@@ -33,6 +33,7 @@ import glob
 import jwt
 import pandas
 from functions_latest_features_nav import is_development_env_enabled
+from functions_appinsights import log_event
 
 from functions_environment import load_simplechat_dotenv
 from flask import (
@@ -95,7 +96,7 @@ DOTENV_LOAD_RESULT = load_simplechat_dotenv()
 EXECUTOR_TYPE = 'thread'
 EXECUTOR_MAX_WORKERS = 30
 SESSION_TYPE = 'filesystem'
-VERSION = "0.250.125"
+VERSION = "0.250.126"
 IS_DEVELOPMENT = is_development_env_enabled()
 
 SESSION_COOKIE_SAMESITE = os.getenv('SESSION_COOKIE_SAMESITE', 'Lax')
@@ -168,6 +169,7 @@ HSTS_MAX_AGE = int(os.getenv('HSTS_MAX_AGE', '31536000'))  # 1 year default
 
 CLIENTS = {}
 CLIENTS_LOCK = threading.Lock()
+ENHANCED_CITATIONS_STORAGE_STATUS = {}
 
 # Base allowed extensions (always available)
 BASE_ALLOWED_EXTENSIONS = {'txt', 'doc', 'docm', 'html', 'md', 'json', 'xml', 'yaml', 'yml', 'log'}
@@ -464,6 +466,115 @@ storage_account_group_documents_container_name = "group-documents"
 storage_account_public_documents_container_name = "public-documents"
 storage_account_personal_chat_container_name = "personal-chat"
 storage_account_group_chat_container_name = "group-chat"
+
+
+def get_enhanced_citations_storage_container_names():
+    """Return the source blob containers used by Enhanced Citations."""
+    return [
+        storage_account_user_documents_container_name,
+        storage_account_group_documents_container_name,
+        storage_account_public_documents_container_name,
+        storage_account_personal_chat_container_name,
+        storage_account_group_chat_container_name,
+    ]
+
+
+def _set_enhanced_citations_storage_status(
+    state,
+    message,
+    enabled=False,
+    configured=False,
+    authentication_type=None,
+    error_type=None,
+):
+    """Record non-secret Enhanced Citations storage startup status for admin diagnostics."""
+    ENHANCED_CITATIONS_STORAGE_STATUS.clear()
+    ENHANCED_CITATIONS_STORAGE_STATUS.update({
+        "state": state,
+        "message": message,
+        "enabled": bool(enabled),
+        "configured": bool(configured),
+        "authentication_type": authentication_type or "",
+        "error_type": error_type or "",
+        "container_names": get_enhanced_citations_storage_container_names(),
+    })
+
+
+def get_enhanced_citations_storage_status():
+    """Return a copy of the current Enhanced Citations storage startup status."""
+    if not ENHANCED_CITATIONS_STORAGE_STATUS:
+        _set_enhanced_citations_storage_status(
+            "not_initialized",
+            "Enhanced Citations storage has not been initialized for this process.",
+        )
+    return dict(ENHANCED_CITATIONS_STORAGE_STATUS)
+
+
+def build_enhanced_citations_blob_service_client(settings):
+    """Build the Enhanced Citations Blob service client without probing the network."""
+    settings = settings or {}
+    authentication_type = str(settings.get("office_docs_authentication_type") or "key").strip()
+    if authentication_type == "managed_identity":
+        blob_endpoint = str(settings.get("office_docs_storage_account_blob_endpoint") or "").strip()
+        if not blob_endpoint:
+            raise ValueError("Enhanced Citations blob endpoint is required for managed identity authentication.")
+        return BlobServiceClient(account_url=blob_endpoint, credential=DefaultAzureCredential())
+
+    connection_string = str(settings.get("office_docs_storage_account_url") or "").strip()
+    if not connection_string:
+        raise ValueError("Enhanced Citations storage connection string is required for key authentication.")
+    return BlobServiceClient.from_connection_string(connection_string)
+
+
+def _initialize_enhanced_citations_storage_client(settings, enable_enhanced_citations):
+    """Initialize optional Enhanced Citations storage without startup network calls."""
+    authentication_type = str((settings or {}).get("office_docs_authentication_type") or "key").strip()
+    if not enable_enhanced_citations:
+        CLIENTS.pop("storage_account_office_docs_client", None)
+        _set_enhanced_citations_storage_status(
+            "disabled",
+            "Enhanced Citations storage is disabled.",
+            authentication_type=authentication_type,
+        )
+        return
+
+    try:
+        blob_service_client = build_enhanced_citations_blob_service_client(settings)
+        CLIENTS["storage_account_office_docs_client"] = blob_service_client
+        _set_enhanced_citations_storage_status(
+            "configured",
+            "Enhanced Citations storage client was configured at startup. Live container checks are deferred until upload or admin connection testing.",
+            enabled=True,
+            configured=True,
+            authentication_type=authentication_type,
+        )
+        log_event(
+            "[ENHANCED_CITATIONS] Storage client configured without startup container checks.",
+            extra={
+                "authentication_type": authentication_type,
+                "container_count": len(get_enhanced_citations_storage_container_names()),
+            },
+            level=logging.INFO,
+        )
+    except Exception as exc:
+        CLIENTS.pop("storage_account_office_docs_client", None)
+        _set_enhanced_citations_storage_status(
+            "initialization_failed",
+            "Enhanced Citations storage is enabled but the storage client could not be configured. The application will continue running, but Enhanced Citations storage operations will fail until settings are corrected.",
+            enabled=True,
+            configured=False,
+            authentication_type=authentication_type,
+            error_type=type(exc).__name__,
+        )
+        log_event(
+            "[ENHANCED_CITATIONS] Storage client initialization failed during startup; continuing without Enhanced Citations storage.",
+            extra={
+                "authentication_type": authentication_type,
+                "error_type": type(exc).__name__,
+            },
+            level=logging.WARNING,
+            exceptionTraceback=True,
+        )
 
 # Initialize Azure Cosmos DB client
 cosmos_endpoint = os.getenv("AZURE_COSMOS_ENDPOINT")
@@ -1157,35 +1268,4 @@ def initialize_clients(settings):
                 del CLIENTS["content_safety_client"]
 
 
-        try:
-            if enable_enhanced_citations:
-                blob_service_client = None
-                if settings.get("office_docs_authentication_type") == "key":
-                    blob_service_client = BlobServiceClient.from_connection_string(settings.get("office_docs_storage_account_url"))
-                    CLIENTS["storage_account_office_docs_client"] = blob_service_client
-                elif settings.get("office_docs_authentication_type") == "managed_identity":
-                    blob_service_client = BlobServiceClient(account_url=settings.get("office_docs_storage_account_blob_endpoint"), credential=DefaultAzureCredential())
-                    CLIENTS["storage_account_office_docs_client"] = blob_service_client
-                
-                # Create containers if they don't exist
-                # This addresses the issue where the application assumes containers exist
-                if blob_service_client:
-                    for container_name in [
-                        storage_account_user_documents_container_name,
-                        storage_account_group_documents_container_name,
-                        storage_account_public_documents_container_name,
-                        storage_account_personal_chat_container_name,
-                        storage_account_group_chat_container_name
-                        ]:
-                        try:
-                            container_client = blob_service_client.get_container_client(container_name)
-                            if not container_client.exists():
-                                print(f"Container '{container_name}' does not exist. Creating...")
-                                container_client.create_container()
-                                print(f"Container '{container_name}' created successfully.")
-                            else:
-                                print(f"Container '{container_name}' already exists.")
-                        except Exception as container_error:
-                            print(f"Error creating container {container_name}: {str(container_error)}")
-        except Exception as e:
-            print(f"Failed to initialize Blob Storage clients: {e}")
+        _initialize_enhanced_citations_storage_client(settings, enable_enhanced_citations)

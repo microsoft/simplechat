@@ -10512,6 +10512,30 @@
                         layer will be available in a future release).
                     </p>
 
+                    {% set ec_storage_status = settings.enhanced_citations_storage_status or {} %}
+                    {% set ec_storage_state = ec_storage_status.state or 'not_initialized' %}
+                    {% if settings.enable_enhanced_citations %}
+                    <div
+                        class="alert {% if ec_storage_state in ['initialization_failed', 'not_initialized'] %}alert-warning{% else %}alert-info{% endif %} mb-3"
+                        id="enhanced-citations-storage-startup-status"
+                    >
+                        <div class="fw-semibold">Enhanced Citations storage startup status</div>
+                        <div>{{ ec_storage_status.message or 'Enhanced Citations storage status is not available for this process.' }}</div>
+                        <div class="small mt-1">
+                            Startup skips live storage container checks so storage outages do not block application boot.
+                            Use the connection test to validate current storage reachability and container access.
+                        </div>
+                        <button
+                            type="button"
+                            class="btn btn-outline-secondary btn-sm mt-2"
+                            id="test_enhanced_citations_storage_button"
+                        >
+                            Test Enhanced Citations Storage
+                        </button>
+                        <div class="mt-2" id="test_enhanced_citations_storage_result"></div>
+                    </div>
+                    {% endif %}
+
 
                     <div class="form-group form-check form-switch mb-3">
                         <input

@@ -98,6 +98,9 @@ def _resolve_admin_settings_test_secrets(payload):
             settings,
             'web_search_agent.other_settings.azure_ai_foundry.client_secret',
         )
+    elif test_type == 'enhanced_citations_storage':
+        _resolve_test_payload_secret(payload, ('connection_string',), settings, 'office_docs_storage_account_url')
+        _resolve_test_payload_secret(payload, ('blob_endpoint',), settings, 'office_docs_storage_account_blob_endpoint')
     elif test_type == 'multimodal_vision':
         if isinstance(payload.get('multi_endpoint'), dict):
             return payload
@@ -106,6 +109,114 @@ def _resolve_admin_settings_test_secrets(payload):
         else:
             _resolve_test_payload_secret(payload, ('direct', 'key'), settings, 'azure_openai_gpt_key')
     return payload
+
+
+def _test_enhanced_citations_storage_connection(data):
+    """Validate Enhanced Citations storage only when an admin explicitly requests it."""
+    auth_type = str(data.get("authentication_type") or "key").strip()
+    client_settings = {
+        "office_docs_authentication_type": auth_type,
+        "office_docs_storage_account_url": data.get("connection_string", ""),
+        "office_docs_storage_account_blob_endpoint": data.get("blob_endpoint", ""),
+    }
+    if auth_type == "managed_identity" and not str(client_settings["office_docs_storage_account_blob_endpoint"] or "").strip():
+        return jsonify({
+            "success": False,
+            "error": "Enhanced Citations blob endpoint is required for managed identity authentication.",
+            "guidance": [
+                "Confirm the Enhanced Citations authentication type and storage settings.",
+            ],
+        }), 400
+    if auth_type != "managed_identity" and not str(client_settings["office_docs_storage_account_url"] or "").strip():
+        return jsonify({
+            "success": False,
+            "error": "Enhanced Citations storage connection string is required for key authentication.",
+            "guidance": [
+                "Confirm the Enhanced Citations authentication type and storage settings.",
+            ],
+        }), 400
+
+    try:
+        blob_service_client = build_enhanced_citations_blob_service_client(client_settings)
+        container_results = []
+        missing_containers = []
+        for container_name in get_enhanced_citations_storage_container_names():
+            container_client = blob_service_client.get_container_client(container_name)
+            exists = container_client.exists(
+                connection_timeout=5,
+                read_timeout=10,
+                retry_total=0,
+            )
+            if not exists:
+                missing_containers.append(container_name)
+            container_results.append({
+                "container_name": container_name,
+                "container_exists": bool(exists),
+            })
+
+        if missing_containers:
+            return jsonify({
+                "success": True,
+                "status": "warning",
+                "message": "Enhanced Citations storage is reachable, but one or more expected containers are missing.",
+                "details": [
+                    f"Authentication type: {auth_type}",
+                    f"Missing containers: {', '.join(missing_containers)}",
+                ],
+                "guidance": [
+                    "Containers are created on demand during upload when permissions allow it.",
+                    "If uploads fail, grant the app identity permission to create or write these containers.",
+                ],
+                "containers": container_results,
+            }), 200
+
+        return jsonify({
+            "success": True,
+            "status": "success",
+            "message": "Enhanced Citations storage is reachable and all expected containers exist.",
+            "details": [
+                f"Authentication type: {auth_type}",
+                f"Validated containers: {len(container_results)}",
+            ],
+            "containers": container_results,
+        }), 200
+    except ValueError as exc:
+        log_event(
+            "[ENHANCED_CITATIONS] Admin storage connection test configuration was invalid.",
+            extra={
+                "authentication_type": auth_type,
+                "error_type": type(exc).__name__,
+            },
+            level=logging.WARNING,
+        )
+        return jsonify({
+            "success": False,
+            "error": "Enhanced Citations storage settings are invalid.",
+            "details": [f"Error type: {type(exc).__name__}"],
+            "guidance": [
+                "Confirm the Enhanced Citations authentication type and storage settings.",
+            ],
+        }), 400
+    except Exception as exc:
+        log_event(
+            "[ENHANCED_CITATIONS] Admin storage connection test failed.",
+            extra={
+                "authentication_type": auth_type,
+                "error_type": type(exc).__name__,
+            },
+            level=logging.WARNING,
+            exceptionTraceback=True,
+        )
+        return jsonify({
+            "success": False,
+            "error": "Enhanced Citations storage connection test failed.",
+            "details": [f"Error type: {type(exc).__name__}"],
+            "guidance": [
+                "Confirm the storage account endpoint or connection string.",
+                "Confirm the app identity can access the storage account and expected containers.",
+                "Check storage firewall, private endpoint, DNS, and RBAC settings if this app runs in Azure.",
+            ],
+        }), 400
 
 
 def auto_fix_index_fields(idx_type: str, user_id: str = 'system', admin_email: str = None) -> dict:
@@ -643,6 +754,9 @@ def register_route_backend_settings(bp):
             
             elif test_type == 'key_vault':
                 return _test_key_vault_connection(data)
+
+            elif test_type == 'enhanced_citations_storage':
+                return _test_enhanced_citations_storage_connection(data)
 
             else:
                 return jsonify({'error': f'Unknown test_type: {test_type}'}), 400

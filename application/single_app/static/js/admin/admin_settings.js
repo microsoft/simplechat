@@ -7870,6 +7870,14 @@ function setupTestButtons() {
         url_access_blocked_domains: getFieldValue('url_access_blocked_domains')
     });
 
+    const buildEnhancedCitationsStoragePayload = () => ({
+        test_type: 'enhanced_citations_storage',
+        enabled: isFieldChecked('enable_enhanced_citations'),
+        authentication_type: getFieldValue('office_docs_authentication_type') || 'key',
+        connection_string: getFieldValue('office_docs_storage_account_url'),
+        blob_endpoint: getFieldValue('office_docs_storage_account_blob_endpoint')
+    });
+
     const runAdminTestRequest = async (payload) => {
         const response = await fetch('/api/admin/settings/test_connection', {
             method: 'POST',
@@ -7929,6 +7937,28 @@ function setupTestButtons() {
         });
     };
 
+    const renderEnhancedCitationsStorageTestData = (container, response, data) => {
+        if (response.ok && data.success !== false) {
+            const isWarning = data.status === 'warning';
+            renderAdminTestResult(container, {
+                variant: isWarning ? 'warning' : 'success',
+                title: isWarning ? 'Enhanced Citations storage is reachable with warnings' : 'Enhanced Citations storage test passed',
+                message: data.message,
+                details: data.details,
+                guidance: data.guidance
+            });
+            return;
+        }
+
+        renderAdminTestResult(container, {
+            variant: 'danger',
+            title: 'Enhanced Citations storage test failed',
+            message: data.message || data.error || 'Error testing Enhanced Citations storage.',
+            details: data.details,
+            guidance: data.guidance
+        });
+    };
+
     const runWebSearchTest = async (button) => {
         const resultDiv = document.getElementById('test_web_search_result');
         renderAdminTestLoading(resultDiv, 'Running Web Search test...');
@@ -7967,6 +7997,25 @@ function setupTestButtons() {
         }
     };
 
+    const runEnhancedCitationsStorageTest = async (button) => {
+        const resultDiv = document.getElementById('test_enhanced_citations_storage_result');
+        renderAdminTestLoading(resultDiv, 'Testing Enhanced Citations storage...');
+        setButtonBusy(button, true, 'Testing...');
+
+        try {
+            const { response, data } = await runAdminTestRequest(buildEnhancedCitationsStoragePayload());
+            renderEnhancedCitationsStorageTestData(resultDiv, response, data);
+        } catch (error) {
+            renderAdminTestResult(resultDiv, {
+                variant: 'danger',
+                title: 'Enhanced Citations storage test failed',
+                message: error.message
+            });
+        } finally {
+            setButtonBusy(button, false);
+        }
+    };
+
     const testWebSearchBtn = document.getElementById('test_web_search_button');
     if (testWebSearchBtn) {
         testWebSearchBtn.addEventListener('click', () => runWebSearchTest(testWebSearchBtn));
@@ -7980,6 +8029,11 @@ function setupTestButtons() {
     const testUrlAccessPolicyBtn = document.getElementById('test_url_access_policy_button');
     if (testUrlAccessPolicyBtn) {
         testUrlAccessPolicyBtn.addEventListener('click', () => runUrlAccessPolicyTest(testUrlAccessPolicyBtn));
+    }
+
+    const testEnhancedCitationsStorageBtn = document.getElementById('test_enhanced_citations_storage_button');
+    if (testEnhancedCitationsStorageBtn) {
+        testEnhancedCitationsStorageBtn.addEventListener('click', () => runEnhancedCitationsStorageTest(testEnhancedCitationsStorageBtn));
     }
 
     const testGptBtn = document.getElementById('test_gpt_button');

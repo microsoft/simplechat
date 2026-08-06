@@ -7,6 +7,7 @@ import traceback
 import zipfile
 from io import BytesIO
 from flask import make_response
+from azure.core.exceptions import ResourceExistsError
 from config import *
 from functions_appinsights import log_event
 from functions_document_access_index import (
@@ -507,6 +508,37 @@ def _get_blob_service_client():
     if not blob_service_client:
         raise Exception("Blob service client not available or not configured.")
     return blob_service_client
+
+
+def _ensure_blob_container_ready(blob_service_client, container_name):
+    """Create the Enhanced Citations target container on demand if it is missing."""
+    if not container_name:
+        raise ValueError("Blob container name is required")
+
+    container_client = blob_service_client.get_container_client(container_name)
+    try:
+        container_client.create_container()
+        log_event(
+            "[ENHANCED_CITATIONS] Created blob storage container during upload.",
+            extra={"container_name": container_name},
+            level=logging.INFO,
+        )
+    except ResourceExistsError:
+        pass
+    except HttpResponseError as exc:
+        if getattr(exc, "status_code", None) != 409:
+            log_event(
+                "[ENHANCED_CITATIONS] Blob storage container readiness check failed during upload.",
+                extra={
+                    "container_name": container_name,
+                    "error_type": type(exc).__name__,
+                    "status_code": getattr(exc, "status_code", None),
+                },
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            raise
+    return container_client
 
 
 def _blob_exists(container_name, blob_path):
@@ -5046,10 +5078,8 @@ def upload_to_blob(temp_file_path, user_id, document_id, blob_filename, update_c
 
         blob_service_client = _get_blob_service_client()
 
-        blob_client = blob_service_client.get_blob_client(
-            container=storage_account_container_name,
-            blob=blob_path
-        )
+        container_client = _ensure_blob_container_ready(blob_service_client, storage_account_container_name)
+        blob_client = container_client.get_blob_client(blob_path)
 
         metadata = {
             "document_id": str(document_id),
@@ -5082,8 +5112,18 @@ def upload_to_blob(temp_file_path, user_id, document_id, blob_filename, update_c
         return blob_path
 
     except Exception as e:
-        print(f"Error uploading {blob_filename} to Blob Storage: {str(e)}")
-        raise Exception(f"Error uploading {blob_filename} to Blob Storage: {str(e)}")
+        log_event(
+            "[ENHANCED_CITATIONS] Blob upload failed.",
+            extra={
+                "document_id": document_id,
+                "group_scope": group_id is not None,
+                "public_workspace_scope": public_workspace_id is not None,
+                "error_type": type(e).__name__,
+            },
+            level=logging.ERROR,
+            exceptionTraceback=True,
+        )
+        raise RuntimeError(f"Error uploading {blob_filename} to Blob Storage.") from e
 
 def process_txt(document_id, user_id, temp_file_path, original_filename, enable_enhanced_citations, update_callback, group_id=None, public_workspace_id=None):
     """Processes plain text files."""
