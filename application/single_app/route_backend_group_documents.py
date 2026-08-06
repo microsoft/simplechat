@@ -616,7 +616,7 @@ def register_route_backend_group_documents(bp):
                         )
                     except Exception as shadow_error:
                         log_event(
-                            '[DocumentAccessIndex] Shadow validation source query failed after DAI read succeeded.',
+                            '[DOCUMENT_ACCESS_INDEX] Shadow validation source query failed after DAI read succeeded.',
                             extra={'source_scope': DOCUMENT_ACCESS_SCOPE_GROUP, 'error': str(shadow_error)},
                             level=logging.WARNING,
                             exceptionTraceback=True,
@@ -856,7 +856,7 @@ def register_route_backend_group_documents(bp):
             return jsonify({'error': str(exc)}), 404
         except Exception as exc:
             log_event(
-                '[DocumentDownload] Failed group document download',
+                '[DOCUMENT_DOWNLOAD] Failed group document download',
                 {'document_id': document_id, 'group_id': active_group_id, 'error': str(exc)},
                 debug_only=True,
             )
@@ -914,7 +914,7 @@ def register_route_backend_group_documents(bp):
             return jsonify({'error': str(exc)}), 404
         except Exception as exc:
             log_event(
-                '[DocumentDownload] Failed group document ZIP download',
+                '[DOCUMENT_DOWNLOAD] Failed group document ZIP download',
                 {'group_id': active_group_id, 'document_count': len(documents), 'error': str(exc)},
                 debug_only=True,
             )
@@ -1184,6 +1184,86 @@ def register_route_backend_group_documents(bp):
             'message': 'Group metadata extraction has been queued. Check document status periodically.',
             'document_id': document_id
         }), 200
+
+    @bp.route('/api/group_documents/extract_metadata', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_group_workspaces")
+    def api_extract_group_metadata_batch():
+        """
+        POST /api/group_documents/extract_metadata
+        Queues background metadata extraction jobs for selected group documents.
+        """
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+
+        settings = get_settings()
+        if not settings.get('enable_extract_meta_data'):
+            return jsonify({'error': 'Metadata extraction not enabled'}), 403
+
+        active_group_id, group_doc, _, error_response = _require_active_group_document_context(
+            user_id,
+            allowed_roles=("Owner", "Admin", "DocumentManager"),
+            permission_message='You do not have permission to extract metadata for group documents',
+        )
+        if error_response:
+            return error_response
+
+        allowed, reason = check_group_status_allows_operation(group_doc, 'upload')
+        if not allowed:
+            return jsonify({'error': reason}), 403
+
+        payload = request.get_json(silent=True) or {}
+        document_ids = payload.get('document_ids')
+        if not isinstance(document_ids, list):
+            document_id = payload.get('document_id')
+            document_ids = [document_id] if document_id else []
+        document_ids = list(dict.fromkeys(
+            str(document_id).strip()
+            for document_id in document_ids
+            if str(document_id or '').strip()
+        ))
+        if not document_ids:
+            return jsonify({'error': 'At least one document ID is required.'}), 400
+
+        queued = []
+        errors = []
+        for document_id in document_ids:
+            try:
+                document_item = get_document_metadata(
+                    document_id=document_id,
+                    user_id=user_id,
+                    group_id=active_group_id,
+                )
+                if not document_item:
+                    errors.append({'document_id': document_id, 'error': 'Document not found.'})
+                    continue
+                if document_item.get('group_id') != active_group_id:
+                    errors.append({'document_id': document_id, 'error': 'Only documents in the active group can have metadata extracted.'})
+                    continue
+
+                current_app.extensions['executor'].submit_stored(
+                    f"{document_id}_group_metadata",
+                    process_metadata_extraction_background,
+                    document_id=document_id,
+                    user_id=user_id,
+                    group_id=active_group_id
+                )
+                queued.append({'document_id': document_id})
+            except Exception as e:
+                errors.append({'document_id': document_id, 'error': str(e)})
+
+        if queued:
+            invalidate_group_search_cache(active_group_id)
+
+        status_code = 202 if queued and not errors else (207 if queued else 400)
+        return jsonify({
+            'message': f'Queued {len(queued)} document(s) for metadata extraction.',
+            'queued': queued,
+            'errors': errors,
+        }), status_code
 
     @bp.route('/api/group_documents/reprocess_extraction', methods=['POST'])
     @swagger_route(security=get_auth_security())

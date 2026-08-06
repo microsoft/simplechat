@@ -80,3 +80,11 @@ This workflow covers what happens when users upload content into personal or gro
 8. Once indexing completes, the document becomes available to hybrid retrieval in chat and workspace search.
 
 Typical chunk metadata includes document identity, filename, workspace scope, sequence numbers, page references, timestamps, and optional classification or extraction metadata.
+
+## Mixed-Source Document Actions
+
+When mixed-source flags are enabled, Chat and workflow Search remain relevance bounded. Analyze and Compare resolve an ordered authorized manifest, dispatch narrative documents to bounded window analysis and CSV/Excel documents to native tabular tools, and combine only bounded evidence summaries.
+
+Every selected or planned source ends with `completed`, `partial`, `failed`, or `skipped` plus a bounded reason. Analyze reduces only when at least one source succeeds. Compare requires a prepared Source and can continue past a failed Target. Cancellation stops active branches and prevents later reduction, citation/artifact publication, and assistant response persistence.
+
+The staged Analyze All backend enumerates current documents through the ready document access index and rejects catalogs above the configured workflow Analyze limit. Every enumerated ID is reauthorized before execution. This stage remains default off and is not newly exposed in the workflow selector in version **0.250.070**.

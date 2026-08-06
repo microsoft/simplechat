@@ -1,0 +1,13 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "Generic MCP Preset Implementation Settings",
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["compatibilityProfile"],
+    "properties": {
+        "compatibilityProfile": {
+            "type": "string",
+            "enum": ["standards_compliant"]
+        }
+    }
+}

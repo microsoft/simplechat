@@ -177,7 +177,7 @@ class OpenApiPlugin(BasePlugin):
             openapi_spec_content: OpenAPI specification content as parsed dict (preferred)
         """
         import logging
-        logging.info(f"[OpenAPI Plugin] Initializing plugin with base_url: {base_url}")
+        logging.info(f"[OPEN_API_PLUGIN] Initializing plugin with base_url: {base_url}")
         
         if not base_url:
             raise ValueError("base_url is required")
@@ -194,20 +194,20 @@ class OpenApiPlugin(BasePlugin):
         self.function_calls = []
         
         # Load and parse the OpenAPI specification
-        logging.info(f"[OpenAPI Plugin] Loading OpenAPI specification...")
+        logging.info(f"[OPEN_API_PLUGIN] Loading OpenAPI specification...")
         self.openapi = self._load_openapi_spec()
-        logging.info(f"[OpenAPI Plugin] Generating metadata...")
+        logging.info(f"[OPEN_API_PLUGIN] Generating metadata...")
         self._metadata = self._generate_metadata()
         
         # Dynamically create kernel functions for each API operation
-        logging.info(f"[OpenAPI Plugin] About to create dynamic functions...")
+        logging.info(f"[OPEN_API_PLUGIN] About to create dynamic functions...")
         try:
             self._create_operation_functions()
-            logging.info(f"[OpenAPI Plugin] Successfully completed initialization")
+            logging.info(f"[OPEN_API_PLUGIN] Successfully completed initialization")
         except Exception as e:
-            logging.error(f"[OpenAPI Plugin] Error creating dynamic functions: {e}")
+            logging.error(f"[OPEN_API_PLUGIN] Error creating dynamic functions: {e}")
             import traceback
-            logging.error(f"[OpenAPI Plugin] Traceback: {traceback.format_exc()}")
+            logging.error(f"[OPEN_API_PLUGIN] Traceback: {traceback.format_exc()}")
             raise
     
     def _load_openapi_spec(self) -> Dict[str, Any]:
@@ -257,10 +257,10 @@ class OpenApiPlugin(BasePlugin):
                         current = current[part]
                     return current
                 except (KeyError, TypeError):
-                    logging.warning(f"[OpenAPI Plugin] Failed to resolve reference: {ref_path}")
+                    logging.warning(f"[OPEN_API_PLUGIN] Failed to resolve reference: {ref_path}")
                     return ref_obj
             else:
-                logging.warning(f"[OpenAPI Plugin] External references not supported: {ref_path}")
+                logging.warning(f"[OPEN_API_PLUGIN] External references not supported: {ref_path}")
                 return ref_obj
         elif isinstance(ref_obj, list):
             # Recursively resolve references in lists
@@ -427,7 +427,7 @@ class OpenApiPlugin(BasePlugin):
         import types
         import logging
         
-        logging.info(f"[OpenAPI Plugin] Creating dynamic functions for {len(self._metadata['methods'])} operations")
+        logging.info(f"[OPEN_API_PLUGIN] Creating dynamic functions for {len(self._metadata['methods'])} operations")
         
         paths = self.openapi.get("paths", {})
         for path, operations in paths.items():
@@ -440,7 +440,7 @@ class OpenApiPlugin(BasePlugin):
                     # Generate operation ID if not provided
                     operation_id = f"{method}_{path.replace('/', '_').replace('{', '').replace('}', '')}"
                 
-                logging.info(f"[OpenAPI Plugin] Creating function: {operation_id} for {method.upper()} {path}")
+                logging.info(f"[OPEN_API_PLUGIN] Creating function: {operation_id} for {method.upper()} {path}")
                 
                 # Create a dynamic function for this operation
                 def create_operation_function(op_id, op_path, op_method, op_data):
@@ -482,7 +482,7 @@ class OpenApiPlugin(BasePlugin):
                             if python_name in param_descriptions:
                                 original_name = param_descriptions[python_name]["original_name"]
                                 mapped_kwargs[original_name] = value
-                                logging.info(f"[OpenAPI Plugin] Mapped parameter {python_name} -> {original_name}: {value}")
+                                logging.info(f"[OPEN_API_PLUGIN] Mapped parameter {python_name} -> {original_name}: {value}")
                             else:
                                 mapped_kwargs[python_name] = value
                         
@@ -516,9 +516,9 @@ class OpenApiPlugin(BasePlugin):
                 func = create_operation_function(operation_id, path, method, operation)
                 bound_func = types.MethodType(func, self)
                 setattr(self, operation_id, bound_func)
-                logging.info(f"[OpenAPI Plugin] Successfully created and bound function: {operation_id}")
+                logging.info(f"[OPEN_API_PLUGIN] Successfully created and bound function: {operation_id}")
         
-        logging.info(f"[OpenAPI Plugin] Finished creating dynamic functions")
+        logging.info(f"[OPEN_API_PLUGIN] Finished creating dynamic functions")
 
     def get_kernel_plugin(self, plugin_name="openapi_plugin"):
         """
@@ -530,19 +530,19 @@ class OpenApiPlugin(BasePlugin):
         from semantic_kernel.functions.kernel_plugin import KernelPlugin
         import logging
         
-        logging.info(f"[OpenAPI Plugin] Creating kernel plugin for {plugin_name}")
-        logging.info(f"[OpenAPI Plugin] Available methods on self: {[m for m in dir(self) if not m.startswith('_') and callable(getattr(self, m))]}")
+        logging.info(f"[OPEN_API_PLUGIN] Creating kernel plugin for {plugin_name}")
+        logging.info(f"[OPEN_API_PLUGIN] Available methods on self: {[m for m in dir(self) if not m.startswith('_') and callable(getattr(self, m))]}")
         
         # Use from_object to create the plugin - this will automatically find all @kernel_function decorated methods
         try:
             plugin = KernelPlugin.from_object(plugin_name, self)
-            logging.info(f"[OpenAPI Plugin] Successfully created kernel plugin with {len(plugin.functions)} functions")
-            logging.info(f"[OpenAPI Plugin] Functions: {list(plugin.functions.keys())}")
+            logging.info(f"[OPEN_API_PLUGIN] Successfully created kernel plugin with {len(plugin.functions)} functions")
+            logging.info(f"[OPEN_API_PLUGIN] Functions: {list(plugin.functions.keys())}")
             return plugin
         except Exception as e:
-            logging.error(f"[OpenAPI Plugin] Failed to create kernel plugin: {e}")
+            logging.error(f"[OPEN_API_PLUGIN] Failed to create kernel plugin: {e}")
             import traceback
-            logging.error(f"[OpenAPI Plugin] Traceback: {traceback.format_exc()}")
+            logging.error(f"[OPEN_API_PLUGIN] Traceback: {traceback.format_exc()}")
             raise
 
     def _to_camel_case(self, name: str) -> str:
@@ -807,9 +807,9 @@ class OpenApiPlugin(BasePlugin):
         import time
         
         # Log the function call
-        logging.info(f"[OpenAPI Plugin] Calling operation: {operation_id} ({method.upper()} {path})")
-        logging.info(f"[OpenAPI Plugin] Parameters: {_redact_openapi_value(kwargs)}")
-        logging.info(f"[OpenAPI Plugin] Base URL: {self.base_url}")
+        logging.info(f"[OPEN_API_PLUGIN] Calling operation: {operation_id} ({method.upper()} {path})")
+        logging.info(f"[OPEN_API_PLUGIN] Parameters: {_redact_openapi_value(kwargs)}")
+        logging.info(f"[OPEN_API_PLUGIN] Base URL: {self.base_url}")
         
         # Track function call for citations
         call_start = time.time()
@@ -839,9 +839,9 @@ class OpenApiPlugin(BasePlugin):
             debug_print(f"Base URL: {self.base_url}")
             debug_print(f"Path: {path}")
             
-            logging.info(f"[OpenAPI Plugin] Processing parameters for {operation_id}")
-            logging.info(f"[OpenAPI Plugin] Received kwargs: {_redact_openapi_value(kwargs)}")
-            logging.info(f"[OpenAPI Plugin] Operation parameters: {[p.get('name') for p in parameters]}")
+            logging.info(f"[OPEN_API_PLUGIN] Processing parameters for {operation_id}")
+            logging.info(f"[OPEN_API_PLUGIN] Received kwargs: {_redact_openapi_value(kwargs)}")
+            logging.info(f"[OPEN_API_PLUGIN] Operation parameters: {[p.get('name') for p in parameters]}")
             
             # Check for missing required parameters and add automatic parameter mapping
             for param in parameters:
@@ -865,15 +865,15 @@ class OpenApiPlugin(BasePlugin):
                     if snake_case_name in kwargs:
                         kwargs[param_name] = kwargs[snake_case_name]
                         debug_print(f"Mapped {snake_case_name} -> {param_name}: {_redact_openapi_value(kwargs[snake_case_name])}")
-                        logging.info(f"[OpenAPI Plugin] Mapped {snake_case_name} -> {param_name}: {_redact_openapi_value(kwargs[snake_case_name])}")
+                        logging.info(f"[OPEN_API_PLUGIN] Mapped {snake_case_name} -> {param_name}: {_redact_openapi_value(kwargs[snake_case_name])}")
                     elif camel_case_name in kwargs:
                         kwargs[param_name] = kwargs[camel_case_name]
                         debug_print(f"Mapped {camel_case_name} -> {param_name}: {_redact_openapi_value(kwargs[camel_case_name])}")
-                        logging.info(f"[OpenAPI Plugin] Mapped {camel_case_name} -> {param_name}: {_redact_openapi_value(kwargs[camel_case_name])}")
+                        logging.info(f"[OPEN_API_PLUGIN] Mapped {camel_case_name} -> {param_name}: {_redact_openapi_value(kwargs[camel_case_name])}")
                     elif pascal_case_name in kwargs:
                         kwargs[param_name] = kwargs[pascal_case_name]
                         debug_print(f"Mapped {pascal_case_name} -> {param_name}: {_redact_openapi_value(kwargs[pascal_case_name])}")
-                        logging.info(f"[OpenAPI Plugin] Mapped {pascal_case_name} -> {param_name}: {_redact_openapi_value(kwargs[pascal_case_name])}")
+                        logging.info(f"[OPEN_API_PLUGIN] Mapped {pascal_case_name} -> {param_name}: {_redact_openapi_value(kwargs[pascal_case_name])}")
                     else:
                         # Try additional common variations
                         variations = self._get_name_variations(param_name)
@@ -882,13 +882,13 @@ class OpenApiPlugin(BasePlugin):
                             if variation in kwargs:
                                 kwargs[param_name] = kwargs[variation]
                                 debug_print(f"Mapped {variation} -> {param_name}: {_redact_openapi_value(kwargs[variation])}")
-                                logging.info(f"[OpenAPI Plugin] Mapped {variation} -> {param_name}: {_redact_openapi_value(kwargs[variation])}")
+                                logging.info(f"[OPEN_API_PLUGIN] Mapped {variation} -> {param_name}: {_redact_openapi_value(kwargs[variation])}")
                                 mapped = True
                                 break
                         
                         if not mapped:
                             debug_print(f"WARNING - Required parameter '{param_name}' not found in any name variation!")
-                            logging.warning(f"[OpenAPI Plugin] Required parameter {param_name} not found after trying all name variations")
+                            logging.warning(f"[OPEN_API_PLUGIN] Required parameter {param_name} not found after trying all name variations")
                 else:
                     if param_name in kwargs:
                         debug_print(f"Param '{param_name}' found directly")
@@ -903,7 +903,7 @@ class OpenApiPlugin(BasePlugin):
                 param_required = param.get("required", False)
                 
                 debug_print(f"Processing parameter '{param_name}' (location: {param_in}, required: {param_required})")
-                logging.info(f"[OpenAPI Plugin] Processing parameter: {param_name} (location: {param_in}, required: {param_required})")
+                logging.info(f"[OPEN_API_PLUGIN] Processing parameter: {param_name} (location: {param_in}, required: {param_required})")
                 
                 param_value = None
                 
@@ -911,7 +911,7 @@ class OpenApiPlugin(BasePlugin):
                 if param_name in kwargs:
                     param_value = kwargs[param_name]
                     debug_print(f"Found exact match for '{param_name}': {_redact_openapi_value(param_value)}")
-                    logging.info(f"[OpenAPI Plugin] Found exact match for {param_name}: {_redact_openapi_value(param_value)}")
+                    logging.info(f"[OPEN_API_PLUGIN] Found exact match for {param_name}: {_redact_openapi_value(param_value)}")
                 else:
                     # Try universal name transformations
                     variations = self._get_name_variations(param_name)
@@ -922,12 +922,12 @@ class OpenApiPlugin(BasePlugin):
                         if variation in kwargs:
                             param_value = kwargs[variation]
                             debug_print(f"Found variation match '{variation}' -> '{param_name}': {_redact_openapi_value(param_value)}")
-                            logging.info(f"[OpenAPI Plugin] Found variation match {variation} -> {param_name}: {_redact_openapi_value(param_value)}")
+                            logging.info(f"[OPEN_API_PLUGIN] Found variation match {variation} -> {param_name}: {_redact_openapi_value(param_value)}")
                             break
                     
                     if param_value is None and param_required:
                         debug_print(f"WARNING - Required parameter '{param_name}' not found after trying all variations!")
-                        logging.warning(f"[OpenAPI Plugin] Required parameter {param_name} not found after trying all name variations!")
+                        logging.warning(f"[OPEN_API_PLUGIN] Required parameter {param_name} not found after trying all name variations!")
                     elif param_value is None:
                         debug_print(f"Optional parameter '{param_name}' not found (OK)")
                 
@@ -938,19 +938,19 @@ class OpenApiPlugin(BasePlugin):
                             final_path = final_path.replace(f"{{{param_name}}}", str(param_value))
                             path_params[param_name] = param_value
                             debug_print(f"Set path parameter '{param_name}'={_redact_openapi_value(param_value)}")
-                            logging.info(f"[OpenAPI Plugin] Set path parameter {param_name}={_redact_openapi_value(param_value)}")
+                            logging.info(f"[OPEN_API_PLUGIN] Set path parameter {param_name}={_redact_openapi_value(param_value)}")
                         else:
                             debug_print(f"SAFETY CHECK: final_path={final_path}, param_name={param_name}")
-                            logging.warning(f"[OpenAPI Plugin] Safety check failed: final_path={final_path}, param_name={param_name}")
+                            logging.warning(f"[OPEN_API_PLUGIN] Safety check failed: final_path={final_path}, param_name={param_name}")
                     elif param_in == "query":
                         # Add to query parameters - add safety check for param_name
                         if param_name is not None:
                             query_params[param_name] = param_value
                             debug_print(f"Set query parameter '{param_name}'={_redact_openapi_value(param_value)}")
-                            logging.info(f"[OpenAPI Plugin] Set query parameter {param_name}={_redact_openapi_value(param_value)}")
+                            logging.info(f"[OPEN_API_PLUGIN] Set query parameter {param_name}={_redact_openapi_value(param_value)}")
                         else:
                             debug_print(f"SAFETY CHECK: param_name is None for query parameter")
-                            logging.warning(f"[OpenAPI Plugin] Safety check failed: param_name is None for query parameter")
+                            logging.warning(f"[OPEN_API_PLUGIN] Safety check failed: param_name is None for query parameter")
                 else:
                     debug_print(f"Parameter '{param_name}' has no value - skipping")
             
@@ -960,12 +960,12 @@ class OpenApiPlugin(BasePlugin):
             if final_path is None:
                 final_path = ""  # Use empty string if path is None
                 debug_print("WARNING: final_path was None, using empty string")
-                logging.warning("[OpenAPI Plugin] final_path was None, using empty string")
+                logging.warning("[OPEN_API_PLUGIN] final_path was None, using empty string")
             
             full_url = f"{self.base_url}{final_path}"
             debug_print(f"Base URL + path: {_redact_openapi_url(full_url)}")
             debug_print(f"Query params before auth: {_redact_openapi_value(query_params)}")
-            logging.info(f"[OpenAPI Plugin] Final URL: {_redact_openapi_url(full_url)}")
+            logging.info(f"[OPEN_API_PLUGIN] Final URL: {_redact_openapi_url(full_url)}")
             
             # Set up headers
             headers = {"Accept": "application/json", "User-Agent": "SimpleChat-OpenAPI-Plugin/1.0"}
@@ -1014,14 +1014,14 @@ class OpenApiPlugin(BasePlugin):
                                 key_name = scheme.get("name", "api_key")
                                 query_params[key_name] = api_key
                                 debug_print(f"Added query parameter auth from '{scheme_name}': {key_name}={OPENAPI_REDACTED_VALUE}")
-                                logging.info(f"[OpenAPI Plugin] Using query parameter auth: {key_name}")
+                                logging.info(f"[OPEN_API_PLUGIN] Using query parameter auth: {key_name}")
                                 auth_applied = True
                                 break
                             elif scheme.get("type") == "apiKey" and scheme.get("in") == "header":
                                 key_name = scheme.get("name", "x-api-key")
                                 headers[key_name] = api_key
                                 debug_print(f"Added header auth from '{scheme_name}': {key_name}={OPENAPI_REDACTED_VALUE}")
-                                logging.info(f"[OpenAPI Plugin] Using header auth: {key_name}")
+                                logging.info(f"[OPEN_API_PLUGIN] Using header auth: {key_name}")
                                 auth_applied = True
                                 break
                         
@@ -1032,7 +1032,7 @@ class OpenApiPlugin(BasePlugin):
                                 # Default to query parameter with underscore
                                 query_params["api_key"] = api_key
                                 debug_print(f"Using fallback query parameter auth: api_key={OPENAPI_REDACTED_VALUE}")
-                                logging.info(f"[OpenAPI Plugin] Using fallback query parameter auth: api_key")
+                                logging.info(f"[OPEN_API_PLUGIN] Using fallback query parameter auth: api_key")
                     else:
                         debug_print(f"No security schemes found in OpenAPI spec")
                         # Fallback if no security schemes found
@@ -1040,7 +1040,7 @@ class OpenApiPlugin(BasePlugin):
                             # Default to query parameter with underscore
                             query_params["api_key"] = api_key
                             debug_print(f"Using fallback query parameter auth: api_key={OPENAPI_REDACTED_VALUE}")
-                            logging.info(f"[OpenAPI Plugin] Using fallback query parameter auth: api_key")
+                            logging.info(f"[OPEN_API_PLUGIN] Using fallback query parameter auth: api_key")
                 elif auth_type == "bearer":
                     token = self.auth.get("token", "")
                     headers["Authorization"] = f"Bearer {token}"
@@ -1055,7 +1055,7 @@ class OpenApiPlugin(BasePlugin):
                 else:
                     debug_print(f"Unknown auth type: {auth_type}")
                     
-                logging.info(f"[OpenAPI Plugin] Applied authentication type: {auth_type}")
+                logging.info(f"[OPEN_API_PLUGIN] Applied authentication type: {auth_type}")
             else:
                 debug_print(f"No authentication configured")
             
@@ -1067,37 +1067,37 @@ class OpenApiPlugin(BasePlugin):
             debug_print(f"URL: {_redact_openapi_url(full_url)}")
             debug_print(f"Headers: {_redact_openapi_value(headers)}")
             debug_print(f"Query params: {_redact_openapi_value(query_params)}")
-            logging.info(f"[OpenAPI Plugin] Making {method.upper()} request to {_redact_openapi_url(full_url)}")
-            logging.info(f"[OpenAPI Plugin] Headers: {_redact_openapi_value(headers)}")
-            logging.info(f"[OpenAPI Plugin] Query params: {_redact_openapi_value(query_params)}")
+            logging.info(f"[OPEN_API_PLUGIN] Making {method.upper()} request to {_redact_openapi_url(full_url)}")
+            logging.info(f"[OPEN_API_PLUGIN] Headers: {_redact_openapi_value(headers)}")
+            logging.info(f"[OPEN_API_PLUGIN] Query params: {_redact_openapi_value(query_params)}")
             
             if method.lower() == 'get':
                 response = requests.get(full_url, headers=headers, params=query_params, timeout=30)
                 # Log the actual URL that was requested
                 debug_print(f"Actual GET request URL: {_redact_openapi_url(response.url)}")
                 debug_print(f"Response status: {response.status_code}")
-                logging.info(f"[OpenAPI Plugin] Actual GET request URL: {_redact_openapi_url(response.url)}")
+                logging.info(f"[OPEN_API_PLUGIN] Actual GET request URL: {_redact_openapi_url(response.url)}")
             elif method.lower() == 'post':
                 response = requests.post(full_url, headers=headers, params=query_params, json=kwargs, timeout=30)
-                logging.info(f"[OpenAPI Plugin] Actual POST request URL: {_redact_openapi_url(response.url)}")
+                logging.info(f"[OPEN_API_PLUGIN] Actual POST request URL: {_redact_openapi_url(response.url)}")
             elif method.lower() == 'put':
                 response = requests.put(full_url, headers=headers, params=query_params, json=kwargs, timeout=30)
-                logging.info(f"[OpenAPI Plugin] Actual PUT request URL: {_redact_openapi_url(response.url)}")
+                logging.info(f"[OPEN_API_PLUGIN] Actual PUT request URL: {_redact_openapi_url(response.url)}")
             elif method.lower() == 'delete':
                 response = requests.delete(full_url, headers=headers, params=query_params, timeout=30)
-                logging.info(f"[OpenAPI Plugin] Actual DELETE request URL: {_redact_openapi_url(response.url)}")
+                logging.info(f"[OPEN_API_PLUGIN] Actual DELETE request URL: {_redact_openapi_url(response.url)}")
             elif method.lower() == 'patch':
                 response = requests.patch(full_url, headers=headers, params=query_params, json=kwargs, timeout=30)
-                logging.info(f"[OpenAPI Plugin] Actual PATCH request URL: {_redact_openapi_url(response.url)}")
+                logging.info(f"[OPEN_API_PLUGIN] Actual PATCH request URL: {_redact_openapi_url(response.url)}")
             else:
                 # Default to GET for unknown methods
                 response = requests.get(full_url, headers=headers, params=query_params, timeout=30)
-                logging.info(f"[OpenAPI Plugin] Actual GET request URL: {_redact_openapi_url(response.url)}")
+                logging.info(f"[OPEN_API_PLUGIN] Actual GET request URL: {_redact_openapi_url(response.url)}")
             
             debug_print(f"Response status: {response.status_code}")
             debug_print(f"Response headers: {_redact_openapi_value(dict(response.headers))}")
-            logging.info(f"[OpenAPI Plugin] Response status: {response.status_code}")
-            logging.info(f"[OpenAPI Plugin] Response headers: {_redact_openapi_value(dict(response.headers))}")
+            logging.info(f"[OPEN_API_PLUGIN] Response status: {response.status_code}")
+            logging.info(f"[OPEN_API_PLUGIN] Response headers: {_redact_openapi_value(dict(response.headers))}")
             
             # Check if request was successful
             if response.status_code == 200:
@@ -1113,7 +1113,7 @@ class OpenApiPlugin(BasePlugin):
                     
                     if result_size > MAX_RESPONSE_SIZE:
                         debug_print(f"Response too large ({result_size} chars), truncating to {MAX_RESPONSE_SIZE} chars")
-                        logging.warning(f"[OpenAPI Plugin] Large response ({result_size} chars) truncated to prevent context overflow")
+                        logging.warning(f"[OPEN_API_PLUGIN] Large response ({result_size} chars) truncated to prevent context overflow")
                         
                         # If it's a list, take more items for news APIs
                         if isinstance(result, list) and len(result) > 10:
@@ -1148,13 +1148,13 @@ class OpenApiPlugin(BasePlugin):
                                 "data_available": True
                             }
                     
-                    logging.info(f"[OpenAPI Plugin] Successfully called {operation_id} - JSON response received")
+                    logging.info(f"[OPEN_API_PLUGIN] Successfully called {operation_id} - JSON response received")
                     if isinstance(result, dict) and len(result) < 10:
-                        logging.info(f"[OpenAPI Plugin] Response preview: {_redact_openapi_value(result)}")
+                        logging.info(f"[OPEN_API_PLUGIN] Response preview: {_redact_openapi_value(result)}")
                     elif isinstance(result, list) and len(result) < 5:
-                        logging.info(f"[OpenAPI Plugin] Response preview (list): {_redact_openapi_value(result)}")
+                        logging.info(f"[OPEN_API_PLUGIN] Response preview (list): {_redact_openapi_value(result)}")
                     else:
-                        logging.info(f"[OpenAPI Plugin] Response type: {type(result)}, length: {len(result) if hasattr(result, '__len__') else 'unknown'}")
+                        logging.info(f"[OPEN_API_PLUGIN] Response type: {type(result)}, length: {len(result) if hasattr(result, '__len__') else 'unknown'}")
                     
                     # Track successful function call for citations
                     self._track_function_call(operation_id, kwargs, result, call_start, full_url)
@@ -1163,7 +1163,7 @@ class OpenApiPlugin(BasePlugin):
                 except ValueError as json_error:
                     debug_print(f"JSON parsing error: {json_error}")
                     error_msg = f"Failed to parse JSON response from {operation_id}: {json_error}"
-                    logging.error(f"[OpenAPI Plugin] {error_msg}")
+                    logging.error(f"[OPEN_API_PLUGIN] {error_msg}")
                     
                     # Return raw text as fallback
                     raw_text = _redact_openapi_string(response.text)
@@ -1185,14 +1185,14 @@ class OpenApiPlugin(BasePlugin):
                 }
                 
                 debug_print(f"Returning error result: {error_result}")
-                logging.error(f"[OpenAPI Plugin] HTTP {response.status_code} error from {operation_id}: {error_response}")
+                logging.error(f"[OPEN_API_PLUGIN] HTTP {response.status_code} error from {operation_id}: {error_response}")
                 
                 return error_result
                 
         except requests.exceptions.RequestException as req_error:
             redacted_request_error = _redact_openapi_string(str(req_error))
             debug_print(f"Request exception: {redacted_request_error}")
-            logging.error(f"[OpenAPI Plugin] Request error for {operation_id}: {redacted_request_error}")
+            logging.error(f"[OPEN_API_PLUGIN] Request error for {operation_id}: {redacted_request_error}")
             error_result = {
                 "error": f"Request failed: {redacted_request_error}",
                 "operation_id": operation_id,
@@ -1206,7 +1206,7 @@ class OpenApiPlugin(BasePlugin):
         except Exception as e:
             redacted_error = _redact_openapi_string(str(e))
             debug_print(f"General exception: {redacted_error}")
-            logging.error(f"[OpenAPI Plugin] Unexpected error in {operation_id}: {redacted_error}")
+            logging.error(f"[OPEN_API_PLUGIN] Unexpected error in {operation_id}: {redacted_error}")
             error_result = {
                 "error": f"Unexpected error: {redacted_error}",
                 "operation_id": operation_id,
@@ -1262,7 +1262,7 @@ class OpenApiPlugin(BasePlugin):
             "base_url": _redact_openapi_url(self.base_url)
         }
         self.function_calls.append(call_data)
-        logging.info(f"[OpenAPI Plugin] Tracked function call: {operation_id} ({duration:.3f}s) -> {_redact_openapi_url(url)}")
+        logging.info(f"[OPEN_API_PLUGIN] Tracked function call: {operation_id} ({duration:.3f}s) -> {_redact_openapi_url(url)}")
 
     @plugin_function_logger("OpenApiPlugin")
     @kernel_function(
@@ -1281,7 +1281,7 @@ class OpenApiPlugin(BasePlugin):
         """
         import logging
         
-        logging.info(f"[OpenAPI Plugin] call_operation called with operation_id: {operation_id}, kwargs: {kwargs}")
+        logging.info(f"[OPEN_API_PLUGIN] call_operation called with operation_id: {operation_id}, kwargs: {kwargs}")
         
         # Find the operation in the spec
         operation_found = False
@@ -1322,7 +1322,7 @@ class OpenApiPlugin(BasePlugin):
                                        variation.lower() == available_op.lower() or
                                        available_op.endswith(variation) or
                                        variation in available_op.lower()):
-                        logging.info(f"[OpenAPI Plugin] Found fuzzy match: '{operation_id}' -> '{available_op}'")
+                        logging.info(f"[OPEN_API_PLUGIN] Found fuzzy match: '{operation_id}' -> '{available_op}'")
                         operation_id = available_op  # Update to use the correct operation ID
                         
                         # Find the matched operation
@@ -1342,13 +1342,13 @@ class OpenApiPlugin(BasePlugin):
         
         if not operation_found:
             error_msg = f"Operation '{operation_id}' not found in OpenAPI specification"
-            logging.error(f"[OpenAPI Plugin] {error_msg}")
+            logging.error(f"[OPEN_API_PLUGIN] {error_msg}")
             available_ops = [op.get("operationId") for path_ops in self.openapi.get("paths", {}).values() 
                            for op in path_ops.values() if op.get("operationId")]
-            logging.error(f"[OpenAPI Plugin] Available operations: {available_ops}")
+            logging.error(f"[OPEN_API_PLUGIN] Available operations: {available_ops}")
             raise ValueError(error_msg)
         
-        logging.info(f"[OpenAPI Plugin] Found operation {operation_id}: {operation_method.upper()} {operation_path}")
+        logging.info(f"[OPEN_API_PLUGIN] Found operation {operation_id}: {operation_method.upper()} {operation_path}")
         
         # Call the actual API operation
         return self._call_api_operation(operation_id, operation_path, operation_method, operation_data, **kwargs)

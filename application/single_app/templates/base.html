@@ -1,7 +1,14 @@
 <!-- templates/base.html -->
- 
+
+{% set allowed_font_size_preferences = ['xs', 's', 'm', 'l', 'xl'] %}
+{% set saved_font_size_preference = user_settings.get('settings', {}).get('fontSizePreference', 'm') %}
 <!DOCTYPE html>
-<html lang="en" data-bs-theme="light" id="htmlRoot">
+<html
+  lang="en"
+  data-bs-theme="light"
+  data-font-size="{{ saved_font_size_preference if saved_font_size_preference in allowed_font_size_preferences else 'm' }}"
+  id="htmlRoot"
+>
 
 <head>
   <meta charset="UTF-8" />
@@ -176,7 +183,8 @@
     .editor-toolbar a.fa-question-circle:before { content: "?"; }
 
     .chat-container {
-      max-height: calc(100vh - var(--top-nav-height, 66px));
+      max-height: 100%;
+      min-height: 0;
       display: flex;
       flex-direction: column;
       overflow: hidden;
@@ -195,6 +203,18 @@
   <!-- Dark mode early initialization to prevent flash -->
   <script>
     (function() {
+      window.publicWorkspaceLabels = {{ app_settings.public_workspace_labels | default({}) | tojson }};
+      window.getPublicWorkspaceLabel = function(key) {
+        var defaults = {
+          singular: 'Public Workspace',
+          plural: 'Public Workspaces',
+          lower_singular: 'public workspace',
+          lower_plural: 'public workspaces',
+          short: 'Public'
+        };
+        return (window.publicWorkspaceLabels && window.publicWorkspaceLabels[key]) || defaults[key] || '';
+      };
+
       // Check localStorage first for fast theme loading to prevent flash
       var savedTheme = localStorage.getItem('simplechat-theme');
       if (savedTheme) {
@@ -256,7 +276,7 @@
 <body class="d-flex flex-column min-vh-100{% if app_settings.classification_banner_enabled and app_settings.classification_banner_text %} has-classification-banner{% endif %}{% if is_chat_page %} chat-shell-page{% endif %}{% if is_chat_page and not is_sidebar_layout %} chat-top-nav-shell{% endif %}">
   {% if app_settings.classification_banner_enabled and app_settings.classification_banner_text %}
     <div id="classification-banner"
-         style="background: {{ app_settings.classification_banner_color or '#ffc107' }}; color: {{ app_settings.classification_banner_text_color or '#ffffff' }}; display: flex; align-items: center; justify-content: center; text-align: center; font-weight: bold; padding: 0; height: 40px; font-size: 1.1em; letter-spacing: 0.5px; position: fixed; top: 0; left: 0; width: 100%; z-index: 1051;">
+         style="background: {{ app_settings.classification_banner_color or '#ffc107' }}; color: {{ app_settings.classification_banner_text_color or '#ffffff' }}; display: flex; align-items: center; justify-content: center; text-align: center; font-weight: bold; padding: 0; height: var(--classification-banner-height); font-size: 1.1em; letter-spacing: 0.5px; position: fixed; top: 0; left: 0; width: 100%; z-index: 1051;">
       {{ app_settings.classification_banner_text }}
     </div>
   {% endif %}
@@ -281,7 +301,12 @@
   </div>
 
   <!-- Toast container for error/info messages -->
-  <div id="toast-container" class="position-fixed bottom-0 end-0 p-3" style="z-index: 1100;"></div>
+  <div
+    id="toast-container"
+    class="position-fixed bottom-0 end-0 p-3"
+    style="z-index: 1100;"
+    aria-label="Notifications"
+  ></div>
   {% if session.get('user') %}
   <style>
     .workflow-alert-modal-dialog {
@@ -619,6 +644,7 @@
   <!-- Then Bootstrap JS (Bootstrap 5 doesn't require jQuery, 
          but it's okay to load it afterwards) -->
   <script src="/static/js/chat/bootstrap.bundle.min.js"></script>
+  <script src="{{ url_for('static', filename='js/toast.js') }}?v={{ config['VERSION'] }}"></script>
 
 
   <!-- Then DataTables (depends on jQuery) -->
@@ -650,6 +676,11 @@
     const appSettings = {{ app_settings|tojson }};
     window.appSettings = appSettings;
     window.simplechatUserSettings = {{ user_settings.get('settings', {}) | tojson }};
+    window.simplechatLatestFeaturesNav = {{ {
+      'currentVersion': latest_features_current_version | default(config['VERSION']),
+      'hiddenByDevelopment': latest_features_nav_hidden_by_development | default(false),
+      'settingKey': 'latestFeaturesHiddenVersion'
+    } | tojson }};
   </script>
 
   <!-- Prism.js syntax highlighting script -->
@@ -698,11 +729,13 @@
   <script src="{{ url_for('static', filename='js/navigation.js') }}"></script>
   <script src="{{ url_for('static', filename='js/sidebar.js') }}"></script>
   <script src="{{ url_for('static', filename='js/sidebar-resize.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/latest-features-nav.js') }}?v={{ config['VERSION'] }}"></script>
   <!-- Profile Image JavaScript -->
   <script src="{{ url_for('static', filename='js/profile-image.js') }}"></script>
   {% if session.get('user') %}
+  <script src="{{ url_for('static', filename='js/completion-audio-cues.js') }}?v={{ config['VERSION'] }}"></script>
   <!-- Notifications JavaScript (for badge polling on authenticated pages) -->
-  <script src="{{ url_for('static', filename='js/notifications.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/notifications.js') }}?v={{ config['VERSION'] }}"></script>
   {% endif %}
   {% if session.get('user') and app_settings.enable_speech_to_text_input %}
   <script src="{{ url_for('static', filename='js/form-voice-input.js') }}?v={{ config['VERSION'] }}"></script>

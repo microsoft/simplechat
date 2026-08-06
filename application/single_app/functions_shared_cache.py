@@ -65,7 +65,7 @@ def _log_cache_warning(operation, error, extra=None):
     if extra:
         context.update(extra)
     log_event(
-        f"[SharedCache] {operation} failed.",
+        f"[SHARED_CACHE] {operation} failed.",
         extra=context,
         level=logging.WARNING,
         exceptionTraceback=True,
@@ -103,7 +103,7 @@ def _record_cache_event(operation, namespace=None, key=None, backend='cosmos', r
         _shared_cache_metrics['last_event'] = copy.deepcopy(safe_event)
 
     log_event(
-        f"[SharedCache] {safe_event['operation']} {safe_event['result']}.",
+        f"[SHARED_CACHE] {safe_event['operation']} {safe_event['result']}.",
         extra=safe_event,
         level=logging.INFO,
         debug_only=True,

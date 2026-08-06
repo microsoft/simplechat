@@ -6,6 +6,7 @@ from functions_authentication import *
 from functions_content import *
 from functions_settings import *
 from functions_agent_catalog import build_accessible_agent_catalog
+from functions_ai_notice import get_ai_notice_config, is_ai_notice_dismissed
 from functions_collaboration import (
     assert_user_can_participate_in_collaboration_conversation,
     create_collaboration_message_notifications,
@@ -18,6 +19,7 @@ from functions_collaboration import (
     serialize_collaboration_conversation,
     serialize_collaboration_message,
 )
+from functions_conversation_contents import is_conversation_contents_drawer_enabled
 from functions_source_review import get_deep_research_config, is_source_review_enabled_for_user, is_url_access_enabled_for_user
 from functions_documents import *
 from functions_group import (
@@ -676,6 +678,11 @@ def register_route_frontend_chats(bp):
         user_settings = get_user_settings(user_id)
         user_settings_dict = user_settings.get("settings", {}) if isinstance(user_settings, dict) else {}
         public_settings = sanitize_settings_for_user(settings)
+        ai_notice = get_ai_notice_config(public_settings)
+        ai_notice['dismissed'] = is_ai_notice_dismissed(
+            ai_notice,
+            user_settings_dict,
+        )
         current_user_info = get_current_user_info() or {}
         current_user_roles = (session.get('user') or {}).get('roles', [])
         user_workflows_enabled_for_user = is_user_workflows_enabled_for_user(
@@ -700,6 +707,10 @@ def register_route_frontend_chats(bp):
         public_settings['enable_url_access'] = url_access_enabled_for_user
         public_settings['enable_chat_file_uploads'] = chat_file_upload_enabled_for_user
         public_settings['allow_user_workflows'] = user_workflows_enabled_for_user
+        conversation_contents_drawer_enabled = is_conversation_contents_drawer_enabled(
+            public_settings,
+            user_settings_dict,
+        )
         public_settings['enable_deep_source_review'] = bool(
             source_review_enabled_for_user and settings.get('enable_deep_source_review', False)
         )
@@ -711,6 +722,10 @@ def register_route_frontend_chats(bp):
         enable_document_classification = public_settings.get("enable_document_classification", False)
         enable_extract_meta_data = public_settings.get("enable_extract_meta_data", False)
         enable_multi_model_endpoints = public_settings.get("enable_multi_model_endpoints", False)
+        desktop_notifications_enabled = bool(
+            public_settings.get("enable_desktop_notifications", False)
+            and user_settings_dict.get("desktopNotificationsEnabled", True)
+        )
         active_group_id = user_settings_dict.get("activeGroupOid", "")
         active_group_name = ""
         if active_group_id:
@@ -850,6 +865,7 @@ def register_route_frontend_chats(bp):
         return render_template(
             'chats.html',
             settings=public_settings,
+            ai_notice=ai_notice,
             enable_user_feedback=enable_user_feedback,
             active_group_id=active_group_id,
             active_group_name=active_group_name,
@@ -868,6 +884,8 @@ def register_route_frontend_chats(bp):
             chat_agent_options=chat_agent_options,
             chat_model_options=chat_model_options,
             initial_chat_model_selection=initial_chat_model_selection,
+            conversation_contents_drawer_enabled=conversation_contents_drawer_enabled,
+            desktop_notifications_enabled=desktop_notifications_enabled,
         )
 
     @bp.route('/workflow-activity', methods=['GET'])
@@ -1097,7 +1115,7 @@ def register_route_frontend_chats(bp):
                             invalidate_personal_search_cache(affected_user_id)
             except Exception as workspace_error:
                 log_event(
-                    f"[ChatUpload] Failed to queue workspace document for {filename}: {workspace_error}",
+                    f"[CHAT_UPLOAD] Failed to queue workspace document for {filename}: {workspace_error}",
                     {
                         'conversation_id': response_conversation_id,
                         'source_conversation_id': conversation_id,
@@ -1210,7 +1228,7 @@ def register_route_frontend_chats(bp):
                             )
                     except Exception as mirror_error:
                         log_event(
-                            f"[ChatUpload] Failed to mirror workspace upload into collaboration {response_conversation_id}: {mirror_error}",
+                            f"[CHAT_UPLOAD] Failed to mirror workspace upload into collaboration {response_conversation_id}: {mirror_error}",
                             {
                                 'conversation_id': response_conversation_id,
                                 'source_conversation_id': conversation_id,
@@ -1296,7 +1314,7 @@ def register_route_frontend_chats(bp):
 
                         if settings.get('enable_enhanced_citations', False):
                             log_event(
-                                "[ChatUpload] Prepared image bytes for blob-backed chat storage",
+                                "[CHAT_UPLOAD] Prepared image bytes for blob-backed chat storage",
                                 {
                                     "conversation_id": conversation_id,
                                     "filename": filename,
@@ -1475,7 +1493,7 @@ def register_route_frontend_chats(bp):
                     image_message['metadata']['original_size'] = blob_image_info['image_size']
                     cosmos_messages_container.upsert_item(image_message)
                     log_event(
-                        "[ChatUpload] Created blob-backed image message",
+                        "[CHAT_UPLOAD] Created blob-backed image message",
                         {
                             "conversation_id": conversation_id,
                             "message_id": file_message_id,

@@ -2,8 +2,8 @@
 # test_tabular_llm_reviewer_recovery.py
 """
 Functional test for multi-sheet tabular LLM reviewer recovery.
-Version: 0.240.049
-Implemented in: 0.240.035; 0.240.036; 0.240.037; 0.240.038; 0.240.039; 0.240.040; 0.240.041; 0.240.042; 0.240.043; 0.240.048; 0.240.049
+Version: 0.250.111
+Implemented in: 0.240.035; 0.240.036; 0.240.037; 0.240.038; 0.240.039; 0.240.040; 0.240.041; 0.240.042; 0.240.043; 0.240.048; 0.240.049; 0.250.111
 
 This test ensures that stalled multi-sheet analytical runs can parse a reviewer
 JSON plan, normalize the selected function, and inject the correct source
@@ -41,6 +41,7 @@ TARGET_FUNCTIONS = {
     'question_requests_tabular_exhaustive_results',
     'question_requests_tabular_row_context',
     'resolve_tabular_reviewer_call_arguments',
+    'tabular_text_contains_url_like_value',
     'tabular_value_looks_url_like',
     'tabular_result_payload_contains_url_like_content',
 }
@@ -71,6 +72,7 @@ def load_route_helpers():
     namespace = {
         'json': __import__('json'),
         're': __import__('re'),
+        'urlparse': __import__('urllib.parse', fromlist=['urlparse']).urlparse,
     }
     exec(compile(module, ROUTE_FILE, 'exec'), namespace)
     return namespace, source
@@ -378,6 +380,56 @@ def test_reviewer_follow_up_derivation_expands_limited_distinct_value_lists():
     return True
 
 
+def test_tabular_url_like_detection_uses_sharepoint_hostname_boundaries():
+    """Verify SharePoint URL-like detection does not trust substring matches."""
+    print('🔍 Testing host-aware SharePoint URL-like detection...')
+
+    helpers, _ = load_route_helpers()
+    value_looks_url_like = helpers['tabular_value_looks_url_like']
+    payload_contains_url_like_content = helpers['tabular_result_payload_contains_url_like_content']
+
+    positive_values = [
+        'https://contoso.sharepoint.com/sites/Alpha/SitePages/Home.aspx',
+        'https://sharepoint.com/sites/root',
+        '/sites/Alpha/SitePages/Home.aspx',
+        'http://share/sites/Alpha/SitePages/Home.aspx',
+        'https://example.com/documents/report.pdf',
+    ]
+    negative_values = [
+        'sharepoint.com.evil.example',
+        'https://sharepoint.com.evil.example/sites/Alpha',
+        'evilsharepoint.com',
+        'https://evilsharepoint.com/sites/Alpha',
+        'contoso-sharepoint.com',
+        'Ordinary SharePoint label without a URL or site path',
+    ]
+
+    for positive_value in positive_values:
+        assert value_looks_url_like(positive_value), positive_value
+
+    for negative_value in negative_values:
+        assert not value_looks_url_like(negative_value), negative_value
+
+    assert not payload_contains_url_like_content({
+        'values': [
+            'sharepoint.com.evil.example',
+            'https://evilsharepoint.com/sites/Alpha',
+        ],
+        'data': [
+            {'Location': 'Ordinary SharePoint label without URL'},
+        ],
+    })
+    assert payload_contains_url_like_content({
+        'values': ['Ordinary label'],
+        'data': [
+            {'Location': 'Legal SharePoint - https://contoso.sharepoint.com/sites/Alpha'},
+        ],
+    })
+
+    print('✅ Host-aware SharePoint URL-like detection passed')
+    return True
+
+
 def test_route_contains_llm_reviewer_recovery_and_version_bump():
     """Verify the route wires in reviewer recovery and the config version bump."""
     print('🔍 Testing reviewer recovery route wiring...')
@@ -406,7 +458,7 @@ def test_route_contains_llm_reviewer_recovery_and_version_bump():
     ]
     missing = [snippet for snippet in required_snippets if snippet not in source]
     assert not missing, f'Missing reviewer recovery snippets: {missing}'
-    assert read_config_version() == '0.240.049'
+    assert read_config_version() == '0.250.111'
 
     print('✅ Reviewer recovery route wiring passed')
     return True
@@ -422,6 +474,7 @@ if __name__ == '__main__':
         test_reviewer_follow_up_derivation_infers_cohort_column_from_row_context,
         test_reviewer_follow_up_derivation_expands_limited_search_rows_and_extraction_values,
         test_reviewer_follow_up_derivation_expands_limited_distinct_value_lists,
+        test_tabular_url_like_detection_uses_sharepoint_hostname_boundaries,
         test_route_contains_llm_reviewer_recovery_and_version_bump,
     ]
 

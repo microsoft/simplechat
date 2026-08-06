@@ -195,7 +195,10 @@ function renderCustomPagesTable() {
         appendTextCell(row, page.show_in_nav ? "Shown" : "Hidden");
 
         const actionCell = document.createElement("td");
+        actionCell.className = "text-nowrap";
         const isPythonPage = page.source === "python";
+
+        actionCell.appendChild(createCustomPageOpenAction(page));
 
         const editButton = document.createElement("button");
         editButton.type = "button";
@@ -217,6 +220,59 @@ function renderCustomPagesTable() {
         customPagesTbody.appendChild(row);
     });
     syncRequestAccessPageButtonState();
+}
+
+function createCustomPageOpenAction(page) {
+    const unavailableReason = getCustomPageOpenUnavailableReason(page);
+    if (unavailableReason) {
+        const disabledWrapper = document.createElement("span");
+        disabledWrapper.className = "d-inline-block me-1";
+        disabledWrapper.title = unavailableReason;
+        disabledWrapper.tabIndex = 0;
+        disabledWrapper.setAttribute("aria-label", unavailableReason);
+
+        const disabledButton = document.createElement("button");
+        disabledButton.type = "button";
+        disabledButton.className = "btn btn-sm btn-outline-secondary";
+        disabledButton.disabled = true;
+        disabledButton.textContent = "Open";
+        disabledWrapper.appendChild(disabledButton);
+        return disabledWrapper;
+    }
+
+    const openLink = document.createElement("a");
+    openLink.className = "btn btn-sm btn-outline-success me-1";
+    openLink.href = getCustomPageUrl(page);
+    openLink.target = "_blank";
+    openLink.rel = "noopener noreferrer";
+    openLink.textContent = "Open";
+    openLink.title = "Open this custom page in a new tab. Route authorization still applies.";
+    return openLink;
+}
+
+function getCustomPageOpenUnavailableReason(page) {
+    if (window.customPagesInitiallyEnabled !== true) {
+        return "Enable Custom Pages, save settings, and restart the app before opening custom pages.";
+    }
+
+    if (!getCustomPageSlug(page)) {
+        return "This custom page cannot be opened because it is missing a slug.";
+    }
+
+    if (page?.enabled === false) {
+        return "Disabled custom pages are not available to open.";
+    }
+
+    return "";
+}
+
+function getCustomPageUrl(page) {
+    const slug = getCustomPageSlug(page);
+    return slug ? `/custom/${encodeURIComponent(slug)}` : "";
+}
+
+function getCustomPageSlug(page) {
+    return String(page?.slug || "").trim();
 }
 
 function requestAccessPageExists() {

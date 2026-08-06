@@ -582,7 +582,7 @@ def _query_documents(container: Any, query: str, parameters: List[Dict[str, Any]
         return sort_documents(select_current_documents(documents))[:ASSIGNED_KNOWLEDGE_CATALOG_DOCUMENT_LIMIT]
     except Exception as ex:
         log_event(
-            "[AssignedKnowledge] Failed to query assigned knowledge catalog documents",
+            "[ASSIGNED_KNOWLEDGE] Failed to query assigned knowledge catalog documents",
             level=logging.WARNING,
             debug_only=True,
             extra={"error": str(ex)},

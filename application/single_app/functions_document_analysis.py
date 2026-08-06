@@ -25,6 +25,16 @@ def _get_search_service_helpers():
     return build_document_chunk_windows, get_document_chunks_payload
 
 
+def _get_mixed_source_orchestration_helpers():
+    """Lazily resolve mixed-source cancellation helpers to avoid import cycles."""
+    from functions_mixed_source_orchestration import (
+        MixedSourceCancellationError,
+        raise_if_mixed_source_cancelled,
+    )
+
+    return MixedSourceCancellationError, raise_if_mixed_source_cancelled
+
+
 def _coerce_int(value, default_value, min_value=None, max_value=None):
     try:
         normalized_value = int(value)
@@ -363,6 +373,119 @@ def _build_window_label(document_name, window_range):
     return f"{document_name} - window {window_range.get('window_number')} ({range_label})"
 
 
+def _prompt_requests_json_output(analysis_prompt):
+    prompt_text = str(analysis_prompt or '').strip().lower()
+    if not prompt_text:
+        return False
+
+    json_markers = (
+        'json artifact',
+        'json export',
+        'json output',
+        'json array',
+        'json object',
+        'json file',
+        'json format',
+        'valid json',
+        'convert into json',
+        'convert to json',
+        'return json',
+        'return only json',
+        'respond with json',
+        'format as json',
+        'output as json',
+        'save as json',
+        'export as json',
+        'download as json',
+        'create json',
+        'create a json',
+        'make json',
+        'make a json',
+        'generate json',
+        'generate a json',
+    )
+    if any(marker in prompt_text for marker in json_markers):
+        return True
+
+    return bool(re.search(
+        r'\b(convert|create|make|build|generate|produce|return|respond|format|output|save|export|download)\b[\w\s.,:;\-/]{0,80}\bjson\b',
+        prompt_text,
+    ))
+
+
+def _prompt_requests_xml_output(analysis_prompt):
+    prompt_text = str(analysis_prompt or '').strip().lower()
+    if not prompt_text:
+        return False
+
+    xml_markers = (
+        'xml artifact',
+        'xml export',
+        'xml output',
+        'xml document',
+        'xml file',
+        'xml template',
+        'valid xml',
+        'well-formed xml',
+        'convert into xml',
+        'convert to xml',
+        'populate xml',
+        'populate the xml',
+        'return xml',
+        'return only xml',
+        'respond with xml',
+        'format as xml',
+        'output as xml',
+        'save as xml',
+        'export as xml',
+        'download as xml',
+        'create xml',
+        'create an xml',
+        'make xml',
+        'make an xml',
+        'generate xml',
+        'generate an xml',
+    )
+    if any(marker in prompt_text for marker in xml_markers):
+        return True
+
+    return bool(re.search(
+        r'\b(convert|populate|create|make|build|generate|produce|return|respond|format|output|save|export|download)\b[\w\s.,:;\-/]{0,80}\bxml\b',
+        prompt_text,
+    ))
+
+
+def _build_requested_output_guidance(analysis_prompt, stage):
+    if _prompt_requests_xml_output(analysis_prompt):
+        if stage == 'slice':
+            return (
+                'The overall task requests XML output. For this slice, preserve exact XML element names, '
+                'attribute names, nesting, template placeholders, and source values needed to produce the final XML. '
+                'Do not condense repeated XML structures when they are visible in this slice. If this slice contains '
+                'everything needed to satisfy the task, return only the complete well-formed XML document.\n\n'
+            )
+        return (
+            'The original task requests an XML file. Return only one complete well-formed XML document for the final '
+            'answer, without Markdown fences, prose, citations, or explanatory text outside the XML. Preserve the '
+            'requested template structure whenever a template is supplied.\n\n'
+        )
+
+    if _prompt_requests_json_output(analysis_prompt):
+        if stage == 'slice':
+            return (
+                'The overall task requests JSON output. For this slice, preserve exact field names, hierarchy, arrays, '
+                'template placeholders, and source values needed to produce the final JSON. Do not condense repeated '
+                'structures when they are visible in this slice. If this slice contains everything needed to satisfy '
+                'the task, return only valid JSON.\n\n'
+            )
+        return (
+            'The original task requests a JSON file. Return only valid JSON for the final answer, without Markdown '
+            'fences, prose, citations, or explanatory text outside the JSON.\n\n'
+        )
+
+    return ''
+
+
 def _build_window_analysis_prompt(analysis_prompt, document_payload, window_payload, window_range):
     document_file_name = _resolve_document_file_name(document_payload)
     document_title = _resolve_document_title(document_payload)
@@ -387,6 +510,7 @@ def _build_window_analysis_prompt(analysis_prompt, document_payload, window_payl
         f'Page count in slice: {window_range.get("page_count", 0)}\n\n'
         'Task instructions:\n'
         f'{analysis_prompt}\n\n'
+        f'{_build_requested_output_guidance(analysis_prompt, "slice")}'
         'Write a focused analysis of this slice. Preserve concrete facts, decisions, comments, action items, '
         'and open questions. Call out anything that still needs follow-up.\n\n'
         f'<DocumentSlice>\n{_render_window_source_text(window_payload)}\n</DocumentSlice>'
@@ -508,11 +632,15 @@ def _prompt_requests_exhaustive_output(analysis_prompt):
 
 def _build_analysis_intent(analysis_prompt):
     per_source_output_requested = _prompt_requests_per_source_output(analysis_prompt)
+    json_output_requested = _prompt_requests_json_output(analysis_prompt)
+    xml_output_requested = _prompt_requests_xml_output(analysis_prompt)
     json_array_output_requested = _prompt_requests_json_array_output(analysis_prompt)
     json_code_block_requested = _prompt_requests_json_code_block(analysis_prompt)
     table_output_requested = _prompt_requests_table_output(analysis_prompt)
     exhaustive_output_requested = (
         per_source_output_requested
+        or json_output_requested
+        or xml_output_requested
         or json_array_output_requested
         or table_output_requested
         or _prompt_requests_exhaustive_output(analysis_prompt)
@@ -522,11 +650,13 @@ def _build_analysis_intent(analysis_prompt):
         'exhaustive': exhaustive_output_requested,
         'preserve_raw_outputs': True,
         'per_source_output_requested': per_source_output_requested,
+        'json_output_requested': json_output_requested,
+        'xml_output_requested': xml_output_requested,
         'json_array_output_requested': json_array_output_requested,
         'json_code_block_requested': json_code_block_requested,
         'table_output_requested': table_output_requested,
-        'csv_artifact_recommended': table_output_requested or exhaustive_output_requested,
-        'markdown_analysis_artifact_recommended': exhaustive_output_requested,
+        'csv_artifact_recommended': table_output_requested or (exhaustive_output_requested and not json_output_requested and not xml_output_requested),
+        'markdown_analysis_artifact_recommended': exhaustive_output_requested and not json_output_requested and not xml_output_requested,
     }
 
 
@@ -627,6 +757,7 @@ def _build_reduction_prompt(analysis_prompt, items, stage_label, failed_range_la
         f'Task instructions:\n{analysis_prompt}\n\n'
         f'{failed_note}'
         f'{preservation_note}'
+        f'{_build_requested_output_guidance(analysis_prompt, "reduction")}'
         f'{combine_instruction}\n\n'
         f'<WindowAnalyses>\n{combined_text}\n</WindowAnalyses>'
     )
@@ -659,6 +790,7 @@ def _build_document_reduction_prompt(analysis_prompt, document_name, items, stag
         f'Source document: {document_name}\n'
         f'Task instructions:\n{analysis_prompt}\n\n'
         f'{failed_note}'
+        f'{_build_requested_output_guidance(analysis_prompt, "reduction")}'
         'Combine the slice analyses below into one document-level answer.\n\n'
         f'<DocumentWindowAnalyses>\n{combined_text}\n</DocumentWindowAnalyses>'
     )
@@ -679,7 +811,10 @@ def _reduce_document_analysis_items(
     failed_range_labels,
     reduction_batch_size,
     max_reduction_rounds,
+    cancel_requested=None,
+    request_correlation_id=None,
 ):
+    _, raise_if_mixed_source_cancelled = _get_mixed_source_orchestration_helpers()
     current_items = list(items or [])
     reduction_round = 1
 
@@ -687,6 +822,11 @@ def _reduce_document_analysis_items(
         next_items = []
         batches = _build_reduction_batches(current_items, reduction_batch_size)
         for batch_index, batch_items in enumerate(batches, start=1):
+            raise_if_mixed_source_cancelled(
+                cancel_requested,
+                'narrative_reduction',
+                request_correlation_id=request_correlation_id,
+            )
             reduction_prompt = _build_document_reduction_prompt(
                 analysis_prompt,
                 document_name,
@@ -705,6 +845,11 @@ def _reduce_document_analysis_items(
                     'item_count': len(batch_items),
                 },
             ) or '').strip()
+            raise_if_mixed_source_cancelled(
+                cancel_requested,
+                'narrative_reduction',
+                request_correlation_id=request_correlation_id,
+            )
             if not reduced_text:
                 raise RuntimeError(
                     f'Document analysis document reduction returned an empty response for {document_name} '
@@ -784,12 +929,20 @@ def run_document_analysis(
     activity_callback=None,
     max_documents=None,
     include_coverage_summary=True,
+    cancel_requested=None,
+    request_correlation_id=None,
 ):
+    MixedSourceCancellationError, raise_if_mixed_source_cancelled = _get_mixed_source_orchestration_helpers()
     normalized_analysis_prompt = str(analysis_prompt or '').strip()
     if not normalized_analysis_prompt:
         raise ValueError('An analysis prompt is required for document analysis.')
     if not callable(invoke_prompt):
         raise ValueError('A callable invoke_prompt handler is required for document analysis.')
+    raise_if_mixed_source_cancelled(
+        cancel_requested,
+        'narrative_manifest',
+        request_correlation_id=request_correlation_id,
+    )
 
     build_document_chunk_windows, get_document_chunks_payload = _get_search_service_helpers()
 
@@ -819,7 +972,7 @@ def run_document_analysis(
     )
 
     debug_print(
-        '[DocumentAnalysis] Starting analysis | '
+        '[DOCUMENT_ANALYSIS] Starting analysis | '
         f'user_id={user_id} | '
         f"documents={len(targets.get('document_ids', []))} | "
         f"doc_scope={targets.get('doc_scope')} | "
@@ -861,6 +1014,11 @@ def run_document_analysis(
     json_code_block_requested = analysis_intent.get('json_code_block_requested')
 
     for document_index, document_id in enumerate(targets.get('document_ids', []), start=1):
+        raise_if_mixed_source_cancelled(
+            cancel_requested,
+            'narrative_manifest',
+            request_correlation_id=request_correlation_id,
+        )
         document_payload = get_document_chunks_payload(
             document_id=document_id,
             user_id=user_id,
@@ -871,6 +1029,11 @@ def run_document_analysis(
             window_unit=targets.get('window_unit'),
             window_size=targets.get('window_size'),
             window_percent=targets.get('window_percent'),
+        )
+        raise_if_mixed_source_cancelled(
+            cancel_requested,
+            'narrative_manifest',
+            request_correlation_id=request_correlation_id,
         )
         windows = build_document_chunk_windows(
             document_payload.get('chunks', []),
@@ -919,6 +1082,11 @@ def run_document_analysis(
         })
 
     for document_run in document_runs:
+        raise_if_mixed_source_cancelled(
+            cancel_requested,
+            'narrative',
+            request_correlation_id=request_correlation_id,
+        )
         document_id = document_run.get('document_id')
         document_payload = document_run.get('document_payload') or {}
         document_metadata = document_payload.get('document') if isinstance(document_payload.get('document'), dict) else {}
@@ -929,7 +1097,7 @@ def run_document_analysis(
         windows = document_run.get('windows') or []
         document_index = document_run.get('document_index') or 1
         debug_print(
-            '[DocumentAnalysis] Starting document | '
+            '[DOCUMENT_ANALYSIS] Starting document | '
             f'document_index={document_index} | '
             f"document_count={coverage.get('document_count', 0)} | "
             f'document_id={document_id} | '
@@ -963,11 +1131,16 @@ def run_document_analysis(
             })
 
         for window_payload in windows:
+            raise_if_mixed_source_cancelled(
+                cancel_requested,
+                'narrative',
+                request_correlation_id=request_correlation_id,
+            )
             window_range = _serialize_window_range(window_payload)
             document_summary['ranges'].append(window_range)
             window_label = _build_window_label(document_name, window_range)
             debug_print(
-                '[DocumentAnalysis] Starting window | '
+                '[DOCUMENT_ANALYSIS] Starting window | '
                 f'document_id={document_id} | '
                 f'document_name={document_name} | '
                 f"window={window_range.get('window_number')} | "
@@ -1004,6 +1177,11 @@ def run_document_analysis(
             last_error = ''
             max_attempts = targets.get('max_retries_per_window', DEFAULT_MAX_RETRIES_PER_WINDOW) + 1
             for attempt_number in range(1, max_attempts + 1):
+                raise_if_mixed_source_cancelled(
+                    cancel_requested,
+                    'narrative',
+                    request_correlation_id=request_correlation_id,
+                )
                 if attempt_number > 1:
                     coverage['retries'] += 1
 
@@ -1024,13 +1202,20 @@ def run_document_analysis(
                             'attempt_number': attempt_number,
                         },
                     ) or '').strip()
+                    raise_if_mixed_source_cancelled(
+                        cancel_requested,
+                        'narrative',
+                        request_correlation_id=request_correlation_id,
+                    )
                     if not analysis_text:
                         raise ValueError('The analysis runner returned an empty response.')
                     break
+                except MixedSourceCancellationError:
+                    raise
                 except Exception as exc:
                     last_error = str(exc)
                     debug_print(
-                        '[DocumentAnalysis] Window attempt failed | '
+                        '[DOCUMENT_ANALYSIS] Window attempt failed | '
                         f'document_id={document_id} | '
                         f'document_name={document_name} | '
                         f"window={window_range.get('window_number')} | "
@@ -1072,7 +1257,7 @@ def run_document_analysis(
 
             if analysis_text:
                 debug_print(
-                    '[DocumentAnalysis] Completed window | '
+                    '[DOCUMENT_ANALYSIS] Completed window | '
                     f'document_id={document_id} | '
                     f'document_name={document_name} | '
                     f"window={window_range.get('window_number')} | "
@@ -1126,7 +1311,7 @@ def run_document_analysis(
                     })
             else:
                 debug_print(
-                    '[DocumentAnalysis] Window failed | '
+                    '[DOCUMENT_ANALYSIS] Window failed | '
                     f'document_id={document_id} | '
                     f'document_name={document_name} | '
                     f"window={window_range.get('window_number')} | "
@@ -1165,6 +1350,8 @@ def run_document_analysis(
                     document_summary.get('failed_ranges', []),
                     reduction_batch_size,
                     max_reduction_rounds,
+                    cancel_requested=cancel_requested,
+                    request_correlation_id=request_correlation_id,
                 )
 
             document_result_text = str(document_result.get('text', '') or '').strip()
@@ -1211,7 +1398,7 @@ def run_document_analysis(
                 'progress': _build_progress_snapshot(coverage),
             })
         debug_print(
-            '[DocumentAnalysis] Completed document | '
+            '[DOCUMENT_ANALYSIS] Completed document | '
             f'document_index={document_index} | '
             f'document_id={document_id} | '
             f'document_name={document_name} | '
@@ -1223,7 +1410,7 @@ def run_document_analysis(
 
     if not reduction_items:
         debug_print(
-            '[DocumentAnalysis] Analysis failed | '
+            '[DOCUMENT_ANALYSIS] Analysis failed | '
             f'user_id={user_id} | error=No document windows were analyzed successfully'
         )
         raise RuntimeError('No document windows were analyzed successfully.')
@@ -1248,7 +1435,7 @@ def run_document_analysis(
         )
         if final_analysis_reply:
             debug_print(
-                '[DocumentAnalysis] Completed structured merge | '
+                '[DOCUMENT_ANALYSIS] Completed structured merge | '
                 f'items={len(current_items)}'
             )
 
@@ -1264,6 +1451,11 @@ def run_document_analysis(
             next_items = []
             batches = _build_reduction_batches(current_items, reduction_batch_size)
             for batch_index, batch_items in enumerate(batches, start=1):
+                raise_if_mixed_source_cancelled(
+                    cancel_requested,
+                    'narrative_reduction',
+                    request_correlation_id=request_correlation_id,
+                )
                 reduction_step_index = completed_reduction_steps + 1
                 reduction_progress_percent = 90
                 if reduction_step_total > 0:
@@ -1283,7 +1475,7 @@ def run_document_analysis(
                     phase_total_steps=reduction_step_total,
                 )
                 debug_print(
-                    '[DocumentAnalysis] Starting reduction batch | '
+                    '[DOCUMENT_ANALYSIS] Starting reduction batch | '
                     f'round={reduction_round} | '
                     f'batch={batch_index}/{len(batches)} | '
                     f'items={len(batch_items)}'
@@ -1316,9 +1508,14 @@ def run_document_analysis(
                         'item_count': len(batch_items),
                     },
                 ) or '').strip()
+                raise_if_mixed_source_cancelled(
+                    cancel_requested,
+                    'narrative_reduction',
+                    request_correlation_id=request_correlation_id,
+                )
                 if not reduced_text:
                     debug_print(
-                        '[DocumentAnalysis] Reduction failed | '
+                        '[DOCUMENT_ANALYSIS] Reduction failed | '
                         f'round={reduction_round} | '
                         f'batch={batch_index} | error=empty reduction response'
                     )
@@ -1328,7 +1525,7 @@ def run_document_analysis(
 
                 source_labels = [item.get('label') for item in batch_items]
                 debug_print(
-                    '[DocumentAnalysis] Completed reduction batch | '
+                    '[DOCUMENT_ANALYSIS] Completed reduction batch | '
                     f'round={reduction_round} | '
                     f'batch={batch_index}/{len(batches)} | '
                     f'sources={len(source_labels)}'
@@ -1350,6 +1547,11 @@ def run_document_analysis(
 
         final_analysis_reply = current_items[0].get('text', '').strip()
 
+    raise_if_mixed_source_cancelled(
+        cancel_requested,
+        'narrative_finalization',
+        request_correlation_id=request_correlation_id,
+    )
     _set_progress_meta(
         coverage,
         phase='completed',
@@ -1372,7 +1574,7 @@ def run_document_analysis(
         })
 
     log_event(
-        '[DocumentAnalysis] Completed document analysis',
+        '[DOCUMENT_ANALYSIS] Completed document analysis',
         extra={
             'user_id': user_id,
             'document_count': coverage.get('document_count', 0),
@@ -1384,7 +1586,7 @@ def run_document_analysis(
         level=logging.INFO,
     )
     debug_print(
-        '[DocumentAnalysis] Completed analysis | '
+        '[DOCUMENT_ANALYSIS] Completed analysis | '
         f"documents={coverage.get('document_count', 0)} | "
         f"windows={coverage.get('total_windows', 0)} | "
         f"processed={coverage.get('processed_windows', 0)} | "

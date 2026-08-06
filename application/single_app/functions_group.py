@@ -42,6 +42,10 @@ def create_group(name, description):
         ],
         "pendingUsers": [],
         "disable_file_downloads": False,
+        "retention_policy": {
+            "conversation_retention_days": "default",
+            "document_retention_days": "default"
+        },
         "createdDate": now_str,
         "modifiedDate": now_str
     }
@@ -101,7 +105,7 @@ def search_all_groups(search_query, limit=10):
         parameters=params,
         enable_cross_partition_query=True
     ))
-    return results[:max(1, min(int(limit or 10), 25))]
+    return results[:max(1, min(int(limit or 10), 50))]
 
 def get_user_groups(user_id):
     """

@@ -1015,6 +1015,44 @@ function createModelTextInput(modelId, datasetKey, value, readOnly = false) {
     return input;
 }
 
+function normalizeModelResponseLength(value) {
+    const valueText = String(value ?? "").trim();
+    if (!valueText) {
+        return "";
+    }
+    if (!/^\d+$/.test(valueText)) {
+        return null;
+    }
+
+    const parsedValue = Number.parseInt(valueText, 10);
+    return parsedValue > 0 ? parsedValue : null;
+}
+
+function getModelResponseLength(model) {
+    return normalizeModelResponseLength(
+        model.responseLength
+        ?? model.response_length
+        ?? model.maxTokens
+        ?? model.max_tokens
+        ?? model.maxCompletionTokens
+        ?? model.max_completion_tokens
+    );
+}
+
+function createModelResponseLengthInput(modelId, value) {
+    const input = document.createElement("input");
+    input.type = "number";
+    input.className = "form-control form-control-sm";
+    input.min = "1";
+    input.step = "1";
+    input.placeholder = "Optional";
+    input.dataset.responseLengthFor = modelId;
+    input.id = getModelIconDomId(modelId, "response-length");
+    input.value = value || "";
+    input.setAttribute("aria-describedby", getModelIconDomId(modelId, "response-length-help"));
+    return input;
+}
+
 function getModelIconDomId(modelId, suffix) {
     const safeModelId = String(modelId || "model").replace(/[^A-Za-z0-9_-]/g, "-");
     return `model-${safeModelId}-${suffix}`;
@@ -1165,6 +1203,7 @@ function renderModalModels(models) {
         const modelName = model.modelName || "";
         const displayName = model.displayName || deploymentName;
         const description = model.description || "";
+        const responseLength = getModelResponseLength(model);
         const deploymentReadonly = model.isDiscovered ? "readonly" : "";
         const modelId = model.id || generateId();
         model.id = modelId;
@@ -1196,12 +1235,22 @@ function renderModalModels(models) {
         const iconCol = createElement("div", "col-md-4");
         iconCol.appendChild(createSmallLabel("Icon"));
         iconCol.appendChild(createModelIconEditor(model, modelId));
+        const responseLengthCol = createElement("div", "col-md-4");
+        const responseLengthLabel = createSmallLabel("Response Length");
+        responseLengthLabel.htmlFor = getModelIconDomId(modelId, "response-length");
+        responseLengthCol.appendChild(responseLengthLabel);
+        responseLengthCol.appendChild(createModelResponseLengthInput(modelId, responseLength));
+        const responseLengthHelp = createElement("div", "form-text");
+        responseLengthHelp.id = getModelIconDomId(modelId, "response-length-help");
+        responseLengthHelp.textContent = "Optional output token ceiling for standard chat responses.";
+        responseLengthCol.appendChild(responseLengthHelp);
         const descriptionCol = createElement("div", "col-md-8");
         descriptionCol.appendChild(createSmallLabel("Description (optional)"));
         descriptionCol.appendChild(createModelTextInput(modelId, "descriptionFor", description));
         fieldsRow.appendChild(deploymentCol);
         fieldsRow.appendChild(displayCol);
         fieldsRow.appendChild(iconCol);
+        fieldsRow.appendChild(responseLengthCol);
         fieldsRow.appendChild(descriptionCol);
 
         const actions = createElement("div", "d-flex gap-2 mt-2");
@@ -1241,12 +1290,22 @@ function collectModalModels() {
         const deploymentInput = modelsListEl.querySelector(`input[data-deployment-name-for="${model.id}"]`);
         const displayInput = modelsListEl.querySelector(`input[data-display-name-for="${model.id}"]`);
         const descriptionInput = modelsListEl.querySelector(`input[data-description-for="${model.id}"]`);
+        const responseLengthInput = modelsListEl.querySelector(`input[data-response-length-for="${model.id}"]`);
         const iconEditor = findModelEditor(model.id);
+        const responseLength = responseLengthInput ? normalizeModelResponseLength(responseLengthInput.value) : "";
+        if (responseLength === null) {
+            throw new Error("Response length must be a positive whole number.");
+        }
         model.enabled = checkbox ? checkbox.checked : model.enabled;
         model.deploymentName = deploymentInput ? deploymentInput.value.trim() : model.deploymentName;
         model.displayName = displayInput ? displayInput.value.trim() : model.displayName;
         model.icon = iconEditor ? getIconPayload(iconEditor, MODEL_ICON_CONTROL_CONFIG) : model.icon || {};
         model.description = descriptionInput ? descriptionInput.value.trim() : model.description;
+        if (responseLength) {
+            model.responseLength = responseLength;
+        } else {
+            delete model.responseLength;
+        }
     });
     return updated;
 }

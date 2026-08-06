@@ -4,6 +4,7 @@
 (function () {
     const MAX_RECORDING_DURATION_MS = 90000;
     const DEFAULT_TRANSCRIPTION_ENDPOINT = '/api/speech/transcribe-chat';
+    const publicWorkspaceLowerSingular = window.getPublicWorkspaceLabel ? window.getPublicWorkspaceLabel('lower_singular') : 'public workspace';
     const fieldControls = new WeakMap();
     const controls = [];
     let activeControl = null;
@@ -509,10 +510,10 @@
             ['groupDescription', { label: 'Dictate group description' }],
             ['editGroupName', { label: 'Dictate group name', insertMode: 'replace' }],
             ['editGroupDescription', { label: 'Dictate group description' }],
-            ['publicWorkspaceName', { label: 'Dictate public workspace name', insertMode: 'replace' }],
-            ['publicWorkspaceDescription', { label: 'Dictate public workspace description' }],
-            ['editWorkspaceName', { label: 'Dictate public workspace name', insertMode: 'replace' }],
-            ['editWorkspaceDescription', { label: 'Dictate public workspace description' }],
+            ['publicWorkspaceName', { label: `Dictate ${publicWorkspaceLowerSingular} name`, insertMode: 'replace' }],
+            ['publicWorkspaceDescription', { label: `Dictate ${publicWorkspaceLowerSingular} description` }],
+            ['editWorkspaceName', { label: `Dictate ${publicWorkspaceLowerSingular} name`, insertMode: 'replace' }],
+            ['editWorkspaceDescription', { label: `Dictate ${publicWorkspaceLowerSingular} description` }],
             ['doc-title', { label: 'Dictate title', insertMode: 'replace' }],
             ['doc-abstract', { label: 'Dictate abstract' }],
             ['doc-keywords', { label: 'Dictate keywords', mode: 'comma-list' }],

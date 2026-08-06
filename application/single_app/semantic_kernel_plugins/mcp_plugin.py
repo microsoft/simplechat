@@ -9,8 +9,11 @@ from semantic_kernel.functions.kernel_plugin import KernelPlugin
 from functions_debug import debug_print
 from functions_mcp_operations import (
     MCP_PLUGIN_TYPE,
+    McpRuntimeError,
+    classify_mcp_exception,
     normalize_mcp_additional_fields,
     normalize_mcp_tool_metadata,
+    validate_mcp_tool_arguments,
 )
 from semantic_kernel_plugins.base_plugin import BasePlugin
 from semantic_kernel_plugins.plugin_invocation_logger import plugin_function_logger
@@ -66,6 +69,7 @@ class McpPlugin(BasePlugin):
             "name": self.manifest.get("name", "mcp"),
             "type": MCP_PLUGIN_TYPE,
             "description": self.manifest.get("description") or "Model Context Protocol action configuration.",
+            "server_profile": self._additional_fields.get("server_profile"),
             "transport": self._additional_fields.get("transport"),
             "methods": methods,
         }
@@ -107,7 +111,7 @@ class McpPlugin(BasePlugin):
             description = f"{description}\n\nInput schema: {input_schema}"
 
         async def tool_function(**kwargs):
-            return await self.invoke_tool(original_name, kwargs)
+            return await self.call_tool(original_name, kwargs)
 
         tool_function.__name__ = function_name
         tool_function.__qualname__ = f"McpPlugin.{function_name}"
@@ -153,6 +157,19 @@ class McpPlugin(BasePlugin):
                 "error_type": "not_configured",
                 "configured_tools": sorted(configured_tool_names),
             }
+        if self._additional_fields.get("validate_tool_arguments"):
+            configured_tool = next(
+                (tool for tool in self._tools if tool.get("original_name") == normalized_tool_name),
+                None,
+            )
+            validation_errors = validate_mcp_tool_arguments(configured_tool, arguments or {})
+            if validation_errors:
+                return {
+                    "success": False,
+                    "error": "MCP tool arguments failed input schema validation.",
+                    "error_type": "validation",
+                    "validation_errors": validation_errors,
+                }
 
         return await self.invoke_tool(normalized_tool_name, arguments or {})
 
@@ -160,7 +177,7 @@ class McpPlugin(BasePlugin):
         """Invoke an MCP tool through the factory's native MCP connector."""
         try:
             debug_print(
-                f"[McpPlugin] Invoking MCP tool tool_name={tool_name} "
+                f"[MCP_PLUGIN] Invoking MCP tool tool_name={tool_name} "
                 f"transport={self._additional_fields.get('transport')} "
                 f"endpoint_present={bool(str(self.manifest.get('endpoint') or '').strip())} "
                 f"argument_keys={sorted((arguments or {}).keys())}"
@@ -173,25 +190,38 @@ class McpPlugin(BasePlugin):
                 arguments or {},
             )
             debug_print(
-                f"[McpPlugin] MCP tool completed tool_name={tool_name} "
+                f"[MCP_PLUGIN] MCP tool completed tool_name={tool_name} "
                 f"success={result.get('success') if isinstance(result, dict) else '<unknown>'}"
             )
             return result
         except ValueError as exc:
-            debug_print(f"[McpPlugin] MCP tool validation failed tool_name={tool_name} message={exc}")
+            debug_print(f"[MCP_PLUGIN] MCP tool validation failed tool_name={tool_name} message={exc}")
             return {
                 "success": False,
                 "error": str(exc),
                 "error_type": "validation",
             }
-        except Exception as exc:
+        except McpRuntimeError as exc:
             debug_print(
-                f"[McpPlugin] MCP tool call failed tool_name={tool_name} "
-                f"exception_type={type(exc).__name__} message={exc}"
+                f"[MCP_PLUGIN] MCP tool call failed tool_name={tool_name} "
+                f"category={exc.category} operation={exc.operation}"
             )
             return {
                 "success": False,
-                "error": f"Failed to call MCP tool '{tool_name}'.",
-                "error_type": "mcp_call_failed",
-                "details": str(exc),
+                "error": str(exc),
+                "error_type": exc.category,
+                "operation": exc.operation,
+                "details": exc.detail,
+            }
+        except Exception as exc:
+            error_info = classify_mcp_exception(exc, "tool_call")
+            debug_print(
+                f"[MCP_PLUGIN] MCP tool call failed tool_name={tool_name} "
+                f"exception_type={type(exc).__name__} category={error_info['category']}"
+            )
+            return {
+                "success": False,
+                "error": f"Failed to call MCP tool '{tool_name}'. {error_info['message']}",
+                "error_type": error_info["category"],
+                "details": error_info["detail"],
             }

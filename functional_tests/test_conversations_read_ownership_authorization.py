@@ -2,14 +2,15 @@
 # test_conversations_read_ownership_authorization.py
 """
 Functional test for personal conversation read authorization hardening.
-Version: 0.250.036
-Implemented in: 0.241.011; 0.241.022; 0.241.032; 0.250.033; 0.250.035
+Version: 0.250.101
+Implemented in: 0.241.011; 0.241.022; 0.241.032; 0.250.033; 0.250.035; 0.250.074; 0.250.101
 
 This test ensures authenticated users can only read messages and images from
 their own personal conversations, and that foreign conversation reads fail with
 403 without querying the message container. It also validates blob-backed image
 messages stream only after conversation authorization succeeds. It validates
-that mark-read cache invalidation is idempotent for already-read conversations.
+that mark-read cache invalidation is idempotent for already-read conversations
+and that fork conflict logging preserves the intended HTTP 409 response.
 """
 
 import copy
@@ -237,9 +238,11 @@ def _install_route_import_stubs():
     stub_modules['functions_message_artifacts'] = artifacts_module
 
     simplechat_operations_module = types.ModuleType('functions_simplechat_operations')
+    simplechat_operations_module.ConversationForkConflictError = RuntimeError
     simplechat_operations_module.create_personal_conversation_for_current_user = lambda *args, **kwargs: {}
     simplechat_operations_module.delete_blob_backed_chat_message_files = lambda *args, **kwargs: None
     simplechat_operations_module.derive_conversation_title_from_message = lambda *args, **kwargs: ''
+    simplechat_operations_module.fork_personal_conversation_for_user = lambda *args, **kwargs: {}
     stub_modules['functions_simplechat_operations'] = simplechat_operations_module
 
     swagger_module = types.ModuleType('swagger_wrapper')
@@ -692,6 +695,71 @@ def test_mark_read_only_invalidates_cache_when_unread_state_changes():
         restore()
 
 
+def test_fork_conflict_logging_preserves_409_response():
+    """Verify structured conflict logging cannot turn a fork conflict into HTTP 500."""
+    print("🔍 Testing fork conflict logging response...")
+
+    app, _message_container, restore = build_test_app(
+        'user-owner',
+        [
+            {
+                'id': 'conversation-owner',
+                'user_id': 'user-owner',
+                'chat_type': 'group-single-user',
+            }
+        ],
+        [],
+    )
+
+    try:
+        route_module = app.config['route_backend_conversations']
+        logged_events = []
+
+        def raise_fork_conflict(**kwargs):
+            raise route_module.ConversationForkConflictError('Workspace access changed')
+
+        def capture_log_event(
+            message,
+            extra=None,
+            level=None,
+            includeStack=False,
+            stacklevel=2,
+            exceptionTraceback=None,
+            debug_only=False,
+            category='INFO',
+            flush=False,
+            message_args=None,
+        ):
+            logged_events.append({'message': message, 'extra': extra, 'level': level})
+
+        route_module.fork_personal_conversation_for_user = raise_fork_conflict
+        route_module.log_event = capture_log_event
+
+        with app.test_client() as client:
+            response = client.post(
+                '/api/conversations/conversation-owner/fork',
+                json={'message_id': 'assistant-message'},
+            )
+
+        payload = response.get_json()
+        assert response.status_code == 409, (
+            f"Expected 409, got {response.status_code}: {payload}"
+        )
+        assert payload == {'error': 'Conversation fork conflict'}, (
+            f"Expected fork conflict payload, got {payload}"
+        )
+        assert logged_events and logged_events[0]['extra'] == {
+            'source_conversation_id': 'conversation-owner',
+            'selected_message_id': 'assistant-message',
+            'user_id': 'user-owner',
+        }, f"Expected structured fork conflict context, got {logged_events}"
+
+        print("✅ Fork conflict logging preserved the intended 409 response")
+        return True if __name__ == '__main__' else None
+    finally:
+        restore()
+
+
 if __name__ == '__main__':
     tests = [
         test_owner_can_read_messages,
@@ -702,6 +770,7 @@ if __name__ == '__main__':
         test_foreign_image_return_forbidden_before_query,
         test_missing_image_preserves_not_found_response,
         test_mark_read_only_invalidates_cache_when_unread_state_changes,
+        test_fork_conflict_logging_preserves_409_response,
     ]
 
     print('🧪 Running conversation read ownership authorization tests...')

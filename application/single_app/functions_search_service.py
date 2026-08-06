@@ -12,7 +12,12 @@ from azure.identity import DefaultAzureCredential, get_bearer_token_provider
 from azure.cosmos.exceptions import CosmosResourceNotFoundError
 from openai import AzureOpenAI
 
-from config import CLIENTS, cognitive_services_scope, cosmos_messages_container
+from config import (
+    CLIENTS,
+    cognitive_services_scope,
+    cosmos_conversations_container,
+    cosmos_messages_container,
+)
 from functions_appinsights import log_event
 from functions_debug import debug_print
 from functions_documents import get_document_record, get_ordered_document_chunks
@@ -40,6 +45,9 @@ SUMMARY_DEFAULT_CHUNK_WINDOW = 20
 SUMMARY_MAX_WINDOW_SIZE = 50
 CHAT_UPLOAD_CHUNK_WORD_SIZE = 400
 CHAT_UPLOAD_CHUNK_WORD_OVERLAP = 40
+MIXED_SOURCE_TABULAR_CANDIDATE_TOP_N = 50
+MIXED_SOURCE_TABULAR_CANDIDATE_LIMIT = 100
+MIXED_SOURCE_TABULAR_EXTENSIONS = frozenset({".csv", ".xls", ".xlsx", ".xlsm"})
 
 
 def _coerce_positive_int(value, default_value, min_value=1, max_value=None):
@@ -76,7 +84,7 @@ def _get_user_accessible_group_ids(user_id):
         ])
     except Exception as exc:
         log_event(
-            f"[SearchService] Failed to resolve authorized group ids: {exc}",
+            f"[SEARCH_SERVICE] Failed to resolve authorized group ids: {exc}",
             extra={"user_id": user_id},
             level=logging.WARNING,
             exceptionTraceback=True,
@@ -107,7 +115,7 @@ def _resolve_public_workspace_ids(user_id, active_public_workspace_id=None):
         visible_workspace_ids = normalize_search_id_list(get_user_visible_public_workspace_ids_from_settings(user_id))
     except Exception as exc:
         log_event(
-            f"[SearchService] Failed to resolve visible public workspace ids: {exc}",
+            f"[SEARCH_SERVICE] Failed to resolve visible public workspace ids: {exc}",
             extra={"user_id": user_id},
             level=logging.WARNING,
             exceptionTraceback=True,
@@ -181,7 +189,7 @@ def _load_chat_upload_blob_text(message_item):
         return blob_data.decode("utf-8", errors="replace")
     except Exception as exc:
         debug_print(
-            "[SearchService] Failed to load chat upload blob content | "
+            "[SEARCH_SERVICE] Failed to load chat upload blob content | "
             f"message_id={message_item.get('id')} | error={exc}"
         )
         return ""
@@ -238,34 +246,101 @@ def _build_chat_upload_chunks(text_content, max_chunks=None):
     return chunks
 
 
-def _resolve_chat_upload_context(document_id, conversation_id=None):
+def _authorize_chat_upload_conversation(user_id, conversation_id):
+    normalized_user_id = str(user_id or "").strip()
+    normalized_conversation_id = str(conversation_id or "").strip()
+    if not normalized_user_id or not normalized_conversation_id:
+        return False
+
+    try:
+        conversation_item = cosmos_conversations_container.read_item(
+            item=normalized_conversation_id,
+            partition_key=normalized_conversation_id,
+        )
+    except CosmosResourceNotFoundError:
+        return False
+    except Exception as exc:
+        log_event(
+            "[SEARCH_SERVICE] Failed to authorize chat upload conversation.",
+            extra={"exception_type": type(exc).__name__},
+            level=logging.WARNING,
+            exceptionTraceback=True,
+            debug_only=True,
+        )
+        return False
+
+    return str(conversation_item.get("user_id") or "").strip() == normalized_user_id
+
+
+def _resolve_chat_upload_context(
+    document_id,
+    user_id=None,
+    conversation_id=None,
+    include_content=True,
+    authorization_prechecked=False,
+):
     normalized_conversation_id = str(conversation_id or "").strip()
     normalized_document_id = str(document_id or "").strip()
     if not normalized_conversation_id or not normalized_document_id:
         return None
+    if (
+        not authorization_prechecked
+        and not _authorize_chat_upload_conversation(user_id, normalized_conversation_id)
+    ):
+        return None
 
     try:
-        message_item = cosmos_messages_container.read_item(
-            item=normalized_document_id,
-            partition_key=normalized_conversation_id,
-        )
+        if include_content:
+            message_item = cosmos_messages_container.read_item(
+                item=normalized_document_id,
+                partition_key=normalized_conversation_id,
+            )
+        else:
+            metadata_items = list(cosmos_messages_container.query_items(
+                query="""
+                    SELECT TOP 1
+                        c.id,
+                        c.role,
+                        c.filename,
+                        c.title,
+                        c.version,
+                        c.metadata.is_user_upload AS is_user_upload,
+                        c.metadata.is_generated_chat_artifact AS is_generated_chat_artifact,
+                        c.metadata.generated_artifact_capability AS generated_artifact_capability,
+                        c.metadata.generated_artifact_output_format AS generated_artifact_output_format
+                    FROM c
+                    WHERE c.id = @document_id
+                """,
+                parameters=[
+                    {"name": "@document_id", "value": normalized_document_id},
+                ],
+                partition_key=normalized_conversation_id,
+            ))
+            if not metadata_items:
+                return None
+            message_item = metadata_items[0]
     except CosmosResourceNotFoundError:
         return None
     except Exception as exc:
-        debug_print(
-            "[SearchService] Failed to resolve chat upload context | "
-            f"document_id={normalized_document_id} | conversation_id={normalized_conversation_id} | error={exc}"
+        log_event(
+            "[SEARCH_SERVICE] Failed to resolve authorized chat upload context.",
+            extra={"exception_type": type(exc).__name__},
+            level=logging.WARNING,
+            exceptionTraceback=True,
+            debug_only=True,
         )
         return None
 
     role_name = str(message_item.get("role") or "").strip().lower()
     metadata = message_item.get("metadata", {}) or {}
-    is_uploaded_image = role_name == "image" and bool((message_item.get("metadata") or {}).get("is_user_upload"))
+    is_uploaded_image = role_name == "image" and bool(
+        metadata.get("is_user_upload") or message_item.get("is_user_upload")
+    )
     if role_name not in {"file", "image"} or (role_name == "image" and not is_uploaded_image):
         return None
 
-    comparison_text = _coerce_chat_upload_text(message_item)
-    if not comparison_text:
+    comparison_text = _coerce_chat_upload_text(message_item) if include_content else ""
+    if include_content and not comparison_text:
         return None
 
     message_title = str(message_item.get("filename") or message_item.get("title") or normalized_document_id).strip() or normalized_document_id
@@ -275,11 +350,24 @@ def _resolve_chat_upload_context(document_id, conversation_id=None):
         "title": message_title,
         "conversation_id": normalized_conversation_id,
         "source_type": "chat_upload",
-        "source_subtype": "generated_chat_artifact" if metadata.get("is_generated_chat_artifact") else "chat_upload",
-        "artifact_capability": str(metadata.get("generated_artifact_capability") or "").strip().lower() or None,
-        "artifact_output_format": str(metadata.get("generated_artifact_output_format") or "").strip().lower() or None,
-        "comparison_text": comparison_text,
+        "source_subtype": "generated_chat_artifact" if (
+            metadata.get("is_generated_chat_artifact")
+            or message_item.get("is_generated_chat_artifact")
+        ) else "chat_upload",
+        "artifact_capability": str(
+            metadata.get("generated_artifact_capability")
+            or message_item.get("generated_artifact_capability")
+            or ""
+        ).strip().lower() or None,
+        "artifact_output_format": str(
+            metadata.get("generated_artifact_output_format")
+            or message_item.get("generated_artifact_output_format")
+            or ""
+        ).strip().lower() or None,
+        "version": message_item.get("version"),
     }
+    if include_content:
+        resolved_document["comparison_text"] = comparison_text
     return {
         "scope": "chat",
         "group_id": None,
@@ -289,6 +377,59 @@ def _resolve_chat_upload_context(document_id, conversation_id=None):
     }
 
 
+def _resolve_personal_document_context(document_id, user_id):
+    personal_document = get_document_record(
+        user_id=user_id,
+        document_id=document_id,
+    )
+    if not personal_document:
+        return None
+    return {
+        "scope": "personal",
+        "group_id": None,
+        "public_workspace_id": None,
+        "document": personal_document,
+    }
+
+
+def _resolve_group_document_context(document_id, user_id, authorized_group_ids):
+    for group_id in authorized_group_ids or []:
+        group_document = get_document_record(
+            user_id=user_id,
+            document_id=document_id,
+            group_id=group_id,
+        )
+        if group_document:
+            return {
+                "scope": "group",
+                "group_id": group_id,
+                "public_workspace_id": None,
+                "document": group_document,
+            }
+    return None
+
+
+def _resolve_public_document_context(
+    document_id,
+    user_id,
+    authorized_public_workspace_ids,
+):
+    for public_workspace_id in authorized_public_workspace_ids or []:
+        public_document = get_document_record(
+            user_id=user_id,
+            document_id=document_id,
+            public_workspace_id=public_workspace_id,
+        )
+        if public_document:
+            return {
+                "scope": "public",
+                "group_id": None,
+                "public_workspace_id": public_workspace_id,
+                "document": public_document,
+            }
+    return None
+
+
 def resolve_document_context(
     document_id,
     user_id,
@@ -296,64 +437,112 @@ def resolve_document_context(
     active_group_ids=None,
     active_public_workspace_id=None,
     conversation_id=None,
+    include_content=True,
 ):
     normalized_scope = normalize_search_scope(doc_scope)
 
     if normalized_scope in ("all", "personal"):
-        personal_document = get_document_record(user_id=user_id, document_id=document_id)
-        if personal_document:
-            return {
-                "scope": "personal",
-                "group_id": None,
-                "public_workspace_id": None,
-                "document": personal_document,
-            }
+        personal_context = _resolve_personal_document_context(document_id, user_id)
+        if personal_context:
+            return personal_context
 
     if normalized_scope in ("all", "group"):
-        for group_id in _resolve_active_group_ids(
+        group_context = _resolve_group_document_context(
+            document_id,
             user_id,
-            active_group_ids=active_group_ids,
-            fallback_to_memberships=True,
-        ):
-            group_document = get_document_record(
-                user_id=user_id,
-                document_id=document_id,
-                group_id=group_id,
-            )
-            if group_document:
-                return {
-                    "scope": "group",
-                    "group_id": group_id,
-                    "public_workspace_id": None,
-                    "document": group_document,
-                }
+            _resolve_active_group_ids(
+                user_id,
+                active_group_ids=active_group_ids,
+                fallback_to_memberships=True,
+            ),
+        )
+        if group_context:
+            return group_context
 
     if normalized_scope in ("all", "public"):
-        for public_workspace_id in _resolve_public_workspace_ids(
+        public_context = _resolve_public_document_context(
+            document_id,
             user_id,
-            active_public_workspace_id=active_public_workspace_id,
-        ):
-            public_document = get_document_record(
-                user_id=user_id,
-                document_id=document_id,
-                public_workspace_id=public_workspace_id,
-            )
-            if public_document:
-                return {
-                    "scope": "public",
-                    "group_id": None,
-                    "public_workspace_id": public_workspace_id,
-                    "document": public_document,
-                }
+            _resolve_public_workspace_ids(
+                user_id,
+                active_public_workspace_id=active_public_workspace_id,
+            ),
+        )
+        if public_context:
+            return public_context
 
     chat_upload_context = _resolve_chat_upload_context(
         document_id=document_id,
+        user_id=user_id,
         conversation_id=conversation_id,
+        include_content=include_content,
     )
     if chat_upload_context:
         return chat_upload_context
 
     return None
+
+
+def resolve_document_contexts(
+    document_ids,
+    user_id,
+    doc_scope="all",
+    active_group_ids=None,
+    active_public_workspace_id=None,
+    conversation_id=None,
+    include_content=True,
+):
+    """Resolve ordered document contexts using one current authorization snapshot."""
+    normalized_scope = normalize_search_scope(doc_scope)
+    normalized_document_ids = normalize_search_id_list(document_ids)
+    authorized_group_ids = []
+    if normalized_scope in ("all", "group"):
+        authorized_group_ids = _resolve_active_group_ids(
+            user_id,
+            active_group_ids=active_group_ids,
+            fallback_to_memberships=True,
+        )
+    authorized_public_workspace_ids = []
+    if normalized_scope in ("all", "public"):
+        authorized_public_workspace_ids = _resolve_public_workspace_ids(
+            user_id,
+            active_public_workspace_id=active_public_workspace_id,
+        )
+
+    normalized_conversation_id = str(conversation_id or "").strip()
+    chat_conversation_authorized = bool(
+        normalized_conversation_id
+        and _authorize_chat_upload_conversation(user_id, normalized_conversation_id)
+    )
+
+    resolved_contexts = []
+    for document_id in normalized_document_ids:
+        document_context = None
+        if normalized_scope in ("all", "personal"):
+            document_context = _resolve_personal_document_context(document_id, user_id)
+        if not document_context and normalized_scope in ("all", "group"):
+            document_context = _resolve_group_document_context(
+                document_id,
+                user_id,
+                authorized_group_ids,
+            )
+        if not document_context and normalized_scope in ("all", "public"):
+            document_context = _resolve_public_document_context(
+                document_id,
+                user_id,
+                authorized_public_workspace_ids,
+            )
+        if not document_context and chat_conversation_authorized:
+            document_context = _resolve_chat_upload_context(
+                document_id=document_id,
+                user_id=user_id,
+                conversation_id=normalized_conversation_id,
+                include_content=include_content,
+                authorization_prechecked=True,
+            )
+        resolved_contexts.append(document_context)
+
+    return resolved_contexts
 
 
 def build_search_request(
@@ -367,6 +556,7 @@ def build_search_request(
     active_group_ids=None,
     active_public_workspace_id=None,
     enable_file_sharing=True,
+    include_all_public_workspaces=False,
 ):
     normalized_query = str(query or "").strip()
     if not normalized_query:
@@ -406,7 +596,11 @@ def build_search_request(
         active_public_workspace_id=active_public_workspace_id,
     )
     if resolved_public_workspace_ids and normalized_scope in ("all", "public"):
-        search_request["active_public_workspace_id"] = resolved_public_workspace_ids[0]
+        search_request["active_public_workspace_id"] = (
+            resolved_public_workspace_ids
+            if include_all_public_workspaces
+            else resolved_public_workspace_ids[0]
+        )
 
     return search_request
 
@@ -422,6 +616,7 @@ def search_documents(
     active_group_ids=None,
     active_public_workspace_id=None,
     enable_file_sharing=True,
+    include_all_public_workspaces=False,
 ):
     search_request = build_search_request(
         query=query,
@@ -434,6 +629,7 @@ def search_documents(
         active_group_ids=active_group_ids,
         active_public_workspace_id=active_public_workspace_id,
         enable_file_sharing=enable_file_sharing,
+        include_all_public_workspaces=include_all_public_workspaces,
     )
     results = hybrid_search(**search_request) or []
     unique_document_ids = {
@@ -453,6 +649,70 @@ def search_documents(
         "result_count": len(results),
         "document_count": len(unique_document_ids),
         "results": results,
+    }
+
+
+def search_relevant_tabular_candidates(
+    query,
+    user_id,
+    doc_scope="all",
+    document_ids=None,
+    tags_filter=None,
+    active_group_ids=None,
+    active_public_workspace_id=None,
+    max_candidates=MIXED_SOURCE_TABULAR_CANDIDATE_LIMIT,
+):
+    """Find a bounded set of authorized table candidates from indexed schema chunks."""
+    normalized_limit = _coerce_positive_int(
+        max_candidates,
+        MIXED_SOURCE_TABULAR_CANDIDATE_LIMIT,
+        min_value=1,
+        max_value=MIXED_SOURCE_TABULAR_CANDIDATE_LIMIT,
+    )
+    candidate_query = (
+        f"{str(query or '').strip()}\n"
+        "Relevant spreadsheet, workbook, worksheet, CSV, table schema, columns, and data fields."
+    ).strip()
+    search_result = search_documents(
+        query=candidate_query,
+        user_id=user_id,
+        top_n=MIXED_SOURCE_TABULAR_CANDIDATE_TOP_N,
+        doc_scope=doc_scope,
+        document_ids=document_ids,
+        tags_filter=tags_filter,
+        active_group_ids=active_group_ids,
+        active_public_workspace_id=active_public_workspace_id,
+        include_all_public_workspaces=True,
+    )
+
+    candidate_document_ids = []
+    seen_document_ids = set()
+    for result in search_result.get("results") or []:
+        file_name = str(result.get("file_name") or "").strip()
+        if os.path.splitext(file_name)[1].lower() not in MIXED_SOURCE_TABULAR_EXTENSIONS:
+            continue
+        document_id = str(result.get("document_id") or "").strip()
+        if not document_id or document_id in seen_document_ids:
+            continue
+        seen_document_ids.add(document_id)
+        candidate_document_ids.append(document_id)
+        if len(candidate_document_ids) >= normalized_limit:
+            break
+
+    log_event(
+        "[MIXED_SOURCE_CHAT_SEARCH] Completed bounded authorized tabular candidate search.",
+        extra={
+            "candidate_search_result_count": search_result.get("result_count", 0),
+            "tabular_candidate_count": len(candidate_document_ids),
+            "candidate_limit": normalized_limit,
+        },
+        level=logging.INFO,
+    )
+    return {
+        "document_ids": candidate_document_ids,
+        "candidate_count": len(candidate_document_ids),
+        "search_result_count": search_result.get("result_count", 0),
+        "query": search_result.get("query"),
     }
 
 
@@ -844,7 +1104,7 @@ def summarize_document_content(
 
     while current_stage_inputs and stage_number <= max_reduction_rounds:
         debug_print(
-            f"[SearchService] Summarization stage {stage_number} for {file_name} with {len(current_stage_inputs)} input windows"
+            f"[SEARCH_SERVICE] Summarization stage {stage_number} for {file_name} with {len(current_stage_inputs)} input windows"
         )
         output_items = []
 
@@ -911,7 +1171,7 @@ def summarize_document_content(
         stage_number += 1
 
     log_event(
-        '[SearchService] Document summarization completed',
+        '[SEARCH_SERVICE] Document summarization completed',
         extra={
             'document_id': document_id,
             'file_name': file_name,

@@ -4,6 +4,8 @@ import asyncio
 import re
 import builtins
 import json
+import time
+import uuid
 import azure.cosmos as azure_cosmos
 from azure.cosmos.exceptions import CosmosHttpResponseError
 from azure.identity import DefaultAzureCredential
@@ -66,6 +68,7 @@ from functions_chart_operations import CHART_DEFAULT_ENDPOINT, CHART_PLUGIN_TYPE
 from functions_databricks_operations import (
     DATABRICKS_LEGACY_TABLE_PLUGIN_TYPE,
     DATABRICKS_PLUGIN_TYPE,
+    is_builtin_databricks_discovery_type,
     normalize_databricks_additional_fields,
 )
 from functions_snowflake_operations import (
@@ -81,10 +84,24 @@ from functions_tableau_operations import (
     normalize_tableau_server_url,
 )
 from functions_mcp_operations import (
+    MCP_CUSTOM_HEADERS_FIELD,
     MCP_PLUGIN_TYPE,
     MCP_STDIO_ENDPOINT,
+    McpRuntimeError,
+    get_mcp_error_http_status,
     normalize_mcp_additional_fields,
 )
+from functions_mcp_destinations import (
+    McpDestinationPolicyError,
+    assert_mcp_destination_allowed,
+    build_mcp_destination_log_context,
+    get_mcp_destination_policy_config,
+)
+from functions_mcp_preconfigurations import (
+    assert_mcp_preconfiguration_manifest_allowed,
+    build_mcp_server_preconfigurations_response,
+)
+from functions_mcp_presets import build_mcp_server_presets_response
 from semantic_kernel_plugins.mcp_plugin_factory import McpPluginFactory
 from functions_msgraph_operations import (
     MSGRAPH_DEFAULT_ENDPOINT,
@@ -106,6 +123,13 @@ from functions_governance import (
     is_action_type_access_allowed,
     upsert_item_policy,
 )
+
+
+ACTION_VALIDATION_ERROR_MESSAGE = "Invalid action configuration."
+ACTION_PERMISSION_ERROR_MESSAGE = "You are not authorized to save this action."
+ACTION_KEY_VAULT_ERROR_MESSAGE = "Unable to store action secrets in Key Vault."
+PLUGIN_VALIDATION_ERROR_MESSAGE = "Invalid plugin configuration."
+PLUGIN_KEY_VAULT_ERROR_MESSAGE = "Unable to store plugin secrets in Key Vault."
 
 
 DOCUMENT_SEARCH_INTERNAL_ENDPOINT = 'internal://document-search'
@@ -281,6 +305,7 @@ def get_plugin_types(allowed_type_filter=None):
     for fname in os.listdir(plugintypes_dir):
         if fname.endswith('_plugin.py') and fname != 'base_plugin.py':
             module_name = fname[:-3]
+            module_type = module_name.replace('_plugin', '')
             file_path = os.path.join(plugintypes_dir, fname)
             debug_log.append(f"Checking plugin file: {fname}")
             try:
@@ -306,7 +331,7 @@ def get_plugin_types(allowed_type_filter=None):
                         display_name = "OpenAPI"
                         description = "Plugin for integrating with external APIs using OpenAPI specifications. Supports file upload, URL download, and various authentication methods."
                         types.append({
-                            'type': module_name.replace('_plugin', ''),
+                            'type': module_type,
                             'class': attr,
                             'display': display_name,
                             'description': description
@@ -324,7 +349,7 @@ def get_plugin_types(allowed_type_filter=None):
                         
                         # Only add minimal required fields based on plugin type
                         #TODO: This can be improved by ensuring we have additional fields from the schemas we have not created if needed. 
-                        if 'databricks' in module_name.lower():
+                        if is_builtin_databricks_discovery_type(module_type):
                             safe_manifest = {
                                 'endpoint': 'https://adb-1234567890123456.7.azuredatabricks.net',
                                 'auth': {'type': 'key', 'key': 'dummy'},
@@ -489,7 +514,7 @@ def get_plugin_types(allowed_type_filter=None):
                         debug_log.append(f"Complete failure to instantiate {attr}: {e}. Using final fallback.")
                     
                     types.append({
-                        'type': module_name.replace('_plugin', ''),
+                        'type': module_type,
                         'class': attr,
                         'display': display_name,
                         'description': description
@@ -500,7 +525,7 @@ def get_plugin_types(allowed_type_filter=None):
     if callable(allowed_type_filter):
         types = [plugin_type for plugin_type in types if allowed_type_filter(plugin_type.get('type'))]
 
-    print("[PLUGIN DISCOVERY DEBUG]", *debug_log, sep="\n")
+    print("[PLUGIN_DISCOVERY_DEBUG]", *debug_log, sep="\n")
     return jsonify(types)
 
 bpap = Blueprint('admin_plugins', __name__)
@@ -581,6 +606,75 @@ def _reject_non_admin_mcp_stdio(plugin_manifest, scope_label="personal"):
     return None
 
 
+def _enforce_mcp_destination_policy(plugin_manifest, scope_type, scope_id, operation, user_id=None, mcp_operation_id=""):
+    """Enforce outbound MCP destination policy for save, discovery, and runtime-adjacent routes."""
+    if not isinstance(plugin_manifest, dict) or plugin_manifest.get('type') != MCP_PLUGIN_TYPE:
+        return None
+
+    normalized_user_id = str(user_id or get_current_user_id() or '').strip()
+    policy_config = get_mcp_destination_policy_config(get_settings(), user_id=normalized_user_id)
+    decision = assert_mcp_destination_allowed(
+        plugin_manifest,
+        scope_type=scope_type,
+        scope_id=scope_id,
+        policy_config=policy_config,
+        operation=operation,
+        user_id=normalized_user_id,
+        mcp_operation_id=mcp_operation_id,
+    )
+    assert_mcp_preconfiguration_manifest_allowed(
+        plugin_manifest,
+        scope_type=scope_type,
+        scope_id=scope_id,
+        settings=get_settings(),
+        operation=operation,
+        user_id=normalized_user_id,
+    )
+    return decision
+
+
+def _elapsed_mcp_discovery_ms(started_at):
+    """Return a rounded outbound MCP discovery duration in milliseconds."""
+    return round((time.perf_counter() - started_at) * 1000, 2)
+
+
+def _build_mcp_discovery_log_context(
+    mcp_operation_id,
+    user_id,
+    discovery_manifest=None,
+    scope_type="",
+    scope_id="",
+    started_at=None,
+    extra=None,
+):
+    """Build low-sensitivity structured telemetry for outbound MCP discovery."""
+    manifest = discovery_manifest if isinstance(discovery_manifest, dict) else {}
+    additional_fields = manifest.get('additionalFields') if isinstance(manifest.get('additionalFields'), dict) else {}
+    auth = manifest.get('auth') if isinstance(manifest.get('auth'), dict) else {}
+    context = {
+        "mcp_operation_id": mcp_operation_id,
+        "user_id": user_id,
+        "scope_type": scope_type,
+        "scope_id_present": bool(scope_id),
+        "transport": additional_fields.get('transport'),
+        "auth_method": additional_fields.get('auth_method'),
+        "preconfiguration_id": additional_fields.get('preconfiguration_id'),
+        "server_profile": additional_fields.get('server_profile'),
+        "custom_header_count": len(additional_fields.get(MCP_CUSTOM_HEADERS_FIELD) or {}),
+        "has_auth_secret": bool(str(auth.get('key') or '').strip()),
+        "has_identity": bool(str(auth.get('identity') or '').strip()),
+    }
+    if manifest:
+        context.update({
+            f"destination_{key}": value
+            for key, value in build_mcp_destination_log_context(manifest).items()
+        })
+    if started_at is not None:
+        context["duration_ms"] = _elapsed_mcp_discovery_ms(started_at)
+    context.update(extra or {})
+    return context
+
+
 def _hydrate_sql_test_identity(data, existing_plugin, user_id):
     """Resolve a selected workspace identity into transient SQL test credentials."""
     identity_id = str((data or {}).get("identity_id") or "").strip()
@@ -620,6 +714,37 @@ def _resolve_secret_value_for_plugin_test(value, field_name, plugin_label='plugi
     if validate_secret_name_dynamic(resolved_value):
         raise ValueError(f"Unable to resolve stored Key Vault secret for {plugin_label} field '{field_name}'.")
     return resolved_value
+
+
+def _hydrate_mcp_custom_headers_for_test(discovery_manifest, existing_plugin):
+    """Resolve or preserve MCP custom header values for transient discovery calls."""
+    additional_fields = discovery_manifest.get('additionalFields') if isinstance(discovery_manifest.get('additionalFields'), dict) else {}
+    custom_headers = additional_fields.get(MCP_CUSTOM_HEADERS_FIELD, {})
+    if not isinstance(custom_headers, dict):
+        return
+
+    existing_additional_fields = existing_plugin.get('additionalFields') if isinstance(existing_plugin, dict) and isinstance(existing_plugin.get('additionalFields'), dict) else {}
+    existing_headers = existing_additional_fields.get(MCP_CUSTOM_HEADERS_FIELD, {})
+    if not isinstance(existing_headers, dict):
+        existing_headers = {}
+
+    hydrated_headers = {}
+    for header_name, header_value in custom_headers.items():
+        resolved_header_value = header_value
+        if resolved_header_value in ('', None, ui_trigger_word):
+            resolved_header_value = existing_headers.get(header_name)
+        if resolved_header_value == ui_trigger_word:
+            raise ValueError(f"Stored MCP custom header '{header_name}' could not be resolved. Re-enter the header value.")
+        if not resolved_header_value:
+            continue
+        hydrated_headers[header_name] = _resolve_secret_value_for_plugin_test(
+            resolved_header_value,
+            f"custom_headers.{header_name}",
+            plugin_label='MCP',
+        )
+
+    additional_fields[MCP_CUSTOM_HEADERS_FIELD] = hydrated_headers
+    discovery_manifest['additionalFields'] = additional_fields
 
 
 def _resolve_secret_value_for_sql_test(value, field_name, scope_value=None, scope="user"):
@@ -774,8 +899,8 @@ def set_user_plugins():
                 WORKSPACE_IDENTITY_SCOPE_PERSONAL,
                 user_id,
             )
-        except (ValueError, LookupError, PermissionError) as exc:
-            return jsonify({'error': str(exc)}), 400
+        except (ValueError, LookupError, PermissionError):
+            return jsonify({'error': 'Action identity configuration is invalid.'}), 400
         
         # Ensure auth has default structure
         if 'auth' not in plugin_to_save:
@@ -796,6 +921,22 @@ def set_user_plugins():
         validation_error = validate_plugin(plugin_to_save)
         if validation_error:
             return jsonify({'error': f'Plugin validation failed: {validation_error}'}), 400
+        is_valid, validation_errors = PluginHealthChecker.validate_plugin_manifest(plugin_to_save, plugin_type)
+        if not is_valid:
+            return jsonify({'error': f'Plugin validation failed: {"; ".join(validation_errors)}'}), 400
+
+        try:
+            _enforce_mcp_destination_policy(
+                plugin_to_save,
+                WORKSPACE_IDENTITY_SCOPE_PERSONAL,
+                user_id,
+                operation='personal_action_save',
+                user_id=user_id,
+            )
+        except McpDestinationPolicyError:
+            return jsonify({'error': 'MCP destination is not allowed by governance policy.'}), 403
+        except ValueError:
+            return jsonify({'error': 'MCP destination configuration is invalid.'}), 400
         
         filtered_plugins.append(plugin_to_save)
         new_plugin_names.add(plugin_to_save['name'])
@@ -823,10 +964,13 @@ def set_user_plugins():
             
     except ValueError as e:
         debug_print(f"Validation error saving personal actions for user {user_id}: {e}")
-        return jsonify({'error': str(e)}), 400
+        return jsonify({'error': ACTION_VALIDATION_ERROR_MESSAGE}), 400
     except PermissionError as e:
         debug_print(f"Governance denied saving personal actions for user {user_id}: {e}")
-        return jsonify({'error': str(e)}), 403
+        return jsonify({'error': ACTION_PERMISSION_ERROR_MESSAGE}), 403
+    except RuntimeError as e:
+        debug_print(f"Key Vault error saving personal actions for user {user_id}: {e}")
+        return jsonify({'error': ACTION_KEY_VAULT_ERROR_MESSAGE}), 500
     except Exception as e:
         debug_print(f"Error saving personal actions for user {user_id}: {e}")
         return jsonify({'error': 'Failed to save plugins'}), 500
@@ -858,8 +1002,8 @@ def delete_user_plugin(plugin_name):
     # Try to delete from personal_actions container
     try:
         deleted = delete_personal_action(user_id, plugin_name)
-    except PermissionError as exc:
-        return jsonify({'error': str(exc)}), 403
+    except PermissionError:
+        return jsonify({'error': 'You are not authorized to delete this action.'}), 403
     
     if not deleted:
         return jsonify({'error': 'Plugin not found.'}), 404
@@ -885,12 +1029,12 @@ def get_group_actions_route():
             active_group,
             allowed_roles=("Owner", "Admin", "DocumentManager", "User"),
         )
-    except ValueError as exc:
-        return jsonify({'error': str(exc)}), 400
-    except LookupError as exc:
-        return jsonify({'error': str(exc)}), 404
-    except PermissionError as exc:
-        return jsonify({'error': str(exc)}), 403
+    except ValueError:
+        return jsonify({'error': 'Group action scope is invalid.'}), 400
+    except LookupError:
+        return jsonify({'error': 'The selected group context was not found.'}), 404
+    except PermissionError:
+        return jsonify({'error': 'You are not authorized to list group actions.'}), 403
 
     actions = get_governed_group_actions(active_group, user_id, return_type=SecretReturnType.TRIGGER)
 
@@ -924,12 +1068,12 @@ def get_group_action_route(action_id):
             active_group,
             allowed_roles=("Owner", "Admin", "DocumentManager", "User"),
         )
-    except ValueError as exc:
-        return jsonify({'error': str(exc)}), 400
-    except LookupError as exc:
-        return jsonify({'error': str(exc)}), 404
-    except PermissionError as exc:
-        return jsonify({'error': str(exc)}), 403
+    except ValueError:
+        return jsonify({'error': 'Group action scope is invalid.'}), 400
+    except LookupError:
+        return jsonify({'error': 'The selected group context was not found.'}), 404
+    except PermissionError:
+        return jsonify({'error': 'You are not authorized to view this group action.'}), 403
 
     action = get_group_action(active_group, action_id, return_type=SecretReturnType.TRIGGER)
     if not action:
@@ -953,12 +1097,12 @@ def create_group_action_route():
         app_settings = get_settings()
         allowed_roles = ("Owner",) if app_settings.get('require_owner_for_group_agent_management') else ("Owner", "Admin")
         assert_group_role(user_id, active_group, allowed_roles=allowed_roles)
-    except ValueError as exc:
-        return jsonify({'error': str(exc)}), 400
-    except LookupError as exc:
-        return jsonify({'error': str(exc)}), 404
-    except PermissionError as exc:
-        return jsonify({'error': str(exc)}), 403
+    except ValueError:
+        return jsonify({'error': 'Group action scope is invalid.'}), 400
+    except LookupError:
+        return jsonify({'error': 'The selected group context was not found.'}), 404
+    except PermissionError:
+        return jsonify({'error': 'You are not authorized to create this group action.'}), 403
 
     payload = request.get_json(silent=True) or {}
     try:
@@ -989,13 +1133,37 @@ def create_group_action_route():
             WORKSPACE_IDENTITY_SCOPE_GROUP,
             active_group,
         )
-    except (ValueError, LookupError, PermissionError) as exc:
-        return jsonify({'error': str(exc)}), 400
+    except (ValueError, LookupError, PermissionError):
+        return jsonify({'error': 'Group action identity configuration is invalid.'}), 400
+
+    is_valid, validation_errors = PluginHealthChecker.validate_plugin_manifest(payload, payload.get('type'))
+    if not is_valid:
+        return jsonify({'error': f'Plugin validation failed: {"; ".join(validation_errors)}'}), 400
+
+    try:
+        _enforce_mcp_destination_policy(
+            payload,
+            WORKSPACE_IDENTITY_SCOPE_GROUP,
+            active_group,
+            operation='group_action_create',
+            user_id=user_id,
+        )
+    except McpDestinationPolicyError:
+        return jsonify({'error': 'MCP destination is not allowed by governance policy.'}), 403
+    except ValueError:
+        return jsonify({'error': 'MCP destination configuration is invalid.'}), 400
 
     try:
         saved = save_group_action(active_group, payload, user_id=user_id)
+    except ValueError as exc:
+        debug_print('Validation error saving group action: %s', exc)
+        return jsonify({'error': ACTION_VALIDATION_ERROR_MESSAGE}), 400
     except PermissionError as exc:
-        return jsonify({'error': str(exc)}), 403
+        debug_print('Permission denied saving group action: %s', exc)
+        return jsonify({'error': ACTION_PERMISSION_ERROR_MESSAGE}), 403
+    except RuntimeError as exc:
+        debug_print('Key Vault error saving group action: %s', exc)
+        return jsonify({'error': ACTION_KEY_VAULT_ERROR_MESSAGE}), 500
     except Exception as exc:
         debug_print('Failed to save group action: %s', exc)
         return jsonify({'error': 'Unable to save action'}), 500
@@ -1067,13 +1235,37 @@ def update_group_action_route(action_id):
             WORKSPACE_IDENTITY_SCOPE_GROUP,
             active_group,
         )
-    except (ValueError, LookupError, PermissionError) as exc:
-        return jsonify({'error': str(exc)}), 400
+    except (ValueError, LookupError, PermissionError):
+        return jsonify({'error': 'Group action identity configuration is invalid.'}), 400
+
+    is_valid, validation_errors = PluginHealthChecker.validate_plugin_manifest(merged, merged.get('type'))
+    if not is_valid:
+        return jsonify({'error': f'Plugin validation failed: {"; ".join(validation_errors)}'}), 400
+
+    try:
+        _enforce_mcp_destination_policy(
+            merged,
+            WORKSPACE_IDENTITY_SCOPE_GROUP,
+            active_group,
+            operation='group_action_update',
+            user_id=user_id,
+        )
+    except McpDestinationPolicyError:
+        return jsonify({'error': 'MCP destination is not allowed by governance policy.'}), 403
+    except ValueError:
+        return jsonify({'error': 'MCP destination configuration is invalid.'}), 400
 
     try:
         saved = save_group_action(active_group, merged, user_id=user_id)
+    except ValueError as exc:
+        debug_print('Validation error updating group action %s: %s', action_id, exc)
+        return jsonify({'error': ACTION_VALIDATION_ERROR_MESSAGE}), 400
     except PermissionError as exc:
-        return jsonify({'error': str(exc)}), 403
+        debug_print('Permission denied updating group action %s: %s', action_id, exc)
+        return jsonify({'error': ACTION_PERMISSION_ERROR_MESSAGE}), 403
+    except RuntimeError as exc:
+        debug_print('Key Vault error updating group action %s: %s', action_id, exc)
+        return jsonify({'error': ACTION_KEY_VAULT_ERROR_MESSAGE}), 500
     except Exception as exc:
         debug_print('Failed to update group action %s: %s', action_id, exc)
         return jsonify({'error': 'Unable to update action'}), 500
@@ -1094,12 +1286,12 @@ def delete_group_action_route(action_id):
         app_settings = get_settings()
         allowed_roles = ("Owner",) if app_settings.get('require_owner_for_group_agent_management') else ("Owner", "Admin")
         assert_group_role(user_id, active_group, allowed_roles=allowed_roles)
-    except ValueError as exc:
-        return jsonify({'error': str(exc)}), 400
-    except LookupError as exc:
-        return jsonify({'error': str(exc)}), 404
-    except PermissionError as exc:
-        return jsonify({'error': str(exc)}), 403
+    except ValueError:
+        return jsonify({'error': 'Group action scope is invalid.'}), 400
+    except LookupError:
+        return jsonify({'error': 'The selected group context was not found.'}), 404
+    except PermissionError:
+        return jsonify({'error': 'You are not authorized to delete this group action.'}), 403
 
     try:
         existing = get_group_action(active_group, action_id, return_type=SecretReturnType.NAME)
@@ -1131,6 +1323,36 @@ def get_user_plugin_types():
             'personal',
         )
     )
+
+
+@bpap.route('/api/group/plugins/types', methods=['GET'])
+@swagger_route(security=get_auth_security())
+@login_required
+@user_required
+@enabled_required('enable_group_workspaces')
+def get_group_plugin_types():
+    user_id = get_current_user_id()
+    try:
+        active_group = require_active_group(user_id)
+        app_settings = get_settings()
+        allowed_roles = ("Owner",) if app_settings.get('require_owner_for_group_agent_management') else ("Owner", "Admin")
+        assert_group_role(user_id, active_group, allowed_roles=allowed_roles)
+    except ValueError:
+        return jsonify({'error': 'Group action scope is invalid.'}), 400
+    except LookupError:
+        return jsonify({'error': 'The selected group context was not found.'}), 404
+    except PermissionError:
+        return jsonify({'error': 'You are not authorized to list group action types.'}), 403
+
+    return get_plugin_types(
+        allowed_type_filter=lambda action_type: is_action_type_access_allowed(
+            'governance_group_actions',
+            user_id,
+            action_type,
+            'group',
+        )
+    )
+
 
 # === ADMIN PLUGINS ENDPOINTS ===
 
@@ -1294,6 +1516,19 @@ def add_plugin():
             log_event("Add plugin failed: manifest validation error", level=logging.WARNING, 
                      extra={"action": "add", "plugin": _redact_plugin_for_logging(new_plugin), "errors": validation_errors})
             return jsonify({'error': f"Manifest validation failed: {'; '.join(validation_errors)}"}), 400
+
+        try:
+            _enforce_mcp_destination_policy(
+                new_plugin,
+                WORKSPACE_IDENTITY_SCOPE_GLOBAL,
+                WORKSPACE_IDENTITY_SCOPE_GLOBAL,
+                operation='global_action_add',
+                user_id=str(get_current_user_id() or ''),
+            )
+        except McpDestinationPolicyError:
+            return jsonify({'error': 'MCP destination is not allowed by governance policy.'}), 403
+        except ValueError:
+            return jsonify({'error': 'MCP destination configuration is invalid.'}), 400
         
         # Merge with schema to ensure all required fields are present
         schema_dir = os.path.join(current_app.root_path, 'static', 'json', 'schemas')
@@ -1337,6 +1572,12 @@ def add_plugin():
         # --- HOT RELOAD TRIGGER ---
         setattr(builtins, "kernel_reload_needed", True)
         return jsonify({'success': True})
+    except ValueError as e:
+        log_event(f"Validation error adding plugin: {e}", level=logging.WARNING)
+        return jsonify({'error': PLUGIN_VALIDATION_ERROR_MESSAGE}), 400
+    except RuntimeError as e:
+        log_event(f"Key Vault error adding plugin: {e}", level=logging.ERROR)
+        return jsonify({'error': PLUGIN_KEY_VAULT_ERROR_MESSAGE}), 500
     except Exception as e:
         log_event(f"Error adding plugin: {e}", level=logging.ERROR)
         return jsonify({'error': 'Failed to add plugin.'}), 500
@@ -1370,6 +1611,19 @@ def edit_plugin(plugin_name):
             log_event("Edit plugin failed: manifest validation error", level=logging.WARNING, 
                      extra={"action": "edit", "plugin": _redact_plugin_for_logging(updated_plugin), "errors": validation_errors})
             return jsonify({'error': f"Manifest validation failed: {'; '.join(validation_errors)}"}), 400
+
+        try:
+            _enforce_mcp_destination_policy(
+                updated_plugin,
+                WORKSPACE_IDENTITY_SCOPE_GLOBAL,
+                WORKSPACE_IDENTITY_SCOPE_GLOBAL,
+                operation='global_action_edit',
+                user_id=str(get_current_user_id() or ''),
+            )
+        except McpDestinationPolicyError:
+            return jsonify({'error': 'MCP destination is not allowed by governance policy.'}), 403
+        except ValueError:
+            return jsonify({'error': 'MCP destination configuration is invalid.'}), 400
         
         # Merge with schema to ensure all required fields are present
         schema_dir = os.path.join(current_app.root_path, 'static', 'json', 'schemas')
@@ -1427,6 +1681,12 @@ def edit_plugin(plugin_name):
         
         log_event("Edit plugin failed: not found", level=logging.WARNING, extra={"action": "edit", "plugin_name": plugin_name})
         return jsonify({'error': 'Plugin not found.'}), 404
+    except ValueError as e:
+        log_event(f"Validation error editing plugin: {e}", level=logging.WARNING)
+        return jsonify({'error': PLUGIN_VALIDATION_ERROR_MESSAGE}), 400
+    except RuntimeError as e:
+        log_event(f"Key Vault error editing plugin: {e}", level=logging.ERROR)
+        return jsonify({'error': PLUGIN_KEY_VAULT_ERROR_MESSAGE}), 500
     except Exception as e:
         log_event(f"Error editing plugin: {e}", level=logging.ERROR)
         return jsonify({'error': 'Failed to edit plugin.'}), 500
@@ -1540,6 +1800,38 @@ def get_plugin_auth_types(plugin_type):
     })
 
 
+@bpap.route('/api/plugins/mcp/presets', methods=['GET'])
+@swagger_route(security=get_auth_security())
+@login_required
+@user_required
+def get_mcp_server_presets():
+    """Return validated MCP server presets for action modal configuration."""
+    return jsonify(build_mcp_server_presets_response())
+
+
+@bpap.route('/api/plugins/mcp/preconfigurations', methods=['GET'])
+@swagger_route(security=get_auth_security())
+@login_required
+@user_required
+def get_mcp_server_preconfigurations():
+    """Return validated MCP server preconfigurations for action modal configuration."""
+    action_scope = request.args.get('scope') or 'personal'
+    user_id = str(get_current_user_id() or '').strip()
+    try:
+        scope_type, scope_id = _resolve_action_identity_context({'action_scope': action_scope}, None, user_id)
+    except PermissionError:
+        return jsonify({'error': 'You are not authorized to list MCP server preconfigurations.'}), 403
+    except (ValueError, LookupError):
+        return jsonify({'error': 'MCP preconfiguration scope is invalid.'}), 400
+
+    return jsonify(build_mcp_server_preconfigurations_response(
+        action_scope=scope_type,
+        scope_id=scope_id,
+        user_id=user_id,
+        settings=get_settings(),
+    ))
+
+
 @bpap.route('/api/plugins/mcp/discover', methods=['POST'])
 @swagger_route(security=get_auth_security())
 @login_required
@@ -1551,11 +1843,32 @@ def discover_mcp_tools():
     if not isinstance(payload, dict):
         return jsonify({'error': 'Invalid MCP discovery payload.'}), 400
 
+    mcp_operation_id = str(uuid.uuid4())
+    started_at = time.perf_counter()
+    discovery_manifest = {}
+    scope_type = ""
+    scope_id = ""
+    log_event(
+        "[MCP_DISCOVERY] Started",
+        extra=_build_mcp_discovery_log_context(
+            mcp_operation_id,
+            user_id,
+            started_at=started_at,
+            extra={
+                "payload_key_count": len(payload.keys()),
+                "plugin_context_present": isinstance(payload.get('plugin_context'), dict),
+            },
+        ),
+        level=logging.INFO,
+    )
+
     try:
         existing_plugin = _load_existing_plugin_for_test(payload.get('plugin_context'), user_id)
         scope_type, scope_id = _resolve_action_identity_context(payload, existing_plugin, user_id)
 
         discovery_manifest = dict(payload)
+        discovery_manifest['mcp_operation_id'] = mcp_operation_id
+        discovery_manifest['runtime_user_id'] = user_id
         discovery_manifest['type'] = MCP_PLUGIN_TYPE
         discovery_manifest.setdefault('name', 'mcp_discovery')
         discovery_manifest.setdefault('displayName', 'MCP Discovery')
@@ -1564,7 +1877,27 @@ def discover_mcp_tools():
         discovery_manifest.setdefault('additionalFields', {})
         _apply_plugin_runtime_defaults(discovery_manifest)
         if discovery_manifest.get('additionalFields', {}).get('transport') == 'stdio' and scope_type != WORKSPACE_IDENTITY_SCOPE_GLOBAL:
-            return jsonify({'error': 'MCP stdio discovery is only available for admin-managed global actions.'}), 403
+            log_event(
+                "[MCP_DISCOVERY] Failed",
+                extra=_build_mcp_discovery_log_context(
+                    mcp_operation_id,
+                    user_id,
+                    discovery_manifest,
+                    scope_type,
+                    scope_id,
+                    started_at,
+                    {
+                        "category": "authorization",
+                        "http_status": 403,
+                        "failure_stage": "transport_scope_validation",
+                    },
+                ),
+                level=logging.WARNING,
+            )
+            return jsonify({
+                'error': 'MCP stdio discovery is only available for admin-managed global actions.',
+                'mcp_operation_id': mcp_operation_id,
+            }), 403
 
         auth = discovery_manifest.get('auth') if isinstance(discovery_manifest.get('auth'), dict) else {}
         existing_auth = existing_plugin.get('auth') if isinstance(existing_plugin, dict) and isinstance(existing_plugin.get('auth'), dict) else {}
@@ -1587,40 +1920,167 @@ def discover_mcp_tools():
                 auth['key'] = _resolve_secret_value_for_plugin_test(auth.get('key'), 'auth.key', plugin_label='MCP')
             discovery_manifest['auth'] = auth
 
+        _hydrate_mcp_custom_headers_for_test(discovery_manifest, existing_plugin)
+
         is_valid, validation_errors = PluginHealthChecker.validate_plugin_manifest(discovery_manifest, MCP_PLUGIN_TYPE)
         if not is_valid:
+            log_event(
+                "[MCP_DISCOVERY] Failed",
+                extra=_build_mcp_discovery_log_context(
+                    mcp_operation_id,
+                    user_id,
+                    discovery_manifest,
+                    scope_type,
+                    scope_id,
+                    started_at,
+                    {
+                        "category": "validation",
+                        "http_status": 400,
+                        "failure_stage": "manifest_validation",
+                        "validation_error_count": len(validation_errors or []),
+                    },
+                ),
+                level=logging.WARNING,
+            )
             return jsonify({
                 'success': False,
                 'error': 'MCP discovery manifest is invalid.',
                 'errors': validation_errors,
+                'mcp_operation_id': mcp_operation_id,
             }), 400
 
-        tools = asyncio.run(McpPluginFactory.discover_tools_from_config(discovery_manifest))
+        _enforce_mcp_destination_policy(
+            discovery_manifest,
+            scope_type,
+            scope_id,
+            operation='mcp_tool_discovery',
+            user_id=user_id,
+            mcp_operation_id=mcp_operation_id,
+        )
+
+        probe_result = asyncio.run(McpPluginFactory.probe_server_from_config(discovery_manifest))
+        tools = probe_result.get('tools', []) if isinstance(probe_result, dict) else []
         log_event(
-            "[MCP Discovery] Discovered MCP tools",
-            extra={
-                "user_id": user_id,
-                "tool_count": len(tools),
-                "transport": discovery_manifest.get('additionalFields', {}).get('transport'),
-            },
+            "[MCP_DISCOVERY] Completed",
+            extra=_build_mcp_discovery_log_context(
+                mcp_operation_id,
+                user_id,
+                discovery_manifest,
+                scope_type,
+                scope_id,
+                started_at,
+                {
+                    "http_status": 200,
+                    "status": "success",
+                    "tool_count": len(tools),
+                    "warning_count": len(probe_result.get('warnings', [])) if isinstance(probe_result, dict) else 0,
+                },
+            ),
             level=logging.INFO,
         )
         return jsonify({
             'success': True,
+            'mcp_operation_id': mcp_operation_id,
             'tool_count': len(tools),
             'tools': tools,
+            'capabilities': probe_result.get('capabilities', {}) if isinstance(probe_result, dict) else {},
+            'warnings': probe_result.get('warnings', []) if isinstance(probe_result, dict) else [],
+            'transport': probe_result.get('transport') if isinstance(probe_result, dict) else None,
+            'auth_method': probe_result.get('auth_method') if isinstance(probe_result, dict) else None,
         })
     except PermissionError as exc:
-        return jsonify({'error': str(exc)}), 403
+        category = "destination_policy" if isinstance(exc, McpDestinationPolicyError) else "authorization"
+        log_event(
+            "[MCP_DISCOVERY] Failed",
+            extra=_build_mcp_discovery_log_context(
+                mcp_operation_id,
+                user_id,
+                discovery_manifest,
+                scope_type,
+                scope_id,
+                started_at,
+                {
+                    "category": category,
+                    "http_status": 403,
+                    "failure_stage": category,
+                },
+            ),
+            level=logging.WARNING,
+        )
+        return jsonify({
+            'error': 'MCP destination is not allowed by governance policy.',
+            'mcp_operation_id': mcp_operation_id,
+        }), 403
     except (LookupError, ValueError) as exc:
-        return jsonify({'error': str(exc)}), 400
+        log_event(
+            "[MCP_DISCOVERY] Failed",
+            extra=_build_mcp_discovery_log_context(
+                mcp_operation_id,
+                user_id,
+                discovery_manifest,
+                scope_type,
+                scope_id,
+                started_at,
+                {
+                    "category": "validation",
+                    "http_status": 400,
+                    "failure_stage": type(exc).__name__,
+                },
+            ),
+            level=logging.WARNING,
+        )
+        return jsonify({
+            'error': 'MCP discovery request is invalid.',
+            'mcp_operation_id': mcp_operation_id,
+        }), 400
+    except McpRuntimeError as exc:
+        http_status = get_mcp_error_http_status(exc.category)
+        log_event(
+            "[MCP_DISCOVERY] Failed",
+            extra=_build_mcp_discovery_log_context(
+                mcp_operation_id,
+                user_id,
+                discovery_manifest,
+                scope_type,
+                scope_id,
+                started_at,
+                {
+                    "category": exc.category,
+                    "operation": exc.operation,
+                    "retryable": exc.retryable,
+                    "http_status": http_status,
+                    "failure_stage": "mcp_runtime",
+                },
+            ),
+            level=logging.WARNING,
+        )
+        return jsonify({
+            'success': False,
+            'mcp_operation_id': mcp_operation_id,
+            'error': 'MCP discovery failed.',
+            'error_type': exc.category,
+            'operation': exc.operation,
+        }), http_status
     except Exception as exc:
         log_event(
-            f"[MCP Discovery] Failed to discover MCP tools: {exc}",
+            f"[MCP_DISCOVERY] Failed unexpectedly: {exc}",
+            extra=_build_mcp_discovery_log_context(
+                mcp_operation_id,
+                user_id,
+                discovery_manifest,
+                scope_type,
+                scope_id,
+                started_at,
+                {
+                    "category": "unexpected",
+                    "http_status": 500,
+                    "failure_stage": type(exc).__name__,
+                },
+            ),
             level=logging.ERROR,
             exceptionTraceback=True,
         )
-        return jsonify({'error': 'Failed to discover MCP tools.'}), 500
+        return jsonify({'error': 'Failed to discover MCP tools.', 'mcp_operation_id': mcp_operation_id}), 500
 
 ##########################################################################################################
 # Dynamic Plugin Metadata Endpoint
@@ -1961,7 +2421,7 @@ def test_cosmos_connection():
         )
 
         log_event(
-            '[Plugins] Cosmos connection test succeeded',
+            '[PLUGINS] Cosmos connection test succeeded',
             extra={
                 'user_id': user_id,
                 'endpoint': endpoint,
@@ -1992,7 +2452,7 @@ def test_cosmos_connection():
             status = 400
 
         log_event(
-            f'[Plugins] Cosmos connection test failed: {exc}',
+            f'[PLUGINS] Cosmos connection test failed: {exc}',
             extra={
                 'user_id': user_id,
                 'endpoint': endpoint,
@@ -2007,7 +2467,7 @@ def test_cosmos_connection():
         return jsonify({'success': False, 'error': error_msg}), status
     except Exception as exc:
         log_event(
-            f'[Plugins] Cosmos connection test failed unexpectedly: {exc}',
+            f'[PLUGINS] Cosmos connection test failed unexpectedly: {exc}',
             extra={
                 'user_id': user_id,
                 'endpoint': endpoint,

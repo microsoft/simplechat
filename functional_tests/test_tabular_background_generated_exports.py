@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """
 Functional test for durable tabular generated-output background exports.
-Version: 0.241.186
-Implemented in: 0.241.060
+Version: 0.250.070
+Implemented in: 0.241.060; throughput and timeout hardening in: 0.250.070
 
 This test ensures that large tabular structured exports are wired through the
 durable background queue, status API, queued retry recovery, and chat progress
 UI without requiring live Azure services.
 """
 
+import asyncio
 import ast
 import sys
 from pathlib import Path
@@ -63,6 +64,7 @@ def test_export_runner_module():
         'build_background_tabular_generated_output_metadata',
         'process_tabular_generated_output_run',
         'resume_tabular_generated_output_run',
+        'cancel_tabular_generated_output_run',
         'check_due_tabular_generated_output_runs_once',
         '_is_due_queued_retry_run',
         '_is_stale_queued_run',
@@ -74,9 +76,19 @@ def test_export_runner_module():
 
     source_text = read_text(EXPORT_MODULE)
     assert_contains(source_text, "STATUS_QUEUED = 'queued'", 'queued status constant')
-    assert_contains(source_text, 'input_batches.json', 'single staged input-batches blob')
+    assert_contains(source_text, 'input/batch_', 'per-batch staged input blobs')
     assert_contains(source_text, 'output/batch_', 'per-batch output checkpoint blobs')
-    assert_contains(source_text, 'upload_generated_analysis_artifact_for_user', 'background-safe artifact upload')
+    assert_contains(source_text, 'upload_generated_analysis_artifact_stream_for_user', 'bounded-memory artifact upload')
+    assert_contains(source_text, '_write_ordered_output_stream', 'ordered streaming finalization')
+    assert_contains(source_text, '_stage_tabular_generated_output_source', 'bounded source-query staging')
+    assert_contains(source_text, '_authorize_tabular_export_run_execution', 'worker-boundary authorization')
+    assert_contains(source_text, '_migrate_legacy_tabular_export_run', 'legacy run contract migration')
+    assert_contains(source_text, 'TABULAR_EXPORT_CONTRACT_VERSION = 2', 'versioned row orchestration contract')
+    assert_contains(source_text, 'lease_generation', 'worker fencing generation')
+    assert_contains(source_text, '_replace_claimed_run', 'ETag-fenced worker persistence')
+    assert_contains(source_text, 'TABULAR_EXPORT_INPUT_ROW_TOKEN_FIELD', 'opaque row binding token')
+    assert_contains(source_text, '_build_generated_batch_summary', 'per-batch compact summaries')
+    assert_contains(source_text, '_build_compact_post_run_summary', 'checkpoint-derived post-run summary')
     assert_contains(source_text, "'generated_artifact': generated_artifact", 'completed artifact status payload')
     assert_contains(source_text, '_mark_run_retryable', 'retryable transient failure requeue')
     assert_contains(source_text, 'transient_failure_count', 'bounded transient failure counter')
@@ -90,6 +102,8 @@ def test_export_runner_module():
     assert_contains(source_text, '_query_scheduler_candidates_by_status', 'simple scheduler status query helper')
     assert_contains(source_text, '_scheduler_candidate_reason', 'Python-side scheduler due filtering')
     assert_contains(source_text, 'FROM c WHERE c.type = @type AND c.status = @status', 'Cosmos-safe scheduler query shape')
+    assert_contains(source_text, 'ORDER BY c.updated_at ASC', 'oldest-first scheduler ordering')
+    assert_contains(source_text, 'if len(eligible_candidates) >= per_status_limit', 'eligibility-before-limit scheduler scan')
     assert_contains(source_text, 'active_processing_seconds', 'active-time ETA accounting')
     assert_contains(source_text, 'or _is_due_queued_retry_run(run)', 'queued retry-due manual resume eligibility')
     assert_contains(source_text, 'or _is_stale_queued_run(run, settings or {})', 'stale queued manual resume eligibility')
@@ -97,25 +111,89 @@ def test_export_runner_module():
     assert_contains(source_text, "'retry_due': status_detail.get('retry_due')", 'retry-due public status payload')
     assert_contains(source_text, 'Manual resume queued', 'manual checkpoint resume message')
     assert_contains(source_text, 'manual_resume_count', 'manual resume counter')
+    assert_contains(source_text, 'can_cancel', 'public cancellation capability')
     assert_contains(source_text, 'status_detail', 'safe status detail payload')
     assert_contains(source_text, 'checkpoint_summary', 'checkpoint summary payload')
     assert_contains(source_text, 'waiting_for_retry', 'scheduled retry status payload')
     assert_contains(source_text, 'retry_delay_seconds', 'retry delay status payload')
     assert_contains(source_text, 'Background scheduler scan result', 'scheduler scan diagnostics')
 
+    simplechat_operations_source = read_text(APP_ROOT / 'functions_simplechat_operations.py')
+    assert_contains(simplechat_operations_source, 'artifact_idempotency_key', 'idempotent artifact key')
+    assert_contains(simplechat_operations_source, 'uuid.uuid5', 'deterministic artifact message identity')
+
 
 def test_background_runner_bounded_batch_concurrency():
     """Validate Phase 4 bounded model-batch concurrency in the background runner."""
     source_text = read_text(EXPORT_MODULE)
-    assert_contains(source_text, 'TABULAR_EXPORT_DEFAULT_BATCH_CONCURRENCY = 2', 'default batch concurrency')
+    assert_contains(source_text, 'TABULAR_EXPORT_DEFAULT_BATCH_CONCURRENCY = 3', 'default batch concurrency')
     assert_contains(source_text, 'TABULAR_EXPORT_MAX_BATCH_CONCURRENCY = 5', 'maximum batch concurrency')
+    assert_contains(source_text, 'TABULAR_EXPORT_DEFAULT_BATCH_TIMEOUT_SECONDS = 300', 'bounded batch timeout')
     assert_contains(source_text, 'tabular_generated_output_batch_concurrency', 'settings override for batch concurrency')
+    assert_contains(source_text, 'tabular_generated_output_batch_timeout_seconds', 'settings override for batch timeout')
     assert_contains(source_text, '_generate_batch_window_entries', 'async batch window generation helper')
     assert_contains(source_text, 'asyncio.Semaphore', 'bounded async batch semaphore')
     assert_contains(source_text, 'asyncio.gather(*tasks, return_exceptions=True)', 'bounded window gather with exception capture')
+    assert_contains(source_text, 'asyncio.wait_for(', 'bounded model-call timeout')
     assert_contains(source_text, '_checkpoint_generated_batch_results', 'checkpoint successful concurrent batches')
     assert_contains(source_text, '_advance_run_progress_for_window', 'contiguous progress advancement after batch window')
     assert_contains(source_text, 'Building background structured export batch window', 'batch window diagnostics')
+
+
+def test_background_batch_timeout_prevents_indefinite_model_wait():
+    """A stalled model call must fail as retryable timeout before a worker can hang indefinitely."""
+    module_tree = parse_python(EXPORT_MODULE)
+    helper_node = get_function(module_tree, '_generate_batch_entries')
+    if helper_node is None:
+        raise AssertionError('_generate_batch_entries was not found')
+
+    class FakeChatHistory:
+        def add_system_message(self, _message):
+            return None
+
+        def add_user_message(self, _message):
+            return None
+
+    class FakeExecutionSettings:
+        def __init__(self, service_id):
+            self.service_id = service_id
+
+    class SlowChatService:
+        async def get_chat_message_contents(self, _history, _settings):
+            await asyncio.sleep(0.01)
+            return []
+
+    namespace = {
+        'asyncio': asyncio,
+        'SKChatHistory': FakeChatHistory,
+        'AzureChatPromptExecutionSettings': FakeExecutionSettings,
+        'TABULAR_EXPORT_DEFAULT_BATCH_TIMEOUT_SECONDS': 300,
+        '_safe_float': lambda value, default=0.0: float(value) if value is not None else default,
+        '_build_batch_prompt': lambda *args, **kwargs: 'test prompt',
+    }
+    extracted_module = ast.Module(body=[helper_node], type_ignores=[])
+    ast.fix_missing_locations(extracted_module)
+    exec(compile(extracted_module, str(EXPORT_MODULE), 'exec'), namespace)
+
+    try:
+        asyncio.run(
+            namespace['_generate_batch_entries'](
+                SlowChatService(),
+                'Create a CSV.',
+                [{'name': 'Example'}],
+                0,
+                1,
+                'example.csv',
+                '',
+                1,
+                'run-1',
+                batch_timeout_seconds=0.001,
+            )
+        )
+    except TimeoutError as exc:
+        assert 'timed out after' in str(exc), exc
+    else:
+        raise AssertionError('Expected a stalled background model call to time out')
 
 
 def test_chat_route_wires_background_exports():
@@ -138,7 +216,9 @@ def test_chat_route_wires_background_exports():
     assert_contains(source_text, 'build_background_tabular_generated_output_metadata', 'background metadata handoff')
     assert_contains(source_text, "'/api/tabular/generated-output/runs/<run_id>'", 'run status API route')
     assert_contains(source_text, "'/api/tabular/generated-output/runs/<run_id>/resume'", 'run resume API route')
+    assert_contains(source_text, "'/api/tabular/generated-output/runs/<run_id>/cancel'", 'run cancel API route')
     assert_contains(source_text, 'resume_tabular_generated_output_run', 'manual resume route helper')
+    assert_contains(source_text, 'cancel_tabular_generated_output_run', 'cancel route helper')
     assert_contains(source_text, '@swagger_route(security=get_auth_security())', 'secured status route decorator')
     assert_contains(source_text, "output_metadata.get('background_export')", 'background assistant handoff message')
 
@@ -185,13 +265,17 @@ def test_chat_ui_renders_and_polls_background_exports():
     assert_contains(source_text, 'refreshBackgroundGeneratedOutputStatus', 'status refresh function')
     assert_contains(source_text, 'continueBackgroundGeneratedOutputRun', 'manual continue function')
     assert_contains(source_text, 'generated-tabular-continue-btn', 'manual continue button')
+    assert_contains(source_text, 'generated-tabular-cancel-btn', 'cancel button')
     assert_contains(source_text, '/resume', 'manual resume endpoint call')
+    assert_contains(source_text, '/cancel', 'cancel endpoint call')
     assert_contains(source_text, 'formatGeneratedOutputTimestamp', 'localized status timestamps')
     assert_contains(source_text, 'formatGeneratedOutputDuration', 'readable retry and ETA durations')
     assert_contains(source_text, 'shouldPollBackgroundGeneratedOutput', 'retry-aware polling guard')
     assert_contains(source_text, 'status_detail', 'safe status detail rendering')
     assert_contains(source_text, '/api/tabular/generated-output/runs/', 'status polling endpoint')
     assert_contains(source_text, 'textContent', 'safe text rendering boundary')
+    if 'generated-tabular-refresh-status-btn' in source_text or 'Refresh Status' in source_text:
+        raise AssertionError('Background export cards must rely on automatic polling without a manual refresh button')
 
 
 def main():
@@ -199,6 +283,7 @@ def main():
     tests = [
         test_export_runner_module,
         test_background_runner_bounded_batch_concurrency,
+        test_background_batch_timeout_prevents_indefinite_model_wait,
         test_chat_route_wires_background_exports,
         test_generated_export_batch_packing_phase_three,
         test_background_scheduler_and_config_registered,

@@ -13,15 +13,18 @@ import io
 import json
 import logging
 import re
+import tempfile
 import warnings
 import pandas
+from azure.core import MatchConditions
 from flask import g, has_request_context
 from typing import Annotated, Dict, List, Optional, Set
 from urllib.parse import urlsplit, urlunsplit
 from semantic_kernel.functions import kernel_function
-from semantic_kernel_plugins.plugin_invocation_logger import plugin_function_logger
+from semantic_kernel_plugins.plugin_invocation_logger import PluginInvocationResult, plugin_function_logger
 from functions_appinsights import log_event
 from functions_authentication import get_current_user_id
+from functions_tabular_csv_query import iter_tabular_csv_query_rows
 from functions_group import find_group_by_id, get_user_role_in_group
 from functions_public_workspaces import get_user_visible_public_workspace_ids_from_settings
 from config import (
@@ -124,6 +127,7 @@ class TabularProcessingPlugin:
         self._df_cache = {}  # Per-instance cache: (container, blob_name, sheet_name) -> DataFrame
         self._blob_data_cache = {}  # Per-instance cache: (container, blob_name) -> raw bytes
         self._workbook_metadata_cache = {}  # Per-instance cache: (container, blob_name) -> workbook metadata
+        self._blob_version_cache = {}  # Per-instance cache: (container, blob_name) -> immutable blob version metadata
         self._default_sheet_overrides = {}  # (container, blob_name) -> default sheet name
         self._resolved_blob_location_overrides = {}  # (source, filename) -> (container, blob_name)
 
@@ -230,6 +234,14 @@ class TabularProcessingPlugin:
             for workspace_id in (authorized_context.get('active_public_workspace_ids') or [])
             if str(workspace_id or '').strip()
         ]
+        authorized_blob_locations = [
+            [str(location[0]), str(location[1])]
+            for location in authorized_context.get('authorized_blob_locations') or []
+            if isinstance(location, (list, tuple))
+            and len(location) == 2
+            and str(location[0] or '').strip()
+            and str(location[1] or '').strip()
+        ]
 
         return {
             'user_id': authorized_user_id,
@@ -240,6 +252,7 @@ class TabularProcessingPlugin:
             'active_public_workspace_id': (
                 str(authorized_context.get('active_public_workspace_id') or '').strip() or None
             ),
+            'authorized_blob_locations': authorized_blob_locations,
         }
 
     def _resolve_authorized_scope_arguments(
@@ -258,7 +271,7 @@ class TabularProcessingPlugin:
 
         if requested_user_id and requested_user_id != authorized_context['user_id']:
             log_event(
-                '[TabularProcessingPlugin] Ignoring mismatched user_id in tool call.',
+                '[TABULAR_PROCESSING_PLUGIN] Ignoring mismatched user_id in tool call.',
                 extra={
                     'requested_user_id': requested_user_id,
                     'authorized_user_id': authorized_context['user_id'],
@@ -268,7 +281,7 @@ class TabularProcessingPlugin:
 
         if requested_conversation_id and requested_conversation_id != authorized_context['conversation_id']:
             log_event(
-                '[TabularProcessingPlugin] Ignoring mismatched conversation_id in tool call.',
+                '[TABULAR_PROCESSING_PLUGIN] Ignoring mismatched conversation_id in tool call.',
                 extra={
                     'requested_conversation_id': requested_conversation_id,
                     'authorized_conversation_id': authorized_context['conversation_id'],
@@ -342,6 +355,14 @@ class TabularProcessingPlugin:
 
     def _is_authorized_blob_location(self, container_name: str, blob_path: str, authorized_context: dict) -> bool:
         """Ensure remembered blob locations still fall within the caller's authorized request scope."""
+        exact_authorized_locations = {
+            (str(location[0]), str(location[1]))
+            for location in authorized_context.get('authorized_blob_locations') or []
+            if isinstance(location, (list, tuple)) and len(location) == 2
+        }
+        if (str(container_name or ''), str(blob_path or '')) in exact_authorized_locations:
+            return True
+
         source = self._infer_source_from_container(container_name)
         blob_parts = [part for part in str(blob_path or '').split('/') if part]
         if not source or not blob_parts:
@@ -392,10 +413,44 @@ class TabularProcessingPlugin:
 
         client = self._get_blob_service_client()
         blob_client = client.get_blob_client(container=container_name, blob=blob_name)
-        stream = blob_client.download_blob()
+        blob_version = self._get_tabular_blob_version(
+            container_name,
+            blob_name,
+            refresh=True,
+        )
+        stream = blob_client.download_blob(
+            etag=blob_version['blob_etag'],
+            match_condition=MatchConditions.IfNotModified,
+        )
         data = stream.readall()
         self._blob_data_cache[cache_key] = data
         return data
+
+    def _get_tabular_blob_version(self, container_name: str, blob_name: str, refresh: bool = False) -> dict:
+        """Return the exact blob version used by this plugin instance."""
+        cache_key = (container_name, blob_name)
+        if not refresh and cache_key in self._blob_version_cache:
+            return dict(self._blob_version_cache[cache_key])
+
+        blob_client = self._get_blob_service_client().get_blob_client(
+            container=container_name,
+            blob=blob_name,
+        )
+        blob_properties = blob_client.get_blob_properties()
+        blob_etag = getattr(blob_properties, 'etag', None)
+        blob_size = getattr(blob_properties, 'size', None)
+        if isinstance(blob_properties, dict):
+            blob_etag = blob_etag or blob_properties.get('etag')
+            blob_size = blob_size if blob_size is not None else blob_properties.get('size')
+        if not blob_etag:
+            raise ValueError('Tabular source version could not be determined')
+
+        blob_version = {
+            'blob_etag': str(blob_etag),
+            'blob_size': int(blob_size or 0),
+        }
+        self._blob_version_cache[cache_key] = blob_version
+        return dict(blob_version)
 
     def _get_excel_engine(self, blob_name: str) -> Optional[str]:
         """Return the pandas Excel engine for a workbook, or None for CSV files."""
@@ -811,7 +866,7 @@ class TabularProcessingPlugin:
             return None
 
         log_event(
-            f"[TabularProcessingPlugin] Cross-sheet filter_rows: "
+            f"[TABULAR_PROCESSING_PLUGIN] Cross-sheet filter_rows: "
             f"searched {len(sheets_searched)} sheets, "
             f"matched on {len(sheets_matched)} ({sheets_matched}), "
             f"total_matches={total_matches}",
@@ -972,7 +1027,7 @@ class TabularProcessingPlugin:
             return None
 
         log_event(
-            f"[TabularProcessingPlugin] Cross-sheet search_rows: "
+            f"[TABULAR_PROCESSING_PLUGIN] Cross-sheet search_rows: "
             f"searched {len(sheets_searched)} sheets, "
             f"matched on {len(sheets_matched)} ({sheets_matched}), "
             f"total_matches={total_matches}",
@@ -1100,7 +1155,7 @@ class TabularProcessingPlugin:
             return None
 
         log_event(
-            f"[TabularProcessingPlugin] Cross-sheet lookup_value: "
+            f"[TABULAR_PROCESSING_PLUGIN] Cross-sheet lookup_value: "
             f"searched {len(sheets_searched)} sheets, "
             f"matched on {len(sheets_matched)} ({sheets_matched}), "
             f"total_matches={total_matches}",
@@ -1224,7 +1279,7 @@ class TabularProcessingPlugin:
             return None
 
         log_event(
-            f"[TabularProcessingPlugin] Cross-sheet query_tabular_data: "
+            f"[TABULAR_PROCESSING_PLUGIN] Cross-sheet query_tabular_data: "
             f"searched {len(sheets_searched)} sheets, "
             f"matched on {len(sheets_matched)} ({sheets_matched}), "
             f"total_matches={total_matches}",
@@ -3374,7 +3429,7 @@ class TabularProcessingPlugin:
             try:
                 blob_client = client.get_blob_client(container=container, blob=blob_path)
                 if blob_client.exists():
-                    log_event(f"[TabularProcessingPlugin] Found blob at {container}/{blob_path}", level=logging.DEBUG)
+                    log_event(f"[TABULAR_PROCESSING_PLUGIN] Found blob at {container}/{blob_path}", level=logging.DEBUG)
                     return container, blob_path
             except Exception:
                 continue
@@ -3383,6 +3438,169 @@ class TabularProcessingPlugin:
         if attempts:
             return attempts[0]
         raise ValueError(f"Could not resolve blob location for {filename}")
+
+    def build_generated_export_query_descriptor(
+        self,
+        user_id: str,
+        conversation_id: str,
+        filename: str,
+        query_expression: str,
+        source: str = 'chat',
+        return_columns: Optional[str] = None,
+        group_id: Optional[str] = None,
+        public_workspace_id: Optional[str] = None,
+        expected_row_count: int = 0,
+    ) -> dict:
+        """Resolve an authorized, version-pinned CSV query for durable export replay."""
+        container_name, blob_path = self._resolve_blob_location_with_fallback(
+            user_id,
+            conversation_id,
+            filename,
+            source,
+            group_id=group_id,
+            public_workspace_id=public_workspace_id,
+        )
+        return self._build_generated_export_query_descriptor_from_location(
+            container_name=container_name,
+            blob_path=blob_path,
+            filename=filename,
+            query_expression=query_expression,
+            return_columns=return_columns,
+            expected_row_count=expected_row_count,
+        )
+
+    def _build_generated_export_query_descriptor_from_location(
+        self,
+        container_name: str,
+        blob_path: str,
+        filename: str,
+        query_expression: str,
+        return_columns: Optional[str] = None,
+        expected_row_count: int = 0,
+        blob_version: Optional[dict] = None,
+    ) -> dict:
+        """Pin a durable query descriptor to an already-authorized blob location."""
+        if not str(blob_path or '').lower().endswith('.csv'):
+            raise ValueError('Durable source-backed generated exports currently require a CSV source')
+
+        blob_version = dict(blob_version or self._get_tabular_blob_version(container_name, blob_path))
+        blob_etag = blob_version.get('blob_etag')
+        blob_size = blob_version.get('blob_size')
+
+        resolved_source = self._infer_source_from_container(container_name)
+        blob_parts = [part for part in str(blob_path or '').split('/') if part]
+        scope_id = blob_parts[0] if resolved_source in {'group', 'public'} and blob_parts else None
+        return {
+            'version': 1,
+            'kind': 'query_tabular_data',
+            'source': resolved_source,
+            'scope_id': scope_id,
+            'container': container_name,
+            'blob_path': blob_path,
+            'blob_etag': str(blob_etag),
+            'blob_size': int(blob_size or 0),
+            'filename': str(filename or '').strip(),
+            'query_expression': str(query_expression or '').strip(),
+            'return_columns': return_columns,
+            'expected_row_count': max(0, int(expected_row_count or 0)),
+        }
+
+    def _build_source_authorization_from_location(
+        self,
+        container_name: str,
+        blob_path: str,
+        blob_version: Optional[dict] = None,
+    ) -> dict:
+        """Build exact server-only scope metadata for later worker revalidation."""
+        resolved_source = self._infer_source_from_container(container_name)
+        blob_parts = [part for part in str(blob_path or '').split('/') if part]
+        scope_id = blob_parts[0] if resolved_source in {'group', 'public'} and blob_parts else None
+        return {
+            'source': resolved_source,
+            'scope_id': scope_id,
+            'container': container_name,
+            'blob_path': blob_path,
+            'blob_etag': (blob_version or self._get_tabular_blob_version(container_name, blob_path)).get(
+                'blob_etag'
+            ),
+        }
+
+    def _query_csv_data_in_bounded_chunks(
+        self,
+        container_name: str,
+        blob_path: str,
+        filename: str,
+        query_expression: str,
+        return_columns: Optional[str],
+        start_row,
+        max_rows,
+    ) -> PluginInvocationResult:
+        """Execute foreground CSV pagination through the durable replay query engine."""
+        start, limit = self._parse_row_page_arguments(start_row, max_rows)
+        replay_stats = {'used_reviewer_style_fallback': False}
+        matched_row_count = 0
+        page_rows = []
+        blob_client = self._get_blob_service_client().get_blob_client(
+            container=container_name,
+            blob=blob_path,
+        )
+        blob_version = self._get_tabular_blob_version(
+            container_name,
+            blob_path,
+            refresh=True,
+        )
+        with tempfile.SpooledTemporaryFile(max_size=1024 * 1024, mode='w+b') as source_stream:
+            blob_client.download_blob(
+                etag=blob_version['blob_etag'],
+                match_condition=MatchConditions.IfNotModified,
+            ).readinto(source_stream)
+            source_stream.seek(0)
+            for _, source_row in iter_tabular_csv_query_rows(
+                csv_stream=source_stream,
+                query_expression=query_expression,
+                return_columns=return_columns,
+                source_chunk_rows=1000,
+                tabular_plugin=self,
+                replay_stats=replay_stats,
+            ):
+                if start <= matched_row_count < start + limit:
+                    page_rows.append(source_row)
+                matched_row_count += 1
+
+        response_payload = {
+            'filename': filename,
+            'selected_sheet': None,
+            'query_expression': query_expression,
+            'query_expression_fallback': replay_stats['used_reviewer_style_fallback'],
+            'total_matches': matched_row_count,
+        }
+        response_payload.update(self._build_tabular_row_page_payload(
+            page_rows,
+            matched_row_count,
+            start_row=start,
+            max_rows=limit,
+            return_columns=self._parse_optional_column_list_argument(return_columns),
+        ))
+        source_descriptor = self._build_generated_export_query_descriptor_from_location(
+            container_name=container_name,
+            blob_path=blob_path,
+            filename=filename,
+            query_expression=query_expression,
+            return_columns=return_columns,
+            expected_row_count=matched_row_count,
+            blob_version=blob_version,
+        )
+        return PluginInvocationResult(
+            json.dumps(response_payload, indent=2, default=str),
+            internal_metadata={
+                'tabular_generated_export_source': source_descriptor,
+                'tabular_source_authorization': self._build_source_authorization_from_location(
+                    container_name,
+                    blob_path,
+                    blob_version=blob_version,
+                ),
+            },
+        )
 
     @kernel_function(
         description=(
@@ -3411,7 +3629,7 @@ class TabularProcessingPlugin:
             )
         except PermissionError as exc:
             log_event(
-                f"[TabularProcessingPlugin] Denied tabular file listing: {exc}",
+                f"[TABULAR_PROCESSING_PLUGIN] Denied tabular file listing: {exc}",
                 level=logging.WARNING,
                 extra={
                     'requested_group_id': group_id,
@@ -3447,7 +3665,7 @@ class TabularProcessingPlugin:
                         "sheet_count": workbook_metadata.get('sheet_count', 0),
                     })
             except Exception as e:
-                log_event(f"[TabularProcessingPlugin] Error listing workspace blobs: {e}", level=logging.WARNING)
+                log_event(f"[TABULAR_PROCESSING_PLUGIN] Error listing workspace blobs: {e}", level=logging.WARNING)
 
             try:
                 chat_prefix = f"{user_id}/{conversation_id}/"
@@ -3469,7 +3687,7 @@ class TabularProcessingPlugin:
                         "sheet_count": workbook_metadata.get('sheet_count', 0),
                     })
             except Exception as e:
-                log_event(f"[TabularProcessingPlugin] Error listing chat blobs: {e}", level=logging.WARNING)
+                log_event(f"[TABULAR_PROCESSING_PLUGIN] Error listing chat blobs: {e}", level=logging.WARNING)
 
             if group_id:
                 try:
@@ -3492,7 +3710,7 @@ class TabularProcessingPlugin:
                             "sheet_count": workbook_metadata.get('sheet_count', 0),
                         })
                 except Exception as e:
-                    log_event(f"[TabularProcessingPlugin] Error listing group blobs: {e}", level=logging.WARNING)
+                    log_event(f"[TABULAR_PROCESSING_PLUGIN] Error listing group blobs: {e}", level=logging.WARNING)
 
             if public_workspace_id:
                 try:
@@ -3515,7 +3733,7 @@ class TabularProcessingPlugin:
                             "sheet_count": workbook_metadata.get('sheet_count', 0),
                         })
                 except Exception as e:
-                    log_event(f"[TabularProcessingPlugin] Error listing public blobs: {e}", level=logging.WARNING)
+                    log_event(f"[TABULAR_PROCESSING_PLUGIN] Error listing public blobs: {e}", level=logging.WARNING)
 
             return json.dumps(results, indent=2)
         return await asyncio.to_thread(_sync_work)
@@ -3579,7 +3797,7 @@ class TabularProcessingPlugin:
 
                 return json.dumps(summary, indent=2, default=str)
             except Exception as e:
-                log_event(f"[TabularProcessingPlugin] Error describing file: {e}", level=logging.WARNING)
+                log_event(f"[TABULAR_PROCESSING_PLUGIN] Error describing file: {e}", level=logging.WARNING)
                 return json.dumps({"error": str(e)})
         return await asyncio.to_thread(_sync_work)
 
@@ -3711,7 +3929,7 @@ class TabularProcessingPlugin:
 
                 return json.dumps(response, indent=2, default=str)
             except Exception as e:
-                log_event(f"[TabularProcessingPlugin] Error looking up value: {e}", level=logging.WARNING)
+                log_event(f"[TABULAR_PROCESSING_PLUGIN] Error looking up value: {e}", level=logging.WARNING)
                 return json.dumps({"error": str(e)})
         return await asyncio.to_thread(_sync_work)
 
@@ -3883,7 +4101,7 @@ class TabularProcessingPlugin:
                     })
                 return json.dumps(response_payload, indent=2, default=str)
             except Exception as e:
-                log_event(f"[TabularProcessingPlugin] Error getting distinct values: {e}", level=logging.WARNING)
+                log_event(f"[TABULAR_PROCESSING_PLUGIN] Error getting distinct values: {e}", level=logging.WARNING)
                 return json.dumps({"error": str(e)})
 
         return await asyncio.to_thread(_sync_work)
@@ -4003,7 +4221,7 @@ class TabularProcessingPlugin:
                     'normalize_match': normalize_match_flag,
                 }, indent=2, default=str)
             except Exception as e:
-                log_event(f"[TabularProcessingPlugin] Error counting rows: {e}", level=logging.WARNING)
+                log_event(f"[TABULAR_PROCESSING_PLUGIN] Error counting rows: {e}", level=logging.WARNING)
                 return json.dumps({"error": str(e)})
 
         return await asyncio.to_thread(_sync_work)
@@ -4096,7 +4314,7 @@ class TabularProcessingPlugin:
                     "result": result,
                 }, indent=2, default=str)
             except Exception as e:
-                log_event(f"[TabularProcessingPlugin] Error aggregating column: {e}", level=logging.WARNING)
+                log_event(f"[TABULAR_PROCESSING_PLUGIN] Error aggregating column: {e}", level=logging.WARNING)
                 return json.dumps({"error": str(e)})
         return await asyncio.to_thread(_sync_work)
 
@@ -4235,7 +4453,7 @@ class TabularProcessingPlugin:
                 ))
                 return json.dumps(response_payload, indent=2, default=str)
             except Exception as e:
-                log_event(f"[TabularProcessingPlugin] Error filtering rows: {e}", level=logging.WARNING)
+                log_event(f"[TABULAR_PROCESSING_PLUGIN] Error filtering rows: {e}", level=logging.WARNING)
                 return json.dumps({"error": str(e)})
         return await asyncio.to_thread(_sync_work)
 
@@ -4425,7 +4643,7 @@ class TabularProcessingPlugin:
                     'data': search_result['data'],
                 }, indent=2, default=str)
             except Exception as e:
-                log_event(f"[TabularProcessingPlugin] Error searching rows: {e}", level=logging.WARNING)
+                log_event(f"[TABULAR_PROCESSING_PLUGIN] Error searching rows: {e}", level=logging.WARNING)
                 return json.dumps({"error": str(e)})
 
         return await asyncio.to_thread(_sync_work)
@@ -4462,6 +4680,16 @@ class TabularProcessingPlugin:
                     user_id, conversation_id, filename, source,
                     group_id=group_id, public_workspace_id=public_workspace_id
                 )
+                if str(blob_path or '').lower().endswith('.csv'):
+                    return self._query_csv_data_in_bounded_chunks(
+                        container_name=container,
+                        blob_path=blob_path,
+                        filename=filename,
+                        query_expression=query_expression,
+                        return_columns=return_columns,
+                        start_row=start_row,
+                        max_rows=max_rows,
+                    )
                 # When no explicit sheet_name is given, try cross-sheet query first
                 normalized_sheet = (sheet_name or '').strip()
                 normalized_sheet_idx = None if sheet_index is None else str(sheet_index).strip()
@@ -4510,9 +4738,33 @@ class TabularProcessingPlugin:
                     max_rows=limit,
                     return_columns=parsed_return_columns,
                 ))
-                return json.dumps(response_payload, indent=2, default=str)
+                response_json = json.dumps(response_payload, indent=2, default=str)
+                source_blob_version = self._get_tabular_blob_version(container, blob_path)
+                internal_metadata = {
+                    'tabular_source_authorization': self._build_source_authorization_from_location(
+                        container,
+                        blob_path,
+                        blob_version=source_blob_version,
+                    ),
+                }
+                if str(blob_path or '').lower().endswith('.csv'):
+                    internal_metadata['tabular_generated_export_source'] = (
+                        self._build_generated_export_query_descriptor_from_location(
+                            container_name=container,
+                            blob_path=blob_path,
+                            filename=filename,
+                            query_expression=query_expression,
+                            return_columns=return_columns,
+                            expected_row_count=len(result_df),
+                            blob_version=source_blob_version,
+                        )
+                    )
+                return PluginInvocationResult(
+                    response_json,
+                    internal_metadata=internal_metadata,
+                )
             except Exception as e:
-                log_event(f"[TabularProcessingPlugin] Error querying data: {e}", level=logging.WARNING)
+                log_event(f"[TABULAR_PROCESSING_PLUGIN] Error querying data: {e}", level=logging.WARNING)
                 return json.dumps({"error": f"Query error: {str(e)}. Ensure column names and values are correct."})
         return await asyncio.to_thread(_sync_work)
 
@@ -4588,7 +4840,7 @@ class TabularProcessingPlugin:
                 )
                 return json.dumps(result_payload, indent=2, default=str)
             except Exception as e:
-                log_event(f"[TabularProcessingPlugin] Error filtering rows by related values: {e}", level=logging.WARNING)
+                log_event(f"[TABULAR_PROCESSING_PLUGIN] Error filtering rows by related values: {e}", level=logging.WARNING)
                 return json.dumps({"error": str(e)})
 
         return await asyncio.to_thread(_sync_work)
@@ -4665,7 +4917,7 @@ class TabularProcessingPlugin:
                     result_payload.pop('rows_limited', None)
                 return json.dumps(result_payload, indent=2, default=str)
             except Exception as e:
-                log_event(f"[TabularProcessingPlugin] Error counting rows by related values: {e}", level=logging.WARNING)
+                log_event(f"[TABULAR_PROCESSING_PLUGIN] Error counting rows by related values: {e}", level=logging.WARNING)
                 return json.dumps({"error": str(e)})
 
         return await asyncio.to_thread(_sync_work)
@@ -4764,7 +5016,7 @@ class TabularProcessingPlugin:
                     **summary,
                 }, indent=2, default=str)
             except Exception as e:
-                log_event(f"[TabularProcessingPlugin] Error in group-by: {e}", level=logging.WARNING)
+                log_event(f"[TABULAR_PROCESSING_PLUGIN] Error in group-by: {e}", level=logging.WARNING)
                 return json.dumps({"error": str(e)})
         return await asyncio.to_thread(_sync_work)
 
@@ -4920,6 +5172,6 @@ class TabularProcessingPlugin:
                     **summary,
                 }, indent=2, default=str)
             except Exception as e:
-                log_event(f"[TabularProcessingPlugin] Error in datetime component grouping: {e}", level=logging.WARNING)
+                log_event(f"[TABULAR_PROCESSING_PLUGIN] Error in datetime component grouping: {e}", level=logging.WARNING)
                 return json.dumps({"error": str(e)})
         return await asyncio.to_thread(_sync_work)

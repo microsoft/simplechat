@@ -313,7 +313,7 @@ def register_route_backend_public_documents(bp):
                         )
                     except Exception as shadow_error:
                         log_event(
-                            '[DocumentAccessIndex] Shadow validation source query failed after DAI read succeeded.',
+                            '[DOCUMENT_ACCESS_INDEX] Shadow validation source query failed after DAI read succeeded.',
                             extra={'source_scope': DOCUMENT_ACCESS_SCOPE_PUBLIC, 'error': str(shadow_error)},
                             level=logging.WARNING,
                             exceptionTraceback=True,
@@ -345,7 +345,7 @@ def register_route_backend_public_documents(bp):
             docs = current_docs[offset:offset + page_size]
         except Exception as e:
             log_event(
-                '[PublicDocuments] Error fetching public documents.',
+                '[PUBLIC_DOCUMENTS] Error fetching public documents.',
                 extra={'public_workspace_id': active_ws, 'error': str(e)},
                 level=logging.ERROR,
             )
@@ -443,7 +443,7 @@ def register_route_backend_public_documents(bp):
                         )
                     except Exception as shadow_error:
                         log_event(
-                            '[DocumentAccessIndex] Shadow validation source query failed after DAI read succeeded.',
+                            '[DOCUMENT_ACCESS_INDEX] Shadow validation source query failed after DAI read succeeded.',
                             extra={'source_scope': DOCUMENT_ACCESS_SCOPE_PUBLIC, 'error': str(shadow_error)},
                             level=logging.WARNING,
                             exceptionTraceback=True,
@@ -468,7 +468,7 @@ def register_route_backend_public_documents(bp):
                 )
         except Exception as e:
             log_event(
-                '[PublicDocuments] Error fetching public workspace chat documents.',
+                '[PUBLIC_DOCUMENTS] Error fetching public workspace chat documents.',
                 extra={'workspace_count': len(workspace_ids), 'error': str(e)},
                 level=logging.ERROR,
             )
@@ -578,7 +578,7 @@ def register_route_backend_public_documents(bp):
             return jsonify({'error': str(exc)}), 404
         except Exception as exc:
             log_event(
-                '[DocumentDownload] Failed public document download',
+                '[DOCUMENT_DOWNLOAD] Failed public document download',
                 {'document_id': doc_id, 'public_workspace_id': active_ws, 'error': str(exc)},
                 debug_only=True,
             )
@@ -636,7 +636,7 @@ def register_route_backend_public_documents(bp):
             return jsonify({'error': str(exc)}), 404
         except Exception as exc:
             log_event(
-                '[DocumentDownload] Failed public document ZIP download',
+                '[DOCUMENT_DOWNLOAD] Failed public document ZIP download',
                 {'public_workspace_id': active_ws, 'document_count': len(documents), 'error': str(exc)},
                 debug_only=True,
             )
@@ -1018,6 +1018,81 @@ def register_route_backend_public_documents(bp):
         executor = current_app.extensions['executor']
         executor.submit(process_metadata_extraction_background, document_id=doc_id, user_id=user_id, public_workspace_id=active_ws)
         return jsonify({'message':'Extraction queued'}), 200
+
+    @bp.route('/api/public_documents/extract_metadata', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required('enable_public_workspaces')
+    def api_extract_metadata_public_documents_batch():
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+
+        settings = get_settings()
+        if not settings.get('enable_extract_meta_data'):
+            return jsonify({'error': 'Metadata extraction not enabled'}), 403
+
+        active_ws, ws_doc, _role, error_response = _require_active_public_workspace_response(
+            user_id,
+            PUBLIC_WORKSPACE_MANAGER_ROLES,
+        )
+        if error_response:
+            return error_response
+
+        allowed, reason = check_public_workspace_status_allows_operation(ws_doc, 'upload')
+        if not allowed:
+            return jsonify({'error': reason}), 403
+
+        payload = request.get_json(silent=True) or {}
+        document_ids = payload.get('document_ids')
+        if not isinstance(document_ids, list):
+            doc_id = payload.get('document_id')
+            document_ids = [doc_id] if doc_id else []
+        document_ids = list(dict.fromkeys(
+            str(document_id).strip()
+            for document_id in document_ids
+            if str(document_id or '').strip()
+        ))
+        if not document_ids:
+            return jsonify({'error': 'At least one document ID is required.'}), 400
+
+        queued = []
+        errors = []
+        for document_id in document_ids:
+            try:
+                document_item = get_document_metadata(
+                    document_id=document_id,
+                    user_id=user_id,
+                    public_workspace_id=active_ws,
+                )
+                if not document_item:
+                    errors.append({'document_id': document_id, 'error': 'Document not found.'})
+                    continue
+                if document_item.get('public_workspace_id') != active_ws:
+                    errors.append({'document_id': document_id, 'error': 'Only documents in the active public workspace can have metadata extracted.'})
+                    continue
+
+                current_app.extensions['executor'].submit_stored(
+                    f"{document_id}_public_metadata",
+                    process_metadata_extraction_background,
+                    document_id=document_id,
+                    user_id=user_id,
+                    public_workspace_id=active_ws
+                )
+                queued.append({'document_id': document_id})
+            except Exception as e:
+                errors.append({'document_id': document_id, 'error': str(e)})
+
+        if queued:
+            invalidate_public_workspace_search_cache(active_ws)
+
+        status_code = 202 if queued and not errors else (207 if queued else 400)
+        return jsonify({
+            'message': f'Queued {len(queued)} document(s) for metadata extraction.',
+            'queued': queued,
+            'errors': errors,
+        }), status_code
 
     @bp.route('/api/public_documents/reprocess_extraction', methods=['POST'])
     @swagger_route(security=get_auth_security())

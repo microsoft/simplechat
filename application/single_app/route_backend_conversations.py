@@ -61,9 +61,11 @@ from functions_message_artifacts import (
     hydrate_agent_citations_from_artifacts,
 )
 from functions_simplechat_operations import (
+    ConversationForkConflictError,
     create_personal_conversation_for_current_user,
     delete_blob_backed_chat_message_files,
     derive_conversation_title_from_message,
+    fork_personal_conversation_for_user,
 )
 from swagger_wrapper import swagger_route, get_auth_security
 from functions_activity_logging import log_conversation_creation, log_conversation_deletion, log_conversation_archival
@@ -202,7 +204,7 @@ def _build_conversation_cache_access_parameters(user_id):
         group_docs = get_user_groups(user_id)
     except Exception as exc:
         log_event(
-            f"[ConversationCache] Failed to build group access cache fingerprint for {user_id}: {exc}",
+            f"[CONVERSATION_CACHE] Failed to build group access cache fingerprint for {user_id}: {exc}",
             level=logging.WARNING,
             exceptionTraceback=True,
             debug_only=True,
@@ -249,6 +251,67 @@ def _normalize_workspace_document_delete_ids(raw_document_ids):
         normalized_document_ids.append(document_id)
 
     return normalized_document_ids
+
+
+def _build_replayed_document_context(original_metadata):
+    """Rebuild document-context intent from stored metadata for retry and edit."""
+    metadata = original_metadata if isinstance(original_metadata, dict) else {}
+    workspace_search = metadata.get('workspace_search')
+    if not isinstance(workspace_search, dict):
+        workspace_search = metadata.get('document_search')
+    workspace_search = workspace_search if isinstance(workspace_search, dict) else {}
+
+    selected_document_ids = (
+        workspace_search.get('requested_document_ids')
+        or workspace_search.get('selected_document_ids')
+        or []
+    )
+    if not isinstance(selected_document_ids, list):
+        selected_document_ids = [selected_document_ids]
+    selected_document_ids = [
+        str(document_id or '').strip()
+        for document_id in selected_document_ids
+        if str(document_id or '').strip()
+    ]
+    selected_document_id = str(
+        workspace_search.get('selected_document_id')
+        or workspace_search.get('document_id')
+        or ''
+    ).strip()
+    if selected_document_id and selected_document_id not in selected_document_ids:
+        selected_document_ids.insert(0, selected_document_id)
+
+    selection_mode = str(workspace_search.get('selection_mode') or '').strip().lower()
+    if selection_mode not in {'selected', 'all', 'history', 'relevance'}:
+        selection_mode = 'selected' if selected_document_ids else 'relevance'
+    document_context_requested = workspace_search.get('document_context_requested')
+    if not isinstance(document_context_requested, bool):
+        document_context_requested = bool(
+            workspace_search.get('search_enabled')
+            or workspace_search.get('enabled')
+            or selected_document_ids
+        )
+
+    return {
+        'hybrid_search': bool(
+            workspace_search.get('hybrid_search_preference')
+            if 'hybrid_search_preference' in workspace_search
+            else workspace_search.get('enabled')
+            or workspace_search.get('search_enabled')
+        ),
+        'selection_mode': selection_mode,
+        'document_context_requested': document_context_requested,
+        'selected_document_id': selected_document_ids[0] if selected_document_ids else None,
+        'selected_document_ids': selected_document_ids,
+        'doc_scope': workspace_search.get('document_scope') or workspace_search.get('scope'),
+        'top_n': workspace_search.get('top_n'),
+        'classifications': (
+            workspace_search.get('classification')
+            or workspace_search.get('classifications')
+        ),
+        'active_group_ids': workspace_search.get('active_group_ids') or [],
+        'active_public_workspace_ids': workspace_search.get('active_public_workspace_ids') or [],
+    }
 
 
 def _get_requested_workspace_document_delete_ids_for_conversation(payload, conversation_id):
@@ -653,7 +716,7 @@ def _load_collaboration_conversations_for_feed(user_id):
         unread_by_conversation = _load_unread_collaboration_notification_map(user_id)
     except Exception as exc:
         log_event(
-            f'[ConversationFeed] Failed to load collaboration unread state: {exc}',
+            f'[CONVERSATION_FEED] Failed to load collaboration unread state: {exc}',
             level=logging.WARNING,
             exceptionTraceback=True,
         )
@@ -704,7 +767,7 @@ def _build_conversation_feed(user_id, page_size, source_offsets, include_priorit
         collaboration_conversations = _load_collaboration_conversations_for_feed(user_id)
     except Exception as exc:
         log_event(
-            f'[ConversationFeed] Failed to load collaborative conversations: {exc}',
+            f'[CONVERSATION_FEED] Failed to load collaborative conversations: {exc}',
             level=logging.WARNING,
             exceptionTraceback=True,
         )
@@ -845,7 +908,7 @@ def _invalidate_conversation_cache_after_message_mutation(conversation_id, user_
         conversation_item = _authorize_personal_conversation_read(user_id, conversation_id)
     except Exception as exc:
         log_event(
-            f"[ConversationCache] Failed to load conversation {conversation_id} for message mutation invalidation: {exc}",
+            f"[CONVERSATION_CACHE] Failed to load conversation {conversation_id} for message mutation invalidation: {exc}",
             level=logging.WARNING,
             exceptionTraceback=True,
             debug_only=True,
@@ -981,6 +1044,11 @@ def register_route_backend_conversations(bp):
             all_items = list(cosmos_messages_container.query_items(
                 query=message_query,
                 partition_key=conversation_id
+            ))
+            all_items.sort(key=lambda item: (
+                str(item.get('timestamp') or ''),
+                int(item.get('fork_sequence')) if str(item.get('fork_sequence') or '').isdigit() else 0,
+                str(item.get('id') or ''),
             ))
             artifact_payload_map = build_message_artifact_payload_map(all_items)
             all_items = filter_assistant_artifact_items(all_items)
@@ -1187,7 +1255,7 @@ def register_route_backend_conversations(bp):
             return jsonify(feed_payload), 200
         except Exception as exc:
             log_event(
-                f'[ConversationFeed] Failed to load feed: {exc}',
+                f'[CONVERSATION_FEED] Failed to load feed: {exc}',
                 level=logging.ERROR,
                 exceptionTraceback=True,
             )
@@ -1214,7 +1282,91 @@ def register_route_backend_conversations(bp):
             'conversation_id': conversation_item.get('id'),
             'title': conversation_item.get('title', 'New Conversation')
         }), 200
-    
+
+
+    @bp.route('/api/conversations/<conversation_id>/fork', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def fork_conversation(conversation_id):
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+
+        request_payload = request.get_json(silent=True) or {}
+        selected_message_id = str(request_payload.get('message_id') or '').strip()
+        if not selected_message_id:
+            return jsonify({'error': 'A persisted assistant message is required'}), 400
+
+        try:
+            source_conversation = _authorize_personal_conversation_read(user_id, conversation_id)
+        except PermissionError:
+            return jsonify({'error': 'Forbidden'}), 403
+        except LookupError:
+            return jsonify({'error': 'The source conversation was not found'}), 404
+
+        try:
+            fork_result = fork_personal_conversation_for_user(
+                source_conversation=source_conversation,
+                selected_message_id=selected_message_id,
+                user_id=user_id,
+            )
+            fork_conversation = fork_result['conversation']
+            try:
+                bump_conversation_cache_version(user_id, reason="conversation_forked")
+            except Exception as cache_error:
+                log_event(
+                    f'[CONVERSATION_FORK] Fork created but cache invalidation failed: {cache_error}',
+                    level=logging.WARNING,
+                    extra={
+                        'fork_conversation_id': fork_conversation['id'],
+                        'user_id': user_id,
+                    },
+                )
+            return jsonify({
+                'conversation_id': fork_conversation['id'],
+                'title': fork_conversation['title'],
+                'message_count': fork_result['message_count'],
+            }), 201
+        except LookupError:
+            return jsonify({'error': 'The selected assistant message was not found'}), 404
+        except ValueError as validation_error:
+            log_event(
+                f'[CONVERSATION_FORK] Validation failed while creating conversation fork: {validation_error}',
+                level=logging.WARNING,
+                exceptionTraceback=True,
+                extra={
+                    'source_conversation_id': conversation_id,
+                    'selected_message_id': selected_message_id,
+                    'user_id': user_id,
+                },
+            )
+            return jsonify({'error': 'Invalid request'}), 400
+        except ConversationForkConflictError as conflict_error:
+            log_event(
+                f'[CONVERSATION_FORK] Conflict while creating conversation fork: {conflict_error}',
+                level=logging.WARNING,
+                extra={
+                    'source_conversation_id': conversation_id,
+                    'selected_message_id': selected_message_id,
+                    'user_id': user_id,
+                },
+            )
+            return jsonify({'error': 'Conversation fork conflict'}), 409
+        except Exception as error:
+            log_event(
+                f'[CONVERSATION_FORK] Failed to create conversation fork: {error}',
+                level=logging.ERROR,
+                exceptionTraceback=True,
+                extra={
+                    'source_conversation_id': conversation_id,
+                    'selected_message_id': selected_message_id,
+                    'user_id': user_id,
+                },
+            )
+            return jsonify({'error': 'Failed to fork conversation'}), 500
+
+
     @bp.route('/api/conversations/<conversation_id>', methods=['PUT'])
     @swagger_route(security=get_auth_security())
     @login_required
@@ -1332,13 +1484,13 @@ def register_route_backend_conversations(bp):
                     invalidate_personal_search_cache(conversation_item.get('user_id'))
                 if workspace_delete_result.get('failed_documents'):
                     log_event(
-                        f"[ConversationDelete] Failed to delete some selected linked workspace documents for {conversation_id}",
+                        f"[CONVERSATION_DELETE] Failed to delete some selected linked workspace documents for {conversation_id}",
                         workspace_delete_result,
                         level=logging.WARNING,
                     )
             except Exception as workspace_delete_error:
                 log_event(
-                    f"[ConversationDelete] Failed to delete selected linked workspace documents for {conversation_id}: {workspace_delete_error}",
+                    f"[CONVERSATION_DELETE] Failed to delete selected linked workspace documents for {conversation_id}: {workspace_delete_error}",
                     level=logging.WARNING,
                     exceptionTraceback=True,
                 )
@@ -1743,7 +1895,7 @@ def register_route_backend_conversations(bp):
                 )
             except Exception as linked_documents_error:
                 log_event(
-                    f"[ConversationMetadata] Failed to list linked workspace documents for {conversation_id}: {linked_documents_error}",
+                    f"[CONVERSATION_METADATA] Failed to list linked workspace documents for {conversation_id}: {linked_documents_error}",
                     level=logging.WARNING,
                     exceptionTraceback=True,
                 )
@@ -2267,7 +2419,7 @@ def register_route_backend_conversations(bp):
             
         except Exception as e:
             log_event(
-                f'[ConversationSearch] Failed to search conversations: {e}',
+                f'[CONVERSATION_SEARCH] Failed to search conversations: {e}',
                 level=logging.ERROR,
                 exceptionTraceback=True,
             )
@@ -2750,16 +2902,13 @@ def register_route_backend_conversations(bp):
                 "message_retry_created",
             )
             # Build chat request parameters from original message metadata
+            replayed_document_context = _build_replayed_document_context(original_metadata)
             chat_request = {
                 'message': user_content,
                 'conversation_id': conversation_id,
                 'model_deployment': selected_model or original_metadata.get('model_selection', {}).get('selected_model'),
                 'reasoning_effort': reasoning_effort or original_metadata.get('reasoning_effort'),
-                'hybrid_search': original_metadata.get('document_search', {}).get('enabled', False),
-                'selected_document_id': original_metadata.get('document_search', {}).get('document_id'),
-                'doc_scope': original_metadata.get('document_search', {}).get('scope'),
-                'top_n': original_metadata.get('document_search', {}).get('top_n'),
-                'classifications': original_metadata.get('document_search', {}).get('classifications'),
+                **replayed_document_context,
                 'image_generation': original_metadata.get('image_generation', {}).get('enabled', False),
                 'active_group_id': original_metadata.get('chat_context', {}).get('group_id'),
                 'active_public_workspace_id': original_metadata.get('chat_context', {}).get('public_workspace_id'),
@@ -3012,16 +3161,13 @@ def register_route_backend_conversations(bp):
             )
             # Build chat request parameters from original message metadata
             # Keep all original settings (model, reasoning, doc search, etc.)
+            replayed_document_context = _build_replayed_document_context(original_metadata)
             chat_request = {
                 'message': edited_content,  # Use edited content
                 'conversation_id': conversation_id,
                 'model_deployment': original_metadata.get('model_selection', {}).get('selected_model'),
                 'reasoning_effort': original_metadata.get('reasoning_effort'),
-                'hybrid_search': original_metadata.get('document_search', {}).get('enabled', False),
-                'selected_document_id': original_metadata.get('document_search', {}).get('document_id'),
-                'doc_scope': original_metadata.get('document_search', {}).get('scope'),
-                'top_n': original_metadata.get('document_search', {}).get('top_n'),
-                'classifications': original_metadata.get('document_search', {}).get('classifications'),
+                **replayed_document_context,
                 'image_generation': original_metadata.get('image_generation', {}).get('enabled', False),
                 'active_group_id': original_metadata.get('chat_context', {}).get('group_id'),
                 'active_public_workspace_id': original_metadata.get('chat_context', {}).get('public_workspace_id'),

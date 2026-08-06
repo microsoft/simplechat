@@ -1,5 +1,6 @@
 # app.py
 import builtins
+import bleach
 import logging
 import pickle
 import json
@@ -29,8 +30,10 @@ from semantic_kernel_loader import initialize_semantic_kernel
 from functions_authentication import *
 from functions_content import *
 from functions_documents import *
+from functions_latest_features_nav import should_hide_latest_features_nav
 from functions_search import *
 from functions_settings import *
+from functions_mcp_server_config import is_mcp_ui_enabled
 from functions_appinsights import *
 from functions_activity_logging import *
 
@@ -92,6 +95,7 @@ from route_backend_tts import register_route_backend_tts
 from route_backend_collaboration import register_route_backend_collaboration
 from route_backend_data_management import register_route_backend_data_management
 from route_backend_msgraph_pending_actions import register_route_backend_msgraph_pending_actions
+from route_inbound_mcp import register_route_inbound_mcp
 from route_enhanced_citations import register_enhanced_citations_routes
 from plugin_validation_endpoint import plugin_validation_admin_bp, plugin_validation_bp
 from route_openapi import register_openapi_routes
@@ -100,6 +104,7 @@ from route_plugin_logging import bpl as plugin_logging_bp
 from functions_custom_pages import get_custom_pages_nav
 from functions_debug import debug_print
 from functions_terms_of_use import has_terms_of_use_acceptance
+from functions_mcp_server_auth import inbound_mcp_required_blueprint
 
 from opentelemetry.instrumentation.flask import FlaskInstrumentor
 
@@ -115,6 +120,7 @@ executor = Executor()
 executor.init_app(app)
 app.config['SESSION_TYPE'] = SESSION_TYPE
 app.config['VERSION'] = VERSION
+app.config['IS_DEVELOPMENT'] = IS_DEVELOPMENT
 app.config['SECRET_KEY'] = SECRET_KEY
 app.config['SESSION_COOKIE_SAMESITE'] = SESSION_COOKIE_SAMESITE
 app.config['SESSION_COOKIE_HTTPONLY'] = SESSION_COOKIE_HTTPONLY
@@ -284,7 +290,7 @@ def start_background_tasks():
             print("Background tasks disabled for this web process.")
             _background_tasks_started = True
             return
-        start_background_task_threads()
+        start_background_task_threads(app=app)
         _background_tasks_started = True
 
 
@@ -569,25 +575,36 @@ def inject_settings():
     try:
         custom_pages_nav = get_custom_pages_nav(settings)
     except Exception as e:
-        log_event(f"[CustomPages] Error injecting custom page navigation: {e}", level=logging.ERROR, exceptionTraceback=True)
+        log_event(f"[CUSTOM_PAGES] Error injecting custom page navigation: {e}", level=logging.ERROR, exceptionTraceback=True)
     # Inject per-user settings if logged in
     user_settings = {}
+    latest_features_nav_hidden = IS_DEVELOPMENT
     try:
         user_id = get_current_user_id()
         if user_id:
             from functions_settings import get_user_ui_settings
             user_settings = get_user_ui_settings(user_id) or {}
+            latest_features_nav_hidden = should_hide_latest_features_nav(
+                user_settings,
+                VERSION,
+                is_development=IS_DEVELOPMENT
+            )
     except Exception as e:
         print(f"Error injecting user settings: {e}")
         log_event(f"Error injecting user settings: {e}", level=logging.ERROR)
         user_settings = {}
+        latest_features_nav_hidden = IS_DEVELOPMENT
     return dict(
         app_settings=public_settings,
         user_settings=user_settings,
         custom_pages_nav=custom_pages_nav,
+        latest_features_current_version=VERSION,
+        latest_features_nav_hidden=latest_features_nav_hidden,
+        latest_features_nav_hidden_by_development=IS_DEVELOPMENT,
         idle_timeout_enabled=idle_timeout_enabled,
         idle_timeout_minutes=idle_timeout_minutes,
-        idle_warning_minutes=idle_warning_minutes
+        idle_warning_minutes=idle_warning_minutes,
+        mcp_ui_enabled=is_mcp_ui_enabled()
     )
 
 @app.template_filter('to_datetime')
@@ -602,10 +619,10 @@ def format_datetime_filter(value):
 @app.before_request
 def reload_kernel_if_needed():
     if getattr(builtins, "kernel_reload_needed", False):
-        debug_print(f"[SK Loader] Hot reload: re-initializing Semantic Kernel and agents due to settings change.")
+        debug_print(f"[SK_LOADER] Hot reload: re-initializing Semantic Kernel and agents due to settings change.")
         """Commneted out because hot reload is not fully supported yet.
         log_event(
-            "[SK Loader] Hot reload: re-initializing Semantic Kernel and agents due to settings change.",
+            "[SK_LOADER] Hot reload: re-initializing Semantic Kernel and agents due to settings change.",
             level=logging.INFO
         )
         initialize_semantic_kernel()
@@ -1031,8 +1048,36 @@ def markdown_filter(text):
 
     # Add target="_blank" to all <a> links
     html = re.sub(r'(<a\s+href=["\'](https?://.*?)["\'])', r'\1 target="_blank" rel="noopener noreferrer"', html)
+    allowed_tags = set(bleach.sanitizer.ALLOWED_TAGS).union({
+        'p',
+        'pre',
+        'span',
+        'h1',
+        'h2',
+        'h3',
+        'h4',
+        'h5',
+        'h6',
+        'br',
+        'table',
+        'thead',
+        'tbody',
+        'tr',
+        'th',
+        'td',
+    })
+    allowed_attributes = dict(bleach.sanitizer.ALLOWED_ATTRIBUTES)
+    allowed_attributes['a'] = ['href', 'title', 'target', 'rel']
+    allowed_attributes['*'] = ['class']
+    html = bleach.clean(
+        html,
+        tags=allowed_tags,
+        attributes=allowed_attributes,
+        protocols={'http', 'https', 'mailto'},
+        strip=True,
+    )
 
-    return Markup(html)
+    return Markup(html)  # xss-check: ignore - sanitized with bleach.clean before Markup.
 
 # Add the filter to the Jinja environment
 app.jinja_env.filters['markdown'] = markdown_filter
@@ -1042,8 +1087,8 @@ def nl2br_filter(value):
     """Escape HTML then convert newline characters to <br> tags."""
     from markupsafe import escape, Markup
     if not value:
-        return Markup('')
-    return Markup(str(escape(value)).replace('\n', '<br>\n'))
+        return Markup('')  # xss-check: ignore - static empty safe markup.
+    return Markup(str(escape(value)).replace('\n', '<br>\n'))  # xss-check: ignore - value is escaped before adding static br tags.
 
 app.jinja_env.filters['nl2br'] = nl2br_filter
 
@@ -1281,6 +1326,9 @@ register_route_blueprint('backend_user_agreement', register_route_backend_user_a
 
 # ------------------- API Thoughts Routes ----------------
 register_route_blueprint('backend_thoughts', register_route_backend_thoughts, user_required_blueprint)
+
+# ------------------- Inbound MCP Routes -----------------
+register_route_blueprint('inbound_mcp', register_route_inbound_mcp, inbound_mcp_required_blueprint)
 
 # ------------------- External Health Routes ----------
 register_route_blueprint('external_health', register_route_external_health)

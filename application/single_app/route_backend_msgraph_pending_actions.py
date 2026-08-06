@@ -176,7 +176,7 @@ def register_route_backend_msgraph_pending_actions(bp):
             action, error = approve_msgraph_pending_action(user_id, action_id)
         except Exception as exc:
             log_event(
-                f'[MSGraphPendingActionRoutes] Failed to approve pending action: {exc}',
+                f'[MS_GRAPH_PENDING_ACTION_ROUTES] Failed to approve pending action: {exc}',
                 extra={'user_id': user_id, 'action_id': action_id},
                 level=logging.ERROR,
                 exceptionTraceback=True,
@@ -198,7 +198,7 @@ def register_route_backend_msgraph_pending_actions(bp):
             action, error = approve_msgraph_pending_action(user_id, action_id)
         except Exception as exc:
             log_event(
-                f'[MSGraphPendingActionRoutes] Failed to send pending action now: {exc}',
+                f'[MS_GRAPH_PENDING_ACTION_ROUTES] Failed to send pending action now: {exc}',
                 extra={'user_id': user_id, 'action_id': action_id},
                 level=logging.ERROR,
                 exceptionTraceback=True,
@@ -220,7 +220,7 @@ def register_route_backend_msgraph_pending_actions(bp):
             action, error = cancel_msgraph_pending_action(user_id, action_id)
         except Exception as exc:
             log_event(
-                f'[MSGraphPendingActionRoutes] Failed to cancel pending action: {exc}',
+                f'[MS_GRAPH_PENDING_ACTION_ROUTES] Failed to cancel pending action: {exc}',
                 extra={'user_id': user_id, 'action_id': action_id},
                 level=logging.ERROR,
                 exceptionTraceback=True,

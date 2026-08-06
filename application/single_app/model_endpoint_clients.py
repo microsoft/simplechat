@@ -54,7 +54,15 @@ class ModelEndpointBehavior:
 
     @property
     def is_openai_reasoning_model(self) -> bool:
-        return self.normalized_deployment_name.startswith(OPENAI_REASONING_MODEL_PREFIXES)
+        normalized_model_name = (
+            self.normalized_deployment_name
+            .replace("_", "-")
+            .replace(" ", "-")
+        )
+        return (
+            normalized_model_name.startswith(OPENAI_REASONING_MODEL_PREFIXES)
+            or "gpt-5" in normalized_model_name
+        )
 
     @property
     def is_foundry_non_openai_model(self) -> bool:
@@ -75,6 +83,10 @@ class ModelEndpointBehavior:
         if not normalized_reasoning_effort or normalized_reasoning_effort.lower() == "none":
             return ""
         return normalized_reasoning_effort if self.is_openai_reasoning_model else ""
+
+    @property
+    def response_length_parameter(self) -> str:
+        return "max_completion_tokens" if self.is_openai_reasoning_model else "max_tokens"
 
 
 def normalize_endpoint_text(endpoint: Any) -> str:
@@ -525,7 +537,7 @@ class AnthropicChatCompletionClient:
                 try:
                     event_payload = json.loads(event_data)
                 except json.JSONDecodeError:
-                    debug_print(f"[ModelEndpoint] Ignoring invalid Anthropic stream payload: {event_data[:200]}")
+                    debug_print(f"[MODEL_ENDPOINT] Ignoring invalid Anthropic stream payload: {event_data[:200]}")
                     continue
 
                 event_type = event_payload.get("type")

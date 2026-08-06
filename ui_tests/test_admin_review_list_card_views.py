@@ -1,8 +1,8 @@
 # test_admin_review_list_card_views.py
 """
 UI tests for admin feedback and safety violation list/card views.
-Version: 0.241.032
-Implemented in: 0.241.032
+Version: 0.250.075
+Implemented in: 0.241.032; lifecycle controls extended in 0.250.075
 
 These tests ensure the admin review tables stay compact, card views render
 from the same data, safety category tags hide severity 0 entries, and the
@@ -78,6 +78,7 @@ def _mock_user_lookup(page):
 def test_admin_feedback_compact_list_and_card_view(playwright):
     """Validate feedback list columns, card toggle, and view modal behavior."""
     browser, context, page = _new_admin_page(playwright)
+    lifecycle_requests = []
 
     try:
         _mock_user_lookup(page)
@@ -97,9 +98,9 @@ def test_admin_feedback_compact_list_and_card_view(playwright):
                 },
             ),
         )
-        page.route(
-            "**/feedback/review?*",
-            lambda route: _fulfill_json(
+        def handle_feedback_list(route, request):
+            is_archived = "archive=archived" in request.url
+            _fulfill_json(
                 route,
                 {
                     "feedback": [
@@ -111,6 +112,7 @@ def test_admin_feedback_compact_list_and_card_view(playwright):
                             "aiResponse": "The response was too brief.",
                             "feedbackType": "Negative",
                             "reason": "The answer missed key customer segments.",
+                            "isArchived": is_archived,
                             "adminReview": {
                                 "acknowledged": False,
                                 "analysisNotes": "",
@@ -123,8 +125,38 @@ def test_admin_feedback_compact_list_and_card_view(playwright):
                     "page_size": 10,
                     "total_count": 1,
                 },
-            ),
-        )
+            )
+
+        page.route("**/feedback/review?*", handle_feedback_list)
+
+        def handle_feedback_archive(route, request):
+            lifecycle_requests.append({
+                "method": request.method,
+                "json": request.post_data_json,
+            })
+            _fulfill_json(
+                route,
+                {
+                    "success": True,
+                    "message": "Feedback archived successfully.",
+                    "audit_logged": False,
+                    "audit_warning": "The record was updated, but the audit activity could not be recorded.",
+                },
+            )
+
+        def handle_feedback_delete(route, request):
+            lifecycle_requests.append({"method": request.method})
+            _fulfill_json(
+                route,
+                {
+                    "success": True,
+                    "message": "Feedback permanently deleted.",
+                    "audit_logged": True,
+                },
+            )
+
+        page.route("**/feedback/review/feedback-*/archive", handle_feedback_archive)
+        page.route("**/feedback/review/feedback-*", handle_feedback_delete)
 
         response = page.goto(f"{BASE_URL}/admin/feedback_review", wait_until="domcontentloaded")
         _skip_unavailable(response, "/admin/feedback_review")
@@ -151,6 +183,30 @@ def test_admin_feedback_compact_list_and_card_view(playwright):
         expect(page.locator("#feedback-card-view")).to_contain_text("Summarize the quarterly launch feedback.")
         page.locator("#feedback-card-view").get_by_role("button", name="View").click()
         expect(page.get_by_role("heading", name="View Feedback Entry")).to_be_visible()
+        page.locator("#archiveFeedbackBtn").click()
+        expect(page.locator("#feedbackPageStatusAlert")).to_contain_text("audit activity could not be recorded")
+        assert lifecycle_requests[-1] == {
+            "method": "PATCH",
+            "json": {"archived": True},
+        }
+
+        page.locator("#filterFeedbackArchive").select_option("archived")
+        page.locator("#applyFiltersBtn").click()
+        expect(page.locator("#feedback-table").get_by_role("button", name="Unarchive")).to_be_visible()
+        page.locator("#feedback-table").get_by_role("button", name="Unarchive").click()
+        assert lifecycle_requests[-1] == {
+            "method": "PATCH",
+            "json": {"archived": False},
+        }
+
+        page.locator("#feedback-table").get_by_role("button", name="Delete").click()
+        expect(page.get_by_role("heading", name="Permanently delete feedback?")).to_be_visible()
+        page.get_by_role("button", name="Cancel").click()
+        expect(page.get_by_role("heading", name="Permanently delete feedback?")).not_to_be_visible()
+        page.locator("#feedback-table").get_by_role("button", name="Delete").click()
+        page.get_by_role("button", name="Permanently Delete").click()
+        expect(page.locator("#feedbackPageStatusAlert")).to_contain_text("Feedback permanently deleted")
+        assert lifecycle_requests[-1]["method"] == "DELETE"
     finally:
         context.close()
         browser.close()
@@ -161,6 +217,8 @@ def test_admin_safety_violations_tags_cards_and_view_save(playwright):
     """Validate safety category badges, compact columns, cards, and notes save."""
     browser, context, page = _new_admin_page(playwright)
     captured_payload = {}
+    lifecycle_requests = []
+    delete_attempts = {"count": 0}
 
     try:
         _mock_user_lookup(page)
@@ -205,6 +263,44 @@ def test_admin_safety_violations_tags_cards_and_view_save(playwright):
             if "/stats" in request.url:
                 _fulfill_json(route, safety_stats_payload)
                 return
+            if request.method == "DELETE":
+                delete_attempts["count"] += 1
+                lifecycle_requests.append({"method": request.method})
+                if delete_attempts["count"] == 1:
+                    _fulfill_json(
+                        route,
+                        {
+                            "error": (
+                                "This safety violation cannot be deleted while a "
+                                "remediation approval request is pending."
+                            )
+                        },
+                        status=409,
+                    )
+                    return
+                _fulfill_json(
+                    route,
+                    {
+                        "success": True,
+                        "message": "Safety violation permanently deleted.",
+                        "audit_logged": True,
+                    },
+                )
+                return
+            if "/archive" in request.url:
+                lifecycle_requests.append({
+                    "method": request.method,
+                    "json": request.post_data_json,
+                })
+                _fulfill_json(
+                    route,
+                    {
+                        "success": True,
+                        "message": "Safety violation archived successfully.",
+                        "audit_logged": True,
+                    },
+                )
+                return
             if request.method == "PATCH":
                 captured_payload["json"] = request.post_data_json
                 _fulfill_json(route, {"message": "Safety log updated successfully."})
@@ -241,6 +337,24 @@ def test_admin_safety_violations_tags_cards_and_view_save(playwright):
         page.get_by_role("button", name="Save Review").click()
         expect(page.locator("#safetyPageStatusAlert")).to_contain_text("Safety log updated successfully")
         assert captured_payload["json"]["notes"] == "Reviewed from the card view."
+
+        page.locator("#safety-card-view").get_by_role("button", name="View").click()
+        page.locator("#archiveSafetyBtn").click()
+        expect(page.locator("#safetyPageStatusAlert")).to_contain_text("Safety violation archived successfully")
+        assert lifecycle_requests[-1] == {
+            "method": "PATCH",
+            "json": {"archived": True},
+        }
+
+        page.locator("#safety-card-view").get_by_role("button", name="View").click()
+        page.locator("#deleteSafetyBtn").click()
+        expect(page.get_by_role("heading", name="Permanently delete safety violation?")).to_be_visible()
+        page.get_by_role("button", name="Permanently Delete").click()
+        expect(page.locator("#safetyPageStatusAlert")).to_contain_text("cannot be deleted while")
+        expect(page.get_by_role("heading", name="Permanently delete safety violation?")).to_be_visible()
+        page.get_by_role("button", name="Permanently Delete").click()
+        expect(page.locator("#safetyPageStatusAlert")).to_contain_text("Safety violation permanently deleted")
+        assert delete_attempts["count"] == 2
     finally:
         context.close()
         browser.close()

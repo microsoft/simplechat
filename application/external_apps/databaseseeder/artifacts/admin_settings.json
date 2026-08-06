@@ -90,6 +90,8 @@
     "audio_files_authentication_type": "key",
     "audio_files_key": "",
     "enable_content_safety": false,
+    "content_safety_violation_message": "Your message was blocked by Content Safety.",
+    "content_safety_include_trigger_information": true,
     "require_member_of_safety_violation_admin": false,
     "content_safety_endpoint": "",
     "content_safety_key": "",

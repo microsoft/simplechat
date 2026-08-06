@@ -235,7 +235,7 @@
 {% endblock %}
 
 {% block content %}
-<div class="container-fluid p-0" style="height: calc(100vh - {% if app_settings.classification_banner_enabled and app_settings.classification_banner_text %}106px{% else %}66px{% endif %});">
+<div class="container-fluid p-0 chat-page-shell">
     <div class="h-100 w-100">
 
         <div id="left-pane" class="d-flex flex-column h-100">
@@ -280,6 +280,19 @@
                             <button id="conversation-info-btn" class="btn btn-sm chat-shell-icon-button d-none" data-bs-toggle="tooltip" data-bs-placement="top" title="View conversation details" aria-label="View conversation details">
                                 <i class="bi bi-info-circle"></i>
                             </button>
+                            {% if conversation_contents_drawer_enabled %}
+                            <button
+                               id="conversation-contents-toggle"
+                               type="button"
+                               class="btn btn-sm chat-shell-icon-button d-none"
+                               title="Open conversation contents"
+                               aria-label="Open conversation contents"
+                               aria-controls="conversation-contents-drawer"
+                               aria-expanded="false"
+                            >
+                               <i class="bi bi-list-nested" aria-hidden="true"></i>
+                            </button>
+                            {% endif %}
                         </div>
                     </div>
                     <div class="d-flex align-items-center mt-1 gap-2 chat-shell-status-row">
@@ -790,6 +803,56 @@
                         </div>
                     </div>
                 </div>
+                {% if ai_notice.enabled and not ai_notice.dismissed %}
+                <section
+                    id="ai-notice"
+                    class="ai-notice d-none"
+                    aria-label="AI notice"
+                    aria-live="polite"
+                    data-notice-frequency="{{ ai_notice.frequency }}"
+                    data-notice-hash="{{ ai_notice.hash }}"
+                >
+                    <i class="bi bi-info-circle ai-notice-icon" aria-hidden="true"></i>
+                    <p class="ai-notice-message mb-0" id="ai-notice-message">{{ ai_notice.message }}</p>
+                    {% if ai_notice.frequency != 'non_dismissible' %}
+                    <button
+                        type="button"
+                        class="btn-close ai-notice-dismiss"
+                        id="ai-notice-dismiss"
+                        aria-label="Dismiss AI notice"
+                        title="Dismiss AI notice"
+                    ></button>
+                    {% endif %}
+                </section>
+                {% endif %}
+                {% if conversation_contents_drawer_enabled %}
+                <aside
+                    id="conversation-contents-drawer"
+                    class="offcanvas offcanvas-end conversation-contents-drawer"
+                    tabindex="-1"
+                    aria-labelledby="conversation-contents-title"
+                    aria-hidden="true"
+                >
+                    <div class="offcanvas-header border-bottom">
+                        <div>
+                            <h5 class="offcanvas-title mb-0" id="conversation-contents-title">Conversation contents</h5>
+                            <p class="small text-muted mb-0">Jump to a user message</p>
+                        </div>
+                        <button
+                            id="conversation-contents-close"
+                            type="button"
+                            class="btn-close"
+                            aria-label="Close conversation contents"
+                        ></button>
+                    </div>
+                    <nav class="offcanvas-body p-2" aria-label="User messages in this conversation">
+                        <ol id="conversation-contents-list" class="conversation-contents-list list-unstyled mb-0"></ol>
+                        <p id="conversation-contents-empty" class="small text-muted text-center px-3 py-4 mb-0">
+                            No user messages are available yet.
+                        </p>
+                    </nav>
+                </aside>
+                {% endif %}
             </div>
         </div>
     </div>
@@ -890,6 +953,34 @@
           </div>
         </div>
       </form>
+    </div>
+</div>
+
+<!-- Modal for forking a personal conversation -->
+<div class="modal fade" id="fork-conversation-modal" tabindex="-1" aria-labelledby="forkConversationModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="forkConversationModalLabel">
+                    <i class="bi bi-signpost-split me-2"></i>Fork Conversation
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <p>Create a new personal conversation containing the history through this assistant response?</p>
+                <p class="text-muted small mb-0">The original conversation will not be changed.</p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" id="confirm-fork-conversation-btn">
+                    <span id="fork-conversation-button-label">Fork conversation</span>
+                    <span id="fork-conversation-button-spinner" class="d-none">
+                        <span class="spinner-border spinner-border-sm me-1" aria-hidden="true"></span>
+                        Forking...
+                    </span>
+                </button>
+            </div>
+        </div>
     </div>
 </div>
 
@@ -1461,6 +1552,7 @@
     window.initialChatModelSelection = {{ initial_chat_model_selection|default({}, true)|tojson|safe }};
     window.enableEnhancedCitations = {{ enable_enhanced_citations|tojson }};
     window.enable_document_classification = {{ enable_document_classification|tojson }};
+    window.conversationContentsDrawerEnabled = {{ conversation_contents_drawer_enabled|tojson }};
     window.classification_categories = {{ settings.document_classification_categories|default([], true)|tojson(indent=None)|safe }};
     if (!Array.isArray(window.classification_categories)) {
         window.classification_categories = [];
@@ -1474,6 +1566,7 @@
 
     // App settings for feature detection
     window.appSettings = {
+        ...(window.appSettings || {}),
         enable_text_to_speech: {{ app_settings.enable_text_to_speech|tojson }},
         enable_speech_to_text_input: {{ app_settings.enable_speech_to_text_input|tojson }},
         enable_chat_file_uploads: {{ settings.enable_chat_file_uploads|tojson }},
@@ -1487,6 +1580,10 @@
         enable_multi_model_endpoints: {{ enable_multi_model_endpoints|tojson }},
         enable_thoughts: {{ settings.enable_thoughts|tojson }},
         enable_collaborative_conversations: {{ settings.enable_collaborative_conversations|tojson }},
+        enable_mixed_source_chat_search: {{ settings.enable_mixed_source_chat_search|default(false, true)|tojson }},
+        enable_desktop_notifications: {{ settings.enable_desktop_notifications|default(false, true)|tojson }},
+        desktop_notifications_enabled: {{ desktop_notifications_enabled|default(false, true)|tojson }},
+        app_title: {{ settings.app_title|default('Simple Chat', true)|tojson }},
         documentActionCapabilities: {{ settings.document_action_capabilities|default({}, true)|tojson|safe }}
     };
 
@@ -1515,11 +1612,15 @@
 <script type="module" src="{{ url_for('static', filename='js/chat/chat-prompts.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/chat/chat-input-actions.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/chat/chat-toast.js') }}"></script>
+<script type="module" src="{{ url_for('static', filename='js/chat/chat-ai-notice.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/chat/chat-feedback.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/chat/chat-citations.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/chat/chat-loading-indicator.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/chat/chat-conversation-details.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/chat/chat-conversation-info-button.js') }}"></script>
+{% if conversation_contents_drawer_enabled %}
+<script type="module" src="{{ url_for('static', filename='js/chat/chat-conversation-contents.js') }}"></script>
+{% endif %}
 <script type="module" src="{{ url_for('static', filename='js/chat/chat-collaboration.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/chat/chat-search-modal.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/chat/chat-reasoning.js') }}"></script>

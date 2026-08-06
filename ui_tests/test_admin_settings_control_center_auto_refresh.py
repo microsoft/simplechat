@@ -1,11 +1,12 @@
 # test_admin_settings_control_center_auto_refresh.py
 """
 UI test for Control Center auto-refresh admin settings.
-Version: 0.241.026
+Version: 0.250.102
 Implemented in: 0.241.026
+Updated in: 0.250.102
 
-This test ensures the admin settings page exposes the daily UTC Control Center
-auto-refresh schedule controls with the enabled 06:00 default.
+This test ensures the admin settings page exposes the daily timezone-aware
+Control Center auto-refresh controls with the enabled 02:00 Eastern default.
 """
 
 import os
@@ -48,9 +49,13 @@ def test_admin_settings_control_center_auto_refresh_controls(playwright):
 
         auto_refresh_toggle = page.locator("#control_center_auto_refresh_enabled")
         auto_refresh_time = page.locator("#control_center_auto_refresh_time")
+        auto_refresh_timezone = page.locator("#control_center_auto_refresh_timezone")
+        viewer_timezone = page.locator("#control-center-auto-refresh-viewer-timezone")
         expect(auto_refresh_toggle).to_be_checked()
         expect(auto_refresh_time).to_be_visible()
-        expect(auto_refresh_time).to_have_value("06:00")
+        expect(auto_refresh_time).to_have_value("02:00")
+        expect(auto_refresh_timezone).to_have_value("America/New_York")
+        expect(viewer_timezone).not_to_have_text("local time")
 
         auto_refresh_toggle.uncheck()
         expect(page.locator("#control-center-auto-refresh-inputs")).to_have_class(

@@ -1,0 +1,296 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "MCP Server Preconfiguration",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+        "id",
+        "version",
+        "displayName",
+        "description",
+        "provider",
+        "category",
+        "enabled",
+        "sortOrder",
+        "presetId",
+        "endpoint",
+        "transport",
+        "authRequirement",
+        "defaults",
+        "scopeEligibility",
+        "riskLabel",
+        "documentationUrl",
+        "ui",
+        "warnings"
+    ],
+    "properties": {
+        "id": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$"
+        },
+        "version": {
+            "type": "string",
+            "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+        },
+        "displayName": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+        },
+        "description": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 700
+        },
+        "provider": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+        },
+        "category": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+        },
+        "enabled": {
+            "type": "boolean"
+        },
+        "developmentOnly": {
+            "type": "boolean",
+            "default": false
+        },
+        "sortOrder": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 10000
+        },
+        "presetId": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$"
+        },
+        "endpoint": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+        },
+        "transport": {
+            "type": "string",
+            "enum": ["streamable_http", "sse", "websocket"]
+        },
+        "authRequirement": {
+            "type": "string",
+            "enum": ["none", "optional", "required", "identity"]
+        },
+        "catalogTier": {
+            "type": "string",
+            "enum": ["public", "enterprise"],
+            "default": "public"
+        },
+        "authTier": {
+            "type": "string",
+            "enum": [
+                "public_unauthenticated",
+                "user_supplied_credential",
+                "delegated_oauth_entra",
+                "app_identity",
+                "organization_hosted"
+            ],
+            "default": "public_unauthenticated"
+        },
+        "deploymentModel": {
+            "type": "string",
+            "enum": ["hosted_remote", "organization_hosted_remote", "local_reference"],
+            "default": "hosted_remote"
+        },
+        "disabledByDefault": {
+            "type": "boolean",
+            "default": false
+        },
+        "requiresAdminEnablement": {
+            "type": "boolean",
+            "default": false
+        },
+        "requiresEndpointReview": {
+            "type": "boolean",
+            "default": false
+        },
+        "defaults": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+                "auth_method",
+                "load_tools",
+                "load_prompts",
+                "request_timeout",
+                "connect_timeout",
+                "sse_read_timeout",
+                "retry_count",
+                "retry_backoff_seconds",
+                "allowed_tool_names"
+            ],
+            "properties": {
+                "auth_method": {
+                    "type": "string",
+                    "enum": ["none", "bearer", "api_key", "basic", "identity"]
+                },
+                "api_key_header_name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128,
+                    "default": "X-API-Key"
+                },
+                "load_tools": {
+                    "type": "boolean"
+                },
+                "load_prompts": {
+                    "type": "boolean"
+                },
+                "request_timeout": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 300
+                },
+                "connect_timeout": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 300
+                },
+                "sse_read_timeout": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 300
+                },
+                "retry_count": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 3
+                },
+                "retry_backoff_seconds": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 30
+                },
+                "validate_tool_arguments": {
+                    "type": "boolean",
+                    "default": false
+                },
+                "tool_result_policy": {
+                    "type": "string",
+                    "enum": ["truncate", "error_on_limit"],
+                    "default": "truncate"
+                },
+                "allowed_tool_names": {
+                    "type": "array",
+                    "maxItems": 100,
+                    "items": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 120
+                    }
+                }
+            }
+        },
+        "scopeEligibility": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+                "type": "string",
+                "enum": ["personal", "group", "global"]
+            }
+        },
+        "destinationTags": {
+            "type": "array",
+            "maxItems": 20,
+            "default": [],
+            "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 80
+            }
+        },
+        "implementation": {
+            "type": "object",
+            "additionalProperties": false,
+            "default": {},
+            "required": ["id", "schemaVersion"],
+            "properties": {
+                "id": {
+                    "type": "string",
+                    "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$"
+                },
+                "schemaVersion": {
+                    "type": "string",
+                    "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
+                    "default": "1.0.0"
+                }
+            }
+        },
+        "additionalSettings": {
+            "type": "object",
+            "default": {},
+            "additionalProperties": true
+        },
+        "requiredGovernanceGates": {
+            "type": "array",
+            "maxItems": 20,
+            "default": [],
+            "uniqueItems": true,
+            "items": {
+                "type": "string",
+                "enum": [
+                    "destination_allowlist",
+                    "source_allowlist",
+                    "preconfiguration_policy",
+                    "per_tool_allowlist",
+                    "read_only_mode",
+                    "audit_logging",
+                    "identity_review",
+                    "least_privilege_permissions",
+                    "operator_review",
+                    "service_namespace_allowlist"
+                ]
+            }
+        },
+        "riskLabel": {
+            "type": "string",
+            "enum": ["low", "medium", "high"]
+        },
+        "documentationUrl": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+        },
+        "ui": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["helpText"],
+            "properties": {
+                "helpText": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 700
+                }
+            }
+        },
+        "operatorNotes": {
+            "type": "array",
+            "maxItems": 20,
+            "default": [],
+            "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 700
+            }
+        },
+        "warnings": {
+            "type": "array",
+            "maxItems": 20,
+            "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 700
+            }
+        }
+    }
+}

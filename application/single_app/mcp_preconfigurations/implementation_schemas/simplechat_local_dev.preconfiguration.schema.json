@@ -1,0 +1,25 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "SimpleChat Local Development MCP Preconfiguration Settings",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+        "fixtureType",
+        "intendedEnvironment",
+        "loopbackOnly"
+    ],
+    "properties": {
+        "fixtureType": {
+            "type": "string",
+            "enum": ["simplechat_local_mcp"]
+        },
+        "intendedEnvironment": {
+            "type": "string",
+            "enum": ["development"]
+        },
+        "loopbackOnly": {
+            "type": "boolean",
+            "const": true
+        }
+    }
+}

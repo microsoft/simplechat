@@ -187,7 +187,7 @@ def _build_content_disposition(disposition, file_name, fallback='download'):
 def _log_enhanced_citations_debug(message, **details):
     """Write debug-gated enhanced citations diagnostics."""
     log_event(
-        f"[EnhancedCitations] {message}",
+        f"[ENHANCED_CITATIONS] {message}",
         extra=details or None,
         debug_only=True,
         category="EnhancedCitations",
@@ -199,7 +199,7 @@ def _log_enhanced_citations_error(message, error, **details):
     error_details = dict(details)
     error_details["error"] = str(error)
     log_event(
-        f"[EnhancedCitations] {message}",
+        f"[ENHANCED_CITATIONS] {message}",
         extra=error_details,
         level=logging.ERROR,
         exceptionTraceback=True,

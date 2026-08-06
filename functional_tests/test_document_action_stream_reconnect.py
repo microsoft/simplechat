@@ -2,8 +2,8 @@
 # test_document_action_stream_reconnect.py
 """
 Functional test for document action stream reconnect support.
-Version: 0.250.072
-Implemented in: 0.241.090; updated in: 0.250.068 and 0.250.072
+Version: 0.250.125
+Implemented in: 0.241.090; updated in: 0.250.068, 0.250.072, and 0.250.125
 
 This test ensures analysis and document comparison streaming
 requests register replayable chat stream sessions so reconnecting to an
@@ -37,6 +37,7 @@ def test_document_action_stream_reconnect_wiring() -> None:
     print("🔍 Testing document action stream reconnect wiring...")
 
     route_content = read_text("application/single_app/route_backend_chats.py")
+    config_content = read_text("application/single_app/config.py")
 
     document_action_stream_block = slice_between(
         route_content,
@@ -49,6 +50,9 @@ def test_document_action_stream_reconnect_wiring() -> None:
         "@bp.route('/api/chat', methods=['POST'])",
     )
 
+    assert 'VERSION = "0.250.125"' in config_content, (
+        "Expected the current application version for document action reconnect coverage."
+    )
     assert "@bp.route('/api/chat/stream/status/<conversation_id>', methods=['GET'])" in route_content, (
         "Expected the shared chat stream status endpoint to exist for reconnect support."
     )

@@ -1,8 +1,8 @@
 # test_document_action_token_usage_aggregation.py
 """
 Functional test for document action token usage aggregation.
-Version: 0.250.068
-Implemented in: 0.241.116; updated in: 0.250.068
+Version: 0.250.125
+Implemented in: 0.241.116; updated for generated file exports in 0.250.072; updated in 0.250.073; updated for PR 1145 duplicate fixture key remediation in 0.250.115; updated in 0.250.125
 
 This test ensures analysis and comparison aggregate tokens across
 all internal model calls and persist the aggregate usage on assistant metadata.
@@ -12,10 +12,20 @@ import ast
 import os
 import uuid
 
+from pathlib import Path
+
+
+sys_path = str(Path(__file__).resolve().parents[1] / 'application' / 'single_app')
+if sys_path not in os.sys.path:
+    os.sys.path.insert(0, sys_path)
+
+import functions_mixed_source_orchestration as orchestration
+
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WORKFLOW_RUNNER_PATH = os.path.join(REPO_ROOT, 'application', 'single_app', 'functions_workflow_runner.py')
 CHAT_ROUTE_PATH = os.path.join(REPO_ROOT, 'application', 'single_app', 'route_backend_chats.py')
+CONFIG_PATH = os.path.join(REPO_ROOT, 'application', 'single_app', 'config.py')
 
 
 def assert_equal(actual, expected, label):
@@ -118,12 +128,30 @@ def test_document_analysis_token_aggregation():
         extra_globals={
             'DOCUMENT_ACTION_TYPE_ANALYZE': 'analyze',
             'DOCUMENT_ACTION_CONTEXT_WORKFLOW': 'workflow',
+            'raise_if_mixed_source_cancelled': orchestration.raise_if_mixed_source_cancelled,
             'get_document_action_max_documents': lambda *args, **kwargs: 10,
+            '_is_per_document_analysis_mode': lambda *args, **kwargs: False,
+            '_raise_legacy_mixed_source_analyze_limitation': lambda *args, **kwargs: None,
             '_chain_activity_callbacks': lambda *callbacks: None,
             '_build_document_action_activity_callback': lambda *args, **kwargs: None,
             '_maybe_execute_tabular_document_action': lambda *args, **kwargs: None,
             '_maybe_create_document_analysis_generated_artifacts': lambda *args, **kwargs: {'artifacts': [], 'assistant_reply': None},
+            '_reauthorize_mixed_source_workflow_result': lambda *args, **kwargs: None,
+            '_execute_mixed_source_analyze_workflow': lambda workflow, action_config, settings, invoke_prompt, **kwargs: (
+                invoke_prompt('analysis window 1', stage='window_analysis'),
+                invoke_prompt('analysis window 2', stage='reduction'),
+                {
+                    'reply': 'Aggregated analysis answer',
+                    'coverage': {
+                        'processed_windows': 2,
+                        'failed_windows': 0,
+                    },
+                }
+            )[-1],
             '_resolve_model_workflow_client': lambda *args, **kwargs: (fake_client, 'gpt-5.4', 'aoai'),
+            '_build_workflow_chat_messages': lambda prompt_text, **kwargs: [
+                {'role': 'user', 'content': prompt_text},
+            ],
             'run_document_analysis': lambda **kwargs: (
                 kwargs['invoke_prompt']('analysis window 1', stage='window_analysis'),
                 kwargs['invoke_prompt']('analysis window 2', stage='reduction'),
@@ -195,11 +223,19 @@ def test_document_comparison_token_aggregation():
         },
         extra_globals={
             'DOCUMENT_ACTION_TYPE_COMPARISON': 'comparison',
+            'raise_if_mixed_source_cancelled': orchestration.raise_if_mixed_source_cancelled,
+            'deduplicate_mixed_source_references': orchestration.deduplicate_mixed_source_references,
+            'is_cross_format_compare_enabled': lambda settings: False,
+            '_raise_legacy_cross_format_compare_limitation': lambda *args, **kwargs: None,
             '_chain_activity_callbacks': lambda *callbacks: None,
             '_build_document_action_activity_callback': lambda *args, **kwargs: None,
             '_maybe_execute_tabular_document_action': lambda *args, **kwargs: None,
             '_maybe_create_comparison_generated_artifacts': lambda *args, **kwargs: {'artifacts': [], 'assistant_reply': None},
+            '_reauthorize_mixed_source_workflow_result': lambda *args, **kwargs: None,
             '_resolve_model_workflow_client': lambda *args, **kwargs: (fake_client, 'gpt-5.4', 'aoai'),
+            '_build_workflow_chat_messages': lambda prompt_text, **kwargs: [
+                {'role': 'user', 'content': prompt_text},
+            ],
             'run_document_comparison': lambda **kwargs: (
                 kwargs['invoke_prompt']('summary left', stage='summary'),
                 kwargs['invoke_prompt']('summary right', stage='summary'),
@@ -266,6 +302,8 @@ def test_workflow_assistant_persists_token_usage():
             '_get_document_action_config': lambda workflow: workflow.get('document_action', {}),
             '_get_workflow_scope': lambda workflow: 'group' if workflow.get('group_id') else 'personal',
             '_get_workflow_group_id': lambda workflow: str(workflow.get('group_id') or ''),
+            '_maybe_create_workflow_generated_file_output': lambda **kwargs: None,
+            'get_generated_file_export_content': lambda result: result.get('reply', ''),
             '_persist_agent_citation_artifacts': lambda **kwargs: [],
             'cosmos_messages_container': message_container,
             'cosmos_conversations_container': conversation_container,
@@ -328,6 +366,18 @@ def test_chat_document_action_persists_token_usage():
     assert_in("'document_action_type': normalized_action.get('type')", content, 'chat token usage log context')
     assert_in('log_token_usage(', content, 'chat token usage activity logging')
     print('Chat document action token usage persistence markers passed.')
+    return True
+
+
+def test_version_update():
+    print('Testing version update...')
+
+    with open(CONFIG_PATH, 'r', encoding='utf-8') as handle:
+        content = handle.read()
+
+    assert_in('VERSION = "0.250.125"', content, 'config version update')
+    print('Version update passed.')
+    return True
 
 
 def run_tests():
@@ -339,6 +389,7 @@ def run_tests():
         test_document_comparison_token_aggregation,
         test_workflow_assistant_persists_token_usage,
         test_chat_document_action_persists_token_usage,
+        test_version_update,
     ]
 
     results = []

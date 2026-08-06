@@ -2,7 +2,7 @@
 # test_conversation_chart_and_tabular_reuse.py
 """
 Functional test for conversation chart abilities and reusable tabular analysis.
-Version: 0.241.033
+Version: 0.250.070
 Implemented in: 0.241.031; proactive chart guidance added in 0.241.033
 
 This test ensures the built-in chart plugin is loaded as a conversation-level
@@ -27,7 +27,7 @@ TABULAR_ANALYSIS_FILE = APP_ROOT / "functions_tabular_analysis.py"
 SEMANTIC_KERNEL_LOADER_FILE = APP_ROOT / "semantic_kernel_loader.py"
 CHAT_ROUTE_FILE = APP_ROOT / "route_backend_chats.py"
 WORKFLOW_RUNNER_FILE = APP_ROOT / "functions_workflow_runner.py"
-EXPECTED_VERSION = "0.241.033"
+EXPECTED_VERSION = "0.250.070"
 
 TARGET_CHART_HELPERS = {
     "user_requested_chart_visualization",

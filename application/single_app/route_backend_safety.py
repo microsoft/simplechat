@@ -2,6 +2,7 @@
 
 import csv
 import io
+import logging
 
 from flask import make_response
 
@@ -17,6 +18,13 @@ from functions_approvals import (
     mark_approval_executed,
 )
 from functions_authentication import *
+from functions_review_lifecycle import (
+    apply_archive_state,
+    append_archive_query_filter,
+    log_review_lifecycle_action,
+    normalize_archive_state,
+    serialize_archive_metadata,
+)
 from functions_safety_remediation import (
     SAFETY_REMEDIATION_BLOCK,
     SAFETY_REMEDIATION_SUSPEND,
@@ -54,11 +62,16 @@ def _normalize_safety_page_size(page_size):
     return page_size if page_size in ALLOWED_SAFETY_PAGE_SIZES else 10
 
 
-def _parse_safety_filters():
-    return (
+def _parse_safety_filters(include_archive_state=False):
+    filters = (
         request.args.get('status', None, type=str),
         request.args.get('action', None, type=str),
     )
+    if include_archive_state:
+        return filters + (
+            normalize_archive_state(request.args.get('archive', None, type=str)),
+        )
+    return filters
 
 
 def _format_triggered_categories(log_item):
@@ -134,7 +147,12 @@ def _build_safety_approval_metadata(
     }
 
 
-def _query_safety_logs(user_id=None, filter_status=None, filter_action=None):
+def _query_safety_logs(
+    user_id=None,
+    filter_status=None,
+    filter_action=None,
+    archive_state='active',
+):
     query = "SELECT * FROM c"
     where_clauses = []
     parameters = []
@@ -151,16 +169,21 @@ def _query_safety_logs(user_id=None, filter_status=None, filter_action=None):
         where_clauses.append("c.action = @action")
         parameters.append({"name": "@action", "value": filter_action})
 
+    append_archive_query_filter(where_clauses, archive_state)
+
     if where_clauses:
         query += " WHERE " + " AND ".join(where_clauses)
 
     query += " ORDER BY c.created_at DESC"
 
-    return list(cosmos_safety_container.query_items(
+    logs = list(cosmos_safety_container.query_items(
         query=query,
         parameters=parameters,
         enable_cross_partition_query=True,
     ))
+    for log_item in logs:
+        log_item.update(serialize_archive_metadata(log_item))
+    return logs
 
 
 def _paginate_safety_logs(logs, page, page_size):
@@ -242,6 +265,9 @@ def _build_safety_export_response(logs, filename_prefix, include_user_id=False):
         'Admin Notes',
         'Created At',
         'Last Updated',
+        'Archived',
+        'Archived At',
+        'Archived By',
     ]
     if include_user_id:
         headers.insert(1, 'User ID')
@@ -259,6 +285,9 @@ def _build_safety_export_response(logs, filename_prefix, include_user_id=False):
             log_item.get('notes') or '',
             log_item.get('created_at') or '',
             log_item.get('last_updated') or '',
+            'Yes' if log_item.get('isArchived') else 'No',
+            log_item.get('archivedAt') or '',
+            log_item.get('archivedBy') or '',
         ]
         if include_user_id:
             row.insert(1, log_item.get('user_id') or '')
@@ -270,6 +299,30 @@ def _build_safety_export_response(logs, filename_prefix, include_user_id=False):
         f'attachment; filename={filename_prefix}_{datetime.utcnow().strftime("%Y%m%d_%H%M%S")}.csv'
     )
     return response
+
+
+def _safety_lifecycle_response(message, audit_logged):
+    response = {
+        'success': True,
+        'message': message,
+        'audit_logged': audit_logged,
+    }
+    if not audit_logged:
+        response['audit_warning'] = (
+            'The record was updated, but the audit activity could not be recorded.'
+        )
+    return jsonify(response)
+
+
+def _log_safety_audit_failure(log_id, lifecycle_action):
+    log_event(
+        '[SAFETY_LIFECYCLE] Failed to persist lifecycle audit event',
+        {
+            'safety_log_id': log_id,
+            'lifecycle_action': lifecycle_action,
+        },
+        level=logging.ERROR,
+    )
 
 def register_route_backend_safety(bp):
     @bp.route('/api/safety/logs', methods=['GET'])
@@ -289,10 +342,13 @@ def register_route_backend_safety(bp):
         try:
             page = int(request.args.get('page', 1))
             page_size = int(request.args.get('page_size', 10))
-            filter_status, filter_action = _parse_safety_filters()
+            filter_status, filter_action, archive_state = _parse_safety_filters(
+                include_archive_state=True,
+            )
             logs = _query_safety_logs(
                 filter_status=filter_status,
                 filter_action=filter_action,
+                archive_state=archive_state,
             )
             paginated_items, page, page_size = _paginate_safety_logs(logs, page, page_size)
 
@@ -303,10 +359,12 @@ def register_route_backend_safety(bp):
                 "total_count": len(logs)
             }), 200
 
-        except Exception as e:
-            print(f"Error in get_safety_logs: {str(e)}") # Log the error server-side
-            # Consider using Flask's logging mechanism
-            return jsonify({"error": f"An error occurred while fetching safety logs: {str(e)}"}), 500
+        except ValueError:
+            logging.exception("Invalid request parameters in get_safety_logs")
+            return jsonify({"error": "Invalid request parameters."}), 400
+        except Exception:
+            logging.exception("Error in get_safety_logs")
+            return jsonify({"error": "An internal error occurred while fetching safety logs."}), 500
 
     @bp.route('/api/safety/logs/stats', methods=['GET'])
     @swagger_route(security=get_auth_security())
@@ -316,14 +374,21 @@ def register_route_backend_safety(bp):
     def get_safety_log_stats():
         """Return aggregate safety violation statistics for the admin page."""
         try:
-            filter_status, filter_action = _parse_safety_filters()
+            filter_status, filter_action, archive_state = _parse_safety_filters(
+                include_archive_state=True,
+            )
             logs = _query_safety_logs(
                 filter_status=filter_status,
                 filter_action=filter_action,
+                archive_state=archive_state,
             )
             return jsonify(_build_safety_stats(logs)), 200
-        except Exception as e:
-            return jsonify({"error": f"Failed to retrieve safety stats: {str(e)}"}), 500
+        except ValueError:
+            logging.exception("Invalid request parameters in get_safety_log_stats")
+            return jsonify({"error": "Invalid request parameters."}), 400
+        except Exception:
+            logging.exception("Error in get_safety_log_stats")
+            return jsonify({"error": "Failed to retrieve safety stats."}), 500
 
     @bp.route('/api/safety/logs/export', methods=['GET'])
     @swagger_route(security=get_auth_security())
@@ -333,12 +398,18 @@ def register_route_backend_safety(bp):
     def export_safety_logs():
         """Export safety violation rows as CSV for the active filter set."""
         try:
-            filter_status, filter_action = _parse_safety_filters()
+            filter_status, filter_action, archive_state = _parse_safety_filters(
+                include_archive_state=True,
+            )
             logs = _query_safety_logs(
                 filter_status=filter_status,
                 filter_action=filter_action,
+                archive_state=archive_state,
             )
             return _build_safety_export_response(logs, 'admin_safety_violations_export', include_user_id=True)
+        except ValueError as e:
+            logging.exception("Invalid parameters when exporting safety logs")
+            return jsonify({"error": "Invalid request parameters."}), 400
         except Exception as e:
             return jsonify({"error": f"Failed to export safety logs: {str(e)}"}), 500
 
@@ -484,11 +555,106 @@ def register_route_backend_safety(bp):
         except ValueError as e:
             return jsonify({'error': str(e)}), 400
         except Exception as e:
-            log_event('[SafetyViolations] Failed to update safety log', {
+            log_event('[SAFETY_VIOLATIONS] Failed to update safety log', {
                 'safety_log_id': log_id,
                 'error': str(e),
             }, level=logging.ERROR)
             return jsonify({'error': f'Failed to update safety log: {str(e)}'}), 500
+
+    @bp.route('/api/safety/logs/<string:log_id>/archive', methods=['PATCH'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @safety_violation_admin_required
+    @enabled_required("enable_content_safety")
+    def archive_safety_log(log_id):
+        """Archive or unarchive a safety violation record."""
+        data = request.get_json() or {}
+        archived = data.get('archived')
+        if not isinstance(archived, bool):
+            return jsonify({'error': 'The archived field must be a boolean.'}), 400
+
+        actor = _get_safety_actor_context()
+        if not actor.get('id'):
+            return jsonify({'error': 'No user ID found in session'}), 403
+
+        try:
+            item = cosmos_safety_container.read_item(item=log_id, partition_key=log_id)
+            was_archived = bool(item.get('is_archived'))
+            apply_archive_state(item, archived, actor['id'])
+            item['last_updated'] = datetime.utcnow().isoformat()
+            cosmos_safety_container.upsert_item(item)
+        except exceptions.CosmosResourceNotFoundError:
+            return jsonify({'error': 'Safety violation not found'}), 404
+        except Exception as e:
+            log_event(
+                '[SAFETY_LIFECYCLE] Failed to update safety violation archive state',
+                {'safety_log_id': log_id, 'error': str(e)},
+                level=logging.ERROR,
+            )
+            return jsonify({'error': 'Failed to update safety violation archive state'}), 500
+
+        lifecycle_action = 'archive' if archived else 'unarchive'
+        audit_logged = log_review_lifecycle_action(
+            'safety_violation',
+            lifecycle_action,
+            item,
+            actor,
+            was_archived=was_archived,
+        )
+        if not audit_logged:
+            _log_safety_audit_failure(log_id, lifecycle_action)
+
+        message = (
+            'Safety violation archived successfully.'
+            if archived
+            else 'Safety violation unarchived successfully.'
+        )
+        return _safety_lifecycle_response(message, audit_logged), 200
+
+    @bp.route('/api/safety/logs/<string:log_id>', methods=['DELETE'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @safety_violation_admin_required
+    @enabled_required("enable_content_safety")
+    def delete_safety_log(log_id):
+        """Permanently delete a safety violation without deleting its audit history."""
+        actor = _get_safety_actor_context()
+        if not actor.get('id'):
+            return jsonify({'error': 'No user ID found in session'}), 403
+
+        try:
+            item = cosmos_safety_container.read_item(item=log_id, partition_key=log_id)
+            if str(item.get('action_request_status') or '').strip().lower() == 'pending':
+                return jsonify({
+                    'error': (
+                        'This safety violation cannot be deleted while a remediation '
+                        'approval request is pending.'
+                    )
+                }), 409
+            cosmos_safety_container.delete_item(item=log_id, partition_key=log_id)
+        except exceptions.CosmosResourceNotFoundError:
+            return jsonify({'error': 'Safety violation not found'}), 404
+        except Exception as e:
+            log_event(
+                '[SAFETY_LIFECYCLE] Failed to delete safety violation',
+                {'safety_log_id': log_id, 'error': str(e)},
+                level=logging.ERROR,
+            )
+            return jsonify({'error': 'Failed to delete safety violation'}), 500
+
+        audit_logged = log_review_lifecycle_action(
+            'safety_violation',
+            'delete',
+            item,
+            actor,
+        )
+        if not audit_logged:
+            _log_safety_audit_failure(log_id, 'delete')
+
+        return _safety_lifecycle_response(
+            'Safety violation permanently deleted.',
+            audit_logged,
+        ), 200
         
     @bp.route('/api/safety/logs/my', methods=['GET'])
     @swagger_route(security=get_auth_security())

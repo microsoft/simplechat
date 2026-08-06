@@ -69,7 +69,7 @@ class CosmosQueryPlugin(BasePlugin):
         self._validate_configuration()
 
         log_event(
-            "[CosmosQueryPlugin] Initialized plugin",
+            "[COSMOS_QUERY_PLUGIN] Initialized plugin",
             extra={
                 "endpoint": self.endpoint,
                 "database_name": self.database_name,
@@ -225,7 +225,7 @@ class CosmosQueryPlugin(BasePlugin):
             }
 
             log_event(
-                "[CosmosQueryPlugin] Query executed successfully",
+                "[COSMOS_QUERY_PLUGIN] Query executed successfully",
                 extra={
                     "database_name": self.database_name,
                     "container_name": self.container_name,
@@ -239,7 +239,7 @@ class CosmosQueryPlugin(BasePlugin):
             return ResultWithMetadata(result, self.metadata)
         except CosmosHttpResponseError as exc:
             log_event(
-                f"[CosmosQueryPlugin] Cosmos query failed: {exc}",
+                f"[COSMOS_QUERY_PLUGIN] Cosmos query failed: {exc}",
                 extra={
                     "database_name": self.database_name,
                     "container_name": self.container_name,
@@ -261,7 +261,7 @@ class CosmosQueryPlugin(BasePlugin):
             )
         except Exception as exc:
             log_event(
-                f"[CosmosQueryPlugin] Unexpected query failure: {exc}",
+                f"[COSMOS_QUERY_PLUGIN] Unexpected query failure: {exc}",
                 extra={
                     "database_name": self.database_name,
                     "container_name": self.container_name,

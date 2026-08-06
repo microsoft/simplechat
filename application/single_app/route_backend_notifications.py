@@ -2,6 +2,7 @@
 
 from config import *
 from functions_authentication import *
+from functions_appinsights import log_event
 from functions_conversation_cache import bump_conversation_cache_version
 from functions_settings import *
 from functions_notifications import *
@@ -71,10 +72,19 @@ def register_route_backend_notifications(bp):
         try:
             user_id = get_current_user_id()
             count = get_unread_notification_count(user_id)
+            app_settings = get_settings()
+            completion_audio_enabled = bool(
+                app_settings.get("enable_chat_completion_audio_cues", False)
+            )
+            completion_audio_updated_at = app_settings.get(
+                "chat_completion_audio_cues_updated_at"
+            )
             
             return jsonify({
                 'success': True,
-                'count': count
+                'count': count,
+                'chat_completion_audio_enabled': completion_audio_enabled,
+                'chat_completion_audio_updated_at': completion_audio_updated_at,
             })
             
         except Exception as e:
@@ -82,6 +92,84 @@ def register_route_backend_notifications(bp):
             return jsonify({
                 'success': False,
                 'count': 0
+            }), 500
+
+    @bp.route("/api/notifications/chat-completions", methods=["GET"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def api_get_chat_completion_notifications():
+        """Get recent personal chat completion event identities for audio cues."""
+        user_id = None
+        try:
+            user_id = get_current_user_id()
+            app_settings = get_settings()
+            completion_audio_enabled = bool(
+                app_settings.get("enable_chat_completion_audio_cues", False)
+            )
+            completion_audio_updated_at = app_settings.get(
+                "chat_completion_audio_cues_updated_at"
+            )
+            if not completion_audio_enabled:
+                return jsonify({
+                    "success": True,
+                    "enabled": False,
+                    "updated_at": completion_audio_updated_at,
+                    "notifications": [],
+                })
+            limit = request.args.get("limit", 50)
+            notifications = get_recent_chat_response_notifications(user_id, limit=limit)
+            return jsonify({
+                "success": True,
+                "enabled": True,
+                "updated_at": completion_audio_updated_at,
+                "notifications": notifications,
+            })
+        except Exception as e:
+            log_event(
+                "[NOTIFICATIONS] Chat completion event request failed.",
+                extra={
+                    "user_id": user_id,
+                    "error": str(e),
+                },
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({
+                "success": False,
+                "notifications": [],
+                "error": "Failed to fetch chat completion events",
+            }), 500
+
+    @bp.route("/api/notifications/chat-completion-audio-status", methods=["GET"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def api_get_chat_completion_audio_status():
+        """Return the current server-authoritative completion audio gate."""
+        try:
+            app_settings = get_settings()
+            enabled = bool(
+                app_settings.get("enable_chat_completion_audio_cues", False)
+            )
+            return jsonify({
+                "success": True,
+                "enabled": enabled,
+                "updated_at": app_settings.get(
+                    "chat_completion_audio_cues_updated_at"
+                ),
+            })
+        except Exception as e:
+            log_event(
+                "[NOTIFICATIONS] Completion audio status request failed.",
+                extra={"error": str(e)},
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({
+                "success": False,
+                "enabled": False,
+                "error": "Failed to load completion audio status",
             }), 500
 
     @bp.route("/api/notifications/workflow-alerts", methods=["GET"])

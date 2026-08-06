@@ -2,11 +2,20 @@
 
 import csv
 import io
+import logging
 
 from flask import make_response
 
 from config import *
+from functions_appinsights import log_event
 from functions_authentication import *
+from functions_review_lifecycle import (
+    apply_archive_state,
+    append_archive_query_filter,
+    log_review_lifecycle_action,
+    normalize_archive_state,
+    serialize_archive_metadata,
+)
 from functions_settings import *
 from swagger_wrapper import swagger_route, get_auth_security   
 
@@ -54,7 +63,7 @@ def _normalize_feedback_type(feedback_type):
     return FEEDBACK_TYPE_NORMALIZATION.get(feedback_type.strip().lower())
 
 
-def _parse_feedback_filters():
+def _parse_feedback_filters(include_archive_state=False):
     filter_type = _normalize_feedback_type(request.args.get('type', None, type=str))
 
     filter_ack_str = request.args.get('ack', None, type=str)
@@ -64,13 +73,17 @@ def _parse_feedback_filters():
     elif filter_ack_str == 'false':
         filter_ack_bool = False
 
-    return filter_type, filter_ack_bool
+    archive_state = None
+    if include_archive_state:
+        archive_state = normalize_archive_state(request.args.get('archive', None, type=str))
+
+    return filter_type, filter_ack_bool, archive_state
 
 
 def _serialize_feedback_item(item):
     normalized_feedback_type = _normalize_feedback_type(item.get("feedbackType"))
 
-    return {
+    serialized_item = {
         "id": item.get("id"),
         "userId": item.get("userId"),
         "prompt": item.get("prompt"),
@@ -80,9 +93,16 @@ def _serialize_feedback_item(item):
         "timestamp": item.get("timestamp"),
         "adminReview": item.get("adminReview", {}),
     }
+    serialized_item.update(serialize_archive_metadata(item))
+    return serialized_item
 
 
-def _query_feedback_items(user_id=None, filter_type=None, filter_ack_bool=None):
+def _query_feedback_items(
+    user_id=None,
+    filter_type=None,
+    filter_ack_bool=None,
+    archive_state='active',
+):
     query = "SELECT * FROM c"
     where_clauses = []
     parameters = []
@@ -94,6 +114,8 @@ def _query_feedback_items(user_id=None, filter_type=None, filter_ack_bool=None):
     if filter_ack_bool is not None:
         where_clauses.append("c.adminReview.acknowledged = @ack")
         parameters.append({"name": "@ack", "value": filter_ack_bool})
+
+    append_archive_query_filter(where_clauses, archive_state)
 
     if where_clauses:
         query += " WHERE " + " AND ".join(where_clauses)
@@ -181,6 +203,9 @@ def _build_feedback_export_response(items, filename_prefix, include_user_id=Fals
         'Admin Notes',
         'Admin Response',
         'Admin Action',
+        'Archived',
+        'Archived At',
+        'Archived By',
     ]
     if include_user_id:
         headers.insert(1, 'User ID')
@@ -199,6 +224,9 @@ def _build_feedback_export_response(items, filename_prefix, include_user_id=Fals
             admin_review.get('analysisNotes') or '',
             admin_review.get('responseToUser') or '',
             admin_review.get('actionTaken') or '',
+            'Yes' if item.get('isArchived') else 'No',
+            item.get('archivedAt') or '',
+            item.get('archivedBy') or '',
         ]
         if include_user_id:
             row.insert(1, item.get('userId') or '')
@@ -210,6 +238,39 @@ def _build_feedback_export_response(items, filename_prefix, include_user_id=Fals
         f'attachment; filename={filename_prefix}_{datetime.utcnow().strftime("%Y%m%d_%H%M%S")}.csv'
     )
     return response
+
+
+def _get_feedback_admin_actor():
+    user = session.get('user', {}) or {}
+    actor_id = _get_feedback_session_user_id()
+    return {
+        'id': actor_id,
+        'email': user.get('preferred_username') or user.get('email') or '',
+    }
+
+
+def _feedback_lifecycle_response(message, audit_logged):
+    response = {
+        'success': True,
+        'message': message,
+        'audit_logged': audit_logged,
+    }
+    if not audit_logged:
+        response['audit_warning'] = (
+            'The record was updated, but the audit activity could not be recorded.'
+        )
+    return jsonify(response)
+
+
+def _log_feedback_audit_failure(feedback_id, lifecycle_action):
+    log_event(
+        '[FEEDBACK_LIFECYCLE] Failed to persist lifecycle audit event',
+        {
+            'feedback_id': feedback_id,
+            'lifecycle_action': lifecycle_action,
+        },
+        level=logging.ERROR,
+    )
 
 def register_route_backend_feedback(bp):
 
@@ -309,10 +370,10 @@ def register_route_backend_feedback(bp):
 
         # Set default text if messages weren't found
         if ai_message_text is None:
-            ai_message_text = "[AI response text not found in cosmos_messages_container]"
+            ai_message_text = "[AI_RESPONSE_TEXT_NOT_FOUND_IN_COSMOS_MESSAGES_CONTAINER]"
 
         if not user_prompt_text:
-            user_prompt_text = "[User prompt not found in cosmos_messages_container]"
+            user_prompt_text = "[USER_PROMPT_NOT_FOUND_IN_COSMOS_MESSAGES_CONTAINER]"
 
         # --- Rest of the feedback saving logic remains the same ---
         feedback_id = str(uuid.uuid4())
@@ -357,10 +418,13 @@ def register_route_backend_feedback(bp):
         try:
             page = request.args.get('page', 1, type=int)
             page_size = request.args.get('page_size', 10, type=int)
-            filter_type, filter_ack_bool = _parse_feedback_filters()
+            filter_type, filter_ack_bool, archive_state = _parse_feedback_filters(
+                include_archive_state=True,
+            )
             items = _query_feedback_items(
                 filter_type=filter_type,
                 filter_ack_bool=filter_ack_bool,
+                archive_state=archive_state,
             )
             paginated_items, page, page_size = _paginate_feedback_items(items, page, page_size)
             total_count = len(items)
@@ -373,6 +437,8 @@ def register_route_backend_feedback(bp):
                 "total_pages": math.ceil(total_count / page_size)
             })
 
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 400
         except Exception as e:
              print(f"Error fetching feedback for review: {e}")
              # Log the full exception traceback if possible
@@ -388,14 +454,21 @@ def register_route_backend_feedback(bp):
     def feedback_review_stats():
         """Return aggregate feedback review statistics for the admin page."""
         try:
-            filter_type, filter_ack_bool = _parse_feedback_filters()
+            filter_type, filter_ack_bool, archive_state = _parse_feedback_filters(
+                include_archive_state=True,
+            )
             items = _query_feedback_items(
                 filter_type=filter_type,
                 filter_ack_bool=filter_ack_bool,
+                archive_state=archive_state,
             )
             return jsonify(_build_feedback_stats(items))
-        except Exception as e:
-            return jsonify({"error": f"Failed to retrieve feedback stats: {str(e)}"}), 500
+        except ValueError:
+            logging.exception("Invalid request parameters for feedback review stats")
+            return jsonify({"error": "Invalid request parameters."}), 400
+        except Exception:
+            logging.exception("Failed to retrieve feedback stats")
+            return jsonify({"error": "Failed to retrieve feedback stats."}), 500
 
     @bp.route("/feedback/review/export", methods=["GET"])
     @swagger_route(security=get_auth_security())
@@ -405,12 +478,17 @@ def register_route_backend_feedback(bp):
     def feedback_review_export():
         """Export feedback review rows as CSV for the active filter set."""
         try:
-            filter_type, filter_ack_bool = _parse_feedback_filters()
+            filter_type, filter_ack_bool, archive_state = _parse_feedback_filters(
+                include_archive_state=True,
+            )
             items = _query_feedback_items(
                 filter_type=filter_type,
                 filter_ack_bool=filter_ack_bool,
+                archive_state=archive_state,
             )
             return _build_feedback_export_response(items, 'feedback_review_export', include_user_id=True)
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 400
         except Exception as e:
             return jsonify({"error": f"Failed to export feedback: {str(e)}"}), 500
 
@@ -440,6 +518,7 @@ def register_route_backend_feedback(bp):
                 "timestamp": feedback_doc.get("timestamp"),
                 "adminReview": feedback_doc.get("adminReview", {})
             }
+            result.update(serialize_archive_metadata(feedback_doc))
             return jsonify(result)
 
         except CosmosResourceNotFoundError: # Import this if not already done
@@ -493,6 +572,98 @@ def register_route_backend_feedback(bp):
         except Exception as e:
              print(f"Error updating feedback item {feedbackId}: {e}")
              return jsonify({"error": "Failed to save changes"}), 500
+
+    @bp.route("/feedback/review/<feedbackId>/archive", methods=["PATCH"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @feedback_admin_required
+    @enabled_required("enable_user_feedback")
+    def feedback_review_archive(feedbackId):
+        """Archive or unarchive a feedback review record."""
+        data = request.get_json() or {}
+        archived = data.get('archived')
+        if not isinstance(archived, bool):
+            return jsonify({'error': 'The archived field must be a boolean.'}), 400
+
+        actor = _get_feedback_admin_actor()
+        if not actor.get('id'):
+            return jsonify({'error': 'No user ID found in session'}), 403
+
+        try:
+            feedback_doc = cosmos_feedback_container.read_item(
+                item=feedbackId,
+                partition_key=feedbackId,
+            )
+            was_archived = bool(feedback_doc.get('is_archived'))
+            apply_archive_state(feedback_doc, archived, actor['id'])
+            cosmos_feedback_container.upsert_item(feedback_doc)
+        except CosmosResourceNotFoundError:
+            return jsonify({'error': 'Feedback not found'}), 404
+        except Exception as e:
+            log_event(
+                '[FEEDBACK_LIFECYCLE] Failed to update feedback archive state',
+                {'feedback_id': feedbackId, 'error': str(e)},
+                level=logging.ERROR,
+            )
+            return jsonify({'error': 'Failed to update feedback archive state'}), 500
+
+        lifecycle_action = 'archive' if archived else 'unarchive'
+        audit_logged = log_review_lifecycle_action(
+            'feedback',
+            lifecycle_action,
+            feedback_doc,
+            actor,
+            was_archived=was_archived,
+        )
+        if not audit_logged:
+            _log_feedback_audit_failure(feedbackId, lifecycle_action)
+
+        message = 'Feedback archived successfully.' if archived else 'Feedback unarchived successfully.'
+        return _feedback_lifecycle_response(message, audit_logged), 200
+
+    @bp.route("/feedback/review/<feedbackId>", methods=["DELETE"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @feedback_admin_required
+    @enabled_required("enable_user_feedback")
+    def feedback_review_delete(feedbackId):
+        """Permanently delete a feedback review record."""
+        actor = _get_feedback_admin_actor()
+        if not actor.get('id'):
+            return jsonify({'error': 'No user ID found in session'}), 403
+
+        try:
+            feedback_doc = cosmos_feedback_container.read_item(
+                item=feedbackId,
+                partition_key=feedbackId,
+            )
+            cosmos_feedback_container.delete_item(
+                item=feedbackId,
+                partition_key=feedbackId,
+            )
+        except CosmosResourceNotFoundError:
+            return jsonify({'error': 'Feedback not found'}), 404
+        except Exception as e:
+            log_event(
+                '[FEEDBACK_LIFECYCLE] Failed to delete feedback',
+                {'feedback_id': feedbackId, 'error': str(e)},
+                level=logging.ERROR,
+            )
+            return jsonify({'error': 'Failed to delete feedback'}), 500
+
+        audit_logged = log_review_lifecycle_action(
+            'feedback',
+            'delete',
+            feedback_doc,
+            actor,
+        )
+        if not audit_logged:
+            _log_feedback_audit_failure(feedbackId, 'delete')
+
+        return _feedback_lifecycle_response(
+            'Feedback permanently deleted.',
+            audit_logged,
+        ), 200
 
 
     @bp.route("/feedback/retest/<feedbackId>", methods=["POST"])

@@ -64,6 +64,15 @@ SECRET_ASSIGNMENT_RE = re.compile(
 AUTHORIZATION_VALUE_RE = re.compile(r"(?i)\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+")
 
 
+class PluginInvocationResult(str):
+    """String tool result with server-only metadata retained in invocation history."""
+
+    def __new__(cls, value: str, internal_metadata: Optional[Dict[str, Any]] = None):
+        instance = super().__new__(cls, value)
+        instance.internal_metadata = dict(internal_metadata or {})
+        return instance
+
+
 def _normalize_sensitive_key(key: Any) -> str:
     return re.sub(r"[^a-z0-9]", "", str(key or "").strip().lower())
 
@@ -368,7 +377,7 @@ class PluginInvocationLogger:
             status = "SUCCESS" if invocation.success else "ERROR"
             
             # Keep minimal print for real-time monitoring
-            debug_print(f"[Plugin {status}] {invocation.plugin_name}.{invocation.function_name} ({invocation.duration_ms:.1f}ms)")
+            debug_print(f"[PLUGIN_INVOCATION] {status} {invocation.plugin_name}.{invocation.function_name} ({invocation.duration_ms:.1f}ms)")
             
             # Comprehensive structured logging for production
             log_data = {
@@ -420,7 +429,7 @@ class PluginInvocationLogger:
                          level=logging.ERROR)
                          
         except Exception as e:
-            log_event(f"[Plugin Invocation] Error logging to terminal", 
+            log_event(f"[PLUGIN_INVOCATION] Error logging to terminal",
                      extra={"error_message": str(e)}, 
                      level=logging.ERROR)
     
@@ -475,7 +484,7 @@ class PluginInvocationLogger:
                     log_data["result_summary"] = result_summary
             
             log_event(
-                f"[Plugin Invocation] {invocation.plugin_name}.{invocation.function_name}",
+                f"[PLUGIN_INVOCATION] {invocation.plugin_name}.{invocation.function_name}",
                 extra=log_data,
                 level=logging.INFO if invocation.success else logging.ERROR
             )
@@ -488,7 +497,7 @@ class PluginInvocationLogger:
         try:
             if invocation.success:
                 self.logger.info(
-                    f"[Plugin] {invocation.plugin_name}.{invocation.function_name} "
+                    f"[PLUGIN] {invocation.plugin_name}.{invocation.function_name} "
                     f"executed successfully in {invocation.duration_ms:.2f}ms"
                 )
             else:
@@ -497,7 +506,7 @@ class PluginInvocationLogger:
                     max_string_length=500,
                 )
                 self.logger.error(
-                    f"[Plugin] {invocation.plugin_name}.{invocation.function_name} "
+                    f"[PLUGIN] {invocation.plugin_name}.{invocation.function_name} "
                     f"failed after {invocation.duration_ms:.2f}ms: {safe_error_message}"
                 )
         except Exception as e:
@@ -728,7 +737,7 @@ def log_plugin_invocation(plugin_name: str, function_name: str,
 def plugin_function_logger(plugin_name: str):
     """Decorator to automatically log plugin function invocations."""
     def decorator(func: Callable) -> Callable:
-        log_event(f"[Plugin Function Logger] Decorating function for plugin", 
+        log_event(f"[PLUGIN_FUNCTION_LOGGER] Decorating function for plugin",
                  extra={"function_name": func.__name__, "plugin_name": plugin_name}, 
                  level=logging.DEBUG)
 
@@ -769,7 +778,7 @@ def plugin_function_logger(plugin_name: str):
 
         def _log_start(function_name: str):
             log_event(
-                f"[Plugin Function Logger] Function call started",
+                f"[PLUGIN_FUNCTION_LOGGER] Function call started",
                 extra={"plugin_name": plugin_name, "function_name": function_name},
                 level=logging.DEBUG
             )
@@ -781,7 +790,7 @@ def plugin_function_logger(plugin_name: str):
                 for key, value in parameters.items()
             } if parameters else {}
             log_event(
-                f"[Plugin Function Logger] Function parameters",
+                f"[PLUGIN_FUNCTION_LOGGER] Function parameters",
                 extra={
                     "plugin_name": plugin_name,
                     "function_name": function_name,
@@ -799,7 +808,7 @@ def plugin_function_logger(plugin_name: str):
                 result,
             )
             log_event(
-                f"[Plugin Function Logger] Function completed successfully",
+                f"[PLUGIN_FUNCTION_LOGGER] Function completed successfully",
                 extra={
                     "plugin_name": plugin_name,
                     "function_name": function_name,
@@ -813,7 +822,7 @@ def plugin_function_logger(plugin_name: str):
 
         def _log_failure(function_name: str, error: Exception, duration_ms: float):
             log_event(
-                f"[Plugin Function Logger] Function failed with error",
+                f"[PLUGIN_FUNCTION_LOGGER] Function failed with error",
                 extra={
                     "plugin_name": plugin_name,
                     "function_name": function_name,
@@ -904,7 +913,7 @@ def plugin_function_logger(plugin_name: str):
                     result = func(*args, **kwargs)
                     if inspect.isawaitable(result):
                         log_event(
-                            "[Plugin Function Logger] Awaitable returned from sync wrapper; deferring completion logging",
+                            "[PLUGIN_FUNCTION_LOGGER] Awaitable returned from sync wrapper; deferring completion logging",
                             extra={
                                 "plugin_name": plugin_name,
                                 "function_name": function_name,

@@ -10,7 +10,8 @@ import { promptSelect } from "./chat-prompts.js";
 import {
   createNewConversation,
   selectConversation,
-  addConversationToList
+  addConversationToList,
+  loadConversations
 } from "./chat-conversations.js";
 import { updateSidebarConversationTitle } from "./chat-sidebar-conversations.js";
 import { getActiveConversationContext, getActiveConversationScope } from "./chat-conversation-scope.js";
@@ -60,6 +61,12 @@ const documentComparisonSelectionList = document.getElementById('document-compar
 const documentComparisonPickerPanel = document.getElementById('document-comparison-picker-panel');
 const documentComparisonPickerControls = document.getElementById('document-comparison-picker-controls');
 const documentComparisonPickerStatus = document.getElementById('document-comparison-picker-status');
+const conversationForkModalEl = document.getElementById('fork-conversation-modal');
+const confirmConversationForkBtn = document.getElementById('confirm-fork-conversation-btn');
+const conversationForkButtonLabel = document.getElementById('fork-conversation-button-label');
+const conversationForkButtonSpinner = document.getElementById('fork-conversation-button-spinner');
+let pendingConversationFork = null;
+let conversationForkRequestPending = false;
 let comparisonVersionLoadToken = 0;
 let comparisonVersionCatalog = [];
 let comparisonChatUploadCatalog = [];
@@ -584,6 +591,14 @@ function isWorkspaceDocumentSearchEnabled() {
 }
 
 const INLINE_ASSISTANT_EXPORT_ACTIONS = Object.freeze({
+  audio: {
+    actionName: 'exportMessageAsAudio',
+    buttonClass: 'inline-export-audio-btn',
+    iconClass: 'bi bi-file-earmark-music',
+    label: 'Create Audio File',
+    pendingLabel: 'Creating Audio File...',
+    title: 'Create Audio File',
+  },
   powerpoint: {
     actionName: 'exportMessageAsPowerPoint',
     buttonClass: 'inline-export-ppt-btn',
@@ -3148,6 +3163,128 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     return !isStreamingAssistantPlaceholder(messageId, fullMessageObject);
   }
 
+  function getForkableSingleUserConversationId(fullMessageObject = null) {
+    const conversationId = resolveMessageConversationId(fullMessageObject);
+    const activeConversationId = String(
+      window.chatConversations?.getCurrentConversationId?.()
+      || window.currentConversationId
+      || ''
+    ).trim();
+    if (!conversationId || conversationId !== activeConversationId) {
+      return '';
+    }
+
+    const conversationItem = document.querySelector(
+      `.conversation-item[data-conversation-id="${CSS.escape(conversationId)}"], `
+      + `.sidebar-conversation-item[data-conversation-id="${CSS.escape(conversationId)}"]`
+    );
+    if (!conversationItem || conversationItem.dataset.conversationKind === 'collaborative') {
+      return '';
+    }
+
+    const chatType = String(conversationItem.dataset.chatType || '').trim().toLowerCase();
+    return [
+      '',
+      'new',
+      'personal',
+      'personal_single_user',
+      'group-single-user',
+      'public',
+    ].includes(chatType)
+      ? conversationId
+      : '';
+  }
+
+  function shouldRenderConversationForkAction(messageId, fullMessageObject = null) {
+    const normalizedMessageId = String(messageId || '').trim();
+    const persistedMessageId = String(fullMessageObject?.id || '').trim();
+    return Boolean(
+      normalizedMessageId
+      && persistedMessageId === normalizedMessageId
+      && shouldRenderCompletedAssistantActions(messageId, fullMessageObject)
+      && getForkableSingleUserConversationId(fullMessageObject)
+    );
+  }
+
+  function setConversationForkPendingState(isPending) {
+    conversationForkRequestPending = isPending;
+    if (confirmConversationForkBtn) {
+      confirmConversationForkBtn.disabled = isPending;
+    }
+    conversationForkButtonLabel?.classList.toggle('d-none', isPending);
+    conversationForkButtonSpinner?.classList.toggle('d-none', !isPending);
+  }
+
+  function openConversationForkModal(messageDiv, fullMessageObject = null) {
+    if (!conversationForkModalEl || !window.bootstrap || conversationForkRequestPending) {
+      return;
+    }
+
+    const messageId = String(messageDiv?.dataset?.messageId || '').trim();
+    const conversationId = getForkableSingleUserConversationId(fullMessageObject);
+    if (!messageId || !conversationId) {
+      showToast('This message is not available to fork.', 'warning');
+      return;
+    }
+
+    pendingConversationFork = { conversationId, messageId };
+    setConversationForkPendingState(false);
+    bootstrap.Modal.getOrCreateInstance(conversationForkModalEl).show();
+  }
+
+  async function executeConversationFork() {
+    if (!pendingConversationFork || conversationForkRequestPending) {
+      return;
+    }
+
+    const { conversationId, messageId } = pendingConversationFork;
+    setConversationForkPendingState(true);
+
+    try {
+      const response = await fetch(
+        `/api/conversations/${encodeURIComponent(conversationId)}/fork`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message_id: messageId }),
+        }
+      );
+      const responsePayload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(responsePayload.error || 'Failed to fork conversation');
+      }
+
+      const forkConversationId = String(responsePayload.conversation_id || '').trim();
+      if (!forkConversationId) {
+        throw new Error('The fork response did not include a conversation ID');
+      }
+
+      bootstrap.Modal.getOrCreateInstance(conversationForkModalEl).hide();
+      pendingConversationFork = null;
+      addConversationToList(
+        forkConversationId,
+        String(responsePayload.title || 'Forked Conversation')
+      );
+      await selectConversation(forkConversationId);
+      void loadConversations();
+      showToast('Conversation fork created.', 'success');
+    } catch (error) {
+      console.error('Failed to fork conversation:', error);
+      showToast(error.message || 'Failed to fork conversation', 'danger');
+    } finally {
+      setConversationForkPendingState(false);
+    }
+  }
+
+  confirmConversationForkBtn?.addEventListener('click', () => {
+    void executeConversationFork();
+  });
+  conversationForkModalEl?.addEventListener('hidden.bs.modal', () => {
+    if (!conversationForkRequestPending) {
+      pendingConversationFork = null;
+    }
+  });
+
   function buildInlineAssistantExportActionsHtml(messageId) {
     const previousMessage = getMostRecentRenderedMessage();
     if (!(previousMessage instanceof HTMLElement) || !previousMessage.classList.contains('user-message')) {
@@ -3198,7 +3335,12 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     const normalizedDocumentId = String(output.document_id || '').trim();
     const normalizedExportRunId = String(output.export_run_id || output.run_id || '').trim();
     const isBackgroundExport = Boolean(output.background_export) && Boolean(normalizedExportRunId);
-    if (!normalizedArtifactMessageId && !normalizedDocumentId && !isBackgroundExport) {
+    const terminalStatus = String(output.status || '').trim().toLowerCase();
+    const isTerminalExportStatus = Boolean(
+      output.suppress_assistant_table_export
+      && ['failed', 'canceled'].includes(terminalStatus)
+    );
+    if (!normalizedArtifactMessageId && !normalizedDocumentId && !isBackgroundExport && !isTerminalExportStatus) {
       return null;
     }
 
@@ -3209,7 +3351,8 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
       document_id: normalizedDocumentId,
       export_run_id: normalizedExportRunId,
       run_id: normalizedExportRunId,
-      background_export: isBackgroundExport,
+      background_export: isBackgroundExport || isTerminalExportStatus,
+      suppress_assistant_table_export: Boolean(output.suppress_assistant_table_export),
     };
   }
 
@@ -3392,6 +3535,36 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     continueButton.disabled = !canContinue;
     if (continueButton.dataset.busy !== 'true') {
       continueButton.textContent = getBackgroundGeneratedOutputContinueLabel(outputMetadata);
+    }
+  }
+
+  function canCancelBackgroundGeneratedOutput(outputMetadata) {
+    return Boolean(outputMetadata?.background_export && outputMetadata?.can_cancel);
+  }
+
+  function setBackgroundGeneratedOutputCancelButtonLabel(cancelButton, label) {
+    if (!(cancelButton instanceof HTMLElement)) {
+      return;
+    }
+
+    const icon = document.createElement('i');
+    icon.className = 'bi bi-x-circle me-1';
+    icon.setAttribute('aria-hidden', 'true');
+    const labelText = document.createElement('span');
+    labelText.textContent = label;
+    cancelButton.replaceChildren(icon, labelText);
+  }
+
+  function updateBackgroundGeneratedOutputCancelButton(cancelButton, outputMetadata) {
+    if (!(cancelButton instanceof HTMLElement)) {
+      return;
+    }
+
+    const canCancel = canCancelBackgroundGeneratedOutput(outputMetadata);
+    cancelButton.classList.toggle('d-none', !canCancel);
+    cancelButton.disabled = !canCancel;
+    if (cancelButton.dataset.busy !== 'true') {
+      setBackgroundGeneratedOutputCancelButtonLabel(cancelButton, 'Cancel');
     }
   }
 
@@ -4229,6 +4402,7 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
 
       updateBackgroundGeneratedOutputStatusCard(statusElements, outputMetadata);
       updateBackgroundGeneratedOutputContinueButton(statusElements.continueButton, outputMetadata);
+      updateBackgroundGeneratedOutputCancelButton(statusElements.cancelButton, outputMetadata);
     } catch (error) {
       if (statusElements.detailText) {
         statusElements.detailText.textContent = error.message || 'Could not refresh export progress.';
@@ -4296,6 +4470,53 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
       if (continueButton) {
         continueButton.textContent = originalButtonText;
         updateBackgroundGeneratedOutputContinueButton(continueButton, outputMetadata);
+      }
+    }
+  }
+
+  async function cancelBackgroundGeneratedOutputRun(outputMetadata, card, statusElements = {}, cancelButton = null) {
+    const runId = String(outputMetadata?.export_run_id || outputMetadata?.run_id || '').trim();
+    if (!runId || !(card instanceof HTMLElement) || !document.body.contains(card)) {
+      return;
+    }
+
+    if (cancelButton) {
+      cancelButton.dataset.busy = 'true';
+      cancelButton.disabled = true;
+      setBackgroundGeneratedOutputCancelButtonLabel(cancelButton, 'Canceling...');
+    }
+
+    try {
+      const response = await fetch(`/api/tabular/generated-output/runs/${encodeURIComponent(runId)}/cancel`, {
+        method: 'POST',
+        headers: {
+          'Accept': 'application/json',
+        },
+      });
+      const responseData = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(responseData?.message || responseData?.error || `Server responded with status ${response.status}`);
+      }
+
+      const runStatus = responseData?.run || {};
+      Object.assign(outputMetadata, runStatus, {
+        export_run_id: runStatus.run_id || runId,
+        run_id: runStatus.run_id || runId,
+        background_export: true,
+      });
+      updateBackgroundGeneratedOutputStatusCard(statusElements, outputMetadata);
+      updateBackgroundGeneratedOutputContinueButton(statusElements.continueButton, outputMetadata);
+      updateBackgroundGeneratedOutputCancelButton(cancelButton, outputMetadata);
+      showToast(responseData?.message || 'Background export canceled.', 'success');
+    } catch (error) {
+      if (statusElements.detailText) {
+        statusElements.detailText.textContent = error.message || 'Could not cancel background export.';
+      }
+      showToast(error.message || 'Could not cancel background export.', 'danger');
+    } finally {
+      if (cancelButton) {
+        delete cancelButton.dataset.busy;
+        updateBackgroundGeneratedOutputCancelButton(cancelButton, outputMetadata);
       }
     }
   }
@@ -4453,6 +4674,11 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     actions.className = 'd-flex flex-wrap gap-2 mt-3';
 
     if (outputMetadata?.background_export) {
+      const backgroundRunId = String(outputMetadata?.export_run_id || outputMetadata?.run_id || '').trim();
+      if (!backgroundRunId) {
+        return card;
+      }
+
       const continueButton = document.createElement('button');
       continueButton.type = 'button';
       continueButton.className = 'btn btn-sm btn-outline-primary generated-tabular-continue-btn d-none';
@@ -4466,18 +4692,20 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
       updateBackgroundGeneratedOutputContinueButton(continueButton, outputMetadata);
       actions.appendChild(continueButton);
 
-      const refreshStatusButton = document.createElement('button');
-      refreshStatusButton.type = 'button';
-      refreshStatusButton.className = 'btn btn-sm btn-outline-secondary generated-tabular-refresh-status-btn';
-      refreshStatusButton.textContent = 'Refresh Status';
-      refreshStatusButton.addEventListener('click', async () => {
-        refreshStatusButton.disabled = true;
-        refreshStatusButton.textContent = 'Refreshing...';
-        await refreshBackgroundGeneratedOutputStatus(outputMetadata, card, backgroundStatusElements || {});
-        refreshStatusButton.disabled = false;
-        refreshStatusButton.textContent = 'Refresh Status';
+      const cancelButton = document.createElement('button');
+      cancelButton.type = 'button';
+      cancelButton.className = 'btn btn-sm btn-outline-danger generated-tabular-cancel-btn d-none';
+      cancelButton.setAttribute('aria-label', 'Cancel background export');
+      setBackgroundGeneratedOutputCancelButtonLabel(cancelButton, 'Cancel');
+      cancelButton.addEventListener('click', async () => {
+        await cancelBackgroundGeneratedOutputRun(outputMetadata, card, backgroundStatusElements || {}, cancelButton);
       });
-      actions.appendChild(refreshStatusButton);
+      if (backgroundStatusElements) {
+        backgroundStatusElements.cancelButton = cancelButton;
+      }
+      updateBackgroundGeneratedOutputCancelButton(cancelButton, outputMetadata);
+      actions.appendChild(cancelButton);
+
       card.appendChild(actions);
       scheduleBackgroundGeneratedOutputStatusPolling(outputMetadata, card, backgroundStatusElements || {});
       return card;
@@ -4643,6 +4871,10 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
   function attachMessageExportActionListeners(messageDiv, role) {
     const actionMappings = [
       {
+        selectors: ['.dropdown-export-audio-btn', '.inline-export-audio-btn'],
+        actionName: 'exportMessageAsAudio',
+      },
+      {
         selectors: ['.dropdown-export-md-btn', '.inline-export-md-btn'],
         actionName: 'exportMessageAsMarkdown',
       },
@@ -4669,6 +4901,9 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
         messageDiv.querySelectorAll(selector).forEach(button => {
           button.addEventListener('click', (event) => {
             event.preventDefault();
+            if (button.getAttribute('aria-busy') === 'true') {
+              return;
+            }
             void triggerMessageExportAction(messageDiv, role, actionName, button);
           });
         });
@@ -4696,6 +4931,10 @@ export function appendMessage(
   messageDiv.classList.add("mb-2", "message");
   messageDiv.setAttribute("data-message-id", messageId || `msg-${Date.now()}`);
   messageDiv.dataset.conversationId = resolveMessageConversationId(fullMessageObject);
+  messageDiv.dataset.conversationContentsRole =
+    sender === "You" || sender === "Collaborator" ? "user" : "other";
+  messageDiv.conversationContentsText =
+    sender === "You" || sender === "Collaborator" ? String(messageContent || "") : "";
 
   let avatarImg = "";
   let avatarAltText = "";
@@ -4780,13 +5019,20 @@ export function appendMessage(
         `;
 
     const maskButtonHtml = buildMaskControlsHtml(messageId, maskState);
+    const audioExportMenuItemHtml = window.appSettings?.enable_text_to_speech
+      ? '<li><a class="dropdown-item dropdown-export-audio-btn" href="#" data-default-label="Export to Audio" data-pending-label="Creating Audio File..." data-icon-class="bi bi-file-earmark-music" data-default-title="Export to Audio"><i class="bi bi-file-earmark-music me-2"></i>Export to Audio</a></li>'
+      : '';
     const exportMenuItemsHtml = renderCompletedAssistantActions ? `
             <li><hr class="dropdown-divider"></li>
             <li><a class="dropdown-item dropdown-export-md-btn" href="#" data-message-id="${messageId}"><i class="bi bi-markdown me-2"></i>Export to Markdown</a></li>
             <li><a class="dropdown-item dropdown-export-word-btn" href="#" data-message-id="${messageId}"><i class="bi bi-file-earmark-word me-2"></i>Export to Word</a></li>
             <li><a class="dropdown-item dropdown-export-ppt-btn" href="#" data-message-id="${messageId}"><i class="bi bi-file-earmark-slides me-2"></i>Export to PowerPoint</a></li>
+            ${audioExportMenuItemHtml}
             <li><a class="dropdown-item dropdown-copy-prompt-btn" href="#" data-message-id="${messageId}"><i class="bi bi-clipboard-plus me-2"></i>Use as Prompt</a></li>
             <li><a class="dropdown-item dropdown-open-email-btn" href="#" data-message-id="${messageId}"><i class="bi bi-envelope me-2"></i>Open in Email</a></li>` : '';
+    const forkConversationMenuItemHtml = shouldRenderConversationForkAction(messageId, fullMessageObject)
+      ? '<li><button class="dropdown-item dropdown-fork-conversation-btn" type="button"><i class="bi bi-signpost-split me-2"></i>Fork conversation</button></li>'
+      : '';
     const actionsDropdownHtml = `
             <div class="dropdown">
                 <button class="btn btn-sm btn-link text-muted" type="button" data-bs-toggle="dropdown" data-bs-boundary="viewport" data-bs-reference="parent" aria-expanded="false" title="More actions">
@@ -4795,6 +5041,7 @@ export function appendMessage(
                 <ul class="dropdown-menu dropdown-menu-start">
                     <li><a class="dropdown-item dropdown-delete-btn" href="#" data-message-id="${messageId}"><i class="bi bi-trash me-2"></i>Delete</a></li>
                     <li><a class="dropdown-item dropdown-retry-btn" href="#" data-message-id="${messageId}"><i class="bi bi-arrow-clockwise me-2"></i>Retry</a></li>
+                    ${forkConversationMenuItemHtml}
                     ${feedbackHtml}
             ${exportMenuItemsHtml}
                 </ul>
@@ -5059,6 +5306,11 @@ export function appendMessage(
       });
     }
 
+    const dropdownForkConversationBtn = messageDiv.querySelector('.dropdown-fork-conversation-btn');
+    dropdownForkConversationBtn?.addEventListener('click', () => {
+      openConversationForkModal(messageDiv, fullMessageObject);
+    });
+
     // Handle dropdown positioning manually - move to chatbox container
     const dropdownToggle = messageDiv.querySelector(".message-actions .dropdown button[data-bs-toggle='dropdown']");
     const dropdownMenu = messageDiv.querySelector(".message-actions .dropdown-menu");
@@ -5315,6 +5567,9 @@ export function appendMessage(
     if (sender === "You") {
       const metadataContainerId = `metadata-${messageId || Date.now()}`;
       const maskState = getMaskStateFromMetadata(fullMessageObject?.metadata);
+      const audioExportMenuItemHtml = window.appSettings?.enable_text_to_speech
+        ? '<li><a class="dropdown-item dropdown-export-audio-btn" href="#" data-default-label="Export to Audio" data-pending-label="Creating Audio File..." data-icon-class="bi bi-file-earmark-music" data-default-title="Export to Audio"><i class="bi bi-file-earmark-music me-2"></i>Export to Audio</a></li>'
+        : '';
 
       messageFooterHtml = `
         <div class="message-footer d-flex justify-content-between align-items-center mt-2">
@@ -5331,6 +5586,7 @@ export function appendMessage(
                 <li><a class="dropdown-item dropdown-export-md-btn" href="#" data-message-id="${messageId}"><i class="bi bi-markdown me-2"></i>Export to Markdown</a></li>
                 <li><a class="dropdown-item dropdown-export-word-btn" href="#" data-message-id="${messageId}"><i class="bi bi-file-earmark-word me-2"></i>Export to Word</a></li>
                 <li><a class="dropdown-item dropdown-export-ppt-btn" href="#" data-message-id="${messageId}"><i class="bi bi-file-earmark-slides me-2"></i>Export to PowerPoint</a></li>
+                ${audioExportMenuItemHtml}
                 <li><a class="dropdown-item dropdown-copy-prompt-btn" href="#" data-message-id="${messageId}"><i class="bi bi-clipboard-plus me-2"></i>Use as Prompt</a></li>
                 <li><a class="dropdown-item dropdown-open-email-btn" href="#" data-message-id="${messageId}"><i class="bi bi-envelope me-2"></i>Open in Email</a></li>
               </ul>
@@ -6051,6 +6307,8 @@ export function buildChatRequestPayload(finalMessageToSend, conversationId = cur
       .filter(value => value);
     selectedDocumentId = selectedDocumentIds.length > 0 ? selectedDocumentIds[0] : null;
   }
+  const selectionMode = selectedDocumentIds.length > 0 ? 'selected' : 'relevance';
+  const documentContextRequested = hybridSearchEnabled || selectedDocumentIds.length > 0;
 
   let imageGenEnabled = false;
   const igbtn = document.getElementById('image-generate-btn');
@@ -6165,6 +6423,8 @@ export function buildChatRequestPayload(finalMessageToSend, conversationId = cur
     message: finalMessageToSend,
     conversation_id: conversationId,
     hybrid_search: hybridSearchEnabled,
+    selection_mode: selectionMode,
+    document_context_requested: documentContextRequested,
     user_workspace_context_enabled: userWorkspaceContextEnabled,
     web_search_enabled: webSearchEnabled,
     url_access_enabled: urlAccessEnabled,
@@ -6226,6 +6486,13 @@ export function buildCollaborativeInvocationTarget(messageData = {}, explicitInv
     messageData.agent_info
     && (messageData.agent_info.id || messageData.agent_info.name || messageData.agent_info.display_name)
   );
+  const workspaceContextInvocationRequested = Boolean(
+    messageData.hybrid_search
+    || (
+      messageData.document_context_requested
+      && window.appSettings?.enable_mixed_source_chat_search
+    )
+  );
   const sourceMode = messageData.image_generation
     ? 'image_generation'
     : hasAgentTarget
@@ -6236,7 +6503,7 @@ export function buildCollaborativeInvocationTarget(messageData = {}, explicitInv
     ? 'url_access'
     : messageData.web_search_enabled
     ? 'web_search'
-    : messageData.hybrid_search
+    : workspaceContextInvocationRequested
     ? 'workspace'
     : messageData.prompt_info
     ? 'prompt'

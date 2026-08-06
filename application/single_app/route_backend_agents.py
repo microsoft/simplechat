@@ -735,7 +735,7 @@ def draft_agent_instructions():
             return jsonify({'error': 'The model did not return instructions.'}), 502
 
         log_event(
-            '[AgentInstructions] Agent instructions drafted.',
+            '[AGENT_INSTRUCTIONS] Agent instructions drafted.',
             extra={
                 'user_id': str(user_id),
                 'agent_scope': agent_scope,
@@ -746,7 +746,7 @@ def draft_agent_instructions():
         return jsonify({'success': True, 'instructions': instructions})
     except Exception as exc:
         log_event(
-            f'[AgentInstructions] Error drafting agent instructions: {exc}',
+            f'[AGENT_INSTRUCTIONS] Error drafting agent instructions: {exc}',
             level=logging.ERROR,
             exceptionTraceback=True,
         )
@@ -1347,7 +1347,7 @@ def get_agents_catalog():
         return jsonify({'agents': catalog}), 200
     except Exception as exc:
         log_event(
-            '[AgentsCatalog] Failed to load accessible agent catalog.',
+            '[AGENTS_CATALOG] Failed to load accessible agent catalog.',
             extra={'user_id': user_id, 'error': str(exc)},
             level=logging.ERROR,
             exceptionTraceback=True,
@@ -1377,7 +1377,7 @@ def get_popular_agents_catalog():
         return jsonify({'agents': popular_agents}), 200
     except Exception as exc:
         log_event(
-            '[AgentsCatalog] Failed to load popular agents.',
+            '[AGENTS_CATALOG] Failed to load popular agents.',
             extra={'user_id': user_id, 'error': str(exc)},
             level=logging.ERROR,
             exceptionTraceback=True,

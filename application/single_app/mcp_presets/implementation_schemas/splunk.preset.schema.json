@@ -1,0 +1,30 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "Splunk MCP Preset Implementation Settings",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+        "compatibilityProfile",
+        "credentialMode",
+        "customHeaderValueHandling",
+        "preferredTransport"
+    ],
+    "properties": {
+        "compatibilityProfile": {
+            "type": "string",
+            "enum": ["splunk_mcp"]
+        },
+        "credentialMode": {
+            "type": "string",
+            "enum": ["scoped_test_or_workspace_identity"]
+        },
+        "customHeaderValueHandling": {
+            "type": "string",
+            "enum": ["secret"]
+        },
+        "preferredTransport": {
+            "type": "string",
+            "enum": ["streamable_http"]
+        }
+    }
+}
