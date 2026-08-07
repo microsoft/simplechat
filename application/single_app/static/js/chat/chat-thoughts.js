@@ -1381,15 +1381,21 @@ export function handleStreamingThought(thoughtData, targetMessageId = null) {
  * Create HTML for the thoughts toggle button and hidden container.
  * Returns an object with { toggleHtml, containerHtml }.
  * @param {string} messageId
+ * @param {Object} options
  */
-export function createThoughtsToggleHtml(messageId) {
+export function createThoughtsToggleHtml(messageId, options = {}) {
     if (!window.appSettings?.enable_thoughts) {
         return { toggleHtml: '', containerHtml: '' };
     }
 
     const containerId = `thoughts-${messageId || Date.now()}`;
-    const toggleHtml = `<button class="btn btn-sm btn-link text-muted thoughts-toggle-btn" title="Show processing thoughts" aria-expanded="false" aria-controls="${containerId}"><i class="bi bi-stars"></i></button>`;
-    const containerHtml = `<div id="${containerId}" class="thoughts-container d-none mt-2 pt-2 border-top"><div class="text-muted small">Loading thoughts...</div></div>`;
+    const isExpanded = options.expanded === true;
+    const safeContainerId = escapeHtml(containerId);
+    const expandedClass = isExpanded ? '' : ' d-none';
+    const toggleHtml = isExpanded
+        ? `<button class="btn btn-sm btn-link text-muted thoughts-toggle-btn" title="Hide processing thoughts" aria-expanded="true" aria-controls="${safeContainerId}"><i class="bi bi-chevron-up"></i></button>`
+        : `<button class="btn btn-sm btn-link text-muted thoughts-toggle-btn" title="Show processing thoughts" aria-expanded="false" aria-controls="${safeContainerId}"><i class="bi bi-stars"></i></button>`;
+    const containerHtml = `<div id="${safeContainerId}" class="thoughts-container${expandedClass} mt-2 pt-2 border-top"><div class="text-muted small">Loading thoughts...</div></div>`;
 
     return { toggleHtml, containerHtml };
 }
@@ -1403,6 +1409,12 @@ export function createThoughtsToggleHtml(messageId) {
 export function attachThoughtsToggleListener(messageDiv, messageId, conversationId) {
     const toggleBtn = messageDiv.querySelector('.thoughts-toggle-btn');
     if (!toggleBtn) return;
+
+    const loadIfNeeded = container => {
+        if (container && container.innerHTML.includes('Loading thoughts')) {
+            loadThoughtsForMessage(conversationId, messageId, container);
+        }
+    };
 
     toggleBtn.addEventListener('click', () => {
         const targetId = toggleBtn.getAttribute('aria-controls');
@@ -1426,9 +1438,7 @@ export function attachThoughtsToggleListener(messageDiv, messageId, conversation
             toggleBtn.innerHTML = '<i class="bi bi-chevron-up"></i>';
 
             // Lazy-load thoughts on first expand
-            if (container.innerHTML.includes('Loading thoughts')) {
-                loadThoughtsForMessage(conversationId, messageId, container);
-            }
+            loadIfNeeded(container);
         }
 
         // Restore scroll position
@@ -1440,6 +1450,12 @@ export function attachThoughtsToggleListener(messageDiv, messageId, conversation
             }
         }, 10);
     });
+
+    const initialTargetId = toggleBtn.getAttribute('aria-controls');
+    const initialContainer = initialTargetId ? messageDiv.querySelector(`#${initialTargetId}`) : null;
+    if (toggleBtn.getAttribute('aria-expanded') === 'true') {
+        loadIfNeeded(initialContainer);
+    }
 }
 
 // ---------------------------------------------------------------------------

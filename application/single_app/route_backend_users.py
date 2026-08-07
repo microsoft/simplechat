@@ -513,6 +513,7 @@ def register_route_backend_users(bp):
                     'aiNoticeDismissal',
                     'sidebarToggleStyle', 'sidebarMenuState', 'fontSizePreference',
                     'conversationContentsDrawerEnabled',
+                    'orchestration_interaction',
                     LATEST_FEATURES_HIDDEN_VERSION_SETTING,
                     # Microphone permission settings
                     'microphonePermissionPreference', 'microphonePermissionState',

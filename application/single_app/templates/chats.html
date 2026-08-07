@@ -520,6 +520,33 @@
                                             </select>
                                         </div>
 
+                                        <div id="orchestration-mode-container" class="chat-toolbar-selector">
+                                            <label for="orchestration-mode-dropdown-button" class="visually-hidden">Execution mode</label>
+                                            <div class="dropdown" id="orchestration-mode-dropdown">
+                                                <button class="form-select chat-searchable-select-button"
+                                                        type="button"
+                                                        id="orchestration-mode-dropdown-button"
+                                                        data-bs-toggle="dropdown"
+                                                        data-bs-auto-close="outside"
+                                                        aria-expanded="false">
+                                                    <span class="chat-searchable-select-text text-truncate" id="orchestration-mode-dropdown-text">Balanced</span>
+                                                </button>
+                                                <div class="dropdown-menu p-2 chat-searchable-select-menu" id="orchestration-mode-dropdown-menu">
+                                                    <div id="orchestration-mode-options" class="d-grid gap-1"></div>
+                                                    <hr class="my-2">
+                                                    <div class="form-check form-switch px-2 mb-2">
+                                                        <input class="form-check-input ms-0 me-2" type="checkbox" role="switch" id="orchestration-review-visibility-toggle">
+                                                        <label class="form-check-label small" for="orchestration-review-visibility-toggle">Expanded plan details</label>
+                                                    </div>
+                                                    <div class="d-grid gap-1">
+                                                        <button type="button" class="btn btn-sm btn-outline-secondary" id="orchestration-save-conversation-default-btn">Save for this conversation</button>
+                                                        <button type="button" class="btn btn-sm btn-outline-secondary" id="orchestration-save-user-default-btn">Save as my default</button>
+                                                    </div>
+                                                    <div class="small text-muted mt-2" id="orchestration-mode-status" aria-live="polite"></div>
+                                                </div>
+                                            </div>
+                                        </div>
+
                                         <div id="agent-select-container" class="chat-toolbar-selector" style="display: none;">
                                             <label for="agent-select" class="visually-hidden">Agent</label>
                                             <div class="dropdown chat-searchable-select" id="agent-dropdown">
@@ -1584,6 +1611,7 @@
         enable_desktop_notifications: {{ settings.enable_desktop_notifications|default(false, true)|tojson }},
         desktop_notifications_enabled: {{ desktop_notifications_enabled|default(false, true)|tojson }},
         app_title: {{ settings.app_title|default('Simple Chat', true)|tojson }},
+        orchestrationInteractionPolicy: {{ settings.orchestration_interaction_policy|default({}, true)|tojson|safe }},
         documentActionCapabilities: {{ settings.document_action_capabilities|default({}, true)|tojson|safe }}
     };
 
@@ -1610,6 +1638,7 @@
 <script type="module" src="{{ url_for('static', filename='js/chat/chat-sidebar-conversations.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/chat/chat-documents.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/chat/chat-prompts.js') }}"></script>
+<script type="module" src="{{ url_for('static', filename='js/chat/chat-orchestration-interaction.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/chat/chat-input-actions.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/chat/chat-toast.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/chat/chat-ai-notice.js') }}"></script>

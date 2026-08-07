@@ -14,6 +14,10 @@ from functions_document_actions import get_default_document_action_capabilities
 from functions_icon_utils import normalize_icon_payload
 from functions_latest_features_nav import LATEST_FEATURES_HIDDEN_VERSION_SETTING
 from functions_mcp_server_config import INBOUND_MCP_SETTINGS_DEFAULTS, normalize_inbound_mcp_settings
+from functions_orchestration_interaction import (
+    DEFAULT_ORCHESTRATION_INTERACTION_POLICY,
+    normalize_orchestration_interaction_policy,
+)
 from functions_service_health import get_default_service_health
 import app_settings_cache
 import inspect
@@ -270,6 +274,17 @@ def normalize_chat_capability_planner_settings(settings):
         'chat_capability_planner_model_endpoint_id': model_endpoint_id,
         'chat_capability_planner_model_id': model_id,
     }
+
+
+def normalize_orchestration_interaction_settings(settings):
+    """Normalize Phase 12 interaction policy on an app settings document."""
+    if not isinstance(settings, dict):
+        return False
+    normalized_policy = normalize_orchestration_interaction_policy(settings)
+    if settings.get('orchestration_interaction_policy') == normalized_policy:
+        return False
+    settings['orchestration_interaction_policy'] = normalized_policy
+    return True
 
 
 def _normalize_key_vault_admin_roles(value):
@@ -1507,6 +1522,9 @@ def get_settings(use_cosmos=False, include_source=False):
         },
         'chat_capability_choice_ttl_seconds': 86400,
         **CHAT_CAPABILITY_PLANNER_DEFAULTS,
+        'orchestration_interaction_policy': copy.deepcopy(
+            DEFAULT_ORCHESTRATION_INTERACTION_POLICY
+        ),
 
         # URL Access and Deep Research (bounded source-page inspection for web evidence)
         'enable_url_access': False,
@@ -1741,6 +1759,7 @@ def get_settings(use_cosmos=False, include_source=False):
         inbound_mcp_settings_updated = normalize_inbound_mcp_settings(merged)
         public_workspace_display_settings_updated = normalize_public_workspace_display_settings(merged)
         key_vault_reminder_settings_updated = normalize_key_vault_reminder_settings(merged)
+        orchestration_interaction_settings_updated = normalize_orchestration_interaction_settings(merged)
 
         merged['enable_tabular_processing_plugin'] = is_tabular_processing_enabled(merged)
 
@@ -1755,6 +1774,7 @@ def get_settings(use_cosmos=False, include_source=False):
             or inbound_mcp_settings_updated
             or public_workspace_display_settings_updated
             or key_vault_reminder_settings_updated
+            or orchestration_interaction_settings_updated
         ):
             cosmos_settings_container.upsert_item(merged)
             _refresh_app_settings_cache_after_write(merged, context="merge_upsert")
@@ -1808,6 +1828,7 @@ def update_settings(new_settings):
         normalize_inbound_mcp_settings(settings_item)
         normalize_public_workspace_display_settings(settings_item)
         normalize_key_vault_reminder_settings(settings_item)
+        normalize_orchestration_interaction_settings(settings_item)
         settings_item['enable_multi_model_endpoints'] = coerce_multi_model_endpoint_enablement(
             existing_multi_endpoint_enabled,
             settings_item.get('enable_multi_model_endpoints', False),

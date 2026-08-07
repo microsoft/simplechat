@@ -982,6 +982,7 @@ def register_route_frontend_admin_settings(bp):
             settings_for_template.update(
                 normalize_chat_capability_planner_settings(settings_for_template)
             )
+            normalize_orchestration_interaction_settings(settings_for_template)
             normalize_inbound_mcp_settings(settings_for_template)
             settings_for_template['model_endpoints'] = frontend_model_endpoints
             audio_runtime_capabilities = get_audio_runtime_capabilities()
@@ -1126,6 +1127,62 @@ def register_route_frontend_admin_settings(bp):
                     submitted_planner_settings
                 )
             )
+            submitted_orchestration_interaction_policy = {
+                'enabled_execution_modes': form_data.getlist(
+                    'orchestration_execution_modes_enabled'
+                ),
+                'default_execution_mode': form_data.get(
+                    'orchestration_default_execution_mode',
+                    'balanced',
+                ),
+                'enabled_review_visibility': form_data.getlist(
+                    'orchestration_review_visibility_levels_enabled'
+                ),
+                'default_review_visibility': form_data.get(
+                    'orchestration_default_review_visibility',
+                    'collapsed',
+                ),
+                'allow_conversation_execution_mode': (
+                    form_data.get('orchestration_allow_conversation_execution_mode') == 'on'
+                ),
+                'allow_per_message_execution_mode': (
+                    form_data.get('orchestration_allow_per_message_execution_mode') == 'on'
+                ),
+                'allow_conversation_review_visibility': (
+                    form_data.get('orchestration_allow_conversation_review_visibility') == 'on'
+                ),
+                'allow_per_message_review_visibility': (
+                    form_data.get('orchestration_allow_per_message_review_visibility') == 'on'
+                ),
+                'require_expanded_review_visibility': (
+                    form_data.get('orchestration_require_expanded_review_visibility') == 'on'
+                ),
+                'context_execution_modes': {
+                    'personal': form_data.getlist('orchestration_context_modes_personal'),
+                    'group': form_data.getlist('orchestration_context_modes_group'),
+                    'public': form_data.getlist('orchestration_context_modes_public'),
+                    'external': form_data.getlist('orchestration_context_modes_external'),
+                },
+                'plan_details_drawer_enabled': (
+                    form_data.get('orchestration_plan_details_drawer_enabled') == 'on'
+                ),
+                'advanced_plan_editing': form_data.get(
+                    'orchestration_advanced_plan_editing',
+                    'view_only',
+                ),
+                'audit_enabled': (
+                    form_data.get('orchestration_interaction_audit_enabled') == 'on'
+                ),
+                'retention_days': parse_admin_int(
+                    form_data.get('orchestration_interaction_retention_days'),
+                    (settings.get('orchestration_interaction_policy') or {}).get('retention_days', 90),
+                    'orchestration_interaction_retention_days',
+                    90,
+                ),
+            }
+            orchestration_interaction_policy = normalize_orchestration_interaction_policy({
+                'orchestration_interaction_policy': submitted_orchestration_interaction_policy,
+            })
 
             # --- Fetch all other form data as before ---
             app_title = form_data.get('app_title', 'AI Chat Application')
@@ -2427,6 +2484,7 @@ def register_route_frontend_admin_settings(bp):
                 'multi_endpoint_migrated_at': migrated_at,
                 'multi_endpoint_migration_notice': migration_notice,
                 **chat_capability_planner_settings,
+                'orchestration_interaction_policy': orchestration_interaction_policy,
                 'azure_apim_gpt_endpoint': form_data.get('azure_apim_gpt_endpoint', '').strip(),
                 'azure_apim_gpt_subscription_key': admin_secret('azure_apim_gpt_subscription_key'),
                 'azure_apim_gpt_deployment': form_data.get('azure_apim_gpt_deployment', '').strip(),
