@@ -1,8 +1,8 @@
 # test_tabular_row_orchestration_scale.py
 """
 Functional test for scalable per-row tabular orchestration.
-Version: 0.250.127
-Implemented in: 0.250.060; generated CSV formula safety in 0.250.065; generated file export routing in 0.250.072; source descriptor generalization in 0.250.127
+Version: 0.250.128
+Implemented in: 0.250.060; generated CSV formula safety in 0.250.065; generated file export routing in 0.250.072; source descriptor generalization in 0.250.127; unified durable run contract in 0.250.128
 
 This test ensures generated exports preserve source identity and row order while
 enforcing one stable output schema across independently generated batches.
@@ -15,6 +15,7 @@ import io
 import importlib.util
 import json
 import logging
+import math
 import os
 import re
 import sys
@@ -94,6 +95,18 @@ FAILURE_FUNCTIONS = {
 }
 ARTIFACT_FUNCTIONS = {'_upload_generated_chat_artifact_for_current_user'}
 SCHEDULER_FUNCTIONS = {'_query_scheduler_candidates_by_status'}
+MANIFEST_FUNCTIONS = {
+    '_normalize_tabular_run_task_type',
+    '_input_blob_path',
+    '_chunk_manifest_blob_prefix',
+    '_chunk_manifest_page_blob_path',
+    '_output_blob_path',
+    '_output_summary_blob_path',
+    '_build_chunk_manifest_contract',
+    '_build_chunk_manifest_entries',
+    '_write_chunk_manifest_pages',
+    '_write_chunk_manifest_for_run',
+}
 
 
 def _load_contract_helpers():
@@ -552,26 +565,44 @@ def _load_legacy_migration_helper(aggregate_batches):
     selected_nodes = [
         node
         for node in module_tree.body
-        if isinstance(node, ast.FunctionDef) and node.name in LEGACY_MIGRATION_FUNCTIONS
+        if isinstance(node, ast.FunctionDef) and node.name in LEGACY_MIGRATION_FUNCTIONS | MANIFEST_FUNCTIONS
     ]
-    if len(selected_nodes) != len(LEGACY_MIGRATION_FUNCTIONS):
+    found_functions = {node.name for node in selected_nodes}
+    missing_functions = (LEGACY_MIGRATION_FUNCTIONS | MANIFEST_FUNCTIONS) - found_functions
+    if missing_functions:
         raise AssertionError('Missing legacy export migration helpers')
+
+    def safe_int(value, default=0, minimum=None, maximum=None):
+        try:
+            parsed_value = int(value)
+        except (TypeError, ValueError):
+            parsed_value = default
+        if minimum is not None:
+            parsed_value = max(minimum, parsed_value)
+        if maximum is not None:
+            parsed_value = min(maximum, parsed_value)
+        return parsed_value
 
     uploaded_batches = {}
     deleted_blobs = []
     namespace = {
         're': re,
         'uuid': uuid,
-        'TABULAR_EXPORT_CONTRACT_VERSION': 2,
+        'math': math,
+        'TABULAR_EXPORT_CONTRACT_VERSION': 3,
+        'TABULAR_RUN_TASK_STRUCTURED_EXPORT': 'structured_export',
+        'TABULAR_RUN_TASK_HIERARCHICAL_ANALYSIS': 'hierarchical_analysis',
+        'TABULAR_RUN_TASK_COMBINED': 'combined',
+        'TABULAR_RUN_TASK_TYPES': {'structured_export', 'hierarchical_analysis', 'combined'},
+        'TABULAR_RUN_CHUNK_MANIFEST_VERSION': 1,
+        'TABULAR_RUN_DEFAULT_CHUNK_MANIFEST_PAGE_SIZE': 250,
         'TABULAR_EXPORT_INPUT_ROW_NUMBER_FIELD': '__simplechat_source_row_number',
         'TABULAR_EXPORT_INPUT_ROW_IDENTITY_FIELD': '__simplechat_source_row_identity',
         'TABULAR_EXPORT_INPUT_ROW_TOKEN_FIELD': '__simplechat_source_row_token',
-        '_safe_int': lambda value: int(value or 0),
+        'storage_account_personal_chat_container_name': 'personal-chat',
+        '_safe_int': safe_int,
         '_download_json_blob': lambda path: aggregate_batches if path == 'legacy-input.json' else uploaded_batches[path],
         '_upload_json_blob': lambda path, payload, metadata=None: uploaded_batches.__setitem__(path, payload),
-        '_input_blob_path': lambda user_id, conversation_id, run_id, batch_number: f'batch-{batch_number}',
-        '_output_blob_path': lambda user_id, conversation_id, run_id, batch_number: f'output-{batch_number}',
-        '_output_summary_blob_path': lambda user_id, conversation_id, run_id, batch_number: f'summary-{batch_number}',
         '_delete_blob_if_exists': deleted_blobs.append,
         '_now_iso': lambda: '2026-07-21T18:00:00+00:00',
         '_raise_if_tabular_export_canceled': lambda run: run,
@@ -580,6 +611,49 @@ def _load_legacy_migration_helper(aggregate_batches):
     extracted_module = ast.Module(body=selected_nodes, type_ignores=[])
     exec(compile(extracted_module, str(EXPORT_MODULE), 'exec'), namespace)
     return namespace['_migrate_legacy_tabular_export_run'], uploaded_batches, deleted_blobs
+
+
+def _load_manifest_helpers():
+    module_tree = ast.parse(EXPORT_MODULE.read_text(encoding='utf-8'), filename=str(EXPORT_MODULE))
+    selected_nodes = [
+        node
+        for node in module_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name in MANIFEST_FUNCTIONS
+    ]
+    found_functions = {node.name for node in selected_nodes}
+    missing_functions = MANIFEST_FUNCTIONS - found_functions
+    if missing_functions:
+        raise AssertionError(f'Missing manifest helpers: {sorted(missing_functions)}')
+
+    uploaded_pages = {}
+
+    def safe_int(value, default=0, minimum=None, maximum=None):
+        try:
+            parsed_value = int(value)
+        except (TypeError, ValueError):
+            parsed_value = default
+        if minimum is not None:
+            parsed_value = max(minimum, parsed_value)
+        if maximum is not None:
+            parsed_value = min(maximum, parsed_value)
+        return parsed_value
+
+    namespace = {
+        'math': math,
+        'TABULAR_EXPORT_CONTRACT_VERSION': 3,
+        'TABULAR_RUN_TASK_STRUCTURED_EXPORT': 'structured_export',
+        'TABULAR_RUN_TASK_HIERARCHICAL_ANALYSIS': 'hierarchical_analysis',
+        'TABULAR_RUN_TASK_COMBINED': 'combined',
+        'TABULAR_RUN_TASK_TYPES': {'structured_export', 'hierarchical_analysis', 'combined'},
+        'TABULAR_RUN_CHUNK_MANIFEST_VERSION': 1,
+        'TABULAR_RUN_DEFAULT_CHUNK_MANIFEST_PAGE_SIZE': 250,
+        'storage_account_personal_chat_container_name': 'personal-chat',
+        '_safe_int': safe_int,
+        '_upload_json_blob': lambda path, payload, metadata=None: uploaded_pages.__setitem__(path, payload),
+    }
+    extracted_module = ast.Module(body=selected_nodes, type_ignores=[])
+    exec(compile(extracted_module, str(EXPORT_MODULE), 'exec'), namespace)
+    return namespace, uploaded_pages
 
 
 def _load_failed_export_helpers():
@@ -1349,6 +1423,64 @@ def test_worker_lease_fencing_rejects_stale_claims():
         raise AssertionError('An ETag conflict must fence the stale worker')
 
 
+def test_chunk_manifest_contract_stays_compact_at_100000_rows():
+    """Large run manifests keep chunk entries outside the Cosmos run document."""
+    helpers, uploaded_pages = _load_manifest_helpers()
+
+    manifest = helpers['_write_chunk_manifest_for_run'](
+        'user-1',
+        'conversation-1',
+        'run-100000',
+        2000,
+        row_count=100000,
+        estimated_rows_per_chunk=50,
+        chunk_status='pending_source_staging',
+    )
+    run_document = {
+        'id': 'run-100000',
+        'type': 'tabular_generated_output_run',
+        'contract_version': 3,
+        'task_type': 'structured_export',
+        'analysis_objective': '',
+        'row_count': 100000,
+        'batch_count': 2000,
+        'total_chunk_count': manifest['total_chunk_count'],
+        'processed_chunk_count': 0,
+        'failed_chunk_count': 0,
+        'chunk_manifest': manifest,
+    }
+    safe_cosmos_document_threshold = 16 * 1024
+    serialized_run_document = json.dumps(
+        run_document,
+        separators=(',', ':'),
+        ensure_ascii=False,
+    ).encode('utf-8')
+
+    assert len(serialized_run_document) < safe_cosmos_document_threshold
+    assert 'chunks' not in run_document['chunk_manifest']
+    assert manifest['page_count'] == 8
+    assert len(uploaded_pages) == 8
+
+    first_page = uploaded_pages[
+        'user-1/conversation-1/generated/tabular_runs/run-100000/manifest/chunks/page_000001.json'
+    ]
+    last_page = uploaded_pages[
+        'user-1/conversation-1/generated/tabular_runs/run-100000/manifest/chunks/page_000008.json'
+    ]
+    assert first_page['chunk_index_start'] == 1
+    assert len(first_page['chunks']) == 250
+    assert first_page['chunks'][0]['source_row_start'] == 1
+    assert first_page['chunks'][0]['source_row_end'] == 50
+    assert last_page['chunk_index_end'] == 2000
+    assert last_page['chunks'][-1]['source_row_end'] == 100000
+
+    max_manifest_page_size = max(
+        len(json.dumps(page, separators=(',', ':'), ensure_ascii=False).encode('utf-8'))
+        for page in uploaded_pages.values()
+    )
+    assert max_manifest_page_size < 128 * 1024
+
+
 def test_legacy_run_migration_tokenizes_inputs_and_resets_outputs():
     """Pre-contract runs migrate deterministic inputs and regenerate old outputs."""
     aggregate_batches = [
@@ -1367,15 +1499,35 @@ def test_legacy_run_migration_tokenizes_inputs_and_resets_outputs():
         'input_blob_path': 'legacy-input.json',
     })
 
-    assert migrated_run['contract_version'] == 2
+    input_batch_1_path = 'user-1/conversation-1/generated/tabular_runs/legacy-run/input/batch_000001.json'
+    input_batch_2_path = 'user-1/conversation-1/generated/tabular_runs/legacy-run/input/batch_000002.json'
+    output_batch_1_path = 'user-1/conversation-1/generated/tabular_runs/legacy-run/output/batch_000001.json'
+    output_batch_2_path = 'user-1/conversation-1/generated/tabular_runs/legacy-run/output/batch_000002.json'
+    summary_batch_1_path = 'user-1/conversation-1/generated/tabular_runs/legacy-run/summary/batch_000001.json'
+    summary_batch_2_path = 'user-1/conversation-1/generated/tabular_runs/legacy-run/summary/batch_000002.json'
+    manifest_page_path = 'user-1/conversation-1/generated/tabular_runs/legacy-run/manifest/chunks/page_000001.json'
+
+    assert migrated_run['contract_version'] == 3
+    assert migrated_run['task_type'] == 'structured_export'
+    assert migrated_run['analysis_objective'] == ''
+    assert migrated_run['total_chunk_count'] == 2
+    assert migrated_run['processed_chunk_count'] == 0
+    assert migrated_run['failed_chunk_count'] == 0
+    assert migrated_run['chunk_manifest']['page_count'] == 1
     assert migrated_run['completed_batches'] == 0
     assert migrated_run['processed_rows'] == 0
     assert migrated_run['output_schema'] is None
     assert migrated_run['regenerate_legacy_output_checkpoints'] is False
     assert migrated_run['input_blob_path'] is None
-    assert [row['__simplechat_source_row_number'] for row in uploaded_batches['batch-1']] == [1, 2]
-    assert uploaded_batches['batch-2'][0]['__simplechat_source_row_number'] == 3
-    assert deleted_blobs == ['output-1', 'summary-1', 'output-2', 'summary-2']
+    assert [row['__simplechat_source_row_number'] for row in uploaded_batches[input_batch_1_path]] == [1, 2]
+    assert uploaded_batches[input_batch_2_path][0]['__simplechat_source_row_number'] == 3
+    assert uploaded_batches[manifest_page_path]['chunks'][0]['row_count'] == 2
+    assert deleted_blobs == [
+        output_batch_1_path,
+        summary_batch_1_path,
+        output_batch_2_path,
+        summary_batch_2_path,
+    ]
     migrate_again, second_uploaded_batches, _ = _load_legacy_migration_helper(aggregate_batches)
     migrate_again({
         'id': 'legacy-run',
@@ -1387,8 +1539,8 @@ def test_legacy_run_migration_tokenizes_inputs_and_resets_outputs():
         'processed_rows': 2,
         'input_blob_path': 'legacy-input.json',
     })
-    assert uploaded_batches['batch-1'][0]['__simplechat_source_row_token'] == (
-        second_uploaded_batches['batch-1'][0]['__simplechat_source_row_token']
+    assert uploaded_batches[input_batch_1_path][0]['__simplechat_source_row_token'] == (
+        second_uploaded_batches[input_batch_1_path][0]['__simplechat_source_row_token']
     )
 
 
@@ -1534,6 +1686,7 @@ def main():
         test_worker_revalidates_conversation_and_workspace_authorization,
         test_durable_cancellation_is_idempotent_and_terminal,
         test_worker_lease_fencing_rejects_stale_claims,
+        test_chunk_manifest_contract_stays_compact_at_100000_rows,
         test_legacy_run_migration_tokenizes_inputs_and_resets_outputs,
         test_post_run_summary_uses_only_bounded_batch_summaries,
         test_final_artifact_publication_is_retry_idempotent,

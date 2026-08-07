@@ -52,7 +52,17 @@ from functions_simplechat_operations import upload_generated_analysis_artifact_s
 
 
 TABULAR_EXPORT_RUN_TYPE = 'tabular_generated_output_run'
-TABULAR_EXPORT_CONTRACT_VERSION = 2
+TABULAR_EXPORT_CONTRACT_VERSION = 3
+TABULAR_RUN_TASK_STRUCTURED_EXPORT = 'structured_export'
+TABULAR_RUN_TASK_HIERARCHICAL_ANALYSIS = 'hierarchical_analysis'
+TABULAR_RUN_TASK_COMBINED = 'combined'
+TABULAR_RUN_TASK_TYPES = {
+    TABULAR_RUN_TASK_STRUCTURED_EXPORT,
+    TABULAR_RUN_TASK_HIERARCHICAL_ANALYSIS,
+    TABULAR_RUN_TASK_COMBINED,
+}
+TABULAR_RUN_CHUNK_MANIFEST_VERSION = 1
+TABULAR_RUN_DEFAULT_CHUNK_MANIFEST_PAGE_SIZE = 250
 TABULAR_EXPORT_STATUS_QUEUED = 'queued'
 TABULAR_EXPORT_STATUS_RUNNING = 'running'
 TABULAR_EXPORT_STATUS_COMPLETED = 'completed'
@@ -169,6 +179,13 @@ def _settings_bool(settings, key, default=False):
 
 def _settings_int(settings, key, default, minimum=None, maximum=None):
     return _safe_int((settings or {}).get(key, default), default=default, minimum=minimum, maximum=maximum)
+
+
+def _normalize_tabular_run_task_type(task_type):
+    normalized_task_type = str(task_type or '').strip().lower()
+    if normalized_task_type in TABULAR_RUN_TASK_TYPES:
+        return normalized_task_type
+    return TABULAR_RUN_TASK_STRUCTURED_EXPORT
 
 
 def _iter_exception_chain(exc):
@@ -548,12 +565,154 @@ def _input_batches_blob_path(user_id, conversation_id, run_id):
     return f"{user_id}/{conversation_id}/generated/tabular_runs/{run_id}/input/input_batches.json"
 
 
+def _chunk_manifest_blob_prefix(user_id, conversation_id, run_id):
+    return f"{user_id}/{conversation_id}/generated/tabular_runs/{run_id}/manifest/chunks/"
+
+
+def _chunk_manifest_page_blob_path(user_id, conversation_id, run_id, page_number):
+    return f"{_chunk_manifest_blob_prefix(user_id, conversation_id, run_id)}page_{page_number:06d}.json"
+
+
 def _output_blob_path(user_id, conversation_id, run_id, batch_number):
     return f"{user_id}/{conversation_id}/generated/tabular_runs/{run_id}/output/batch_{batch_number:06d}.json"
 
 
 def _output_summary_blob_path(user_id, conversation_id, run_id, batch_number):
     return f"{user_id}/{conversation_id}/generated/tabular_runs/{run_id}/summary/batch_{batch_number:06d}.json"
+
+
+def _build_chunk_manifest_contract(user_id, conversation_id, run_id, total_chunk_count, row_count=0, page_size=None):
+    normalized_total_chunk_count = _safe_int(total_chunk_count, default=0, minimum=0)
+    normalized_page_size = _safe_int(
+        page_size,
+        default=TABULAR_RUN_DEFAULT_CHUNK_MANIFEST_PAGE_SIZE,
+        minimum=1,
+        maximum=1000,
+    )
+    page_count = math.ceil(normalized_total_chunk_count / normalized_page_size) if normalized_total_chunk_count else 0
+    return {
+        'version': TABULAR_RUN_CHUNK_MANIFEST_VERSION,
+        'storage': 'blob',
+        'container': storage_account_personal_chat_container_name,
+        'blob_prefix': _chunk_manifest_blob_prefix(user_id, conversation_id, run_id),
+        'page_blob_name_pattern': 'page_{page_number:06d}.json',
+        'page_size': normalized_page_size,
+        'page_count': page_count,
+        'chunk_index_base': 1,
+        'total_chunk_count': normalized_total_chunk_count,
+        'row_count': _safe_int(row_count, default=0, minimum=0),
+    }
+
+
+def _build_chunk_manifest_entries(
+    user_id,
+    conversation_id,
+    run_id,
+    total_chunk_count,
+    row_count=0,
+    chunk_row_counts=None,
+    estimated_rows_per_chunk=None,
+    chunk_status='staged',
+):
+    normalized_total_chunk_count = _safe_int(total_chunk_count, default=0, minimum=0)
+    normalized_row_count = _safe_int(row_count, default=0, minimum=0)
+    normalized_estimated_rows_per_chunk = _safe_int(estimated_rows_per_chunk, default=0, minimum=0)
+    exact_chunk_row_counts = [
+        _safe_int(chunk_row_count, default=0, minimum=0)
+        for chunk_row_count in (chunk_row_counts or [])
+    ]
+    entries = []
+    next_source_row_number = 1
+    for chunk_index in range(1, normalized_total_chunk_count + 1):
+        chunk_row_count = 0
+        if chunk_index <= len(exact_chunk_row_counts):
+            chunk_row_count = exact_chunk_row_counts[chunk_index - 1]
+        elif normalized_estimated_rows_per_chunk and normalized_row_count:
+            remaining_rows = max(normalized_row_count - next_source_row_number + 1, 0)
+            chunk_row_count = min(normalized_estimated_rows_per_chunk, remaining_rows)
+
+        entry = {
+            'chunk_index': chunk_index,
+            'status': str(chunk_status or 'staged').strip() or 'staged',
+            'input_blob_path': _input_blob_path(user_id, conversation_id, run_id, chunk_index),
+            'output_blob_path': _output_blob_path(user_id, conversation_id, run_id, chunk_index),
+            'summary_blob_path': _output_summary_blob_path(user_id, conversation_id, run_id, chunk_index),
+        }
+        if chunk_row_count > 0:
+            entry.update({
+                'source_row_start': next_source_row_number,
+                'source_row_end': next_source_row_number + chunk_row_count - 1,
+                'row_count': chunk_row_count,
+            })
+            next_source_row_number += chunk_row_count
+        entries.append(entry)
+    return entries
+
+
+def _write_chunk_manifest_pages(user_id, conversation_id, run_id, manifest, chunk_entries):
+    page_size = _safe_int(
+        (manifest or {}).get('page_size'),
+        default=TABULAR_RUN_DEFAULT_CHUNK_MANIFEST_PAGE_SIZE,
+        minimum=1,
+        maximum=1000,
+    )
+    total_chunk_count = _safe_int((manifest or {}).get('total_chunk_count'), default=len(chunk_entries), minimum=0)
+    page_count = math.ceil(total_chunk_count / page_size) if total_chunk_count else 0
+    for page_number in range(1, page_count + 1):
+        page_start = (page_number - 1) * page_size
+        page_entries = list(chunk_entries[page_start:page_start + page_size])
+        page_payload = {
+            'version': TABULAR_RUN_CHUNK_MANIFEST_VERSION,
+            'run_id': run_id,
+            'page_number': page_number,
+            'page_count': page_count,
+            'page_size': page_size,
+            'chunk_index_start': page_start + 1,
+            'chunk_index_end': page_start + len(page_entries),
+            'chunks': page_entries,
+        }
+        _upload_json_blob(
+            _chunk_manifest_page_blob_path(user_id, conversation_id, run_id, page_number),
+            page_payload,
+            metadata={
+                'run_id': run_id,
+                'conversation_id': conversation_id,
+                'chunk_manifest': 'true',
+                'page_number': page_number,
+                'contract_version': TABULAR_EXPORT_CONTRACT_VERSION,
+            },
+        )
+
+
+def _write_chunk_manifest_for_run(
+    user_id,
+    conversation_id,
+    run_id,
+    total_chunk_count,
+    row_count=0,
+    chunk_row_counts=None,
+    estimated_rows_per_chunk=None,
+    chunk_status='staged',
+):
+    manifest = _build_chunk_manifest_contract(
+        user_id,
+        conversation_id,
+        run_id,
+        total_chunk_count,
+        row_count=row_count,
+    )
+    chunk_entries = _build_chunk_manifest_entries(
+        user_id,
+        conversation_id,
+        run_id,
+        total_chunk_count,
+        row_count=row_count,
+        chunk_row_counts=chunk_row_counts,
+        estimated_rows_per_chunk=estimated_rows_per_chunk,
+        chunk_status=chunk_status,
+    )
+    _write_chunk_manifest_pages(user_id, conversation_id, run_id, manifest, chunk_entries)
+    return manifest
 
 
 def _upload_json_blob(blob_path, payload, metadata=None, overwrite=True):
@@ -881,11 +1040,35 @@ def _stage_tabular_generated_output_source(run, settings):
     if staged_batch_count <= 0:
         raise ValueError('Source query produced no input checkpoints')
 
+    staged_chunk_row_counts = []
+    for batch_number in range(1, staged_batch_count + 1):
+        batch_rows = _download_json_blob(_input_blob_path(
+            run.get('user_id'),
+            run.get('conversation_id'),
+            run.get('id'),
+            batch_number,
+        ))
+        if not isinstance(batch_rows, list):
+            raise ValueError(f'Source input checkpoint {batch_number}/{staged_batch_count} was not a JSON array')
+        staged_chunk_row_counts.append(len(batch_rows))
+
+    chunk_manifest = _write_chunk_manifest_for_run(
+        run.get('user_id'),
+        run.get('conversation_id'),
+        run.get('id'),
+        staged_batch_count,
+        row_count=staged_row_count,
+        chunk_row_counts=staged_chunk_row_counts,
+        chunk_status='staged',
+    )
+
     now = _now_iso()
     run.update({
         'source_staging_complete': True,
         'row_count': staged_row_count,
         'batch_count': staged_batch_count,
+        'total_chunk_count': staged_batch_count,
+        'chunk_manifest': chunk_manifest,
         'updated_at': now,
         'last_heartbeat_at': now,
         'last_message': (
@@ -913,6 +1096,7 @@ def _migrate_legacy_tabular_export_run(run):
             raise ValueError('Legacy input batches blob was not a JSON array')
 
     migrated_row_count = 0
+    migrated_chunk_row_counts = []
     for batch_number in range(1, batch_count + 1):
         _raise_if_tabular_export_canceled(run)
         if aggregate_input_batches is not None:
@@ -963,16 +1147,33 @@ def _migrate_legacy_tabular_export_run(run):
             run.get('id'),
             batch_number,
         ))
-        migrated_row_count += len(prepared_rows)
+        prepared_row_count = len(prepared_rows)
+        migrated_chunk_row_counts.append(prepared_row_count)
+        migrated_row_count += prepared_row_count
 
     if migrated_row_count != expected_row_count:
         raise ValueError(
             f'Legacy input migration found {migrated_row_count} row(s); expected {expected_row_count}'
         )
 
+    chunk_manifest = _write_chunk_manifest_for_run(
+        run.get('user_id'),
+        run.get('conversation_id'),
+        run.get('id'),
+        batch_count,
+        row_count=migrated_row_count,
+        chunk_row_counts=migrated_chunk_row_counts,
+        chunk_status='staged',
+    )
     now = _now_iso()
     run.update({
         'contract_version': TABULAR_EXPORT_CONTRACT_VERSION,
+        'task_type': _normalize_tabular_run_task_type(run.get('task_type')),
+        'analysis_objective': str(run.get('analysis_objective') or '').strip(),
+        'total_chunk_count': batch_count,
+        'processed_chunk_count': 0,
+        'failed_chunk_count': 0,
+        'chunk_manifest': chunk_manifest,
         'input_blob_path': None,
         'completed_batches': 0,
         'processed_rows': 0,
@@ -1592,6 +1793,9 @@ def _build_run_public_status(run, settings=None):
     completed_batches = _safe_int(run.get('completed_batches'))
     row_count = _safe_int(run.get('row_count'))
     processed_rows = _safe_int(run.get('processed_rows'))
+    total_chunk_count = _safe_int(run.get('total_chunk_count'), default=batch_count, minimum=0)
+    processed_chunk_count = _safe_int(run.get('processed_chunk_count'), default=completed_batches, minimum=0)
+    failed_chunk_count = _safe_int(run.get('failed_chunk_count'), default=0, minimum=0)
     progress_percent = 0.0
     if batch_count:
         progress_percent = round((completed_batches / batch_count) * 100, 2)
@@ -1620,6 +1824,7 @@ def _build_run_public_status(run, settings=None):
     return {
         'run_id': run.get('id'),
         'conversation_id': run.get('conversation_id'),
+        'task_type': _normalize_tabular_run_task_type(run.get('task_type')),
         'status': run.get('status'),
         'source_file_name': run.get('source_file_name'),
         'selected_sheet': run.get('selected_sheet'),
@@ -1628,6 +1833,9 @@ def _build_run_public_status(run, settings=None):
         'processed_rows': processed_rows,
         'batch_count': batch_count,
         'completed_batches': completed_batches,
+        'total_chunk_count': total_chunk_count,
+        'processed_chunk_count': processed_chunk_count,
+        'failed_chunk_count': failed_chunk_count,
         'progress_percent': progress_percent,
         'created_at': run.get('created_at'),
         'started_at': run.get('started_at'),
@@ -2156,6 +2364,7 @@ def _update_run_progress(run, completed_batches, processed_rows, batch_rows, bat
     run.update({
         'completed_batches': completed_batches,
         'processed_rows': processed_rows,
+        'processed_chunk_count': completed_batches,
         'updated_at': now.isoformat(),
         'last_heartbeat_at': now.isoformat(),
         'active_processing_seconds': round(active_processing_seconds, 3),
@@ -2325,6 +2534,8 @@ def _complete_run(run):
         'last_heartbeat_at': now,
         'processed_rows': output_entry_count,
         'completed_batches': _safe_int(run.get('batch_count')),
+        'processed_chunk_count': _safe_int(run.get('batch_count')),
+        'failed_chunk_count': 0,
         'last_message': 'Background structured export completed',
         'post_run_summary': post_run_summary,
         'generated_file_name': uploaded_message.get('file_name') or generated_file_name,
@@ -2776,6 +2987,8 @@ def queue_tabular_generated_output_run(
     model_context=None,
     source_descriptor=None,
     passthrough_input_rows=False,
+    task_type=TABULAR_RUN_TASK_STRUCTURED_EXPORT,
+    analysis_objective=None,
 ):
     """Stage batch input blobs, create a run record, and submit background processing."""
     normalized_user_id = str(user_id or '').strip()
@@ -2788,6 +3001,13 @@ def queue_tabular_generated_output_run(
     source_file_name = str(source_candidate.get('filename') or 'tabular_output').strip() or 'tabular_output'
     selected_sheet = str(source_candidate.get('selected_sheet') or '').strip()
     normalized_output_format = str(output_format or 'json').strip().lower() or 'json'
+    normalized_task_type = _normalize_tabular_run_task_type(task_type)
+    normalized_analysis_objective = str(analysis_objective or '').strip()
+    if not normalized_analysis_objective and normalized_task_type in {
+        TABULAR_RUN_TASK_HIERARCHICAL_ANALYSIS,
+        TABULAR_RUN_TASK_COMBINED,
+    }:
+        normalized_analysis_objective = str(user_question or '').strip()
     generated_file_name = _build_generated_file_name(source_file_name, normalized_output_format)
     settings = settings or {}
     source_descriptor = dict(source_descriptor or {})
@@ -2795,6 +3015,7 @@ def queue_tabular_generated_output_run(
     staged_row_count = 0
     staged_char_count = 0
     staged_batch_count = 0
+    staged_chunk_row_counts = []
 
     if source_descriptor:
         staged_row_count = _safe_int(source_descriptor.get('expected_row_count'))
@@ -2852,17 +3073,31 @@ def queue_tabular_generated_output_run(
                 },
             )
             staged_row_count += len(prepared_batch_rows)
+            staged_chunk_row_counts.append(len(prepared_batch_rows))
             staged_char_count += len(json.dumps(prepared_batch_rows, default=str, ensure_ascii=False))
             staged_batch_count = index
 
         if not staged_batch_count or not staged_row_count:
             raise ValueError('At least one source row is required for a background tabular export')
 
+    chunk_manifest = _write_chunk_manifest_for_run(
+        normalized_user_id,
+        normalized_conversation_id,
+        run_id,
+        staged_batch_count,
+        row_count=staged_row_count,
+        chunk_row_counts=staged_chunk_row_counts if staged_chunk_row_counts else None,
+        estimated_rows_per_chunk=source_descriptor.get('batch_max_rows') if source_descriptor else None,
+        chunk_status='pending_source_staging' if source_descriptor else 'staged',
+    )
+
     now = _now_iso()
     run = {
         'id': run_id,
         'type': TABULAR_EXPORT_RUN_TYPE,
         'contract_version': TABULAR_EXPORT_CONTRACT_VERSION,
+        'task_type': normalized_task_type,
+        'analysis_objective': normalized_analysis_objective,
         'user_id': normalized_user_id,
         'conversation_id': normalized_conversation_id,
         'status': TABULAR_EXPORT_STATUS_QUEUED,
@@ -2881,6 +3116,10 @@ def queue_tabular_generated_output_run(
         'generated_file_name': generated_file_name,
         'row_count': staged_row_count,
         'batch_count': staged_batch_count,
+        'total_chunk_count': staged_batch_count,
+        'processed_chunk_count': 0,
+        'failed_chunk_count': 0,
+        'chunk_manifest': chunk_manifest,
         'completed_batches': 0,
         'processed_rows': 0,
         'output_schema': None,
@@ -2917,8 +3156,10 @@ def queue_tabular_generated_output_run(
             'source_file_name': source_file_name,
             'selected_sheet': selected_sheet,
             'output_format': normalized_output_format,
+            'task_type': normalized_task_type,
             'row_count': staged_row_count,
             'batch_count': staged_batch_count,
+            'total_chunk_count': staged_batch_count,
             'staged_input_char_count': staged_char_count,
             'source_backed': bool(source_descriptor),
             'submitted_to_executor': submitted,
