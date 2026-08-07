@@ -12,6 +12,7 @@ from datetime import date, datetime
 import io
 import json
 import logging
+import math
 import re
 import tempfile
 import warnings
@@ -24,7 +25,10 @@ from semantic_kernel.functions import kernel_function
 from semantic_kernel_plugins.plugin_invocation_logger import PluginInvocationResult, plugin_function_logger
 from functions_appinsights import log_event
 from functions_authentication import get_current_user_id
-from functions_tabular_csv_query import iter_tabular_csv_query_rows
+from functions_tabular_csv_query import (
+    iter_tabular_csv_query_rows,
+    validate_tabular_csv_query_expression,
+)
 from functions_group import find_group_by_id, get_user_role_in_group
 from functions_public_workspaces import get_user_visible_public_workspace_ids_from_settings
 from config import (
@@ -3478,11 +3482,13 @@ class TabularProcessingPlugin:
         return_columns: Optional[str] = None,
         expected_row_count: int = 0,
         blob_version: Optional[dict] = None,
+        source_function: str = 'query_tabular_data',
     ) -> dict:
         """Pin a durable query descriptor to an already-authorized blob location."""
         if not str(blob_path or '').lower().endswith('.csv'):
             raise ValueError('Durable source-backed generated exports currently require a CSV source')
 
+        normalized_query_expression = validate_tabular_csv_query_expression(query_expression)
         blob_version = dict(blob_version or self._get_tabular_blob_version(container_name, blob_path))
         blob_etag = blob_version.get('blob_etag')
         blob_size = blob_version.get('blob_size')
@@ -3493,6 +3499,7 @@ class TabularProcessingPlugin:
         return {
             'version': 1,
             'kind': 'query_tabular_data',
+            'source_function': str(source_function or 'query_tabular_data').strip(),
             'source': resolved_source,
             'scope_id': scope_id,
             'container': container_name,
@@ -3500,10 +3507,202 @@ class TabularProcessingPlugin:
             'blob_etag': str(blob_etag),
             'blob_size': int(blob_size or 0),
             'filename': str(filename or '').strip(),
-            'query_expression': str(query_expression or '').strip(),
+            'query_expression': normalized_query_expression,
             'return_columns': return_columns,
             'expected_row_count': max(0, int(expected_row_count or 0)),
         }
+
+    def _build_generated_export_column_reference(self, column_name: str) -> str:
+        """Return a safe pandas query reference for one resolved source column."""
+        normalized_column_name = str(column_name or '').strip()
+        if not normalized_column_name:
+            raise ValueError('A source column is required for durable replay')
+        if '`' in normalized_column_name:
+            raise ValueError(
+                f"Column '{normalized_column_name}' cannot be represented in a durable row-local query"
+            )
+        return f'`{normalized_column_name}`'
+
+    def _build_generated_export_filter_clause(
+        self,
+        dataframe: pandas.DataFrame,
+        column_name: str,
+        operator: str,
+        value,
+    ) -> str:
+        """Translate one successful filter into an equivalent row-local query clause."""
+        if column_name not in dataframe.columns:
+            raise ValueError(f"Column '{column_name}' is unavailable for durable replay")
+
+        normalized_operator = str(operator or 'equals').strip().lower()
+        column_reference = self._build_generated_export_column_reference(column_name)
+        numeric_value = None
+        try:
+            numeric_value = float(value)
+        except (TypeError, ValueError):
+            pass
+
+        if (
+            normalized_operator in {'==', 'equals', '!=', '>', '<', '>=', '<='}
+            and numeric_value is not None
+            and math.isfinite(numeric_value)
+            and pandas.api.types.is_numeric_dtype(dataframe[column_name])
+        ):
+            resolved_operator = '==' if normalized_operator == 'equals' else normalized_operator
+            return f'{column_reference} {resolved_operator} {numeric_value!r}'
+
+        if normalized_operator in {'>', '<', '>=', '<='}:
+            raise ValueError(
+                f"Filter '{column_name} {normalized_operator} {value}' is not a replayable numeric comparison"
+            )
+
+        string_series = f'{column_reference}.astype("str")'
+        rendered_value = json.dumps(str(value), ensure_ascii=False)
+        rendered_lower_value = json.dumps(str(value).lower(), ensure_ascii=False)
+        if normalized_operator in {'==', 'equals'}:
+            return f'{string_series}.str.lower() == {rendered_lower_value}'
+        if normalized_operator == '!=':
+            return f'{string_series}.str.lower() != {rendered_lower_value}'
+        if normalized_operator == 'contains':
+            return (
+                f'{string_series}.str.contains('
+                f'{rendered_value}, case=False, regex=False, na=False)'
+            )
+        if normalized_operator == 'startswith':
+            return (
+                f'{string_series}.str.lower().str.startswith('
+                f'{rendered_lower_value}, na=False)'
+            )
+        if normalized_operator == 'endswith':
+            return (
+                f'{string_series}.str.lower().str.endswith('
+                f'{rendered_lower_value}, na=False)'
+            )
+        raise ValueError(f"Filter operator '{operator}' cannot be replayed durably")
+
+    def _build_filter_rows_generated_export_query_expression(
+        self,
+        dataframe: pandas.DataFrame,
+        column: str,
+        operator: str,
+        value,
+        additional_filter_column: Optional[str] = None,
+        additional_filter_operator: str = 'equals',
+        additional_filter_value=None,
+        normalize_match: bool = False,
+    ) -> str:
+        """Build the full row-local query represented by a filter_rows call."""
+        if normalize_match:
+            raise ValueError(
+                'filter_rows with normalize_match=true cannot be replayed equivalently by the row-local CSV engine'
+            )
+
+        clauses = [
+            self._build_generated_export_filter_clause(dataframe, column, operator, value),
+        ]
+        if additional_filter_column:
+            clauses.append(self._build_generated_export_filter_clause(
+                dataframe,
+                additional_filter_column,
+                additional_filter_operator,
+                additional_filter_value,
+            ))
+        return validate_tabular_csv_query_expression(
+            ' and '.join(f'({clause})' for clause in clauses)
+        )
+
+    def _build_search_rows_generated_export_query_expression(
+        self,
+        dataframe: pandas.DataFrame,
+        search_value,
+        searched_columns: List[str],
+        search_operator: str = 'contains',
+        query_expression: Optional[str] = None,
+        filter_column: Optional[str] = None,
+        filter_operator: str = 'equals',
+        filter_value=None,
+        additional_filter_column: Optional[str] = None,
+        additional_filter_operator: str = 'equals',
+        additional_filter_value=None,
+        normalize_match: bool = False,
+    ) -> str:
+        """Build the full row-local query represented by a search_rows call."""
+        if normalize_match:
+            raise ValueError(
+                'search_rows with normalize_match=true cannot be replayed equivalently by the row-local CSV engine'
+            )
+
+        clauses = []
+        if query_expression:
+            clauses.append(validate_tabular_csv_query_expression(query_expression))
+        if filter_column:
+            clauses.append(self._build_generated_export_filter_clause(
+                dataframe,
+                filter_column,
+                filter_operator,
+                filter_value,
+            ))
+        if additional_filter_column:
+            clauses.append(self._build_generated_export_filter_clause(
+                dataframe,
+                additional_filter_column,
+                additional_filter_operator,
+                additional_filter_value,
+            ))
+
+        search_clauses = [
+            self._build_generated_export_filter_clause(
+                dataframe,
+                search_column,
+                search_operator,
+                search_value,
+            )
+            for search_column in searched_columns
+        ]
+        if not search_clauses:
+            raise ValueError('search_rows did not resolve a replayable search column')
+        clauses.append(' or '.join(f'({clause})' for clause in search_clauses))
+        return validate_tabular_csv_query_expression(
+            ' and '.join(f'({clause})' for clause in clauses)
+        )
+
+    def _build_tabular_generated_export_internal_metadata(
+        self,
+        container_name: str,
+        blob_path: str,
+        filename: str,
+        source_function: str,
+        query_expression: Optional[str],
+        return_columns: Optional[str],
+        expected_row_count: int,
+        replay_error: Optional[str] = None,
+    ) -> dict:
+        """Build source authorization plus either a replay descriptor or a safe error."""
+        blob_version = self._get_tabular_blob_version(container_name, blob_path)
+        internal_metadata = {
+            'tabular_source_authorization': self._build_source_authorization_from_location(
+                container_name,
+                blob_path,
+                blob_version=blob_version,
+            ),
+        }
+        if replay_error:
+            internal_metadata['tabular_generated_export_source_error'] = str(replay_error)
+            return internal_metadata
+
+        internal_metadata['tabular_generated_export_source'] = (
+            self._build_generated_export_query_descriptor_from_location(
+                container_name=container_name,
+                blob_path=blob_path,
+                filename=filename,
+                query_expression=query_expression,
+                return_columns=return_columns,
+                expected_row_count=expected_row_count,
+                blob_version=blob_version,
+                source_function=source_function,
+            )
+        )
+        return internal_metadata
 
     def _build_source_authorization_from_location(
         self,
@@ -4451,7 +4650,38 @@ class TabularProcessingPlugin:
                     max_rows=limit,
                     return_columns=parsed_return_columns,
                 ))
-                return json.dumps(response_payload, indent=2, default=str)
+                response_json = json.dumps(response_payload, indent=2, default=str)
+                if not str(blob_path or '').lower().endswith('.csv'):
+                    return response_json
+
+                replay_expression = None
+                replay_error = None
+                try:
+                    replay_expression = self._build_filter_rows_generated_export_query_expression(
+                        df,
+                        column,
+                        operator,
+                        value,
+                        additional_filter_column=additional_filter_column,
+                        additional_filter_operator=additional_filter_operator,
+                        additional_filter_value=additional_filter_value,
+                        normalize_match=normalize_match_flag,
+                    )
+                except ValueError as exc:
+                    replay_error = str(exc)
+                return PluginInvocationResult(
+                    response_json,
+                    internal_metadata=self._build_tabular_generated_export_internal_metadata(
+                        container_name=container,
+                        blob_path=blob_path,
+                        filename=filename,
+                        source_function='filter_rows',
+                        query_expression=replay_expression,
+                        return_columns=return_columns,
+                        expected_row_count=len(filtered_df),
+                        replay_error=replay_error,
+                    ),
+                )
             except Exception as e:
                 log_event(f"[TABULAR_PROCESSING_PLUGIN] Error filtering rows: {e}", level=logging.WARNING)
                 return json.dumps({"error": str(e)})
@@ -4624,7 +4854,7 @@ class TabularProcessingPlugin:
                         'selected_sheet': selected_sheet if workbook_metadata.get('is_workbook') else None,
                     })
 
-                return json.dumps({
+                response_json = json.dumps({
                     'filename': filename,
                     'selected_sheet': selected_sheet if workbook_metadata.get('is_workbook') else None,
                     'search_value': search_value,
@@ -4642,6 +4872,41 @@ class TabularProcessingPlugin:
                     'next_start_row': search_result['next_start_row'],
                     'data': search_result['data'],
                 }, indent=2, default=str)
+                if not str(blob_path or '').lower().endswith('.csv'):
+                    return response_json
+
+                replay_expression = None
+                replay_error = None
+                try:
+                    replay_expression = self._build_search_rows_generated_export_query_expression(
+                        df,
+                        search_value,
+                        search_result['searched_columns'],
+                        search_operator=search_operator,
+                        query_expression=query_expression,
+                        filter_column=filter_column,
+                        filter_operator=filter_operator,
+                        filter_value=filter_value,
+                        additional_filter_column=additional_filter_column,
+                        additional_filter_operator=additional_filter_operator,
+                        additional_filter_value=additional_filter_value,
+                        normalize_match=normalize_match_flag,
+                    )
+                except ValueError as exc:
+                    replay_error = str(exc)
+                return PluginInvocationResult(
+                    response_json,
+                    internal_metadata=self._build_tabular_generated_export_internal_metadata(
+                        container_name=container,
+                        blob_path=blob_path,
+                        filename=filename,
+                        source_function='search_rows',
+                        query_expression=replay_expression,
+                        return_columns=return_columns,
+                        expected_row_count=search_result['total_matches'],
+                        replay_error=replay_error,
+                    ),
+                )
             except Exception as e:
                 log_event(f"[TABULAR_PROCESSING_PLUGIN] Error searching rows: {e}", level=logging.WARNING)
                 return json.dumps({"error": str(e)})

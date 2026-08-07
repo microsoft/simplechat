@@ -44,7 +44,111 @@ TABULAR_ROW_LOCAL_QUERY_AST_NODES = (
     ast.USub,
     ast.UAdd,
     ast.Invert,
+    ast.Call,
+    ast.Attribute,
+    ast.keyword,
 )
+
+TABULAR_ROW_LOCAL_STRING_ATTRIBUTES = {
+    'astype',
+    'contains',
+    'endswith',
+    'lower',
+    'startswith',
+    'str',
+}
+
+
+def _is_row_local_string_cast(call_node):
+    """Return True for a column-level astype('str') call."""
+    return bool(
+        isinstance(call_node, ast.Call)
+        and isinstance(call_node.func, ast.Attribute)
+        and call_node.func.attr == 'astype'
+        and isinstance(call_node.func.value, ast.Name)
+        and len(call_node.args) == 1
+        and isinstance(call_node.args[0], ast.Constant)
+        and call_node.args[0].value == 'str'
+        and not call_node.keywords
+    )
+
+
+def _is_row_local_lower_call(call_node):
+    """Return True for an allowlisted column string lower() call."""
+    if not (
+        isinstance(call_node, ast.Call)
+        and isinstance(call_node.func, ast.Attribute)
+        and call_node.func.attr == 'lower'
+        and not call_node.args
+        and not call_node.keywords
+    ):
+        return False
+
+    string_accessor = call_node.func.value
+    return bool(
+        isinstance(string_accessor, ast.Attribute)
+        and string_accessor.attr == 'str'
+        and _is_row_local_string_cast(string_accessor.value)
+    )
+
+
+def _is_row_local_string_accessor(attribute_node, allow_lower=False):
+    """Return True for .str on an allowlisted cast or lower() result."""
+    if not isinstance(attribute_node, ast.Attribute) or attribute_node.attr != 'str':
+        return False
+    if _is_row_local_string_cast(attribute_node.value):
+        return True
+    return bool(allow_lower and _is_row_local_lower_call(attribute_node.value))
+
+
+def _has_exact_false_keywords(call_node, expected_names):
+    """Return True when a call has exactly the required False keyword arguments."""
+    keyword_values = {
+        keyword.arg: keyword.value
+        for keyword in call_node.keywords
+        if keyword.arg
+    }
+    return bool(
+        set(keyword_values) == set(expected_names)
+        and all(
+            isinstance(keyword_values[name], ast.Constant)
+            and keyword_values[name].value is False
+            for name in expected_names
+        )
+    )
+
+
+def _is_row_local_string_match_call(call_node):
+    """Return True for a generated literal string match on one column."""
+    if not (
+        isinstance(call_node, ast.Call)
+        and isinstance(call_node.func, ast.Attribute)
+        and call_node.func.attr in {'contains', 'startswith', 'endswith'}
+        and len(call_node.args) == 1
+        and isinstance(call_node.args[0], ast.Constant)
+        and isinstance(call_node.args[0].value, str)
+    ):
+        return False
+
+    method_name = call_node.func.attr
+    if method_name == 'contains':
+        return bool(
+            _is_row_local_string_accessor(call_node.func.value)
+            and _has_exact_false_keywords(call_node, {'case', 'regex', 'na'})
+        )
+    return bool(
+        _is_row_local_string_accessor(call_node.func.value, allow_lower=True)
+        and _has_exact_false_keywords(call_node, {'na'})
+    )
+
+
+def _is_supported_row_local_call(call_node):
+    """Return True only for generated, side-effect-free per-column string calls."""
+    return bool(
+        _is_row_local_string_cast(call_node)
+        or _is_row_local_lower_call(call_node)
+        or _is_row_local_string_match_call(call_node)
+    )
 
 
 def _replace_backtick_column_references(expression):
@@ -121,6 +225,15 @@ def validate_tabular_csv_query_expression(query_expression):
     for node in ast.walk(parsed_expression):
         if isinstance(node, ast.Name) and node.id.startswith('__') and not node.id.startswith('__simplechat_column_'):
             raise ValueError('Source query contains an unsupported private identifier')
+        if isinstance(node, ast.Attribute) and node.attr not in TABULAR_ROW_LOCAL_STRING_ATTRIBUTES:
+            raise ValueError(
+                'Source query uses an operation that cannot be replayed equivalently in bounded chunks: '
+                f'{node.attr}'
+            )
+        if isinstance(node, ast.Call) and not _is_supported_row_local_call(node):
+            raise ValueError(
+                'Source query uses a method call that cannot be replayed equivalently in bounded chunks'
+            )
     return normalized_expression
 
 
