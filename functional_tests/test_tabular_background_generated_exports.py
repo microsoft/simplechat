@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Functional test for durable tabular generated-output background exports.
-Version: 0.250.070
-Implemented in: 0.241.060; throughput and timeout hardening in: 0.250.070
+Version: 0.250.128
+Implemented in: 0.241.060; throughput and timeout hardening in: 0.250.070; unified durable run contract in: 0.250.128
 
 This test ensures that large tabular structured exports are wired through the
 durable background queue, status API, queued retry recovery, and chat progress
@@ -83,7 +83,11 @@ def test_export_runner_module():
     assert_contains(source_text, '_stage_tabular_generated_output_source', 'bounded source-query staging')
     assert_contains(source_text, '_authorize_tabular_export_run_execution', 'worker-boundary authorization')
     assert_contains(source_text, '_migrate_legacy_tabular_export_run', 'legacy run contract migration')
-    assert_contains(source_text, 'TABULAR_EXPORT_CONTRACT_VERSION = 2', 'versioned row orchestration contract')
+    assert_contains(source_text, 'TABULAR_EXPORT_CONTRACT_VERSION = 3', 'versioned row orchestration contract')
+    assert_contains(source_text, "TABULAR_RUN_TASK_STRUCTURED_EXPORT = 'structured_export'", 'structured export task type')
+    assert_contains(source_text, "'total_chunk_count': staged_batch_count", 'compact chunk counter')
+    assert_contains(source_text, "'chunk_manifest': chunk_manifest", 'blob-backed chunk manifest pointer')
+    assert_contains(source_text, '_write_chunk_manifest_for_run', 'paged chunk manifest writer')
     assert_contains(source_text, 'lease_generation', 'worker fencing generation')
     assert_contains(source_text, '_replace_claimed_run', 'ETag-fenced worker persistence')
     assert_contains(source_text, 'TABULAR_EXPORT_INPUT_ROW_TOKEN_FIELD', 'opaque row binding token')
