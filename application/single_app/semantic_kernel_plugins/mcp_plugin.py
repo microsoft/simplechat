@@ -13,6 +13,7 @@ from functions_mcp_operations import (
     classify_mcp_exception,
     normalize_mcp_additional_fields,
     normalize_mcp_tool_metadata,
+    normalize_mcp_tool_call_arguments,
     validate_mcp_tool_arguments,
 )
 from semantic_kernel_plugins.base_plugin import BasePlugin
@@ -157,12 +158,16 @@ class McpPlugin(BasePlugin):
                 "error_type": "not_configured",
                 "configured_tools": sorted(configured_tool_names),
             }
+        configured_tool = next(
+            (tool for tool in self._tools if tool.get("original_name") == normalized_tool_name),
+            None,
+        )
+        normalized_arguments = normalize_mcp_tool_call_arguments(
+            configured_tool,
+            arguments if arguments is not None else {},
+        )
         if self._additional_fields.get("validate_tool_arguments"):
-            configured_tool = next(
-                (tool for tool in self._tools if tool.get("original_name") == normalized_tool_name),
-                None,
-            )
-            validation_errors = validate_mcp_tool_arguments(configured_tool, arguments or {})
+            validation_errors = validate_mcp_tool_arguments(configured_tool, normalized_arguments)
             if validation_errors:
                 return {
                     "success": False,
@@ -171,7 +176,7 @@ class McpPlugin(BasePlugin):
                     "validation_errors": validation_errors,
                 }
 
-        return await self.invoke_tool(normalized_tool_name, arguments or {})
+        return await self.invoke_tool(normalized_tool_name, normalized_arguments or {})
 
     async def invoke_tool(self, tool_name: str, arguments: Optional[dict] = None) -> dict:
         """Invoke an MCP tool through the factory's native MCP connector."""
@@ -180,7 +185,7 @@ class McpPlugin(BasePlugin):
                 f"[MCP_PLUGIN] Invoking MCP tool tool_name={tool_name} "
                 f"transport={self._additional_fields.get('transport')} "
                 f"endpoint_present={bool(str(self.manifest.get('endpoint') or '').strip())} "
-                f"argument_keys={sorted((arguments or {}).keys())}"
+                f"argument_keys={sorted(arguments.keys()) if isinstance(arguments, dict) else []}"
             )
             from semantic_kernel_plugins.mcp_plugin_factory import McpPluginFactory
 
