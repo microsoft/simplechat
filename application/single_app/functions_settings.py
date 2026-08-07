@@ -996,6 +996,8 @@ def get_settings(use_cosmos=False, include_source=False):
         'enable_default_embedding_model_plugin': False,
         'enable_fact_memory_plugin': True,
         'enable_tabular_processing_plugin': False,
+        'enable_tabular_hierarchical_analysis': False,
+        'tabular_hierarchical_analysis_reduce_fan_in': 25,
         'enable_multi_agent_orchestration': False,
         'enable_mixed_source_development_telemetry': False,
         'enable_mixed_source_manifest': False,

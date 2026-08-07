@@ -1,8 +1,8 @@
 # test_tabular_row_orchestration_scale.py
 """
 Functional test for scalable per-row tabular orchestration.
-Version: 0.250.128
-Implemented in: 0.250.060; generated CSV formula safety in 0.250.065; generated file export routing in 0.250.072; source descriptor generalization in 0.250.127; unified durable run contract in 0.250.128
+Version: 0.250.129
+Implemented in: 0.250.060; generated CSV formula safety in 0.250.065; generated file export routing in 0.250.072; source descriptor generalization in 0.250.127; unified durable run contract in 0.250.128; hierarchical analysis in 0.250.129
 
 This test ensures generated exports preserve source identity and row order while
 enforcing one stable output schema across independently generated batches.
@@ -106,6 +106,30 @@ MANIFEST_FUNCTIONS = {
     '_build_chunk_manifest_entries',
     '_write_chunk_manifest_pages',
     '_write_chunk_manifest_for_run',
+}
+ANALYSIS_FUNCTIONS = {
+    '_safe_int',
+    '_settings_int',
+    '_normalize_analysis_text',
+    '_normalize_analysis_findings',
+    '_normalize_analysis_counts',
+    '_normalize_analysis_notable_rows',
+    '_source_row_bounds_from_rows',
+    '_source_row_bounds_from_summaries',
+    '_normalize_analysis_summary_payload',
+    '_get_tabular_analysis_reduce_fan_in',
+    '_build_analysis_reduce_groups',
+    '_build_analysis_reduce_plan',
+    '_build_analysis_summary_markdown',
+}
+ANALYSIS_CONSTANTS = {
+    'TABULAR_EXPORT_INPUT_ROW_NUMBER_FIELD',
+    'TABULAR_EXPORT_INPUT_ROW_IDENTITY_FIELD',
+    'TABULAR_ANALYSIS_DEFAULT_REDUCE_FAN_IN',
+    'TABULAR_ANALYSIS_MAX_REDUCE_FAN_IN',
+    'TABULAR_ANALYSIS_SUMMARY_MAX_CHARS',
+    'TABULAR_ANALYSIS_MAX_FINDINGS',
+    'TABULAR_ANALYSIS_MAX_NOTABLE_ROWS',
 }
 
 
@@ -223,6 +247,8 @@ def _load_generated_output_router(route_dependencies):
         and node.name == 'maybe_create_tabular_generated_output'
     )
     namespace = dict(route_dependencies)
+    namespace.setdefault('TABULAR_RUN_TASK_HIERARCHICAL_ANALYSIS', 'hierarchical_analysis')
+    namespace.setdefault('question_requests_tabular_hierarchical_analysis', lambda question: False)
     extracted_module = ast.Module(body=[function_node], type_ignores=[])
     exec(compile(extracted_module, str(CHAT_ROUTE), 'exec'), namespace)
     return namespace['maybe_create_tabular_generated_output']
@@ -656,6 +682,40 @@ def _load_manifest_helpers():
     return namespace, uploaded_pages
 
 
+def _load_analysis_helpers():
+    module_tree = ast.parse(EXPORT_MODULE.read_text(encoding='utf-8'), filename=str(EXPORT_MODULE))
+    selected_nodes = []
+    found_functions = set()
+    found_constants = set()
+
+    for node in module_tree.body:
+        if isinstance(node, ast.FunctionDef) and node.name in ANALYSIS_FUNCTIONS:
+            selected_nodes.append(node)
+            found_functions.add(node.name)
+        elif isinstance(node, ast.Assign):
+            assigned_names = {
+                target.id
+                for target in node.targets
+                if isinstance(target, ast.Name)
+            }
+            if assigned_names & ANALYSIS_CONSTANTS:
+                selected_nodes.append(node)
+                found_constants.update(assigned_names & ANALYSIS_CONSTANTS)
+
+    missing_functions = ANALYSIS_FUNCTIONS - found_functions
+    missing_constants = ANALYSIS_CONSTANTS - found_constants
+    if missing_functions or missing_constants:
+        raise AssertionError(
+            f'Missing analysis helpers: functions={sorted(missing_functions)}, '
+            f'constants={sorted(missing_constants)}'
+        )
+
+    namespace = {'math': math, 're': re}
+    extracted_module = ast.Module(body=selected_nodes, type_ignores=[])
+    exec(compile(extracted_module, str(EXPORT_MODULE), 'exec'), namespace)
+    return namespace
+
+
 def _load_failed_export_helpers():
     module_tree = ast.parse(CHAT_ROUTE.read_text(encoding='utf-8'), filename=str(CHAT_ROUTE))
     selected_nodes = [
@@ -671,6 +731,7 @@ def _load_failed_export_helpers():
         '_build_tabular_generated_output_file_name': (
             lambda filename, output_format: f"{Path(filename).stem}_generated.{output_format}"
         ),
+        'TABULAR_RUN_TASK_HIERARCHICAL_ANALYSIS': 'hierarchical_analysis',
         'has_generated_tabular_csv_output': has_generated_tabular_csv_output,
     }
     extracted_module = ast.Module(body=selected_nodes, type_ignores=[])
@@ -1046,6 +1107,145 @@ def test_filter_rows_pages_queue_full_3000_row_source_replay():
     assert queued_descriptor['batch_max_rows'] == 60
     assert output_metadata['background_export'] is True
     assert output_metadata['export_run_id'] == 'filter-run-3000'
+
+
+def test_filter_rows_pages_queue_hierarchical_analysis_run():
+    """Analysis-only row-scale requests queue the durable hierarchical analysis task."""
+    candidate_helpers = _load_candidate_helpers()
+    descriptor_builder = _load_query_descriptor_helper()
+    invocations = [
+        _build_filter_invocation(0, 60),
+        _build_filter_invocation(60, 60),
+    ]
+    candidate = candidate_helpers['_build_tabular_generated_output_source_candidate'](
+        invocations
+    )
+    queued_calls = []
+
+    def queue_run(**kwargs):
+        queued_calls.append(kwargs)
+        return {
+            'id': 'analysis-run-3000',
+            'task_type': kwargs.get('task_type'),
+            'output_format': kwargs.get('output_format'),
+            'row_count': kwargs['source_descriptor']['expected_row_count'],
+            'batch_count': 50,
+        }
+
+    async def emit_thought(*args, **kwargs):
+        return None
+
+    class MixedSourceCancellationError(Exception):
+        pass
+
+    router = _load_generated_output_router({
+        'MixedSourceCancellationError': MixedSourceCancellationError,
+        '_build_failed_tabular_generated_output_metadata': lambda source, output_format, reason: {
+            'status': 'failed',
+            'status_detail': reason,
+        },
+        '_build_tabular_generated_output_candidate_diagnostics': lambda values: [],
+        '_build_tabular_generated_output_input_row': lambda row, source_file_name=None: row,
+        '_build_tabular_generated_output_query_descriptor': descriptor_builder,
+        '_build_tabular_generated_output_row_batches': lambda rows, settings=None: [rows],
+        '_build_tabular_generated_output_source_authorization': lambda source: source.get(
+            'source_authorization'
+        ),
+        '_build_tabular_generated_output_source_candidate': lambda values: candidate,
+        '_safe_int': lambda value: int(value or 0),
+        'build_background_tabular_generated_output_metadata': lambda run: {
+            'background_export': True,
+            'export_run_id': run['id'],
+            'task_type': run['task_type'],
+            'output_format': run['output_format'],
+            'row_count': run['row_count'],
+        },
+        'build_tabular_post_processing_activity_payload': lambda *args, **kwargs: {},
+        'cancel_tabular_generated_output_run': lambda *args, **kwargs: None,
+        'emit_tabular_post_processing_thought': emit_thought,
+        'get_tabular_generated_output_format': lambda question: None,
+        'logging': logging,
+        'log_event': lambda *args, **kwargs: None,
+        'question_requests_tabular_generated_output': lambda question: False,
+        'question_requests_tabular_hierarchical_analysis': lambda question: True,
+        'question_requests_tabular_structured_object_output': lambda question: False,
+        'queue_tabular_generated_output_run': queue_run,
+        'raise_if_mixed_source_cancelled': lambda *args, **kwargs: None,
+        'should_queue_tabular_generated_output_background': lambda *args, **kwargs: True,
+    })
+
+    output_metadata = asyncio.run(router(
+        user_question='Summarize risk patterns across every row in this dataset.',
+        invocations=invocations,
+        gpt_model='test-model',
+        settings={'enable_tabular_hierarchical_analysis': True},
+        conversation_id='conversation-1',
+        user_id='user-1',
+    ))
+
+    assert len(queued_calls) == 1
+    assert queued_calls[0]['row_batches'] is None
+    assert queued_calls[0]['task_type'] == 'hierarchical_analysis'
+    assert queued_calls[0]['output_format'] == 'md'
+    assert queued_calls[0]['analysis_objective'] == 'Summarize risk patterns across every row in this dataset.'
+    assert queued_calls[0]['source_descriptor']['expected_row_count'] == 3000
+    assert output_metadata['background_export'] is True
+    assert output_metadata['task_type'] == 'hierarchical_analysis'
+
+
+def test_hierarchical_analysis_routing_requires_feature_flag():
+    """Lane C queueing stays behind the feature flag until scale hardening completes."""
+    candidate_helpers = _load_candidate_helpers()
+    descriptor_builder = _load_query_descriptor_helper()
+    candidate = candidate_helpers['_build_tabular_generated_output_source_candidate']([
+        _build_filter_invocation(0, 60),
+    ])
+    queued_calls = []
+
+    class MixedSourceCancellationError(Exception):
+        pass
+
+    router = _load_generated_output_router({
+        'MixedSourceCancellationError': MixedSourceCancellationError,
+        '_build_failed_tabular_generated_output_metadata': lambda source, output_format, reason: {
+            'status': 'failed',
+            'status_detail': reason,
+        },
+        '_build_tabular_generated_output_candidate_diagnostics': lambda values: [],
+        '_build_tabular_generated_output_input_row': lambda row, source_file_name=None: row,
+        '_build_tabular_generated_output_query_descriptor': descriptor_builder,
+        '_build_tabular_generated_output_row_batches': lambda rows, settings=None: [rows],
+        '_build_tabular_generated_output_source_authorization': lambda source: source.get(
+            'source_authorization'
+        ),
+        '_build_tabular_generated_output_source_candidate': lambda values: candidate,
+        '_safe_int': lambda value: int(value or 0),
+        'build_background_tabular_generated_output_metadata': lambda run: run,
+        'build_tabular_post_processing_activity_payload': lambda *args, **kwargs: {},
+        'cancel_tabular_generated_output_run': lambda *args, **kwargs: None,
+        'emit_tabular_post_processing_thought': lambda *args, **kwargs: None,
+        'get_tabular_generated_output_format': lambda question: None,
+        'logging': logging,
+        'log_event': lambda *args, **kwargs: None,
+        'question_requests_tabular_generated_output': lambda question: False,
+        'question_requests_tabular_hierarchical_analysis': lambda question: True,
+        'question_requests_tabular_structured_object_output': lambda question: False,
+        'queue_tabular_generated_output_run': lambda **kwargs: queued_calls.append(kwargs),
+        'raise_if_mixed_source_cancelled': lambda *args, **kwargs: None,
+        'should_queue_tabular_generated_output_background': lambda *args, **kwargs: True,
+    })
+
+    output_metadata = asyncio.run(router(
+        user_question='Analyze every row and summarize patterns.',
+        invocations=[],
+        gpt_model='test-model',
+        settings={},
+        conversation_id='conversation-1',
+        user_id='user-1',
+    ))
+
+    assert output_metadata is None
+    assert queued_calls == []
 
 
 def test_non_replayable_filter_rows_reports_explicit_failure():
@@ -1481,6 +1681,97 @@ def test_chunk_manifest_contract_stays_compact_at_100000_rows():
     assert max_manifest_page_size < 128 * 1024
 
 
+def test_hierarchical_analysis_summary_contract_and_recursive_reduce():
+    """Analysis summaries preserve row evidence and reduce recursively under fan-in caps."""
+    helpers = _load_analysis_helpers()
+    source_rows = [
+        {
+            '__simplechat_source_row_number': 1,
+            '__simplechat_source_row_identity': 'SC-1',
+            'risk': 'low',
+        },
+        {
+            '__simplechat_source_row_number': 2,
+            '__simplechat_source_row_identity': 'SC-2',
+            'risk': 'high',
+        },
+    ]
+    chunk_summary = helpers['_normalize_analysis_summary_payload'](
+        {
+            'summary': 'High risk appears in the second row.',
+            'findings': ['One high-risk record is present.'],
+            'counts': {'high_risk': 1},
+            'notable_rows': [
+                {
+                    'source_row_number': 2,
+                    'source_row_identity': 'SC-2',
+                    'note': 'The row is marked high risk.',
+                },
+            ],
+        },
+        source_rows=source_rows,
+        chunk_number=1,
+    )
+
+    assert chunk_summary['kind'] == 'chunk_summary'
+    assert chunk_summary['row_count'] == 2
+    assert chunk_summary['source_row_start'] == 1
+    assert chunk_summary['source_row_end'] == 2
+    assert chunk_summary['notable_rows'][0]['source_row_number'] == 2
+
+    reduce_fan_in = helpers['_get_tabular_analysis_reduce_fan_in']({
+        'tabular_hierarchical_analysis_reduce_fan_in': 20,
+    })
+    assert reduce_fan_in == 20
+    assert helpers['_build_analysis_reduce_plan'](61, reduce_fan_in) == [4, 1]
+    reduce_groups = helpers['_build_analysis_reduce_groups'](list(range(61)), reduce_fan_in)
+    assert [len(group) for group in reduce_groups] == [20, 20, 20, 1]
+
+    reduced_summary = helpers['_normalize_analysis_summary_payload'](
+        {
+            'summary': 'High risk is isolated but important.',
+            'findings': [{'finding': 'One chunk includes high-risk evidence.'}],
+            'counts': {'chunks_with_high_risk': 1},
+            'notable_rows': chunk_summary['notable_rows'],
+        },
+        child_summaries=[chunk_summary],
+        reduce_level=1,
+        reduce_node=1,
+    )
+    assert reduced_summary['kind'] == 'reduce_summary'
+    assert reduced_summary['row_count'] == 2
+
+    markdown = helpers['_build_analysis_summary_markdown'](
+        {
+            'id': 'analysis-run-1',
+            'source_file_name': 'cases.csv',
+            'row_count': 2,
+            'batch_count': 1,
+        },
+        reduced_summary,
+    )
+    assert '# Tabular Analysis' in markdown
+    assert 'Row 2 (SC-2): The row is marked high risk.' in markdown
+    assert 'Rows analyzed: 2' in markdown
+
+
+def test_runner_routes_hierarchical_analysis_into_map_reduce():
+    """The durable processor branches hierarchical analysis away from structured export finalization."""
+    export_source = EXPORT_MODULE.read_text(encoding='utf-8')
+    process_source = ast.unparse(_get_function_node('process_tabular_generated_output_run'))
+    queue_source = ast.unparse(_get_function_node('queue_tabular_generated_output_run'))
+
+    assert '_process_hierarchical_analysis_run(' in process_source
+    assert 'TABULAR_RUN_TASK_HIERARCHICAL_ANALYSIS' in process_source
+    assert "normalized_output_format = 'md'" in queue_source
+    assert '_build_analysis_file_name(source_file_name)' in queue_source
+    assert '_generate_analysis_chunk_summary_window' in export_source
+    assert '_run_analysis_reduce_tree' in export_source
+    assert 'tabular_hierarchical_analysis_reduce_fan_in' in export_source
+    assert "'analysis_phase': run.get('analysis_phase')" in export_source
+    assert 'tabular-hierarchical-analysis:' in export_source
+
+
 def test_legacy_run_migration_tokenizes_inputs_and_resets_outputs():
     """Pre-contract runs migrate deterministic inputs and regenerate old outputs."""
     aggregate_batches = [
@@ -1678,6 +1969,8 @@ def main():
         test_paginated_candidate_rejects_gaps,
         test_paginated_candidate_rejects_mixed_source_versions,
         test_filter_rows_pages_queue_full_3000_row_source_replay,
+        test_filter_rows_pages_queue_hierarchical_analysis_run,
+        test_hierarchical_analysis_routing_requires_feature_flag,
         test_non_replayable_filter_rows_reports_explicit_failure,
         test_streaming_finalizer_writes_30000_rows_in_bounded_chunks,
         test_streaming_finalizer_neutralizes_csv_formulas,
@@ -1687,6 +1980,8 @@ def main():
         test_durable_cancellation_is_idempotent_and_terminal,
         test_worker_lease_fencing_rejects_stale_claims,
         test_chunk_manifest_contract_stays_compact_at_100000_rows,
+        test_hierarchical_analysis_summary_contract_and_recursive_reduce,
+        test_runner_routes_hierarchical_analysis_into_map_reduce,
         test_legacy_run_migration_tokenizes_inputs_and_resets_outputs,
         test_post_run_summary_uses_only_bounded_batch_summaries,
         test_final_artifact_publication_is_retry_idempotent,
