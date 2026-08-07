@@ -1,6 +1,6 @@
 # getAToken Missing Code Redirect Fix
 
-Fixed/Implemented in version: **0.250.127**
+Fixed/Implemented in version: **0.250.129**
 
 ## Issue Description
 
@@ -23,7 +23,7 @@ Code changes summary:
 - Updated the `/getAToken` callback missing-code branch to log the recoverable condition and redirect to `public_app.index`.
 - Preserved the valid OAuth authorization-code exchange flow.
 - Left `/getATokenApi` unchanged so API token callback callers still receive explicit request errors.
-- Updated `config.py` version from `0.250.126` to `0.250.127`.
+- Updated `config.py` version to `0.250.129` after merging the latest `Development` changes.
 
 ## Validation
 
