@@ -1,8 +1,8 @@
 # test_tabular_row_orchestration_scale.py
 """
 Functional test for scalable per-row tabular orchestration.
-Version: 0.250.129
-Implemented in: 0.250.060; generated CSV formula safety in 0.250.065; generated file export routing in 0.250.072; source descriptor generalization in 0.250.127; unified durable run contract in 0.250.128; hierarchical analysis in 0.250.129
+Version: 0.250.130
+Implemented in: 0.250.060; generated CSV formula safety in 0.250.065; generated file export routing in 0.250.072; source descriptor generalization in 0.250.127; unified durable run contract in 0.250.128; hierarchical analysis in 0.250.129; combined analysis and export in 0.250.130
 
 This test ensures generated exports preserve source identity and row order while
 enforcing one stable output schema across independently generated batches.
@@ -240,6 +240,15 @@ def _load_query_descriptor_helper():
 def _load_generated_output_router(route_dependencies):
     """Load maybe_create_tabular_generated_output with focused dependency stubs."""
     module_tree = ast.parse(CHAT_ROUTE.read_text(encoding='utf-8'), filename=str(CHAT_ROUTE))
+    helper_nodes = [
+        node
+        for node in module_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name in {
+            '_settings_flag_enabled',
+            '_get_tabular_generated_output_task_type',
+        }
+    ]
     function_node = next(
         node
         for node in module_tree.body
@@ -248,8 +257,9 @@ def _load_generated_output_router(route_dependencies):
     )
     namespace = dict(route_dependencies)
     namespace.setdefault('TABULAR_RUN_TASK_HIERARCHICAL_ANALYSIS', 'hierarchical_analysis')
+    namespace.setdefault('TABULAR_RUN_TASK_COMBINED', 'combined')
     namespace.setdefault('question_requests_tabular_hierarchical_analysis', lambda question: False)
-    extracted_module = ast.Module(body=[function_node], type_ignores=[])
+    extracted_module = ast.Module(body=[*helper_nodes, function_node], type_ignores=[])
     exec(compile(extracted_module, str(CHAT_ROUTE), 'exec'), namespace)
     return namespace['maybe_create_tabular_generated_output']
 
@@ -732,6 +742,7 @@ def _load_failed_export_helpers():
             lambda filename, output_format: f"{Path(filename).stem}_generated.{output_format}"
         ),
         'TABULAR_RUN_TASK_HIERARCHICAL_ANALYSIS': 'hierarchical_analysis',
+        'TABULAR_RUN_TASK_COMBINED': 'combined',
         'has_generated_tabular_csv_output': has_generated_tabular_csv_output,
     }
     extracted_module = ast.Module(body=selected_nodes, type_ignores=[])
@@ -964,11 +975,12 @@ def test_durable_runner_enforces_row_contract():
     )
     resume_source = ast.unparse(_get_function_node('resume_tabular_generated_output_run'))
     assert resume_source.index('_authorize_tabular_export_run_execution') < resume_source.index('run.update')
-    complete_source = ast.unparse(_get_function_node('_complete_run'))
-    assert complete_source.index('_write_ordered_output_stream') < complete_source.index(
+    publish_source = ast.unparse(_get_function_node('_publish_structured_export_artifact'))
+    assert publish_source.index('_write_ordered_output_stream') < publish_source.index(
         'upload_generated_analysis_artifact_stream_for_user'
     )
-    assert complete_source.index('upload_generated_analysis_artifact_stream_for_user') < complete_source.index(
+    complete_source = ast.unparse(_get_function_node('_complete_run'))
+    assert complete_source.index('_publish_structured_export_artifact') < complete_source.index(
         "'status': TABULAR_EXPORT_STATUS_COMPLETED"
     )
 
@@ -1191,6 +1203,92 @@ def test_filter_rows_pages_queue_hierarchical_analysis_run():
     assert queued_calls[0]['source_descriptor']['expected_row_count'] == 3000
     assert output_metadata['background_export'] is True
     assert output_metadata['task_type'] == 'hierarchical_analysis'
+
+
+def test_filter_rows_pages_queue_combined_analysis_and_export_run():
+    """Export plus analysis prompts queue one combined run over the replayable source."""
+    candidate_helpers = _load_candidate_helpers()
+    descriptor_builder = _load_query_descriptor_helper()
+    invocations = [
+        _build_filter_invocation(0, 60),
+        _build_filter_invocation(60, 60),
+    ]
+    candidate = candidate_helpers['_build_tabular_generated_output_source_candidate'](
+        invocations
+    )
+    queued_calls = []
+
+    def queue_run(**kwargs):
+        queued_calls.append(kwargs)
+        return {
+            'id': 'combined-run-3000',
+            'task_type': kwargs.get('task_type'),
+            'output_format': kwargs.get('output_format'),
+            'row_count': kwargs['source_descriptor']['expected_row_count'],
+            'batch_count': 50,
+        }
+
+    async def emit_thought(*args, **kwargs):
+        return None
+
+    class MixedSourceCancellationError(Exception):
+        pass
+
+    router = _load_generated_output_router({
+        'MixedSourceCancellationError': MixedSourceCancellationError,
+        '_build_failed_tabular_generated_output_metadata': lambda source, output_format, reason: {
+            'status': 'failed',
+            'status_detail': reason,
+        },
+        '_build_tabular_generated_output_candidate_diagnostics': lambda values: [],
+        '_build_tabular_generated_output_input_row': lambda row, source_file_name=None: row,
+        '_build_tabular_generated_output_query_descriptor': descriptor_builder,
+        '_build_tabular_generated_output_row_batches': lambda rows, settings=None: [rows],
+        '_build_tabular_generated_output_source_authorization': lambda source: source.get(
+            'source_authorization'
+        ),
+        '_build_tabular_generated_output_source_candidate': lambda values: candidate,
+        '_safe_int': lambda value: int(value or 0),
+        'build_background_tabular_generated_output_metadata': lambda run: {
+            'background_export': True,
+            'export_run_id': run['id'],
+            'task_type': run['task_type'],
+            'output_format': run['output_format'],
+            'row_count': run['row_count'],
+        },
+        'build_tabular_post_processing_activity_payload': lambda *args, **kwargs: {},
+        'cancel_tabular_generated_output_run': lambda *args, **kwargs: None,
+        'emit_tabular_post_processing_thought': emit_thought,
+        'get_tabular_generated_output_format': lambda question: 'csv',
+        'logging': logging,
+        'log_event': lambda *args, **kwargs: None,
+        'question_requests_tabular_generated_output': lambda question: True,
+        'question_requests_tabular_hierarchical_analysis': lambda question: True,
+        'question_requests_tabular_structured_object_output': lambda question: True,
+        'queue_tabular_generated_output_run': queue_run,
+        'raise_if_mixed_source_cancelled': lambda *args, **kwargs: None,
+        'should_queue_tabular_generated_output_background': lambda *args, **kwargs: True,
+    })
+
+    output_metadata = asyncio.run(router(
+        user_question='For each row, answer each question, generate a CSV, and summarize risk patterns.',
+        invocations=invocations,
+        gpt_model='test-model',
+        settings={'enable_tabular_hierarchical_analysis': True},
+        conversation_id='conversation-1',
+        user_id='user-1',
+    ))
+
+    assert len(queued_calls) == 1
+    assert queued_calls[0]['row_batches'] is None
+    assert queued_calls[0]['task_type'] == 'combined'
+    assert queued_calls[0]['output_format'] == 'csv'
+    assert queued_calls[0]['analysis_objective'] == (
+        'For each row, answer each question, generate a CSV, and summarize risk patterns.'
+    )
+    assert queued_calls[0]['source_descriptor']['expected_row_count'] == 3000
+    assert output_metadata['background_export'] is True
+    assert output_metadata['task_type'] == 'combined'
 
 
 def test_hierarchical_analysis_routing_requires_feature_flag():
@@ -1772,6 +1870,36 @@ def test_runner_routes_hierarchical_analysis_into_map_reduce():
     assert 'tabular-hierarchical-analysis:' in export_source
 
 
+def test_runner_routes_combined_analysis_and_export_once():
+    """Combined durable runs share one chunk pass and publish both deliverables."""
+    export_source = EXPORT_MODULE.read_text(encoding='utf-8')
+    process_source = ast.unparse(_get_function_node('process_tabular_generated_output_run'))
+    combined_source = ast.unparse(_get_function_node('_process_combined_run'))
+    load_summaries_source = ast.unparse(_get_function_node('_load_analysis_chunk_summaries'))
+    public_status_source = ast.unparse(_get_function_node('_build_run_public_status'))
+    queue_source = ast.unparse(_get_function_node('queue_tabular_generated_output_run'))
+
+    assert 'TABULAR_RUN_TASK_COMBINED' in process_source
+    assert '_process_combined_run(' in process_source
+    assert '_generate_combined_chunk_result_window' in combined_source
+    assert '_generate_batch_window_entries' not in combined_source
+    assert '_generate_analysis_chunk_summary_window' not in combined_source
+    assert '_checkpoint_combined_batch_results' in combined_source
+    assert combined_source.index('_publish_combined_structured_export_phase') < combined_source.index(
+        '_run_analysis_reduce_tree'
+    )
+    assert combined_source.index('_run_analysis_reduce_tree') < combined_source.index(
+        '_complete_combined_analysis_run'
+    )
+    assert '_analysis_chunk_summary_blob_path' in load_summaries_source
+    assert "'generated_artifacts': generated_artifacts" in public_status_source
+    assert "'structured_export_artifact': run.get('structured_export_artifact')" in public_status_source
+    assert "'analysis_artifact': run.get('analysis_artifact')" in public_status_source
+    assert 'analysis_generated_file_name' in queue_source
+    assert '_generate_combined_chunk_result_window' in export_source
+    assert 'tabular_combined_analysis_summary' in export_source
+
+
 def test_legacy_run_migration_tokenizes_inputs_and_resets_outputs():
     """Pre-contract runs migrate deterministic inputs and regenerate old outputs."""
     aggregate_batches = [
@@ -1970,6 +2098,7 @@ def main():
         test_paginated_candidate_rejects_mixed_source_versions,
         test_filter_rows_pages_queue_full_3000_row_source_replay,
         test_filter_rows_pages_queue_hierarchical_analysis_run,
+        test_filter_rows_pages_queue_combined_analysis_and_export_run,
         test_hierarchical_analysis_routing_requires_feature_flag,
         test_non_replayable_filter_rows_reports_explicit_failure,
         test_streaming_finalizer_writes_30000_rows_in_bounded_chunks,
@@ -1982,6 +2111,7 @@ def main():
         test_chunk_manifest_contract_stays_compact_at_100000_rows,
         test_hierarchical_analysis_summary_contract_and_recursive_reduce,
         test_runner_routes_hierarchical_analysis_into_map_reduce,
+        test_runner_routes_combined_analysis_and_export_once,
         test_legacy_run_migration_tokenizes_inputs_and_resets_outputs,
         test_post_run_summary_uses_only_bounded_batch_summaries,
         test_final_artifact_publication_is_retry_idempotent,

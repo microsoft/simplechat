@@ -210,6 +210,7 @@ from functions_simplechat_operations import (
     upload_generated_analysis_artifact_for_current_user,
 )
 from functions_tabular_generated_exports import (
+    TABULAR_RUN_TASK_COMBINED,
     TABULAR_RUN_TASK_HIERARCHICAL_ANALYSIS,
     _normalize_generated_batch_entries,
     _prepare_tabular_source_rows,
@@ -5061,9 +5062,9 @@ def question_requests_tabular_generated_output(user_question):
 
 
 def question_requests_tabular_hierarchical_analysis(user_question):
-    """Return True when the prompt asks for whole-dataset row-level synthesis without an export."""
+    """Return True when the prompt asks for whole-dataset row-level synthesis."""
     normalized_question = str(user_question or '').strip().lower()
-    if not normalized_question or get_tabular_generated_output_format(user_question):
+    if not normalized_question:
         return False
 
     exhaustive_markers = (
@@ -5093,10 +5094,33 @@ def question_requests_tabular_hierarchical_analysis(user_question):
         'themes',
         'risks',
         'risk patterns',
+        'answer',
+        'answer each question',
+        'answer every question',
     )
     return any(marker in normalized_question for marker in exhaustive_markers) and any(
         marker in normalized_question for marker in analysis_markers
     )
+
+
+def _settings_flag_enabled(settings, key, default=False):
+    value = (settings or {}).get(key, default)
+    if isinstance(value, str):
+        return value.strip().lower() in {'1', 'true', 'yes', 'on'}
+    return bool(value)
+
+
+def _get_tabular_generated_output_task_type(generated_output_requested, hierarchical_analysis_requested, settings):
+    hierarchical_analysis_enabled = _settings_flag_enabled(
+        settings,
+        'enable_tabular_hierarchical_analysis',
+        False,
+    )
+    if generated_output_requested and hierarchical_analysis_requested and hierarchical_analysis_enabled:
+        return TABULAR_RUN_TASK_COMBINED
+    if not generated_output_requested and hierarchical_analysis_requested and hierarchical_analysis_enabled:
+        return TABULAR_RUN_TASK_HIERARCHICAL_ANALYSIS
+    return None
 
 
 def question_requests_tabular_structured_object_output(user_question):
@@ -5931,6 +5955,7 @@ def _build_tabular_generated_output_system_message(output_metadata):
     output_status = str(output_metadata.get('status') or '').strip().lower()
     task_type = str(output_metadata.get('task_type') or '').strip().lower()
     is_hierarchical_analysis = task_type == TABULAR_RUN_TASK_HIERARCHICAL_ANALYSIS
+    is_combined = task_type == TABULAR_RUN_TASK_COMBINED
 
     if output_status == 'failed':
         failure_detail = str(
@@ -5953,6 +5978,14 @@ def _build_tabular_generated_output_system_message(output_metadata):
     if output_metadata.get('background_export'):
         run_id = str(output_metadata.get('export_run_id') or output_metadata.get('run_id') or '').strip()
         batch_count = _safe_int(output_metadata.get('batch_count'))
+        if is_combined:
+            return (
+                f'A durable background tabular analysis and {output_format} export has been queued for {row_count} row(s) '
+                f'across {batch_count} chunk(s). '
+                'Do not claim either full deliverable is complete yet. Tell the user the combined run is continuing in the background, '
+                'that progress is checkpointed, and that the downloadable file and final answer artifact will appear in the chat when ready. '
+                f'Run id: {run_id}.'
+            )
         if is_hierarchical_analysis:
             return (
                 f'A durable background tabular analysis has been queued for {row_count} row(s) '
@@ -6284,18 +6317,15 @@ async def maybe_create_tabular_generated_output(
     )
     generated_output_requested = question_requests_tabular_generated_output(user_question)
     hierarchical_analysis_requested = question_requests_tabular_hierarchical_analysis(user_question)
-    analysis_only_requested = hierarchical_analysis_requested and not generated_output_requested
-    if analysis_only_requested:
-        hierarchical_analysis_enabled = settings.get('enable_tabular_hierarchical_analysis', False)
-        if isinstance(hierarchical_analysis_enabled, str):
-            hierarchical_analysis_enabled = hierarchical_analysis_enabled.strip().lower() in {
-                '1',
-                'true',
-                'yes',
-                'on',
-            }
-        if not hierarchical_analysis_enabled:
-            return None
+    durable_task_type = _get_tabular_generated_output_task_type(
+        generated_output_requested,
+        hierarchical_analysis_requested,
+        settings,
+    )
+    analysis_only_requested = durable_task_type == TABULAR_RUN_TASK_HIERARCHICAL_ANALYSIS
+    combined_requested = durable_task_type == TABULAR_RUN_TASK_COMBINED
+    if hierarchical_analysis_requested and not generated_output_requested and not analysis_only_requested:
+        return None
     if not generated_output_requested and not hierarchical_analysis_requested:
         return None
 
@@ -6311,6 +6341,7 @@ async def maybe_create_tabular_generated_output(
                 'candidate_count': len(candidate_diagnostics),
                 'candidates': candidate_diagnostics,
                 'analysis_only_requested': analysis_only_requested,
+                'combined_requested': combined_requested,
             },
             debug_only=True,
         )
@@ -6323,6 +6354,7 @@ async def maybe_create_tabular_generated_output(
                 'candidate_count': len(candidate_diagnostics),
                 'structured_output_requested': question_requests_tabular_structured_object_output(user_question),
                 'analysis_only_requested': analysis_only_requested,
+                'combined_requested': combined_requested,
             },
             debug_only=True,
         )
@@ -6339,6 +6371,7 @@ async def maybe_create_tabular_generated_output(
         and (
             question_requests_tabular_structured_object_output(user_question)
             or analysis_only_requested
+            or combined_requested
         )
     ):
         try:
@@ -6401,13 +6434,14 @@ async def maybe_create_tabular_generated_output(
         and (
             question_requests_tabular_structured_object_output(user_question)
             or analysis_only_requested
+            or combined_requested
         )
         and source_candidate.get('full_result_available')
         and _safe_int(source_candidate.get('page_count')) > 1
-        and (analysis_only_requested or not exceeds_background_threshold)
+        and (analysis_only_requested or combined_requested or not exceeds_background_threshold)
     )
     if should_queue_materialized_pages:
-        queued_task_type = TABULAR_RUN_TASK_HIERARCHICAL_ANALYSIS if analysis_only_requested else None
+        queued_task_type = durable_task_type
         queued_output_format = 'md' if analysis_only_requested else output_format
         raise_if_mixed_source_cancelled(
             cancel_requested,
@@ -6425,7 +6459,7 @@ async def maybe_create_tabular_generated_output(
             settings=settings,
             model_context=model_context,
             task_type=queued_task_type or None,
-            analysis_objective=user_question if analysis_only_requested else None,
+            analysis_objective=user_question if analysis_only_requested or combined_requested else None,
         )
         background_metadata = build_background_tabular_generated_output_metadata(background_run)
         try:
@@ -6443,6 +6477,9 @@ async def maybe_create_tabular_generated_output(
         await emit_tabular_post_processing_thought(
             thought_callback,
             (
+                'Queued exhaustive tabular analysis and export from validated tabular pages'
+                if combined_requested
+                else
                 'Queued exhaustive tabular analysis from validated tabular pages'
                 if analysis_only_requested
                 else f"Queued exhaustive {str(output_format or 'json').upper()} export from validated tabular pages"
@@ -6454,6 +6491,9 @@ async def maybe_create_tabular_generated_output(
             activity=build_tabular_post_processing_activity_payload(
                 'tabular.generated_output',
                 (
+                    'Exhaustive tabular analysis and export queued'
+                    if combined_requested
+                    else
                     'Exhaustive tabular analysis queued'
                     if analysis_only_requested
                     else f"Exhaustive {str(output_format or 'json').upper()} export queued"
@@ -6478,7 +6518,7 @@ async def maybe_create_tabular_generated_output(
     )
     if should_queue_source_backed_run:
         try:
-            queued_task_type = TABULAR_RUN_TASK_HIERARCHICAL_ANALYSIS if analysis_only_requested else None
+            queued_task_type = durable_task_type
             queued_output_format = 'md' if analysis_only_requested else output_format
             raise_if_mixed_source_cancelled(
                 cancel_requested,
@@ -6497,7 +6537,7 @@ async def maybe_create_tabular_generated_output(
                 model_context=model_context,
                 source_descriptor=source_descriptor,
                 task_type=queued_task_type or None,
-                analysis_objective=user_question if analysis_only_requested else None,
+                analysis_objective=user_question if analysis_only_requested or combined_requested else None,
             )
         except MixedSourceCancellationError:
             raise
@@ -6534,6 +6574,9 @@ async def maybe_create_tabular_generated_output(
         await emit_tabular_post_processing_thought(
             thought_callback,
             (
+                'Queued exhaustive tabular analysis and export from the authorized source query'
+                if combined_requested
+                else
                 'Queued exhaustive tabular analysis from the authorized source query'
                 if analysis_only_requested
                 else f"Queued exhaustive {str(output_format or 'json').upper()} export from the authorized source query"
@@ -6545,6 +6588,9 @@ async def maybe_create_tabular_generated_output(
             activity=build_tabular_post_processing_activity_payload(
                 'tabular.generated_output',
                 (
+                    'Exhaustive tabular analysis and export queued'
+                    if combined_requested
+                    else
                     'Exhaustive tabular analysis queued'
                     if analysis_only_requested
                     else f"Exhaustive {str(output_format or 'json').upper()} export queued"
