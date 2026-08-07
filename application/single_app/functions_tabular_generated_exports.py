@@ -1576,12 +1576,33 @@ def _build_batch_prompt(
     )
 
 
+def _resolve_tabular_chunk_model_selection(gpt_model, settings, model_context=None):
+    chunk_model_mode = str(
+        (settings or {}).get('tabular_generated_output_chunk_model_mode') or 'current'
+    ).strip().lower()
+    if chunk_model_mode != 'configured':
+        return gpt_model, model_context
+
+    configured_deployment = str(
+        (settings or {}).get('tabular_generated_output_chunk_model_deployment') or ''
+    ).strip()
+    if not configured_deployment:
+        return gpt_model, model_context
+
+    return configured_deployment, {}
+
+
 def _build_chat_service(gpt_model, settings, model_context=None):
-    chat_service, _ = build_semantic_kernel_chat_service_for_model(
+    chunk_gpt_model, chunk_model_context = _resolve_tabular_chunk_model_selection(
         gpt_model,
         settings,
-        service_id='tabular-generated-output-background',
         model_context=model_context,
+    )
+    chat_service, _ = build_semantic_kernel_chat_service_for_model(
+        chunk_gpt_model,
+        settings,
+        service_id='tabular-generated-output-background',
+        model_context=chunk_model_context,
     )
     return chat_service
 

@@ -3415,6 +3415,174 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     return normalizedRowCount.toLocaleString();
   }
 
+  function parseLargeTabularRunInteger(value) {
+    const normalizedValue = String(value || '').replace(/,/g, '').trim();
+    const parsedValue = Number.parseInt(normalizedValue, 10);
+    return Number.isFinite(parsedValue) && parsedValue > 0 ? parsedValue : 0;
+  }
+
+  export function estimateLargeTabularRunForPrompt(messageText, appSettings = window.appSettings || {}) {
+    const normalizedMessage = String(messageText || '').toLowerCase();
+    const confirmationEnabled = appSettings?.enable_tabular_durable_run_confirmation !== false;
+    if (!confirmationEnabled || !normalizedMessage.trim()) {
+      return { shouldConfirm: false, estimatedRows: 0, estimatedBatches: 0 };
+    }
+
+    const exhaustiveRowRequested = /\b(all rows|every row|each row|for each row|for every row|one row per|one object per)\b/.test(normalizedMessage);
+    const exportRequested = /\b(csv|json|xml|export|download|generate|create|save)\b/.test(normalizedMessage);
+    const rowCountMatch = normalizedMessage.match(/\b(\d{1,3}(?:,\d{3})+|\d+)\s*(?:rows?|records?|entries?)\b/);
+    const estimatedRows = parseLargeTabularRunInteger(rowCountMatch?.[1]);
+    const maxBatchRows = Math.max(
+      parseLargeTabularRunInteger(appSettings?.tabular_generated_output_max_batch_rows) || 50,
+      1,
+    );
+    const estimatedBatches = estimatedRows > 0 ? Math.ceil(estimatedRows / maxBatchRows) : 0;
+    const rowThreshold = Math.max(
+      parseLargeTabularRunInteger(appSettings?.tabular_durable_run_confirmation_threshold_rows) || 500,
+      1,
+    );
+    const batchThreshold = Math.max(
+      parseLargeTabularRunInteger(appSettings?.tabular_durable_run_confirmation_threshold_batches) || 75,
+      1,
+    );
+
+    return {
+      shouldConfirm: Boolean(
+        exhaustiveRowRequested
+        && exportRequested
+        && estimatedRows > 0
+        && (estimatedRows > rowThreshold || estimatedBatches > batchThreshold)
+      ),
+      estimatedRows,
+      estimatedBatches,
+      rowThreshold,
+      batchThreshold,
+      maxBatchRows,
+    };
+  }
+
+  function getOrCreateLargeTabularRunConfirmationModal() {
+    let modalElement = document.getElementById('large-tabular-run-confirmation-modal');
+    if (modalElement) {
+      return modalElement;
+    }
+
+    modalElement = document.createElement('div');
+    modalElement.className = 'modal fade';
+    modalElement.id = 'large-tabular-run-confirmation-modal';
+    modalElement.tabIndex = -1;
+    modalElement.setAttribute('aria-labelledby', 'large-tabular-run-confirmation-title');
+    modalElement.setAttribute('aria-hidden', 'true');
+
+    const dialog = document.createElement('div');
+    dialog.className = 'modal-dialog modal-dialog-centered';
+    dialog.setAttribute('role', 'dialog');
+    dialog.setAttribute('aria-modal', 'true');
+    dialog.setAttribute('aria-labelledby', 'large-tabular-run-confirmation-title');
+    modalElement.appendChild(dialog);
+
+    const content = document.createElement('div');
+    content.className = 'modal-content';
+    dialog.appendChild(content);
+
+    const header = document.createElement('div');
+    header.className = 'modal-header';
+    content.appendChild(header);
+
+    const title = document.createElement('h5');
+    title.className = 'modal-title';
+    title.id = 'large-tabular-run-confirmation-title';
+    title.textContent = 'Large tabular run';
+    header.appendChild(title);
+
+    const closeButton = document.createElement('button');
+    closeButton.type = 'button';
+    closeButton.className = 'btn-close';
+    closeButton.setAttribute('data-bs-dismiss', 'modal');
+    closeButton.setAttribute('aria-label', 'Close');
+    header.appendChild(closeButton);
+
+    const body = document.createElement('div');
+    body.className = 'modal-body';
+    content.appendChild(body);
+
+    const summary = document.createElement('p');
+    summary.className = 'mb-2';
+    summary.dataset.largeTabularRunSummary = 'true';
+    body.appendChild(summary);
+
+    const detail = document.createElement('p');
+    detail.className = 'text-muted mb-0';
+    detail.dataset.largeTabularRunDetail = 'true';
+    body.appendChild(detail);
+
+    const footer = document.createElement('div');
+    footer.className = 'modal-footer';
+    content.appendChild(footer);
+
+    const narrowButton = document.createElement('button');
+    narrowButton.type = 'button';
+    narrowButton.className = 'btn btn-outline-secondary';
+    narrowButton.dataset.largeTabularRunCancel = 'true';
+    narrowButton.textContent = 'Narrow scope';
+    footer.appendChild(narrowButton);
+
+    const continueButton = document.createElement('button');
+    continueButton.type = 'button';
+    continueButton.className = 'btn btn-primary';
+    continueButton.dataset.largeTabularRunContinue = 'true';
+    continueButton.textContent = 'Continue run';
+    footer.appendChild(continueButton);
+
+    document.body.appendChild(modalElement);
+    return modalElement;
+  }
+
+  export function confirmLargeTabularRunForPrompt(messageText, appSettings = window.appSettings || {}) {
+    const estimate = estimateLargeTabularRunForPrompt(messageText, appSettings);
+    if (!estimate.shouldConfirm) {
+      return Promise.resolve(true);
+    }
+
+    const modalElement = getOrCreateLargeTabularRunConfirmationModal();
+    const summary = modalElement.querySelector('[data-large-tabular-run-summary="true"]');
+    const detail = modalElement.querySelector('[data-large-tabular-run-detail="true"]');
+    const continueButton = modalElement.querySelector('[data-large-tabular-run-continue="true"]');
+    const cancelButton = modalElement.querySelector('[data-large-tabular-run-cancel="true"]');
+
+    if (summary) {
+      summary.textContent = `This request mentions ${estimate.estimatedRows.toLocaleString()} rows and is estimated at about ${estimate.estimatedBatches.toLocaleString()} batches.`;
+    }
+    if (detail) {
+      detail.textContent = 'Large row-level runs are checkpointed in the background. Continue to start the run, or narrow the prompt before sending.';
+    }
+
+    return new Promise(resolve => {
+      const modal = window.bootstrap?.Modal?.getOrCreateInstance(modalElement);
+      let resolved = false;
+
+      const finish = shouldContinue => {
+        if (resolved) {
+          return;
+        }
+        resolved = true;
+        continueButton?.removeEventListener('click', onContinue);
+        cancelButton?.removeEventListener('click', onCancel);
+        modalElement.removeEventListener('hidden.bs.modal', onHidden);
+        modal?.hide();
+        resolve(shouldContinue);
+      };
+      const onContinue = () => finish(true);
+      const onCancel = () => finish(false);
+      const onHidden = () => finish(false);
+
+      continueButton?.addEventListener('click', onContinue, { once: true });
+      cancelButton?.addEventListener('click', onCancel, { once: true });
+      modalElement.addEventListener('hidden.bs.modal', onHidden, { once: true });
+      modal?.show();
+    });
+  }
+
   function clampGeneratedOutputProgress(value) {
     const numericValue = Number.parseFloat(value);
     if (!Number.isFinite(numericValue)) {
@@ -3460,6 +3628,17 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     }
 
     return 'Queued';
+  }
+
+  function getGeneratedOutputRunTypeLabel(outputMetadata = {}) {
+    const taskType = String(outputMetadata?.task_type || '').trim().toLowerCase();
+    if (taskType === 'combined') {
+      return 'Background analysis + export';
+    }
+    if (taskType === 'hierarchical_analysis') {
+      return 'Background analysis';
+    }
+    return 'Background export';
   }
 
   function getGeneratedOutputStatusBadgeClass(outputMetadata) {
@@ -4229,14 +4408,26 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     const statusLabel = formatGeneratedOutputStatusLabel(outputMetadata?.status, outputMetadata);
     const completedBatches = Number.parseInt(outputMetadata?.completed_batches, 10);
     const batchCount = Number.parseInt(outputMetadata?.batch_count, 10);
+    const processedChunkCount = Number.parseInt(outputMetadata?.processed_chunk_count, 10);
+    const totalChunkCount = Number.parseInt(outputMetadata?.total_chunk_count, 10);
+    const failedChunkCount = Number.parseInt(outputMetadata?.failed_chunk_count, 10);
+    const analysisReduceLevel = Number.parseInt(outputMetadata?.analysis_reduce_level, 10);
+    const analysisReduceNode = Number.parseInt(outputMetadata?.analysis_reduce_node, 10);
+    const analysisReduceNodeCount = Number.parseInt(outputMetadata?.analysis_reduce_node_count, 10);
     const processedRows = Number.parseInt(outputMetadata?.processed_rows, 10);
     const rowCount = Number.parseInt(outputMetadata?.row_count, 10);
     const transientFailureCount = Number.parseInt(outputMetadata?.transient_failure_count, 10);
     const manualResumeCount = Number.parseInt(outputMetadata?.manual_resume_count, 10);
     const retryDelaySeconds = Number.parseInt(outputMetadata?.retry_delay_seconds, 10);
     const estimatedRemainingSeconds = Number.parseInt(outputMetadata?.estimated_remaining_seconds, 10);
+    const taskType = String(outputMetadata?.task_type || '').trim().toLowerCase();
+    const analysisPhase = String(outputMetadata?.analysis_phase || '').trim().toLowerCase();
     const progressPercent = calculateGeneratedOutputProgress(outputMetadata);
     const progressPercentLabel = `${Math.round(progressPercent)}%`;
+
+    if (statusElements.statusLabel) {
+      statusElements.statusLabel.textContent = getGeneratedOutputRunTypeLabel(outputMetadata);
+    }
 
     if (statusElements.statusBadge) {
       statusElements.statusBadge.textContent = statusLabel;
@@ -4264,6 +4455,38 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
         checkpointParts.push(`${processedRows.toLocaleString()} of ${rowCount.toLocaleString()} rows`);
       }
       detailParts.push(checkpointParts.join(', '));
+    }
+
+    if (taskType === 'hierarchical_analysis' || taskType === 'combined') {
+      if (analysisPhase === 'reducing') {
+        const reduceParts = ['Reduce phase'];
+        if (Number.isFinite(analysisReduceLevel) && analysisReduceLevel > 0) {
+          reduceParts.push(`level ${analysisReduceLevel.toLocaleString()}`);
+        }
+        if (
+          Number.isFinite(analysisReduceNode)
+          && Number.isFinite(analysisReduceNodeCount)
+          && analysisReduceNodeCount > 0
+        ) {
+          reduceParts.push(`node ${analysisReduceNode.toLocaleString()} of ${analysisReduceNodeCount.toLocaleString()}`);
+        }
+        detailParts.push(reduceParts.join(' '));
+      } else if (analysisPhase === 'publishing') {
+        detailParts.push('Publishing final artifact');
+      } else if (Number.isFinite(processedChunkCount) && Number.isFinite(totalChunkCount) && totalChunkCount > 0) {
+        detailParts.push(`Map phase: ${processedChunkCount.toLocaleString()} of ${totalChunkCount.toLocaleString()} chunks`);
+      }
+
+      if (Number.isFinite(failedChunkCount) && failedChunkCount > 0) {
+        detailParts.push(`Chunks needing retry: ${failedChunkCount.toLocaleString()}`);
+      }
+    }
+
+    if (Number.isFinite(completedBatches) && Number.isFinite(batchCount) && batchCount > completedBatches) {
+      detailParts.push(`Remaining batches: ${(batchCount - completedBatches).toLocaleString()}`);
+    }
+    if (Number.isFinite(processedChunkCount) && Number.isFinite(totalChunkCount) && totalChunkCount > processedChunkCount) {
+      detailParts.push(`Remaining chunks: ${(totalChunkCount - processedChunkCount).toLocaleString()}`);
     }
 
     if (outputMetadata?.waiting_for_retry) {
@@ -4319,7 +4542,7 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
 
     const statusLabel = document.createElement('span');
     statusLabel.className = 'fw-semibold';
-    statusLabel.textContent = 'Background export';
+    statusLabel.textContent = getGeneratedOutputRunTypeLabel(outputMetadata);
     statusRow.appendChild(statusLabel);
 
     const statusBadge = document.createElement('span');
@@ -4347,6 +4570,7 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     wrapper.appendChild(updatedText);
 
     const statusElements = {
+      statusLabel,
       statusBadge,
       progressBar,
       detailText,
@@ -5818,7 +6042,7 @@ export function appendMessage(
   } // End of the large 'else' block for non-AI messages
 }
 
-export function sendMessage() {
+export async function sendMessage() {
   if (!userInput) {
     console.error("User input element not found.");
     return;
@@ -5845,6 +6069,12 @@ export function sendMessage() {
   combinedMessage = combinedMessage.trim();
 
   if (!combinedMessage) {
+    return;
+  }
+
+  const largeTabularRunConfirmed = await confirmLargeTabularRunForPrompt(combinedMessage);
+  if (!largeTabularRunConfirmed) {
+    userInput.focus();
     return;
   }
 
