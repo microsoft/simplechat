@@ -2,8 +2,8 @@
 #!/usr/bin/env python3
 """
 Functional test for outbound MCP tool argument normalization.
-Version: 0.250.127
-Implemented in: 0.250.127
+Version: 0.250.128
+Implemented in: 0.250.128
 
 This test ensures wrapped Semantic Kernel kwargs are normalized before outbound
 MCP tool validation and invocation, while legitimate kwargs tool fields remain
@@ -31,6 +31,13 @@ class _NoopLogger:
         return _noop
 
 
+_NOOP_LOGGER = _NoopLogger()
+
+
+def _get_noop_logger():
+    return _NOOP_LOGGER
+
+
 class _KernelPlugin:
     def __init__(self, functions):
         self.functions = functions
@@ -51,7 +58,7 @@ sys.modules.setdefault(
     "functions_appinsights",
     types.SimpleNamespace(
         log_event=_noop,
-        get_appinsights_logger=lambda: _NoopLogger(),
+        get_appinsights_logger=_get_noop_logger,
     ),
 )
 sys.modules.setdefault(
@@ -274,7 +281,7 @@ def test_factory_preserves_wrapper_without_cached_tool_metadata():
 
 def main():
     """Run tests as a standalone functional test script."""
-    assert_app_version_at_least("0.250.127")
+    assert_app_version_at_least("0.250.128")
     tests = [
         test_wrapped_kwargs_arguments_are_unwrapped_for_required_schema,
         test_direct_arguments_are_preserved,
