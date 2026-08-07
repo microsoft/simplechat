@@ -217,8 +217,13 @@ def register_route_frontend_authentication(bp):
 
         code = request.args.get('code')
         if not code:
-            print("Authorization code not found in callback.")
-            return "Authorization code not found", 400
+            log_event(
+                "[AUTH_CALLBACK] OAuth callback reached without an authorization code; redirecting to sign-in.",
+                extra={'path': request.path},
+                level=logging.INFO,
+                debug_only=True,
+            )
+            return redirect(url_for('public_app.index'))
 
         # Build MSAL app WITH session cache (will be loaded by _build_msal_app via _load_cache)
         msal_app = _build_msal_app(cache=_load_cache()) # Load existing cache
