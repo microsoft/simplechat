@@ -1,8 +1,8 @@
 # test_tabular_row_orchestration_scale.py
 """
 Functional test for scalable per-row tabular orchestration.
-Version: 0.250.131
-Implemented in: 0.250.060; generated CSV formula safety in 0.250.065; generated file export routing in 0.250.072; source descriptor generalization in 0.250.127; unified durable run contract in 0.250.128; hierarchical analysis in 0.250.129; combined analysis and export in 0.250.130
+Version: 0.250.132
+Implemented in: 0.250.060; generated CSV formula safety in 0.250.065; generated file export routing in 0.250.072; source descriptor generalization in 0.250.127; unified durable run contract in 0.250.128; hierarchical analysis in 0.250.129; combined analysis and export in 0.250.130; scale validation in 0.250.132
 
 This test ensures generated exports preserve source identity and row order while
 enforcing one stable output schema across independently generated batches.
@@ -34,6 +34,12 @@ CHAT_ROUTE = REPO_ROOT / 'application' / 'single_app' / 'route_backend_chats.py'
 SIMPLECHAT_OPERATIONS = REPO_ROOT / 'application' / 'single_app' / 'functions_simplechat_operations.py'
 CSV_QUERY_MODULE = REPO_ROOT / 'application' / 'single_app' / 'functions_tabular_csv_query.py'
 sys.path.append(str(APP_ROOT))
+sys.path.append(str(Path(__file__).resolve().parent))
+
+from generate_tabular_scale_fixtures import (  # noqa: E402
+    SCALE_TIERS,
+    iter_synthetic_rows,
+)
 
 from functions_assistant_table_exports import (  # noqa: E402
     build_safe_csv_headers,
@@ -1582,6 +1588,138 @@ def test_csv_query_source_reader_scales_and_resumes():
         raise AssertionError('Cross-chunk query context must be rejected for durable replay')
 
 
+def test_scale_fixture_generator_streams_all_required_tiers():
+    """Synthetic scale fixtures cover every required tier without list materialization."""
+    assert tuple(SCALE_TIERS) == (30, 300, 3000, 30000, 100000)
+
+    for row_tier in SCALE_TIERS:
+        generated_count = 0
+        first_row = None
+        last_row = None
+        for generated_row in iter_synthetic_rows(row_tier):
+            generated_count += 1
+            first_row = first_row or generated_row
+            last_row = generated_row
+
+        assert generated_count == row_tier
+        assert first_row['Case ID'] == 'SC-000001'
+        assert last_row['Case ID'] == f'SC-{row_tier:06d}'
+        assert set(first_row) == {'Case ID', 'Score', 'Risk', 'Question'}
+
+
+def test_scale_tiers_plan_export_and_analysis_with_bounded_manifests():
+    """All required tiers keep Lane B and Lane C planning metadata bounded."""
+    manifest_helpers, uploaded_pages = _load_manifest_helpers()
+    analysis_helpers = _load_analysis_helpers()
+    batch_size = 50
+    reduce_fan_in = analysis_helpers['_get_tabular_analysis_reduce_fan_in']({
+        'tabular_hierarchical_analysis_reduce_fan_in': 25,
+    })
+
+    for row_tier in SCALE_TIERS:
+        batch_count = math.ceil(row_tier / batch_size)
+        chunk_row_counts = [batch_size] * batch_count
+        remainder = row_tier % batch_size
+        if remainder:
+            chunk_row_counts[-1] = remainder
+
+        manifest = manifest_helpers['_write_chunk_manifest_for_run'](
+            'user-1',
+            'conversation-1',
+            f'run-tier-{row_tier}',
+            batch_count,
+            row_count=row_tier,
+            chunk_row_counts=chunk_row_counts,
+            chunk_status='staged',
+        )
+        export_plan = {
+            'lane': 'structured_export',
+            'row_count': row_tier,
+            'batch_count': batch_count,
+            'chunk_manifest': manifest,
+        }
+        analysis_plan = {
+            'lane': 'hierarchical_analysis',
+            'row_count': row_tier,
+            'batch_count': batch_count,
+            'reduce_plan': analysis_helpers['_build_analysis_reduce_plan'](batch_count, reduce_fan_in),
+            'chunk_manifest': manifest,
+        }
+        serialized_run_document = json.dumps(
+            {
+                'id': f'run-tier-{row_tier}',
+                'type': 'tabular_generated_output_run',
+                'contract_version': 3,
+                'task_type': export_plan['lane'],
+                'row_count': row_tier,
+                'batch_count': batch_count,
+                'chunk_manifest': manifest,
+            },
+            separators=(',', ':'),
+            ensure_ascii=False,
+        ).encode('utf-8')
+
+        assert len(serialized_run_document) < 16 * 1024
+        assert 'chunks' not in manifest
+        assert export_plan['batch_count'] == analysis_plan['batch_count']
+        assert max(chunk_row_counts) <= batch_size
+        assert sum(chunk_row_counts) == row_tier
+        reduce_groups = analysis_helpers['_build_analysis_reduce_groups'](
+            list(range(batch_count)),
+            reduce_fan_in,
+        )
+        assert all(len(group) <= reduce_fan_in for group in reduce_groups)
+
+    max_manifest_page_size = max(
+        len(json.dumps(page, separators=(',', ':'), ensure_ascii=False).encode('utf-8'))
+        for page in uploaded_pages.values()
+    )
+    assert max_manifest_page_size < 128 * 1024
+
+
+def test_100000_row_hardening_contracts_revalidate_source_and_cancel_terminally():
+    """The largest tier keeps source-version, authorization, and cancel contracts explicit."""
+    source_version_source = ast.unparse(_get_function_node('_get_versioned_source_blob_client'))
+    staging_source = ast.unparse(_get_function_node('_stage_tabular_generated_output_source'))
+    assert 'blob_etag' in source_version_source
+    assert 'Source CSV changed after the export was queued' in source_version_source
+    assert 'MatchConditions.IfNotModified' in staging_source
+    assert 'source_scan_row_count' in staging_source
+
+    authorize_personal = _load_authorization_helper('user-1')
+    large_run = {
+        'id': 'run-100000-auth',
+        'user_id': 'user-1',
+        'conversation_id': 'conversation-1',
+        'row_count': 100000,
+        'batch_count': 2000,
+        'source_descriptor': {
+            'source': 'chat',
+            'container': 'personal-chat',
+            'blob_path': 'user-1/conversation-1/source-100000.csv',
+            'blob_etag': 'etag-100000',
+        },
+    }
+    assert authorize_personal(large_run)['user_id'] == 'user-1'
+
+    helpers, stored_run = _load_cancellation_helpers({
+        'id': 'run-100000-cancel',
+        'user_id': 'user-1',
+        'conversation_id': 'conversation-1',
+        'status': 'running',
+        'row_count': 100000,
+        'batch_count': 2000,
+        'completed_batches': 1500,
+        'processed_rows': 75000,
+    })
+    cancel_result = helpers['cancel_tabular_generated_output_run']('user-1', 'run-100000-cancel')
+    assert cancel_result['success'] is True
+    assert stored_run['status'] == 'canceled'
+    assert stored_run['completed_at']
+    assert helpers['_can_cancel_run'](stored_run) is False
+    assert cancel_result['run']['can_cancel'] is False
+
+
 def test_worker_revalidates_conversation_and_workspace_authorization():
     """Stored source descriptors are authorized again whenever a worker executes."""
     authorize_personal = _load_authorization_helper('user-1')
@@ -2105,6 +2243,9 @@ def main():
         test_streaming_finalizer_neutralizes_csv_formulas,
         test_streaming_finalizer_rejects_source_order_gaps,
         test_csv_query_source_reader_scales_and_resumes,
+        test_scale_fixture_generator_streams_all_required_tiers,
+        test_scale_tiers_plan_export_and_analysis_with_bounded_manifests,
+        test_100000_row_hardening_contracts_revalidate_source_and_cancel_terminally,
         test_worker_revalidates_conversation_and_workspace_authorization,
         test_durable_cancellation_is_idempotent_and_terminal,
         test_worker_lease_fencing_rejects_stale_claims,
