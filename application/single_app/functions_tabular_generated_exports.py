@@ -88,6 +88,11 @@ TABULAR_EXPORT_FINAL_SPOOL_MAX_MEMORY_BYTES = 1024 * 1024
 TABULAR_EXPORT_DEFAULT_SOURCE_CHUNK_ROWS = 1000
 TABULAR_EXPORT_DEFAULT_SOURCE_BATCH_ROWS = 50
 TABULAR_EXPORT_DEFAULT_SOURCE_BATCH_CHARS = 60000
+TABULAR_ANALYSIS_DEFAULT_REDUCE_FAN_IN = 25
+TABULAR_ANALYSIS_MAX_REDUCE_FAN_IN = 50
+TABULAR_ANALYSIS_SUMMARY_MAX_CHARS = 24000
+TABULAR_ANALYSIS_MAX_FINDINGS = 12
+TABULAR_ANALYSIS_MAX_NOTABLE_ROWS = 25
 TABULAR_EXPORT_SUMMARY_MAX_FIELDS = 25
 TABULAR_EXPORT_SUMMARY_MAX_VALUES_PER_FIELD = 5
 TABULAR_EXPORT_SUMMARY_AGGREGATE_MAX_VALUES = 25
@@ -250,6 +255,11 @@ def _build_generated_file_name(source_file_name, output_format):
     timestamp_suffix = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
     normalized_extension = normalize_generated_output_format(output_format)
     return f"{_sanitize_file_base_name(source_file_name)}_generated_{timestamp_suffix}.{normalized_extension}"
+
+
+def _build_analysis_file_name(source_file_name):
+    timestamp_suffix = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
+    return f"{_sanitize_file_base_name(source_file_name)}_analysis_{timestamp_suffix}.md"
 
 
 def _serialize_generated_output_value(value):
@@ -581,6 +591,17 @@ def _output_summary_blob_path(user_id, conversation_id, run_id, batch_number):
     return f"{user_id}/{conversation_id}/generated/tabular_runs/{run_id}/summary/batch_{batch_number:06d}.json"
 
 
+def _analysis_reduce_blob_path(user_id, conversation_id, run_id, level_number, node_number):
+    return (
+        f"{user_id}/{conversation_id}/generated/tabular_runs/{run_id}/analysis/reduce/"
+        f"level_{level_number:03d}/node_{node_number:06d}.json"
+    )
+
+
+def _analysis_final_blob_path(user_id, conversation_id, run_id):
+    return f"{user_id}/{conversation_id}/generated/tabular_runs/{run_id}/analysis/final_summary.json"
+
+
 def _build_chunk_manifest_contract(user_id, conversation_id, run_id, total_chunk_count, row_count=0, page_size=None):
     normalized_total_chunk_count = _safe_int(total_chunk_count, default=0, minimum=0)
     normalized_page_size = _safe_int(
@@ -888,6 +909,13 @@ def _parse_generated_json_entries(response_content):
     return None
 
 
+def _parse_generated_json_object(response_content):
+    parsed_entries = _parse_generated_json_entries(response_content)
+    if not parsed_entries or len(parsed_entries) != 1:
+        return None
+    return parsed_entries[0]
+
+
 def _truncate_response_preview(response_content, max_chars=400):
     cleaned = _clean_generated_json_code_fence(response_content)
     normalized = re.sub(r'\s+', ' ', cleaned).strip()
@@ -900,6 +928,228 @@ def _truncate_response_preview(response_content, max_chars=400):
 
 def _dump_generated_output_json(value):
     return json.dumps(value, default=str, ensure_ascii=False, separators=(',', ':'))
+
+
+def _normalize_analysis_text(value, max_chars=4000):
+    normalized_value = re.sub(r'\s+', ' ', str(value or '').strip())
+    if len(normalized_value) <= max_chars:
+        return normalized_value
+    return f"{normalized_value[:max_chars].rstrip()}..."
+
+
+def _normalize_analysis_findings(value):
+    if isinstance(value, str):
+        candidates = [value]
+    elif isinstance(value, list):
+        candidates = value
+    else:
+        candidates = []
+
+    findings = []
+    for candidate in candidates:
+        if isinstance(candidate, dict):
+            candidate_text = candidate.get('finding') or candidate.get('summary') or candidate.get('text')
+        else:
+            candidate_text = candidate
+        normalized_text = _normalize_analysis_text(candidate_text, max_chars=1200)
+        if normalized_text:
+            findings.append(normalized_text)
+        if len(findings) >= TABULAR_ANALYSIS_MAX_FINDINGS:
+            break
+    return findings
+
+
+def _normalize_analysis_counts(value):
+    if not isinstance(value, dict):
+        return {}
+    counts = {}
+    for count_key, count_value in value.items():
+        normalized_key = _normalize_analysis_text(count_key, max_chars=120)
+        if not normalized_key:
+            continue
+        if isinstance(count_value, (int, float, str, bool)) or count_value is None:
+            counts[normalized_key] = count_value
+        else:
+            counts[normalized_key] = _normalize_analysis_text(count_value, max_chars=500)
+    return counts
+
+
+def _normalize_analysis_notable_rows(value):
+    if not isinstance(value, list):
+        return []
+
+    notable_rows = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        source_row_number = _safe_int(
+            item.get('source_row_number')
+            or item.get('row_number')
+            or item.get('row')
+        )
+        if source_row_number <= 0:
+            continue
+        note = _normalize_analysis_text(
+            item.get('note')
+            or item.get('finding')
+            or item.get('reason')
+            or item.get('summary'),
+            max_chars=1200,
+        )
+        if not note:
+            continue
+        notable_rows.append({
+            'source_row_number': source_row_number,
+            'source_row_identity': _normalize_analysis_text(
+                item.get('source_row_identity') or item.get('identity'),
+                max_chars=200,
+            ),
+            'note': note,
+        })
+        if len(notable_rows) >= TABULAR_ANALYSIS_MAX_NOTABLE_ROWS:
+            break
+    return notable_rows
+
+
+def _source_row_bounds_from_rows(source_rows):
+    row_numbers = [
+        _safe_int(row.get(TABULAR_EXPORT_INPUT_ROW_NUMBER_FIELD))
+        for row in (source_rows or [])
+        if isinstance(row, dict)
+    ]
+    row_numbers = [row_number for row_number in row_numbers if row_number > 0]
+    if not row_numbers:
+        return None, None
+    return min(row_numbers), max(row_numbers)
+
+
+def _source_row_bounds_from_summaries(summaries):
+    row_starts = []
+    row_ends = []
+    for summary in summaries or []:
+        row_start = _safe_int((summary or {}).get('source_row_start'))
+        row_end = _safe_int((summary or {}).get('source_row_end'))
+        if row_start > 0:
+            row_starts.append(row_start)
+        if row_end > 0:
+            row_ends.append(row_end)
+    if not row_starts or not row_ends:
+        return None, None
+    return min(row_starts), max(row_ends)
+
+
+def _normalize_analysis_summary_payload(payload, source_rows=None, child_summaries=None, chunk_number=None, reduce_level=None, reduce_node=None):
+    payload = payload if isinstance(payload, dict) else {}
+    child_summaries = [summary for summary in (child_summaries or []) if isinstance(summary, dict)]
+    source_row_start, source_row_end = _source_row_bounds_from_rows(source_rows)
+    if source_row_start is None or source_row_end is None:
+        source_row_start, source_row_end = _source_row_bounds_from_summaries(child_summaries)
+
+    row_count = len(source_rows or [])
+    if not row_count and child_summaries:
+        row_count = sum(_safe_int(summary.get('row_count')) for summary in child_summaries)
+
+    summary_text = _normalize_analysis_text(
+        payload.get('summary')
+        or payload.get('answer')
+        or payload.get('overview'),
+        max_chars=TABULAR_ANALYSIS_SUMMARY_MAX_CHARS,
+    )
+    findings = _normalize_analysis_findings(payload.get('findings'))
+    notable_rows = _normalize_analysis_notable_rows(
+        payload.get('notable_rows')
+        or payload.get('row_references')
+        or payload.get('citations')
+    )
+    counts = _normalize_analysis_counts(payload.get('counts'))
+    if not summary_text and findings:
+        summary_text = findings[0]
+    if not summary_text:
+        summary_text = 'No concise summary was returned for this analysis segment.'
+
+    normalized_summary = {
+        'summary': summary_text,
+        'findings': findings,
+        'counts': counts,
+        'notable_rows': notable_rows,
+        'row_count': row_count,
+        'source_row_start': source_row_start,
+        'source_row_end': source_row_end,
+    }
+    if chunk_number is not None:
+        normalized_summary.update({
+            'kind': 'chunk_summary',
+            'chunk_number': _safe_int(chunk_number),
+        })
+    if reduce_level is not None:
+        normalized_summary.update({
+            'kind': 'reduce_summary',
+            'reduce_level': _safe_int(reduce_level),
+            'reduce_node': _safe_int(reduce_node),
+            'child_summary_count': len(child_summaries),
+        })
+    return normalized_summary
+
+
+def _get_tabular_analysis_reduce_fan_in(settings):
+    return _settings_int(
+        settings,
+        'tabular_hierarchical_analysis_reduce_fan_in',
+        TABULAR_ANALYSIS_DEFAULT_REDUCE_FAN_IN,
+        minimum=2,
+        maximum=TABULAR_ANALYSIS_MAX_REDUCE_FAN_IN,
+    )
+
+
+def _build_analysis_reduce_groups(items, fan_in):
+    normalized_fan_in = max(2, _safe_int(fan_in, default=TABULAR_ANALYSIS_DEFAULT_REDUCE_FAN_IN))
+    return [
+        list(items[index:index + normalized_fan_in])
+        for index in range(0, len(items or []), normalized_fan_in)
+    ]
+
+
+def _build_analysis_reduce_plan(summary_count, fan_in):
+    remaining_count = _safe_int(summary_count, minimum=0)
+    normalized_fan_in = max(2, _safe_int(fan_in, default=TABULAR_ANALYSIS_DEFAULT_REDUCE_FAN_IN))
+    level_counts = []
+    while remaining_count > 1:
+        remaining_count = math.ceil(remaining_count / normalized_fan_in)
+        level_counts.append(remaining_count)
+    return level_counts
+
+
+def _build_analysis_chunk_prompt(run, batch_rows, batch_number, batch_count):
+    analysis_objective = str(run.get('analysis_objective') or run.get('user_question') or '').strip()
+    selected_sheet = str(run.get('selected_sheet') or '').strip()
+    selected_sheet_line = f"Worksheet: {selected_sheet}\n" if selected_sheet else ''
+    return (
+        'Analyze the bounded tabular chunk below for the user.\n\n'
+        f'User analytical objective:\n{analysis_objective}\n\n'
+        'Return ONLY a valid JSON object with these fields: summary, findings, counts, notable_rows.\n'
+        'findings must be an array of concise strings. counts must be an object of useful aggregate counts.\n'
+        'notable_rows must be an array of objects with source_row_number, source_row_identity, and note.\n'
+        'Use source_row_number and source_row_identity from the input rows for any row references.\n'
+        'Do not claim coverage beyond this chunk. Do not include markdown fences.\n\n'
+        f"Source file: {run.get('source_file_name') or 'unknown file'}\n"
+        f'{selected_sheet_line}'
+        f'Chunk: {batch_number}/{batch_count}\n\n'
+        f'Input rows:\n{_dump_generated_output_json(batch_rows)}'
+    )
+
+
+def _build_analysis_reduce_prompt(run, summaries, level_number, node_number, node_count):
+    analysis_objective = str(run.get('analysis_objective') or run.get('user_question') or '').strip()
+    return (
+        'Reduce the bounded tabular analysis summaries below into one higher-level summary.\n\n'
+        f'User analytical objective:\n{analysis_objective}\n\n'
+        'Return ONLY a valid JSON object with these fields: summary, findings, counts, notable_rows.\n'
+        'Preserve row references by carrying forward source_row_number and source_row_identity in notable_rows.\n'
+        'Merge duplicate findings, keep the most important evidence, and do not invent rows or counts.\n'
+        'Do not include markdown fences.\n\n'
+        f'Reduce level: {level_number}; node: {node_number}/{node_count}\n\n'
+        f'Input summaries:\n{_dump_generated_output_json(summaries)}'
+    )
 
 
 def _checkpoint_source_input_batch(run, batch_rows, source_scan_row_count):
@@ -1428,6 +1678,208 @@ async def _generate_batch_window_entries(
     return successful_results, first_error
 
 
+async def _generate_analysis_chunk_summary(
+    chat_service,
+    run,
+    batch_request,
+    total_batches,
+    retry_attempts,
+    batch_timeout_seconds,
+):
+    batch_number = batch_request['batch_number']
+    batch_rows = batch_request['rows']
+    timeout_seconds = max(
+        _safe_float(
+            batch_timeout_seconds,
+            default=TABULAR_EXPORT_DEFAULT_BATCH_TIMEOUT_SECONDS,
+        ),
+        0.001,
+    )
+    raw_response_content = ''
+    for attempt_number in range(1, retry_attempts + 1):
+        chat_history = SKChatHistory()
+        chat_history.add_system_message(
+            'You analyze bounded tabular data chunks and return compact, evidence-preserving JSON summaries. '
+            'Return only one valid JSON object. Never include markdown or unbounded row dumps.'
+        )
+        if attempt_number > 1:
+            chat_history.add_system_message(
+                'The previous attempt was not a valid compact JSON analysis summary. Retry with exactly one JSON object.'
+            )
+        chat_history.add_user_message(_build_analysis_chunk_prompt(run, batch_rows, batch_number, total_batches))
+
+        execution_settings = AzureChatPromptExecutionSettings(service_id='tabular-generated-output-background')
+        try:
+            result = await asyncio.wait_for(
+                chat_service.get_chat_message_contents(chat_history, execution_settings),
+                timeout=timeout_seconds,
+            )
+        except asyncio.TimeoutError as exc:
+            raise TimeoutError(
+                f'Background tabular analysis chunk {batch_number}/{total_batches} '
+                f'timed out after {timeout_seconds:g} seconds.'
+            ) from exc
+        raw_response_content = result[0].content if result and result[0].content else ''
+        parsed_summary = _parse_generated_json_object(raw_response_content) if raw_response_content else None
+        if parsed_summary is not None:
+            return _normalize_analysis_summary_payload(
+                parsed_summary,
+                source_rows=batch_rows,
+                chunk_number=batch_number,
+            )
+        log_event(
+            '[TABULAR_GENERATED_OUTPUT] Background analysis chunk attempt mismatch',
+            {
+                'run_id': run.get('id'),
+                'batch_number': batch_number,
+                'batch_count': total_batches,
+                'attempt_number': attempt_number,
+                'row_count': len(batch_rows),
+                'response_char_count': len(raw_response_content),
+                'response_preview': _truncate_response_preview(raw_response_content),
+            },
+            debug_only=True,
+        )
+
+    raise ValueError(
+        f'Background tabular analysis chunk {batch_number}/{total_batches} failed validation.'
+    )
+
+
+async def _generate_analysis_chunk_summary_for_window(
+    semaphore,
+    chat_service,
+    run,
+    batch_request,
+    total_batches,
+    retry_attempts,
+    batch_timeout_seconds,
+):
+    async with semaphore:
+        batch_started_at = time.monotonic()
+        analysis_summary = await _generate_analysis_chunk_summary(
+            chat_service,
+            run,
+            batch_request,
+            total_batches,
+            retry_attempts,
+            batch_timeout_seconds,
+        )
+        return {
+            'batch_number': batch_request['batch_number'],
+            'analysis_summary': analysis_summary,
+            'batch_row_count': _safe_int(analysis_summary.get('row_count')),
+            'elapsed_seconds': time.monotonic() - batch_started_at,
+            'mismatch_count': 0,
+        }
+
+
+async def _generate_analysis_chunk_summary_window(
+    chat_service,
+    run,
+    batch_requests,
+    total_batches,
+    retry_attempts,
+    batch_concurrency,
+    batch_timeout_seconds,
+):
+    semaphore = asyncio.Semaphore(max(1, batch_concurrency))
+    tasks = [
+        _generate_analysis_chunk_summary_for_window(
+            semaphore,
+            chat_service,
+            run,
+            batch_request,
+            total_batches,
+            retry_attempts,
+            batch_timeout_seconds,
+        )
+        for batch_request in batch_requests
+    ]
+    gathered_results = await asyncio.gather(*tasks, return_exceptions=True)
+    successful_results = []
+    first_error = None
+    for gathered_result in gathered_results:
+        if isinstance(gathered_result, Exception):
+            if first_error is None:
+                first_error = gathered_result
+            continue
+        successful_results.append(gathered_result)
+    return successful_results, first_error
+
+
+async def _generate_analysis_reduce_summary(
+    chat_service,
+    run,
+    summaries,
+    level_number,
+    node_number,
+    node_count,
+    retry_attempts,
+    batch_timeout_seconds,
+):
+    timeout_seconds = max(
+        _safe_float(
+            batch_timeout_seconds,
+            default=TABULAR_EXPORT_DEFAULT_BATCH_TIMEOUT_SECONDS,
+        ),
+        0.001,
+    )
+    raw_response_content = ''
+    for attempt_number in range(1, retry_attempts + 1):
+        chat_history = SKChatHistory()
+        chat_history.add_system_message(
+            'You recursively reduce bounded tabular analysis summaries. '
+            'Return only one compact JSON object and preserve cited source row references.'
+        )
+        if attempt_number > 1:
+            chat_history.add_system_message(
+                'The previous reduce attempt was not a valid JSON object. Retry with exactly one JSON object.'
+            )
+        chat_history.add_user_message(
+            _build_analysis_reduce_prompt(run, summaries, level_number, node_number, node_count)
+        )
+
+        execution_settings = AzureChatPromptExecutionSettings(service_id='tabular-generated-output-background')
+        try:
+            result = await asyncio.wait_for(
+                chat_service.get_chat_message_contents(chat_history, execution_settings),
+                timeout=timeout_seconds,
+            )
+        except asyncio.TimeoutError as exc:
+            raise TimeoutError(
+                f'Background tabular analysis reduce level {level_number} node {node_number}/{node_count} '
+                f'timed out after {timeout_seconds:g} seconds.'
+            ) from exc
+        raw_response_content = result[0].content if result and result[0].content else ''
+        parsed_summary = _parse_generated_json_object(raw_response_content) if raw_response_content else None
+        if parsed_summary is not None:
+            return _normalize_analysis_summary_payload(
+                parsed_summary,
+                child_summaries=summaries,
+                reduce_level=level_number,
+                reduce_node=node_number,
+            )
+        log_event(
+            '[TABULAR_GENERATED_OUTPUT] Background analysis reduce attempt mismatch',
+            {
+                'run_id': run.get('id'),
+                'level_number': level_number,
+                'node_number': node_number,
+                'node_count': node_count,
+                'attempt_number': attempt_number,
+                'input_summary_count': len(summaries),
+                'response_char_count': len(raw_response_content),
+                'response_preview': _truncate_response_preview(raw_response_content),
+            },
+            debug_only=True,
+        )
+
+    raise ValueError(
+        f'Background tabular analysis reduce level {level_number} node {node_number}/{node_count} failed validation.'
+    )
+
+
 def should_queue_tabular_generated_output_background(row_count, batch_count, settings=None):
     """Return True when a structured generated export should run durably in the background."""
     settings = settings or {}
@@ -1666,6 +2118,8 @@ def _build_checkpoint_summary(completed_batches, batch_count, processed_rows, ro
 
 def _build_run_status_detail(run, settings, retryable_failure, can_resume):
     status = str((run or {}).get('status') or '').strip().lower()
+    task_type = _normalize_tabular_run_task_type((run or {}).get('task_type'))
+    is_hierarchical_analysis = task_type == TABULAR_RUN_TASK_HIERARCHICAL_ANALYSIS
     is_stale = status == TABULAR_EXPORT_STATUS_RUNNING and _is_stale_running_run(run, settings or {})
     waiting_for_retry = _is_waiting_for_retry(run)
     retry_due = _is_due_queued_retry_run(run)
@@ -1676,7 +2130,11 @@ def _build_run_status_detail(run, settings, retryable_failure, can_resume):
         return {
             'status_label': 'Complete',
             'status_tone': 'success',
-            'status_detail': 'Export complete and ready to download.',
+            'status_detail': (
+                'Analysis complete and ready to view.'
+                if is_hierarchical_analysis
+                else 'Export complete and ready to download.'
+            ),
             'is_stale': False,
             'waiting_for_retry': False,
             'retry_due': False,
@@ -1686,7 +2144,7 @@ def _build_run_status_detail(run, settings, retryable_failure, can_resume):
         return {
             'status_label': 'Canceled',
             'status_tone': 'secondary',
-            'status_detail': 'Export was canceled.',
+            'status_detail': 'Analysis was canceled.' if is_hierarchical_analysis else 'Export was canceled.',
             'is_stale': False,
             'waiting_for_retry': False,
             'retry_due': False,
@@ -1707,7 +2165,11 @@ def _build_run_status_detail(run, settings, retryable_failure, can_resume):
             return {
                 'status_label': 'Finalizing',
                 'status_tone': 'info',
-                'status_detail': 'Export validation passed and the final artifact is being published.',
+                'status_detail': (
+                    'Analysis reduction passed and the final answer artifact is being published.'
+                    if is_hierarchical_analysis
+                    else 'Export validation passed and the final artifact is being published.'
+                ),
                 'is_stale': False,
                 'waiting_for_retry': False,
                 'retry_due': False,
@@ -1716,7 +2178,13 @@ def _build_run_status_detail(run, settings, retryable_failure, can_resume):
         return {
             'status_label': 'Running',
             'status_tone': 'info',
-            'status_detail': 'Export is running and checkpointing completed batches.',
+            'status_detail': (
+                'Analysis is reducing checkpointed chunk summaries.'
+                if is_hierarchical_analysis and (run or {}).get('analysis_phase') == 'reducing'
+                else 'Analysis is running and checkpointing completed chunks.'
+                if is_hierarchical_analysis
+                else 'Export is running and checkpointing completed batches.'
+            ),
             'is_stale': False,
             'waiting_for_retry': False,
             'retry_due': False,
@@ -1756,7 +2224,11 @@ def _build_run_status_detail(run, settings, retryable_failure, can_resume):
         return {
             'status_label': 'Needs Attention',
             'status_tone': 'warning' if can_resume else 'danger',
-            'status_detail': 'Export stopped after a retryable interruption. Continue will resume from the last checkpoint.',
+            'status_detail': (
+                'Analysis stopped after a retryable interruption. Continue will resume from the last checkpoint.'
+                if is_hierarchical_analysis
+                else 'Export stopped after a retryable interruption. Continue will resume from the last checkpoint.'
+            ),
             'is_stale': False,
             'waiting_for_retry': False,
             'retry_due': False,
@@ -1766,7 +2238,11 @@ def _build_run_status_detail(run, settings, retryable_failure, can_resume):
         return {
             'status_label': 'Failed',
             'status_tone': 'danger',
-            'status_detail': 'Export failed and cannot continue from checkpoints.',
+            'status_detail': (
+                'Analysis failed and cannot continue from checkpoints.'
+                if is_hierarchical_analysis
+                else 'Export failed and cannot continue from checkpoints.'
+            ),
             'is_stale': False,
             'waiting_for_retry': False,
             'retry_due': False,
@@ -1776,7 +2252,11 @@ def _build_run_status_detail(run, settings, retryable_failure, can_resume):
     return {
         'status_label': 'Queued',
         'status_tone': 'info',
-        'status_detail': 'Export is queued and waiting for a background worker.',
+        'status_detail': (
+            'Analysis is queued and waiting for a background worker.'
+            if is_hierarchical_analysis
+            else 'Export is queued and waiting for a background worker.'
+        ),
         'is_stale': False,
         'waiting_for_retry': False,
         'retry_due': False,
@@ -1836,6 +2316,11 @@ def _build_run_public_status(run, settings=None):
         'total_chunk_count': total_chunk_count,
         'processed_chunk_count': processed_chunk_count,
         'failed_chunk_count': failed_chunk_count,
+        'analysis_phase': run.get('analysis_phase'),
+        'analysis_reduce_level': _safe_int(run.get('analysis_reduce_level')),
+        'analysis_reduce_node': _safe_int(run.get('analysis_reduce_node')),
+        'analysis_reduce_node_count': _safe_int(run.get('analysis_reduce_node_count')),
+        'analysis_reduce_plan': run.get('analysis_reduce_plan') if isinstance(run.get('analysis_reduce_plan'), list) else [],
         'progress_percent': progress_percent,
         'created_at': run.get('created_at'),
         'started_at': run.get('started_at'),
@@ -1877,14 +2362,20 @@ def _build_run_public_status(run, settings=None):
 def build_background_tabular_generated_output_metadata(run):
     """Build assistant metadata for a queued or running background export."""
     public_status = _build_run_public_status(run) or {}
+    task_type = public_status.get('task_type') or _normalize_tabular_run_task_type((run or {}).get('task_type'))
+    is_hierarchical_analysis = task_type == TABULAR_RUN_TASK_HIERARCHICAL_ANALYSIS
+    output_label = str(public_status.get('output_format') or 'json').upper()
     public_status.update({
         'export_run_id': public_status.get('run_id'),
         'background_export': True,
         'capability': 'tabular',
         'suppress_assistant_table_export': True,
         'summary': (
-            f"Queued structured {str(public_status.get('output_format') or 'json').upper()} export "
-            f"for {public_status.get('row_count', 0)} row(s) across {public_status.get('batch_count', 0)} batch(es)."
+            f"Queued hierarchical tabular analysis for {public_status.get('row_count', 0)} row(s) "
+            f"across {public_status.get('batch_count', 0)} chunk(s)."
+            if is_hierarchical_analysis
+            else f"Queued structured {output_label} export for {public_status.get('row_count', 0)} row(s) "
+            f"across {public_status.get('batch_count', 0)} batch(es)."
         ),
     })
     return public_status
@@ -2568,6 +3059,145 @@ def _complete_run(run):
     return run
 
 
+def _build_analysis_summary_markdown(run, final_summary):
+    final_summary = final_summary if isinstance(final_summary, dict) else {}
+    markdown_parts = [
+        '# Tabular Analysis',
+        '',
+        final_summary.get('summary') or 'Analysis completed.',
+        '',
+    ]
+    findings = _normalize_analysis_findings(final_summary.get('findings'))
+    if findings:
+        markdown_parts.extend(['## Findings', ''])
+        markdown_parts.extend([f'- {finding}' for finding in findings])
+        markdown_parts.append('')
+
+    counts = _normalize_analysis_counts(final_summary.get('counts'))
+    if counts:
+        markdown_parts.extend(['## Counts', ''])
+        for count_key, count_value in counts.items():
+            markdown_parts.append(f'- {count_key}: {count_value}')
+        markdown_parts.append('')
+
+    notable_rows = _normalize_analysis_notable_rows(final_summary.get('notable_rows'))
+    if notable_rows:
+        markdown_parts.extend(['## Notable Rows', ''])
+        for notable_row in notable_rows:
+            identity = str(notable_row.get('source_row_identity') or '').strip()
+            identity_suffix = f" ({identity})" if identity else ''
+            markdown_parts.append(
+                f"- Row {notable_row.get('source_row_number')}{identity_suffix}: {notable_row.get('note')}"
+            )
+        markdown_parts.append('')
+
+    markdown_parts.extend([
+        '## Coverage',
+        '',
+        f"- Source file: {run.get('source_file_name') or 'unknown file'}",
+        f"- Rows analyzed: {_safe_int(final_summary.get('row_count'), default=_safe_int(run.get('row_count'))):,}",
+        f"- Source row range: {final_summary.get('source_row_start') or 1} to {final_summary.get('source_row_end') or run.get('row_count')}",
+        f"- Chunks analyzed: {_safe_int(run.get('batch_count')):,}",
+        f"- Run id: {run.get('id')}",
+        '',
+    ])
+    return '\n'.join(markdown_parts)
+
+
+def _complete_analysis_run(run, final_summary):
+    generated_file_name = run.get('generated_file_name') or _build_analysis_file_name(
+        run.get('source_file_name')
+    )
+    final_summary = _normalize_analysis_summary_payload(
+        final_summary,
+        child_summaries=[final_summary] if isinstance(final_summary, dict) else [],
+    )
+    _upload_json_blob(
+        _analysis_final_blob_path(run.get('user_id'), run.get('conversation_id'), run.get('id')),
+        final_summary,
+        metadata={
+            'run_id': run.get('id'),
+            'conversation_id': run.get('conversation_id'),
+            'tabular_analysis_final_summary': 'true',
+        },
+    )
+    markdown_content = _build_analysis_summary_markdown(run, final_summary)
+    markdown_bytes = markdown_content.encode('utf-8')
+
+    _authorize_tabular_export_run_execution(run)
+    _raise_if_tabular_export_canceled(run)
+    if not run.get('publishing_started_at'):
+        run.update({
+            'publishing_started_at': _now_iso(),
+            'analysis_phase': 'publishing',
+            'last_message': 'Final analysis reduction complete; publishing the answer artifact',
+        })
+        run = _replace_claimed_run(run)
+    _authorize_tabular_export_run_execution(run)
+
+    with tempfile.SpooledTemporaryFile(
+        max_size=TABULAR_EXPORT_FINAL_SPOOL_MAX_MEMORY_BYTES,
+        mode='w+b',
+    ) as binary_output_stream:
+        binary_output_stream.write(markdown_bytes)
+        binary_output_stream.seek(0)
+        upload_result = upload_generated_analysis_artifact_stream_for_user(
+            current_user_id=run.get('user_id'),
+            conversation_id=run.get('conversation_id'),
+            file_name=generated_file_name,
+            file_stream=binary_output_stream,
+            file_size=len(markdown_bytes),
+            capability='tabular',
+            output_format='md',
+            summary=final_summary.get('summary'),
+            artifact_idempotency_key=f"tabular-hierarchical-analysis:{run.get('id')}",
+        )
+        _raise_if_tabular_export_canceled(run)
+
+    uploaded_message = upload_result.get('message') or {}
+    now = _now_iso()
+    run.update({
+        'status': TABULAR_EXPORT_STATUS_COMPLETED,
+        'updated_at': now,
+        'completed_at': now,
+        'last_heartbeat_at': now,
+        'analysis_phase': 'completed',
+        'processed_rows': _safe_int(final_summary.get('row_count'), default=_safe_int(run.get('row_count'))),
+        'completed_batches': _safe_int(run.get('batch_count')),
+        'processed_chunk_count': _safe_int(run.get('batch_count')),
+        'failed_chunk_count': 0,
+        'last_message': 'Background tabular analysis completed',
+        'post_run_summary': final_summary.get('summary'),
+        'generated_file_name': uploaded_message.get('file_name') or generated_file_name,
+        'output_format': 'md',
+        'final_artifact': {
+            'artifact_message_id': uploaded_message.get('id'),
+            'file_name': uploaded_message.get('file_name') or generated_file_name,
+            'blob_container': uploaded_message.get('blob_container'),
+            'blob_path': uploaded_message.get('blob_path'),
+            'capability': uploaded_message.get('capability') or 'tabular',
+            'output_format': uploaded_message.get('output_format') or 'md',
+        },
+        'estimated_remaining_seconds': 0,
+    })
+    run = _replace_claimed_run(run)
+    log_event(
+        '[TABULAR_GENERATED_OUTPUT] Background tabular analysis completed',
+        {
+            'run_id': run.get('id'),
+            'conversation_id': run.get('conversation_id'),
+            'user_id': run.get('user_id'),
+            'source_file_name': run.get('source_file_name'),
+            'row_count': run.get('processed_rows'),
+            'batch_count': run.get('batch_count'),
+            'artifact_message_id': uploaded_message.get('id'),
+            'generated_file_name': uploaded_message.get('file_name') or generated_file_name,
+        },
+        level=logging.INFO,
+    )
+    return run
+
+
 def _load_input_batch_rows(run, input_batches, user_id, run_id, batch_number, batch_count):
     if isinstance(input_batches, list):
         try:
@@ -2646,6 +3276,50 @@ def _build_batch_window(run, input_batches, user_id, run_id, window_start, windo
                 'run_id': run_id,
                 'source_file_name': run.get('source_file_name'),
                 'output_format': run.get('output_format'),
+                'batch_number': batch_number,
+                'batch_count': batch_count,
+                'row_count': len(batch_rows),
+            },
+            debug_only=True,
+        )
+        batch_requests.append({
+            'batch_number': batch_number,
+            'rows': batch_rows,
+        })
+    return batch_results, batch_requests
+
+
+def _build_analysis_batch_window(run, input_batches, user_id, run_id, window_start, window_end, batch_count):
+    batch_results = {}
+    batch_requests = []
+    for batch_number in range(window_start, window_end + 1):
+        batch_started_at = time.monotonic()
+        output_blob_path = _output_blob_path(
+            user_id,
+            run.get('conversation_id'),
+            run_id,
+            batch_number,
+        )
+        if _blob_exists(output_blob_path):
+            analysis_summary = _download_json_blob(output_blob_path)
+            if not isinstance(analysis_summary, dict):
+                raise ValueError(f'Analysis checkpoint {batch_number}/{batch_count} was not a JSON object')
+            batch_results[batch_number] = {
+                'batch_number': batch_number,
+                'analysis_summary': analysis_summary,
+                'batch_row_count': _safe_int(analysis_summary.get('row_count')),
+                'elapsed_seconds': time.monotonic() - batch_started_at,
+                'mismatch_count': 0,
+                'from_checkpoint': True,
+            }
+            continue
+
+        batch_rows = _load_input_batch_rows(run, input_batches, user_id, run_id, batch_number, batch_count)
+        log_event(
+            '[TABULAR_GENERATED_OUTPUT] Building background analysis chunk',
+            {
+                'run_id': run_id,
+                'source_file_name': run.get('source_file_name'),
                 'batch_number': batch_number,
                 'batch_count': batch_count,
                 'row_count': len(batch_rows),
@@ -2745,6 +3419,64 @@ def _checkpoint_generated_batch_results(run, generated_results):
     return batch_results
 
 
+def _checkpoint_analysis_batch_results(run, generated_results):
+    _raise_if_tabular_export_canceled(run)
+    batch_results = {}
+    ordered_results = sorted(generated_results, key=lambda result: result['batch_number'])
+    for generated_result in ordered_results:
+        _raise_if_tabular_export_canceled(run)
+        batch_number = generated_result['batch_number']
+        analysis_summary = generated_result.get('analysis_summary') or {}
+        output_blob_path = _output_blob_path(
+            run.get('user_id'),
+            run.get('conversation_id'),
+            run.get('id'),
+            batch_number,
+        )
+        try:
+            _upload_json_blob(
+                output_blob_path,
+                analysis_summary,
+                metadata={
+                    'run_id': run.get('id'),
+                    'conversation_id': run.get('conversation_id'),
+                    'batch_number': batch_number,
+                    'tabular_analysis_summary': 'true',
+                    'lease_generation': run.get('lease_generation'),
+                },
+                overwrite=False,
+            )
+        except ResourceExistsError:
+            checkpoint_summary = _download_json_blob(output_blob_path)
+            if not isinstance(checkpoint_summary, dict):
+                raise ValueError(f'Concurrent analysis checkpoint {batch_number} was malformed')
+            analysis_summary = checkpoint_summary
+        _upload_json_blob(
+            _output_summary_blob_path(
+                run.get('user_id'),
+                run.get('conversation_id'),
+                run.get('id'),
+                batch_number,
+            ),
+            analysis_summary,
+            metadata={
+                'run_id': run.get('id'),
+                'conversation_id': run.get('conversation_id'),
+                'batch_number': batch_number,
+                'tabular_analysis_summary': 'true',
+            },
+        )
+        batch_results[batch_number] = {
+            'batch_number': batch_number,
+            'analysis_summary': analysis_summary,
+            'batch_row_count': _safe_int(analysis_summary.get('row_count')),
+            'elapsed_seconds': generated_result['elapsed_seconds'],
+            'mismatch_count': generated_result.get('mismatch_count') or 0,
+            'from_checkpoint': False,
+        }
+    return batch_results
+
+
 def _build_passthrough_batch_results(run, batch_requests):
     """Create checkpoint entries directly when rows are already final export output."""
     expected_output_schema = list(run.get('output_schema') or [])
@@ -2789,6 +3521,239 @@ def _advance_run_progress_for_window(run, batch_results, completed_batches, proc
             mismatch_count=mismatch_count,
         )
     return run, completed_batches, processed_rows
+
+
+def _advance_analysis_map_progress_for_window(run, batch_results, completed_batches, processed_rows, window_start, window_end):
+    for batch_number in range(window_start, window_end + 1):
+        batch_result = batch_results.get(batch_number)
+        if not batch_result:
+            break
+        completed_batches = batch_number
+        processed_rows += _safe_int(batch_result.get('batch_row_count'))
+        run = _update_analysis_map_progress(
+            run,
+            completed_batches,
+            processed_rows,
+            batch_result.get('batch_row_count'),
+            batch_result.get('elapsed_seconds'),
+        )
+    return run, completed_batches, processed_rows
+
+
+def _update_analysis_map_progress(run, completed_batches, processed_rows, batch_rows, batch_elapsed_seconds):
+    now = _now_utc()
+    active_processing_seconds = max(_safe_float(run.get('active_processing_seconds')), 0.0)
+    active_processing_seconds += max(_safe_float(batch_elapsed_seconds), 0.0)
+    batch_count = _safe_int(run.get('batch_count'))
+    estimated_total_seconds = None
+    estimated_remaining_seconds = None
+    if completed_batches > 0 and batch_count > 0 and active_processing_seconds > 0:
+        seconds_per_batch = active_processing_seconds / completed_batches
+        estimated_total_seconds = round(seconds_per_batch * batch_count, 1)
+        estimated_remaining_seconds = round(seconds_per_batch * max(batch_count - completed_batches, 0), 1)
+
+    recent_batches = list(run.get('recent_batches') or [])[-9:]
+    recent_batches.append({
+        'batch_number': completed_batches,
+        'row_count': _safe_int(batch_rows),
+        'elapsed_seconds': round(_safe_float(batch_elapsed_seconds), 3),
+        'completed_at': now.isoformat(),
+        'phase': 'map',
+    })
+    run.update({
+        'completed_batches': completed_batches,
+        'processed_rows': processed_rows,
+        'processed_chunk_count': completed_batches,
+        'analysis_phase': 'mapping',
+        'updated_at': now.isoformat(),
+        'last_heartbeat_at': now.isoformat(),
+        'active_processing_seconds': round(active_processing_seconds, 3),
+        'estimated_total_seconds': estimated_total_seconds,
+        'estimated_remaining_seconds': estimated_remaining_seconds,
+        'last_message': f'Analyzed tabular chunk {completed_batches} of {batch_count}',
+        'recent_batches': recent_batches,
+    })
+    return _replace_claimed_run(run)
+
+
+def _load_analysis_chunk_summaries(run):
+    summaries = []
+    batch_count = _safe_int(run.get('batch_count'))
+    for batch_number in range(1, batch_count + 1):
+        summary = _download_json_blob(_output_blob_path(
+            run.get('user_id'),
+            run.get('conversation_id'),
+            run.get('id'),
+            batch_number,
+        ))
+        if not isinstance(summary, dict):
+            raise ValueError(f'Analysis checkpoint {batch_number}/{batch_count} was not a JSON object')
+        summaries.append(summary)
+    if len(summaries) != batch_count:
+        raise ValueError('Analysis map phase did not produce every chunk summary')
+    return summaries
+
+
+def _update_analysis_reduce_progress(run, level_number, node_number, node_count, level_counts):
+    now = _now_iso()
+    run.update({
+        'analysis_phase': 'reducing',
+        'analysis_reduce_level': level_number,
+        'analysis_reduce_node': node_number,
+        'analysis_reduce_node_count': node_count,
+        'analysis_reduce_plan': level_counts,
+        'updated_at': now,
+        'last_heartbeat_at': now,
+        'last_message': f'Reducing tabular analysis level {level_number} node {node_number} of {node_count}',
+    })
+    return _replace_claimed_run(run)
+
+
+def _run_analysis_reduce_tree(run, chat_service, settings, retry_attempts, batch_timeout_seconds):
+    fan_in = _get_tabular_analysis_reduce_fan_in(settings)
+    current_summaries = _load_analysis_chunk_summaries(run)
+    level_counts = _build_analysis_reduce_plan(len(current_summaries), fan_in)
+    level_number = 1
+    while len(current_summaries) > 1:
+        groups = _build_analysis_reduce_groups(current_summaries, fan_in)
+        next_level_summaries = []
+        node_count = len(groups)
+        for node_index, summary_group in enumerate(groups, start=1):
+            _raise_if_tabular_export_canceled(run)
+            reduce_blob_path = _analysis_reduce_blob_path(
+                run.get('user_id'),
+                run.get('conversation_id'),
+                run.get('id'),
+                level_number,
+                node_index,
+            )
+            if _blob_exists(reduce_blob_path):
+                reduced_summary = _download_json_blob(reduce_blob_path)
+                if not isinstance(reduced_summary, dict):
+                    raise ValueError(
+                        f'Analysis reduce checkpoint level {level_number} node {node_index} was malformed'
+                    )
+            else:
+                reduced_summary = asyncio.run(_generate_analysis_reduce_summary(
+                    chat_service,
+                    run,
+                    summary_group,
+                    level_number,
+                    node_index,
+                    node_count,
+                    retry_attempts,
+                    batch_timeout_seconds,
+                ))
+                _raise_if_tabular_export_canceled(run)
+                _upload_json_blob(
+                    reduce_blob_path,
+                    reduced_summary,
+                    metadata={
+                        'run_id': run.get('id'),
+                        'conversation_id': run.get('conversation_id'),
+                        'tabular_analysis_reduce': 'true',
+                        'reduce_level': level_number,
+                        'reduce_node': node_index,
+                    },
+                    overwrite=False,
+                )
+            next_level_summaries.append(reduced_summary)
+            run = _update_analysis_reduce_progress(
+                run,
+                level_number,
+                node_index,
+                node_count,
+                level_counts,
+            )
+        current_summaries = next_level_summaries
+        level_number += 1
+    return current_summaries[0] if current_summaries else {}
+
+
+def _process_hierarchical_analysis_run(
+    run,
+    chat_service,
+    input_batches,
+    retry_attempts,
+    batch_concurrency,
+    batch_timeout_seconds,
+    settings,
+):
+    if chat_service is None:
+        raise ValueError('Hierarchical tabular analysis requires a chat model service')
+
+    completed_batches = _safe_int(run.get('completed_batches'))
+    processed_rows = _safe_int(run.get('processed_rows'))
+    batch_count = _safe_int(run.get('batch_count'))
+    last_logged_at = 0.0
+    while completed_batches < batch_count:
+        _raise_if_tabular_export_canceled(run)
+        window_start = completed_batches + 1
+        window_end = min(batch_count, window_start + batch_concurrency - 1)
+        batch_results, batch_requests = _build_analysis_batch_window(
+            run,
+            input_batches,
+            run.get('user_id'),
+            run.get('id'),
+            window_start,
+            window_end,
+            batch_count,
+        )
+        generation_error = None
+        if batch_requests:
+            log_event(
+                '[TABULAR_GENERATED_OUTPUT] Building background analysis chunk window',
+                {
+                    'run_id': run.get('id'),
+                    'source_file_name': run.get('source_file_name'),
+                    'window_start': window_start,
+                    'window_end': window_end,
+                    'batch_count': batch_count,
+                    'batch_concurrency': batch_concurrency,
+                    'batch_timeout_seconds': batch_timeout_seconds,
+                    'generation_request_count': len(batch_requests),
+                },
+                debug_only=True,
+            )
+            generated_results, generation_error = asyncio.run(
+                _generate_analysis_chunk_summary_window(
+                    chat_service,
+                    run,
+                    batch_requests,
+                    batch_count,
+                    retry_attempts,
+                    batch_concurrency,
+                    batch_timeout_seconds,
+                )
+            )
+            _raise_if_tabular_export_canceled(run)
+            batch_results.update(_checkpoint_analysis_batch_results(run, generated_results))
+
+        previous_completed_batches = completed_batches
+        run, completed_batches, processed_rows = _advance_analysis_map_progress_for_window(
+            run,
+            batch_results,
+            completed_batches,
+            processed_rows,
+            window_start,
+            window_end,
+        )
+        last_logged_at = _log_progress_if_due(run, last_logged_at)
+        if generation_error:
+            raise generation_error
+        if completed_batches == previous_completed_batches:
+            raise RuntimeError(f'No progress was made for analysis chunk window {window_start}-{window_end}')
+
+    _raise_if_tabular_export_canceled(run)
+    final_summary = _run_analysis_reduce_tree(
+        run,
+        chat_service,
+        settings,
+        retry_attempts,
+        batch_timeout_seconds,
+    )
+    _raise_if_tabular_export_canceled(run)
+    return _complete_analysis_run(run, final_summary)
 
 
 def process_tabular_generated_output_run(run_id, user_id):
@@ -2865,6 +3830,7 @@ def process_tabular_generated_output_run(run_id, user_id):
                 'user_id': normalized_user_id,
                 'source_file_name': run.get('source_file_name'),
                 'output_format': run.get('output_format'),
+                'task_type': _normalize_tabular_run_task_type(run.get('task_type')),
                 'row_count': run.get('row_count'),
                 'batch_count': batch_count,
                 'resume_completed_batches': completed_batches,
@@ -2873,6 +3839,17 @@ def process_tabular_generated_output_run(run_id, user_id):
             },
             level=logging.INFO,
         )
+
+        if _normalize_tabular_run_task_type(run.get('task_type')) == TABULAR_RUN_TASK_HIERARCHICAL_ANALYSIS:
+            return _process_hierarchical_analysis_run(
+                run,
+                chat_service,
+                input_batches,
+                retry_attempts,
+                batch_concurrency,
+                batch_timeout_seconds,
+                settings,
+            )
 
         while completed_batches < batch_count:
             _raise_if_tabular_export_canceled(run)
@@ -3000,15 +3977,20 @@ def queue_tabular_generated_output_run(
     source_candidate = source_candidate if isinstance(source_candidate, dict) else {}
     source_file_name = str(source_candidate.get('filename') or 'tabular_output').strip() or 'tabular_output'
     selected_sheet = str(source_candidate.get('selected_sheet') or '').strip()
-    normalized_output_format = str(output_format or 'json').strip().lower() or 'json'
     normalized_task_type = _normalize_tabular_run_task_type(task_type)
+    normalized_output_format = str(output_format or 'json').strip().lower() or 'json'
+    if normalized_task_type == TABULAR_RUN_TASK_HIERARCHICAL_ANALYSIS:
+        normalized_output_format = 'md'
     normalized_analysis_objective = str(analysis_objective or '').strip()
     if not normalized_analysis_objective and normalized_task_type in {
         TABULAR_RUN_TASK_HIERARCHICAL_ANALYSIS,
         TABULAR_RUN_TASK_COMBINED,
     }:
         normalized_analysis_objective = str(user_question or '').strip()
-    generated_file_name = _build_generated_file_name(source_file_name, normalized_output_format)
+    if normalized_task_type == TABULAR_RUN_TASK_HIERARCHICAL_ANALYSIS:
+        generated_file_name = _build_analysis_file_name(source_file_name)
+    else:
+        generated_file_name = _build_generated_file_name(source_file_name, normalized_output_format)
     settings = settings or {}
     source_descriptor = dict(source_descriptor or {})
     source_authorization = dict(source_candidate.get('source_authorization') or {})
@@ -3138,8 +4120,13 @@ def queue_tabular_generated_output_run(
         'mismatch_count': 0,
         'retry_count': 0,
         'recent_batches': [],
+        'analysis_phase': 'queued' if normalized_task_type == TABULAR_RUN_TASK_HIERARCHICAL_ANALYSIS else None,
         'active_processing_seconds': 0,
-        'last_message': 'Queued background structured export',
+        'last_message': (
+            'Queued background tabular analysis'
+            if normalized_task_type == TABULAR_RUN_TASK_HIERARCHICAL_ANALYSIS
+            else 'Queued background structured export'
+        ),
         'last_error': None,
         'final_artifact': None,
     }
