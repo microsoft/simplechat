@@ -26,6 +26,7 @@ from functions_mcp_operations import (
     get_mcp_custom_header_validation_errors,
     is_valid_mcp_header_name,
     normalize_mcp_additional_fields,
+    normalize_mcp_tool_call_arguments,
     normalize_mcp_tool_metadata,
     validate_mcp_endpoint_for_transport,
 )
@@ -249,10 +250,35 @@ class McpPluginFactory:
         arguments: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Connect to an MCP server, invoke one tool, and normalize the result."""
+        configured_tool = cls._find_configured_tool(config, tool_name)
+        normalized_arguments = (
+            normalize_mcp_tool_call_arguments(configured_tool, arguments)
+            if configured_tool
+            else arguments
+        )
         return await cls._run_with_retries(
             config,
             "tool_call",
-            lambda: cls._call_tool_once(config, tool_name, arguments),
+            lambda: cls._call_tool_once(config, tool_name, normalized_arguments),
+        )
+
+    @classmethod
+    def _find_configured_tool(cls, config: Dict[str, Any], tool_name: str) -> Optional[Dict[str, Any]]:
+        """Return cached MCP tool metadata for a factory invocation."""
+        normalized_tool_name = str(tool_name or "").strip()
+        if not normalized_tool_name:
+            return None
+
+        additional_fields = normalize_mcp_additional_fields((config or {}).get("additionalFields", {}))
+        configured_tools = normalize_mcp_tool_metadata(additional_fields.get("mcp_tools", []))
+        return next(
+            (
+                tool
+                for tool in configured_tools
+                if tool.get("original_name") == normalized_tool_name
+                or tool.get("function_name") == normalized_tool_name
+            ),
+            None,
         )
 
     @classmethod

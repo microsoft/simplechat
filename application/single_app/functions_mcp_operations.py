@@ -477,6 +477,33 @@ def build_mcp_tool_metadata_warnings(tools, additional_fields=None):
     return warnings[:20]
 
 
+def _mcp_tool_schema_defines_property(tool, property_name):
+    if not isinstance(tool, dict):
+        return False
+
+    input_schema = tool.get("input_schema") if isinstance(tool.get("input_schema"), dict) else {}
+    properties = input_schema.get("properties")
+    return isinstance(properties, dict) and property_name in properties
+
+
+def normalize_mcp_tool_call_arguments(tool, arguments):
+    """Return MCP tool arguments in the top-level shape expected by tools/call."""
+    if arguments is None:
+        return {}
+    if not isinstance(arguments, dict):
+        return arguments
+
+    wrapper_value = arguments.get("kwargs")
+    if (
+        set(arguments.keys()) == {"kwargs"}
+        and isinstance(wrapper_value, dict)
+        and not _mcp_tool_schema_defines_property(tool, "kwargs")
+    ):
+        return wrapper_value
+
+    return arguments
+
+
 def validate_mcp_tool_arguments(tool, arguments):
     """Return validation errors for MCP tool arguments against cached input schema."""
     if not isinstance(tool, dict):
