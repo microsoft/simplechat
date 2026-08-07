@@ -210,6 +210,7 @@ from functions_simplechat_operations import (
     upload_generated_analysis_artifact_for_current_user,
 )
 from functions_tabular_generated_exports import (
+    TABULAR_RUN_TASK_HIERARCHICAL_ANALYSIS,
     _normalize_generated_batch_entries,
     _prepare_tabular_source_rows,
     build_background_tabular_generated_output_metadata,
@@ -5059,6 +5060,45 @@ def question_requests_tabular_generated_output(user_question):
     return any(marker in normalized_question for marker in exhaustive_markers)
 
 
+def question_requests_tabular_hierarchical_analysis(user_question):
+    """Return True when the prompt asks for whole-dataset row-level synthesis without an export."""
+    normalized_question = str(user_question or '').strip().lower()
+    if not normalized_question or get_tabular_generated_output_format(user_question):
+        return False
+
+    exhaustive_markers = (
+        'all rows',
+        'every row',
+        'each row',
+        'for each row',
+        'for every row',
+        'entire dataset',
+        'entire file',
+        'whole dataset',
+        'whole file',
+    )
+    analysis_markers = (
+        'analyze',
+        'analyse',
+        'summarize',
+        'summarise',
+        'synthesize',
+        'synthesise',
+        'evaluate',
+        'assess',
+        'classify',
+        'review',
+        'find patterns',
+        'patterns',
+        'themes',
+        'risks',
+        'risk patterns',
+    )
+    return any(marker in normalized_question for marker in exhaustive_markers) and any(
+        marker in normalized_question for marker in analysis_markers
+    )
+
+
 def question_requests_tabular_structured_object_output(user_question):
     """Return True when the prompt wants one structured object per source row."""
     normalized_question = str(user_question or '').strip().lower()
@@ -5889,6 +5929,8 @@ def _build_tabular_generated_output_system_message(output_metadata):
     file_name = str(output_metadata.get('file_name') or 'generated output').strip() or 'generated output'
     row_count = _safe_int(output_metadata.get('row_count'))
     output_status = str(output_metadata.get('status') or '').strip().lower()
+    task_type = str(output_metadata.get('task_type') or '').strip().lower()
+    is_hierarchical_analysis = task_type == TABULAR_RUN_TASK_HIERARCHICAL_ANALYSIS
 
     if output_status == 'failed':
         failure_detail = str(
@@ -5911,6 +5953,14 @@ def _build_tabular_generated_output_system_message(output_metadata):
     if output_metadata.get('background_export'):
         run_id = str(output_metadata.get('export_run_id') or output_metadata.get('run_id') or '').strip()
         batch_count = _safe_int(output_metadata.get('batch_count'))
+        if is_hierarchical_analysis:
+            return (
+                f'A durable background tabular analysis has been queued for {row_count} row(s) '
+                f'across {batch_count} chunk(s). '
+                'Do not claim the full analysis is complete yet. Tell the user the analysis is continuing in the background, '
+                'that progress is checkpointed, and that the final answer artifact will appear in the chat when the run completes. '
+                f'Run id: {run_id}.'
+            )
         return (
             f'A durable background {output_format} export has been queued for {row_count} row(s) '
             f'across {batch_count} batch(es). '
@@ -6226,16 +6276,30 @@ async def maybe_create_tabular_generated_output(
     request_correlation_id=None,
     token_usage_callback=None,
 ):
-    """Build, upload, and describe a generated tabular JSON/CSV export when requested."""
+    """Build, upload, or queue generated tabular exports and analysis artifacts when requested."""
     raise_if_mixed_source_cancelled(
         cancel_requested,
         'export',
         request_correlation_id=request_correlation_id,
     )
-    if not question_requests_tabular_generated_output(user_question):
+    generated_output_requested = question_requests_tabular_generated_output(user_question)
+    hierarchical_analysis_requested = question_requests_tabular_hierarchical_analysis(user_question)
+    analysis_only_requested = hierarchical_analysis_requested and not generated_output_requested
+    if analysis_only_requested:
+        hierarchical_analysis_enabled = settings.get('enable_tabular_hierarchical_analysis', False)
+        if isinstance(hierarchical_analysis_enabled, str):
+            hierarchical_analysis_enabled = hierarchical_analysis_enabled.strip().lower() in {
+                '1',
+                'true',
+                'yes',
+                'on',
+            }
+        if not hierarchical_analysis_enabled:
+            return None
+    if not generated_output_requested and not hierarchical_analysis_requested:
         return None
 
-    output_format = get_tabular_generated_output_format(user_question)
+    output_format = get_tabular_generated_output_format(user_question) or 'md'
     candidate_diagnostics = _build_tabular_generated_output_candidate_diagnostics(invocations)
     source_candidate = _build_tabular_generated_output_source_candidate(invocations)
     if candidate_diagnostics:
@@ -6246,6 +6310,7 @@ async def maybe_create_tabular_generated_output(
                 'output_format': output_format,
                 'candidate_count': len(candidate_diagnostics),
                 'candidates': candidate_diagnostics,
+                'analysis_only_requested': analysis_only_requested,
             },
             debug_only=True,
         )
@@ -6257,6 +6322,7 @@ async def maybe_create_tabular_generated_output(
                 'output_format': output_format,
                 'candidate_count': len(candidate_diagnostics),
                 'structured_output_requested': question_requests_tabular_structured_object_output(user_question),
+                'analysis_only_requested': analysis_only_requested,
             },
             debug_only=True,
         )
@@ -6270,7 +6336,10 @@ async def maybe_create_tabular_generated_output(
     if (
         user_id
         and conversation_id
-        and question_requests_tabular_structured_object_output(user_question)
+        and (
+            question_requests_tabular_structured_object_output(user_question)
+            or analysis_only_requested
+        )
     ):
         try:
             source_descriptor = _build_tabular_generated_output_query_descriptor(
@@ -6329,12 +6398,17 @@ async def maybe_create_tabular_generated_output(
     should_queue_materialized_pages = bool(
         user_id
         and conversation_id
-        and question_requests_tabular_structured_object_output(user_question)
+        and (
+            question_requests_tabular_structured_object_output(user_question)
+            or analysis_only_requested
+        )
         and source_candidate.get('full_result_available')
         and _safe_int(source_candidate.get('page_count')) > 1
-        and not exceeds_background_threshold
+        and (analysis_only_requested or not exceeds_background_threshold)
     )
     if should_queue_materialized_pages:
+        queued_task_type = TABULAR_RUN_TASK_HIERARCHICAL_ANALYSIS if analysis_only_requested else None
+        queued_output_format = 'md' if analysis_only_requested else output_format
         raise_if_mixed_source_cancelled(
             cancel_requested,
             'export',
@@ -6345,11 +6419,13 @@ async def maybe_create_tabular_generated_output(
             conversation_id=conversation_id,
             user_question=user_question,
             source_candidate=source_candidate,
-            output_format=output_format,
+            output_format=queued_output_format,
             row_batches=materialized_batches,
             gpt_model=gpt_model,
             settings=settings,
             model_context=model_context,
+            task_type=queued_task_type or None,
+            analysis_objective=user_question if analysis_only_requested else None,
         )
         background_metadata = build_background_tabular_generated_output_metadata(background_run)
         try:
@@ -6366,17 +6442,25 @@ async def maybe_create_tabular_generated_output(
             raise
         await emit_tabular_post_processing_thought(
             thought_callback,
-            f"Queued exhaustive {str(output_format or 'json').upper()} export from validated tabular pages",
+            (
+                'Queued exhaustive tabular analysis from validated tabular pages'
+                if analysis_only_requested
+                else f"Queued exhaustive {str(output_format or 'json').upper()} export from validated tabular pages"
+            ),
             detail=(
                 f"run_id={background_metadata.get('export_run_id')}; "
                 f"rows={expected_row_count}; batches={len(materialized_batches)}; checkpointed=true"
             ),
             activity=build_tabular_post_processing_activity_payload(
                 'tabular.generated_output',
-                f"Exhaustive {str(output_format or 'json').upper()} export queued",
+                (
+                    'Exhaustive tabular analysis queued'
+                    if analysis_only_requested
+                    else f"Exhaustive {str(output_format or 'json').upper()} export queued"
+                ),
                 'running',
                 phase='queued',
-                output_format=output_format,
+                output_format=queued_output_format,
                 file_name=source_candidate.get('filename'),
                 batch_index=0,
                 batch_count=len(materialized_batches),
@@ -6394,6 +6478,8 @@ async def maybe_create_tabular_generated_output(
     )
     if should_queue_source_backed_run:
         try:
+            queued_task_type = TABULAR_RUN_TASK_HIERARCHICAL_ANALYSIS if analysis_only_requested else None
+            queued_output_format = 'md' if analysis_only_requested else output_format
             raise_if_mixed_source_cancelled(
                 cancel_requested,
                 'export',
@@ -6404,12 +6490,14 @@ async def maybe_create_tabular_generated_output(
                 conversation_id=conversation_id,
                 user_question=user_question,
                 source_candidate=source_candidate,
-                output_format=output_format,
+                output_format=queued_output_format,
                 row_batches=None,
                 gpt_model=gpt_model,
                 settings=settings,
                 model_context=model_context,
                 source_descriptor=source_descriptor,
+                task_type=queued_task_type or None,
+                analysis_objective=user_question if analysis_only_requested else None,
             )
         except MixedSourceCancellationError:
             raise
@@ -6445,17 +6533,25 @@ async def maybe_create_tabular_generated_output(
             raise
         await emit_tabular_post_processing_thought(
             thought_callback,
-            f"Queued exhaustive {str(output_format or 'json').upper()} export from the authorized source query",
+            (
+                'Queued exhaustive tabular analysis from the authorized source query'
+                if analysis_only_requested
+                else f"Queued exhaustive {str(output_format or 'json').upper()} export from the authorized source query"
+            ),
             detail=(
                 f"run_id={background_metadata.get('export_run_id')}; "
                 f"rows={expected_row_count}; batches~={estimated_batch_count}; checkpointed=true"
             ),
             activity=build_tabular_post_processing_activity_payload(
                 'tabular.generated_output',
-                f"Exhaustive {str(output_format or 'json').upper()} export queued",
+                (
+                    'Exhaustive tabular analysis queued'
+                    if analysis_only_requested
+                    else f"Exhaustive {str(output_format or 'json').upper()} export queued"
+                ),
                 'running',
                 phase='queued',
-                output_format=output_format,
+                output_format=queued_output_format,
                 file_name=source_candidate.get('filename'),
                 batch_index=0,
                 batch_count=estimated_batch_count,
