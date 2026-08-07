@@ -4232,6 +4232,8 @@ def get_tabular_execution_mode(user_question):
         return 'schema_summary'
     if is_tabular_entity_lookup_question(user_question):
         return 'entity_lookup'
+    if question_requests_tabular_exhaustive_results(user_question):
+        return 'exhaustive'
     return 'analysis'
 
 
@@ -5031,6 +5033,8 @@ def question_requests_tabular_generated_output(user_question):
     exhaustive_markers = (
         'all rows',
         'every row',
+        'for each row',
+        'for every row',
         'full json',
         'full csv',
         'full xml',
@@ -5045,6 +5049,7 @@ def question_requests_tabular_generated_output(user_question):
         'populate',
         'one object per',
         'one row per',
+        'one output row per',
         'each object',
         'each row',
     )
@@ -5068,6 +5073,10 @@ def question_requests_tabular_structured_object_output(user_question):
         'one object per submission',
         'one object for each row',
         'for each row',
+        'for every row',
+        'every row',
+        'each row',
+        'one row per',
         'each object must contain',
         'exactly these fields',
     )
@@ -5505,7 +5514,7 @@ def _build_tabular_generated_output_candidate_diagnostic(invocation):
         'has_more': bool(result_payload.get('has_more')) if isinstance(result_payload, dict) else False,
         'next_start_row': result_payload.get('next_start_row') if isinstance(result_payload, dict) else None,
         'filter_applied': result_payload.get('filter_applied') if isinstance(result_payload, dict) else None,
-        'normalized_match': result_payload.get('normalized_match') if isinstance(result_payload, dict) else None,
+        'normalized_match': result_payload.get('normalize_match') if isinstance(result_payload, dict) else None,
         'skip_reason': skip_reason,
         'error_message': error_message,
     }
@@ -5654,6 +5663,9 @@ def _build_tabular_generated_output_source_candidate(invocations):
             'selected_sheet': result_payload.get('selected_sheet'),
             'source_parameters': dict(getattr(invocation, 'parameters', {}) or {}),
             'source_descriptor': invocation_internal_metadata.get('tabular_generated_export_source'),
+            'source_descriptor_error': invocation_internal_metadata.get(
+                'tabular_generated_export_source_error'
+            ),
             'source_authorization': invocation_internal_metadata.get('tabular_source_authorization'),
             'function_rank': diagnostic.get('function_rank') or 0,
             'total_matches': diagnostic.get('total_matches') or 0,
@@ -5700,6 +5712,7 @@ def _build_tabular_generated_output_source_candidate(invocations):
             'selected_sheet': candidate_group.get('selected_sheet'),
             'source_parameters': candidate_group.get('source_parameters'),
             'source_descriptor': candidate_group.get('source_descriptor'),
+            'source_descriptor_error': candidate_group.get('source_descriptor_error'),
             'source_authorization': candidate_group.get('source_authorization'),
             'rows': coalesced_result.get('rows'),
             'row_count': coalesced_result.get('row_count'),
@@ -5722,18 +5735,37 @@ def _build_tabular_generated_output_query_descriptor(
 ):
     if not isinstance(source_candidate, dict):
         return None
-    if source_candidate.get('function_name') != 'query_tabular_data':
+    function_name = str(source_candidate.get('function_name') or '').strip()
+    if function_name not in {'query_tabular_data', 'filter_rows', 'search_rows'}:
         return None
 
     source_parameters = source_candidate.get('source_parameters') or {}
-    query_expression = str(source_parameters.get('query_expression') or '').strip()
     source_descriptor = source_candidate.get('source_descriptor') or {}
+    source_descriptor_error = str(
+        source_candidate.get('source_descriptor_error') or ''
+    ).strip()
+    if source_descriptor_error:
+        raise ValueError(source_descriptor_error)
+
+    query_expression = str(source_descriptor.get('query_expression') or '').strip()
+    descriptor_source_function = str(
+        source_descriptor.get('source_function') or 'query_tabular_data'
+    ).strip()
     if (
         not query_expression
         or source_descriptor.get('kind') != 'query_tabular_data'
+        or descriptor_source_function != function_name
         or str(source_descriptor.get('filename') or '') != str(source_candidate.get('filename') or '')
-        or str(source_descriptor.get('query_expression') or '') != query_expression
     ):
+        return None
+    if (
+        function_name == 'query_tabular_data'
+        and query_expression != str(source_parameters.get('query_expression') or '').strip()
+    ):
+        return None
+    if str(source_descriptor.get('return_columns') or '').strip() != str(
+        source_parameters.get('return_columns') or ''
+    ).strip():
         return None
     validate_tabular_csv_query_expression(query_expression)
 
@@ -8542,9 +8574,13 @@ def question_requests_tabular_exhaustive_results(user_question):
         'all values',
         'all of them',
         'complete list',
+        'each row',
         'each one',
+        'every row',
         'every one',
         'exhaustive',
+        'for each row',
+        'for every row',
         'full list',
         'list all',
         'list each',
@@ -8565,6 +8601,8 @@ def question_requests_tabular_exhaustive_results(user_question):
         r'\bone row per (?:comment|submission|input )?row\b',
         r'\bone row per (?:comment|submission)\b',
         r'\bone object for each row\b',
+        r'\bone row per\b',
+        r'\bfor (?:each|every) row\b',
     )
     structured_output_markers = (
         'json array',
@@ -10697,9 +10735,15 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
 
     try:
         plugin_logger = get_plugin_logger()
-        execution_mode = execution_mode if execution_mode in {'analysis', 'schema_summary', 'entity_lookup'} else 'analysis'
+        execution_mode = execution_mode if execution_mode in {
+            'analysis',
+            'schema_summary',
+            'entity_lookup',
+            'exhaustive',
+        } else 'analysis'
         schema_summary_mode = execution_mode == 'schema_summary'
         entity_lookup_mode = execution_mode == 'entity_lookup'
+        exhaustive_mode = execution_mode == 'exhaustive'
         fact_memory_enabled = bool(settings.get('enable_fact_memory_plugin', False))
         fact_memory_scope_id = group_id or user_id
         fact_memory_scope_type = 'group' if group_id else 'user'
@@ -11087,6 +11131,13 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                     "If the right worksheet or columns are unclear, call describe_tabular_file without sheet_name as an exploration step, then continue with one or more analytical tool calls. You may need multiple tool rounds.\n\n"
                 )
 
+            exhaustive_request_feedback = ""
+            if exhaustive_mode:
+                exhaustive_request_feedback = (
+                    "EXHAUSTIVE ROW REQUEST:\n"
+                    "The user requires one result per source row or a complete structured export. Prefer one query_tabular_data call with a simple row-local query expression that identifies the complete cohort, even when filter_rows or search_rows could return a preview. For the entire CSV, use a full-cohort expression such as index == index. Include the source columns needed for the requested per-row work in return_columns. A bounded returned page is sufficient because the server will replay the authorized source query durably; do not page the full cohort into model context. Do not use normalized or cross-row matching for a durable export.\n\n"
+                )
+
             related_sheet_feedback = ""
             if workbook_related_sheet_hints:
                 rendered_related_sheet_hints = "\n".join(
@@ -11189,6 +11240,7 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                 f"{related_sheet_feedback}"
                 f"{cross_sheet_bridge_feedback}"
                 f"{discovery_step_feedback}"
+                f"{exhaustive_request_feedback}"
                 f"{missing_sheet_feedback}"
                 f"FILE SCHEMAS:\n"
                 f"{schema_context}\n\n"

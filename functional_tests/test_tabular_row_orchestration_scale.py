@@ -1,14 +1,15 @@
 # test_tabular_row_orchestration_scale.py
 """
 Functional test for scalable per-row tabular orchestration.
-Version: 0.250.073
-Implemented in: 0.250.060; generated CSV formula safety in 0.250.065; generated file export routing in 0.250.072; updated in 0.250.073
+Version: 0.250.127
+Implemented in: 0.250.060; generated CSV formula safety in 0.250.065; generated file export routing in 0.250.072; source descriptor generalization in 0.250.127
 
 This test ensures generated exports preserve source identity and row order while
 enforcing one stable output schema across independently generated batches.
 """
 
 import ast
+import asyncio
 import csv
 import io
 import importlib.util
@@ -174,6 +175,46 @@ def _load_candidate_helpers():
     return namespace
 
 
+def _load_query_descriptor_helper():
+    """Load the generalized durable query descriptor adapter in isolation."""
+    module_tree = ast.parse(CHAT_ROUTE.read_text(encoding='utf-8'), filename=str(CHAT_ROUTE))
+    function_node = next(
+        node
+        for node in module_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == '_build_tabular_generated_output_query_descriptor'
+    )
+    source_reader_helpers = _load_source_reader_helpers()
+    namespace = {
+        '_get_tabular_generated_output_batch_budget': lambda settings: {
+            'max_rows': 60,
+            'max_chars': 60000,
+        },
+        '_safe_int': lambda value: int(value or 0),
+        'validate_tabular_csv_query_expression': source_reader_helpers[
+            'validate_tabular_csv_query_expression'
+        ],
+    }
+    extracted_module = ast.Module(body=[function_node], type_ignores=[])
+    exec(compile(extracted_module, str(CHAT_ROUTE), 'exec'), namespace)
+    return namespace['_build_tabular_generated_output_query_descriptor']
+
+
+def _load_generated_output_router(route_dependencies):
+    """Load maybe_create_tabular_generated_output with focused dependency stubs."""
+    module_tree = ast.parse(CHAT_ROUTE.read_text(encoding='utf-8'), filename=str(CHAT_ROUTE))
+    function_node = next(
+        node
+        for node in module_tree.body
+        if isinstance(node, ast.AsyncFunctionDef)
+        and node.name == 'maybe_create_tabular_generated_output'
+    )
+    namespace = dict(route_dependencies)
+    extracted_module = ast.Module(body=[function_node], type_ignores=[])
+    exec(compile(extracted_module, str(CHAT_ROUTE), 'exec'), namespace)
+    return namespace['maybe_create_tabular_generated_output']
+
+
 def _build_query_invocation(start_row, row_count, total_matches=300, source_etag='etag-source-7'):
     class InvocationPayload(dict):
         pass
@@ -221,6 +262,76 @@ def _build_query_invocation(start_row, row_count, total_matches=300, source_etag
             'source': 'chat',
             'start_row': str(start_row),
             'max_rows': '100',
+        },
+        result=result_payload,
+        error_message=None,
+    )
+
+
+def _build_filter_invocation(
+    start_row,
+    row_count,
+    total_matches=3000,
+    source_etag='etag-source-filter-7',
+    replay_error=None,
+):
+    """Build one logged filter_rows page with server-only replay metadata."""
+    class InvocationPayload(dict):
+        pass
+
+    rows = [
+        {'transaction_id': f'BT-{row_index + 1:04d}'}
+        for row_index in range(start_row, start_row + row_count)
+    ]
+    result_payload = InvocationPayload({
+        'filename': 'bank_treasury_operations_dataset-3000.csv',
+        'filter_applied': ['transaction_id contains BT-'],
+        'normalize_match': bool(replay_error),
+        'start_row': start_row,
+        'returned_rows': row_count,
+        'total_matches': total_matches,
+        'has_more': start_row + row_count < total_matches,
+        'next_start_row': start_row + row_count if start_row + row_count < total_matches else None,
+        'data': rows,
+    })
+    result_payload.internal_metadata = {
+        'tabular_source_authorization': {
+            'source': 'workspace',
+            'scope_id': None,
+            'container': 'user-documents',
+            'blob_path': 'user-1/nested/version-7/source.csv',
+            'blob_etag': source_etag,
+        },
+    }
+    if replay_error:
+        result_payload.internal_metadata['tabular_generated_export_source_error'] = replay_error
+    else:
+        result_payload.internal_metadata['tabular_generated_export_source'] = {
+            'version': 1,
+            'kind': 'query_tabular_data',
+            'source_function': 'filter_rows',
+            'source': 'workspace',
+            'scope_id': None,
+            'container': 'user-documents',
+            'blob_path': 'user-1/nested/version-7/source.csv',
+            'blob_etag': source_etag,
+            'filename': 'bank_treasury_operations_dataset-3000.csv',
+            'query_expression': '(`transaction_id`.astype("str").str.contains("BT-", case=False, regex=False, na=False))',
+            'return_columns': 'transaction_id',
+            'expected_row_count': total_matches,
+        }
+    return SimpleNamespace(
+        plugin_name='TabularProcessingPlugin',
+        function_name='filter_rows',
+        parameters={
+            'filename': 'bank_treasury_operations_dataset-3000.csv',
+            'column': 'transaction_id',
+            'operator': 'contains',
+            'value': 'BT-',
+            'source': 'workspace',
+            'return_columns': 'transaction_id',
+            'start_row': str(start_row),
+            'max_rows': '3000',
         },
         result=result_payload,
         error_message=None,
@@ -781,6 +892,154 @@ def test_paginated_candidate_rejects_mixed_source_versions():
     assert 'different source blobs or versions' in candidate['validation_error'].lower()
 
 
+def test_filter_rows_pages_queue_full_3000_row_source_replay():
+    """Incomplete filter pages queue one durable run from the full source descriptor."""
+    candidate_helpers = _load_candidate_helpers()
+    descriptor_builder = _load_query_descriptor_helper()
+    invocations = [
+        _build_filter_invocation(0, 60),
+        _build_filter_invocation(60, 60),
+    ]
+    candidate = candidate_helpers['_build_tabular_generated_output_source_candidate'](
+        invocations
+    )
+    queued_calls = []
+
+    def queue_run(**kwargs):
+        queued_calls.append(kwargs)
+        return {
+            'id': 'filter-run-3000',
+            'row_count': kwargs['source_descriptor']['expected_row_count'],
+            'batch_count': 50,
+        }
+
+    async def emit_thought(*args, **kwargs):
+        return None
+
+    class MixedSourceCancellationError(Exception):
+        pass
+
+    router = _load_generated_output_router({
+        'MixedSourceCancellationError': MixedSourceCancellationError,
+        '_build_failed_tabular_generated_output_metadata': lambda source, output_format, reason: {
+            'status': 'failed',
+            'status_detail': reason,
+        },
+        '_build_tabular_generated_output_candidate_diagnostics': lambda values: [],
+        '_build_tabular_generated_output_input_row': lambda row, source_file_name=None: row,
+        '_build_tabular_generated_output_query_descriptor': descriptor_builder,
+        '_build_tabular_generated_output_row_batches': lambda rows, settings=None: [rows],
+        '_build_tabular_generated_output_source_authorization': lambda source: source.get(
+            'source_authorization'
+        ),
+        '_build_tabular_generated_output_source_candidate': lambda values: candidate,
+        '_safe_int': lambda value: int(value or 0),
+        'build_background_tabular_generated_output_metadata': lambda run: {
+            'background_export': True,
+            'export_run_id': run['id'],
+            'row_count': run['row_count'],
+        },
+        'build_tabular_post_processing_activity_payload': lambda *args, **kwargs: {},
+        'cancel_tabular_generated_output_run': lambda *args, **kwargs: None,
+        'emit_tabular_post_processing_thought': emit_thought,
+        'get_tabular_generated_output_format': lambda question: 'csv',
+        'logging': logging,
+        'log_event': lambda *args, **kwargs: None,
+        'question_requests_tabular_generated_output': lambda question: True,
+        'question_requests_tabular_structured_object_output': lambda question: True,
+        'queue_tabular_generated_output_run': queue_run,
+        'raise_if_mixed_source_cancelled': lambda *args, **kwargs: None,
+        'should_queue_tabular_generated_output_background': lambda *args, **kwargs: True,
+    })
+
+    output_metadata = asyncio.run(router(
+        user_question='For each row, answer each question and generate a CSV.',
+        invocations=invocations,
+        gpt_model='test-model',
+        settings={},
+        conversation_id='conversation-1',
+        user_id='user-1',
+    ))
+
+    assert candidate['full_result_available'] is False
+    assert candidate['row_count'] == 120
+    assert candidate['total_matches'] == 3000
+    assert len(queued_calls) == 1
+    assert queued_calls[0]['row_batches'] is None
+    queued_descriptor = queued_calls[0]['source_descriptor']
+    assert queued_descriptor['source_function'] == 'filter_rows'
+    assert queued_descriptor['expected_row_count'] == 3000
+    assert queued_descriptor['batch_max_rows'] == 60
+    assert output_metadata['background_export'] is True
+    assert output_metadata['export_run_id'] == 'filter-run-3000'
+
+
+def test_non_replayable_filter_rows_reports_explicit_failure():
+    """Normalized filter semantics fail closed with a user-visible reason."""
+    candidate_helpers = _load_candidate_helpers()
+    descriptor_builder = _load_query_descriptor_helper()
+    replay_error = (
+        'filter_rows with normalize_match=true cannot be replayed equivalently '
+        'by the row-local CSV engine'
+    )
+    invocations = [
+        _build_filter_invocation(0, 60, replay_error=replay_error),
+    ]
+    candidate = candidate_helpers['_build_tabular_generated_output_source_candidate'](
+        invocations
+    )
+    queued_calls = []
+
+    async def emit_thought(*args, **kwargs):
+        return None
+
+    class MixedSourceCancellationError(Exception):
+        pass
+
+    router = _load_generated_output_router({
+        'MixedSourceCancellationError': MixedSourceCancellationError,
+        '_build_failed_tabular_generated_output_metadata': lambda source, output_format, reason: {
+            'status': 'failed',
+            'status_detail': reason,
+        },
+        '_build_tabular_generated_output_candidate_diagnostics': lambda values: [],
+        '_build_tabular_generated_output_input_row': lambda row, source_file_name=None: row,
+        '_build_tabular_generated_output_query_descriptor': descriptor_builder,
+        '_build_tabular_generated_output_row_batches': lambda rows, settings=None: [rows],
+        '_build_tabular_generated_output_source_authorization': lambda source: source.get(
+            'source_authorization'
+        ),
+        '_build_tabular_generated_output_source_candidate': lambda values: candidate,
+        '_safe_int': lambda value: int(value or 0),
+        'build_background_tabular_generated_output_metadata': lambda run: run,
+        'build_tabular_post_processing_activity_payload': lambda *args, **kwargs: {},
+        'cancel_tabular_generated_output_run': lambda *args, **kwargs: None,
+        'emit_tabular_post_processing_thought': emit_thought,
+        'get_tabular_generated_output_format': lambda question: 'csv',
+        'logging': logging,
+        'log_event': lambda *args, **kwargs: None,
+        'question_requests_tabular_generated_output': lambda question: True,
+        'question_requests_tabular_structured_object_output': lambda question: True,
+        'queue_tabular_generated_output_run': lambda **kwargs: queued_calls.append(kwargs),
+        'raise_if_mixed_source_cancelled': lambda *args, **kwargs: None,
+        'should_queue_tabular_generated_output_background': lambda *args, **kwargs: True,
+    })
+
+    output_metadata = asyncio.run(router(
+        user_question='For every row, answer the question and generate a CSV.',
+        invocations=invocations,
+        gpt_model='test-model',
+        settings={},
+        conversation_id='conversation-1',
+        user_id='user-1',
+    ))
+
+    assert not queued_calls
+    assert output_metadata['status'] == 'failed'
+    assert 'normalize_match=true' in output_metadata['status_detail']
+    assert 'No partial CSV was created' in output_metadata['status_detail']
+
+
 def test_streaming_finalizer_writes_30000_rows_in_bounded_chunks():
     """Final assembly reads one checkpoint at a time and never builds a full row list."""
     requested_batches = []
@@ -1266,6 +1525,8 @@ def main():
         test_paginated_candidate_coalesces_all_300_rows,
         test_paginated_candidate_rejects_gaps,
         test_paginated_candidate_rejects_mixed_source_versions,
+        test_filter_rows_pages_queue_full_3000_row_source_replay,
+        test_non_replayable_filter_rows_reports_explicit_failure,
         test_streaming_finalizer_writes_30000_rows_in_bounded_chunks,
         test_streaming_finalizer_neutralizes_csv_formulas,
         test_streaming_finalizer_rejects_source_order_gaps,
