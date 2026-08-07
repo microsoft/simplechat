@@ -4972,6 +4972,150 @@
                     </div>
                 </div>
 
+                <!-- Orchestration Interaction Controls Section -->
+                {% set orchestration_policy = settings.orchestration_interaction_policy %}
+                <div class="card p-3 mb-4" id="orchestration-interaction-section" data-testid="orchestration-interaction-settings">
+                    <h5 class="card-title d-flex align-items-center">
+                        <i class="bi bi-toggles2 me-2"></i>Orchestration Interaction
+                        <button type="button" class="btn btn-link p-0 ms-2 text-secondary lh-1" data-bs-toggle="tooltip" data-bs-trigger="hover focus" title="Controls which execution modes and plan visibility levels users can choose. Authorization and hard approval policy still apply." aria-label="About orchestration interaction">
+                            <i class="bi bi-info-circle" aria-hidden="true"></i>
+                        </button>
+                    </h5>
+                    <p class="text-muted small">
+                        Govern the mode selector shown in chat. Manual asks more often, Balanced automates low-risk internal reads, and Auto uses the best governed plan until a hard approval boundary is reached.
+                    </p>
+
+                    <div class="row g-3">
+                        <div class="col-lg-6">
+                            <fieldset class="border rounded p-3 h-100">
+                                <legend class="float-none w-auto px-2 fs-6">Execution modes</legend>
+                                {% for mode, label, help_text in [
+                                    ('manual', 'Manual', 'Ask before adding tools or optional artifacts.'),
+                                    ('balanced', 'Balanced', 'Use safe automation and ask when policy requires review.'),
+                                    ('auto', 'Auto', 'Run the best governed plan automatically until a hard boundary is reached.')
+                                ] %}
+                                <div class="form-check mb-2">
+                                    <input class="form-check-input" type="checkbox" id="orchestration_execution_mode_{{ mode }}" name="orchestration_execution_modes_enabled" value="{{ mode }}" {% if mode in orchestration_policy.enabled_execution_modes %}checked{% endif %}>
+                                    <label class="form-check-label" for="orchestration_execution_mode_{{ mode }}">
+                                        <strong>{{ label }}</strong>
+                                        <span class="text-muted small d-block">{{ help_text }}</span>
+                                    </label>
+                                </div>
+                                {% endfor %}
+                                <label class="form-label mt-2" for="orchestration_default_execution_mode">Default mode</label>
+                                <select class="form-select" id="orchestration_default_execution_mode" name="orchestration_default_execution_mode">
+                                    {% for mode, label in [('manual', 'Manual'), ('balanced', 'Balanced'), ('auto', 'Auto')] %}
+                                    <option value="{{ mode }}" {% if orchestration_policy.default_execution_mode == mode %}selected{% endif %}>{{ label }}</option>
+                                    {% endfor %}
+                                </select>
+                            </fieldset>
+                        </div>
+
+                        <div class="col-lg-6">
+                            <fieldset class="border rounded p-3 h-100">
+                                <legend class="float-none w-auto px-2 fs-6">Review visibility</legend>
+                                {% for visibility, label, help_text in [
+                                    ('collapsed', 'Collapsed', 'Show concise progress and collapse details after completion.'),
+                                    ('expanded', 'Expanded', 'Expand plan, approvals, sources, and deliverables by default.')
+                                ] %}
+                                <div class="form-check mb-2">
+                                    <input class="form-check-input" type="checkbox" id="orchestration_review_visibility_{{ visibility }}" name="orchestration_review_visibility_levels_enabled" value="{{ visibility }}" {% if visibility in orchestration_policy.enabled_review_visibility %}checked{% endif %}>
+                                    <label class="form-check-label" for="orchestration_review_visibility_{{ visibility }}">
+                                        <strong>{{ label }}</strong>
+                                        <span class="text-muted small d-block">{{ help_text }}</span>
+                                    </label>
+                                </div>
+                                {% endfor %}
+                                <label class="form-label mt-2" for="orchestration_default_review_visibility">Default visibility</label>
+                                <select class="form-select" id="orchestration_default_review_visibility" name="orchestration_default_review_visibility">
+                                    {% for visibility, label in [('collapsed', 'Collapsed'), ('expanded', 'Expanded')] %}
+                                    <option value="{{ visibility }}" {% if orchestration_policy.default_review_visibility == visibility %}selected{% endif %}>{{ label }}</option>
+                                    {% endfor %}
+                                </select>
+                                <div class="form-check form-switch mt-3">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="orchestration_require_expanded_review_visibility" name="orchestration_require_expanded_review_visibility" {% if orchestration_policy.require_expanded_review_visibility %}checked{% endif %}>
+                                    <label class="form-check-label" for="orchestration_require_expanded_review_visibility">Require expanded visibility</label>
+                                </div>
+                            </fieldset>
+                        </div>
+
+                        <div class="col-12">
+                            <fieldset class="border rounded p-3">
+                                <legend class="float-none w-auto px-2 fs-6">User controls</legend>
+                                <div class="row g-3">
+                                    <div class="col-md-3">
+                                        <div class="form-check form-switch">
+                                            <input class="form-check-input" type="checkbox" role="switch" id="orchestration_allow_conversation_execution_mode" name="orchestration_allow_conversation_execution_mode" {% if orchestration_policy.allow_conversation_execution_mode %}checked{% endif %}>
+                                            <label class="form-check-label" for="orchestration_allow_conversation_execution_mode">Conversation mode defaults</label>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-3">
+                                        <div class="form-check form-switch">
+                                            <input class="form-check-input" type="checkbox" role="switch" id="orchestration_allow_per_message_execution_mode" name="orchestration_allow_per_message_execution_mode" {% if orchestration_policy.allow_per_message_execution_mode %}checked{% endif %}>
+                                            <label class="form-check-label" for="orchestration_allow_per_message_execution_mode">Per-message mode override</label>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-3">
+                                        <div class="form-check form-switch">
+                                            <input class="form-check-input" type="checkbox" role="switch" id="orchestration_allow_conversation_review_visibility" name="orchestration_allow_conversation_review_visibility" {% if orchestration_policy.allow_conversation_review_visibility %}checked{% endif %}>
+                                            <label class="form-check-label" for="orchestration_allow_conversation_review_visibility">Conversation visibility defaults</label>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-3">
+                                        <div class="form-check form-switch">
+                                            <input class="form-check-input" type="checkbox" role="switch" id="orchestration_allow_per_message_review_visibility" name="orchestration_allow_per_message_review_visibility" {% if orchestration_policy.allow_per_message_review_visibility %}checked{% endif %}>
+                                            <label class="form-check-label" for="orchestration_allow_per_message_review_visibility">Per-message visibility override</label>
+                                        </div>
+                                    </div>
+                                </div>
+                            </fieldset>
+                        </div>
+
+                        <div class="col-12">
+                            <fieldset class="border rounded p-3">
+                                <legend class="float-none w-auto px-2 fs-6">Context restrictions</legend>
+                                <div class="row g-3">
+                                    {% for context_name, context_label in [('personal', 'Personal'), ('group', 'Group'), ('public', 'Public'), ('external', 'External')] %}
+                                    <div class="col-md-3">
+                                        <label class="form-label" for="orchestration_context_modes_{{ context_name }}">{{ context_label }}</label>
+                                        <select class="form-select" id="orchestration_context_modes_{{ context_name }}" name="orchestration_context_modes_{{ context_name }}" multiple size="3">
+                                            {% for mode, label in [('manual', 'Manual'), ('balanced', 'Balanced'), ('auto', 'Auto')] %}
+                                            <option value="{{ mode }}" {% if mode in orchestration_policy.context_execution_modes[context_name] %}selected{% endif %}>{{ label }}</option>
+                                            {% endfor %}
+                                        </select>
+                                    </div>
+                                    {% endfor %}
+                                </div>
+                            </fieldset>
+                        </div>
+
+                        <div class="col-md-4">
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" role="switch" id="orchestration_plan_details_drawer_enabled" name="orchestration_plan_details_drawer_enabled" {% if orchestration_policy.plan_details_drawer_enabled %}checked{% endif %}>
+                                <label class="form-check-label" for="orchestration_plan_details_drawer_enabled">Plan details drawer</label>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label" for="orchestration_advanced_plan_editing">Advanced plan editing</label>
+                            <select class="form-select" id="orchestration_advanced_plan_editing" name="orchestration_advanced_plan_editing">
+                                {% for value, label in [('disabled', 'Disabled'), ('view_only', 'View only'), ('server_alternatives', 'Server-authored alternatives')] %}
+                                <option value="{{ value }}" {% if orchestration_policy.advanced_plan_editing == value %}selected{% endif %}>{{ label }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="col-md-2">
+                            <label class="form-label" for="orchestration_interaction_retention_days">Audit retention days</label>
+                            <input type="number" class="form-control" id="orchestration_interaction_retention_days" name="orchestration_interaction_retention_days" min="1" max="3650" value="{{ orchestration_policy.retention_days }}">
+                        </div>
+                        <div class="col-md-2 d-flex align-items-end">
+                            <div class="form-check form-switch mb-2">
+                                <input class="form-check-input" type="checkbox" role="switch" id="orchestration_interaction_audit_enabled" name="orchestration_interaction_audit_enabled" {% if orchestration_policy.audit_enabled %}checked{% endif %}>
+                                <label class="form-check-label" for="orchestration_interaction_audit_enabled">Audit mode decisions</label>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- Capability Planner Section -->
                 <div class="card p-3 mb-4" id="chat-capability-planner-section" data-testid="chat-capability-planner-settings">
                     <h5 class="card-title d-flex align-items-center">

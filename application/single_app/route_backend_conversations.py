@@ -60,6 +60,9 @@ from functions_message_artifacts import (
     filter_assistant_artifact_items,
     hydrate_agent_citations_from_artifacts,
 )
+from functions_orchestration_interaction import (
+    normalize_orchestration_interaction_policy,
+)
 from functions_simplechat_operations import (
     ConversationForkConflictError,
     create_personal_conversation_for_current_user,
@@ -900,6 +903,59 @@ def _authorize_personal_conversation_read(user_id, conversation_id):
         raise PermissionError('Forbidden')
 
     return conversation_item
+
+
+def _get_orchestration_interaction_context_type(conversation_item):
+    chat_type = str((conversation_item or {}).get('chat_type') or '').strip().lower()
+    if chat_type.startswith('group'):
+        return 'group'
+    if chat_type.startswith('public'):
+        return 'public'
+    primary_context = next(
+        (
+            context
+            for context in (conversation_item or {}).get('context', []) or []
+            if isinstance(context, dict) and context.get('type') == 'primary'
+        ),
+        None,
+    )
+    primary_scope = str((primary_context or {}).get('scope') or '').strip().lower()
+    if primary_scope in {'group', 'public'}:
+        return primary_scope
+    return 'personal'
+
+
+def _normalize_conversation_orchestration_interaction_preference(payload, policy, context_type):
+    """Validate a conversation-level Phase 12 interaction preference."""
+    request_payload = payload if isinstance(payload, dict) else {}
+    existing = request_payload.get('orchestration_interaction')
+    if isinstance(existing, dict):
+        request_payload = existing
+
+    normalized = {}
+    execution_mode = str(request_payload.get('execution_mode') or '').strip().lower()
+    if execution_mode:
+        enabled_modes = set(
+            (policy.get('context_execution_modes') or {}).get(context_type)
+            or policy.get('enabled_execution_modes')
+            or []
+        )
+        if execution_mode not in enabled_modes:
+            raise ValueError('execution_mode is not allowed by admin policy')
+        normalized['execution_mode'] = execution_mode
+
+    review_visibility = str(request_payload.get('review_visibility') or '').strip().lower()
+    if review_visibility:
+        enabled_visibility = set(policy.get('enabled_review_visibility') or [])
+        if review_visibility not in enabled_visibility:
+            raise ValueError('review_visibility is not allowed by admin policy')
+        normalized['review_visibility'] = review_visibility
+
+    if not normalized:
+        raise ValueError('execution_mode or review_visibility is required')
+
+    normalized['version'] = 2
+    return normalized
 
 
 def _invalidate_conversation_cache_after_message_mutation(conversation_id, user_id, reason):
@@ -1917,6 +1973,7 @@ def register_route_backend_conversations(bp):
                 "last_unread_assistant_at": conversation_item.get('last_unread_assistant_at'),
                 "scope_locked": conversation_item.get('scope_locked'),
                 "locked_contexts": conversation_item.get('locked_contexts', []),
+                "orchestration_interaction": conversation_item.get('orchestration_interaction') or {},
                 "chat_type": conversation_item.get('chat_type'),
                 "workflow_id": conversation_item.get('workflow_id'),
                 "summary": conversation_item.get('summary'),
@@ -1928,6 +1985,77 @@ def register_route_backend_conversations(bp):
         except Exception as e:
             print(f"Error retrieving conversation metadata: {e}")
             return jsonify({'error': 'Failed to retrieve conversation metadata'}), 500
+
+    @bp.route('/api/conversations/<conversation_id>/orchestration-interaction', methods=['PATCH'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def patch_conversation_orchestration_interaction(conversation_id):
+        """Persist a validated per-conversation Phase 12 interaction default."""
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+
+        data = request.get_json(silent=True) or {}
+        try:
+            settings = get_settings()
+            policy = normalize_orchestration_interaction_policy(settings)
+            requested_preference = (
+                data.get('orchestration_interaction')
+                if isinstance(data.get('orchestration_interaction'), dict)
+                else data
+            )
+            if not policy.get('allow_conversation_execution_mode') and 'execution_mode' in requested_preference:
+                return jsonify({'error': 'Conversation execution mode defaults are disabled by administrator'}), 403
+            if not policy.get('allow_conversation_review_visibility') and 'review_visibility' in requested_preference:
+                return jsonify({'error': 'Conversation review visibility defaults are disabled by administrator'}), 403
+
+            conversation_item = _authorize_personal_conversation_read(
+                user_id,
+                conversation_id,
+            )
+            context_type = _get_orchestration_interaction_context_type(conversation_item)
+            preference = _normalize_conversation_orchestration_interaction_preference(
+                data,
+                policy,
+                context_type,
+            )
+            current_preference = (
+                conversation_item.get('orchestration_interaction')
+                if isinstance(conversation_item.get('orchestration_interaction'), dict)
+                else {}
+            )
+            updated_preference = dict(current_preference)
+            updated_preference.update(preference)
+            updated_preference['updated_at'] = datetime.utcnow().isoformat()
+            conversation_item['orchestration_interaction'] = updated_preference
+            conversation_item['last_updated'] = datetime.utcnow().isoformat()
+            cosmos_conversations_container.upsert_item(conversation_item)
+            invalidate_conversation_cache_for_item(
+                conversation_item,
+                reason='conversation_orchestration_interaction_updated',
+            )
+            return jsonify({
+                'success': True,
+                'orchestration_interaction': updated_preference,
+            }), 200
+        except ValueError as exc:
+            return jsonify({'error': str(exc)}), 400
+        except PermissionError:
+            return jsonify({'error': 'Forbidden'}), 403
+        except (CosmosResourceNotFoundError, LookupError):
+            return jsonify({'error': 'Conversation not found'}), 404
+        except Exception as exc:
+            log_event(
+                '[ORCHESTRATION_INTERACTION] Conversation preference update failed',
+                extra={
+                    'conversation_id': conversation_id,
+                    'error_type': type(exc).__name__,
+                },
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({'error': 'Failed to update conversation preference'}), 500
 
     @bp.route('/api/conversations/<conversation_id>/mark-read', methods=['POST'])
     @swagger_route(security=get_auth_security())

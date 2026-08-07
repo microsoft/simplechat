@@ -22,6 +22,7 @@ import { saveUserSetting } from "./chat-layout.js";
 import { sendMessageWithStreaming } from "./chat-streaming.js";
 import { getCurrentReasoningEffort, isReasoningEffortEnabled } from './chat-reasoning.js';
 import { areAgentsEnabled } from './chat-agents.js';
+import { getOrchestrationInteractionRequest, markOrchestrationInteractionSubmitted } from './chat-orchestration-interaction.js';
 import { createThoughtsToggleHtml, attachThoughtsToggleListener } from './chat-thoughts.js';
 import { destroyInlineCharts, extractInlineChartBlocks, hydrateInlineCharts, injectInlineChartHtml, restoreInlineChartTokens } from './chat-inline-charts.js';
 import { attachGeneratedImageProposalResults, extractInlineImageProposalBlocks, hydrateInlineImageProposals, injectInlineImageProposalHtml, restoreInlineImageProposalTokens } from './chat-inline-image-proposals.js';
@@ -5127,7 +5128,12 @@ export function appendMessage(
     const metadataContainerId = `metadata-${messageId || Date.now()}`;
     const metadataContainerHtml = `<div class="metadata-container mt-2 pt-2 border-top" id="${metadataContainerId}" style="display: none;"><div class="text-muted">Loading metadata...</div></div>`;
 
-    const thoughtsHtml = createThoughtsToggleHtml(messageId);
+    const reviewVisibility = String(
+      fullMessageObject?.metadata?.orchestration_interaction?.review_visibility || ''
+    ).trim().toLowerCase();
+    const thoughtsHtml = createThoughtsToggleHtml(messageId, {
+      expanded: reviewVisibility === 'expanded',
+    });
 
     const footerContentHtml = `<div class="message-footer d-flex justify-content-between align-items-center mt-2">
       <div class="d-flex align-items-center">${copyAndFeedbackHtml}</div>
@@ -6456,6 +6462,11 @@ export function buildChatRequestPayload(finalMessageToSend, conversationId = cur
     requestPayload.document_action = documentAction;
   }
 
+  const orchestrationInteraction = getOrchestrationInteractionRequest();
+  if (Object.keys(orchestrationInteraction).length > 0) {
+    requestPayload.orchestration_interaction = orchestrationInteraction;
+  }
+
   if (documentActionType === DOCUMENT_ACTION_ANALYZE) {
     requestPayload.analyze = {
       enabled: true,
@@ -6654,6 +6665,7 @@ export function actuallySendMessage(finalMessageToSend) {
       fallbackAgentInfo: messageData.agent_info || null,
     }
   );
+  markOrchestrationInteractionSubmitted();
 
   return;
 }

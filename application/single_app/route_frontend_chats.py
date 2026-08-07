@@ -33,6 +33,7 @@ from functions_group import (
 )
 from functions_governance import ensure_governance_access
 from functions_image_messages import build_image_message_documents
+from functions_orchestration_interaction import normalize_orchestration_interaction_policy
 from functions_prompts import list_all_prompts_for_scope
 from functions_public_workspaces import find_public_workspace_by_id, get_user_visible_public_workspace_ids_from_settings
 from functions_simplechat_operations import upload_chat_image_bytes_for_user
@@ -707,6 +708,7 @@ def register_route_frontend_chats(bp):
         public_settings['enable_url_access'] = url_access_enabled_for_user
         public_settings['enable_chat_file_uploads'] = chat_file_upload_enabled_for_user
         public_settings['allow_user_workflows'] = user_workflows_enabled_for_user
+        public_settings['orchestration_interaction_policy'] = normalize_orchestration_interaction_policy(settings)
         conversation_contents_drawer_enabled = is_conversation_contents_drawer_enabled(
             public_settings,
             user_settings_dict,

@@ -292,6 +292,11 @@ from functions_orchestration_runtime import (
     resolve_orchestration_evidence_discovery,
     start_orchestration_node,
 )
+from functions_orchestration_interaction import (
+    apply_execution_mode_to_capability_inventory,
+    normalize_orchestration_interaction_policy,
+    resolve_orchestration_interaction,
+)
 from functions_image_messages import build_image_message_documents, decode_image_content
 from functions_icon_utils import normalize_icon_payload
 from functions_image_generation import (
@@ -3822,6 +3827,97 @@ def _get_policy_blocked_selected_capability_ids(settings, data):
     ]
 
 
+def _get_orchestration_interaction_context_type(conversation_item, data=None):
+    """Return the Phase 12 context bucket for the current chat turn."""
+    request_data = data if isinstance(data, Mapping) else {}
+    chat_type = str(
+        (conversation_item or {}).get('chat_type')
+        or request_data.get('chat_type')
+        or ''
+    ).strip().lower()
+    if chat_type.startswith('group'):
+        return 'group'
+    if chat_type.startswith('public'):
+        return 'public'
+
+    primary_context = next(
+        (
+            context
+            for context in (conversation_item or {}).get('context', []) or []
+            if isinstance(context, Mapping) and context.get('type') == 'primary'
+        ),
+        None,
+    )
+    primary_scope = str((primary_context or {}).get('scope') or '').strip().lower()
+    if primary_scope in {'group', 'public'}:
+        return primary_scope
+    if request_data.get('active_public_workspace_ids'):
+        return 'public'
+    if request_data.get('active_group_ids'):
+        return 'group'
+    return 'personal'
+
+
+def _get_message_orchestration_interaction(conversation_id, message_id):
+    normalized_message_id = str(message_id or '').strip()
+    if not normalized_message_id:
+        return None
+    message_doc = cosmos_messages_container.read_item(
+        item=normalized_message_id,
+        partition_key=conversation_id,
+    )
+    metadata = message_doc.get('metadata') if isinstance(message_doc.get('metadata'), Mapping) else {}
+    interaction = metadata.get('orchestration_interaction')
+    return copy.deepcopy(dict(interaction)) if isinstance(interaction, Mapping) else None
+
+
+def _resolve_chat_turn_orchestration_interaction(
+    *,
+    settings,
+    user_id,
+    conversation_item,
+    data,
+    capability_resume_context=None,
+    retry_user_message_id=None,
+):
+    """Resolve or restore the per-turn Phase 12 interaction snapshot."""
+    if isinstance(capability_resume_context, Mapping):
+        interaction = capability_resume_context.get('orchestration_interaction')
+        if isinstance(interaction, Mapping):
+            return copy.deepcopy(dict(interaction))
+
+    conversation_id = str((conversation_item or {}).get('id') or '').strip()
+    if retry_user_message_id and conversation_id:
+        try:
+            retry_interaction = _get_message_orchestration_interaction(
+                conversation_id,
+                retry_user_message_id,
+            )
+            if retry_interaction:
+                return retry_interaction
+        except Exception as exc:
+            log_event(
+                '[ORCHESTRATION_INTERACTION] Retry snapshot restore failed',
+                extra={
+                    'conversation_id': conversation_id,
+                    'error_type': type(exc).__name__,
+                },
+                level=logging.WARNING,
+            )
+
+    user_settings_doc = get_user_settings(user_id)
+    return resolve_orchestration_interaction(
+        settings=settings,
+        user_settings=user_settings_doc,
+        conversation=conversation_item,
+        request_payload=data,
+        context_type=_get_orchestration_interaction_context_type(
+            conversation_item,
+            data,
+        ),
+    )
+
+
 def _get_rejected_selected_capability_entries(inventory, selected_capability_ids):
     try:
         selected_ids = set(
@@ -4141,6 +4237,7 @@ def _build_server_capability_discovery(
     authorized_document_count=0,
     selected_agent_present=False,
     enable_deterministic_matching=True,
+    orchestration_interaction=None,
 ):
     inventory = _resolve_server_chat_capability_inventory(
         settings=settings,
@@ -4160,6 +4257,10 @@ def _build_server_capability_discovery(
         settings=settings,
         user_id=user_id,
         selected_agent_present=selected_agent_present,
+    )
+    inventory = apply_execution_mode_to_capability_inventory(
+        inventory,
+        orchestration_interaction,
     )
     if not enable_deterministic_matching:
         return {
@@ -4513,6 +4614,24 @@ def _load_authorized_capability_proposal_context(
         if isinstance(user_message_doc.get('metadata'), Mapping)
         else {}
     )
+    source_orchestration_interaction = (
+        copy.deepcopy(dict(user_metadata.get('orchestration_interaction')))
+        if isinstance(user_metadata.get('orchestration_interaction'), Mapping)
+        else None
+    )
+    if source_orchestration_interaction:
+        current_policy = normalize_orchestration_interaction_policy(settings)
+        source_policy_version = str(
+            source_orchestration_interaction.get('admin_policy_version') or ''
+        ).strip()
+        if (
+            source_policy_version
+            and source_policy_version != current_policy.get('policy_version')
+        ):
+            raise CapabilityChoiceError(
+                'orchestration interaction policy changed after this decision was created',
+                code='orchestration_policy_changed',
+            )
     user_thread_info = (
         user_metadata.get('thread_info')
         if isinstance(user_metadata.get('thread_info'), Mapping)
@@ -4725,6 +4844,10 @@ def _load_authorized_capability_proposal_context(
     )
     refreshed_inventory = copy.deepcopy(refreshed_inventory)
     refreshed_inventory['agents'] = copy.deepcopy(agent_inventory.get('agents') or [])
+    refreshed_inventory = apply_execution_mode_to_capability_inventory(
+        refreshed_inventory,
+        source_orchestration_interaction,
+    )
     provenance = (
         proposal_metadata.get('capability_provenance')
         if isinstance(proposal_metadata.get('capability_provenance'), Mapping)
@@ -4752,6 +4875,7 @@ def _load_authorized_capability_proposal_context(
         'selected_capability_ids': selected_capability_ids,
         'automatic_capability_root_ids': automatic_capability_root_ids,
         'automatic_capability_effective_ids': automatic_capability_effective_ids,
+        'orchestration_interaction': source_orchestration_interaction,
         'selected_agent_present': bool(
             selected_agent_snapshot_id or stored_selected_agent_binding
         ),
@@ -6097,6 +6221,9 @@ def _claim_authorized_capability_resume_impl(
         ),
         'automatic_capability_effective_ids': copy.deepcopy(
             context.get('automatic_capability_effective_ids')
+        ),
+        'orchestration_interaction': copy.deepcopy(
+            context.get('orchestration_interaction')
         ),
         'agent_ref': agent_ref or None,
         'agent_origin': 'discovery_approved' if agent_ref else None,
@@ -17060,6 +17187,18 @@ def register_route_backend_chats(bp):
         conversation_id = conversation_item.get('id')
         g.conversation_id = conversation_id
         _set_authorized_chat_request_context(user_id, conversation_id, action_scope_context)
+        turn_orchestration_interaction = _resolve_chat_turn_orchestration_interaction(
+            settings=settings,
+            user_id=user_id,
+            conversation_item=conversation_item,
+            data=data,
+            capability_resume_context=capability_resume_context,
+            retry_user_message_id=(
+                data.get('retry_user_message_id')
+                or data.get('edited_user_message_id')
+            ),
+        )
+        data['orchestration_interaction'] = turn_orchestration_interaction
 
         if isinstance(
             (capability_resume_context or {}).get('_contextual_proposal'),
@@ -17136,6 +17275,10 @@ def register_route_backend_chats(bp):
                 user_id=user_id,
                 selected_agent_present=_has_chat_agent_selection(request_agent_info),
             )
+        action_capability_inventory = apply_execution_mode_to_capability_inventory(
+            action_capability_inventory,
+            turn_orchestration_interaction,
+        )
         rejected_selected_capabilities = _get_rejected_selected_capability_entries(
             action_capability_inventory,
             selected_builtin_capability_ids,
@@ -17333,6 +17476,7 @@ def register_route_backend_chats(bp):
         else:
             user_metadata = generated_user_metadata
         user_metadata['orchestration'] = turn_orchestration_plan
+        user_metadata['orchestration_interaction'] = turn_orchestration_interaction
         user_metadata['evidence_ledger'] = turn_evidence_ledger
         user_metadata['orchestration_runtime'] = turn_orchestration_run.to_metadata()
         user_metadata['capability_provenance'] = turn_capability_provenance
@@ -17445,6 +17589,7 @@ def register_route_backend_chats(bp):
                 'user_message_id': user_message_id,
                 'metadata': {
                     'orchestration': turn_orchestration_plan,
+                    'orchestration_interaction': turn_orchestration_interaction,
                     'orchestration_runtime': turn_orchestration_run.to_metadata(),
                     'evidence_ledger': turn_evidence_ledger,
                 },
@@ -17931,6 +18076,7 @@ def register_route_backend_chats(bp):
                         'incomplete': True,
                         'error': 'runtime_reconciliation_failed',
                         'orchestration': turn_orchestration_plan,
+                        'orchestration_interaction': turn_orchestration_interaction,
                         'orchestration_runtime': turn_orchestration_run.to_metadata(),
                         'evidence_ledger': turn_evidence_ledger,
                         'capability_provenance': turn_capability_provenance,
@@ -17965,6 +18111,7 @@ def register_route_backend_chats(bp):
                 'user_message_id': user_message_id,
                 'metadata': {
                     'orchestration': turn_orchestration_plan,
+                    'orchestration_interaction': turn_orchestration_interaction,
                     'orchestration_runtime': turn_orchestration_run.to_metadata(),
                     'evidence_ledger': turn_evidence_ledger,
                 },
@@ -18099,6 +18246,7 @@ def register_route_backend_chats(bp):
                 'token_usage': execution_result.get('token_usage'),
                 'user_info': response_message_context.get('user_info'),
                 'orchestration': turn_orchestration_plan,
+                'orchestration_interaction': turn_orchestration_interaction,
                 'orchestration_runtime': turn_orchestration_run.to_metadata(),
                 'evidence_ledger': turn_evidence_ledger,
                 'capability_provenance': turn_capability_provenance,
@@ -19635,6 +19783,15 @@ def register_route_backend_chats(bp):
                 return build_json_error_response('Failed to read conversation')
 
             _set_authorized_chat_request_context(user_id, conversation_id, scope_context)
+            turn_orchestration_interaction = _resolve_chat_turn_orchestration_interaction(
+                settings=settings,
+                user_id=user_id,
+                conversation_item=conversation_item,
+                data=data,
+                capability_resume_context=trusted_capability_resume_context,
+                retry_user_message_id=retry_user_message_id,
+            )
+            data['orchestration_interaction'] = turn_orchestration_interaction
 
             auto_linked_chat_upload_document_ids = []
             auto_merge_chat_upload_workspace_context = (
@@ -19737,6 +19894,10 @@ def register_route_backend_chats(bp):
                 settings=settings,
                 user_id=user_id,
                 selected_agent_present=_has_chat_agent_selection(request_agent_info),
+            )
+            compatibility_capability_inventory = apply_execution_mode_to_capability_inventory(
+                compatibility_capability_inventory,
+                turn_orchestration_interaction,
             )
             compatibility_rejected_capabilities = _get_rejected_selected_capability_entries(
                 compatibility_capability_inventory,
@@ -20262,6 +20423,7 @@ def register_route_backend_chats(bp):
                 invalidate_conversation_cache_for_item(conversation_item, reason="conversation_title_initialized")
 
             user_metadata['capability_provenance'] = compatibility_capability_provenance
+            user_metadata['orchestration_interaction'] = turn_orchestration_interaction
             user_message_doc['metadata'] = user_metadata
             cosmos_messages_container.upsert_item(user_message_doc)
 
@@ -21282,6 +21444,7 @@ def register_route_backend_chats(bp):
                         'model_deployment_name': image_gen_model,
                         'metadata': {
                             'user_info': user_info_for_image,
+                            'orchestration_interaction': turn_orchestration_interaction,
                             'capability_provenance': compatibility_capability_provenance,
                             'capability_resume': (
                                 {
@@ -21345,6 +21508,7 @@ def register_route_backend_chats(bp):
                         'message_id': image_message_id,
                         'user_message_id': user_message_id,
                         'metadata': {
+                            'orchestration_interaction': turn_orchestration_interaction,
                             'capability_provenance': compatibility_capability_provenance,
                         },
                     }), 200
@@ -24555,6 +24719,16 @@ def register_route_backend_chats(bp):
                         yield f"data: {json.dumps({'error': 'Forbidden'})}\n\n"
                         return
 
+                turn_orchestration_interaction = _resolve_chat_turn_orchestration_interaction(
+                    settings=settings,
+                    user_id=user_id,
+                    conversation_item=conversation_item,
+                    data=data,
+                    capability_resume_context=capability_resume_context,
+                    retry_user_message_id=retry_user_message_id,
+                )
+                data['orchestration_interaction'] = turn_orchestration_interaction
+
                 capability_dialogue_context_state = {
                     'prior_user_messages': [],
                     'predecessor_thread_id': None,
@@ -25473,6 +25647,7 @@ def register_route_backend_chats(bp):
                         enable_deterministic_matching=(
                             capability_planner_mode != 'assist'
                         ),
+                        orchestration_interaction=turn_orchestration_interaction,
                     )
                 inventory_entries = capability_discovery.get('inventory', {}).get('capabilities', [])
                 log_event(
@@ -26416,6 +26591,7 @@ def register_route_backend_chats(bp):
                         copy.deepcopy(dict(user_metadata['orchestration'])),
                     )
                 user_metadata['orchestration'] = turn_orchestration_plan
+                user_metadata['orchestration_interaction'] = turn_orchestration_interaction
                 user_metadata['evidence_ledger'] = turn_evidence_ledger
                 user_metadata['orchestration_runtime'] = turn_orchestration_run.to_metadata()
                 user_metadata['capability_provenance'] = turn_capability_provenance
@@ -26780,6 +26956,9 @@ def register_route_backend_chats(bp):
                             safety_doc.setdefault('metadata', {})[
                                 'orchestration'
                             ] = turn_orchestration_plan
+                            safety_doc.setdefault('metadata', {})[
+                                'orchestration_interaction'
+                            ] = turn_orchestration_interaction
                             cosmos_messages_container.upsert_item(safety_doc)
                             complete_stream_capability_resume(assistant_message_id)
 
@@ -26863,6 +27042,7 @@ def register_route_backend_chats(bp):
                         'metadata': {
                             'awaiting_user_clarification': True,
                             'orchestration': turn_orchestration_plan,
+                            'orchestration_interaction': turn_orchestration_interaction,
                             'orchestration_runtime': (
                                 turn_orchestration_run.to_metadata()
                             ),
@@ -26953,6 +27133,7 @@ def register_route_backend_chats(bp):
                         'metadata': {
                             'awaiting_user_choice': True,
                             'orchestration': turn_orchestration_plan,
+                            'orchestration_interaction': turn_orchestration_interaction,
                             'orchestration_runtime': turn_orchestration_run.to_metadata(),
                             'evidence_ledger': turn_evidence_ledger,
                             'capability_proposal': proposal,
@@ -28827,6 +29008,7 @@ def register_route_backend_chats(bp):
                                 },
                                 'history_context': history_debug_info,
                                 'orchestration': turn_orchestration_plan,
+                                'orchestration_interaction': turn_orchestration_interaction,
                                 'orchestration_runtime': turn_orchestration_run.to_metadata(),
                                 'evidence_ledger': turn_evidence_ledger,
                                 'capability_provenance': turn_capability_provenance,
@@ -28892,6 +29074,7 @@ def register_route_backend_chats(bp):
                             'metadata': {
                                 **cancel_metadata,
                                 'orchestration': turn_orchestration_plan,
+                                'orchestration_interaction': turn_orchestration_interaction,
                                 'orchestration_runtime': turn_orchestration_run.to_metadata(),
                                 'evidence_ledger': turn_evidence_ledger,
                                 'central_synthesis': central_synthesis_metadata,
@@ -29839,6 +30022,7 @@ def register_route_backend_chats(bp):
                             },
                             'history_context': history_debug_info,
                             'orchestration': turn_orchestration_plan,
+                            'orchestration_interaction': turn_orchestration_interaction,
                             'orchestration_runtime': turn_orchestration_run.to_metadata(),
                             'evidence_ledger': turn_evidence_ledger,
                             'capability_provenance': turn_capability_provenance,
@@ -30206,6 +30390,7 @@ def register_route_backend_chats(bp):
                                 'reasoning_effort': reasoning_effort,
                                 'history_context': history_debug_info,
                                 'orchestration': turn_orchestration_plan,
+                                'orchestration_interaction': turn_orchestration_interaction,
                                 'orchestration_runtime': turn_orchestration_run.to_metadata(),
                                 'evidence_ledger': turn_evidence_ledger,
                                 'capability_provenance': turn_capability_provenance,
