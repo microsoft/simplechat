@@ -1,8 +1,8 @@
 # test_chat_background_generated_export_status.py
 """
 UI test for chat background generated export status cards.
-Version: 0.250.061
-Implemented in: 0.241.046; cancellation in 0.250.060; automatic-only refresh in 0.250.061
+Version: 0.250.131
+Implemented in: 0.241.046; cancellation in 0.250.060; automatic-only refresh in 0.250.061; combined progress and large-run confirmation in 0.250.131
 
 This test ensures queued tabular generated exports render progress in chat and
 turn into a downloadable artifact when complete or a visible canceled state.
@@ -233,6 +233,183 @@ def test_chat_background_generated_export_can_be_canceled(playwright) -> None:
         expect(cancel_button).to_be_hidden()
         assert cancel_requests == ["POST"]
         assert page_errors == []
+    finally:
+        context.close()
+        browser.close()
+
+
+@pytest.mark.ui
+def test_chat_combined_background_status_shows_reduce_progress(playwright) -> None:
+    """Validate combined runs show map/reduce phase and remaining work."""
+    _require_ui_env()
+
+    browser = playwright.chromium.launch()
+    context = browser.new_context(
+        storage_state=STORAGE_STATE,
+        viewport={"width": 1440, "height": 900},
+    )
+    page = context.new_page()
+    page_errors = []
+    page.on("pageerror", lambda error: page_errors.append(str(error)))
+
+    try:
+        page.route(
+            "**/api/tabular/generated-output/runs/run-combined-progress",
+            lambda route: route.fulfill(
+                status=200,
+                content_type="application/json",
+                json={
+                    "success": True,
+                    "run": {
+                        "run_id": "run-combined-progress",
+                        "task_type": "combined",
+                        "status": "running",
+                        "status_label": "Running",
+                        "status_tone": "info",
+                        "status_detail": "Combined run is reducing checkpointed chunk summaries.",
+                        "analysis_phase": "reducing",
+                        "analysis_reduce_level": 1,
+                        "analysis_reduce_node": 2,
+                        "analysis_reduce_node_count": 4,
+                        "row_count": 3000,
+                        "processed_rows": 2400,
+                        "batch_count": 60,
+                        "completed_batches": 48,
+                        "total_chunk_count": 60,
+                        "processed_chunk_count": 48,
+                        "failed_chunk_count": 0,
+                        "progress_percent": 80,
+                        "estimated_remaining_seconds": 120,
+                        "background_export": True,
+                    },
+                },
+            ),
+        )
+        page.goto(f"{BASE_URL}/", wait_until="domcontentloaded")
+        page.evaluate(
+            """
+            async () => {
+                const module = await import('/static/js/chat/chat-messages.js');
+                window.currentConversationId = 'conversation-combined-progress';
+                module.appendMessage(
+                    'AI',
+                    'The combined run is continuing in the background.',
+                    null,
+                    'message-combined-progress',
+                    false,
+                    [],
+                    [],
+                    [],
+                    null,
+                    null,
+                    {
+                        metadata: {
+                            generated_tabular_outputs: [
+                                {
+                                    capability: 'tabular',
+                                    background_export: true,
+                                    export_run_id: 'run-combined-progress',
+                                    run_id: 'run-combined-progress',
+                                    task_type: 'combined',
+                                    status: 'running',
+                                    status_label: 'Running',
+                                    status_detail: 'Combined run is reducing checkpointed chunk summaries.',
+                                    analysis_phase: 'reducing',
+                                    analysis_reduce_level: 1,
+                                    analysis_reduce_node: 2,
+                                    analysis_reduce_node_count: 4,
+                                    row_count: 3000,
+                                    processed_rows: 2400,
+                                    batch_count: 60,
+                                    completed_batches: 48,
+                                    total_chunk_count: 60,
+                                    processed_chunk_count: 48,
+                                    progress_percent: 80,
+                                    estimated_remaining_seconds: 120,
+                                    file_name: 'combined-output.csv',
+                                    output_format: 'csv',
+                                    source_file_name: 'large-source.csv'
+                                }
+                            ]
+                        }
+                    },
+                    false
+                );
+            }
+            """
+        )
+
+        message = page.locator('[data-message-id="message-combined-progress"]')
+        expect(message.get_by_text("Background analysis + export")).to_be_visible()
+        expect(message.get_by_text("Running", exact=True)).to_be_visible()
+        expect(message.get_by_text("Reduce phase level 1 node 2 of 4")).to_be_visible()
+        expect(message.get_by_text("Remaining batches: 12")).to_be_visible()
+        expect(message.get_by_text("Remaining chunks: 12")).to_be_visible()
+        expect(message.get_by_text("Estimated remaining: 2m")).to_be_visible()
+        assert page_errors == []
+    finally:
+        context.close()
+        browser.close()
+
+
+@pytest.mark.ui
+def test_chat_large_tabular_run_confirmation_prompt(playwright) -> None:
+    """Validate large explicit row-level prompts require confirmation before send."""
+    _require_ui_env()
+
+    browser = playwright.chromium.launch()
+    context = browser.new_context(
+        storage_state=STORAGE_STATE,
+        viewport={"width": 1440, "height": 900},
+    )
+    page = context.new_page()
+
+    try:
+        page.goto(f"{BASE_URL}/", wait_until="domcontentloaded")
+        small_prompt_estimate = page.evaluate(
+            """
+            async () => {
+                const module = await import('/static/js/chat/chat-messages.js');
+                return module.estimateLargeTabularRunForPrompt(
+                    'For each row in 30 rows, generate a CSV.',
+                    {
+                        enable_tabular_durable_run_confirmation: true,
+                        tabular_durable_run_confirmation_threshold_rows: 500,
+                        tabular_durable_run_confirmation_threshold_batches: 75,
+                        tabular_generated_output_max_batch_rows: 50
+                    }
+                );
+            }
+            """
+        )
+        assert small_prompt_estimate["shouldConfirm"] is False
+
+        page.evaluate(
+            """
+            async () => {
+                const module = await import('/static/js/chat/chat-messages.js');
+                window.__largeTabularRunDecision = null;
+                module.confirmLargeTabularRunForPrompt(
+                    'For each row in 3,000 rows, answer each question and generate a CSV.',
+                    {
+                        enable_tabular_durable_run_confirmation: true,
+                        tabular_durable_run_confirmation_threshold_rows: 500,
+                        tabular_durable_run_confirmation_threshold_batches: 75,
+                        tabular_generated_output_max_batch_rows: 50
+                    }
+                ).then(value => {
+                    window.__largeTabularRunDecision = value;
+                });
+            }
+            """
+        )
+
+        dialog = page.get_by_role("dialog", name="Large tabular run")
+        expect(dialog).to_be_visible()
+        expect(dialog.get_by_text("3,000 rows")).to_be_visible()
+        expect(dialog.get_by_text("60 batches")).to_be_visible()
+        dialog.get_by_role("button", name="Narrow scope").click()
+        page.wait_for_function("window.__largeTabularRunDecision === false")
     finally:
         context.close()
         browser.close()
