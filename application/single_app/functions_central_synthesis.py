@@ -5,6 +5,7 @@ import json
 import re
 from collections.abc import Mapping
 
+from functions_deliverable_planner import materialize_deliverable_plan
 from functions_evidence_ledger import compact_evidence_ledger_for_model
 
 
@@ -89,6 +90,16 @@ def create_central_synthesis_request(
     requested_output = compact_ledger.get('requested_output')
     if not isinstance(requested_output, Mapping):
         requested_output = {}
+    deliverable_intent = compact_ledger.get('deliverable_intent')
+    if not isinstance(deliverable_intent, Mapping):
+        deliverable_intent = {}
+    materialized_deliverable_plan = compact_ledger.get('materialized_deliverable_plan')
+    if not isinstance(materialized_deliverable_plan, Mapping) or not materialized_deliverable_plan:
+        materialized_deliverable_plan = (
+            materialize_deliverable_plan(deliverable_intent, compact_ledger)
+            if deliverable_intent.get('version')
+            else {}
+        )
 
     return {
         'version': CENTRAL_SYNTHESIS_CONTRACT_VERSION,
@@ -98,6 +109,8 @@ def create_central_synthesis_request(
         'task_profile': compact_ledger.get('task_profile'),
         'original_request': normalized_request,
         'requested_output': dict(requested_output),
+        'deliverable_intent': dict(deliverable_intent),
+        'materialized_deliverable_plan': dict(materialized_deliverable_plan),
         'finalizer': str(plan.get('finalizer') or requested_output.get('type') or 'response'),
         'evidence_status': compact_ledger.get('status'),
         'evidence_ledger': compact_ledger,
@@ -157,6 +170,7 @@ def build_central_synthesis_messages(synthesis_request):
         'Never use unsupported_facts as factual content or fill missing evidence with assumptions.',
         'Disclose material missing evidence, failed required attempts, authorization denials, and unresolved conflicts.',
         'Produce one coherent final output that follows output_profile and requested_output.',
+        'Use materialized_deliverable_plan to distinguish complete inline answers, summaries, and artifacts.',
         'Do not claim that a proposed artifact was generated when approval is still required.',
     ])
     user_message = (
