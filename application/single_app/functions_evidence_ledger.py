@@ -7,6 +7,8 @@ from collections.abc import Mapping
 from datetime import datetime, timezone
 from urllib.parse import urlsplit, urlunsplit
 
+from functions_deliverable_planner import build_deliverable_intent, materialize_deliverable_plan
+
 
 EVIDENCE_LEDGER_VERSION = 1
 EVIDENCE_LEDGER_GUIDANCE_MARKER = '[Turn Evidence Ledger]'
@@ -287,6 +289,8 @@ def create_evidence_ledger(
     created_at=None,
     orchestration_mode='coordinated',
     plan_version=None,
+    deliverable_intent=None,
+    materialized_deliverable_plan=None,
 ):
     """Create an empty JSON-serializable result and evidence ledger."""
     if not isinstance(requested_output, Mapping):
@@ -310,6 +314,8 @@ def create_evidence_ledger(
         'created_at': _normalize_text(created_at, 'created_at')
         or datetime.now(timezone.utc).isoformat(),
         'requested_output': _sanitize_metadata(requested_output),
+        'deliverable_intent': _sanitize_metadata(deliverable_intent),
+        'materialized_deliverable_plan': _sanitize_metadata(materialized_deliverable_plan),
         'status': ledger_status,
         'requirements': [],
         'sources': [],
@@ -329,6 +335,8 @@ def create_evidence_ledger_from_plan(
     user_message_id,
     conversation_id=None,
     requested_output=None,
+    deliverable_intent=None,
+    original_request=None,
     created_at=None,
 ):
     """Initialize a ledger from an immutable orchestration plan."""
@@ -343,6 +351,11 @@ def create_evidence_ledger_from_plan(
         'type': plan.get('finalizer') or 'response',
         'task_type': plan.get('task_type') or 'answer',
     }
+    effective_deliverable_intent = deliverable_intent or build_deliverable_intent(
+        original_request or '',
+        plan,
+        requested_output=effective_requested_output,
+    )
     ledger = create_evidence_ledger(
         plan.get('task_type') or 'answer',
         effective_conversation_id,
@@ -353,6 +366,7 @@ def create_evidence_ledger_from_plan(
         created_at=created_at,
         orchestration_mode=plan.get('mode') or 'direct',
         plan_version=plan.get('version'),
+        deliverable_intent=effective_deliverable_intent,
     )
 
     for requirement_id in _normalize_ids(plan.get('evidence_requirements')):
@@ -386,6 +400,39 @@ def create_evidence_ledger_from_plan(
         )
 
     return ledger
+
+
+def set_deliverable_intent(ledger, deliverable_intent):
+    """Persist a sanitized deliverable intent on an evidence ledger."""
+    _require_ledger(ledger)
+    if not isinstance(deliverable_intent, Mapping):
+        raise ValueError('deliverable_intent must be a mapping')
+    ledger['deliverable_intent'] = _sanitize_metadata(deliverable_intent)
+    ledger['materialized_deliverable_plan'] = {}
+    return ledger['deliverable_intent']
+
+
+def set_materialized_deliverable_plan(ledger, materialized_plan):
+    """Persist a sanitized materialized deliverable plan on an evidence ledger."""
+    _require_ledger(ledger)
+    if not isinstance(materialized_plan, Mapping):
+        raise ValueError('materialized_plan must be a mapping')
+    ledger['materialized_deliverable_plan'] = _sanitize_metadata(materialized_plan)
+    return ledger['materialized_deliverable_plan']
+
+
+def materialize_deliverable_plan_for_ledger(ledger, **kwargs):
+    """Materialize the ledger's deliverable intent against its current evidence state."""
+    _require_ledger(ledger)
+    deliverable_intent = ledger.get('deliverable_intent')
+    if not isinstance(deliverable_intent, Mapping) or not deliverable_intent:
+        raise ValueError('ledger does not contain deliverable_intent')
+    materialized_plan = materialize_deliverable_plan(
+        deliverable_intent,
+        ledger,
+        **kwargs,
+    )
+    return set_materialized_deliverable_plan(ledger, materialized_plan)
 
 
 def add_evidence_requirement(
@@ -914,6 +961,10 @@ def _model_safe_ledger(ledger):
         'task_profile': ledger.get('task_profile'),
         'orchestration_mode': ledger.get('orchestration_mode'),
         'requested_output': _sanitize_metadata(ledger.get('requested_output')),
+        'deliverable_intent': _sanitize_metadata(ledger.get('deliverable_intent')),
+        'materialized_deliverable_plan': _sanitize_metadata(
+            ledger.get('materialized_deliverable_plan')
+        ),
         'status': ledger.get('status'),
         **model_sections,
     }

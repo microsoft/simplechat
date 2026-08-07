@@ -17281,6 +17281,7 @@ def register_route_backend_chats(bp):
             turn_orchestration_plan,
             conversation_id=conversation_id,
             user_message_id=user_message_id,
+            original_request=document_action_user_message,
         )
         turn_orchestration_run = OrchestrationRun.from_plan(
             turn_orchestration_plan,
@@ -26272,6 +26273,7 @@ def register_route_backend_chats(bp):
                     turn_orchestration_plan,
                     conversation_id=conversation_id,
                     user_message_id=user_message_id,
+                    original_request=user_message,
                 )
                 turn_orchestration_run = OrchestrationRun.from_plan(
                     turn_orchestration_plan,
