@@ -1,8 +1,8 @@
 # test_tabular_row_orchestration_scale.py
 """
 Functional test for scalable per-row tabular orchestration.
-Version: 0.250.132
-Implemented in: 0.250.060; generated CSV formula safety in 0.250.065; generated file export routing in 0.250.072; source descriptor generalization in 0.250.127; unified durable run contract in 0.250.128; hierarchical analysis in 0.250.129; combined analysis and export in 0.250.130; scale validation in 0.250.132
+Version: 0.250.133
+Implemented in: 0.250.060; generated CSV formula safety in 0.250.065; generated file export routing in 0.250.072; source descriptor generalization in 0.250.127; unified durable run contract in 0.250.128; hierarchical analysis in 0.250.129; combined analysis and export in 0.250.130; scale validation in 0.250.132; direct source-backed exhaustive queueing in 0.250.133
 
 This test ensures generated exports preserve source identity and row order while
 enforcing one stable output schema across independently generated batches.
@@ -22,7 +22,7 @@ import sys
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 from collections import Counter
 from typing import Any, Dict, Optional
 
@@ -268,6 +268,33 @@ def _load_generated_output_router(route_dependencies):
     extracted_module = ast.Module(body=[*helper_nodes, function_node], type_ignores=[])
     exec(compile(extracted_module, str(CHAT_ROUTE), 'exec'), namespace)
     return namespace['maybe_create_tabular_generated_output']
+
+
+def _load_direct_source_queue_helpers(route_dependencies):
+    """Load direct source-backed queue helpers with focused dependency stubs."""
+    module_tree = ast.parse(CHAT_ROUTE.read_text(encoding='utf-8'), filename=str(CHAT_ROUTE))
+    helper_names = {
+        '_build_direct_tabular_generated_output_source',
+        'maybe_queue_direct_tabular_generated_output',
+    }
+    selected_nodes = [
+        node
+        for node in module_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name in helper_names
+    ]
+    if len(selected_nodes) != len(helper_names):
+        raise AssertionError('Missing direct source-backed queue helper implementation')
+
+    namespace = dict(route_dependencies)
+    namespace.setdefault('TABULAR_RUN_TASK_HIERARCHICAL_ANALYSIS', 'hierarchical_analysis')
+    namespace.setdefault('TABULAR_RUN_TASK_COMBINED', 'combined')
+    namespace.setdefault('json', json)
+    namespace.setdefault('math', math)
+    namespace.setdefault('inspect', SimpleNamespace(isawaitable=lambda value: False))
+    namespace.setdefault('asyncio', SimpleNamespace(run=lambda value: value))
+    extracted_module = ast.Module(body=selected_nodes, type_ignores=[])
+    exec(compile(extracted_module, str(CHAT_ROUTE), 'exec'), namespace)
+    return namespace
 
 
 def _build_query_invocation(start_row, row_count, total_matches=300, source_etag='etag-source-7'):
@@ -1297,6 +1324,134 @@ def test_filter_rows_pages_queue_combined_analysis_and_export_run():
     assert output_metadata['task_type'] == 'combined'
 
 
+def test_direct_source_backed_csv_queue_bypasses_tool_paging():
+    """Explicit exhaustive CSV prompts queue directly from one authorized source blob."""
+    original_module = sys.modules.get('semantic_kernel_plugins.tabular_processing_plugin')
+    fake_module = ModuleType('semantic_kernel_plugins.tabular_processing_plugin')
+
+    class FakePluginResult(str):
+        def __new__(cls, value, internal_metadata=None):
+            instance = super().__new__(cls, value)
+            instance.internal_metadata = internal_metadata or {}
+            return instance
+
+    class FakeTabularProcessingPlugin:
+        def _resolve_blob_location_with_fallback(self, user_id, conversation_id, filename, source, group_id=None, public_workspace_id=None):
+            assert user_id == 'user-1'
+            assert conversation_id == 'conversation-1'
+            assert filename == 'bank_treasury_operations_dataset-3000.csv'
+            assert source == 'workspace'
+            assert group_id is None
+            assert public_workspace_id is None
+            return 'user-documents', 'user-1/bank_treasury_operations_dataset-3000.csv'
+
+        def _query_csv_data_in_bounded_chunks(self, container_name, blob_path, filename, query_expression, return_columns, start_row, max_rows):
+            assert container_name == 'user-documents'
+            assert blob_path == 'user-1/bank_treasury_operations_dataset-3000.csv'
+            assert filename == 'bank_treasury_operations_dataset-3000.csv'
+            assert query_expression == 'index == index'
+            assert return_columns is None
+            assert start_row == 0
+            assert max_rows == 1
+            return FakePluginResult(
+                json.dumps({'total_matches': 3000, 'data': [{'transaction_id': 'BT-000001'}]}),
+                internal_metadata={
+                    'tabular_generated_export_source': {
+                        'version': 1,
+                        'kind': 'query_tabular_data',
+                        'source_function': 'query_tabular_data',
+                        'source': 'workspace',
+                        'scope_id': None,
+                        'container': container_name,
+                        'blob_path': blob_path,
+                        'blob_etag': 'etag-3000',
+                        'filename': filename,
+                        'query_expression': query_expression,
+                        'return_columns': return_columns,
+                        'expected_row_count': 3000,
+                    },
+                    'tabular_source_authorization': {
+                        'source': 'workspace',
+                        'scope_id': None,
+                        'container': container_name,
+                        'blob_path': blob_path,
+                        'blob_etag': 'etag-3000',
+                    },
+                },
+            )
+
+    fake_module.TabularProcessingPlugin = FakeTabularProcessingPlugin
+    sys.modules['semantic_kernel_plugins.tabular_processing_plugin'] = fake_module
+    queued_runs = []
+    thought_payloads = []
+
+    try:
+        helpers = _load_direct_source_queue_helpers({
+            '_safe_int': lambda value: int(value or 0),
+            '_get_tabular_generated_output_batch_budget': lambda settings=None: {
+                'max_rows': 60,
+                'max_chars': 60000,
+            },
+            '_get_tabular_generated_output_task_type': lambda generated, analysis, settings: 'combined' if generated and analysis else None,
+            'question_requests_tabular_generated_output': lambda question: True,
+            'question_requests_tabular_hierarchical_analysis': lambda question: True,
+            'get_tabular_generated_output_format': lambda question: 'csv',
+            'dedupe_tabular_file_contexts': lambda contexts=None: list(contexts or []),
+            'raise_if_mixed_source_cancelled': lambda *args, **kwargs: None,
+            'queue_tabular_generated_output_run': lambda **kwargs: queued_runs.append(kwargs) or {
+                'id': 'direct-run-3000',
+                'task_type': kwargs.get('task_type'),
+                'output_format': kwargs.get('output_format'),
+                'row_count': kwargs['source_descriptor']['expected_row_count'],
+                'batch_count': 50,
+            },
+            'build_background_tabular_generated_output_metadata': lambda run: {
+                'background_export': True,
+                'export_run_id': run['id'],
+                'task_type': run['task_type'],
+                'output_format': run['output_format'],
+                'row_count': run['row_count'],
+            },
+            'build_tabular_post_processing_activity_payload': lambda *args, **kwargs: {
+                'phase': kwargs.get('phase'),
+            },
+            'logging': logging,
+            'log_event': lambda *args, **kwargs: None,
+        })
+
+        output_metadata = helpers['maybe_queue_direct_tabular_generated_output'](
+            user_question='For each row, answer each question, generate a CSV, and summarize risk patterns.',
+            file_contexts=[{
+                'file_name': 'bank_treasury_operations_dataset-3000.csv',
+                'source_hint': 'workspace',
+            }],
+            user_id='user-1',
+            conversation_id='conversation-1',
+            gpt_model='test-model',
+            settings={},
+            thought_callback=lambda payload: thought_payloads.append(payload),
+            model_context={'endpoint_id': 'model-1'},
+        )
+    finally:
+        if original_module is None:
+            sys.modules.pop('semantic_kernel_plugins.tabular_processing_plugin', None)
+        else:
+            sys.modules['semantic_kernel_plugins.tabular_processing_plugin'] = original_module
+
+    assert len(queued_runs) == 1
+    queued_run = queued_runs[0]
+    assert queued_run['row_batches'] is None
+    assert queued_run['task_type'] == 'combined'
+    assert queued_run['output_format'] == 'csv'
+    assert queued_run['analysis_objective'].startswith('For each row')
+    assert queued_run['source_descriptor']['expected_row_count'] == 3000
+    assert queued_run['source_descriptor']['batch_max_rows'] == 60
+    assert output_metadata['background_export'] is True
+    assert output_metadata['task_type'] == 'combined'
+    assert thought_payloads
+    assert 'run_id=direct-run-3000' in thought_payloads[0]['detail']
+
+
 def test_hierarchical_analysis_routing_requires_feature_flag():
     """Lane C queueing stays behind the feature flag until scale hardening completes."""
     candidate_helpers = _load_candidate_helpers()
@@ -2237,6 +2392,7 @@ def main():
         test_filter_rows_pages_queue_full_3000_row_source_replay,
         test_filter_rows_pages_queue_hierarchical_analysis_run,
         test_filter_rows_pages_queue_combined_analysis_and_export_run,
+        test_direct_source_backed_csv_queue_bypasses_tool_paging,
         test_hierarchical_analysis_routing_requires_feature_flag,
         test_non_replayable_filter_rows_reports_explicit_failure,
         test_streaming_finalizer_writes_30000_rows_in_bounded_chunks,
