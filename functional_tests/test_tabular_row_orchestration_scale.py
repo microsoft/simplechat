@@ -292,6 +292,7 @@ def _load_direct_source_queue_helpers(route_dependencies):
     namespace.setdefault('math', math)
     namespace.setdefault('inspect', SimpleNamespace(isawaitable=lambda value: False))
     namespace.setdefault('asyncio', SimpleNamespace(run=lambda value: value))
+    namespace.setdefault('MixedSourceCancellationError', type('MixedSourceCancellationError', (Exception,), {}))
     extracted_module = ast.Module(body=selected_nodes, type_ignores=[])
     exec(compile(extracted_module, str(CHAT_ROUTE), 'exec'), namespace)
     return namespace
@@ -1452,6 +1453,65 @@ def test_direct_source_backed_csv_queue_bypasses_tool_paging():
     assert 'run_id=direct-run-3000' in thought_payloads[0]['detail']
 
 
+def test_direct_source_backed_queue_failure_falls_back_without_stream_abort():
+    """Direct queue failures return None so existing tabular analysis fallback can continue."""
+    original_module = sys.modules.get('semantic_kernel_plugins.tabular_processing_plugin')
+    fake_module = ModuleType('semantic_kernel_plugins.tabular_processing_plugin')
+
+    class FakeTabularProcessingPlugin:
+        def _resolve_blob_location_with_fallback(self, *args, **kwargs):
+            raise RuntimeError('simulated credential challenge')
+
+    fake_module.TabularProcessingPlugin = FakeTabularProcessingPlugin
+    sys.modules['semantic_kernel_plugins.tabular_processing_plugin'] = fake_module
+    logged_events = []
+    queued_runs = []
+
+    try:
+        helpers = _load_direct_source_queue_helpers({
+            '_safe_int': lambda value: int(value or 0),
+            '_get_tabular_generated_output_batch_budget': lambda settings=None: {
+                'max_rows': 60,
+                'max_chars': 60000,
+            },
+            '_get_tabular_generated_output_task_type': lambda generated, analysis, settings: None,
+            'question_requests_tabular_generated_output': lambda question: True,
+            'question_requests_tabular_hierarchical_analysis': lambda question: False,
+            'get_tabular_generated_output_format': lambda question: 'csv',
+            'dedupe_tabular_file_contexts': lambda contexts=None: list(contexts or []),
+            'raise_if_mixed_source_cancelled': lambda *args, **kwargs: None,
+            'queue_tabular_generated_output_run': lambda **kwargs: queued_runs.append(kwargs),
+            'build_background_tabular_generated_output_metadata': lambda run: run,
+            'build_tabular_post_processing_activity_payload': lambda *args, **kwargs: {},
+            'logging': logging,
+            'log_event': lambda *args, **kwargs: logged_events.append((args, kwargs)),
+        })
+
+        output_metadata = helpers['maybe_queue_direct_tabular_generated_output'](
+            user_question='For each row, answer each question and generate a CSV.',
+            file_contexts=[{
+                'file_name': 'interior_resource_operations_dataset-30000.csv',
+                'source_hint': 'workspace',
+            }],
+            user_id='user-1',
+            conversation_id='conversation-1',
+            gpt_model='test-model',
+            settings={},
+        )
+    finally:
+        if original_module is None:
+            sys.modules.pop('semantic_kernel_plugins.tabular_processing_plugin', None)
+        else:
+            sys.modules['semantic_kernel_plugins.tabular_processing_plugin'] = original_module
+
+    assert output_metadata is None
+    assert queued_runs == []
+    assert any(
+        args and args[0] == '[TABULAR_GENERATED_OUTPUT] Direct source-backed generated output queueing skipped'
+        for args, _kwargs in logged_events
+    )
+
+
 def test_hierarchical_analysis_routing_requires_feature_flag():
     """Lane C queueing stays behind the feature flag until scale hardening completes."""
     candidate_helpers = _load_candidate_helpers()
@@ -2393,6 +2453,7 @@ def main():
         test_filter_rows_pages_queue_hierarchical_analysis_run,
         test_filter_rows_pages_queue_combined_analysis_and_export_run,
         test_direct_source_backed_csv_queue_bypasses_tool_paging,
+        test_direct_source_backed_queue_failure_falls_back_without_stream_abort,
         test_hierarchical_analysis_routing_requires_feature_flag,
         test_non_replayable_filter_rows_reports_explicit_failure,
         test_streaming_finalizer_writes_30000_rows_in_bounded_chunks,
