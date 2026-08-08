@@ -5970,80 +5970,96 @@ def maybe_queue_direct_tabular_generated_output(
     request_correlation_id=None,
 ):
     """Queue an exhaustive CSV-backed generated-output run directly from an authorized source."""
-    direct_source = _build_direct_tabular_generated_output_source(
-        user_question,
-        file_contexts,
-        user_id,
-        conversation_id,
-        settings,
-    )
-    if not direct_source:
+    try:
+        direct_source = _build_direct_tabular_generated_output_source(
+            user_question,
+            file_contexts,
+            user_id,
+            conversation_id,
+            settings,
+        )
+        if not direct_source:
+            return None
+
+        raise_if_mixed_source_cancelled(
+            cancel_requested,
+            'export',
+            request_correlation_id=request_correlation_id,
+        )
+        background_run = queue_tabular_generated_output_run(
+            user_id=user_id,
+            conversation_id=conversation_id,
+            user_question=user_question,
+            source_candidate=direct_source['source_candidate'],
+            output_format=direct_source['output_format'],
+            row_batches=None,
+            gpt_model=gpt_model,
+            settings=settings,
+            model_context=model_context,
+            source_descriptor=direct_source['source_descriptor'],
+            task_type=direct_source.get('task_type') or None,
+            analysis_objective=direct_source.get('analysis_objective'),
+        )
+        background_metadata = build_background_tabular_generated_output_metadata(background_run)
+        if callable(thought_callback):
+            output_label = str(direct_source['output_format'] or 'json').upper()
+            if direct_source.get('combined_requested'):
+                title = 'Queued exhaustive tabular analysis and export from the selected CSV source'
+            elif direct_source.get('analysis_only_requested'):
+                title = 'Queued exhaustive tabular analysis from the selected CSV source'
+            else:
+                title = f'Queued exhaustive {output_label} export from the selected CSV source'
+            thought_payload = {
+                'step_type': 'tabular_analysis',
+                'content': title,
+                'detail': (
+                    f"run_id={background_metadata.get('export_run_id')}; "
+                    f"rows={direct_source['row_count']}; batches~={direct_source['batch_count_estimate']}; checkpointed=true"
+                ),
+                'activity': build_tabular_post_processing_activity_payload(
+                    'tabular.generated_output',
+                    title,
+                    'running',
+                    phase='queued',
+                    output_format=direct_source['output_format'],
+                    file_name=direct_source['source_candidate'].get('filename'),
+                    batch_index=0,
+                    batch_count=direct_source['batch_count_estimate'],
+                ),
+            }
+            maybe_callback_result = thought_callback(thought_payload)
+            if inspect.isawaitable(maybe_callback_result):
+                asyncio.run(maybe_callback_result)
+
+        log_event(
+            '[TABULAR_GENERATED_OUTPUT] Queued direct source-backed generated output run',
+            {
+                'conversation_id': conversation_id,
+                'source_file_name': direct_source['source_candidate'].get('filename'),
+                'row_count': direct_source['row_count'],
+                'batch_count_estimate': direct_source['batch_count_estimate'],
+                'task_type': direct_source.get('task_type') or 'structured_export',
+                'output_format': direct_source['output_format'],
+                'export_run_id': background_metadata.get('export_run_id'),
+            },
+            level=logging.INFO,
+        )
+        return background_metadata
+    except MixedSourceCancellationError:
+        raise
+    except Exception as exc:
+        log_event(
+            '[TABULAR_GENERATED_OUTPUT] Direct source-backed generated output queueing skipped',
+            {
+                'conversation_id': conversation_id,
+                'file_count': len(file_contexts or []),
+                'error_type': exc.__class__.__name__,
+                'error': str(exc)[:500],
+            },
+            level=logging.WARNING,
+            exceptionTraceback=True,
+        )
         return None
-
-    raise_if_mixed_source_cancelled(
-        cancel_requested,
-        'export',
-        request_correlation_id=request_correlation_id,
-    )
-    background_run = queue_tabular_generated_output_run(
-        user_id=user_id,
-        conversation_id=conversation_id,
-        user_question=user_question,
-        source_candidate=direct_source['source_candidate'],
-        output_format=direct_source['output_format'],
-        row_batches=None,
-        gpt_model=gpt_model,
-        settings=settings,
-        model_context=model_context,
-        source_descriptor=direct_source['source_descriptor'],
-        task_type=direct_source.get('task_type') or None,
-        analysis_objective=direct_source.get('analysis_objective'),
-    )
-    background_metadata = build_background_tabular_generated_output_metadata(background_run)
-    if callable(thought_callback):
-        output_label = str(direct_source['output_format'] or 'json').upper()
-        if direct_source.get('combined_requested'):
-            title = 'Queued exhaustive tabular analysis and export from the selected CSV source'
-        elif direct_source.get('analysis_only_requested'):
-            title = 'Queued exhaustive tabular analysis from the selected CSV source'
-        else:
-            title = f'Queued exhaustive {output_label} export from the selected CSV source'
-        thought_payload = {
-            'step_type': 'tabular_analysis',
-            'content': title,
-            'detail': (
-                f"run_id={background_metadata.get('export_run_id')}; "
-                f"rows={direct_source['row_count']}; batches~={direct_source['batch_count_estimate']}; checkpointed=true"
-            ),
-            'activity': build_tabular_post_processing_activity_payload(
-                'tabular.generated_output',
-                title,
-                'running',
-                phase='queued',
-                output_format=direct_source['output_format'],
-                file_name=direct_source['source_candidate'].get('filename'),
-                batch_index=0,
-                batch_count=direct_source['batch_count_estimate'],
-            ),
-        }
-        maybe_callback_result = thought_callback(thought_payload)
-        if inspect.isawaitable(maybe_callback_result):
-            asyncio.run(maybe_callback_result)
-
-    log_event(
-        '[TABULAR_GENERATED_OUTPUT] Queued direct source-backed generated output run',
-        {
-            'conversation_id': conversation_id,
-            'source_file_name': direct_source['source_candidate'].get('filename'),
-            'row_count': direct_source['row_count'],
-            'batch_count_estimate': direct_source['batch_count_estimate'],
-            'task_type': direct_source.get('task_type') or 'structured_export',
-            'output_format': direct_source['output_format'],
-            'export_run_id': background_metadata.get('export_run_id'),
-        },
-        level=logging.INFO,
-    )
-    return background_metadata
 
 
 def _build_tabular_generated_output_source_authorization(source_candidate):
@@ -16197,7 +16213,6 @@ def register_route_backend_chats(bp):
                         debug_print(f"Error retrieving group details: {e}")
                         if 'workspace_search' in user_metadata:
                             user_metadata['workspace_search']['group_name'] = None
-                        import traceback
                         traceback.print_exc()
 
                 if effective_document_scope == 'public' and effective_active_public_workspace_id:
@@ -17199,7 +17214,6 @@ def register_route_backend_chats(bp):
                     except Exception as e:
                         debug_print(f"Error retrieving group name for chat context: {e}")
                         user_metadata['chat_context']['group_name'] = None
-                        import traceback
                         traceback.print_exc()
             elif message_chat_type == 'public':
                 # For public chat, add workspace information if available from document selection
@@ -19669,7 +19683,6 @@ def register_route_backend_chats(bp):
                         debug_print(f"[DEBUG] user_enable_agents={user_enable_agents}")
                     except Exception as e:
                         debug_print(f"Error loading user settings: {e}")
-                        import traceback
                         traceback.print_exc()
 
                 # Streaming does not support image generation
@@ -20421,7 +20434,6 @@ def register_route_backend_chats(bp):
                             except Exception as e:
                                 debug_print(f"Error retrieving group details: {e}")
                                 user_metadata['workspace_search']['group_name'] = None
-                                import traceback
                                 traceback.print_exc()
 
                         if effective_document_scope == 'public' and effective_active_public_workspace_id:
@@ -22465,7 +22477,6 @@ def register_route_backend_chats(bp):
                                             continue
                                     raise
                         except Exception as stream_error:
-                            import traceback
                             plugin_logger_cb.deregister_callbacks(callback_key)
                             debug_print(
                                 f"[STREAMING][Plugin Callback] Deregistered callback after streaming error for key={callback_key}"
