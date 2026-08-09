@@ -2,7 +2,7 @@
 
 Implemented in version: **0.241.046**
 
-Updated through version: **0.241.064**
+Updated through version: **0.250.136**
 
 ## Overview
 
@@ -25,7 +25,7 @@ The feature supports large spreadsheet-driven analysis, including workbooks that
 
 - Chat and workflow tabular generated-output requests continue to use the existing inline path for smaller exports.
 - Oversized structured exports are queued with `queue_tabular_generated_output_run(...)`.
-- Input row batches are staged as a single blob-backed JSON payload.
+- Version-pinned CSV sources are replayed into bounded per-batch input checkpoints without model pagination.
 - Each completed model batch is checkpointed as an output blob.
 - Cosmos stores compact run metadata, progress counts, retry state, and final artifact metadata.
 - The background scheduler claims queued runs with optimistic status updates and resumes from checkpointed output batches.
@@ -45,8 +45,13 @@ The feature supports large spreadsheet-driven analysis, including workbooks that
 - `tabular_generated_output_max_batch_rows`
 - `tabular_generated_output_max_batch_chars`
 - `tabular_generated_output_batch_concurrency`
+- `tabular_generated_output_input_token_ratio`
+- `tabular_generated_output_large_context_input_token_ratio`
+- `tabular_generated_output_input_token_soft_cap`
+- `tabular_generated_output_output_token_ratio`
+- `tabular_generated_output_output_expansion_ratio`
 
-If settings are absent, conservative defaults are used.
+If a fixed concurrency is not configured, runs use up to 4, 16, 64, or 128 concurrent model calls according to the actual staged batch count. Model-aware source batching uses selected-model metadata, local `model_capabilities.json` token-limit fields when present, and bounded fallback limits otherwise.
 
 ### File Structure
 
@@ -62,11 +67,12 @@ Users continue requesting tabular structured output in chat or workflows. For sm
 
 When a workflow/document analysis request also creates a full generated tabular export, the generated export is presented as the primary deliverable. The analysis layer may still attach a supporting CSV preview, but redundant analysis JSON and Markdown artifacts are suppressed so they do not compete with the full generated export card.
 
-The progress card displays current status, completed checkpoint counts, processed row counts, estimated remaining time, scheduled retry time, retry-due state, transient retry count, manual continuation count, last update time, and heartbeat time when available.
+The progress card displays current status, completed checkpoint counts, processed row counts, wall-clock rows per minute, model concurrency, estimated remaining time, scheduled retry time, retry-due state, transient retry count, manual continuation count, last update time, and heartbeat time when available.
 
 ## Testing and Validation
 
 - Functional regression: `functional_tests/test_tabular_background_generated_exports.py`
+- Scale and performance regression: `functional_tests/test_tabular_row_orchestration_scale.py`
 - Functional regression for workflow/document-action presentation: `functional_tests/test_document_analysis_lossless_artifacts.py`
 - UI regression: `ui_tests/test_chat_background_generated_export_status.py`
 - Compile validation covers the modified Python modules.
@@ -75,7 +81,10 @@ The progress card displays current status, completed checkpoint counts, processe
 
 - The request only stages durable input and queues work for oversized exports.
 - Phase 3 batch packing compacts generated-export prompt payloads, removes internal tabular helper fields from staged model input, avoids duplicating row-linked document excerpts as synthetic attachment text, and packs rows by configurable row and character budgets.
-- Phase 4 bounded concurrency lets the background worker generate a small configurable window of model batches in parallel while checkpointing successful batches and advancing public progress only in contiguous batch order.
+- Model-aware packing targets 50% of ordinary model input capacity and 60% of output capacity. Context windows above 500,000 tokens use a lower 30% input ratio and a default 180,000-token soft input cap.
+- Adaptive concurrency uses up to 4 calls for small runs, 16 for medium runs, 64 for large runs, and 128 for runs with at least 256 staged batches. An explicit administrator setting overrides the adaptive tier.
+- Each parallel window checkpoints successful output batches before advancing public progress in contiguous order.
+- Progress is persisted once per completed parallel window. ETA uses recent wall-clock rows per minute rather than summing concurrent model-call durations as serial work.
 - Background processing writes each completed batch before moving on, allowing the run to resume after worker restarts.
 - The run status API returns compact metadata only, not source rows or generated batch content.
 - User-facing status details are derived from run metadata instead of displaying raw backend errors in the progress card.
@@ -83,6 +92,8 @@ The progress card displays current status, completed checkpoint counts, processe
 ## Known Limitations
 
 - Background runs still depend on configured background scheduler capacity and available Azure OpenAI throughput.
+- One durable run is still claimed by one application worker; App Service scale-out does not shard a single run across workers.
+- Completion time remains proportional to LLM-generated output volume and model generation speed. Higher batching and concurrency improve throughput but do not guarantee a fixed completion time.
 - Completion appears through status polling or on the next chat reload; no push notification is added in this version.
 - Manual continuation applies to retryable failures, stale running leases, queued retries whose retry time has passed, and stale queued runs; hard validation failures remain terminal.
 
@@ -92,3 +103,4 @@ The progress card displays current status, completed checkpoint counts, processe
 - `application/single_app/config.py` was updated to version **0.241.059** for Phase 3 compact batch packing.
 - `application/single_app/config.py` was updated to version **0.241.060** for Phase 4 bounded batch concurrency.
 - `application/single_app/config.py` was updated to version **0.241.064** for generated export artifact presentation cleanup.
+- `application/single_app/config.py` was updated to version **0.250.136** for model-aware batch sizing, adaptive LLM concurrency, and parallel wall-clock ETA.

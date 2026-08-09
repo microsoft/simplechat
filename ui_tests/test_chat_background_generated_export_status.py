@@ -1,8 +1,8 @@
 # test_chat_background_generated_export_status.py
 """
 UI test for chat background generated export status cards.
-Version: 0.250.131
-Implemented in: 0.241.046; cancellation in 0.250.060; automatic-only refresh in 0.250.061; combined progress and large-run confirmation in 0.250.131
+Version: 0.250.136
+Implemented in: 0.241.046; cancellation in 0.250.060; automatic-only refresh in 0.250.061; combined progress and large-run confirmation in 0.250.131; throughput and concurrency status in 0.250.136
 
 This test ensures queued tabular generated exports render progress in chat and
 turn into a downloadable artifact when complete or a visible canceled state.
@@ -280,6 +280,9 @@ def test_chat_combined_background_status_shows_reduce_progress(playwright) -> No
                         "failed_chunk_count": 0,
                         "progress_percent": 80,
                         "estimated_remaining_seconds": 120,
+                        "rows_per_minute": 1200.5,
+                        "batch_concurrency": 16,
+                        "effective_batch_concurrency": 16,
                         "background_export": True,
                     },
                 },
@@ -326,6 +329,9 @@ def test_chat_combined_background_status_shows_reduce_progress(playwright) -> No
                                     processed_chunk_count: 48,
                                     progress_percent: 80,
                                     estimated_remaining_seconds: 120,
+                                    rows_per_minute: 1200.5,
+                                    batch_concurrency: 16,
+                                    effective_batch_concurrency: 16,
                                     file_name: 'combined-output.csv',
                                     output_format: 'csv',
                                     source_file_name: 'large-source.csv'
@@ -346,6 +352,8 @@ def test_chat_combined_background_status_shows_reduce_progress(playwright) -> No
         expect(message.get_by_text("Remaining batches: 12")).to_be_visible()
         expect(message.get_by_text("Remaining chunks: 12")).to_be_visible()
         expect(message.get_by_text("Estimated remaining: 2m")).to_be_visible()
+        expect(message.get_by_text("Throughput: 1,200.5 rows/min")).to_be_visible()
+        expect(message.get_by_text("Model concurrency: 16")).to_be_visible()
         assert page_errors == []
     finally:
         context.close()

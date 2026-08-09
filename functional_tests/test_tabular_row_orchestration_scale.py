@@ -1,8 +1,8 @@
 # test_tabular_row_orchestration_scale.py
 """
 Functional test for scalable per-row tabular orchestration.
-Version: 0.250.135
-Implemented in: 0.250.060; generated CSV formula safety in 0.250.065; generated file export routing in 0.250.072; source descriptor generalization in 0.250.127; unified durable run contract in 0.250.128; hierarchical analysis in 0.250.129; combined analysis and export in 0.250.130; scale validation in 0.250.132; direct source-backed exhaustive queueing in 0.250.133; direct queue call-site hardening in 0.250.134; model-validation auto retry in 0.250.135
+Version: 0.250.136
+Implemented in: 0.250.060; generated CSV formula safety in 0.250.065; generated file export routing in 0.250.072; source descriptor generalization in 0.250.127; unified durable run contract in 0.250.128; hierarchical analysis in 0.250.129; combined analysis and export in 0.250.130; scale validation in 0.250.132; direct source-backed exhaustive queueing in 0.250.133; direct queue call-site hardening in 0.250.134; model-validation auto retry in 0.250.135; model-aware parallel throughput in 0.250.136
 
 This test ensures generated exports preserve source identity and row order while
 enforcing one stable output schema across independently generated batches.
@@ -156,6 +156,25 @@ ANALYSIS_CONSTANTS = {
     'TABULAR_ANALYSIS_SUMMARY_MAX_CHARS',
     'TABULAR_ANALYSIS_MAX_FINDINGS',
     'TABULAR_ANALYSIS_MAX_NOTABLE_ROWS',
+}
+PERFORMANCE_FUNCTIONS = {
+    '_safe_int',
+    '_safe_float',
+    '_settings_int',
+    '_settings_float',
+    '_resolve_tabular_batch_concurrency',
+    '_normalize_tabular_run_task_type',
+    '_resolve_tabular_chunk_model_selection',
+    '_normalize_tabular_model_identifier',
+    '_get_tabular_model_record_identifiers',
+    '_read_tabular_model_token_limit',
+    '_iter_configured_tabular_model_records',
+    '_load_tabular_model_limit_catalog',
+    '_resolve_tabular_model_token_limits',
+    '_build_model_aware_source_batch_budget',
+    '_is_schema_discovery_progress_window',
+    '_calculate_window_throughput',
+    '_advance_run_progress_for_window',
 }
 
 
@@ -962,6 +981,185 @@ def _load_scheduler_query_helper(runs):
     extracted_module = ast.Module(body=selected_nodes, type_ignores=[])
     exec(compile(extracted_module, str(EXPORT_MODULE), 'exec'), namespace)
     return namespace['_query_scheduler_candidates_by_status'], run_container
+
+
+def _load_performance_helpers(progress_updates=None):
+    module_tree = ast.parse(EXPORT_MODULE.read_text(encoding='utf-8'), filename=str(EXPORT_MODULE))
+    selected_nodes = []
+    found_functions = set()
+    for node in module_tree.body:
+        if isinstance(node, ast.FunctionDef) and node.name in PERFORMANCE_FUNCTIONS:
+            selected_nodes.append(node)
+            found_functions.add(node.name)
+        elif isinstance(node, ast.Assign):
+            assigned_names = {
+                target.id
+                for target in node.targets
+                if isinstance(target, ast.Name)
+            }
+            if any(
+                name.startswith('TABULAR_EXPORT_') or name.startswith('TABULAR_RUN_TASK_')
+                for name in assigned_names
+            ):
+                selected_nodes.append(node)
+
+    missing_functions = PERFORMANCE_FUNCTIONS - found_functions
+    if missing_functions:
+        raise AssertionError(f'Missing performance helper functions: {sorted(missing_functions)}')
+
+    namespace = {
+        '__file__': str(EXPORT_MODULE),
+        'json': json,
+        'math': math,
+        'os': os,
+        're': re,
+    }
+    extracted_module = ast.Module(body=selected_nodes, type_ignores=[])
+    exec(compile(extracted_module, str(EXPORT_MODULE), 'exec'), namespace)
+
+    progress_updates = progress_updates if progress_updates is not None else []
+
+    def update_progress(
+        run,
+        completed_batches,
+        processed_rows,
+        window_rows,
+        window_elapsed_seconds,
+        window_batch_count,
+        mismatch_count=0,
+    ):
+        progress_updates.append({
+            'completed_batches': completed_batches,
+            'processed_rows': processed_rows,
+            'window_rows': window_rows,
+            'window_elapsed_seconds': window_elapsed_seconds,
+            'window_batch_count': window_batch_count,
+            'mismatch_count': mismatch_count,
+        })
+        return run
+
+    namespace['_update_run_progress'] = update_progress
+    return namespace
+
+
+def test_model_aware_batch_budget_uses_safe_token_limits():
+    """Batch planning uses output limits and caps very large input contexts."""
+    helpers = _load_performance_helpers()
+    build_budget = helpers['_build_model_aware_source_batch_budget']
+
+    fallback_budget = build_budget(
+        'unlisted-model',
+        {},
+        model_context={'model_id': 'unlisted-model'},
+    )
+    assert fallback_budget['limit_source'] == 'fallback'
+    assert fallback_budget['max_chars'] == 104856
+    assert fallback_budget['max_rows'] == 88
+
+    catalog_records = [{
+        'id': 'large-context-model',
+        'tokenLimits': {
+            'inputTokenLimit': 1000000,
+            'outputTokenLimit': 200000,
+        },
+    }]
+    structured_budget = build_budget(
+        'large-context-model',
+        {},
+        model_context={'model_id': 'large-context-model'},
+        catalog_records=catalog_records,
+    )
+    assert structured_budget['limit_source'] == 'catalog'
+    assert structured_budget['context_token_limit'] == 1000000
+    assert structured_budget['output_token_limit'] == 200000
+    assert structured_budget['input_token_budget'] == 175904
+    assert structured_budget['output_token_budget'] == 120000
+    assert structured_budget['max_chars'] == 320000
+    assert structured_budget['max_rows'] == 267
+
+    analysis_budget = build_budget(
+        'large-context-model',
+        {},
+        model_context={'model_id': 'large-context-model'},
+        task_type='hierarchical_analysis',
+        catalog_records=catalog_records,
+    )
+    assert analysis_budget['max_chars'] == 703616
+    assert analysis_budget['max_rows'] == 500
+
+    custom_deployment_budget = build_budget(
+        'prod-west-chat',
+        {
+            'gpt_model': {
+                'selected': [{
+                    'deploymentName': 'prod-west-chat',
+                    'modelName': 'large-context-model',
+                }],
+            },
+        },
+        catalog_records=catalog_records,
+    )
+    assert custom_deployment_budget['limit_source'] == 'catalog'
+    assert custom_deployment_budget['context_token_limit'] == 1000000
+    assert custom_deployment_budget['output_token_limit'] == 200000
+
+
+def test_dynamic_concurrency_and_parallel_window_eta():
+    """Large runs use 16 calls and ETA measures rows per parallel wall-clock window."""
+    progress_updates = []
+    helpers = _load_performance_helpers(progress_updates)
+    resolve_concurrency = helpers['_resolve_tabular_batch_concurrency']
+    assert resolve_concurrency({}, 1) == 1
+    assert resolve_concurrency({}, 10) == 4
+    assert resolve_concurrency({}, 100) == 16
+    assert resolve_concurrency({}, 128) == 64
+    assert resolve_concurrency({}, 256) == 128
+    assert resolve_concurrency({'tabular_generated_output_batch_concurrency': 96}, 1000) == 96
+    is_schema_window = helpers['_is_schema_discovery_progress_window']
+    assert is_schema_window({'batch_count': 909, 'batch_concurrency': 128}, 1, 1) is True
+    assert is_schema_window({'batch_count': 909, 'batch_concurrency': 128}, 129, 128) is False
+    assert is_schema_window({'batch_count': 1, 'batch_concurrency': 1}, 1, 1) is False
+
+    throughput = helpers['_calculate_window_throughput'](
+        {'row_count': 30000},
+        processed_rows=528,
+        window_rows=528,
+        window_elapsed_seconds=155,
+        completed_at=datetime(2026, 8, 9, tzinfo=timezone.utc),
+    )
+    assert math.isclose(throughput['rows_per_minute'], 204.39, abs_tol=0.01)
+    assert throughput['estimated_total_seconds'] == 8806.8
+    assert throughput['estimated_remaining_seconds'] == 8651.8
+
+    run = {'retry_count': 0}
+    updated_run, completed_batches, processed_rows = helpers['_advance_run_progress_for_window'](
+        run,
+        {
+            1: {'batch_row_count': 33, 'elapsed_seconds': 150, 'mismatch_count': 0},
+            2: {'batch_row_count': 33, 'elapsed_seconds': 149, 'mismatch_count': 2},
+            3: {
+                'batch_row_count': 33,
+                'elapsed_seconds': 0.01,
+                'mismatch_count': 0,
+                'from_checkpoint': True,
+            },
+        },
+        completed_batches=0,
+        processed_rows=0,
+        window_start=1,
+        window_end=3,
+    )
+    assert updated_run['retry_count'] == 1
+    assert completed_batches == 3
+    assert processed_rows == 99
+    assert progress_updates == [{
+        'completed_batches': 3,
+        'processed_rows': 99,
+        'window_rows': 99,
+        'window_elapsed_seconds': 150.0,
+        'window_batch_count': 3,
+        'mismatch_count': 2,
+    }]
 
 
 def test_source_identity_and_order_contract():
@@ -2593,6 +2791,8 @@ def test_route_queues_replayable_pages_and_suppresses_summary_fallback():
 def main():
     """Run focused row-orchestration contract checks."""
     tests = [
+        test_model_aware_batch_budget_uses_safe_token_limits,
+        test_dynamic_concurrency_and_parallel_window_eta,
         test_source_identity_and_order_contract,
         test_generated_batch_schema_contract,
         test_durable_runner_enforces_row_contract,
