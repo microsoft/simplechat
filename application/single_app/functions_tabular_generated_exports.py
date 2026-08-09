@@ -77,6 +77,7 @@ TABULAR_EXPORT_TERMINAL_STATUSES = {
 TABULAR_EXPORT_DEFAULT_INLINE_MAX_BATCHES = 75
 TABULAR_EXPORT_DEFAULT_INLINE_MAX_ROWS = 500
 TABULAR_EXPORT_DEFAULT_BATCH_RETRY_ATTEMPTS = 2
+TABULAR_EXPORT_DEFAULT_MODEL_VALIDATION_AUTO_RETRIES = 3
 TABULAR_EXPORT_DEFAULT_LEASE_SECONDS = 300
 TABULAR_EXPORT_DEFAULT_STALE_SECONDS = 420
 TABULAR_EXPORT_DEFAULT_SCAN_LIMIT = 5
@@ -131,6 +132,19 @@ TABULAR_EXPORT_RETRYABLE_MESSAGE_MARKERS = (
     'timeout',
     'worker exiting',
     'worker restart',
+)
+TABULAR_EXPORT_MODEL_VALIDATION_RETRYABLE_MESSAGE_MARKERS = (
+    'failed validation',
+    'schema mismatch',
+    'schema drift',
+    'source row token mismatch',
+    'did not return the required',
+    'returned no content after tool errors',
+    'returned no content after workbook tool errors',
+    'returned no content',
+    'response did not contain valid structured_rows',
+    'was not a valid compact json analysis summary',
+    'was not a valid json object',
 )
 TABULAR_EXPORT_INPUT_ROW_NUMBER_FIELD = '__simplechat_source_row_number'
 TABULAR_EXPORT_INPUT_ROW_IDENTITY_FIELD = '__simplechat_source_row_identity'
@@ -242,6 +256,14 @@ def _is_retryable_export_error_message(error_message):
     return any(marker in normalized_message for marker in TABULAR_EXPORT_RETRYABLE_MESSAGE_MARKERS)
 
 
+def _is_retryable_model_validation_error_message(error_message):
+    normalized_message = str(error_message or '').lower()
+    return any(
+        marker in normalized_message
+        for marker in TABULAR_EXPORT_MODEL_VALIDATION_RETRYABLE_MESSAGE_MARKERS
+    )
+
+
 def _is_retryable_export_error(exc):
     status_code = _exception_status_code(exc)
     if status_code in TABULAR_EXPORT_RETRYABLE_STATUS_CODES:
@@ -254,6 +276,13 @@ def _is_retryable_export_error(exc):
         if _is_retryable_export_error_message(candidate):
             return True
     return _is_retryable_export_error_message(exc)
+
+
+def _is_retryable_model_validation_error(exc):
+    for candidate in _iter_exception_chain(exc):
+        if _is_retryable_model_validation_error_message(candidate):
+            return True
+    return _is_retryable_model_validation_error_message(exc)
 
 
 def _sanitize_file_base_name(file_name):
@@ -2278,7 +2307,27 @@ def _is_stale_queued_run(run, settings):
 
 def _is_retryable_failed_run(run):
     status = str((run or {}).get('status') or '').strip().lower()
-    return status == TABULAR_EXPORT_STATUS_FAILED and _is_retryable_export_error_message((run or {}).get('last_error'))
+    last_error = (run or {}).get('last_error')
+    return status == TABULAR_EXPORT_STATUS_FAILED and (
+        _is_retryable_export_error_message(last_error)
+        or _is_retryable_model_validation_error_message(last_error)
+    )
+
+
+def _is_auto_retry_exhausted(run):
+    return bool((run or {}).get('auto_retry_exhausted'))
+
+
+def _can_auto_retry_failed_run(run, settings=None):
+    if not _is_retryable_failed_run(run) or _is_auto_retry_exhausted(run):
+        return False
+    return _safe_int((run or {}).get('transient_failure_count')) < _settings_int(
+        settings or {},
+        'tabular_generated_output_max_transient_failures',
+        TABULAR_EXPORT_DEFAULT_MAX_TRANSIENT_FAILURES,
+        minimum=1,
+        maximum=100,
+    )
 
 
 def _scheduler_candidate_reason(run, settings):
@@ -2294,7 +2343,7 @@ def _scheduler_candidate_reason(run, settings):
             return 'running heartbeat is stale'
         return None
     if status == TABULAR_EXPORT_STATUS_FAILED:
-        if _is_retryable_failed_run(run):
+        if _can_auto_retry_failed_run(run, settings or {}):
             return 'failed run has retryable error'
         return None
     return None
@@ -2314,7 +2363,7 @@ def _query_scheduler_candidates_by_status(status, scan_limit, settings):
     query = (
         "SELECT "
         "c.id, c.user_id, c.status, c.created_at, c.updated_at, c.last_heartbeat_at, "
-        "c.next_attempt_at, c.last_error, c.transient_failure_count "
+        "c.next_attempt_at, c.last_error, c.transient_failure_count, c.auto_retry_exhausted "
         "FROM c WHERE c.type = @type AND c.status = @status "
         "ORDER BY c.updated_at ASC"
     )
@@ -2660,6 +2709,8 @@ def _build_run_public_status(run, settings=None):
         'mismatch_count': _safe_int(run.get('mismatch_count')),
         'retry_count': _safe_int(run.get('retry_count')),
         'transient_failure_count': _safe_int(run.get('transient_failure_count')),
+        'auto_retry_exhausted': bool(run.get('auto_retry_exhausted')),
+        'last_retry_category': run.get('last_retry_category'),
         'manual_resume_count': _safe_int(run.get('manual_resume_count')),
         'next_attempt_at': run.get('next_attempt_at'),
         'can_resume': can_resume,
@@ -2802,6 +2853,8 @@ def resume_tabular_generated_output_run(user_id, run_id):
         'next_attempt_at': now,
         'last_message': 'Manual resume queued; export will continue from completed checkpoints',
         'transient_failure_count': 0,
+        'auto_retry_exhausted': False,
+        'last_retry_category': 'manual_resume',
         'manual_resume_count': _safe_int(run.get('manual_resume_count')) + 1,
         'last_manual_resume_at': now,
     })
@@ -3002,17 +3055,7 @@ def _try_claim_run(user_id, run_id, settings):
 
     status = str(run.get('status') or '').strip().lower()
     if status in TABULAR_EXPORT_TERMINAL_STATUSES:
-        retryable_failed_run = (
-            status == TABULAR_EXPORT_STATUS_FAILED
-            and _is_retryable_export_error_message(run.get('last_error'))
-            and _safe_int(run.get('transient_failure_count')) < _settings_int(
-                settings,
-                'tabular_generated_output_max_transient_failures',
-                TABULAR_EXPORT_DEFAULT_MAX_TRANSIENT_FAILURES,
-                minimum=1,
-                maximum=100,
-            )
-        )
+        retryable_failed_run = status == TABULAR_EXPORT_STATUS_FAILED and _can_auto_retry_failed_run(run, settings)
         if not retryable_failed_run:
             return None
     if status == TABULAR_EXPORT_STATUS_RUNNING and not _is_stale_running_run(run, settings):
@@ -3083,19 +3126,40 @@ def _mark_run_failed(run, error_message):
     return run
 
 
-def _mark_run_retryable(run, error_message, settings):
-    transient_failure_count = _safe_int(run.get('transient_failure_count')) + 1
-    max_transient_failures = _settings_int(
+def _get_auto_retry_limit_for_category(settings, retry_category):
+    if retry_category == 'model_validation':
+        return _settings_int(
+            settings,
+            'tabular_generated_output_model_validation_auto_retries',
+            TABULAR_EXPORT_DEFAULT_MODEL_VALIDATION_AUTO_RETRIES,
+            minimum=0,
+            maximum=10,
+        )
+    return _settings_int(
         settings,
         'tabular_generated_output_max_transient_failures',
         TABULAR_EXPORT_DEFAULT_MAX_TRANSIENT_FAILURES,
         minimum=1,
         maximum=100,
     )
-    if transient_failure_count > max_transient_failures:
+
+
+def _mark_run_retryable(run, error_message, settings, retry_category='transient'):
+    normalized_retry_category = str(retry_category or 'transient').strip().lower() or 'transient'
+    transient_failure_count = _safe_int(run.get('transient_failure_count')) + 1
+    max_auto_retries = _get_auto_retry_limit_for_category(settings, normalized_retry_category)
+    if transient_failure_count > max_auto_retries:
+        exhausted_message = (
+            'Max automatic model-output retry attempts exceeded; last error: '
+            if normalized_retry_category == 'model_validation'
+            else 'Max transient retry attempts exceeded; last error: '
+        )
+        run['auto_retry_exhausted'] = True
+        run['last_retry_category'] = normalized_retry_category
+        run['last_auto_retry_exhausted_at'] = _now_iso()
         return _mark_run_failed(
             run,
-            f'Max transient retry attempts exceeded; last error: {error_message}',
+            f'{exhausted_message}{error_message}',
         )
 
     now = _now_utc()
@@ -3109,8 +3173,14 @@ def _mark_run_retryable(run, error_message, settings):
         'lease_holder_id': None,
         'lease_expires_at': None,
         'last_error': str(error_message or 'Transient background export error')[:1000],
-        'last_message': 'Background structured export will resume after a transient connection error',
+        'last_message': (
+            'Background structured export will retry after model-output validation failed'
+            if normalized_retry_category == 'model_validation'
+            else 'Background structured export will resume after a transient connection error'
+        ),
         'transient_failure_count': transient_failure_count,
+        'last_retry_category': normalized_retry_category,
+        'auto_retry_exhausted': False,
         'next_attempt_at': next_attempt_at,
     })
     try:
@@ -3128,7 +3198,8 @@ def _mark_run_retryable(run, error_message, settings):
             'processed_rows': run.get('processed_rows'),
             'row_count': run.get('row_count'),
             'transient_failure_count': transient_failure_count,
-            'max_transient_failures': max_transient_failures,
+            'max_transient_failures': max_auto_retries,
+            'retry_category': normalized_retry_category,
             'next_attempt_at': next_attempt_at,
             'error': str(error_message or '')[:1000],
         },
@@ -4581,7 +4652,9 @@ def process_tabular_generated_output_run(run_id, user_id):
         return _read_run(normalized_user_id, normalized_run_id)
     except Exception as exc:
         if _is_retryable_export_error(exc):
-            return _mark_run_retryable(run, exc, settings)
+            return _mark_run_retryable(run, exc, settings, retry_category='transient')
+        if _is_retryable_model_validation_error(exc):
+            return _mark_run_retryable(run, exc, settings, retry_category='model_validation')
         return _mark_run_failed(run, exc)
 
 

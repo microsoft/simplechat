@@ -1003,6 +1003,7 @@ def get_settings(use_cosmos=False, include_source=False):
         'tabular_durable_run_confirmation_threshold_batches': 75,
         'tabular_generated_output_chunk_model_mode': 'current',
         'tabular_generated_output_chunk_model_deployment': '',
+        'tabular_generated_output_model_validation_auto_retries': 3,
         'enable_multi_agent_orchestration': False,
         'enable_mixed_source_development_telemetry': False,
         'enable_mixed_source_manifest': False,

@@ -1,8 +1,8 @@
 # test_tabular_row_orchestration_scale.py
 """
 Functional test for scalable per-row tabular orchestration.
-Version: 0.250.134
-Implemented in: 0.250.060; generated CSV formula safety in 0.250.065; generated file export routing in 0.250.072; source descriptor generalization in 0.250.127; unified durable run contract in 0.250.128; hierarchical analysis in 0.250.129; combined analysis and export in 0.250.130; scale validation in 0.250.132; direct source-backed exhaustive queueing in 0.250.133; direct queue call-site hardening in 0.250.134
+Version: 0.250.135
+Implemented in: 0.250.060; generated CSV formula safety in 0.250.065; generated file export routing in 0.250.072; source descriptor generalization in 0.250.127; unified durable run contract in 0.250.128; hierarchical analysis in 0.250.129; combined analysis and export in 0.250.130; scale validation in 0.250.132; direct source-backed exhaustive queueing in 0.250.133; direct queue call-site hardening in 0.250.134; model-validation auto retry in 0.250.135
 
 This test ensures generated exports preserve source identity and row order while
 enforcing one stable output schema across independently generated batches.
@@ -20,7 +20,7 @@ import os
 import re
 import sys
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from collections import Counter
@@ -86,6 +86,26 @@ SUMMARY_FUNCTIONS = {
 FENCING_FUNCTIONS = {
     '_raise_if_tabular_export_canceled',
     '_replace_claimed_run',
+}
+RETRY_FUNCTIONS = {
+    '_safe_int',
+    '_settings_int',
+    '_is_retryable_export_error_message',
+    '_is_retryable_model_validation_error_message',
+    '_is_retryable_failed_run',
+    '_is_auto_retry_exhausted',
+    '_can_auto_retry_failed_run',
+    '_mark_run_failed',
+    '_get_auto_retry_limit_for_category',
+    '_mark_run_retryable',
+}
+RETRY_CONSTANTS = {
+    'TABULAR_EXPORT_STATUS_FAILED',
+    'TABULAR_EXPORT_STATUS_QUEUED',
+    'TABULAR_EXPORT_DEFAULT_MAX_TRANSIENT_FAILURES',
+    'TABULAR_EXPORT_DEFAULT_MODEL_VALIDATION_AUTO_RETRIES',
+    'TABULAR_EXPORT_RETRYABLE_MESSAGE_MARKERS',
+    'TABULAR_EXPORT_MODEL_VALIDATION_RETRYABLE_MESSAGE_MARKERS',
 }
 LEGACY_MIGRATION_FUNCTIONS = {
     '_normalize_source_identity_label',
@@ -628,6 +648,55 @@ def _load_fencing_helpers(current_run, replace_error=None):
     extracted_module = ast.Module(body=selected_nodes, type_ignores=[])
     exec(compile(extracted_module, str(EXPORT_MODULE), 'exec'), namespace)
     return namespace
+
+
+def _load_retry_helpers():
+    module_tree = ast.parse(EXPORT_MODULE.read_text(encoding='utf-8'), filename=str(EXPORT_MODULE))
+    selected_nodes = []
+    found_functions = set()
+    found_constants = set()
+
+    for node in module_tree.body:
+        if isinstance(node, ast.FunctionDef) and node.name in RETRY_FUNCTIONS:
+            selected_nodes.append(node)
+            found_functions.add(node.name)
+        elif isinstance(node, ast.Assign):
+            assigned_names = {
+                target.id
+                for target in node.targets
+                if isinstance(target, ast.Name)
+            }
+            if assigned_names & RETRY_CONSTANTS:
+                selected_nodes.append(node)
+                found_constants.update(assigned_names & RETRY_CONSTANTS)
+
+    missing_functions = RETRY_FUNCTIONS - found_functions
+    missing_constants = RETRY_CONSTANTS - found_constants
+    if missing_functions or missing_constants:
+        raise AssertionError(
+            f'Missing retry helpers: functions={sorted(missing_functions)}, constants={sorted(missing_constants)}'
+        )
+
+    stored_run = {}
+
+    def replace_claimed_run(run):
+        stored_run.clear()
+        stored_run.update(run)
+        return dict(stored_run)
+
+    namespace = {
+        'timedelta': timedelta,
+        'logging': logging,
+        'TabularExportLeaseLostError': RuntimeError,
+        '_now_iso': lambda: '2026-08-09T16:00:00+00:00',
+        '_now_utc': lambda: datetime(2026, 8, 9, 16, 0, 0, tzinfo=timezone.utc),
+        '_replace_claimed_run': replace_claimed_run,
+        '_read_run': lambda user_id, run_id: dict(stored_run),
+        'log_event': lambda *args, **kwargs: None,
+    }
+    extracted_module = ast.Module(body=selected_nodes, type_ignores=[])
+    exec(compile(extracted_module, str(EXPORT_MODULE), 'exec'), namespace)
+    return namespace, stored_run
 
 
 def _load_legacy_migration_helper(aggregate_batches):
@@ -1539,6 +1608,58 @@ def test_direct_source_backed_queue_call_sites_use_required_keywords():
             if keyword.arg
         }
         assert required_keyword_names <= keyword_names
+
+
+def test_model_validation_failures_auto_retry_then_manual_continue():
+    """Model-output validation failures auto retry briefly, then remain manually resumable."""
+    helpers, stored_run = _load_retry_helpers()
+    settings = {
+        'tabular_generated_output_model_validation_auto_retries': 3,
+    }
+    run = {
+        'id': 'validation-run',
+        'user_id': 'user-1',
+        'conversation_id': 'conversation-1',
+        'status': 'running',
+        'completed_batches': 1,
+        'processed_rows': 33,
+        'batch_count': 91,
+        'row_count': 3000,
+        '_etag': 'etag-1',
+    }
+    validation_error = ValueError(
+        'Background structured export batch 2/91 failed validation: returned 0 object(s) for 33 input row(s).'
+    )
+
+    first_retry = helpers['_mark_run_retryable'](
+        dict(run),
+        validation_error,
+        settings,
+        retry_category='model_validation',
+    )
+    assert first_retry['status'] == 'queued'
+    assert first_retry['transient_failure_count'] == 1
+    assert first_retry['last_retry_category'] == 'model_validation'
+    assert first_retry['auto_retry_exhausted'] is False
+    assert first_retry['next_attempt_at']
+
+    exhausted_run = dict(first_retry)
+    exhausted_run.update({
+        'status': 'running',
+        'transient_failure_count': 3,
+        '_etag': 'etag-2',
+    })
+    exhausted_retry = helpers['_mark_run_retryable'](
+        exhausted_run,
+        validation_error,
+        settings,
+        retry_category='model_validation',
+    )
+    assert exhausted_retry['status'] == 'failed'
+    assert exhausted_retry['auto_retry_exhausted'] is True
+    assert exhausted_retry['last_retry_category'] == 'model_validation'
+    assert helpers['_is_retryable_failed_run'](stored_run) is True
+    assert helpers['_can_auto_retry_failed_run'](stored_run, settings) is False
 
 
 def test_hierarchical_analysis_routing_requires_feature_flag():
@@ -2484,6 +2605,7 @@ def main():
         test_direct_source_backed_csv_queue_bypasses_tool_paging,
         test_direct_source_backed_queue_failure_falls_back_without_stream_abort,
         test_direct_source_backed_queue_call_sites_use_required_keywords,
+        test_model_validation_failures_auto_retry_then_manual_continue,
         test_hierarchical_analysis_routing_requires_feature_flag,
         test_non_replayable_filter_rows_reports_explicit_failure,
         test_streaming_finalizer_writes_30000_rows_in_bounded_chunks,
