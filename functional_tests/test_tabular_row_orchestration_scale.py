@@ -1,8 +1,8 @@
 # test_tabular_row_orchestration_scale.py
 """
 Functional test for scalable per-row tabular orchestration.
-Version: 0.250.133
-Implemented in: 0.250.060; generated CSV formula safety in 0.250.065; generated file export routing in 0.250.072; source descriptor generalization in 0.250.127; unified durable run contract in 0.250.128; hierarchical analysis in 0.250.129; combined analysis and export in 0.250.130; scale validation in 0.250.132; direct source-backed exhaustive queueing in 0.250.133
+Version: 0.250.134
+Implemented in: 0.250.060; generated CSV formula safety in 0.250.065; generated file export routing in 0.250.072; source descriptor generalization in 0.250.127; unified durable run contract in 0.250.128; hierarchical analysis in 0.250.129; combined analysis and export in 0.250.130; scale validation in 0.250.132; direct source-backed exhaustive queueing in 0.250.133; direct queue call-site hardening in 0.250.134
 
 This test ensures generated exports preserve source identity and row order while
 enforcing one stable output schema across independently generated batches.
@@ -1512,6 +1512,35 @@ def test_direct_source_backed_queue_failure_falls_back_without_stream_abort():
     )
 
 
+def test_direct_source_backed_queue_call_sites_use_required_keywords():
+    """Every direct queue call site passes required arguments explicitly."""
+    module_tree = ast.parse(CHAT_ROUTE.read_text(encoding='utf-8'), filename=str(CHAT_ROUTE))
+    direct_queue_calls = [
+        call
+        for call in ast.walk(module_tree)
+        if isinstance(call, ast.Call)
+        and isinstance(call.func, ast.Name)
+        and call.func.id == 'maybe_queue_direct_tabular_generated_output'
+    ]
+    assert len(direct_queue_calls) >= 4
+
+    required_keyword_names = {
+        'user_question',
+        'file_contexts',
+        'user_id',
+        'conversation_id',
+        'gpt_model',
+        'settings',
+    }
+    for call in direct_queue_calls:
+        keyword_names = {
+            keyword.arg
+            for keyword in call.keywords
+            if keyword.arg
+        }
+        assert required_keyword_names <= keyword_names
+
+
 def test_hierarchical_analysis_routing_requires_feature_flag():
     """Lane C queueing stays behind the feature flag until scale hardening completes."""
     candidate_helpers = _load_candidate_helpers()
@@ -2454,6 +2483,7 @@ def main():
         test_filter_rows_pages_queue_combined_analysis_and_export_run,
         test_direct_source_backed_csv_queue_bypasses_tool_paging,
         test_direct_source_backed_queue_failure_falls_back_without_stream_abort,
+        test_direct_source_backed_queue_call_sites_use_required_keywords,
         test_hierarchical_analysis_routing_requires_feature_flag,
         test_non_replayable_filter_rows_reports_explicit_failure,
         test_streaming_finalizer_writes_30000_rows_in_bounded_chunks,

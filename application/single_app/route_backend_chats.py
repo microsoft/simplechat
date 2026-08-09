@@ -17628,12 +17628,12 @@ def register_route_backend_chats(bp):
                 tabular_invocations = []
                 tabular_related_document_summary = ''
                 tabular_generated_output = maybe_queue_direct_tabular_generated_output(
-                    user_message,
-                    workspace_tabular_file_contexts,
-                    user_id,
-                    conversation_id,
-                    gpt_model,
-                    settings,
+                    user_question=user_message,
+                    file_contexts=workspace_tabular_file_contexts,
+                    user_id=user_id,
+                    conversation_id=conversation_id,
+                    gpt_model=gpt_model,
+                    settings=settings,
                     thought_callback=record_tabular_post_processing_thought,
                     model_context=tabular_model_context,
                 )
@@ -17995,12 +17995,12 @@ def register_route_backend_chats(bp):
                         for file_name in chat_tabular_files
                     ]
                     chat_tabular_generated_output = maybe_queue_direct_tabular_generated_output(
-                        user_message,
-                        chat_tabular_file_contexts,
-                        user_id,
-                        conversation_id,
-                        gpt_model,
-                        settings,
+                        user_question=user_message,
+                        file_contexts=chat_tabular_file_contexts,
+                        user_id=user_id,
+                        conversation_id=conversation_id,
+                        gpt_model=gpt_model,
+                        settings=settings,
                         thought_callback=record_tabular_post_processing_thought,
                         model_context=tabular_model_context,
                     )
@@ -21479,10 +21479,12 @@ def register_route_backend_chats(bp):
                     tabular_invocations = []
                     tabular_related_document_summary = ''
                     tabular_generated_output = maybe_queue_direct_tabular_generated_output(
-                        user_message,
-                        workspace_tabular_file_contexts,
-                        user_id,
+                        user_question=user_message,
+                        file_contexts=workspace_tabular_file_contexts,
+                        user_id=user_id,
                         conversation_id=conversation_id,
+                        gpt_model=gpt_model,
+                        settings=settings,
                         thought_callback=record_and_publish_streaming_thought,
                         model_context=tabular_model_context,
                     )
@@ -21861,12 +21863,12 @@ def register_route_backend_chats(bp):
                             for file_name in chat_tabular_files
                         ]
                         chat_tabular_generated_output = maybe_queue_direct_tabular_generated_output(
-                            user_message,
-                            chat_tabular_file_contexts,
-                            user_id,
-                            conversation_id,
-                            gpt_model,
-                            settings,
+                            user_question=user_message,
+                            file_contexts=chat_tabular_file_contexts,
+                            user_id=user_id,
+                            conversation_id=conversation_id,
+                            gpt_model=gpt_model,
+                            settings=settings,
                             thought_callback=record_and_publish_streaming_thought,
                             model_context=tabular_model_context,
                         )
