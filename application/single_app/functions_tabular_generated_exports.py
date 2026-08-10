@@ -1482,6 +1482,60 @@ def _generated_entry_has_source_position_conflict(source_row, generated_entry):
     return False
 
 
+def _parse_single_nested_csv_generated_entry(generated_entry):
+    if not isinstance(generated_entry, dict):
+        return None
+    csv_payload = generated_entry.get('csv')
+    if not isinstance(csv_payload, str) or not csv_payload.strip():
+        return None
+    allowed_metadata_fields = {
+        'csv',
+        TABULAR_EXPORT_INPUT_ROW_NUMBER_FIELD,
+        TABULAR_EXPORT_INPUT_ROW_IDENTITY_FIELD,
+        TABULAR_EXPORT_INPUT_ROW_TOKEN_FIELD,
+        TABULAR_EXPORT_OUTPUT_ROW_NUMBER_FIELD,
+        TABULAR_EXPORT_OUTPUT_ROW_IDENTITY_FIELD,
+    }
+
+    try:
+        csv_rows = list(csv.DictReader(io.StringIO(csv_payload.strip())))
+    except (csv.Error, TypeError, ValueError):
+        return None
+    if len(csv_rows) != 1:
+        return None
+    parsed_row = {
+        str(field_name or '').strip(): field_value
+        for field_name, field_value in (csv_rows[0] or {}).items()
+        if str(field_name or '').strip()
+    }
+    if not parsed_row:
+        return None
+    for field_name, field_value in generated_entry.items():
+        if field_name in allowed_metadata_fields:
+            continue
+        if field_name not in parsed_row:
+            return None
+        if str(parsed_row.get(field_name) or '') != str(field_value or ''):
+            return None
+    for metadata_field in allowed_metadata_fields - {'csv'}:
+        if metadata_field in generated_entry and generated_entry.get(metadata_field) not in (None, ''):
+            parsed_row[metadata_field] = generated_entry.get(metadata_field)
+    return parsed_row
+
+
+def _expand_nested_csv_generated_entries(generated_entries):
+    expanded_entries = []
+    recovered_count = 0
+    for generated_entry in generated_entries or []:
+        parsed_entry = _parse_single_nested_csv_generated_entry(generated_entry)
+        if parsed_entry is None:
+            expanded_entries.append(generated_entry)
+            continue
+        expanded_entries.append(parsed_entry)
+        recovered_count += 1
+    return expanded_entries, recovered_count
+
+
 def _normalize_model_generated_batch_entries(
     source_rows,
     generated_entries,
@@ -1490,6 +1544,17 @@ def _normalize_model_generated_batch_entries(
     run_id=None,
     batch_number=None,
 ):
+    generated_entries, nested_csv_recovered_count = _expand_nested_csv_generated_entries(generated_entries)
+    if nested_csv_recovered_count:
+        log_event(
+            '[TABULAR_GENERATED_OUTPUT] Expanded nested CSV model output rows',
+            {
+                'run_id': run_id,
+                'batch_number': batch_number,
+                'recovered_row_count': nested_csv_recovered_count,
+            },
+            level=logging.WARNING,
+        )
     try:
         return _normalize_generated_batch_entries(
             source_rows,
@@ -2999,6 +3064,7 @@ def _build_batch_prompt(
         f'Copy {TABULAR_EXPORT_INPUT_ROW_TOKEN_FIELD} exactly from each input row into its matching output object. '
         f'The {TABULAR_EXPORT_INPUT_ROW_NUMBER_FIELD} and {TABULAR_EXPORT_INPUT_ROW_IDENTITY_FIELD} fields are internal; '
         'do not include those two fields in generated objects.\n'
+        'Do not return CSV text, embedded CSV headers, markdown tables, or a field named csv; every requested output column must be a separate JSON object field.\n'
         'Do not drop, merge, summarize, or cap rows.\n'
         'Input rows may include normalized helper fields such as comment_id, body_text, source_file, attachment_present, attachment_names, and attachment_text. Use those normalized fields when they are present.\n'
         'Input rows may include a referenced_documents array containing row-linked evidence from explicitly referenced non-tabular documents. Use that evidence as part of the source row context when it is relevant to the requested output.\n'
