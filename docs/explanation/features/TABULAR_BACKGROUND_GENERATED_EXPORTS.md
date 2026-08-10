@@ -2,7 +2,7 @@
 
 Implemented in version: **0.241.046**
 
-Updated through version: **0.250.137**
+Updated through version: **0.250.138**
 
 ## Overview
 
@@ -33,6 +33,7 @@ The feature supports large spreadsheet-driven analysis, including workbooks that
 - Queued retry runs whose retry time has already passed are surfaced as resumable so deployments without active scheduler loops still give users a recovery action.
 - Run status includes safe user-facing status detail, checkpoint summaries, retry timing, heartbeat state, and continuation availability.
 - Phase 1 acceleration groundwork adds additive generation contract fields, legacy-off rollout gates, safe batch latency/token telemetry, and deterministic fake model/storage harnesses without changing fixed-window execution behavior.
+- Phase 2 foreground handoff uses server-composed acknowledgment text for accepted background export, analysis, and combined runs, so the assistant response describes the complete queued work instead of narrating preview limitations.
 
 ### API Endpoints
 
@@ -77,6 +78,8 @@ The Phase 1 rollout settings default to legacy behavior and are copied into new 
 
 Users continue requesting tabular structured output in chat or workflows. For smaller exports, the file is attached during the response. For larger exports, the assistant message shows a background progress card and the final download appears when processing completes. If a resumable run stops after a transient infrastructure failure, the card shows a Continue action that queues the same run to resume from completed checkpoints.
 
+When a background run is accepted, the immediate assistant response acknowledges the complete requested row count and deliverable. Any visible rows are identified as a sample or preview, while mutable progress remains in the status card and the completed file or analysis appears in the chat when ready.
+
 When a workflow/document analysis request also creates a full generated tabular export, the generated export is presented as the primary deliverable. The analysis layer may still attach a supporting CSV preview, but redundant analysis JSON and Markdown artifacts are suppressed so they do not compete with the full generated export card.
 
 The progress card displays current status, completed checkpoint counts, processed row counts, wall-clock rows per minute, model concurrency, estimated remaining time, scheduled retry time, retry-due state, transient retry count, manual continuation count, last update time, and heartbeat time when available.
@@ -85,6 +88,7 @@ The progress card displays current status, completed checkpoint counts, processe
 
 - Functional regression: `functional_tests/test_tabular_background_generated_exports.py`
 - Scale and performance regression: `functional_tests/test_tabular_row_orchestration_scale.py`
+- Phase 2 handoff regression: `functional_tests/test_tabular_row_orchestration_scale.py`
 - Phase 1 baseline and fake harness coverage: `functional_tests/test_tabular_row_orchestration_scale.py`
 - Functional regression for workflow/document-action presentation: `functional_tests/test_document_analysis_lossless_artifacts.py`
 - UI regression: `ui_tests/test_chat_background_generated_export_status.py`
@@ -119,3 +123,4 @@ The progress card displays current status, completed checkpoint counts, processe
 - `application/single_app/config.py` was updated to version **0.241.064** for generated export artifact presentation cleanup.
 - `application/single_app/config.py` was updated to version **0.250.136** for model-aware batch sizing, adaptive LLM concurrency, and parallel wall-clock ETA.
 - `application/single_app/config.py` was updated to version **0.250.137** for Phase 1 acceleration baseline contracts, rollout controls, privacy-safe telemetry, and fake model/storage harnesses.
+- `application/single_app/config.py` was updated to version **0.250.138** for Phase 2 truthful foreground handoff wording and metadata.

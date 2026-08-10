@@ -6124,6 +6124,91 @@ def _build_failed_tabular_generated_output_metadata(source_candidate, output_for
     }
 
 
+def _is_active_tabular_background_handoff(output_metadata):
+    """Return True when metadata represents a queued or running background tabular handoff."""
+    if not isinstance(output_metadata, dict) or not output_metadata.get('background_export'):
+        return False
+
+    output_status = str(output_metadata.get('status') or '').strip().lower()
+    return output_status not in {'failed', 'canceled', 'cancelled', 'completed'}
+
+
+def _tabular_background_handoff_has_preview(output_metadata):
+    if not isinstance(output_metadata, dict):
+        return False
+
+    preview_fields = (
+        output_metadata.get('preview_rows'),
+        output_metadata.get('preview_items'),
+        output_metadata.get('preview_lines'),
+    )
+    if any(isinstance(value, list) and value for value in preview_fields):
+        return True
+    if str(output_metadata.get('preview_text') or output_metadata.get('analysis_text') or '').strip():
+        return True
+    if output_metadata.get('preview_available'):
+        return True
+    return _safe_int(output_metadata.get('preview_row_count')) > 0
+
+
+def _format_tabular_background_handoff_row_phrase(row_count):
+    normalized_row_count = _safe_int(row_count)
+    if normalized_row_count > 0:
+        return f"all {normalized_row_count:,} rows"
+    return 'all requested rows'
+
+
+def _build_tabular_background_handoff_content(output_metadata):
+    """Build the concise user-facing acknowledgment for an accepted background tabular run."""
+    if not _is_active_tabular_background_handoff(output_metadata):
+        return ''
+
+    output_format = str(output_metadata.get('output_format') or 'csv').strip().upper() or 'CSV'
+    task_type = str(output_metadata.get('task_type') or '').strip().lower()
+    row_phrase = _format_tabular_background_handoff_row_phrase(output_metadata.get('row_count'))
+    has_preview = _tabular_background_handoff_has_preview(output_metadata)
+
+    if task_type == TABULAR_RUN_TASK_COMBINED:
+        if has_preview:
+            return (
+                f'Understood. I am generating the complete {output_format} and analysis for {row_phrase}. '
+                'The rows shown here are a sample; both completed results will appear in this chat when ready.'
+            )
+        return (
+            f'Understood. I am generating the complete {output_format} and analysis for {row_phrase}. '
+            'Both completed results will appear in this chat when ready.'
+        )
+
+    if task_type == TABULAR_RUN_TASK_HIERARCHICAL_ANALYSIS:
+        if has_preview:
+            return (
+                f'Understood. I am analyzing {row_phrase}. '
+                'Any content shown here is a sample; the complete analysis is continuing in the background and will appear in this chat when ready.'
+            )
+        return (
+            f'Understood. I am analyzing {row_phrase}. '
+            'The complete analysis is continuing in the background and will appear in this chat when ready.'
+        )
+
+    if has_preview:
+        return (
+            f'Understood. I am generating the complete {output_format} for {row_phrase}. '
+            'The rows shown here are a sample; the rest is being generated in the background, and the complete file will appear in this chat when ready.'
+        )
+    return (
+        f'Understood. I am generating the complete {output_format} for {row_phrase}. '
+        'Processing continues in the background, and the complete file will appear in this chat when ready.'
+    )
+
+
+def _build_active_tabular_background_handoff_content(generated_tabular_outputs):
+    for output_metadata in generated_tabular_outputs or []:
+        handoff_content = _build_tabular_background_handoff_content(output_metadata)
+        if handoff_content:
+            return handoff_content
+    return ''
+
+
 def _build_tabular_generated_output_batch_prompt(
     user_question,
     batch_rows,
@@ -6174,9 +6259,6 @@ def _build_tabular_generated_output_system_message(output_metadata):
     file_name = str(output_metadata.get('file_name') or 'generated output').strip() or 'generated output'
     row_count = _safe_int(output_metadata.get('row_count'))
     output_status = str(output_metadata.get('status') or '').strip().lower()
-    task_type = str(output_metadata.get('task_type') or '').strip().lower()
-    is_hierarchical_analysis = task_type == TABULAR_RUN_TASK_HIERARCHICAL_ANALYSIS
-    is_combined = task_type == TABULAR_RUN_TASK_COMBINED
 
     if output_status == 'failed':
         failure_detail = str(
@@ -6196,31 +6278,13 @@ def _build_tabular_generated_output_system_message(output_metadata):
             'Do not claim that the full export is attached, and do not recreate a partial assistant-table CSV.'
         )
 
-    if output_metadata.get('background_export'):
-        run_id = str(output_metadata.get('export_run_id') or output_metadata.get('run_id') or '').strip()
-        batch_count = _safe_int(output_metadata.get('batch_count'))
-        if is_combined:
-            return (
-                f'A durable background tabular analysis and {output_format} export has been queued for {row_count} row(s) '
-                f'across {batch_count} chunk(s). '
-                'Do not claim either full deliverable is complete yet. Tell the user the combined run is continuing in the background, '
-                'that progress is checkpointed, and that the downloadable file and final answer artifact will appear in the chat when ready. '
-                f'Run id: {run_id}.'
-            )
-        if is_hierarchical_analysis:
-            return (
-                f'A durable background tabular analysis has been queued for {row_count} row(s) '
-                f'across {batch_count} chunk(s). '
-                'Do not claim the full analysis is complete yet. Tell the user the analysis is continuing in the background, '
-                'that progress is checkpointed, and that the final answer artifact will appear in the chat when the run completes. '
-                f'Run id: {run_id}.'
-            )
+    background_handoff = _build_tabular_background_handoff_content(output_metadata)
+    if background_handoff:
         return (
-            f'A durable background {output_format} export has been queued for {row_count} row(s) '
-            f'across {batch_count} batch(es). '
-            'Do not claim the full export is attached yet. Tell the user the export is continuing in the background, '
-            'that progress is checkpointed, and that the downloadable file will appear in the chat when the run completes. '
-            f'Run id: {run_id}.'
+            'Use this exact concise response for the accepted background tabular work. '
+            'Do not add limitation language, internal identifiers, storage locations, internal progress details, tool names, '
+            'duplicate CSV blocks, or follow-up offers.\n\n'
+            f'{background_handoff}'
         )
 
     return (
@@ -19121,6 +19185,11 @@ def register_route_backend_chats(bp):
             if assistant_file_generated_output:
                 generated_analysis_artifacts_list.append(assistant_file_generated_output)
                 ai_message = _build_assistant_file_output_handoff(assistant_file_generated_output)
+            tabular_background_handoff_content = _build_active_tabular_background_handoff_content(
+                generated_tabular_outputs_list
+            )
+            if tabular_background_handoff_content:
+                ai_message = tabular_background_handoff_content
             generated_analysis_metadata = _build_generated_analysis_metadata(
                 generated_analysis_artifacts=generated_analysis_artifacts_list,
                 generated_tabular_outputs=generated_tabular_outputs_list,
@@ -22871,6 +22940,11 @@ def register_route_backend_chats(bp):
                     if assistant_file_generated_output:
                         generated_analysis_artifacts_list.append(assistant_file_generated_output)
                         accumulated_content = _build_assistant_file_output_handoff(assistant_file_generated_output)
+                    tabular_background_handoff_content = _build_active_tabular_background_handoff_content(
+                        generated_tabular_outputs_list
+                    )
+                    if tabular_background_handoff_content:
+                        accumulated_content = tabular_background_handoff_content
                     if mixed_source_manifest:
                         fresh_finalization_manifest = resolve_authorized_source_manifest(
                             [source.get('document_id') for source in mixed_source_manifest],
