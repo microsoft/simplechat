@@ -1,8 +1,8 @@
 # test_tabular_row_orchestration_scale.py
 """
 Functional test for scalable per-row tabular orchestration.
-Version: 0.250.139
-Implemented in: 0.250.060; generated CSV formula safety in 0.250.065; generated file export routing in 0.250.072; source descriptor generalization in 0.250.127; unified durable run contract in 0.250.128; hierarchical analysis in 0.250.129; combined analysis and export in 0.250.130; scale validation in 0.250.132; direct source-backed exhaustive queueing in 0.250.133; direct queue call-site hardening in 0.250.134; model-validation auto retry in 0.250.135; model-aware parallel throughput in 0.250.136; Phase 1 acceleration contracts and observability in 0.250.137; Phase 2 truthful background handoff in 0.250.138; Phase 3 durable LLM generation planning in 0.250.139
+Version: 0.250.140
+Implemented in: 0.250.060; generated CSV formula safety in 0.250.065; generated file export routing in 0.250.072; source descriptor generalization in 0.250.127; unified durable run contract in 0.250.128; hierarchical analysis in 0.250.129; combined analysis and export in 0.250.130; scale validation in 0.250.132; direct source-backed exhaustive queueing in 0.250.133; direct queue call-site hardening in 0.250.134; model-validation auto retry in 0.250.135; model-aware parallel throughput in 0.250.136; Phase 1 acceleration contracts and observability in 0.250.137; Phase 2 truthful background handoff in 0.250.138; Phase 3 durable LLM generation planning in 0.250.139; Phase 4 compact row response protocol in 0.250.140
 
 This test ensures generated exports preserve source identity and row order while
 enforcing one stable output schema across independently generated batches.
@@ -225,6 +225,9 @@ GENERATION_PLAN_FUNCTIONS = {
 }
 GENERATION_PLAN_CONSTANTS = {
     'TABULAR_RESPONSE_PROTOCOL_OBJECT_V1',
+    'TABULAR_RESPONSE_PROTOCOL_COMPACT_ROW_ARRAY_V1',
+    'TABULAR_RESPONSE_PROTOCOLS',
+    'TABULAR_COMPACT_PLAN_HASH_PREFIX_LENGTH',
     'TABULAR_ROLLOUT_PLANNER_MODES',
     'TABULAR_RUN_TASK_STRUCTURED_EXPORT',
     'TABULAR_RUN_TASK_HIERARCHICAL_ANALYSIS',
@@ -233,8 +236,42 @@ GENERATION_PLAN_CONSTANTS = {
     'TABULAR_EXPORT_INPUT_ROW_NUMBER_FIELD',
     'TABULAR_EXPORT_INPUT_ROW_IDENTITY_FIELD',
     'TABULAR_EXPORT_INPUT_ROW_TOKEN_FIELD',
+    'TABULAR_EXPORT_INPUT_ROW_KEY_FIELD',
     'TABULAR_EXPORT_OUTPUT_ROW_NUMBER_FIELD',
     'TABULAR_EXPORT_OUTPUT_ROW_IDENTITY_FIELD',
+}
+COMPACT_PROTOCOL_FUNCTIONS = {
+    '_safe_int',
+    '_settings_bool',
+    '_settings_mode',
+    '_canonical_json_bytes',
+    '_sha256_json',
+    '_hash_tabular_generation_plan',
+    '_normalize_tabular_run_task_type',
+    '_is_compact_row_array_protocol',
+    '_select_tabular_response_protocol',
+    '_clean_generated_json_code_fence',
+    '_parse_generated_json_entries',
+    '_parse_generated_json_object',
+    '_dump_generated_output_json',
+    '_describe_tabular_generation_plan_value',
+    '_infer_tabular_generation_plan_value_type',
+    '_build_tabular_generation_plan_input_contract',
+    '_validate_tabular_generation_plan_output_fields',
+    '_get_tabular_generation_plan_source',
+    '_build_tabular_generation_plan',
+    '_validate_tabular_generation_plan',
+    '_get_tabular_generation_plan_output_schema',
+    '_get_tabular_generation_plan_llm_fields',
+    '_get_compact_plan_hash_prefix',
+    '_build_compact_batch_row_key',
+    '_build_compact_batch_key_map',
+    '_build_compact_prompt_rows',
+    '_validate_compact_row_field_value',
+    '_parse_compact_row_array_entries',
+    '_build_batch_prompt',
+    '_build_compact_batch_prompt',
+    '_normalize_generated_batch_entries',
 }
 
 
@@ -1235,6 +1272,45 @@ def _load_generation_plan_helpers():
     return namespace, PlannerError, state
 
 
+def _load_compact_protocol_helpers():
+    module_tree = ast.parse(EXPORT_MODULE.read_text(encoding='utf-8'), filename=str(EXPORT_MODULE))
+    selected_nodes = []
+    found_functions = set()
+    for node in module_tree.body:
+        if isinstance(node, ast.FunctionDef) and node.name in COMPACT_PROTOCOL_FUNCTIONS:
+            selected_nodes.append(node)
+            found_functions.add(node.name)
+        elif isinstance(node, ast.Assign):
+            assigned_names = {
+                target.id
+                for target in node.targets
+                if isinstance(target, ast.Name)
+            }
+            if any(
+                name.startswith('TABULAR_EXPORT_')
+                or name.startswith('TABULAR_GENERATION_')
+                or name.startswith('TABULAR_RESPONSE_')
+                or name.startswith('TABULAR_RUN_TASK_')
+                or name.startswith('TABULAR_ROLLOUT_')
+                or name.startswith('TABULAR_COMPACT_')
+                for name in assigned_names
+            ):
+                selected_nodes.append(node)
+
+    missing_functions = COMPACT_PROTOCOL_FUNCTIONS - found_functions
+    if missing_functions:
+        raise AssertionError(f'Missing compact protocol helpers: {sorted(missing_functions)}')
+
+    namespace = {
+        'hashlib': hashlib,
+        'json': json,
+        're': re,
+    }
+    extracted_module = ast.Module(body=selected_nodes, type_ignores=[])
+    exec(compile(extracted_module, str(EXPORT_MODULE), 'exec'), namespace)
+    return namespace
+
+
 def _build_phase_three_test_run(plan_mode='shadow', plan_status='pending'):
     return {
         'id': 'run-phase-3',
@@ -1307,6 +1383,70 @@ def _build_phase_three_plan(helpers, run):
                     'description': 'Risk level requested for the source row.',
                     'type': 'string',
                     'nullable': True,
+                    'source': 'llm',
+                },
+            ],
+            'output_verbosity': 'concise',
+        },
+        input_contract,
+        {
+            'endpoint_id': 'endpoint-1',
+            'model_id': 'gpt-plan',
+            'deployment': 'gpt-plan',
+        },
+        created_at='2026-08-10T12:00:00+00:00',
+    )
+    return plan, input_contract
+
+
+def _build_phase_four_plan(helpers, run):
+    input_contract = helpers['_build_tabular_generation_plan_input_contract'](
+        run['_test_batches'][0] + run['_test_batches'][1]
+    )
+    plan = helpers['_build_tabular_generation_plan'](
+        run,
+        {
+            'output_fields': [
+                {
+                    'name': 'answer',
+                    'description': 'Answer requested for the source row.',
+                    'type': 'string',
+                    'nullable': False,
+                    'source': 'llm',
+                },
+                {
+                    'name': 'risk',
+                    'description': 'Risk level requested for the source row.',
+                    'type': 'string',
+                    'nullable': True,
+                    'source': 'llm',
+                },
+                {
+                    'name': 'score',
+                    'description': 'Numeric score requested for the source row.',
+                    'type': 'number',
+                    'nullable': False,
+                    'source': 'llm',
+                },
+                {
+                    'name': 'flagged',
+                    'description': 'Boolean flag requested for the source row.',
+                    'type': 'boolean',
+                    'nullable': False,
+                    'source': 'llm',
+                },
+                {
+                    'name': 'evidence',
+                    'description': 'Compact evidence object for the source row.',
+                    'type': 'object',
+                    'nullable': False,
+                    'source': 'llm',
+                },
+                {
+                    'name': 'tags',
+                    'description': 'Array of tags requested for the source row.',
+                    'type': 'array',
+                    'nullable': False,
                     'source': 'llm',
                 },
             ],
@@ -1996,6 +2136,180 @@ def test_phase_three_plan_persistence_boundaries_never_replan():
     assert legacy_run['plan_blob_path'] is None
     assert legacy_run['plan_hash'] is None
     assert legacy_run['output_schema'] is None
+
+
+def test_phase_four_compact_protocol_requires_active_plan_rollout():
+    """Compact row arrays are selected only for new active planned structured exports."""
+    helpers = _load_compact_protocol_helpers()
+    select_protocol = helpers['_select_tabular_response_protocol']
+    object_protocol = helpers['TABULAR_RESPONSE_PROTOCOL_OBJECT_V1']
+    compact_protocol = helpers['TABULAR_RESPONSE_PROTOCOL_COMPACT_ROW_ARRAY_V1']
+
+    assert select_protocol({}, 'active', 'structured_export') == object_protocol
+    assert select_protocol(
+        {'enable_tabular_compact_response_protocol': True},
+        'shadow',
+        'structured_export',
+    ) == object_protocol
+    assert select_protocol(
+        {'enable_tabular_compact_response_protocol': True},
+        'active',
+        'combined',
+    ) == object_protocol
+    assert select_protocol(
+        {'enable_tabular_compact_response_protocol': True},
+        'active',
+        'structured_export',
+        passthrough_input_rows=True,
+    ) == object_protocol
+    assert select_protocol(
+        {'enable_tabular_compact_response_protocol': True},
+        'active',
+        'structured_export',
+    ) == compact_protocol
+
+    run = _build_phase_three_test_run(plan_mode='active')
+    run['response_protocol_version'] = compact_protocol
+    plan, input_contract = _build_phase_three_plan(helpers, run)
+    assert plan['response_protocol'] == compact_protocol
+    helpers['_validate_tabular_generation_plan'](
+        plan,
+        run,
+        input_schema_hash=input_contract['input_schema_hash'],
+    )
+
+    invalid_run = dict(run)
+    invalid_run['response_protocol_version'] = 'unknown-protocol'
+    try:
+        helpers['_build_tabular_generation_plan'](
+            invalid_run,
+            {'output_fields': plan['output_fields'][2:]},
+            input_contract,
+            {'model_id': 'gpt-plan', 'deployment': 'gpt-plan'},
+        )
+    except ValueError as exc:
+        assert 'protocol' in str(exc).lower()
+    else:
+        raise AssertionError('Unknown response protocols must fail plan creation')
+
+
+def test_phase_four_compact_response_reconstructs_object_contract():
+    """Compact rows normalize to the same object-shaped checkpoint entries as object-v1."""
+    helpers = _load_compact_protocol_helpers()
+    compact_protocol = helpers['TABULAR_RESPONSE_PROTOCOL_COMPACT_ROW_ARRAY_V1']
+    run = _build_phase_three_test_run(plan_mode='active')
+    run['response_protocol_version'] = compact_protocol
+    plan, _ = _build_phase_four_plan(helpers, run)
+    source_rows = run['_test_batches'][0] + run['_test_batches'][1]
+
+    prompt = helpers['_build_batch_prompt'](
+        run['user_question'],
+        source_rows,
+        0,
+        1,
+        'source.csv',
+        output_schema=helpers['_get_tabular_generation_plan_output_schema'](plan),
+        response_protocol=compact_protocol,
+        generation_plan=plan,
+    )
+    assert '__simplechat_batch_row_key' in prompt
+    assert '__simplechat_source_row_token' not in prompt
+    assert 'token-1' not in prompt
+    assert 'token-2' not in prompt
+
+    response_payload = {
+        'p': helpers['_get_compact_plan_hash_prefix'](plan),
+        'rows': [
+            ['r2', 'second answer', None, 9.5, False, {'quote': 'line, quote "two"'}, ['beta']],
+            ['r1', 'first answer', 'low', 7, True, {'note': 'line one\nline two'}, ['alpha']],
+        ],
+    }
+    generated_entries = helpers['_parse_compact_row_array_entries'](
+        json.dumps(response_payload),
+        source_rows,
+        plan,
+    )
+    normalized_entries, output_schema = helpers['_normalize_generated_batch_entries'](
+        source_rows,
+        generated_entries,
+        expected_output_schema=helpers['_get_tabular_generation_plan_output_schema'](plan),
+    )
+
+    assert output_schema == [
+        'source_row_number',
+        'source_row_identity',
+        'answer',
+        'risk',
+        'score',
+        'flagged',
+        'evidence',
+        'tags',
+    ]
+    assert normalized_entries[0]['source_row_number'] == 1
+    assert normalized_entries[0]['source_row_identity'] == 'SC-1'
+    assert normalized_entries[0]['answer'] == 'first answer'
+    assert normalized_entries[0]['risk'] == 'low'
+    assert normalized_entries[0]['score'] == 7
+    assert normalized_entries[0]['flagged'] is True
+    assert normalized_entries[0]['evidence']['note'] == 'line one\nline two'
+    assert normalized_entries[1]['source_row_number'] == 2
+    assert normalized_entries[1]['answer'] == 'second answer'
+    assert normalized_entries[1]['risk'] is None
+    assert '__simplechat_source_row_token' not in normalized_entries[0]
+
+
+def test_phase_four_compact_response_rejects_key_and_value_failures():
+    """Malformed compact rows fail validation instead of receiving deterministic answers."""
+    helpers = _load_compact_protocol_helpers()
+    compact_protocol = helpers['TABULAR_RESPONSE_PROTOCOL_COMPACT_ROW_ARRAY_V1']
+    run = _build_phase_three_test_run(plan_mode='active')
+    run['response_protocol_version'] = compact_protocol
+    plan, _ = _build_phase_four_plan(helpers, run)
+    source_rows = run['_test_batches'][0] + run['_test_batches'][1]
+    prefix = helpers['_get_compact_plan_hash_prefix'](plan)
+    valid_r1 = ['r1', 'first answer', 'low', 7, True, {'note': 'one'}, ['alpha']]
+    valid_r2 = ['r2', 'second answer', None, 9.5, False, {'note': 'two'}, ['beta']]
+    failure_cases = [
+        (
+            {'p': prefix, 'rows': [valid_r1, valid_r1]},
+            'duplicated',
+        ),
+        (
+            {'p': prefix, 'rows': [valid_r1]},
+            'missed',
+        ),
+        (
+            {'p': prefix, 'rows': [valid_r1, ['r3', 'third', 'high', 1, False, {}, []]]},
+            'unknown',
+        ),
+        (
+            {'p': prefix, 'rows': [valid_r1, ['r2', 'second answer']]},
+            'expected',
+        ),
+        (
+            {'p': 'bad-prefix', 'rows': [valid_r1, valid_r2]},
+            'hash',
+        ),
+        (
+            {'p': prefix, 'rows': [[*valid_r1[:1], None, *valid_r1[2:]], valid_r2]},
+            'non-nullable',
+        ),
+        (
+            {'p': prefix, 'rows': [[*valid_r1[:3], 'not-a-number', *valid_r1[4:]], valid_r2]},
+            'expected number',
+        ),
+    ]
+    for payload, expected_message in failure_cases:
+        try:
+            helpers['_parse_compact_row_array_entries'](
+                json.dumps(payload),
+                source_rows,
+                plan,
+            )
+        except ValueError as exc:
+            assert expected_message in str(exc).lower()
+        else:
+            raise AssertionError(f'Compact validation accepted invalid payload: {payload}')
 
 
 def test_source_identity_and_order_contract():
@@ -3713,6 +4027,9 @@ def main():
         test_phase_three_shadow_active_and_checkpoint_contracts,
         test_phase_three_planner_timeout_retries_before_fallback,
         test_phase_three_plan_persistence_boundaries_never_replan,
+        test_phase_four_compact_protocol_requires_active_plan_rollout,
+        test_phase_four_compact_response_reconstructs_object_contract,
+        test_phase_four_compact_response_rejects_key_and_value_failures,
         test_source_identity_and_order_contract,
         test_generated_batch_schema_contract,
         test_durable_runner_enforces_row_contract,

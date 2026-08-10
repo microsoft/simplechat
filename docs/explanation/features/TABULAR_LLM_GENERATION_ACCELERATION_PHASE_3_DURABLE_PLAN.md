@@ -106,7 +106,7 @@ Planning input and output are bounded independently of dataset row count. Shadow
 ## Known Limitations
 
 - Active mode requires administrator rollout after shadow agreement is acceptable.
-- Phase 3 keeps the `object-v1` row response protocol; compact positional output is deferred to Phase 4.
+- Phase 3 keeps the `object-v1` row response protocol. Phase 4 adds compact positional output for new active planned structured exports.
 - Completion-driven checkpointing, rolling scheduling, and independent batch retries remain deferred to later phases.
 
 ## Related Version Updates
