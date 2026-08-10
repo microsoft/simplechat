@@ -2,7 +2,7 @@
 
 Implemented in version: **0.241.046**
 
-Updated through version: **0.250.148**
+Updated through version: **0.250.149**
 
 ## Overview
 
@@ -44,6 +44,9 @@ The feature supports large spreadsheet-driven analysis, including workbooks that
 - Object-protocol model responses can recover from hidden source-token echo mismatches when row count and any explicit source row number or identity markers preserve the requested source order.
 - Fixed-window runs use a timeout-aware stale threshold so normal long model calls are not shown as stale while only rolling-pool runs use the short heartbeat interval. Retry status text includes safe reason categories such as model output validation or transient provider interruption.
 - Object-protocol responses that wrap one generated CSV row inside a `csv` property are expanded before schema inference so final artifacts use the requested generated columns instead of a nested CSV column.
+- Direct durable artifact routing accepts every configured tabular input format (`csv`, `xlsx`, `xls`, and `xlsm`) through one version-pinned replay contract. Multi-sheet workbooks replay worksheets in workbook order.
+- Recognized exhaustive artifact requests never fall back to dumping generated rows into the assistant response when source preparation fails. The chat receives a concise artifact handoff or safe failure status instead.
+- Shadow schema planning is deferred off the production critical path. Unplanned source-backed runs checkpoint a small first batch before opening normal batch concurrency, and the status card identifies source preparation, active planning, or initial checkpoint generation before row progress appears.
 
 ### API Endpoints
 
@@ -111,6 +114,8 @@ The progress card displays current status, completed checkpoint counts, processe
 - Source-token echo recovery regression: `functional_tests/test_tabular_row_orchestration_scale.py`
 - Fixed-window stale heartbeat regression: `functional_tests/test_tabular_row_orchestration_scale.py`
 - Nested CSV output recovery regression: `functional_tests/test_tabular_row_orchestration_scale.py`
+- Generic CSV and workbook durable routing regressions: `functional_tests/test_tabular_row_orchestration_scale.py`
+- Artifact-only failure and fast-start regressions: `functional_tests/test_tabular_row_orchestration_scale.py`
 - Phase 2 handoff regression: `functional_tests/test_tabular_row_orchestration_scale.py`
 - Phase 1 baseline and fake harness coverage: `functional_tests/test_tabular_row_orchestration_scale.py`
 - Functional regression for workflow/document-action presentation: `functional_tests/test_document_analysis_lossless_artifacts.py`
@@ -167,3 +172,4 @@ The progress card displays current status, completed checkpoint counts, processe
 - `application/single_app/config.py` was updated to version **0.250.146** to recover object-protocol model responses that preserve row order but fail to echo hidden source-row tokens.
 - `application/single_app/config.py` was updated to version **0.250.147** to prevent fixed-window runs from being falsely marked stale during normal long model calls and to show safe retry-reason details in the status card.
 - `application/single_app/config.py` was updated to version **0.250.148** to flatten single-row nested CSV model outputs before generated-export schema inference.
+- `application/single_app/config.py` was updated to version **0.250.149** to route every supported tabular input through artifact-only durable generation and reduce time to the first visible checkpoint.

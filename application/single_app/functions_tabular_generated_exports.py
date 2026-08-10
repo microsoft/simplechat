@@ -28,6 +28,7 @@ from semantic_kernel_plugins.tabular_processing_plugin import TabularProcessingP
 
 from config import (
     CLIENTS,
+    TABULAR_EXTENSIONS,
     cosmos_conversations_container,
     cosmos_tabular_export_runs_container,
     storage_account_group_documents_container_name,
@@ -131,6 +132,7 @@ TABULAR_EXPORT_FINAL_SPOOL_MAX_MEMORY_BYTES = 1024 * 1024
 TABULAR_EXPORT_DEFAULT_SOURCE_CHUNK_ROWS = 1000
 TABULAR_EXPORT_DEFAULT_SOURCE_BATCH_ROWS = 50
 TABULAR_EXPORT_DEFAULT_SOURCE_BATCH_CHARS = 60000
+TABULAR_EXPORT_DEFAULT_SCHEMA_PROBE_ROWS = 5
 TABULAR_EXPORT_MAX_SOURCE_BATCH_ROWS = 500
 TABULAR_EXPORT_MAX_SOURCE_BATCH_CHARS = 720000
 TABULAR_EXPORT_DEFAULT_CONTEXT_TOKEN_LIMIT = 128000
@@ -1214,6 +1216,66 @@ def _is_tabular_analysis_task(task_type):
 
 def _is_tabular_combined_task(task_type):
     return _normalize_tabular_run_task_type(task_type) == TABULAR_RUN_TASK_COMBINED
+
+
+def _resolve_tabular_schema_probe_rows(
+    settings,
+    requested_plan_mode,
+    task_type,
+    row_count,
+    max_batch_rows,
+):
+    if str(requested_plan_mode or '').strip().lower() == 'active':
+        return 0
+    if _normalize_tabular_run_task_type(task_type) not in {
+        TABULAR_RUN_TASK_STRUCTURED_EXPORT,
+        TABULAR_RUN_TASK_COMBINED,
+    }:
+        return 0
+    return min(
+        _settings_int(
+            settings or {},
+            'tabular_generation_schema_probe_rows',
+            TABULAR_EXPORT_DEFAULT_SCHEMA_PROBE_ROWS,
+            minimum=1,
+            maximum=25,
+        ),
+        _safe_int(row_count, minimum=0),
+        _safe_int(max_batch_rows, minimum=1),
+    )
+
+
+def _estimate_tabular_source_batch_count(row_count, max_batch_rows, schema_probe_rows=0):
+    normalized_row_count = _safe_int(row_count, minimum=0)
+    normalized_max_batch_rows = _safe_int(max_batch_rows, minimum=1)
+    normalized_probe_rows = min(
+        _safe_int(schema_probe_rows, minimum=0),
+        normalized_row_count,
+        normalized_max_batch_rows,
+    )
+    if normalized_probe_rows and normalized_row_count > normalized_probe_rows:
+        return 1 + math.ceil(
+            (normalized_row_count - normalized_probe_rows) / normalized_max_batch_rows
+        )
+    return max(1, math.ceil(normalized_row_count / normalized_max_batch_rows))
+
+
+def _get_tabular_source_batch_row_limit(source_descriptor, staged_batch_count):
+    max_batch_rows = _safe_int(
+        (source_descriptor or {}).get('batch_max_rows'),
+        default=TABULAR_EXPORT_DEFAULT_SOURCE_BATCH_ROWS,
+        minimum=1,
+        maximum=TABULAR_EXPORT_MAX_SOURCE_BATCH_ROWS,
+    )
+    schema_probe_rows = _safe_int(
+        (source_descriptor or {}).get('schema_probe_rows'),
+        default=0,
+        minimum=0,
+        maximum=max_batch_rows,
+    )
+    if schema_probe_rows and _safe_int(staged_batch_count, minimum=0) == 0:
+        return schema_probe_rows
+    return max_batch_rows
 
 
 def _iter_exception_chain(exc):
@@ -2758,12 +2820,93 @@ def _checkpoint_source_input_batch(run, batch_rows, source_scan_row_count):
     return _replace_claimed_run(run)
 
 
+def _iter_versioned_tabular_source_rows(
+    source_descriptor,
+    source_format,
+    source_chunk_rows,
+    resume_source_row,
+):
+    blob_path = str(source_descriptor.get('blob_path') or '').strip()
+    tabular_plugin = TabularProcessingPlugin()
+
+    if source_format == 'csv':
+        source_blob_client = _get_versioned_source_blob_client(source_descriptor)
+        with tempfile.SpooledTemporaryFile(
+            max_size=TABULAR_EXPORT_FINAL_SPOOL_MAX_MEMORY_BYTES,
+            mode='w+b',
+        ) as source_stream:
+            source_blob_client.download_blob(
+                etag=source_descriptor.get('blob_etag'),
+                match_condition=MatchConditions.IfNotModified,
+            ).readinto(source_stream)
+            source_stream.seek(0)
+            source_rows = iter_tabular_csv_query_rows(
+                csv_stream=source_stream,
+                query_expression=source_descriptor.get('query_expression'),
+                return_columns=source_descriptor.get('return_columns'),
+                source_chunk_rows=source_chunk_rows,
+                tabular_plugin=tabular_plugin,
+                start_source_row=resume_source_row,
+            )
+            yield from source_rows
+        return
+
+    _get_versioned_source_blob_client(source_descriptor)
+    sheet_names = [
+        str(sheet_name or '').strip()
+        for sheet_name in source_descriptor.get('sheet_names') or []
+        if str(sheet_name or '').strip()
+    ]
+    if not sheet_names:
+        raise ValueError('Source-backed workbook replay requires an explicit worksheet scope')
+    parsed_return_columns = tabular_plugin._parse_optional_column_list_argument(
+        source_descriptor.get('return_columns')
+    )
+    source_row_offset = 0
+    for sheet_name in sheet_names:
+        source_dataframe = tabular_plugin._read_tabular_blob_to_dataframe(
+            source_descriptor.get('container'),
+            blob_path,
+            sheet_name=sheet_name,
+            require_explicit_sheet=True,
+        )
+        source_dataframe = tabular_plugin._try_numeric_conversion(source_dataframe)
+        source_dataframe.index = range(
+            source_row_offset,
+            source_row_offset + len(source_dataframe),
+        )
+        source_row_offset += len(source_dataframe)
+        filtered_dataframe, _ = tabular_plugin._apply_query_expression_with_fallback(
+            source_dataframe,
+            query_expression=source_descriptor.get('query_expression'),
+            normalize_match=False,
+        )
+        selected_columns = [
+            column_name
+            for column_name in (parsed_return_columns or list(filtered_dataframe.columns))
+            if column_name in filtered_dataframe.columns
+        ]
+        output_records = tabular_plugin._build_row_output_records(
+            filtered_dataframe,
+            selected_columns,
+        )
+        for source_row_index, output_record in zip(filtered_dataframe.index, output_records):
+            source_row_number = int(source_row_index) + 1
+            if source_row_number > resume_source_row:
+                yield source_row_number, output_record
+    _get_versioned_source_blob_client(source_descriptor)
+
+
 def _stage_tabular_generated_output_source(run, settings):
     source_descriptor = run.get('source_descriptor') or {}
     if source_descriptor.get('kind') != 'query_tabular_data':
         raise ValueError('Unsupported generated export source descriptor')
-    if not str(source_descriptor.get('blob_path') or '').lower().endswith('.csv'):
-        raise ValueError('Source-backed generated exports require a CSV source')
+    blob_path = str(source_descriptor.get('blob_path') or '').strip()
+    source_format = str(source_descriptor.get('source_format') or '').strip().lower()
+    if not source_format:
+        source_format = os.path.splitext(blob_path)[1].lower().lstrip('.')
+    if source_format not in TABULAR_EXTENSIONS:
+        raise ValueError('Source-backed generated exports require a supported tabular source')
 
     expected_row_count = _safe_int(source_descriptor.get('expected_row_count'))
     if expected_row_count <= 0:
@@ -2787,55 +2930,46 @@ def _stage_tabular_generated_output_source(run, settings):
         minimum=6000,
         maximum=TABULAR_EXPORT_MAX_SOURCE_BATCH_CHARS,
     )
-    source_blob_client = _get_versioned_source_blob_client(source_descriptor)
     resume_source_row = _safe_int(run.get('source_scan_row_count'))
     pending_rows = []
     pending_chars = 0
     last_source_row_number = resume_source_row
+    source_rows = _iter_versioned_tabular_source_rows(
+        source_descriptor,
+        source_format,
+        source_chunk_rows,
+        resume_source_row,
+    )
 
-    with tempfile.SpooledTemporaryFile(
-        max_size=TABULAR_EXPORT_FINAL_SPOOL_MAX_MEMORY_BYTES,
-        mode='w+b',
-    ) as source_stream:
-        source_blob_client.download_blob(
-            etag=source_descriptor.get('blob_etag'),
-            match_condition=MatchConditions.IfNotModified,
-        ).readinto(source_stream)
-        source_stream.seek(0)
-
-        tabular_plugin = TabularProcessingPlugin()
-        for source_row_number, source_row in iter_tabular_csv_query_rows(
-            csv_stream=source_stream,
-            query_expression=source_descriptor.get('query_expression'),
-            return_columns=source_descriptor.get('return_columns'),
-            source_chunk_rows=source_chunk_rows,
-            tabular_plugin=tabular_plugin,
-            start_source_row=resume_source_row,
+    for source_row_number, source_row in source_rows:
+        source_row_text = _dump_generated_output_json(source_row)
+        current_batch_row_limit = _get_tabular_source_batch_row_limit(
+            source_descriptor,
+            run.get('source_staged_batches'),
+        )
+        if pending_rows and (
+            len(pending_rows) >= current_batch_row_limit
+            or pending_chars + len(source_row_text) > max_batch_chars
         ):
-            source_row_text = _dump_generated_output_json(source_row)
-            if pending_rows and (
-                len(pending_rows) >= max_batch_rows
-                or pending_chars + len(source_row_text) > max_batch_chars
-            ):
-                run = _checkpoint_source_input_batch(
-                    run,
-                    pending_rows,
-                    source_scan_row_count=source_row_number - 1,
-                )
-                pending_rows = []
-                pending_chars = 0
+            run = _checkpoint_source_input_batch(
+                run,
+                pending_rows,
+                source_scan_row_count=source_row_number - 1,
+            )
+            pending_rows = []
+            pending_chars = 0
 
-            pending_rows.append(source_row)
-            pending_chars += len(source_row_text)
-            last_source_row_number = source_row_number
-            if len(pending_rows) >= max_batch_rows:
-                run = _checkpoint_source_input_batch(
-                    run,
-                    pending_rows,
-                    source_scan_row_count=source_row_number,
-                )
-                pending_rows = []
-                pending_chars = 0
+        pending_rows.append(source_row)
+        pending_chars += len(source_row_text)
+        last_source_row_number = source_row_number
+        if len(pending_rows) >= current_batch_row_limit:
+            run = _checkpoint_source_input_batch(
+                run,
+                pending_rows,
+                source_scan_row_count=source_row_number,
+            )
+            pending_rows = []
+            pending_chars = 0
 
     if pending_rows:
         run = _checkpoint_source_input_batch(
@@ -3703,6 +3837,24 @@ def _ensure_tabular_generation_plan(
                 'plan_mode': 'off',
                 'plan_status': 'disabled',
                 'updated_at': _now_iso(),
+            })
+            return _replace_claimed_run(run)
+        return run
+    if plan_mode == 'shadow' and not ((run or {}).get('plan_blob_path') or (run or {}).get('plan_hash')):
+        if (run or {}).get('plan_status') != 'deferred':
+            now = _now_iso()
+            run.update({
+                'plan_mode': 'shadow',
+                'plan_status': 'deferred',
+                'plan_failure_reason': 'deferred_off_critical_path',
+                'planner_attempt_count': 0,
+                'planner_latency_seconds': 0,
+                'planner_model_latency_seconds': 0,
+                'planner_started_at': None,
+                'planner_completed_at': None,
+                'updated_at': now,
+                'last_heartbeat_at': now,
+                'last_message': 'Generating the initial schema checkpoint',
             })
             return _replace_claimed_run(run)
         return run
@@ -5372,6 +5524,36 @@ def _build_run_status_detail(run, settings, retryable_failure, can_resume):
                     if is_hierarchical_analysis
                     else 'Export validation passed and the final artifact is being published.'
                 ),
+                'is_stale': False,
+                'waiting_for_retry': False,
+                'retry_due': False,
+                'retry_delay_seconds': None,
+            }
+        if run.get('source_descriptor') and not run.get('source_staging_complete'):
+            return {
+                'status_label': 'Preparing Source',
+                'status_tone': 'info',
+                'status_detail': 'The selected tabular source is being read and checkpointed for background processing.',
+                'is_stale': False,
+                'waiting_for_retry': False,
+                'retry_due': False,
+                'retry_delay_seconds': None,
+            }
+        if str((run or {}).get('plan_status') or '').strip().lower() == 'planning':
+            return {
+                'status_label': 'Planning Output',
+                'status_tone': 'info',
+                'status_detail': 'The output schema is being planned before concurrent batch generation starts.',
+                'is_stale': False,
+                'waiting_for_retry': False,
+                'retry_due': False,
+                'retry_delay_seconds': None,
+            }
+        if _safe_int((run or {}).get('completed_batches')) == 0:
+            return {
+                'status_label': 'Starting',
+                'status_tone': 'info',
+                'status_detail': 'The initial output checkpoint is being generated; concurrent batches will follow.',
                 'is_stale': False,
                 'waiting_for_retry': False,
                 'retry_due': False,
@@ -8149,9 +8331,18 @@ def queue_tabular_generated_output_run(
             raise ValueError('Source query descriptor must include the expected row count')
         source_descriptor['batch_max_rows'] = model_batch_budget['max_rows']
         source_descriptor['batch_max_chars'] = model_batch_budget['max_chars']
-        staged_batch_count = max(
-            1,
-            math.ceil(staged_row_count / source_descriptor['batch_max_rows']),
+        schema_probe_rows = _resolve_tabular_schema_probe_rows(
+            settings,
+            requested_plan_mode,
+            normalized_task_type,
+            staged_row_count,
+            source_descriptor['batch_max_rows'],
+        )
+        source_descriptor['schema_probe_rows'] = schema_probe_rows
+        staged_batch_count = _estimate_tabular_source_batch_count(
+            staged_row_count,
+            source_descriptor['batch_max_rows'],
+            schema_probe_rows,
         )
         source_authorization = {
             field_name: source_descriptor.get(field_name)
@@ -8280,6 +8471,9 @@ def queue_tabular_generated_output_run(
         'analysis_phase': 'queued' if _is_tabular_analysis_task(normalized_task_type) else None,
         'active_processing_seconds': 0,
         'last_message': (
+            'Queued background tabular run; preparing source checkpoints'
+            if source_descriptor
+            else
             'Queued background combined tabular analysis and export'
             if normalized_task_type == TABULAR_RUN_TASK_COMBINED
             else
