@@ -1,8 +1,8 @@
 # test_tabular_row_orchestration_scale.py
 """
 Functional test for scalable per-row tabular orchestration.
-Version: 0.250.145
-Implemented in: 0.250.060; generated CSV formula safety in 0.250.065; generated file export routing in 0.250.072; source descriptor generalization in 0.250.127; unified durable run contract in 0.250.128; hierarchical analysis in 0.250.129; combined analysis and export in 0.250.130; scale validation in 0.250.132; direct source-backed exhaustive queueing in 0.250.133; direct queue call-site hardening in 0.250.134; model-validation auto retry in 0.250.135; model-aware parallel throughput in 0.250.136; Phase 1 acceleration contracts and observability in 0.250.137; Phase 2 truthful background handoff in 0.250.138; Phase 3 durable LLM generation planning in 0.250.139; Phase 4 compact row response protocol in 0.250.140; Phase 5 completion-driven checkpointing in 0.250.141; Phase 6 rolling worker pool in 0.250.142; Phase 7 independent batch retries in 0.250.143; Phase 8 scale, chaos, and rollout in 0.250.144; background metadata streaming fix in 0.250.145
+Version: 0.250.146
+Implemented in: 0.250.060; generated CSV formula safety in 0.250.065; generated file export routing in 0.250.072; source descriptor generalization in 0.250.127; unified durable run contract in 0.250.128; hierarchical analysis in 0.250.129; combined analysis and export in 0.250.130; scale validation in 0.250.132; direct source-backed exhaustive queueing in 0.250.133; direct queue call-site hardening in 0.250.134; model-validation auto retry in 0.250.135; model-aware parallel throughput in 0.250.136; Phase 1 acceleration contracts and observability in 0.250.137; Phase 2 truthful background handoff in 0.250.138; Phase 3 durable LLM generation planning in 0.250.139; Phase 4 compact row response protocol in 0.250.140; Phase 5 completion-driven checkpointing in 0.250.141; Phase 6 rolling worker pool in 0.250.142; Phase 7 independent batch retries in 0.250.143; Phase 8 scale, chaos, and rollout in 0.250.144; background metadata streaming fix in 0.250.145; source-token echo recovery in 0.250.146
 
 This test ensures generated exports preserve source identity and row order while
 enforcing one stable output schema across independently generated batches.
@@ -51,10 +51,13 @@ from functions_assistant_table_exports import (  # noqa: E402
     neutralize_csv_spreadsheet_formula,
 )
 CONTRACT_FUNCTIONS = {
+    '_safe_int',
     '_normalize_source_identity_label',
     '_select_source_row_identity',
     '_prepare_tabular_source_rows',
     '_normalize_generated_batch_entries',
+    '_generated_entry_has_source_position_conflict',
+    '_normalize_model_generated_batch_entries',
 }
 CONTRACT_CONSTANTS = {
     'TABULAR_EXPORT_INPUT_ROW_NUMBER_FIELD',
@@ -372,6 +375,8 @@ def _load_contract_helpers():
         )
 
     namespace = {'re': re, 'uuid': uuid}
+    namespace['log_event'] = lambda *args, **kwargs: None
+    namespace['logging'] = logging
     extracted_module = ast.Module(body=selected_nodes, type_ignores=[])
     exec(compile(extracted_module, str(EXPORT_MODULE), 'exec'), namespace)
     return namespace
@@ -3566,6 +3571,68 @@ def test_generated_batch_schema_contract():
         raise AssertionError('Swapped model rows must fail source-token validation')
 
 
+def test_model_batch_token_echo_recovery_preserves_order_contract():
+    """Model responses may omit hidden token echoes but cannot contradict row order."""
+    helpers = _load_contract_helpers()
+    prepared_rows = helpers['_prepare_tabular_source_rows'](
+        [
+            {'Case ID': 'SC-2001', 'Comment': 'first'},
+            {'Case ID': 'SC-2002', 'Comment': 'second'},
+        ],
+        start_row=0,
+    )
+    token_echo_mismatch_entries = [
+        {
+            '__simplechat_source_row_token': 'model-made-up-token-1',
+            'source_row_number': 1,
+            'source_row_identity': 'SC-2001',
+            'answer': 'yes',
+        },
+        {
+            '__simplechat_source_row_token': 'model-made-up-token-2',
+            'source_row_number': 2,
+            'source_row_identity': 'SC-2002',
+            'answer': 'no',
+        },
+    ]
+
+    recovered_entries, output_schema = helpers['_normalize_model_generated_batch_entries'](
+        prepared_rows,
+        token_echo_mismatch_entries,
+        run_id='run-token-recovery',
+        batch_number=2,
+    )
+
+    assert output_schema == ['source_row_number', 'source_row_identity', 'answer']
+    assert recovered_entries == [
+        {'source_row_number': 1, 'source_row_identity': 'SC-2001', 'answer': 'yes'},
+        {'source_row_number': 2, 'source_row_identity': 'SC-2002', 'answer': 'no'},
+    ]
+
+    try:
+        helpers['_normalize_model_generated_batch_entries'](
+            prepared_rows,
+            [
+                {
+                    '__simplechat_source_row_token': 'model-made-up-token-1',
+                    'source_row_number': 2,
+                    'source_row_identity': 'SC-2002',
+                    'answer': 'no',
+                },
+                {
+                    '__simplechat_source_row_token': 'model-made-up-token-2',
+                    'source_row_number': 1,
+                    'source_row_identity': 'SC-2001',
+                    'answer': 'yes',
+                },
+            ],
+        )
+    except ValueError as exc:
+        assert 'token mismatch' in str(exc).lower()
+    else:
+        raise AssertionError('Explicit source row conflicts must not use positional recovery')
+
+
 def test_durable_runner_enforces_row_contract():
     """Queueing, generation, and checkpointing must all enforce the shared contract."""
     queue_calls = _called_function_names(_get_function_node('queue_tabular_generated_output_run'))
@@ -3574,7 +3641,7 @@ def test_durable_runner_enforces_row_contract():
     process_source = ast.unparse(_get_function_node('process_tabular_generated_output_run'))
 
     assert '_prepare_tabular_source_rows' in queue_calls
-    assert '_normalize_generated_batch_entries' in generation_calls
+    assert '_normalize_model_generated_batch_entries' in generation_calls
     assert "run['output_schema']" in checkpoint_source
     assert "run.get('output_schema')" in process_source
     assert 'window_end = window_start' in process_source
@@ -5231,6 +5298,7 @@ def main():
         test_phase_four_compact_response_rejects_key_and_value_failures,
         test_source_identity_and_order_contract,
         test_generated_batch_schema_contract,
+        test_model_batch_token_echo_recovery_preserves_order_contract,
         test_durable_runner_enforces_row_contract,
         test_paginated_candidate_coalesces_all_300_rows,
         test_paginated_candidate_rejects_gaps,
