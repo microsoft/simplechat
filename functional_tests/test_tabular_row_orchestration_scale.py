@@ -1,8 +1,8 @@
 # test_tabular_row_orchestration_scale.py
 """
 Functional test for scalable per-row tabular orchestration.
-Version: 0.250.142
-Implemented in: 0.250.060; generated CSV formula safety in 0.250.065; generated file export routing in 0.250.072; source descriptor generalization in 0.250.127; unified durable run contract in 0.250.128; hierarchical analysis in 0.250.129; combined analysis and export in 0.250.130; scale validation in 0.250.132; direct source-backed exhaustive queueing in 0.250.133; direct queue call-site hardening in 0.250.134; model-validation auto retry in 0.250.135; model-aware parallel throughput in 0.250.136; Phase 1 acceleration contracts and observability in 0.250.137; Phase 2 truthful background handoff in 0.250.138; Phase 3 durable LLM generation planning in 0.250.139; Phase 4 compact row response protocol in 0.250.140; Phase 5 completion-driven checkpointing in 0.250.141; Phase 6 rolling worker pool in 0.250.142
+Version: 0.250.143
+Implemented in: 0.250.060; generated CSV formula safety in 0.250.065; generated file export routing in 0.250.072; source descriptor generalization in 0.250.127; unified durable run contract in 0.250.128; hierarchical analysis in 0.250.129; combined analysis and export in 0.250.130; scale validation in 0.250.132; direct source-backed exhaustive queueing in 0.250.133; direct queue call-site hardening in 0.250.134; model-validation auto retry in 0.250.135; model-aware parallel throughput in 0.250.136; Phase 1 acceleration contracts and observability in 0.250.137; Phase 2 truthful background handoff in 0.250.138; Phase 3 durable LLM generation planning in 0.250.139; Phase 4 compact row response protocol in 0.250.140; Phase 5 completion-driven checkpointing in 0.250.141; Phase 6 rolling worker pool in 0.250.142; Phase 7 independent batch retries in 0.250.143
 
 This test ensures generated exports preserve source identity and row order while
 enforcing one stable output schema across independently generated batches.
@@ -11,6 +11,7 @@ enforcing one stable output schema across independently generated batches.
 import ast
 import asyncio
 import csv
+import heapq
 import hashlib
 import io
 import importlib.util
@@ -97,8 +98,10 @@ RETRY_FUNCTIONS = {
     '_is_retryable_export_error_message',
     '_is_retryable_model_validation_error_message',
     '_is_retryable_failed_run',
+    '_has_exhausted_independent_batch_retries',
     '_is_auto_retry_exhausted',
     '_can_auto_retry_failed_run',
+    '_can_resume_run',
     '_mark_run_failed',
     '_get_auto_retry_limit_for_category',
     '_mark_run_retryable',
@@ -106,6 +109,9 @@ RETRY_FUNCTIONS = {
 RETRY_CONSTANTS = {
     'TABULAR_EXPORT_STATUS_FAILED',
     'TABULAR_EXPORT_STATUS_QUEUED',
+    'TABULAR_EXPORT_STATUS_RUNNING',
+    'TABULAR_EXPORT_STATUS_COMPLETED',
+    'TABULAR_EXPORT_STATUS_CANCELED',
     'TABULAR_EXPORT_DEFAULT_MAX_TRANSIENT_FAILURES',
     'TABULAR_EXPORT_DEFAULT_MODEL_VALIDATION_AUTO_RETRIES',
     'TABULAR_EXPORT_RETRYABLE_MESSAGE_MARKERS',
@@ -285,10 +291,24 @@ COMPLETION_CHECKPOINT_FUNCTIONS = {
     '_get_tabular_generation_rollout_settings_for_run',
     '_select_tabular_executor_mode',
     '_is_rolling_worker_pool_enabled',
+    '_is_independent_batch_retries_enabled',
     '_get_tabular_generation_plan_mode',
     '_is_rolling_executor_ready',
+    '_retry_blob_path',
+    '_retry_blob_prefix',
     '_output_blob_prefix',
     '_scan_output_checkpoint_batches_for_run',
+    '_load_tabular_batch_retry_records_for_run',
+    '_safe_tabular_batch_error_code',
+    '_classify_tabular_batch_failure',
+    '_is_tabular_batch_failure_retryable',
+    '_tabular_retry_delay_seconds',
+    '_build_tabular_batch_retry_record',
+    '_persist_tabular_batch_retry_record',
+    '_delete_tabular_batch_retry_record',
+    '_is_tabular_batch_retry_due',
+    '_tabular_batch_retry_heap_item',
+    '_reset_exhausted_tabular_batch_retry_records_for_continue',
     '_is_completion_driven_checkpointing_enabled',
     '_get_checkpoint_writer_concurrency',
     '_get_tabular_generation_heartbeat_seconds',
@@ -296,6 +316,16 @@ COMPLETION_CHECKPOINT_FUNCTIONS = {
     '_generate_and_checkpoint_batch_window_entries',
     '_rolling_pool_heartbeat_loop',
     '_generate_and_checkpoint_rolling_pool_entries',
+    '_now_utc',
+    '_now_iso',
+    '_parse_iso_datetime',
+    '_seconds_until',
+    '_iter_exception_chain',
+    '_exception_status_code',
+    '_is_retryable_export_error_message',
+    '_is_retryable_model_validation_error_message',
+    '_is_retryable_export_error',
+    '_is_retryable_model_validation_error',
 }
 
 
@@ -1358,9 +1388,18 @@ def _load_completion_checkpoint_helpers():
 
     namespace = {
         'asyncio': asyncio,
+        'Counter': Counter,
         'deque': __import__('collections').deque,
+        'datetime': datetime,
+        'hashlib': hashlib,
+        'heapq': heapq,
+        'logging': logging,
+        'math': math,
         're': re,
+        'timedelta': timedelta,
+        'timezone': timezone,
         'storage_account_personal_chat_container_name': 'personal-chat',
+        'TabularExportLeaseLostError': RuntimeError,
         'TABULAR_RUN_TASK_STRUCTURED_EXPORT': 'structured_export',
         'TABULAR_RUN_TASK_HIERARCHICAL_ANALYSIS': 'hierarchical_analysis',
         'TABULAR_RUN_TASK_COMBINED': 'combined',
@@ -2850,6 +2889,230 @@ def test_phase_six_rolling_pool_pauses_dispatch_at_checkpoint_high_water():
     assert set(scheduled_at) == {1, 2, 3}
 
 
+def test_phase_seven_retry_ledger_uses_safe_bounded_metadata():
+    """Per-batch retry records persist safe bounded metadata without raw provider errors."""
+    helpers = _load_completion_checkpoint_helpers()
+    helpers['_now_utc'] = lambda: datetime(2026, 8, 10, 12, 0, 0, tzinfo=timezone.utc)
+    run = {
+        'id': 'run-phase-7',
+        'user_id': 'user-1',
+        'conversation_id': 'conversation-1',
+        'plan_hash': 'abcdef1234567890',
+        'lease_generation': 3,
+        'batch_count': 8,
+    }
+    batch_request = {
+        'batch_number': 7,
+        'rows': [
+            {'__simplechat_source_row_number': 301, 'Case ID': 'SC-301'},
+            {'__simplechat_source_row_number': 302, 'Case ID': 'SC-302'},
+        ],
+    }
+
+    class RateLimitError(Exception):
+        status_code = 429
+
+    retry_record = helpers['_build_tabular_batch_retry_record'](
+        run,
+        7,
+        batch_request,
+        RateLimitError('raw provider detail should not be persisted'),
+        max_attempts=2,
+    )
+
+    assert helpers['_retry_blob_path']('user-1', 'conversation-1', 'run-phase-7', 7).endswith(
+        '/retry/batch_000007.json'
+    )
+    assert retry_record['failure_category'] == 'rate_limit'
+    assert retry_record['safe_error_code'] == 'http_429'
+    assert retry_record['attempts_by_category'] == {'rate_limit': 1}
+    assert retry_record['row_count'] == 2
+    assert retry_record['first_source_row_number'] == 301
+    assert retry_record['last_source_row_number'] == 302
+    assert retry_record['next_attempt_at'] is not None
+    assert retry_record['exhausted'] is False
+    serialized_record = json.dumps(retry_record, sort_keys=True)
+    assert 'raw provider detail' not in serialized_record
+
+    exhausted_record = helpers['_build_tabular_batch_retry_record'](
+        run,
+        7,
+        batch_request,
+        ValueError('failed validation: raw schema mismatch detail'),
+        max_attempts=1,
+    )
+    assert exhausted_record['failure_category'] == 'model_validation'
+    assert exhausted_record['safe_error_code'] == 'valueerror'
+    assert exhausted_record['exhausted'] is True
+    assert exhausted_record['next_attempt_at'] is None
+
+    persisted_records = {}
+    helpers['_scan_output_checkpoint_batches_for_run'] = lambda active_run: set()
+    helpers['_load_tabular_batch_retry_records_for_run'] = lambda active_run, completed: {
+        7: dict(exhausted_record),
+    }
+    helpers['_persist_tabular_batch_retry_record'] = lambda active_run, record: persisted_records.__setitem__(
+        record['batch_number'],
+        dict(record),
+    )
+    reset_count = helpers['_reset_exhausted_tabular_batch_retry_records_for_continue'](
+        run,
+        '2026-08-10T12:01:00+00:00',
+    )
+
+    assert reset_count == 1
+    assert persisted_records[7]['attempt_count'] == 0
+    assert persisted_records[7]['attempts_by_category'] == {}
+    assert persisted_records[7]['exhausted'] is False
+    assert persisted_records[7]['next_attempt_at'] == '2026-08-10T12:01:00+00:00'
+
+
+def test_phase_seven_independent_retry_keeps_healthy_batches_running():
+    """A failed rolling batch retries independently while unrelated pending batches continue."""
+    helpers = _load_completion_checkpoint_helpers()
+    scheduled_batches = []
+    generation_attempts = Counter()
+    checkpointed_batches = []
+    retry_records = {}
+    deleted_retry_records = []
+
+    def build_batch_window(run, input_batches, user_id, run_id, window_start, window_end, batch_count, durable_output_batches=None):
+        del run, input_batches, user_id, run_id, window_end, batch_count, durable_output_batches
+        scheduled_batches.append(window_start)
+        return {}, [{
+            'batch_number': window_start,
+            'rows': [{
+                '__simplechat_source_row_number': window_start,
+                'Case ID': f'SC-{window_start}',
+            }],
+        }]
+
+    async def generate_batch_entries_for_window(
+        semaphore,
+        chat_service,
+        user_question,
+        batch_request,
+        total_batches,
+        source_file_name,
+        selected_sheet,
+        retry_attempts,
+        run_id,
+        expected_output_schema,
+        batch_timeout_seconds,
+        response_protocol,
+        generation_plan,
+    ):
+        del chat_service, user_question, total_batches, source_file_name, selected_sheet
+        del retry_attempts, run_id, expected_output_schema, batch_timeout_seconds
+        del response_protocol, generation_plan
+        async with semaphore:
+            batch_number = batch_request['batch_number']
+            generation_attempts[batch_number] += 1
+            await asyncio.sleep(0.01)
+            if batch_number == 2 and generation_attempts[batch_number] == 1:
+                raise ValueError('failed validation: missing answer field')
+            return {
+                'batch_number': batch_number,
+                'batch_entries': [{'source_row_number': batch_number, 'answer': f'a{batch_number}'}],
+                'batch_summary': {'row_count': 1},
+                'batch_row_count': 1,
+                'elapsed_seconds': 0.01,
+                'mismatch_count': 0,
+                'output_schema': ['source_row_number', 'answer'],
+            }
+
+    async def checkpoint_generated_result_async(run, generated_result, writer_semaphore):
+        del run
+        async with writer_semaphore:
+            batch_number = generated_result['batch_number']
+            checkpointed_batches.append(batch_number)
+            return {
+                batch_number: {
+                    'batch_number': batch_number,
+                    'batch_row_count': 1,
+                    'elapsed_seconds': generated_result['elapsed_seconds'],
+                    'mismatch_count': 0,
+                    'from_checkpoint': False,
+                }
+            }
+
+    def advance_progress(run, batch_results, completed_batches, processed_rows, window_start, window_end):
+        for batch_number in range(window_start, window_end + 1):
+            if batch_number not in batch_results:
+                break
+            completed_batches = batch_number
+            processed_rows += batch_results[batch_number]['batch_row_count']
+        run['completed_batches'] = completed_batches
+        run['processed_rows'] = processed_rows
+        return run, completed_batches, processed_rows
+
+    helpers['_scan_output_checkpoint_batches_for_run'] = lambda run: set()
+    helpers['_load_tabular_batch_retry_records_for_run'] = lambda run, completed: {}
+    helpers['_raise_if_tabular_export_canceled'] = lambda run: run
+    helpers['_build_batch_window'] = build_batch_window
+    helpers['_generate_batch_entries_for_window'] = generate_batch_entries_for_window
+    helpers['_checkpoint_generated_result_async'] = checkpoint_generated_result_async
+    helpers['_advance_run_progress_for_window'] = advance_progress
+    helpers['_log_progress_if_due'] = lambda run, last_logged_at: last_logged_at
+    helpers['_persist_tabular_batch_retry_record'] = lambda run, record: retry_records.__setitem__(
+        record['batch_number'],
+        dict(record),
+    )
+    helpers['_delete_tabular_batch_retry_record'] = lambda run, batch_number: deleted_retry_records.append(
+        batch_number
+    )
+    helpers['_is_tabular_batch_retry_due'] = lambda record: 3 in scheduled_batches
+
+    run = {
+        'id': 'run-phase-7-independent-retry',
+        'user_id': 'user-1',
+        'conversation_id': 'conversation-1',
+        'batch_count': 4,
+        'completed_batches': 0,
+        'processed_rows': 0,
+        'output_schema': ['source_row_number', 'answer'],
+        'plan_hash': 'abcdef1234567890',
+        'generation_rollout_settings': {
+            'enable_tabular_independent_batch_retries': True,
+            'tabular_generation_systemic_failure_threshold': 1.0,
+        },
+    }
+    result_run, completed_batches, processed_rows, _ = asyncio.run(
+        helpers['_generate_and_checkpoint_rolling_pool_entries'](
+            run,
+            object(),
+            None,
+            'answer every row',
+            4,
+            'source.csv',
+            None,
+            2,
+            'run-phase-7-independent-retry',
+            'user-1',
+            2,
+            2,
+            300,
+            independent_batch_retries_enabled=True,
+        )
+    )
+
+    second_batch_dispatches = [
+        index
+        for index, batch_number in enumerate(scheduled_batches)
+        if batch_number == 2
+    ]
+    assert len(second_batch_dispatches) == 2
+    assert scheduled_batches.index(3) < second_batch_dispatches[1]
+    assert generation_attempts[2] == 2
+    assert retry_records[2]['failure_category'] == 'model_validation'
+    assert deleted_retry_records.count(2) >= 1
+    assert set(checkpointed_batches) == {1, 2, 3, 4}
+    assert completed_batches == 4
+    assert processed_rows == 4
+    assert result_run['retry_wait_batch_count'] == 0
+    assert result_run['exhausted_batch_count'] == 0
+
+
 def test_source_identity_and_order_contract():
     """Every row receives a canonical ordinal and preserves its source identifier."""
     helpers = _load_contract_helpers()
@@ -3546,6 +3809,14 @@ def test_model_validation_failures_auto_retry_then_manual_continue():
     assert exhausted_retry['last_retry_category'] == 'model_validation'
     assert helpers['_is_retryable_failed_run'](stored_run) is True
     assert helpers['_can_auto_retry_failed_run'](stored_run, settings) is False
+
+    exhausted_batch_run = {
+        'status': 'failed',
+        'last_retry_category': 'batch_exhausted',
+        'exhausted_batch_count': 1,
+    }
+    assert helpers['_has_exhausted_independent_batch_retries'](exhausted_batch_run) is True
+    assert helpers['_can_resume_run'](exhausted_batch_run, settings) is True
 
 
 def test_hierarchical_analysis_routing_requires_feature_flag():
