@@ -5499,6 +5499,7 @@ def build_background_tabular_generated_output_metadata(run):
     is_hierarchical_analysis = task_type == TABULAR_RUN_TASK_HIERARCHICAL_ANALYSIS
     is_combined = task_type == TABULAR_RUN_TASK_COMBINED
     output_label = str(public_status.get('output_format') or 'json').upper()
+    row_count = _safe_int(public_status.get('row_count'))
     public_status.update({
         'export_run_id': public_status.get('run_id'),
         'background_export': True,
@@ -5516,14 +5517,14 @@ def build_background_tabular_generated_output_metadata(run):
         'preview_row_count': 0,
         'foreground_response_policy_version': 'phase2.v1',
         'summary': (
-            f"Queued combined tabular analysis and {output_label} export for {public_status.get('row_count', 0)} row(s) "
+            f"Queued combined tabular analysis and {output_label} export for {row_count} row(s) "
             f"across {public_status.get('batch_count', 0)} chunk(s)."
             if is_combined
             else
-            f"Queued hierarchical tabular analysis for {public_status.get('row_count', 0)} row(s) "
+            f"Queued hierarchical tabular analysis for {row_count} row(s) "
             f"across {public_status.get('batch_count', 0)} chunk(s)."
             if is_hierarchical_analysis
-            else f"Queued structured {output_label} export for {public_status.get('row_count', 0)} row(s) "
+            else f"Queued structured {output_label} export for {row_count} row(s) "
             f"across {public_status.get('batch_count', 0)} batch(es)."
         ),
     })

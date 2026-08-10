@@ -1,8 +1,8 @@
 # test_tabular_row_orchestration_scale.py
 """
 Functional test for scalable per-row tabular orchestration.
-Version: 0.250.144
-Implemented in: 0.250.060; generated CSV formula safety in 0.250.065; generated file export routing in 0.250.072; source descriptor generalization in 0.250.127; unified durable run contract in 0.250.128; hierarchical analysis in 0.250.129; combined analysis and export in 0.250.130; scale validation in 0.250.132; direct source-backed exhaustive queueing in 0.250.133; direct queue call-site hardening in 0.250.134; model-validation auto retry in 0.250.135; model-aware parallel throughput in 0.250.136; Phase 1 acceleration contracts and observability in 0.250.137; Phase 2 truthful background handoff in 0.250.138; Phase 3 durable LLM generation planning in 0.250.139; Phase 4 compact row response protocol in 0.250.140; Phase 5 completion-driven checkpointing in 0.250.141; Phase 6 rolling worker pool in 0.250.142; Phase 7 independent batch retries in 0.250.143; Phase 8 scale, chaos, and rollout in 0.250.144
+Version: 0.250.145
+Implemented in: 0.250.060; generated CSV formula safety in 0.250.065; generated file export routing in 0.250.072; source descriptor generalization in 0.250.127; unified durable run contract in 0.250.128; hierarchical analysis in 0.250.129; combined analysis and export in 0.250.130; scale validation in 0.250.132; direct source-backed exhaustive queueing in 0.250.133; direct queue call-site hardening in 0.250.134; model-validation auto retry in 0.250.135; model-aware parallel throughput in 0.250.136; Phase 1 acceleration contracts and observability in 0.250.137; Phase 2 truthful background handoff in 0.250.138; Phase 3 durable LLM generation planning in 0.250.139; Phase 4 compact row response protocol in 0.250.140; Phase 5 completion-driven checkpointing in 0.250.141; Phase 6 rolling worker pool in 0.250.142; Phase 7 independent batch retries in 0.250.143; Phase 8 scale, chaos, and rollout in 0.250.144; background metadata streaming fix in 0.250.145
 
 This test ensures generated exports preserve source identity and row order while
 enforcing one stable output schema across independently generated batches.
@@ -139,6 +139,7 @@ FAILURE_FUNCTIONS = {
     '_normalize_generated_analysis_artifact_metadata',
     '_tabular_background_handoff_has_preview',
 }
+BACKGROUND_METADATA_FUNCTIONS = {'build_background_tabular_generated_output_metadata'}
 ARTIFACT_FUNCTIONS = {'_upload_generated_chat_artifact_for_current_user'}
 SCHEDULER_FUNCTIONS = {'_query_scheduler_candidates_by_status'}
 MANIFEST_FUNCTIONS = {
@@ -1101,6 +1102,28 @@ def _load_failed_export_helpers():
     extracted_module = ast.Module(body=selected_nodes, type_ignores=[])
     exec(compile(extracted_module, str(CHAT_ROUTE), 'exec'), namespace)
     return namespace
+
+
+def _load_background_generated_output_metadata_helper():
+    module_tree = ast.parse(EXPORT_MODULE.read_text(encoding='utf-8'), filename=str(EXPORT_MODULE))
+    selected_nodes = [
+        node
+        for node in module_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name in BACKGROUND_METADATA_FUNCTIONS
+    ]
+    if len(selected_nodes) != len(BACKGROUND_METADATA_FUNCTIONS):
+        raise AssertionError('Missing background generated-output metadata helper')
+
+    namespace = {
+        '_build_run_public_status': lambda run: dict(run.get('_public_status') or {}),
+        '_normalize_tabular_run_task_type': lambda task_type: task_type or 'structured_export',
+        '_safe_int': lambda value: int(value or 0),
+        'TABULAR_RUN_TASK_HIERARCHICAL_ANALYSIS': 'hierarchical_analysis',
+        'TABULAR_RUN_TASK_COMBINED': 'combined',
+    }
+    extracted_module = ast.Module(body=selected_nodes, type_ignores=[])
+    exec(compile(extracted_module, str(EXPORT_MODULE), 'exec'), namespace)
+    return namespace['build_background_tabular_generated_output_metadata']
 
 
 def _assert_concise_background_handoff_contract(text, expected_row_count, expected_output_label):
@@ -5155,6 +5178,34 @@ def test_phase_two_background_handoff_contracts_are_server_composed():
     assert canceled_handoff == ''
 
 
+def test_background_metadata_uses_public_status_row_count():
+    """Accepted durable runs build stream metadata from their safe public row count."""
+    build_metadata = _load_background_generated_output_metadata_helper()
+    cases = (
+        ('structured_export', 'csv', 'background_export'),
+        ('hierarchical_analysis', 'md', 'background_analysis'),
+        ('combined', 'csv', 'background_combined'),
+    )
+
+    for task_type, output_format, handoff_mode in cases:
+        metadata = build_metadata({
+            'task_type': task_type,
+            '_public_status': {
+                'run_id': f'run-{task_type}',
+                'task_type': task_type,
+                'output_format': output_format,
+                'row_count': 3000,
+                'batch_count': 52,
+            },
+        })
+
+        assert metadata['requested_row_count'] == 3000
+        assert metadata['row_count'] == 3000
+        assert metadata['handoff_mode'] == handoff_mode
+        assert '3,000' not in metadata['summary']
+        assert '3000 row(s)' in metadata['summary']
+
+
 def main():
     """Run focused row-orchestration contract checks."""
     tests = [
@@ -5190,6 +5241,7 @@ def main():
         test_direct_source_backed_csv_queue_bypasses_tool_paging,
         test_direct_source_backed_queue_failure_falls_back_without_stream_abort,
         test_phase_two_background_handoff_contracts_are_server_composed,
+        test_background_metadata_uses_public_status_row_count,
         test_direct_source_backed_queue_call_sites_use_required_keywords,
         test_model_validation_failures_auto_retry_then_manual_continue,
         test_hierarchical_analysis_routing_requires_feature_flag,
