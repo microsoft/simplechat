@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Functional test for durable tabular generated-output background exports.
-Version: 0.250.128
-Implemented in: 0.241.060; throughput and timeout hardening in: 0.250.070; unified durable run contract in: 0.250.128
+Version: 0.250.142
+Implemented in: 0.241.060; throughput and timeout hardening in: 0.250.070; unified durable run contract in: 0.250.128; Phase 6 rolling worker pool compatibility in: 0.250.142
 
 This test ensures that large tabular structured exports are wired through the
 durable background queue, status API, queued retry recovery, and chat progress
@@ -99,7 +99,9 @@ def test_export_runner_module():
     assert_contains(source_text, 'TABULAR_EXPORT_DEFAULT_SCAN_LIMIT = 5', 'non-starving scheduler scan limit')
     assert_contains(source_text, 'APIConnectionError', 'OpenAI connection error retry classification')
     assert_contains(source_text, 'build_semantic_kernel_chat_service_for_model', 'provider-aware background model service')
-    assert_contains(source_text, 'model_context=run.get(\'model_context\')', 'background model context rehydration')
+    assert_contains(source_text, 'has_snapshotted_chunk_model', 'snapshot-aware chunk model rehydration')
+    assert_contains(source_text, "run.get('chunk_model_context')", 'chunk model context rehydration')
+    assert_contains(source_text, "else run.get('model_context')", 'fallback model context rehydration')
     assert_contains(source_text, "'model_context': model_context if isinstance(model_context, dict) else {}", 'persisted non-secret model context')
     assert_contains(source_text, 'TABULAR_EXPORT_STATUS_FAILED', 'retryable failed-run scheduler pickup')
     assert_contains(source_text, 'TABULAR_EXPORT_SCHEDULER_STATUSES', 'status-specific scheduler scans')
@@ -128,10 +130,11 @@ def test_export_runner_module():
 
 
 def test_background_runner_bounded_batch_concurrency():
-    """Validate Phase 4 bounded model-batch concurrency in the background runner."""
+    """Validate bounded adaptive model-batch concurrency in the background runner."""
     source_text = read_text(EXPORT_MODULE)
-    assert_contains(source_text, 'TABULAR_EXPORT_DEFAULT_BATCH_CONCURRENCY = 3', 'default batch concurrency')
-    assert_contains(source_text, 'TABULAR_EXPORT_MAX_BATCH_CONCURRENCY = 5', 'maximum batch concurrency')
+    assert_contains(source_text, 'TABULAR_EXPORT_DEFAULT_BATCH_CONCURRENCY = 16', 'default batch concurrency')
+    assert_contains(source_text, 'TABULAR_EXPORT_HIGH_BATCH_CONCURRENCY = 64', 'high batch concurrency')
+    assert_contains(source_text, 'TABULAR_EXPORT_MAX_BATCH_CONCURRENCY = 128', 'maximum batch concurrency')
     assert_contains(source_text, 'TABULAR_EXPORT_DEFAULT_BATCH_TIMEOUT_SECONDS = 300', 'bounded batch timeout')
     assert_contains(source_text, 'tabular_generated_output_batch_concurrency', 'settings override for batch concurrency')
     assert_contains(source_text, 'tabular_generated_output_batch_timeout_seconds', 'settings override for batch timeout')
@@ -172,7 +175,10 @@ def test_background_batch_timeout_prevents_indefinite_model_wait():
         'SKChatHistory': FakeChatHistory,
         'AzureChatPromptExecutionSettings': FakeExecutionSettings,
         'TABULAR_EXPORT_DEFAULT_BATCH_TIMEOUT_SECONDS': 300,
+        'TABULAR_RESPONSE_PROTOCOL_OBJECT_V1': 'object-v1',
+        'time': __import__('time'),
         '_safe_float': lambda value, default=0.0: float(value) if value is not None else default,
+        '_is_compact_row_array_protocol': lambda _response_protocol: False,
         '_build_batch_prompt': lambda *args, **kwargs: 'test prompt',
     }
     extracted_module = ast.Module(body=[helper_node], type_ignores=[])

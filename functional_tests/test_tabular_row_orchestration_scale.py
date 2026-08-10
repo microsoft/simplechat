@@ -1,8 +1,8 @@
 # test_tabular_row_orchestration_scale.py
 """
 Functional test for scalable per-row tabular orchestration.
-Version: 0.250.141
-Implemented in: 0.250.060; generated CSV formula safety in 0.250.065; generated file export routing in 0.250.072; source descriptor generalization in 0.250.127; unified durable run contract in 0.250.128; hierarchical analysis in 0.250.129; combined analysis and export in 0.250.130; scale validation in 0.250.132; direct source-backed exhaustive queueing in 0.250.133; direct queue call-site hardening in 0.250.134; model-validation auto retry in 0.250.135; model-aware parallel throughput in 0.250.136; Phase 1 acceleration contracts and observability in 0.250.137; Phase 2 truthful background handoff in 0.250.138; Phase 3 durable LLM generation planning in 0.250.139; Phase 4 compact row response protocol in 0.250.140; Phase 5 completion-driven checkpointing in 0.250.141
+Version: 0.250.142
+Implemented in: 0.250.060; generated CSV formula safety in 0.250.065; generated file export routing in 0.250.072; source descriptor generalization in 0.250.127; unified durable run contract in 0.250.128; hierarchical analysis in 0.250.129; combined analysis and export in 0.250.130; scale validation in 0.250.132; direct source-backed exhaustive queueing in 0.250.133; direct queue call-site hardening in 0.250.134; model-validation auto retry in 0.250.135; model-aware parallel throughput in 0.250.136; Phase 1 acceleration contracts and observability in 0.250.137; Phase 2 truthful background handoff in 0.250.138; Phase 3 durable LLM generation planning in 0.250.139; Phase 4 compact row response protocol in 0.250.140; Phase 5 completion-driven checkpointing in 0.250.141; Phase 6 rolling worker pool in 0.250.142
 
 This test ensures generated exports preserve source identity and row order while
 enforcing one stable output schema across independently generated batches.
@@ -280,13 +280,22 @@ COMPLETION_CHECKPOINT_FUNCTIONS = {
     '_settings_int',
     '_settings_float',
     '_settings_mode',
+    '_normalize_tabular_run_task_type',
     '_normalize_tabular_generation_rollout_settings',
+    '_get_tabular_generation_rollout_settings_for_run',
+    '_select_tabular_executor_mode',
+    '_is_rolling_worker_pool_enabled',
+    '_get_tabular_generation_plan_mode',
+    '_is_rolling_executor_ready',
     '_output_blob_prefix',
     '_scan_output_checkpoint_batches_for_run',
     '_is_completion_driven_checkpointing_enabled',
     '_get_checkpoint_writer_concurrency',
+    '_get_tabular_generation_heartbeat_seconds',
     '_checkpoint_generated_result_async',
     '_generate_and_checkpoint_batch_window_entries',
+    '_rolling_pool_heartbeat_loop',
+    '_generate_and_checkpoint_rolling_pool_entries',
 }
 
 
@@ -1349,8 +1358,14 @@ def _load_completion_checkpoint_helpers():
 
     namespace = {
         'asyncio': asyncio,
+        'deque': __import__('collections').deque,
         're': re,
         'storage_account_personal_chat_container_name': 'personal-chat',
+        'TABULAR_RUN_TASK_STRUCTURED_EXPORT': 'structured_export',
+        'TABULAR_RUN_TASK_HIERARCHICAL_ANALYSIS': 'hierarchical_analysis',
+        'TABULAR_RUN_TASK_COMBINED': 'combined',
+        'TABULAR_RUN_TASK_TYPES': {'structured_export', 'hierarchical_analysis', 'combined'},
+        'log_event': lambda *args, **kwargs: None,
     }
     extracted_module = ast.Module(body=selected_nodes, type_ignores=[])
     exec(compile(extracted_module, str(EXPORT_MODULE), 'exec'), namespace)
@@ -1718,6 +1733,8 @@ def test_phase_one_generation_contract_fields_are_additive_and_compact():
         'completed_batch_count': 7,
         'highest_contiguous_batch': 7,
         'active_batch_count': 0,
+        'pending_batch_count': 0,
+        'checkpointing_batch_count': 0,
         'retry_wait_batch_count': 0,
         'exhausted_batch_count': 0,
         'checkpointed_row_count': 231,
@@ -2492,6 +2509,345 @@ def test_phase_five_resume_scan_lists_output_prefix_once():
 
     assert completed_batches == {1, 3}
     assert list_calls == [prefix]
+
+
+def test_phase_six_rolling_executor_selection_requires_active_planned_checkpointing():
+    """Rolling mode is recorded only for active planned structured exports with durable checkpoints."""
+    helpers = _load_completion_checkpoint_helpers()
+    select_executor = helpers['_select_tabular_executor_mode']
+    fixed_mode = helpers['TABULAR_EXECUTOR_MODE_FIXED_WINDOW']
+    rolling_mode = helpers['TABULAR_EXECUTOR_MODE_ROLLING_POOL']
+
+    enabled_rollout = {
+        'enable_tabular_generation_plan': True,
+        'tabular_generation_plan_mode': 'active',
+        'enable_tabular_completion_driven_checkpointing': True,
+        'enable_tabular_rolling_worker_pool': True,
+    }
+    assert select_executor(enabled_rollout, 'active', 'structured_export') == rolling_mode
+    assert select_executor(enabled_rollout, 'shadow', 'structured_export') == fixed_mode
+    assert select_executor({**enabled_rollout, 'enable_tabular_completion_driven_checkpointing': False}, 'active', 'structured_export') == fixed_mode
+    assert select_executor(enabled_rollout, 'active', 'combined') == fixed_mode
+    assert select_executor(enabled_rollout, 'active', 'structured_export', passthrough_input_rows=True) == fixed_mode
+
+    ready_run = {
+        'executor_mode': rolling_mode,
+        'task_type': 'structured_export',
+        'passthrough_input_rows': False,
+        'generation_rollout_settings': enabled_rollout,
+        'plan_mode': 'active',
+        'plan_status': 'ready',
+        'plan_blob_path': 'plan/plan_v1.json',
+        'plan_hash': 'f' * 64,
+        'output_schema': ['source_row_number', 'source_row_identity', 'answer'],
+    }
+    assert helpers['_is_rolling_worker_pool_enabled']({}, ready_run) is True
+    assert helpers['_is_completion_driven_checkpointing_enabled']({}, ready_run) is True
+    assert helpers['_get_tabular_generation_heartbeat_seconds']({}, ready_run) == 30
+    assert helpers['_is_rolling_executor_ready'](ready_run) is True
+    fallback_run = {**ready_run, 'plan_status': 'fallback', 'output_schema': None}
+    assert helpers['_is_rolling_executor_ready'](fallback_run) is False
+
+
+def test_phase_six_rolling_pool_replenishes_completed_slot_before_straggler():
+    """A completed rolling task is replaced without waiting for another active straggler."""
+    helpers = _load_completion_checkpoint_helpers()
+    scheduled_at = {}
+    finished_at = {}
+    checkpointed = []
+
+    def scan_output_checkpoint_batches_for_run(run):
+        del run
+        return set()
+
+    def raise_if_not_canceled(run):
+        return run
+
+    def build_batch_window(run, input_batches, user_id, run_id, window_start, window_end, batch_count, durable_output_batches=None):
+        del run, input_batches, user_id, run_id, window_end, batch_count, durable_output_batches
+        scheduled_at[window_start] = time.monotonic()
+        return {}, [{'batch_number': window_start, 'rows': [{'row': window_start}]}]
+
+    async def generate_batch_entries_for_window(
+        semaphore,
+        chat_service,
+        user_question,
+        batch_request,
+        total_batches,
+        source_file_name,
+        selected_sheet,
+        retry_attempts,
+        run_id,
+        expected_output_schema,
+        batch_timeout_seconds,
+        response_protocol,
+        generation_plan,
+    ):
+        del chat_service, user_question, total_batches, source_file_name, selected_sheet
+        del retry_attempts, run_id, expected_output_schema, batch_timeout_seconds
+        del response_protocol, generation_plan
+        batch_number = batch_request['batch_number']
+        async with semaphore:
+            await asyncio.sleep(0.2 if batch_number == 2 else 0.01)
+            finished_at[batch_number] = time.monotonic()
+            return {
+                'batch_number': batch_number,
+                'batch_entries': [{'source_row_number': batch_number, 'answer': f'a{batch_number}'}],
+                'batch_summary': {'row_count': 1},
+                'batch_row_count': 1,
+                'elapsed_seconds': 0.2 if batch_number == 2 else 0.01,
+                'mismatch_count': 0,
+                'output_schema': ['source_row_number', 'answer'],
+            }
+
+    async def checkpoint_generated_result_async(run, generated_result, writer_semaphore):
+        del run
+        async with writer_semaphore:
+            batch_number = generated_result['batch_number']
+            checkpointed.append(batch_number)
+            return {
+                batch_number: {
+                    'batch_number': batch_number,
+                    'batch_row_count': 1,
+                    'elapsed_seconds': generated_result['elapsed_seconds'],
+                    'mismatch_count': 0,
+                    'from_checkpoint': False,
+                }
+            }
+
+    def advance_progress(run, batch_results, completed_batches, processed_rows, window_start, window_end):
+        for batch_number in range(window_start, window_end + 1):
+            if batch_number not in batch_results:
+                break
+            completed_batches = batch_number
+            processed_rows += batch_results[batch_number]['batch_row_count']
+        run['completed_batches'] = completed_batches
+        run['processed_rows'] = processed_rows
+        return run, completed_batches, processed_rows
+
+    helpers['_scan_output_checkpoint_batches_for_run'] = scan_output_checkpoint_batches_for_run
+    helpers['_raise_if_tabular_export_canceled'] = raise_if_not_canceled
+    helpers['_build_batch_window'] = build_batch_window
+    helpers['_generate_batch_entries_for_window'] = generate_batch_entries_for_window
+    helpers['_checkpoint_generated_result_async'] = checkpoint_generated_result_async
+    helpers['_advance_run_progress_for_window'] = advance_progress
+    helpers['_log_progress_if_due'] = lambda run, last_logged_at: last_logged_at
+
+    run = {
+        'id': 'run-phase-6',
+        'user_id': 'user-1',
+        'conversation_id': 'conversation-1',
+        'batch_count': 4,
+        'completed_batches': 0,
+        'processed_rows': 0,
+        'output_schema': ['source_row_number', 'answer'],
+    }
+    result_run, completed_batches, processed_rows, _ = asyncio.run(
+        helpers['_generate_and_checkpoint_rolling_pool_entries'](
+            run,
+            object(),
+            None,
+            'answer every row',
+            4,
+            'source.csv',
+            None,
+            1,
+            'run-phase-6',
+            'user-1',
+            2,
+            2,
+            300,
+        )
+    )
+
+    assert result_run is run
+    assert completed_batches == 4
+    assert processed_rows == 4
+    assert checkpointed == [1, 3, 4, 2]
+    assert scheduled_at[3] < finished_at[2]
+    assert max(scheduled_at) == 4
+
+
+def test_phase_six_rolling_pool_heartbeat_records_active_counts():
+    """The rolling heartbeat writes lease liveness and bounded scheduler counters."""
+    helpers = _load_completion_checkpoint_helpers()
+    heartbeat_writes = []
+
+    def raise_if_not_canceled(run):
+        return run
+
+    def replace_claimed_run(run):
+        heartbeat_writes.append(dict(run))
+        return dict(run)
+
+    helpers['_raise_if_tabular_export_canceled'] = raise_if_not_canceled
+    helpers['_replace_claimed_run'] = replace_claimed_run
+    helpers['_now_iso'] = lambda: f"2026-08-10T12:00:0{len(heartbeat_writes)}+00:00"
+
+    async def run_heartbeat_once():
+        run = {
+            'id': 'run-phase-6-heartbeat',
+            'completed_batches': 2,
+            'batch_count': 10,
+        }
+        counts = {
+            'active': 4,
+            'pending': 6,
+            'checkpointing': 1,
+            'retry_wait': 0,
+        }
+        state_lock = asyncio.Lock()
+        stop_event = asyncio.Event()
+        heartbeat_task = asyncio.create_task(
+            helpers['_rolling_pool_heartbeat_loop'](
+                run,
+                counts,
+                state_lock,
+                stop_event,
+                0.001,
+            )
+        )
+        while not heartbeat_writes:
+            await asyncio.sleep(0)
+        stop_event.set()
+        await heartbeat_task
+        return run
+
+    run = asyncio.run(run_heartbeat_once())
+
+    assert heartbeat_writes[0]['active_batch_count'] == 4
+    assert heartbeat_writes[0]['pending_batch_count'] == 6
+    assert heartbeat_writes[0]['checkpointing_batch_count'] == 1
+    assert heartbeat_writes[0]['last_heartbeat_at'].startswith('2026-08-10T12:00:00')
+    assert 'Rolling structured export active: 2 of 10 batch(es) durable' in run['last_message']
+
+
+def test_phase_six_rolling_pool_pauses_dispatch_at_checkpoint_high_water():
+    """Checkpoint backlog high-water pauses new model dispatch until a writer completes."""
+    helpers = _load_completion_checkpoint_helpers()
+    scheduled_at = {}
+    checkpoint_started = []
+    checkpoint_release = None
+
+    def scan_output_checkpoint_batches_for_run(run):
+        del run
+        return set()
+
+    def raise_if_not_canceled(run):
+        return run
+
+    def build_batch_window(run, input_batches, user_id, run_id, window_start, window_end, batch_count, durable_output_batches=None):
+        del run, input_batches, user_id, run_id, window_end, batch_count, durable_output_batches
+        scheduled_at[window_start] = time.monotonic()
+        return {}, [{'batch_number': window_start, 'rows': [{'row': window_start}]}]
+
+    async def generate_batch_entries_for_window(
+        semaphore,
+        chat_service,
+        user_question,
+        batch_request,
+        total_batches,
+        source_file_name,
+        selected_sheet,
+        retry_attempts,
+        run_id,
+        expected_output_schema,
+        batch_timeout_seconds,
+        response_protocol,
+        generation_plan,
+    ):
+        del chat_service, user_question, total_batches, source_file_name, selected_sheet
+        del retry_attempts, run_id, expected_output_schema, batch_timeout_seconds
+        del response_protocol, generation_plan
+        async with semaphore:
+            await asyncio.sleep(0)
+            batch_number = batch_request['batch_number']
+            return {
+                'batch_number': batch_number,
+                'batch_entries': [{'source_row_number': batch_number, 'answer': f'a{batch_number}'}],
+                'batch_summary': {'row_count': 1},
+                'batch_row_count': 1,
+                'elapsed_seconds': 0.01,
+                'mismatch_count': 0,
+                'output_schema': ['source_row_number', 'answer'],
+            }
+
+    async def checkpoint_generated_result_async(run, generated_result, writer_semaphore):
+        del run, writer_semaphore
+        batch_number = generated_result['batch_number']
+        checkpoint_started.append(batch_number)
+        if batch_number <= 2:
+            await checkpoint_release.wait()
+        return {
+            batch_number: {
+                'batch_number': batch_number,
+                'batch_row_count': 1,
+                'elapsed_seconds': generated_result['elapsed_seconds'],
+                'mismatch_count': 0,
+                'from_checkpoint': False,
+            }
+        }
+
+    def advance_progress(run, batch_results, completed_batches, processed_rows, window_start, window_end):
+        for batch_number in range(window_start, window_end + 1):
+            if batch_number not in batch_results:
+                break
+            completed_batches = batch_number
+            processed_rows += batch_results[batch_number]['batch_row_count']
+        run['completed_batches'] = completed_batches
+        run['processed_rows'] = processed_rows
+        return run, completed_batches, processed_rows
+
+    helpers['_scan_output_checkpoint_batches_for_run'] = scan_output_checkpoint_batches_for_run
+    helpers['_raise_if_tabular_export_canceled'] = raise_if_not_canceled
+    helpers['_build_batch_window'] = build_batch_window
+    helpers['_generate_batch_entries_for_window'] = generate_batch_entries_for_window
+    helpers['_checkpoint_generated_result_async'] = checkpoint_generated_result_async
+    helpers['_advance_run_progress_for_window'] = advance_progress
+    helpers['_log_progress_if_due'] = lambda run, last_logged_at: last_logged_at
+
+    async def run_backpressure_scenario():
+        nonlocal checkpoint_release
+        checkpoint_release = asyncio.Event()
+        run = {
+            'id': 'run-phase-6-backpressure',
+            'user_id': 'user-1',
+            'conversation_id': 'conversation-1',
+            'batch_count': 3,
+            'completed_batches': 0,
+            'processed_rows': 0,
+            'output_schema': ['source_row_number', 'answer'],
+        }
+        rolling_task = asyncio.create_task(
+            helpers['_generate_and_checkpoint_rolling_pool_entries'](
+                run,
+                object(),
+                None,
+                'answer every row',
+                3,
+                'source.csv',
+                None,
+                1,
+                'run-phase-6-backpressure',
+                'user-1',
+                2,
+                1,
+                300,
+            )
+        )
+        while len(checkpoint_started) < 2:
+            await asyncio.sleep(0)
+        assert set(scheduled_at) == {1, 2}
+        checkpoint_release.set()
+        result_run, completed_batches, processed_rows, _ = await rolling_task
+        return result_run, completed_batches, processed_rows
+
+    result_run, completed_batches, processed_rows = asyncio.run(run_backpressure_scenario())
+
+    assert completed_batches == 3
+    assert processed_rows == 3
+    assert result_run['completed_batches'] == 3
+    assert set(scheduled_at) == {1, 2, 3}
 
 
 def test_source_identity_and_order_contract():

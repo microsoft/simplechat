@@ -2,7 +2,7 @@
 """Durable background runs for large tabular generated exports."""
 
 import asyncio
-from collections import Counter
+from collections import Counter, deque
 import csv
 import hashlib
 import io
@@ -63,6 +63,7 @@ TABULAR_RESPONSE_PROTOCOLS = {
 }
 TABULAR_COMPACT_PLAN_HASH_PREFIX_LENGTH = 12
 TABULAR_EXECUTOR_MODE_FIXED_WINDOW = 'fixed-window-v1'
+TABULAR_EXECUTOR_MODE_ROLLING_POOL = 'rolling-pool-v1'
 TABULAR_GENERATION_PLAN_VERSION = 1
 TABULAR_GENERATION_PLAN_PROMPT_VERSION = 'tabular-generation-plan-v1'
 TABULAR_GENERATION_PLAN_DEFAULT_RETRY_ATTEMPTS = 2
@@ -181,6 +182,7 @@ TABULAR_EXPORT_SUMMARY_AGGREGATE_MAX_VALUES = 25
 TABULAR_EXPORT_PROGRESS_LOG_INTERVAL_SECONDS = 30
 TABULAR_GENERATION_DEFAULT_HEARTBEAT_SECONDS = 30
 TABULAR_GENERATION_DEFAULT_CHECKPOINT_WRITER_CONCURRENCY = 1
+TABULAR_GENERATION_CHECKPOINT_HIGH_WATER_MULTIPLIER = 2
 TABULAR_GENERATION_DEFAULT_SYSTEMIC_FAILURE_THRESHOLD = 0.5
 TABULAR_EXPORT_SCHEDULER_STATUSES = (
     TABULAR_EXPORT_STATUS_QUEUED,
@@ -911,6 +913,59 @@ def _normalize_tabular_generation_rollout_settings(settings):
     }
 
 
+def _get_tabular_generation_rollout_settings_for_run(run=None, settings=None):
+    rollout_settings = (run or {}).get('generation_rollout_settings') if isinstance(run, dict) else None
+    if isinstance(rollout_settings, dict) and rollout_settings:
+        return _normalize_tabular_generation_rollout_settings(rollout_settings)
+    return _normalize_tabular_generation_rollout_settings(settings or {})
+
+
+def _select_tabular_executor_mode(
+    rollout_settings,
+    requested_plan_mode,
+    task_type,
+    passthrough_input_rows=False,
+):
+    normalized_rollout_settings = _normalize_tabular_generation_rollout_settings(rollout_settings or {})
+    normalized_task_type = _normalize_tabular_run_task_type(task_type)
+    if (
+        normalized_rollout_settings.get('enable_tabular_rolling_worker_pool')
+        and normalized_rollout_settings.get('enable_tabular_completion_driven_checkpointing')
+        and str(requested_plan_mode or '').strip().lower() == 'active'
+        and normalized_task_type == TABULAR_RUN_TASK_STRUCTURED_EXPORT
+        and not passthrough_input_rows
+    ):
+        return TABULAR_EXECUTOR_MODE_ROLLING_POOL
+    return TABULAR_EXECUTOR_MODE_FIXED_WINDOW
+
+
+def _is_rolling_executor_ready(run):
+    if str((run or {}).get('executor_mode') or '').strip() != TABULAR_EXECUTOR_MODE_ROLLING_POOL:
+        return False
+    return (
+        _normalize_tabular_run_task_type((run or {}).get('task_type')) == TABULAR_RUN_TASK_STRUCTURED_EXPORT
+        and not (run or {}).get('passthrough_input_rows')
+        and _get_tabular_generation_plan_mode(run) == 'active'
+        and (run or {}).get('plan_status') == 'ready'
+        and bool((run or {}).get('plan_blob_path'))
+        and bool((run or {}).get('plan_hash'))
+        and bool((run or {}).get('output_schema'))
+    )
+
+
+def _downgrade_rolling_executor_to_fixed_window(run, reason):
+    if str((run or {}).get('executor_mode') or '').strip() != TABULAR_EXECUTOR_MODE_ROLLING_POOL:
+        return run
+    now = _now_iso()
+    run.update({
+        'executor_mode': TABULAR_EXECUTOR_MODE_FIXED_WINDOW,
+        'updated_at': now,
+        'last_heartbeat_at': now,
+        'last_message': f'Rolling worker pool unavailable; continuing with fixed windows ({reason})',
+    })
+    return _replace_claimed_run(run)
+
+
 def _sync_tabular_generation_contract_fields(run):
     if not isinstance(run, dict):
         return run
@@ -943,6 +998,8 @@ def _sync_tabular_generation_contract_fields(run):
     run['completed_batch_count'] = completed_batch_count
     run['highest_contiguous_batch'] = highest_contiguous_batch
     run['active_batch_count'] = _safe_int(run.get('active_batch_count'))
+    run['pending_batch_count'] = _safe_int(run.get('pending_batch_count'))
+    run['checkpointing_batch_count'] = _safe_int(run.get('checkpointing_batch_count'))
     run['retry_wait_batch_count'] = _safe_int(run.get('retry_wait_batch_count'))
     run['exhausted_batch_count'] = _safe_int(run.get('exhausted_batch_count'))
     run['checkpointed_row_count'] = checkpointed_row_count
@@ -963,6 +1020,8 @@ def _build_generation_progress_contract_fields(run, completed_batches, processed
         'completed_batch_count': normalized_completed_batches,
         'highest_contiguous_batch': normalized_completed_batches,
         'active_batch_count': 0,
+        'pending_batch_count': _safe_int((run or {}).get('pending_batch_count')),
+        'checkpointing_batch_count': _safe_int((run or {}).get('checkpointing_batch_count')),
         'retry_wait_batch_count': _safe_int((run or {}).get('retry_wait_batch_count')),
         'exhausted_batch_count': _safe_int((run or {}).get('exhausted_batch_count')),
         'checkpointed_row_count': normalized_processed_rows,
@@ -3577,18 +3636,33 @@ async def _generate_batch_window_entries(
     return successful_results, first_error
 
 
-def _is_completion_driven_checkpointing_enabled(settings):
-    rollout_settings = _normalize_tabular_generation_rollout_settings(settings or {})
+def _is_completion_driven_checkpointing_enabled(settings, run=None):
+    rollout_settings = _get_tabular_generation_rollout_settings_for_run(run, settings)
     return bool(rollout_settings.get('enable_tabular_completion_driven_checkpointing'))
 
 
-def _get_checkpoint_writer_concurrency(settings):
-    rollout_settings = _normalize_tabular_generation_rollout_settings(settings or {})
+def _is_rolling_worker_pool_enabled(settings, run=None):
+    rollout_settings = _get_tabular_generation_rollout_settings_for_run(run, settings)
+    return bool(rollout_settings.get('enable_tabular_rolling_worker_pool'))
+
+
+def _get_checkpoint_writer_concurrency(settings, run=None):
+    rollout_settings = _get_tabular_generation_rollout_settings_for_run(run, settings)
     return _safe_int(
         rollout_settings.get('tabular_generation_checkpoint_writer_concurrency'),
         default=TABULAR_GENERATION_DEFAULT_CHECKPOINT_WRITER_CONCURRENCY,
         minimum=1,
         maximum=16,
+    )
+
+
+def _get_tabular_generation_heartbeat_seconds(settings, run=None):
+    rollout_settings = _get_tabular_generation_rollout_settings_for_run(run, settings)
+    return _safe_int(
+        rollout_settings.get('tabular_generation_heartbeat_seconds'),
+        default=TABULAR_GENERATION_DEFAULT_HEARTBEAT_SECONDS,
+        minimum=5,
+        maximum=300,
     )
 
 
@@ -3679,6 +3753,254 @@ async def _generate_and_checkpoint_batch_window_entries(
         completed_checkpoint_tasks, _ = await asyncio.wait(checkpoint_tasks)
         collect_checkpoint_results(completed_checkpoint_tasks)
     return batch_results, first_error
+
+
+async def _rolling_pool_heartbeat_loop(run, counts, state_lock, stop_event, heartbeat_seconds):
+    while not stop_event.is_set():
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=heartbeat_seconds)
+            return
+        except asyncio.TimeoutError:
+            pass
+
+        async with state_lock:
+            await asyncio.to_thread(_raise_if_tabular_export_canceled, run)
+            now = _now_iso()
+            run.update({
+                'updated_at': now,
+                'last_heartbeat_at': now,
+                'active_batch_count': _safe_int(counts.get('active')),
+                'pending_batch_count': _safe_int(counts.get('pending')),
+                'checkpointing_batch_count': _safe_int(counts.get('checkpointing')),
+                'retry_wait_batch_count': _safe_int(counts.get('retry_wait')),
+                'last_message': (
+                    f"Rolling structured export active: {_safe_int(run.get('completed_batches'))} "
+                    f"of {_safe_int(run.get('batch_count'))} batch(es) durable"
+                ),
+            })
+            persisted_run = await asyncio.to_thread(_replace_claimed_run, run)
+            run.clear()
+            run.update(persisted_run)
+
+
+async def _generate_and_checkpoint_rolling_pool_entries(
+    run,
+    chat_service,
+    input_batches,
+    user_question,
+    total_batches,
+    source_file_name,
+    selected_sheet,
+    retry_attempts,
+    run_id,
+    user_id,
+    batch_concurrency,
+    checkpoint_writer_concurrency,
+    heartbeat_seconds,
+    last_logged_at=0.0,
+    batch_timeout_seconds=TABULAR_EXPORT_DEFAULT_BATCH_TIMEOUT_SECONDS,
+    response_protocol=TABULAR_RESPONSE_PROTOCOL_OBJECT_V1,
+    generation_plan=None,
+):
+    model_semaphore = asyncio.Semaphore(max(1, batch_concurrency))
+    writer_semaphore = asyncio.Semaphore(max(1, checkpoint_writer_concurrency))
+    checkpoint_high_water_mark = max(
+        1,
+        checkpoint_writer_concurrency * TABULAR_GENERATION_CHECKPOINT_HIGH_WATER_MULTIPLIER,
+    )
+    completed_batches = _safe_int(run.get('completed_batches'))
+    processed_rows = _safe_int(run.get('processed_rows'))
+    durable_output_batches = _scan_output_checkpoint_batches_for_run(run)
+    pending_batch_numbers = deque(range(completed_batches + 1, total_batches + 1))
+    active_tasks = {}
+    checkpoint_tasks = set()
+    batch_results = {}
+    counts = {
+        'active': 0,
+        'pending': len(pending_batch_numbers),
+        'checkpointing': 0,
+        'retry_wait': 0,
+    }
+    state_lock = asyncio.Lock()
+    stop_heartbeat = asyncio.Event()
+    heartbeat_task = asyncio.create_task(
+        _rolling_pool_heartbeat_loop(
+            run,
+            counts,
+            state_lock,
+            stop_heartbeat,
+            heartbeat_seconds,
+        )
+    )
+    first_error = None
+
+    def refresh_counts():
+        counts.update({
+            'active': len(active_tasks),
+            'pending': len(pending_batch_numbers),
+            'checkpointing': len(checkpoint_tasks),
+            'retry_wait': 0,
+        })
+
+    async def advance_durable_progress():
+        nonlocal completed_batches, processed_rows, run, last_logged_at
+        if (completed_batches + 1) not in batch_results:
+            return False
+        previous_completed_batches = completed_batches
+        async with state_lock:
+            run, completed_batches, processed_rows = await asyncio.to_thread(
+                _advance_run_progress_for_window,
+                run,
+                batch_results,
+                completed_batches,
+                processed_rows,
+                completed_batches + 1,
+                total_batches,
+            )
+        refresh_counts()
+        last_logged_at = _log_progress_if_due(run, last_logged_at)
+        return completed_batches > previous_completed_batches
+
+    def build_pending_batch_task(batch_number):
+        existing_results, batch_requests = _build_batch_window(
+            run,
+            input_batches,
+            user_id,
+            run_id,
+            batch_number,
+            batch_number,
+            total_batches,
+            durable_output_batches=durable_output_batches,
+        )
+        if existing_results:
+            batch_results.update(existing_results)
+            return None
+        if not batch_requests:
+            return None
+        batch_request = batch_requests[0]
+        return asyncio.create_task(
+            _generate_batch_entries_for_window(
+                model_semaphore,
+                chat_service,
+                user_question,
+                batch_request,
+                total_batches,
+                source_file_name,
+                selected_sheet,
+                retry_attempts,
+                run_id,
+                run.get('output_schema'),
+                batch_timeout_seconds,
+                response_protocol,
+                generation_plan,
+            )
+        )
+
+    try:
+        while pending_batch_numbers or active_tasks or checkpoint_tasks:
+            await asyncio.to_thread(_raise_if_tabular_export_canceled, run)
+            if heartbeat_task.done() and not stop_heartbeat.is_set():
+                heartbeat_task.result()
+            if first_error and not active_tasks and not checkpoint_tasks:
+                break
+
+            while (
+                not first_error
+                and pending_batch_numbers
+                and len(active_tasks) < max(1, batch_concurrency)
+                and len(checkpoint_tasks) < checkpoint_high_water_mark
+            ):
+                batch_number = pending_batch_numbers.popleft()
+                model_task = build_pending_batch_task(batch_number)
+                if model_task is not None:
+                    active_tasks[model_task] = batch_number
+                await advance_durable_progress()
+                refresh_counts()
+
+            await advance_durable_progress()
+            refresh_counts()
+            wait_tasks = set(active_tasks) | checkpoint_tasks
+            if wait_tasks and not heartbeat_task.done():
+                wait_tasks.add(heartbeat_task)
+            if not wait_tasks:
+                continue
+
+            completed_tasks, _ = await asyncio.wait(
+                wait_tasks,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            for completed_task in completed_tasks:
+                if completed_task is heartbeat_task:
+                    completed_task.result()
+                    continue
+                if completed_task in active_tasks:
+                    batch_number = active_tasks.pop(completed_task)
+                    try:
+                        generated_result = completed_task.result()
+                    except Exception as exc:
+                        if first_error is None:
+                            first_error = exc
+                        continue
+                    checkpoint_task = asyncio.create_task(
+                        _checkpoint_generated_result_async(run, generated_result, writer_semaphore)
+                    )
+                    checkpoint_tasks.add(checkpoint_task)
+                    log_event(
+                        '[TABULAR_GENERATED_OUTPUT] Rolling pool scheduled checkpoint',
+                        {
+                            'event_name': 'rolling_checkpoint_scheduled',
+                            'run_id': run_id,
+                            'batch_number': batch_number,
+                            'active_batch_count': len(active_tasks),
+                            'pending_batch_count': len(pending_batch_numbers),
+                            'checkpointing_batch_count': len(checkpoint_tasks),
+                            'batch_concurrency': batch_concurrency,
+                            'checkpoint_high_water_mark': checkpoint_high_water_mark,
+                        },
+                        debug_only=True,
+                    )
+                    continue
+                if completed_task in checkpoint_tasks:
+                    checkpoint_tasks.remove(completed_task)
+                    try:
+                        checkpointed_results = completed_task.result()
+                    except Exception as exc:
+                        if first_error is None:
+                            first_error = exc
+                        continue
+                    batch_results.update(checkpointed_results)
+                    durable_output_batches.update(checkpointed_results)
+                    await advance_durable_progress()
+            refresh_counts()
+
+        if first_error:
+            run.update({
+                'active_batch_count': 0,
+                'pending_batch_count': len(pending_batch_numbers),
+                'checkpointing_batch_count': 0,
+            })
+            raise first_error
+        if completed_batches < total_batches:
+            raise RuntimeError(
+                f'Rolling worker pool stopped at batch {completed_batches} of {total_batches}'
+            )
+        run.update({
+            'active_batch_count': 0,
+            'pending_batch_count': 0,
+            'checkpointing_batch_count': 0,
+        })
+        return run, completed_batches, processed_rows, last_logged_at
+    finally:
+        stop_heartbeat.set()
+        if not heartbeat_task.done():
+            heartbeat_task.cancel()
+            await asyncio.gather(heartbeat_task, return_exceptions=True)
+        for model_task in active_tasks:
+            model_task.cancel()
+        if active_tasks:
+            await asyncio.gather(*active_tasks, return_exceptions=True)
+        if checkpoint_tasks:
+            await asyncio.gather(*checkpoint_tasks, return_exceptions=True)
 
 
 async def _generate_analysis_chunk_summary(
@@ -4551,6 +4873,8 @@ def _build_run_public_status(run, settings=None):
         'completed_batch_count': _safe_int(run.get('completed_batch_count')),
         'highest_contiguous_batch': _safe_int(run.get('highest_contiguous_batch')),
         'active_batch_count': _safe_int(run.get('active_batch_count')),
+        'pending_batch_count': _safe_int(run.get('pending_batch_count')),
+        'checkpointing_batch_count': _safe_int(run.get('checkpointing_batch_count')),
         'retry_wait_batch_count': _safe_int(run.get('retry_wait_batch_count')),
         'exhausted_batch_count': _safe_int(run.get('exhausted_batch_count')),
         'checkpointed_row_count': _safe_int(run.get('checkpointed_row_count')),
@@ -5230,6 +5554,9 @@ def _log_progress_if_due(run, last_logged_at):
             'rows_per_minute': run.get('rows_per_minute'),
             'batch_concurrency': run.get('batch_concurrency'),
             'effective_batch_concurrency': run.get('effective_batch_concurrency'),
+            'active_batch_count': run.get('active_batch_count'),
+            'pending_batch_count': run.get('pending_batch_count'),
+            'checkpointing_batch_count': run.get('checkpointing_batch_count'),
             'mismatch_count': run.get('mismatch_count'),
         },
         debug_only=True,
@@ -6593,6 +6920,65 @@ def _process_combined_run(
     return _complete_combined_analysis_run(run, final_summary)
 
 
+def _process_structured_export_rolling_pool(
+    run,
+    chat_service,
+    input_batches,
+    retry_attempts,
+    batch_concurrency,
+    batch_timeout_seconds,
+    settings,
+    generation_plan,
+):
+    if chat_service is None:
+        raise ValueError('Rolling tabular structured export requires a chat model service')
+    if not _is_rolling_executor_ready(run):
+        raise ValueError('Rolling worker pool requires a ready active generation plan')
+
+    batch_count = _safe_int(run.get('batch_count'))
+    log_event(
+        '[TABULAR_GENERATED_OUTPUT] Rolling worker pool started',
+        {
+            'run_id': run.get('id'),
+            'conversation_id': run.get('conversation_id'),
+            'user_id': run.get('user_id'),
+            'batch_count': batch_count,
+            'batch_concurrency': batch_concurrency,
+            'checkpoint_writer_concurrency': _get_checkpoint_writer_concurrency(settings, run),
+            'heartbeat_seconds': _get_tabular_generation_heartbeat_seconds(settings, run),
+            'response_protocol_version': run.get('response_protocol_version'),
+            'plan_hash_present': bool(run.get('plan_hash')),
+        },
+        level=logging.INFO,
+    )
+    run, completed_batches, _processed_rows, last_logged_at = asyncio.run(
+        _generate_and_checkpoint_rolling_pool_entries(
+            run,
+            chat_service,
+            input_batches,
+            run.get('user_question'),
+            batch_count,
+            run.get('source_file_name'),
+            run.get('selected_sheet'),
+            retry_attempts,
+            run.get('id'),
+            run.get('user_id'),
+            batch_concurrency,
+            _get_checkpoint_writer_concurrency(settings, run),
+            _get_tabular_generation_heartbeat_seconds(settings, run),
+            last_logged_at=0.0,
+            batch_timeout_seconds=batch_timeout_seconds,
+            response_protocol=run.get('response_protocol_version'),
+            generation_plan=generation_plan,
+        )
+    )
+    del last_logged_at
+    if completed_batches != batch_count:
+        raise RuntimeError(f'Rolling worker pool completed {completed_batches} of {batch_count} batch(es)')
+    _raise_if_tabular_export_canceled(run)
+    return _complete_run(run)
+
+
 def process_tabular_generated_output_run(run_id, user_id):
     """Process or resume a checkpointed tabular generated-output run."""
     normalized_run_id = str(run_id or '').strip()
@@ -6677,6 +7063,12 @@ def process_tabular_generated_output_run(run_id, user_id):
             batch_timeout_seconds,
         )
         generation_plan = _load_active_compact_generation_plan(run)
+        if str(run.get('executor_mode') or '').strip() == TABULAR_EXECUTOR_MODE_ROLLING_POOL:
+            if not _is_rolling_executor_ready(run):
+                if str(run.get('plan_status') or '').strip().lower() in {'fallback', 'disabled', 'not_applicable'}:
+                    run = _downgrade_rolling_executor_to_fixed_window(run, run.get('plan_status'))
+                else:
+                    raise ValueError('Rolling worker pool requires a ready active generation plan')
 
         log_event(
             '[TABULAR_GENERATED_OUTPUT] Background export run started',
@@ -6692,6 +7084,7 @@ def process_tabular_generated_output_run(run_id, user_id):
                 'resume_completed_batches': completed_batches,
                 'batch_concurrency': batch_concurrency,
                 'batch_timeout_seconds': batch_timeout_seconds,
+                'executor_mode': run.get('executor_mode'),
             },
             level=logging.INFO,
         )
@@ -6717,6 +7110,18 @@ def process_tabular_generated_output_run(run_id, user_id):
                 batch_concurrency,
                 batch_timeout_seconds,
                 settings,
+            )
+
+        if str(run.get('executor_mode') or '').strip() == TABULAR_EXECUTOR_MODE_ROLLING_POOL:
+            return _process_structured_export_rolling_pool(
+                run,
+                chat_service,
+                input_batches,
+                retry_attempts,
+                batch_concurrency,
+                batch_timeout_seconds,
+                settings,
+                generation_plan,
             )
 
         durable_output_batches = _scan_output_checkpoint_batches_for_run(run)
@@ -6756,7 +7161,7 @@ def process_tabular_generated_output_run(run_id, user_id):
                 )
                 if run.get('passthrough_input_rows'):
                     generated_results = _build_passthrough_batch_results(run, batch_requests)
-                elif _is_completion_driven_checkpointing_enabled(settings):
+                elif _is_completion_driven_checkpointing_enabled(settings, run):
                     generated_batch_results, generation_error = asyncio.run(
                         _generate_and_checkpoint_batch_window_entries(
                             run,
@@ -6769,7 +7174,7 @@ def process_tabular_generated_output_run(run_id, user_id):
                             retry_attempts,
                             normalized_run_id,
                             batch_concurrency,
-                            _get_checkpoint_writer_concurrency(settings),
+                            _get_checkpoint_writer_concurrency(settings, run),
                             expected_output_schema=run.get('output_schema'),
                             batch_timeout_seconds=batch_timeout_seconds,
                             response_protocol=run.get('response_protocol_version'),
@@ -6929,6 +7334,12 @@ def queue_tabular_generated_output_run(
         normalized_task_type,
         passthrough_input_rows=passthrough_input_rows,
     )
+    executor_mode = _select_tabular_executor_mode(
+        rollout_settings,
+        requested_plan_mode,
+        normalized_task_type,
+        passthrough_input_rows=passthrough_input_rows,
+    )
 
     if source_descriptor:
         staged_row_count = _safe_int(source_descriptor.get('expected_row_count'))
@@ -6989,7 +7400,7 @@ def queue_tabular_generated_output_run(
         'contract_version': TABULAR_EXPORT_CONTRACT_VERSION,
         'generation_contract_version': TABULAR_GENERATION_CONTRACT_VERSION,
         'response_protocol_version': response_protocol_version,
-        'executor_mode': TABULAR_EXECUTOR_MODE_FIXED_WINDOW,
+        'executor_mode': executor_mode,
         'generation_rollout_settings': rollout_settings,
         'task_type': normalized_task_type,
         'analysis_objective': normalized_analysis_objective,
@@ -7023,6 +7434,8 @@ def queue_tabular_generated_output_run(
         'completed_batch_count': 0,
         'highest_contiguous_batch': 0,
         'active_batch_count': 0,
+        'pending_batch_count': staged_batch_count,
+        'checkpointing_batch_count': 0,
         'retry_wait_batch_count': 0,
         'exhausted_batch_count': 0,
         'checkpointed_row_count': 0,
@@ -7096,7 +7509,7 @@ def queue_tabular_generated_output_run(
             'model_limit_source': model_batch_budget.get('limit_source'),
             'generation_contract_version': TABULAR_GENERATION_CONTRACT_VERSION,
             'response_protocol_version': response_protocol_version,
-            'executor_mode': TABULAR_EXECUTOR_MODE_FIXED_WINDOW,
+            'executor_mode': executor_mode,
             'planner_mode': rollout_settings.get('tabular_generation_plan_mode'),
             'compact_protocol_enabled': rollout_settings.get('enable_tabular_compact_response_protocol'),
             'completion_checkpointing_enabled': rollout_settings.get(
