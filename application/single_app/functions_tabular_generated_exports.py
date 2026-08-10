@@ -1457,6 +1457,75 @@ def _normalize_generated_batch_entries(
     return ordered_entries, output_schema
 
 
+def _generated_entry_has_source_position_conflict(source_row, generated_entry):
+    source_row_number = _safe_int(source_row.get(TABULAR_EXPORT_INPUT_ROW_NUMBER_FIELD), default=0, minimum=0)
+    source_row_identity = str(source_row.get(TABULAR_EXPORT_INPUT_ROW_IDENTITY_FIELD) or '').strip()
+
+    for row_number_field in (
+        TABULAR_EXPORT_INPUT_ROW_NUMBER_FIELD,
+        TABULAR_EXPORT_OUTPUT_ROW_NUMBER_FIELD,
+    ):
+        if row_number_field not in generated_entry or generated_entry.get(row_number_field) in (None, ''):
+            continue
+        if _safe_int(generated_entry.get(row_number_field), default=-1) != source_row_number:
+            return True
+
+    for row_identity_field in (
+        TABULAR_EXPORT_INPUT_ROW_IDENTITY_FIELD,
+        TABULAR_EXPORT_OUTPUT_ROW_IDENTITY_FIELD,
+    ):
+        if row_identity_field not in generated_entry or generated_entry.get(row_identity_field) in (None, ''):
+            continue
+        if str(generated_entry.get(row_identity_field) or '').strip() != source_row_identity:
+            return True
+
+    return False
+
+
+def _normalize_model_generated_batch_entries(
+    source_rows,
+    generated_entries,
+    expected_output_schema=None,
+    allow_source_token_recovery=True,
+    run_id=None,
+    batch_number=None,
+):
+    try:
+        return _normalize_generated_batch_entries(
+            source_rows,
+            generated_entries,
+            expected_output_schema=expected_output_schema,
+        )
+    except ValueError as exc:
+        if (
+            not allow_source_token_recovery
+            or 'source row token mismatch' not in str(exc).lower()
+        ):
+            raise
+        for source_row, generated_entry in zip(source_rows or [], generated_entries or []):
+            if not isinstance(source_row, dict) or not isinstance(generated_entry, dict):
+                raise
+            if _generated_entry_has_source_position_conflict(source_row, generated_entry):
+                raise
+        normalized_entries, output_schema = _normalize_generated_batch_entries(
+            source_rows,
+            generated_entries,
+            expected_output_schema=expected_output_schema,
+            require_source_token=False,
+        )
+        log_event(
+            '[TABULAR_GENERATED_OUTPUT] Recovered generated batch from source-token echo mismatch',
+            {
+                'run_id': run_id,
+                'batch_number': batch_number,
+                'row_count': len(normalized_entries),
+                'recovery_reason': 'source_token_echo_mismatch',
+            },
+            level=logging.WARNING,
+        )
+        return normalized_entries, output_schema
+
+
 def _build_generated_batch_summary(entries):
     entries = [entry for entry in (entries or []) if isinstance(entry, dict)]
     summary = {
@@ -2544,10 +2613,12 @@ def _normalize_combined_chunk_payload(run, payload, batch_rows, batch_number, ex
     )
     if not isinstance(structured_rows, list):
         raise ValueError('Combined chunk response did not include structured_rows as an array')
-    normalized_entries, output_schema = _normalize_generated_batch_entries(
+    normalized_entries, output_schema = _normalize_model_generated_batch_entries(
         batch_rows,
         structured_rows,
         expected_output_schema=expected_output_schema,
+        run_id=run.get('id'),
+        batch_number=batch_number,
     )
 
     analysis_payload = payload.get('analysis_summary')
@@ -3803,10 +3874,13 @@ async def _generate_batch_entries(
         }
         if parsed_entries is not None and parsed_entry_count == len(batch_rows):
             try:
-                normalized_entries, output_schema = _normalize_generated_batch_entries(
+                normalized_entries, output_schema = _normalize_model_generated_batch_entries(
                     batch_rows,
                     parsed_entries,
                     expected_output_schema=expected_output_schema,
+                    allow_source_token_recovery=not compact_protocol,
+                    run_id=run_id,
+                    batch_number=batch_number,
                 )
                 last_attempt_metrics['validation_seconds'] = round(
                     time.monotonic() - validation_started_at,
@@ -5499,6 +5573,7 @@ def build_background_tabular_generated_output_metadata(run):
     is_hierarchical_analysis = task_type == TABULAR_RUN_TASK_HIERARCHICAL_ANALYSIS
     is_combined = task_type == TABULAR_RUN_TASK_COMBINED
     output_label = str(public_status.get('output_format') or 'json').upper()
+    row_count = _safe_int(public_status.get('row_count'))
     public_status.update({
         'export_run_id': public_status.get('run_id'),
         'background_export': True,
@@ -5516,14 +5591,14 @@ def build_background_tabular_generated_output_metadata(run):
         'preview_row_count': 0,
         'foreground_response_policy_version': 'phase2.v1',
         'summary': (
-            f"Queued combined tabular analysis and {output_label} export for {public_status.get('row_count', 0)} row(s) "
+            f"Queued combined tabular analysis and {output_label} export for {row_count} row(s) "
             f"across {public_status.get('batch_count', 0)} chunk(s)."
             if is_combined
             else
-            f"Queued hierarchical tabular analysis for {public_status.get('row_count', 0)} row(s) "
+            f"Queued hierarchical tabular analysis for {row_count} row(s) "
             f"across {public_status.get('batch_count', 0)} chunk(s)."
             if is_hierarchical_analysis
-            else f"Queued structured {output_label} export for {public_status.get('row_count', 0)} row(s) "
+            else f"Queued structured {output_label} export for {row_count} row(s) "
             f"across {public_status.get('batch_count', 0)} batch(es)."
         ),
     })

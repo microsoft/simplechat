@@ -2,7 +2,7 @@
 
 Implemented in version: **0.241.046**
 
-Updated through version: **0.250.144**
+Updated through version: **0.250.146**
 
 ## Overview
 
@@ -40,6 +40,8 @@ The feature supports large spreadsheet-driven analysis, including workbooks that
 - Phase 6 adds an opt-in rolling worker pool that replaces completed model slots without waiting for a fixed window barrier.
 - Phase 7 adds durable per-batch retry records and a delayed retry heap so one retrying batch does not pause healthy pending work.
 - Phase 8 assigns new runs to deterministic rollout cohorts, records explicit planner/executor/protocol/retry modes, reclaims new-run workers after a snapshotted two-minute stale interval, and revalidates source ETags before final publication.
+- Background handoff metadata derives its requested row count from the safe public run status so accepted durable runs cannot terminate the foreground stream while constructing the status card payload.
+- Object-protocol model responses can recover from hidden source-token echo mismatches when row count and any explicit source row number or identity markers preserve the requested source order.
 
 ### API Endpoints
 
@@ -103,6 +105,8 @@ The progress card displays current status, completed checkpoint counts, processe
 - Phase 6 rolling scheduling, heartbeat, backpressure, and straggler regression: `functional_tests/test_tabular_row_orchestration_scale.py`
 - Phase 7 independent retry, durable retry-ledger, and circuit-breaker regression: `functional_tests/test_tabular_row_orchestration_scale.py`
 - Phase 8 stable cohort, stale reclaim, source-version publication, crash recovery, and performance-summary regression: `functional_tests/test_tabular_row_orchestration_scale.py`
+- Background metadata streaming regression for export, analysis, and combined modes: `functional_tests/test_tabular_row_orchestration_scale.py`
+- Source-token echo recovery regression: `functional_tests/test_tabular_row_orchestration_scale.py`
 - Phase 2 handoff regression: `functional_tests/test_tabular_row_orchestration_scale.py`
 - Phase 1 baseline and fake harness coverage: `functional_tests/test_tabular_row_orchestration_scale.py`
 - Functional regression for workflow/document-action presentation: `functional_tests/test_document_analysis_lossless_artifacts.py`
@@ -155,3 +159,5 @@ The progress card displays current status, completed checkpoint counts, processe
 - `application/single_app/config.py` was updated to version **0.250.142** for Phase 6 rolling worker pool scheduling.
 - `application/single_app/config.py` was updated to version **0.250.143** for Phase 7 independent batch retries.
 - `application/single_app/config.py` was updated to version **0.250.144** for Phase 8 stable rollout cohorts, stale reclaim, source-version publication checks, chaos recovery coverage, and bounded performance summaries.
+- `application/single_app/config.py` was updated to version **0.250.145** to prevent accepted background-run metadata from terminating the foreground stream with an undefined row-count variable.
+- `application/single_app/config.py` was updated to version **0.250.146** to recover object-protocol model responses that preserve row order but fail to echo hidden source-row tokens.
