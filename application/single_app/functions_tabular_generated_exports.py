@@ -5229,6 +5229,16 @@ def _build_run_status_detail(run, settings, retryable_failure, can_resume):
     retry_due = _is_due_queued_retry_run(run)
     stale_queued = _is_stale_queued_run(run, settings or {})
     retry_delay_seconds = _seconds_until((run or {}).get('next_attempt_at')) if waiting_for_retry else None
+    retry_category = str((run or {}).get('last_retry_category') or '').strip().lower()
+
+    def retry_reason_text():
+        if retry_category == 'model_validation':
+            return 'model output validation failed'
+        if retry_category in {'transient', 'connection', 'timeout', 'provider_transient', 'rate_limit'}:
+            return 'a transient provider or connection interruption occurred'
+        if retry_category == 'batch_exhausted':
+            return 'one or more batches exhausted independent retries'
+        return 'a retryable interruption occurred'
 
     if status == TABULAR_EXPORT_STATUS_COMPLETED:
         return {
@@ -5334,7 +5344,7 @@ def _build_run_status_detail(run, settings, retryable_failure, can_resume):
         return {
             'status_label': 'Retry Scheduled',
             'status_tone': 'warning',
-            'status_detail': 'Automatic retry is scheduled. Continue can resume now from the last checkpoint.',
+            'status_detail': f'Automatic retry is scheduled because {retry_reason_text()}. Continue can resume now from the last checkpoint.',
             'is_stale': False,
             'waiting_for_retry': True,
             'retry_due': False,
@@ -5344,7 +5354,7 @@ def _build_run_status_detail(run, settings, retryable_failure, can_resume):
         return {
             'status_label': 'Needs Attention',
             'status_tone': 'warning',
-            'status_detail': 'Automatic retry is due but no worker has picked it up. Continue will resume from the last checkpoint.',
+            'status_detail': f'Automatic retry is due because {retry_reason_text()}, but no worker has picked it up. Continue will resume from the last checkpoint.',
             'is_stale': False,
             'waiting_for_retry': False,
             'retry_due': True,
@@ -5365,9 +5375,9 @@ def _build_run_status_detail(run, settings, retryable_failure, can_resume):
             'status_label': 'Needs Attention',
             'status_tone': 'warning' if can_resume else 'danger',
             'status_detail': (
-                'Analysis stopped after a retryable interruption. Continue will resume from the last checkpoint.'
+                f'Analysis stopped because {retry_reason_text()}. Continue will resume from the last checkpoint.'
                 if is_analysis_like
-                else 'Export stopped after a retryable interruption. Continue will resume from the last checkpoint.'
+                else f'Export stopped because {retry_reason_text()}. Continue will resume from the last checkpoint.'
             ),
             'is_stale': False,
             'waiting_for_retry': False,
@@ -5897,6 +5907,15 @@ def _is_stale_running_run(run, settings):
         minimum=60,
         maximum=900,
     )
+    if str((run or {}).get('executor_mode') or '').strip() != TABULAR_EXECUTOR_MODE_ROLLING_POOL:
+        batch_timeout_seconds = _settings_int(
+            settings,
+            'tabular_generated_output_batch_timeout_seconds',
+            TABULAR_EXPORT_DEFAULT_BATCH_TIMEOUT_SECONDS,
+            minimum=30,
+            maximum=900,
+        )
+        stale_seconds = max(stale_seconds, batch_timeout_seconds + 60)
     last_heartbeat = str(run.get('last_heartbeat_at') or run.get('updated_at') or '').strip()
     if not last_heartbeat:
         return True

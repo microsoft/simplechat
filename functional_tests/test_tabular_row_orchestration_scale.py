@@ -1,8 +1,8 @@
 # test_tabular_row_orchestration_scale.py
 """
 Functional test for scalable per-row tabular orchestration.
-Version: 0.250.146
-Implemented in: 0.250.060; generated CSV formula safety in 0.250.065; generated file export routing in 0.250.072; source descriptor generalization in 0.250.127; unified durable run contract in 0.250.128; hierarchical analysis in 0.250.129; combined analysis and export in 0.250.130; scale validation in 0.250.132; direct source-backed exhaustive queueing in 0.250.133; direct queue call-site hardening in 0.250.134; model-validation auto retry in 0.250.135; model-aware parallel throughput in 0.250.136; Phase 1 acceleration contracts and observability in 0.250.137; Phase 2 truthful background handoff in 0.250.138; Phase 3 durable LLM generation planning in 0.250.139; Phase 4 compact row response protocol in 0.250.140; Phase 5 completion-driven checkpointing in 0.250.141; Phase 6 rolling worker pool in 0.250.142; Phase 7 independent batch retries in 0.250.143; Phase 8 scale, chaos, and rollout in 0.250.144; background metadata streaming fix in 0.250.145; source-token echo recovery in 0.250.146
+Version: 0.250.147
+Implemented in: 0.250.060; generated CSV formula safety in 0.250.065; generated file export routing in 0.250.072; source descriptor generalization in 0.250.127; unified durable run contract in 0.250.128; hierarchical analysis in 0.250.129; combined analysis and export in 0.250.130; scale validation in 0.250.132; direct source-backed exhaustive queueing in 0.250.133; direct queue call-site hardening in 0.250.134; model-validation auto retry in 0.250.135; model-aware parallel throughput in 0.250.136; Phase 1 acceleration contracts and observability in 0.250.137; Phase 2 truthful background handoff in 0.250.138; Phase 3 durable LLM generation planning in 0.250.139; Phase 4 compact row response protocol in 0.250.140; Phase 5 completion-driven checkpointing in 0.250.141; Phase 6 rolling worker pool in 0.250.142; Phase 7 independent batch retries in 0.250.143; Phase 8 scale, chaos, and rollout in 0.250.144; background metadata streaming fix in 0.250.145; source-token echo recovery in 0.250.146; fixed-window stale heartbeat fix in 0.250.147
 
 This test ensures generated exports preserve source identity and row order while
 enforcing one stable output schema across independently generated batches.
@@ -143,6 +143,7 @@ FAILURE_FUNCTIONS = {
     '_tabular_background_handoff_has_preview',
 }
 BACKGROUND_METADATA_FUNCTIONS = {'build_background_tabular_generated_output_metadata'}
+STATUS_DETAIL_FUNCTIONS = {'_build_run_status_detail'}
 ARTIFACT_FUNCTIONS = {'_upload_generated_chat_artifact_for_current_user'}
 SCHEDULER_FUNCTIONS = {'_query_scheduler_candidates_by_status'}
 MANIFEST_FUNCTIONS = {
@@ -1131,6 +1132,37 @@ def _load_background_generated_output_metadata_helper():
     return namespace['build_background_tabular_generated_output_metadata']
 
 
+def _load_run_status_detail_helper():
+    module_tree = ast.parse(EXPORT_MODULE.read_text(encoding='utf-8'), filename=str(EXPORT_MODULE))
+    selected_nodes = [
+        node
+        for node in module_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name in STATUS_DETAIL_FUNCTIONS
+    ]
+    if len(selected_nodes) != len(STATUS_DETAIL_FUNCTIONS):
+        raise AssertionError('Missing run status detail helper')
+
+    namespace = {
+        'TABULAR_EXPORT_STATUS_COMPLETED': 'completed',
+        'TABULAR_EXPORT_STATUS_CANCELED': 'canceled',
+        'TABULAR_EXPORT_STATUS_RUNNING': 'running',
+        'TABULAR_EXPORT_STATUS_FAILED': 'failed',
+        'TABULAR_RUN_TASK_HIERARCHICAL_ANALYSIS': 'hierarchical_analysis',
+        'TABULAR_RUN_TASK_COMBINED': 'combined',
+        '_normalize_tabular_run_task_type': lambda task_type: task_type or 'structured_export',
+        '_is_stale_running_run': lambda run, settings: bool(run.get('_test_is_stale')),
+        '_is_waiting_for_retry': lambda run: bool(run.get('_test_waiting_for_retry')),
+        '_is_due_queued_retry_run': lambda run: bool(run.get('_test_retry_due')),
+        '_is_stale_queued_run': lambda run, settings: bool(run.get('_test_stale_queued')),
+        '_seconds_until': lambda value: 15 if value else None,
+        '_safe_int': lambda value: int(value or 0),
+        '_has_exhausted_independent_batch_retries': lambda run: bool(run.get('_test_exhausted')),
+    }
+    extracted_module = ast.Module(body=selected_nodes, type_ignores=[])
+    exec(compile(extracted_module, str(EXPORT_MODULE), 'exec'), namespace)
+    return namespace['_build_run_status_detail']
+
+
 def _assert_concise_background_handoff_contract(text, expected_row_count, expected_output_label):
     normalized_text = str(text or '')
     normalized_lower = normalized_text.lower()
@@ -2047,20 +2079,66 @@ def test_phase_eight_retry_and_stale_reclaim_modes_are_snapshotted():
         fixed_mode,
     ) == 'run-level-v1'
 
-    new_run = {
+    rolling_run = {
+        'executor_mode': rolling_mode,
         'last_heartbeat_at': (now - timedelta(seconds=121)).isoformat(),
         'generation_rollout_settings': {
             'tabular_generation_stale_seconds': 120,
         },
     }
+    fixed_window_run = {
+        'executor_mode': fixed_mode,
+        'last_heartbeat_at': (now - timedelta(seconds=121)).isoformat(),
+        'generation_rollout_settings': {
+            'tabular_generation_stale_seconds': 120,
+        },
+    }
+    stale_fixed_window_run = {
+        **fixed_window_run,
+        'last_heartbeat_at': (now - timedelta(seconds=361)).isoformat(),
+    }
     legacy_run = {
+        'executor_mode': fixed_mode,
         'last_heartbeat_at': (now - timedelta(seconds=121)).isoformat(),
         'generation_rollout_settings': {
             'enable_tabular_generation_plan': True,
         },
     }
-    assert helpers['_is_stale_running_run'](new_run, {}) is True
+    assert helpers['_is_stale_running_run'](rolling_run, {}) is True
+    assert helpers['_is_stale_running_run'](fixed_window_run, {}) is False
+    assert helpers['_is_stale_running_run'](stale_fixed_window_run, {}) is True
     assert helpers['_is_stale_running_run'](legacy_run, {}) is False
+
+
+def test_retry_status_detail_exposes_safe_retry_reason():
+    """Public status explains retry categories without exposing raw provider errors."""
+    build_status_detail = _load_run_status_detail_helper()
+
+    scheduled_detail = build_status_detail(
+        {
+            'status': 'queued',
+            'last_retry_category': 'model_validation',
+            'next_attempt_at': '2026-08-10T12:01:00+00:00',
+            '_test_waiting_for_retry': True,
+        },
+        {},
+        retryable_failure=False,
+        can_resume=True,
+    )
+    assert scheduled_detail['status_label'] == 'Retry Scheduled'
+    assert 'model output validation failed' in scheduled_detail['status_detail']
+    assert 'raw' not in scheduled_detail['status_detail'].lower()
+
+    failed_detail = build_status_detail(
+        {
+            'status': 'failed',
+            'last_retry_category': 'transient',
+        },
+        {},
+        retryable_failure=True,
+        can_resume=True,
+    )
+    assert 'transient provider or connection interruption' in failed_detail['status_detail']
 
 
 def test_phase_eight_publication_revalidates_source_version():
@@ -5282,6 +5360,7 @@ def main():
         test_phase_three_rollout_activates_shadow_only_and_stays_backend_only,
         test_phase_eight_rollout_assignment_is_stable_and_control_runs_stay_legacy,
         test_phase_eight_retry_and_stale_reclaim_modes_are_snapshotted,
+        test_retry_status_detail_exposes_safe_retry_reason,
         test_phase_eight_publication_revalidates_source_version,
         test_phase_eight_committed_output_survives_summary_and_progress_crash,
         test_phase_eight_performance_summary_is_bounded_and_cohort_comparable,

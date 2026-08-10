@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Functional test for durable tabular generated-output background exports.
-Version: 0.250.142
-Implemented in: 0.241.060; throughput and timeout hardening in: 0.250.070; unified durable run contract in: 0.250.128; Phase 6 rolling worker pool compatibility in: 0.250.142
+Version: 0.250.147
+Implemented in: 0.241.060; throughput and timeout hardening in: 0.250.070; unified durable run contract in: 0.250.128; Phase 6 rolling worker pool compatibility in: 0.250.142; safe retry reason status text in: 0.250.147
 
 This test ensures that large tabular structured exports are wired through the
 durable background queue, status API, queued retry recovery, and chat progress
@@ -113,7 +113,7 @@ def test_export_runner_module():
     assert_contains(source_text, 'active_processing_seconds', 'active-time ETA accounting')
     assert_contains(source_text, 'or _is_due_queued_retry_run(run)', 'queued retry-due manual resume eligibility')
     assert_contains(source_text, 'or _is_stale_queued_run(run, settings or {})', 'stale queued manual resume eligibility')
-    assert_contains(source_text, 'Automatic retry is due but no worker has picked it up', 'queued retry-due status detail')
+    assert_contains(source_text, 'Automatic retry is due because', 'queued retry-due status detail')
     assert_contains(source_text, "'retry_due': status_detail.get('retry_due')", 'retry-due public status payload')
     assert_contains(source_text, 'Manual resume queued', 'manual checkpoint resume message')
     assert_contains(source_text, 'manual_resume_count', 'manual resume counter')
