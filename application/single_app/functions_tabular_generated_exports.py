@@ -85,6 +85,13 @@ TABULAR_GENERATION_PLAN_VALUE_TYPES = {
 }
 TABULAR_ROLLOUT_PLANNER_MODES = {'off', 'shadow', 'active'}
 TABULAR_ROLLOUT_HANDOFF_MODES = {'legacy', 'server', 'constrained_model'}
+TABULAR_GENERATION_ROLLOUT_DEFAULT_PERCENTAGE = 100
+TABULAR_GENERATION_ROLLOUT_BUCKET_COUNT = 100
+TABULAR_GENERATION_ROLLOUT_HASH_VERSION = 1
+TABULAR_GENERATION_ROLLOUT_COHORT_CANARY = 'canary'
+TABULAR_GENERATION_ROLLOUT_COHORT_CONTROL = 'control'
+TABULAR_RETRY_MODE_RUN_LEVEL = 'run-level-v1'
+TABULAR_RETRY_MODE_INDEPENDENT_BATCH = 'independent-batch-v1'
 TABULAR_RUN_TASK_STRUCTURED_EXPORT = 'structured_export'
 TABULAR_RUN_TASK_HIERARCHICAL_ANALYSIS = 'hierarchical_analysis'
 TABULAR_RUN_TASK_COMBINED = 'combined'
@@ -182,6 +189,7 @@ TABULAR_EXPORT_SUMMARY_MAX_VALUES_PER_FIELD = 5
 TABULAR_EXPORT_SUMMARY_AGGREGATE_MAX_VALUES = 25
 TABULAR_EXPORT_PROGRESS_LOG_INTERVAL_SECONDS = 30
 TABULAR_GENERATION_DEFAULT_HEARTBEAT_SECONDS = 30
+TABULAR_GENERATION_DEFAULT_STALE_SECONDS = 120
 TABULAR_GENERATION_DEFAULT_CHECKPOINT_WRITER_CONCURRENCY = 1
 TABULAR_GENERATION_CHECKPOINT_HIGH_WATER_MULTIPLIER = 2
 TABULAR_GENERATION_DEFAULT_SYSTEMIC_FAILURE_THRESHOLD = 0.5
@@ -857,6 +865,13 @@ def _parse_compact_row_array_entries(response_content, source_rows, generation_p
 def _normalize_tabular_generation_rollout_settings(settings):
     settings = settings or {}
     return {
+        'tabular_generation_rollout_percentage': _settings_int(
+            settings,
+            'tabular_generation_rollout_percentage',
+            TABULAR_GENERATION_ROLLOUT_DEFAULT_PERCENTAGE,
+            minimum=0,
+            maximum=100,
+        ),
         'tabular_background_handoff_mode': _settings_mode(
             settings,
             'tabular_background_handoff_mode',
@@ -908,6 +923,13 @@ def _normalize_tabular_generation_rollout_settings(settings):
             minimum=5,
             maximum=300,
         ),
+        'tabular_generation_stale_seconds': _settings_int(
+            settings,
+            'tabular_generation_stale_seconds',
+            TABULAR_GENERATION_DEFAULT_STALE_SECONDS,
+            minimum=60,
+            maximum=900,
+        ),
         'tabular_generation_systemic_failure_threshold': _settings_float(
             settings,
             'tabular_generation_systemic_failure_threshold',
@@ -918,10 +940,63 @@ def _normalize_tabular_generation_rollout_settings(settings):
     }
 
 
+def _get_tabular_generation_rollout_bucket(user_id, conversation_id, run_id):
+    assignment_key = ':'.join((
+        f'v{TABULAR_GENERATION_ROLLOUT_HASH_VERSION}',
+        str(user_id or '').strip(),
+        str(conversation_id or '').strip(),
+        str(run_id or '').strip(),
+    ))
+    assignment_digest = hashlib.sha256(assignment_key.encode('utf-8')).digest()
+    return int.from_bytes(assignment_digest[:8], byteorder='big') % TABULAR_GENERATION_ROLLOUT_BUCKET_COUNT + 1
+
+
+def _build_tabular_generation_rollout_assignment(settings, user_id, conversation_id, run_id):
+    rollout_settings = _normalize_tabular_generation_rollout_settings(settings)
+    rollout_percentage = rollout_settings['tabular_generation_rollout_percentage']
+    rollout_bucket = _get_tabular_generation_rollout_bucket(user_id, conversation_id, run_id)
+    rollout_cohort = (
+        TABULAR_GENERATION_ROLLOUT_COHORT_CANARY
+        if rollout_bucket <= rollout_percentage
+        else TABULAR_GENERATION_ROLLOUT_COHORT_CONTROL
+    )
+    if rollout_cohort == TABULAR_GENERATION_ROLLOUT_COHORT_CONTROL:
+        rollout_settings.update({
+            'tabular_background_handoff_mode': 'legacy',
+            'tabular_generation_plan_mode': 'off',
+            'enable_tabular_generation_plan': False,
+            'enable_tabular_compact_response_protocol': False,
+            'enable_tabular_completion_driven_checkpointing': False,
+            'enable_tabular_rolling_worker_pool': False,
+            'enable_tabular_independent_batch_retries': False,
+        })
+    rollout_settings.update({
+        'tabular_generation_rollout_bucket': rollout_bucket,
+        'tabular_generation_rollout_cohort': rollout_cohort,
+        'tabular_generation_rollout_hash_version': TABULAR_GENERATION_ROLLOUT_HASH_VERSION,
+    })
+    return rollout_settings
+
+
 def _get_tabular_generation_rollout_settings_for_run(run=None, settings=None):
     rollout_settings = (run or {}).get('generation_rollout_settings') if isinstance(run, dict) else None
     if isinstance(rollout_settings, dict) and rollout_settings:
-        return _normalize_tabular_generation_rollout_settings(rollout_settings)
+        normalized_rollout_settings = _normalize_tabular_generation_rollout_settings(rollout_settings)
+        if 'tabular_generation_stale_seconds' not in rollout_settings:
+            normalized_rollout_settings['tabular_generation_stale_seconds'] = TABULAR_EXPORT_DEFAULT_STALE_SECONDS
+        return normalized_rollout_settings
+    if isinstance(run, dict):
+        return _normalize_tabular_generation_rollout_settings({
+            'tabular_generation_rollout_percentage': 0,
+            'tabular_background_handoff_mode': 'legacy',
+            'tabular_generation_plan_mode': 'off',
+            'enable_tabular_generation_plan': False,
+            'enable_tabular_compact_response_protocol': False,
+            'enable_tabular_completion_driven_checkpointing': False,
+            'enable_tabular_rolling_worker_pool': False,
+            'enable_tabular_independent_batch_retries': False,
+            'tabular_generation_stale_seconds': TABULAR_EXPORT_DEFAULT_STALE_SECONDS,
+        })
     return _normalize_tabular_generation_rollout_settings(settings or {})
 
 
@@ -944,6 +1019,15 @@ def _select_tabular_executor_mode(
     return TABULAR_EXECUTOR_MODE_FIXED_WINDOW
 
 
+def _select_tabular_retry_mode(rollout_settings, executor_mode):
+    if (
+        str(executor_mode or '').strip() == TABULAR_EXECUTOR_MODE_ROLLING_POOL
+        and _settings_bool(rollout_settings, 'enable_tabular_independent_batch_retries', False)
+    ):
+        return TABULAR_RETRY_MODE_INDEPENDENT_BATCH
+    return TABULAR_RETRY_MODE_RUN_LEVEL
+
+
 def _is_rolling_executor_ready(run):
     if str((run or {}).get('executor_mode') or '').strip() != TABULAR_EXECUTOR_MODE_ROLLING_POOL:
         return False
@@ -964,6 +1048,7 @@ def _downgrade_rolling_executor_to_fixed_window(run, reason):
     now = _now_iso()
     run.update({
         'executor_mode': TABULAR_EXECUTOR_MODE_FIXED_WINDOW,
+        'retry_mode': TABULAR_RETRY_MODE_RUN_LEVEL,
         'updated_at': now,
         'last_heartbeat_at': now,
         'last_message': f'Rolling worker pool unavailable; continuing with fixed windows ({reason})',
@@ -997,6 +1082,7 @@ def _sync_tabular_generation_contract_fields(run):
     run.setdefault('generation_contract_version', TABULAR_GENERATION_CONTRACT_VERSION)
     run.setdefault('response_protocol_version', TABULAR_RESPONSE_PROTOCOL_OBJECT_V1)
     run.setdefault('executor_mode', TABULAR_EXECUTOR_MODE_FIXED_WINDOW)
+    run.setdefault('retry_mode', TABULAR_RETRY_MODE_RUN_LEVEL)
     run.setdefault('plan_blob_path', None)
     run.setdefault('plan_hash', None)
     run['planned_batch_count'] = planned_batch_count
@@ -2135,6 +2221,16 @@ def _get_versioned_source_blob_client(source_descriptor):
     if current_etag != expected_etag:
         raise ValueError('Source CSV changed after the export was queued')
     return blob_client
+
+
+def _revalidate_tabular_source_version_for_publication(run):
+    source_descriptor = (
+        (run or {}).get('source_descriptor')
+        or (run or {}).get('source_authorization')
+    )
+    if not isinstance(source_descriptor, dict) or not source_descriptor.get('blob_etag'):
+        return None
+    return _get_versioned_source_blob_client(source_descriptor)
 
 
 def _clean_generated_json_code_fence(response_content):
@@ -5326,6 +5422,9 @@ def _build_run_public_status(run, settings=None):
         'completed_batches': completed_batches,
         'generation_contract_version': _safe_int(run.get('generation_contract_version')),
         'response_protocol_version': run.get('response_protocol_version'),
+        'executor_mode': run.get('executor_mode'),
+        'retry_mode': run.get('retry_mode'),
+        'plan_mode': run.get('plan_mode'),
         'planned_batch_count': _safe_int(run.get('planned_batch_count')),
         'completed_batch_count': _safe_int(run.get('completed_batch_count')),
         'highest_contiguous_batch': _safe_int(run.get('highest_contiguous_batch')),
@@ -5355,7 +5454,6 @@ def _build_run_public_status(run, settings=None):
         'completed_at': run.get('completed_at'),
         'last_heartbeat_at': run.get('last_heartbeat_at'),
         'last_message': run.get('last_message'),
-        'last_error': run.get('last_error'),
         'status_label': status_detail.get('status_label'),
         'status_tone': status_detail.get('status_tone'),
         'status_detail': status_detail.get('status_detail'),
@@ -5717,11 +5815,12 @@ def _lease_holder_id():
 
 
 def _is_stale_running_run(run, settings):
-    stale_seconds = _settings_int(
-        settings,
-        'tabular_generated_output_stale_seconds',
-        TABULAR_EXPORT_DEFAULT_STALE_SECONDS,
+    rollout_settings = _get_tabular_generation_rollout_settings_for_run(run, settings)
+    stale_seconds = _safe_int(
+        rollout_settings.get('tabular_generation_stale_seconds'),
+        default=TABULAR_EXPORT_DEFAULT_STALE_SECONDS,
         minimum=60,
+        maximum=900,
     )
     last_heartbeat = str(run.get('last_heartbeat_at') or run.get('updated_at') or '').strip()
     if not last_heartbeat:
@@ -5796,6 +5895,7 @@ def _mark_run_failed(run, error_message):
         'last_error': str(error_message or 'Unknown error')[:1000],
         'last_message': 'Background structured export failed',
     })
+    run['performance_summary'] = _build_tabular_generation_performance_summary(run, completed_at=now)
     try:
         run = _replace_claimed_run(run)
     except TabularExportLeaseLostError:
@@ -5811,6 +5911,7 @@ def _mark_run_failed(run, error_message):
             'processed_rows': run.get('processed_rows'),
             'row_count': run.get('row_count'),
             'error': str(error_message or '')[:1000],
+            **run.get('performance_summary', {}),
         },
         level=logging.ERROR,
         exceptionTraceback=True,
@@ -5950,6 +6051,57 @@ def _calculate_window_throughput(
         'rows_per_minute': rows_per_minute,
         'estimated_total_seconds': estimated_total_seconds,
         'estimated_remaining_seconds': estimated_remaining_seconds,
+    }
+
+
+def _build_tabular_generation_performance_summary(run, completed_at=None):
+    completed_time = _parse_iso_datetime(completed_at or (run or {}).get('completed_at')) or _now_utc()
+
+    def elapsed_seconds(started_at):
+        started_time = _parse_iso_datetime(started_at)
+        if not started_time:
+            return None
+        return round(max((completed_time - started_time).total_seconds(), 0.0), 3)
+
+    planner_started_at = (run or {}).get('planner_started_at')
+    planner_completed_at = _parse_iso_datetime((run or {}).get('planner_completed_at'))
+    planner_started_time = _parse_iso_datetime(planner_started_at)
+    created_time = _parse_iso_datetime((run or {}).get('created_at'))
+    started_time = _parse_iso_datetime((run or {}).get('started_at'))
+    planning_latency_seconds = None
+    if planner_started_time and planner_completed_at:
+        planning_latency_seconds = round(
+            max((planner_completed_at - planner_started_time).total_seconds(), 0.0),
+            3,
+        )
+    queue_latency_seconds = None
+    if created_time and started_time:
+        queue_latency_seconds = round(
+            max((started_time - created_time).total_seconds(), 0.0),
+            3,
+        )
+
+    return {
+        'planning_latency_seconds': planning_latency_seconds,
+        'queue_latency_seconds': queue_latency_seconds,
+        'generation_elapsed_seconds': elapsed_seconds((run or {}).get('generation_started_at')),
+        'end_to_end_elapsed_seconds': elapsed_seconds((run or {}).get('created_at')),
+        'durable_rows_per_minute': (run or {}).get('rows_per_minute'),
+        'configured_concurrency': _safe_int((run or {}).get('batch_concurrency')),
+        'effective_concurrency': _safe_int((run or {}).get('effective_batch_concurrency')),
+        'retry_count': _safe_int((run or {}).get('retry_count')),
+        'transient_failure_count': _safe_int((run or {}).get('transient_failure_count')),
+        'row_count': _safe_int((run or {}).get('row_count')),
+        'completed_row_count': _safe_int((run or {}).get('processed_rows')),
+        'batch_count': _safe_int((run or {}).get('batch_count')),
+        'completed_batch_count': _safe_int((run or {}).get('completed_batch_count')),
+        'rollout_cohort': ((run or {}).get('generation_rollout_settings') or {}).get(
+            'tabular_generation_rollout_cohort'
+        ),
+        'plan_mode': (run or {}).get('plan_mode'),
+        'executor_mode': (run or {}).get('executor_mode'),
+        'response_protocol_version': (run or {}).get('response_protocol_version'),
+        'retry_mode': (run or {}).get('retry_mode'),
     }
 
 
@@ -6151,6 +6303,7 @@ def _publish_structured_export_artifact(run):
                 })
                 run = _replace_claimed_run(run)
             _authorize_tabular_export_run_execution(run)
+            _revalidate_tabular_source_version_for_publication(run)
             text_output_stream.flush()
             output_size = binary_output_stream.tell()
             binary_output_stream.seek(0)
@@ -6199,6 +6352,7 @@ def _complete_run(run):
         run.get('batch_count'),
         output_entry_count,
     ))
+    run['performance_summary'] = _build_tabular_generation_performance_summary(run, completed_at=now)
     run = _replace_claimed_run(run)
     log_event(
         '[TABULAR_GENERATED_OUTPUT] Background export completed',
@@ -6216,6 +6370,7 @@ def _complete_run(run):
             'response_protocol_version': run.get('response_protocol_version'),
             'artifact_message_id': uploaded_message.get('id'),
             'generated_file_name': uploaded_message.get('file_name') or generated_file_name,
+            **run.get('performance_summary', {}),
         },
         level=logging.INFO,
     )
@@ -6303,6 +6458,7 @@ def _publish_analysis_artifact(run, final_summary):
         })
         run = _replace_claimed_run(run)
     _authorize_tabular_export_run_execution(run)
+    _revalidate_tabular_source_version_for_publication(run)
 
     with tempfile.SpooledTemporaryFile(
         max_size=TABULAR_EXPORT_FINAL_SPOOL_MAX_MEMORY_BYTES,
@@ -6353,6 +6509,7 @@ def _complete_analysis_run(run, final_summary):
         run.get('batch_count'),
         run.get('processed_rows'),
     ))
+    run['performance_summary'] = _build_tabular_generation_performance_summary(run, completed_at=now)
     run = _replace_claimed_run(run)
     log_event(
         '[TABULAR_GENERATED_OUTPUT] Background tabular analysis completed',
@@ -6365,6 +6522,7 @@ def _complete_analysis_run(run, final_summary):
             'batch_count': run.get('batch_count'),
             'artifact_message_id': uploaded_message.get('id'),
             'generated_file_name': uploaded_message.get('file_name') or generated_file_name,
+            **run.get('performance_summary', {}),
         },
         level=logging.INFO,
     )
@@ -6456,6 +6614,7 @@ def _complete_combined_analysis_run(run, final_summary):
         run.get('batch_count'),
         run.get('processed_rows'),
     ))
+    run['performance_summary'] = _build_tabular_generation_performance_summary(run, completed_at=now)
     run = _replace_claimed_run(run)
     log_event(
         '[TABULAR_GENERATED_OUTPUT] Background combined tabular run completed',
@@ -6468,6 +6627,7 @@ def _complete_combined_analysis_run(run, final_summary):
             'batch_count': run.get('batch_count'),
             'structured_artifact_message_id': structured_artifact.get('artifact_message_id'),
             'analysis_artifact_message_id': analysis_artifact.get('artifact_message_id'),
+            **run.get('performance_summary', {}),
         },
         level=logging.INFO,
     )
@@ -7796,7 +7956,12 @@ def queue_tabular_generated_output_run(
         settings,
         model_context=model_context,
     )
-    rollout_settings = _normalize_tabular_generation_rollout_settings(settings)
+    rollout_settings = _build_tabular_generation_rollout_assignment(
+        settings,
+        normalized_user_id,
+        normalized_conversation_id,
+        run_id,
+    )
     requested_plan_mode = (
         rollout_settings.get('tabular_generation_plan_mode')
         if rollout_settings.get('enable_tabular_generation_plan')
@@ -7816,6 +7981,7 @@ def queue_tabular_generated_output_run(
         normalized_task_type,
         passthrough_input_rows=passthrough_input_rows,
     )
+    retry_mode = _select_tabular_retry_mode(rollout_settings, executor_mode)
 
     if source_descriptor:
         staged_row_count = _safe_int(source_descriptor.get('expected_row_count'))
@@ -7877,6 +8043,7 @@ def queue_tabular_generated_output_run(
         'generation_contract_version': TABULAR_GENERATION_CONTRACT_VERSION,
         'response_protocol_version': response_protocol_version,
         'executor_mode': executor_mode,
+        'retry_mode': retry_mode,
         'generation_rollout_settings': rollout_settings,
         'task_type': normalized_task_type,
         'analysis_objective': normalized_analysis_objective,
@@ -7992,6 +8159,11 @@ def queue_tabular_generated_output_run(
             'generation_contract_version': TABULAR_GENERATION_CONTRACT_VERSION,
             'response_protocol_version': response_protocol_version,
             'executor_mode': executor_mode,
+            'retry_mode': retry_mode,
+            'rollout_percentage': rollout_settings.get('tabular_generation_rollout_percentage'),
+            'rollout_bucket': rollout_settings.get('tabular_generation_rollout_bucket'),
+            'rollout_cohort': rollout_settings.get('tabular_generation_rollout_cohort'),
+            'rollout_hash_version': rollout_settings.get('tabular_generation_rollout_hash_version'),
             'planner_mode': rollout_settings.get('tabular_generation_plan_mode'),
             'compact_protocol_enabled': rollout_settings.get('enable_tabular_compact_response_protocol'),
             'completion_checkpointing_enabled': rollout_settings.get(

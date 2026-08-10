@@ -87,6 +87,7 @@ ADMIN_SETTINGS_NESTED_SECRET_FIELDS = (
     "web_search_agent.other_settings.azure_ai_foundry.client_secret",
 )
 TABULAR_GENERATION_BACKEND_SETTING_KEYS = {
+    'tabular_generation_rollout_percentage',
     'tabular_background_handoff_mode',
     'enable_tabular_generation_plan',
     'tabular_generation_plan_mode',
@@ -96,6 +97,7 @@ TABULAR_GENERATION_BACKEND_SETTING_KEYS = {
     'enable_tabular_independent_batch_retries',
     'tabular_generation_checkpoint_writer_concurrency',
     'tabular_generation_heartbeat_seconds',
+    'tabular_generation_stale_seconds',
     'tabular_generation_systemic_failure_threshold',
 }
 PUBLIC_WORKSPACE_DISPLAY_NAME_DEFAULT = "Public Workspace"
@@ -1016,6 +1018,7 @@ def get_settings(use_cosmos=False, include_source=False):
         'tabular_generated_output_chunk_model_mode': 'current',
         'tabular_generated_output_chunk_model_deployment': '',
         'tabular_generated_output_model_validation_auto_retries': 3,
+        'tabular_generation_rollout_percentage': 100,
         'tabular_background_handoff_mode': 'legacy',
         'enable_tabular_generation_plan': True,
         'tabular_generation_plan_mode': 'shadow',
@@ -1025,6 +1028,7 @@ def get_settings(use_cosmos=False, include_source=False):
         'enable_tabular_independent_batch_retries': False,
         'tabular_generation_checkpoint_writer_concurrency': 1,
         'tabular_generation_heartbeat_seconds': 30,
+        'tabular_generation_stale_seconds': 120,
         'tabular_generation_systemic_failure_threshold': 0.5,
         'enable_multi_agent_orchestration': False,
         'enable_mixed_source_development_telemetry': False,
