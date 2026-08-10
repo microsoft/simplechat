@@ -1,8 +1,8 @@
 # test_tabular_row_orchestration_scale.py
 """
 Functional test for scalable per-row tabular orchestration.
-Version: 0.250.140
-Implemented in: 0.250.060; generated CSV formula safety in 0.250.065; generated file export routing in 0.250.072; source descriptor generalization in 0.250.127; unified durable run contract in 0.250.128; hierarchical analysis in 0.250.129; combined analysis and export in 0.250.130; scale validation in 0.250.132; direct source-backed exhaustive queueing in 0.250.133; direct queue call-site hardening in 0.250.134; model-validation auto retry in 0.250.135; model-aware parallel throughput in 0.250.136; Phase 1 acceleration contracts and observability in 0.250.137; Phase 2 truthful background handoff in 0.250.138; Phase 3 durable LLM generation planning in 0.250.139; Phase 4 compact row response protocol in 0.250.140
+Version: 0.250.141
+Implemented in: 0.250.060; generated CSV formula safety in 0.250.065; generated file export routing in 0.250.072; source descriptor generalization in 0.250.127; unified durable run contract in 0.250.128; hierarchical analysis in 0.250.129; combined analysis and export in 0.250.130; scale validation in 0.250.132; direct source-backed exhaustive queueing in 0.250.133; direct queue call-site hardening in 0.250.134; model-validation auto retry in 0.250.135; model-aware parallel throughput in 0.250.136; Phase 1 acceleration contracts and observability in 0.250.137; Phase 2 truthful background handoff in 0.250.138; Phase 3 durable LLM generation planning in 0.250.139; Phase 4 compact row response protocol in 0.250.140; Phase 5 completion-driven checkpointing in 0.250.141
 
 This test ensures generated exports preserve source identity and row order while
 enforcing one stable output schema across independently generated batches.
@@ -272,6 +272,21 @@ COMPACT_PROTOCOL_FUNCTIONS = {
     '_build_batch_prompt',
     '_build_compact_batch_prompt',
     '_normalize_generated_batch_entries',
+}
+COMPLETION_CHECKPOINT_FUNCTIONS = {
+    '_safe_int',
+    '_safe_float',
+    '_settings_bool',
+    '_settings_int',
+    '_settings_float',
+    '_settings_mode',
+    '_normalize_tabular_generation_rollout_settings',
+    '_output_blob_prefix',
+    '_scan_output_checkpoint_batches_for_run',
+    '_is_completion_driven_checkpointing_enabled',
+    '_get_checkpoint_writer_concurrency',
+    '_checkpoint_generated_result_async',
+    '_generate_and_checkpoint_batch_window_entries',
 }
 
 
@@ -1311,6 +1326,37 @@ def _load_compact_protocol_helpers():
     return namespace
 
 
+def _load_completion_checkpoint_helpers():
+    module_tree = ast.parse(EXPORT_MODULE.read_text(encoding='utf-8'), filename=str(EXPORT_MODULE))
+    selected_nodes = []
+    found_functions = set()
+    for node in module_tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in COMPLETION_CHECKPOINT_FUNCTIONS:
+            selected_nodes.append(node)
+            found_functions.add(node.name)
+        elif isinstance(node, ast.Assign):
+            assigned_names = {
+                target.id
+                for target in node.targets
+                if isinstance(target, ast.Name)
+            }
+            if any(name.startswith('TABULAR_') for name in assigned_names):
+                selected_nodes.append(node)
+
+    missing_functions = COMPLETION_CHECKPOINT_FUNCTIONS - found_functions
+    if missing_functions:
+        raise AssertionError(f'Missing completion checkpoint helpers: {sorted(missing_functions)}')
+
+    namespace = {
+        'asyncio': asyncio,
+        're': re,
+        'storage_account_personal_chat_container_name': 'personal-chat',
+    }
+    extracted_module = ast.Module(body=selected_nodes, type_ignores=[])
+    exec(compile(extracted_module, str(EXPORT_MODULE), 'exec'), namespace)
+    return namespace
+
+
 def _build_phase_three_test_run(plan_mode='shadow', plan_status='pending'):
     return {
         'id': 'run-phase-3',
@@ -2310,6 +2356,142 @@ def test_phase_four_compact_response_rejects_key_and_value_failures():
             assert expected_message in str(exc).lower()
         else:
             raise AssertionError(f'Compact validation accepted invalid payload: {payload}')
+
+
+def test_phase_five_completion_driven_checkpointing_commits_fast_batch_before_straggler():
+    """A completed model response is checkpointed before a slower batch in the same fixed window settles."""
+    helpers = _load_completion_checkpoint_helpers()
+    events = []
+    straggler_finished_at = {'value': None}
+
+    async def generate_batch_entries_for_window(
+        semaphore,
+        chat_service,
+        user_question,
+        batch_request,
+        total_batches,
+        source_file_name,
+        selected_sheet,
+        retry_attempts,
+        run_id,
+        expected_output_schema,
+        batch_timeout_seconds,
+        response_protocol,
+        generation_plan,
+    ):
+        del chat_service, user_question, total_batches, source_file_name, selected_sheet
+        del retry_attempts, run_id, expected_output_schema, batch_timeout_seconds
+        del response_protocol, generation_plan
+        batch_number = batch_request['batch_number']
+        async with semaphore:
+            if batch_number == 2:
+                await asyncio.sleep(0.2)
+                straggler_finished_at['value'] = time.monotonic()
+            else:
+                await asyncio.sleep(0.01)
+            return {
+                'batch_number': batch_number,
+                'batch_entries': [{'source_row_number': batch_number, 'answer': f'a{batch_number}'}],
+                'batch_summary': {'row_count': 1},
+                'batch_row_count': 1,
+                'elapsed_seconds': 0.01 if batch_number == 1 else 0.2,
+                'mismatch_count': 0,
+                'output_schema': ['source_row_number', 'answer'],
+            }
+
+    def checkpoint_generated_batch_results(run, generated_results):
+        del run
+        generated_result = generated_results[0]
+        batch_number = generated_result['batch_number']
+        events.append({
+            'batch_number': batch_number,
+            'checkpointed_at': time.monotonic(),
+        })
+        return {
+            batch_number: {
+                'batch_number': batch_number,
+                'batch_row_count': generated_result['batch_row_count'],
+                'elapsed_seconds': generated_result['elapsed_seconds'],
+                'mismatch_count': 0,
+                'from_checkpoint': False,
+            }
+        }
+
+    helpers['_generate_batch_entries_for_window'] = generate_batch_entries_for_window
+    helpers['_checkpoint_generated_batch_results'] = checkpoint_generated_batch_results
+
+    settings = {
+        'enable_tabular_completion_driven_checkpointing': True,
+        'tabular_generation_checkpoint_writer_concurrency': '1',
+    }
+    assert helpers['_is_completion_driven_checkpointing_enabled'](settings) is True
+    assert helpers['_get_checkpoint_writer_concurrency'](settings) == 1
+
+    batch_results, generation_error = asyncio.run(
+        helpers['_generate_and_checkpoint_batch_window_entries'](
+            {'id': 'run-phase-5', 'output_schema': ['source_row_number', 'answer']},
+            None,
+            'answer every row',
+            [
+                {'batch_number': 1, 'rows': [{'row': 1}]},
+                {'batch_number': 2, 'rows': [{'row': 2}]},
+            ],
+            2,
+            'source.csv',
+            None,
+            1,
+            'run-phase-5',
+            2,
+            1,
+            expected_output_schema=['source_row_number', 'answer'],
+        )
+    )
+
+    assert generation_error is None
+    assert set(batch_results) == {1, 2}
+    fast_checkpoint = next(event for event in events if event['batch_number'] == 1)
+    assert straggler_finished_at['value'] is not None
+    assert fast_checkpoint['checkpointed_at'] < straggler_finished_at['value']
+
+
+def test_phase_five_resume_scan_lists_output_prefix_once():
+    """Resume builds the durable completed set from one output-prefix listing."""
+    helpers = _load_completion_checkpoint_helpers()
+    list_calls = []
+    run = {
+        'id': 'run-phase-5',
+        'user_id': 'user-1',
+        'conversation_id': 'conversation-1',
+        'batch_count': 3,
+    }
+    prefix = helpers['_output_blob_prefix']('user-1', 'conversation-1', 'run-phase-5')
+
+    class BlobProperties:
+        def __init__(self, name):
+            self.name = name
+
+    class ContainerClient:
+        def list_blobs(self, name_starts_with=None):
+            list_calls.append(name_starts_with)
+            return [
+                BlobProperties(f'{prefix}batch_000001.json'),
+                BlobProperties(f'{prefix}batch_000003.json'),
+                BlobProperties(f'{prefix}batch_000004.json'),
+                BlobProperties(f'{prefix}batch_bad.json'),
+                BlobProperties('other/run/output/batch_000002.json'),
+            ]
+
+    class BlobServiceClient:
+        def get_container_client(self, container_name):
+            assert container_name == 'personal-chat'
+            return ContainerClient()
+
+    helpers['_get_blob_service_client'] = lambda: BlobServiceClient()
+
+    completed_batches = helpers['_scan_output_checkpoint_batches_for_run'](run)
+
+    assert completed_batches == {1, 3}
+    assert list_calls == [prefix]
 
 
 def test_source_identity_and_order_contract():
