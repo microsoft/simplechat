@@ -1,8 +1,8 @@
 # test_tabular_row_orchestration_scale.py
 """
 Functional test for scalable per-row tabular orchestration.
-Version: 0.250.136
-Implemented in: 0.250.060; generated CSV formula safety in 0.250.065; generated file export routing in 0.250.072; source descriptor generalization in 0.250.127; unified durable run contract in 0.250.128; hierarchical analysis in 0.250.129; combined analysis and export in 0.250.130; scale validation in 0.250.132; direct source-backed exhaustive queueing in 0.250.133; direct queue call-site hardening in 0.250.134; model-validation auto retry in 0.250.135; model-aware parallel throughput in 0.250.136
+Version: 0.250.137
+Implemented in: 0.250.060; generated CSV formula safety in 0.250.065; generated file export routing in 0.250.072; source descriptor generalization in 0.250.127; unified durable run contract in 0.250.128; hierarchical analysis in 0.250.129; combined analysis and export in 0.250.130; scale validation in 0.250.132; direct source-backed exhaustive queueing in 0.250.133; direct queue call-site hardening in 0.250.134; model-validation auto retry in 0.250.135; model-aware parallel throughput in 0.250.136; Phase 1 acceleration contracts and observability in 0.250.137
 
 This test ensures generated exports preserve source identity and row order while
 enforcing one stable output schema across independently generated batches.
@@ -30,6 +30,7 @@ from typing import Any, Dict, Optional
 REPO_ROOT = Path(__file__).resolve().parents[1]
 APP_ROOT = REPO_ROOT / 'application' / 'single_app'
 EXPORT_MODULE = REPO_ROOT / 'application' / 'single_app' / 'functions_tabular_generated_exports.py'
+SETTINGS_MODULE = REPO_ROOT / 'application' / 'single_app' / 'functions_settings.py'
 CHAT_ROUTE = REPO_ROOT / 'application' / 'single_app' / 'route_backend_chats.py'
 SIMPLECHAT_OPERATIONS = REPO_ROOT / 'application' / 'single_app' / 'functions_simplechat_operations.py'
 CSV_QUERY_MODULE = REPO_ROOT / 'application' / 'single_app' / 'functions_tabular_csv_query.py'
@@ -111,6 +112,7 @@ LEGACY_MIGRATION_FUNCTIONS = {
     '_normalize_source_identity_label',
     '_select_source_row_identity',
     '_prepare_tabular_source_rows',
+    '_sync_tabular_generation_contract_fields',
     '_migrate_legacy_tabular_export_run',
 }
 FAILURE_FUNCTIONS = {
@@ -160,8 +162,14 @@ ANALYSIS_CONSTANTS = {
 PERFORMANCE_FUNCTIONS = {
     '_safe_int',
     '_safe_float',
+    '_settings_bool',
     '_settings_int',
     '_settings_float',
+    '_settings_mode',
+    '_normalize_tabular_generation_rollout_settings',
+    '_sync_tabular_generation_contract_fields',
+    '_build_generation_progress_contract_fields',
+    '_extract_tabular_response_usage',
     '_resolve_tabular_batch_concurrency',
     '_normalize_tabular_run_task_type',
     '_resolve_tabular_chunk_model_selection',
@@ -748,6 +756,9 @@ def _load_legacy_migration_helper(aggregate_batches):
         'uuid': uuid,
         'math': math,
         'TABULAR_EXPORT_CONTRACT_VERSION': 3,
+        'TABULAR_GENERATION_CONTRACT_VERSION': 1,
+        'TABULAR_RESPONSE_PROTOCOL_OBJECT_V1': 'object-v1',
+        'TABULAR_EXECUTOR_MODE_FIXED_WINDOW': 'fixed-window-v1',
         'TABULAR_RUN_TASK_STRUCTURED_EXPORT': 'structured_export',
         'TABULAR_RUN_TASK_HIERARCHICAL_ANALYSIS': 'hierarchical_analysis',
         'TABULAR_RUN_TASK_COMBINED': 'combined',
@@ -998,7 +1009,12 @@ def _load_performance_helpers(progress_updates=None):
                 if isinstance(target, ast.Name)
             }
             if any(
-                name.startswith('TABULAR_EXPORT_') or name.startswith('TABULAR_RUN_TASK_')
+                name.startswith('TABULAR_EXPORT_')
+                or name.startswith('TABULAR_RUN_TASK_')
+                or name.startswith('TABULAR_GENERATION_')
+                or name.startswith('TABULAR_RESPONSE_')
+                or name.startswith('TABULAR_EXECUTOR_')
+                or name.startswith('TABULAR_ROLLOUT_')
                 for name in assigned_names
             ):
                 selected_nodes.append(node)
@@ -1040,6 +1056,63 @@ def _load_performance_helpers(progress_updates=None):
 
     namespace['_update_run_progress'] = update_progress
     return namespace
+
+
+class FakeTabularModelHarness:
+    """Chat-service compatible fake model that releases calls in a caller-chosen order."""
+
+    def __init__(self, responses):
+        self.responses = list(responses)
+        self.calls = []
+        self.completed_batches = []
+        self._release_events = {}
+
+    async def get_chat_message_contents(self, chat_history, execution_settings):
+        del chat_history, execution_settings
+        call_index = len(self.calls)
+        response = dict(self.responses[call_index])
+        batch_number = response.get('batch_number')
+        release_event = asyncio.Event()
+        self.calls.append(batch_number)
+        self._release_events[batch_number] = release_event
+        await release_event.wait()
+        if response.get('exception'):
+            raise response['exception']
+        self.completed_batches.append(batch_number)
+        usage = response.get('usage') or {}
+        return [SimpleNamespace(
+            content=response.get('content', '[]'),
+            metadata={'usage': usage},
+        )]
+
+    def release_batch(self, batch_number):
+        self._release_events[batch_number].set()
+
+
+class FakeTabularStorageHarness:
+    """In-memory JSON blob harness with injectable upload and download failures."""
+
+    def __init__(self):
+        self.blobs = {}
+        self.metadata = {}
+        self.upload_failures = set()
+        self.download_failures = set()
+
+    def upload_json_blob(self, path, payload, metadata=None, overwrite=True):
+        if path in self.upload_failures:
+            raise RuntimeError(f'Injected upload failure for {path}')
+        if not overwrite and path in self.blobs:
+            raise FileExistsError(path)
+        self.blobs[path] = payload
+        self.metadata[path] = dict(metadata or {})
+
+    def download_json_blob(self, path):
+        if path in self.download_failures:
+            raise RuntimeError(f'Injected download failure for {path}')
+        return self.blobs[path]
+
+    def blob_exists(self, path):
+        return path in self.blobs
 
 
 def test_model_aware_batch_budget_uses_safe_token_limits():
@@ -1160,6 +1233,169 @@ def test_dynamic_concurrency_and_parallel_window_eta():
         'window_batch_count': 3,
         'mismatch_count': 2,
     }]
+
+
+def test_phase_one_generation_contract_fields_are_additive_and_compact():
+    """Phase 1 mirrors legacy progress fields without per-batch Cosmos arrays."""
+    helpers = _load_performance_helpers()
+    sync_fields = helpers['_sync_tabular_generation_contract_fields']
+    progress_fields = helpers['_build_generation_progress_contract_fields']
+
+    old_run = {
+        'id': 'old-run',
+        'batch_count': 909,
+        'completed_batches': 3,
+        'processed_rows': 99,
+        'started_at': '2026-08-09T00:00:00+00:00',
+    }
+    synced_run = sync_fields(old_run)
+
+    assert synced_run['generation_contract_version'] == 1
+    assert synced_run['response_protocol_version'] == 'object-v1'
+    assert synced_run['executor_mode'] == 'fixed-window-v1'
+    assert synced_run['planned_batch_count'] == 909
+    assert synced_run['completed_batch_count'] == 3
+    assert synced_run['highest_contiguous_batch'] == 3
+    assert synced_run['checkpointed_row_count'] == 99
+    assert synced_run['plan_blob_path'] is None
+    assert synced_run['plan_hash'] is None
+    assert 'completed_batch_list' not in synced_run
+
+    fields = progress_fields({'batch_count': 909}, completed_batches=7, processed_rows=231)
+    assert fields == {
+        'planned_batch_count': 909,
+        'completed_batch_count': 7,
+        'highest_contiguous_batch': 7,
+        'active_batch_count': 0,
+        'retry_wait_batch_count': 0,
+        'exhausted_batch_count': 0,
+        'checkpointed_row_count': 231,
+    }
+    serialized_run_document = json.dumps(synced_run, separators=(',', ':'), ensure_ascii=False).encode('utf-8')
+    assert len(serialized_run_document) < 2048
+
+
+def test_phase_one_rollout_gates_default_to_legacy_and_stay_backend_only():
+    """Later-phase rollout gates default off and are filtered from user settings."""
+    helpers = _load_performance_helpers()
+    normalize_rollout = helpers['_normalize_tabular_generation_rollout_settings']
+
+    defaults = normalize_rollout({})
+    assert defaults == {
+        'tabular_background_handoff_mode': 'legacy',
+        'tabular_generation_plan_mode': 'off',
+        'enable_tabular_generation_plan': False,
+        'enable_tabular_compact_response_protocol': False,
+        'enable_tabular_completion_driven_checkpointing': False,
+        'enable_tabular_rolling_worker_pool': False,
+        'enable_tabular_independent_batch_retries': False,
+        'tabular_generation_checkpoint_writer_concurrency': 1,
+        'tabular_generation_heartbeat_seconds': 30,
+        'tabular_generation_systemic_failure_threshold': 0.5,
+    }
+    overridden = normalize_rollout({
+        'tabular_background_handoff_mode': 'server',
+        'tabular_generation_plan_mode': 'shadow',
+        'enable_tabular_generation_plan': 'true',
+        'enable_tabular_compact_response_protocol': 'yes',
+        'enable_tabular_completion_driven_checkpointing': '1',
+        'enable_tabular_rolling_worker_pool': 'on',
+        'enable_tabular_independent_batch_retries': True,
+        'tabular_generation_checkpoint_writer_concurrency': 99,
+        'tabular_generation_heartbeat_seconds': 1,
+        'tabular_generation_systemic_failure_threshold': 2,
+    })
+    assert overridden['tabular_background_handoff_mode'] == 'server'
+    assert overridden['tabular_generation_plan_mode'] == 'shadow'
+    assert overridden['enable_tabular_generation_plan'] is True
+    assert overridden['enable_tabular_compact_response_protocol'] is True
+    assert overridden['enable_tabular_completion_driven_checkpointing'] is True
+    assert overridden['enable_tabular_rolling_worker_pool'] is True
+    assert overridden['enable_tabular_independent_batch_retries'] is True
+    assert overridden['tabular_generation_checkpoint_writer_concurrency'] == 16
+    assert overridden['tabular_generation_heartbeat_seconds'] == 5
+    assert overridden['tabular_generation_systemic_failure_threshold'] == 1.0
+
+    settings_source = SETTINGS_MODULE.read_text(encoding='utf-8')
+    for setting_key in defaults:
+        assert f"'{setting_key}'" in settings_source
+    assert 'TABULAR_GENERATION_BACKEND_SETTING_KEYS' in settings_source
+    assert 'if k in TABULAR_GENERATION_BACKEND_SETTING_KEYS' in settings_source
+
+
+def test_phase_one_observability_uses_safe_metrics_not_response_content():
+    """Telemetry records usage counts and excludes generated response previews."""
+    helpers = _load_performance_helpers()
+    usage = helpers['_extract_tabular_response_usage']([
+        SimpleNamespace(metadata={
+            'usage': {
+                'prompt_tokens': 123,
+                'completion_tokens': 45,
+                'total_tokens': 168,
+            },
+        }),
+    ])
+
+    assert usage == {
+        'input_token_count': 123,
+        'output_token_count': 45,
+        'total_token_count': 168,
+    }
+    export_source = EXPORT_MODULE.read_text(encoding='utf-8')
+    assert 'response_preview' not in export_source
+    assert 'batch_model_completed' in export_source
+    assert 'batch_checkpointed' in export_source
+    assert 'model_latency_seconds' in export_source
+    assert 'checkpoint_seconds' in export_source
+
+
+def test_phase_one_fake_harnesses_control_completion_order_and_storage_failures():
+    """Reusable fakes let later phases force stragglers, usage counts, and blob failures."""
+    async def complete_out_of_order():
+        model = FakeTabularModelHarness([
+            {
+                'batch_number': 1,
+                'content': '[{"answer":"one"}]',
+                'usage': {'prompt_tokens': 10, 'completion_tokens': 3},
+            },
+            {'batch_number': 2, 'content': '[{"answer":"two"}]'},
+            {'batch_number': 3, 'content': '[{"answer":"three"}]'},
+        ])
+        tasks = [
+            asyncio.create_task(model.get_chat_message_contents(None, None))
+            for _ in range(3)
+        ]
+        await asyncio.sleep(0)
+        model.release_batch(2)
+        await asyncio.sleep(0)
+        model.release_batch(3)
+        await asyncio.sleep(0)
+        model.release_batch(1)
+        results = await asyncio.gather(*tasks)
+        return model, results
+
+    model, results = asyncio.run(complete_out_of_order())
+    assert model.calls == [1, 2, 3]
+    assert model.completed_batches == [2, 3, 1]
+    assert results[0][0].metadata['usage']['prompt_tokens'] == 10
+
+    storage = FakeTabularStorageHarness()
+    storage.upload_json_blob(
+        'output/batch_000002.json',
+        [{'source_row_number': 2, 'answer': 'two'}],
+        metadata={'batch_number': 2},
+        overwrite=False,
+    )
+    assert storage.blob_exists('output/batch_000002.json') is True
+    assert storage.download_json_blob('output/batch_000002.json')[0]['answer'] == 'two'
+    assert storage.metadata['output/batch_000002.json']['batch_number'] == 2
+    storage.upload_failures.add('output/batch_000003.json')
+    try:
+        storage.upload_json_blob('output/batch_000003.json', [], overwrite=False)
+    except RuntimeError as exc:
+        assert 'Injected upload failure' in str(exc)
+    else:
+        raise AssertionError('Injected storage failures must be observable')
 
 
 def test_source_identity_and_order_contract():
@@ -2628,6 +2864,9 @@ def test_legacy_run_migration_tokenizes_inputs_and_resets_outputs():
     manifest_page_path = 'user-1/conversation-1/generated/tabular_runs/legacy-run/manifest/chunks/page_000001.json'
 
     assert migrated_run['contract_version'] == 3
+    assert migrated_run['generation_contract_version'] == 1
+    assert migrated_run['response_protocol_version'] == 'object-v1'
+    assert migrated_run['executor_mode'] == 'fixed-window-v1'
     assert migrated_run['task_type'] == 'structured_export'
     assert migrated_run['analysis_objective'] == ''
     assert migrated_run['total_chunk_count'] == 2
@@ -2635,7 +2874,13 @@ def test_legacy_run_migration_tokenizes_inputs_and_resets_outputs():
     assert migrated_run['failed_chunk_count'] == 0
     assert migrated_run['chunk_manifest']['page_count'] == 1
     assert migrated_run['completed_batches'] == 0
+    assert migrated_run['planned_batch_count'] == 2
+    assert migrated_run['completed_batch_count'] == 0
+    assert migrated_run['highest_contiguous_batch'] == 0
+    assert migrated_run['checkpointed_row_count'] == 0
     assert migrated_run['processed_rows'] == 0
+    assert migrated_run['plan_blob_path'] is None
+    assert migrated_run['plan_hash'] is None
     assert migrated_run['output_schema'] is None
     assert migrated_run['regenerate_legacy_output_checkpoints'] is False
     assert migrated_run['input_blob_path'] is None
@@ -2793,6 +3038,10 @@ def main():
     tests = [
         test_model_aware_batch_budget_uses_safe_token_limits,
         test_dynamic_concurrency_and_parallel_window_eta,
+        test_phase_one_generation_contract_fields_are_additive_and_compact,
+        test_phase_one_rollout_gates_default_to_legacy_and_stay_backend_only,
+        test_phase_one_observability_uses_safe_metrics_not_response_content,
+        test_phase_one_fake_harnesses_control_completion_order_and_storage_failures,
         test_source_identity_and_order_contract,
         test_generated_batch_schema_contract,
         test_durable_runner_enforces_row_contract,

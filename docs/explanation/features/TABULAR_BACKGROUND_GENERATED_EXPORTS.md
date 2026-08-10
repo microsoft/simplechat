@@ -2,7 +2,7 @@
 
 Implemented in version: **0.241.046**
 
-Updated through version: **0.250.136**
+Updated through version: **0.250.137**
 
 ## Overview
 
@@ -32,6 +32,7 @@ The feature supports large spreadsheet-driven analysis, including workbooks that
 - Users can manually continue resumable failed or stale runs from the existing checkpoints without restarting completed batches.
 - Queued retry runs whose retry time has already passed are surfaced as resumable so deployments without active scheduler loops still give users a recovery action.
 - Run status includes safe user-facing status detail, checkpoint summaries, retry timing, heartbeat state, and continuation availability.
+- Phase 1 acceleration groundwork adds additive generation contract fields, legacy-off rollout gates, safe batch latency/token telemetry, and deterministic fake model/storage harnesses without changing fixed-window execution behavior.
 
 ### API Endpoints
 
@@ -50,8 +51,19 @@ The feature supports large spreadsheet-driven analysis, including workbooks that
 - `tabular_generated_output_input_token_soft_cap`
 - `tabular_generated_output_output_token_ratio`
 - `tabular_generated_output_output_expansion_ratio`
+- `tabular_background_handoff_mode`
+- `enable_tabular_generation_plan`
+- `tabular_generation_plan_mode`
+- `enable_tabular_compact_response_protocol`
+- `enable_tabular_completion_driven_checkpointing`
+- `enable_tabular_rolling_worker_pool`
+- `enable_tabular_independent_batch_retries`
+- `tabular_generation_checkpoint_writer_concurrency`
+- `tabular_generation_heartbeat_seconds`
+- `tabular_generation_systemic_failure_threshold`
 
 If a fixed concurrency is not configured, runs use up to 4, 16, 64, or 128 concurrent model calls according to the actual staged batch count. Model-aware source batching uses selected-model metadata, local `model_capabilities.json` token-limit fields when present, and bounded fallback limits otherwise.
+The Phase 1 rollout settings default to legacy behavior and are copied into new run records for stable future rollouts. Backend-only rollout settings are filtered from sanitized non-admin frontend settings payloads.
 
 ### File Structure
 
@@ -73,6 +85,7 @@ The progress card displays current status, completed checkpoint counts, processe
 
 - Functional regression: `functional_tests/test_tabular_background_generated_exports.py`
 - Scale and performance regression: `functional_tests/test_tabular_row_orchestration_scale.py`
+- Phase 1 baseline and fake harness coverage: `functional_tests/test_tabular_row_orchestration_scale.py`
 - Functional regression for workflow/document-action presentation: `functional_tests/test_document_analysis_lossless_artifacts.py`
 - UI regression: `ui_tests/test_chat_background_generated_export_status.py`
 - Compile validation covers the modified Python modules.
@@ -85,6 +98,7 @@ The progress card displays current status, completed checkpoint counts, processe
 - Adaptive concurrency uses up to 4 calls for small runs, 16 for medium runs, 64 for large runs, and 128 for runs with at least 256 staged batches. An explicit administrator setting overrides the adaptive tier.
 - Each parallel window checkpoints successful output batches before advancing public progress in contiguous order.
 - Progress is persisted once per completed parallel window. ETA uses recent wall-clock rows per minute rather than summing concurrent model-call durations as serial work.
+- Phase 1 telemetry separates safe model-call, validation, and checkpoint timing metrics where the current executor can observe them. Validation mismatch logs record counts and timings only, not generated response previews.
 - Background processing writes each completed batch before moving on, allowing the run to resume after worker restarts.
 - The run status API returns compact metadata only, not source rows or generated batch content.
 - User-facing status details are derived from run metadata instead of displaying raw backend errors in the progress card.
@@ -104,3 +118,4 @@ The progress card displays current status, completed checkpoint counts, processe
 - `application/single_app/config.py` was updated to version **0.241.060** for Phase 4 bounded batch concurrency.
 - `application/single_app/config.py` was updated to version **0.241.064** for generated export artifact presentation cleanup.
 - `application/single_app/config.py` was updated to version **0.250.136** for model-aware batch sizing, adaptive LLM concurrency, and parallel wall-clock ETA.
+- `application/single_app/config.py` was updated to version **0.250.137** for Phase 1 acceleration baseline contracts, rollout controls, privacy-safe telemetry, and fake model/storage harnesses.

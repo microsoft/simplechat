@@ -86,6 +86,18 @@ ADMIN_SETTINGS_FORM_SECRET_FIELDS = (
 ADMIN_SETTINGS_NESTED_SECRET_FIELDS = (
     "web_search_agent.other_settings.azure_ai_foundry.client_secret",
 )
+TABULAR_GENERATION_BACKEND_SETTING_KEYS = {
+    'tabular_background_handoff_mode',
+    'enable_tabular_generation_plan',
+    'tabular_generation_plan_mode',
+    'enable_tabular_compact_response_protocol',
+    'enable_tabular_completion_driven_checkpointing',
+    'enable_tabular_rolling_worker_pool',
+    'enable_tabular_independent_batch_retries',
+    'tabular_generation_checkpoint_writer_concurrency',
+    'tabular_generation_heartbeat_seconds',
+    'tabular_generation_systemic_failure_threshold',
+}
 PUBLIC_WORKSPACE_DISPLAY_NAME_DEFAULT = "Public Workspace"
 PUBLIC_WORKSPACE_DISPLAY_NAME_PLURAL_DEFAULT = "Public Workspaces"
 PUBLIC_WORKSPACE_DISPLAY_NAME_MAX_LENGTH = 32
@@ -1004,6 +1016,16 @@ def get_settings(use_cosmos=False, include_source=False):
         'tabular_generated_output_chunk_model_mode': 'current',
         'tabular_generated_output_chunk_model_deployment': '',
         'tabular_generated_output_model_validation_auto_retries': 3,
+        'tabular_background_handoff_mode': 'legacy',
+        'enable_tabular_generation_plan': False,
+        'tabular_generation_plan_mode': 'off',
+        'enable_tabular_compact_response_protocol': False,
+        'enable_tabular_completion_driven_checkpointing': False,
+        'enable_tabular_rolling_worker_pool': False,
+        'enable_tabular_independent_batch_retries': False,
+        'tabular_generation_checkpoint_writer_concurrency': 1,
+        'tabular_generation_heartbeat_seconds': 30,
+        'tabular_generation_systemic_failure_threshold': 0.5,
         'enable_multi_agent_orchestration': False,
         'enable_mixed_source_development_telemetry': False,
         'enable_mixed_source_manifest': False,
@@ -2770,6 +2792,8 @@ def sanitize_settings_for_user(full_settings: dict) -> dict:
         if k == 'support_feedback_recipient_email':
             continue
         if k == 'agents_page_promoted_popular_agents':
+            continue
+        if k in TABULAR_GENERATION_BACKEND_SETTING_KEYS:
             continue
         if any(term in k.lower() for term in sensitive_terms):
             continue
