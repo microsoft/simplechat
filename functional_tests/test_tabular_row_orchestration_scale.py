@@ -1,8 +1,8 @@
 # test_tabular_row_orchestration_scale.py
 """
 Functional test for scalable per-row tabular orchestration.
-Version: 0.250.147
-Implemented in: 0.250.060; generated CSV formula safety in 0.250.065; generated file export routing in 0.250.072; source descriptor generalization in 0.250.127; unified durable run contract in 0.250.128; hierarchical analysis in 0.250.129; combined analysis and export in 0.250.130; scale validation in 0.250.132; direct source-backed exhaustive queueing in 0.250.133; direct queue call-site hardening in 0.250.134; model-validation auto retry in 0.250.135; model-aware parallel throughput in 0.250.136; Phase 1 acceleration contracts and observability in 0.250.137; Phase 2 truthful background handoff in 0.250.138; Phase 3 durable LLM generation planning in 0.250.139; Phase 4 compact row response protocol in 0.250.140; Phase 5 completion-driven checkpointing in 0.250.141; Phase 6 rolling worker pool in 0.250.142; Phase 7 independent batch retries in 0.250.143; Phase 8 scale, chaos, and rollout in 0.250.144; background metadata streaming fix in 0.250.145; source-token echo recovery in 0.250.146; fixed-window stale heartbeat fix in 0.250.147
+Version: 0.250.148
+Implemented in: 0.250.060; generated CSV formula safety in 0.250.065; generated file export routing in 0.250.072; source descriptor generalization in 0.250.127; unified durable run contract in 0.250.128; hierarchical analysis in 0.250.129; combined analysis and export in 0.250.130; scale validation in 0.250.132; direct source-backed exhaustive queueing in 0.250.133; direct queue call-site hardening in 0.250.134; model-validation auto retry in 0.250.135; model-aware parallel throughput in 0.250.136; Phase 1 acceleration contracts and observability in 0.250.137; Phase 2 truthful background handoff in 0.250.138; Phase 3 durable LLM generation planning in 0.250.139; Phase 4 compact row response protocol in 0.250.140; Phase 5 completion-driven checkpointing in 0.250.141; Phase 6 rolling worker pool in 0.250.142; Phase 7 independent batch retries in 0.250.143; Phase 8 scale, chaos, and rollout in 0.250.144; background metadata streaming fix in 0.250.145; source-token echo recovery in 0.250.146; fixed-window stale heartbeat fix in 0.250.147; nested CSV output recovery in 0.250.148
 
 This test ensures generated exports preserve source identity and row order while
 enforcing one stable output schema across independently generated batches.
@@ -57,6 +57,8 @@ CONTRACT_FUNCTIONS = {
     '_prepare_tabular_source_rows',
     '_normalize_generated_batch_entries',
     '_generated_entry_has_source_position_conflict',
+    '_parse_single_nested_csv_generated_entry',
+    '_expand_nested_csv_generated_entries',
     '_normalize_model_generated_batch_entries',
 }
 CONTRACT_CONSTANTS = {
@@ -375,7 +377,7 @@ def _load_contract_helpers():
             f'constants={sorted(missing_constants)}'
         )
 
-    namespace = {'re': re, 'uuid': uuid}
+    namespace = {'csv': csv, 'io': io, 're': re, 'uuid': uuid}
     namespace['log_event'] = lambda *args, **kwargs: None
     namespace['logging'] = logging
     extracted_module = ast.Module(body=selected_nodes, type_ignores=[])
@@ -3711,6 +3713,117 @@ def test_model_batch_token_echo_recovery_preserves_order_contract():
         raise AssertionError('Explicit source row conflicts must not use positional recovery')
 
 
+def test_model_batch_nested_csv_output_is_flattened_before_schema_inference():
+    """Object responses that wrap one CSV row are expanded into final columns."""
+    helpers = _load_contract_helpers()
+    prepared_rows = helpers['_prepare_tabular_source_rows'](
+        [
+            {'transaction_id': 'BT-000001'},
+            {'transaction_id': 'BT-000002'},
+        ],
+        start_row=0,
+    )
+    generated_entries = [
+        {
+            'transaction_id': 'BT-000001',
+            'csv': (
+                'transaction_id,transaction_summary,counterparty_classification\n'
+                'BT-000001,"summary one","Treasury"'
+            ),
+        },
+        {
+            'transaction_id': 'BT-000002',
+            'csv': (
+                'transaction_id,transaction_summary,counterparty_classification\n'
+                'BT-000002,"summary two","Bank-to-bank"'
+            ),
+        },
+    ]
+
+    recovered_entries, output_schema = helpers['_normalize_model_generated_batch_entries'](
+        prepared_rows,
+        generated_entries,
+        run_id='run-nested-csv',
+        batch_number=1,
+    )
+
+    assert output_schema == [
+        'source_row_number',
+        'source_row_identity',
+        'transaction_id',
+        'transaction_summary',
+        'counterparty_classification',
+    ]
+    assert recovered_entries[0] == {
+        'source_row_number': 1,
+        'source_row_identity': 'BT-000001',
+        'transaction_id': 'BT-000001',
+        'transaction_summary': 'summary one',
+        'counterparty_classification': 'Treasury',
+    }
+    assert 'csv' not in recovered_entries[0]
+
+
+def test_model_batch_nested_csv_output_supports_arbitrary_csv_headers():
+    """Nested CSV recovery is not tied to one source dataset or field set."""
+    helpers = _load_contract_helpers()
+    prepared_rows = helpers['_prepare_tabular_source_rows'](
+        [
+            {'case_id': 'CASE-001', 'department': 'Operations'},
+            {'case_id': 'CASE-002', 'department': 'Support'},
+        ],
+        start_row=0,
+    )
+    expected_schema = [
+        'source_row_number',
+        'source_row_identity',
+        'case_id',
+        'quality_score',
+        'next_step',
+    ]
+    generated_entries = [
+        {
+            'csv': (
+                'case_id,quality_score,next_step\n'
+                'CASE-001,high,"Escalate with notes"'
+            ),
+        },
+        {
+            'csv': (
+                'case_id,quality_score,next_step\n'
+                'CASE-002,medium,"Monitor until resolved"'
+            ),
+        },
+    ]
+
+    recovered_entries, output_schema = helpers['_normalize_model_generated_batch_entries'](
+        prepared_rows,
+        generated_entries,
+        expected_output_schema=expected_schema,
+        run_id='run-nested-csv-generic',
+        batch_number=1,
+    )
+
+    assert output_schema == expected_schema
+    assert recovered_entries == [
+        {
+            'source_row_number': 1,
+            'source_row_identity': 'CASE-001',
+            'case_id': 'CASE-001',
+            'quality_score': 'high',
+            'next_step': 'Escalate with notes',
+        },
+        {
+            'source_row_number': 2,
+            'source_row_identity': 'CASE-002',
+            'case_id': 'CASE-002',
+            'quality_score': 'medium',
+            'next_step': 'Monitor until resolved',
+        },
+    ]
+    assert all('csv' not in recovered_entry for recovered_entry in recovered_entries)
+
+
 def test_durable_runner_enforces_row_contract():
     """Queueing, generation, and checkpointing must all enforce the shared contract."""
     queue_calls = _called_function_names(_get_function_node('queue_tabular_generated_output_run'))
@@ -5378,6 +5491,8 @@ def main():
         test_source_identity_and_order_contract,
         test_generated_batch_schema_contract,
         test_model_batch_token_echo_recovery_preserves_order_contract,
+        test_model_batch_nested_csv_output_is_flattened_before_schema_inference,
+        test_model_batch_nested_csv_output_supports_arbitrary_csv_headers,
         test_durable_runner_enforces_row_contract,
         test_paginated_candidate_coalesces_all_300_rows,
         test_paginated_candidate_rejects_gaps,
