@@ -4,6 +4,7 @@
 import asyncio
 from collections import Counter, deque
 import csv
+import heapq
 import hashlib
 import io
 import json
@@ -184,6 +185,10 @@ TABULAR_GENERATION_DEFAULT_HEARTBEAT_SECONDS = 30
 TABULAR_GENERATION_DEFAULT_CHECKPOINT_WRITER_CONCURRENCY = 1
 TABULAR_GENERATION_CHECKPOINT_HIGH_WATER_MULTIPLIER = 2
 TABULAR_GENERATION_DEFAULT_SYSTEMIC_FAILURE_THRESHOLD = 0.5
+TABULAR_GENERATION_RETRY_LEDGER_VERSION = 1
+TABULAR_GENERATION_RETRY_BASE_DELAY_SECONDS = 15
+TABULAR_GENERATION_RETRY_MAX_DELAY_SECONDS = 300
+TABULAR_GENERATION_RETRY_MAX_JITTER_SECONDS = 12
 TABULAR_EXPORT_SCHEDULER_STATUSES = (
     TABULAR_EXPORT_STATUS_QUEUED,
     TABULAR_EXPORT_STATUS_RUNNING,
@@ -1002,6 +1007,10 @@ def _sync_tabular_generation_contract_fields(run):
     run['checkpointing_batch_count'] = _safe_int(run.get('checkpointing_batch_count'))
     run['retry_wait_batch_count'] = _safe_int(run.get('retry_wait_batch_count'))
     run['exhausted_batch_count'] = _safe_int(run.get('exhausted_batch_count'))
+    run['systemic_failure_circuit_open'] = bool(run.get('systemic_failure_circuit_open'))
+    run.setdefault('systemic_failure_category', None)
+    run.setdefault('systemic_failure_signature', None)
+    run.setdefault('systemic_failure_opened_at', None)
     run['checkpointed_row_count'] = checkpointed_row_count
     run.setdefault('generation_started_at', run.get('started_at'))
     run.setdefault('generation_completed_at', None)
@@ -1542,6 +1551,14 @@ def _output_summary_blob_path(user_id, conversation_id, run_id, batch_number):
     return f"{user_id}/{conversation_id}/generated/tabular_runs/{run_id}/summary/batch_{batch_number:06d}.json"
 
 
+def _retry_blob_path(user_id, conversation_id, run_id, batch_number):
+    return f"{user_id}/{conversation_id}/generated/tabular_runs/{run_id}/retry/batch_{batch_number:06d}.json"
+
+
+def _retry_blob_prefix(user_id, conversation_id, run_id):
+    return f"{user_id}/{conversation_id}/generated/tabular_runs/{run_id}/retry/"
+
+
 def _analysis_chunk_summary_blob_path(user_id, conversation_id, run_id, batch_number):
     return f"{user_id}/{conversation_id}/generated/tabular_runs/{run_id}/analysis/chunks/batch_{batch_number:06d}.json"
 
@@ -1794,6 +1811,227 @@ def _validate_tabular_output_checkpoint_metadata(run, blob_path, batch_number):
     expected_source_etag = _get_tabular_generation_plan_source_etag(run)
     if metadata.get('source_etag') != expected_source_etag:
         raise ValueError(f'Output checkpoint {batch_number} source ETag does not match')
+
+
+def _load_tabular_batch_retry_records_for_run(run, completed_batches=None):
+    user_id = str((run or {}).get('user_id') or '').strip()
+    conversation_id = str((run or {}).get('conversation_id') or '').strip()
+    run_id = str((run or {}).get('id') or '').strip()
+    batch_count = _safe_int((run or {}).get('batch_count'), default=0, minimum=0)
+    if not user_id or not conversation_id or not run_id or batch_count <= 0:
+        return {}
+
+    completed_batch_numbers = set(completed_batches or set())
+    retry_prefix = _retry_blob_prefix(user_id, conversation_id, run_id)
+    container_client = _get_blob_service_client().get_container_client(
+        storage_account_personal_chat_container_name,
+    )
+    retry_records = {}
+    for blob_properties in container_client.list_blobs(name_starts_with=retry_prefix):
+        blob_name = str(
+            blob_properties.get('name')
+            if isinstance(blob_properties, dict)
+            else getattr(blob_properties, 'name', '')
+        ).strip()
+        if not blob_name.startswith(retry_prefix):
+            continue
+        suffix = blob_name[len(retry_prefix):]
+        match = re.fullmatch(r'batch_(\d{6})\.json', suffix)
+        if not match:
+            continue
+        batch_number = _safe_int(match.group(1), default=0, minimum=0)
+        if batch_number < 1 or batch_number > batch_count:
+            continue
+        if batch_number in completed_batch_numbers:
+            _delete_blob_if_exists(blob_name)
+            continue
+        retry_record = _download_json_blob(blob_name)
+        if not isinstance(retry_record, dict):
+            continue
+        retry_record['batch_number'] = batch_number
+        retry_records[batch_number] = retry_record
+    return retry_records
+
+
+def _safe_tabular_batch_error_code(exc):
+    status_code = _exception_status_code(exc)
+    if status_code:
+        return f'http_{status_code}'
+    for candidate in _iter_exception_chain(exc):
+        class_name = candidate.__class__.__name__
+        if class_name:
+            return re.sub(r'[^A-Za-z0-9_]+', '_', class_name).strip('_').lower()[:80] or 'error'
+    return 'error'
+
+
+def _classify_tabular_batch_failure(exc):
+    status_code = _exception_status_code(exc)
+    if status_code == 429:
+        return 'rate_limit'
+    if status_code in TABULAR_EXPORT_RETRYABLE_STATUS_CODES:
+        return 'provider_transient'
+    if isinstance(exc, TabularExportLeaseLostError):
+        return 'lease_lost'
+    if isinstance(exc, PermissionError):
+        return 'authorization_lost'
+
+    normalized_message = str(exc or '').strip().lower()
+    if 'source csv changed' in normalized_message or 'source etag' in normalized_message:
+        return 'source_changed'
+    if 'plan hash' in normalized_message or 'generation plan' in normalized_message:
+        return 'plan_or_schema_systemic'
+    if _is_retryable_model_validation_error(exc):
+        return 'model_validation'
+    if isinstance(exc, TimeoutError) or 'timeout' in normalized_message or 'timed out' in normalized_message:
+        return 'timeout'
+    if _is_retryable_export_error(exc):
+        return 'connection'
+    return 'non_retryable'
+
+
+def _is_tabular_batch_failure_retryable(category):
+    return str(category or '').strip().lower() in {
+        'rate_limit',
+        'timeout',
+        'connection',
+        'provider_transient',
+        'model_validation',
+        'checkpoint_storage',
+    }
+
+
+def _tabular_retry_delay_seconds(batch_number, failure_category, attempt_count):
+    bounded_attempt_count = _safe_int(attempt_count, default=1, minimum=1, maximum=10)
+    base_delay = min(
+        TABULAR_GENERATION_RETRY_MAX_DELAY_SECONDS,
+        TABULAR_GENERATION_RETRY_BASE_DELAY_SECONDS * (2 ** (bounded_attempt_count - 1)),
+    )
+    jitter_key = f'{batch_number}:{failure_category}:{bounded_attempt_count}'
+    jitter_hash = hashlib.sha256(jitter_key.encode('utf-8')).hexdigest()
+    jitter_seconds = int(jitter_hash[:4], 16) % (TABULAR_GENERATION_RETRY_MAX_JITTER_SECONDS + 1)
+    return min(TABULAR_GENERATION_RETRY_MAX_DELAY_SECONDS, base_delay + jitter_seconds)
+
+
+def _build_tabular_batch_retry_record(
+    run,
+    batch_number,
+    batch_request,
+    exc,
+    existing_record=None,
+    max_attempts=1,
+    failure_category=None,
+):
+    existing_record = existing_record if isinstance(existing_record, dict) else {}
+    failure_category = str(failure_category or '').strip().lower() or _classify_tabular_batch_failure(exc)
+    existing_attempts_by_category = existing_record.get('attempts_by_category')
+    attempts_by_category = dict(existing_attempts_by_category) if isinstance(existing_attempts_by_category, dict) else {}
+    attempt_count = _safe_int(attempts_by_category.get(failure_category), default=0, minimum=0) + 1
+    attempts_by_category[failure_category] = attempt_count
+    bounded_max_attempts = _safe_int(max_attempts, default=1, minimum=1, maximum=10)
+    exhausted = (
+        not _is_tabular_batch_failure_retryable(failure_category)
+        or attempt_count >= bounded_max_attempts
+    )
+    now = _now_utc()
+    next_attempt_at = None
+    if not exhausted:
+        next_attempt_at = (now + timedelta(
+            seconds=_tabular_retry_delay_seconds(batch_number, failure_category, attempt_count)
+        )).isoformat()
+
+    rows = (batch_request or {}).get('rows') if isinstance(batch_request, dict) else []
+    row_count = len(rows) if isinstance(rows, list) else 0
+    first_row_number = None
+    last_row_number = None
+    if row_count:
+        first_row_number = _safe_int(rows[0].get(TABULAR_EXPORT_INPUT_ROW_NUMBER_FIELD), default=0, minimum=0)
+        last_row_number = _safe_int(rows[-1].get(TABULAR_EXPORT_INPUT_ROW_NUMBER_FIELD), default=0, minimum=0)
+
+    return {
+        'version': TABULAR_GENERATION_RETRY_LEDGER_VERSION,
+        'run_id': str((run or {}).get('id') or '').strip(),
+        'batch_number': _safe_int(batch_number, minimum=0),
+        'row_count': row_count,
+        'first_source_row_number': first_row_number,
+        'last_source_row_number': last_row_number,
+        'plan_hash': str((run or {}).get('plan_hash') or '').strip()[:64],
+        'lease_generation': _safe_int((run or {}).get('lease_generation')),
+        'failure_category': failure_category,
+        'safe_error_code': _safe_tabular_batch_error_code(exc),
+        'attempts_by_category': attempts_by_category,
+        'attempt_count': attempt_count,
+        'max_attempts': bounded_max_attempts,
+        'first_failure_at': existing_record.get('first_failure_at') or now.isoformat(),
+        'latest_failure_at': now.isoformat(),
+        'next_attempt_at': next_attempt_at,
+        'exhausted': exhausted,
+        'manual_intervention_required': exhausted,
+    }
+
+
+def _persist_tabular_batch_retry_record(run, retry_record):
+    batch_number = _safe_int((retry_record or {}).get('batch_number'), default=0, minimum=0)
+    if batch_number <= 0:
+        return retry_record
+    _upload_json_blob(
+        _retry_blob_path(
+            run.get('user_id'),
+            run.get('conversation_id'),
+            run.get('id'),
+            batch_number,
+        ),
+        retry_record,
+        metadata={
+            'run_id': run.get('id'),
+            'conversation_id': run.get('conversation_id'),
+            'batch_number': batch_number,
+            'retry_record': 'true',
+            'failure_category': retry_record.get('failure_category'),
+            'plan_hash': retry_record.get('plan_hash') or '',
+        },
+    )
+    return retry_record
+
+
+def _delete_tabular_batch_retry_record(run, batch_number):
+    _delete_blob_if_exists(_retry_blob_path(
+        run.get('user_id'),
+        run.get('conversation_id'),
+        run.get('id'),
+        batch_number,
+    ))
+
+
+def _is_tabular_batch_retry_due(retry_record):
+    if bool((retry_record or {}).get('exhausted')):
+        return False
+    next_attempt = _parse_iso_datetime((retry_record or {}).get('next_attempt_at'))
+    return next_attempt is None or next_attempt <= _now_utc()
+
+
+def _tabular_batch_retry_heap_item(retry_record):
+    next_attempt = _parse_iso_datetime((retry_record or {}).get('next_attempt_at')) or _now_utc()
+    return (next_attempt, _safe_int((retry_record or {}).get('batch_number'), default=0, minimum=0))
+
+
+def _reset_exhausted_tabular_batch_retry_records_for_continue(run, now_iso):
+    completed_batches = _scan_output_checkpoint_batches_for_run(run)
+    retry_records = _load_tabular_batch_retry_records_for_run(run, completed_batches)
+    reset_count = 0
+    for batch_number, retry_record in retry_records.items():
+        if batch_number in completed_batches or not bool((retry_record or {}).get('exhausted')):
+            continue
+        retry_record.update({
+            'attempts_by_category': {},
+            'attempt_count': 0,
+            'next_attempt_at': now_iso,
+            'exhausted': False,
+            'manual_intervention_required': False,
+            'manual_continue_reset_at': now_iso,
+        })
+        _persist_tabular_batch_retry_record(run, retry_record)
+        reset_count += 1
+    return reset_count
 
 
 def _delete_blob_if_exists(blob_path):
@@ -3666,6 +3904,11 @@ def _get_tabular_generation_heartbeat_seconds(settings, run=None):
     )
 
 
+def _is_independent_batch_retries_enabled(settings, run=None):
+    rollout_settings = _get_tabular_generation_rollout_settings_for_run(run, settings)
+    return bool(rollout_settings.get('enable_tabular_independent_batch_retries'))
+
+
 async def _checkpoint_generated_result_async(run, generated_result, writer_semaphore):
     async with writer_semaphore:
         checkpoint_results = await asyncio.to_thread(
@@ -3797,6 +4040,7 @@ async def _generate_and_checkpoint_rolling_pool_entries(
     batch_concurrency,
     checkpoint_writer_concurrency,
     heartbeat_seconds,
+    independent_batch_retries_enabled=False,
     last_logged_at=0.0,
     batch_timeout_seconds=TABULAR_EXPORT_DEFAULT_BATCH_TIMEOUT_SECONDS,
     response_protocol=TABULAR_RESPONSE_PROTOCOL_OBJECT_V1,
@@ -3811,15 +4055,40 @@ async def _generate_and_checkpoint_rolling_pool_entries(
     completed_batches = _safe_int(run.get('completed_batches'))
     processed_rows = _safe_int(run.get('processed_rows'))
     durable_output_batches = _scan_output_checkpoint_batches_for_run(run)
-    pending_batch_numbers = deque(range(completed_batches + 1, total_batches + 1))
+    retry_records = {}
+    if independent_batch_retries_enabled:
+        retry_records = _load_tabular_batch_retry_records_for_run(run, durable_output_batches)
+    retry_batch_numbers = {
+        batch_number
+        for batch_number, retry_record in retry_records.items()
+        if not bool((retry_record or {}).get('exhausted'))
+    }
+    exhausted_batch_numbers = {
+        batch_number
+        for batch_number, retry_record in retry_records.items()
+        if bool((retry_record or {}).get('exhausted'))
+    }
+    pending_batch_numbers = deque(
+        batch_number
+        for batch_number in range(completed_batches + 1, total_batches + 1)
+        if batch_number not in retry_batch_numbers and batch_number not in exhausted_batch_numbers
+    )
+    retry_heap = [
+        _tabular_batch_retry_heap_item(retry_record)
+        for retry_record in retry_records.values()
+        if not bool((retry_record or {}).get('exhausted'))
+    ]
+    heapq.heapify(retry_heap)
     active_tasks = {}
+    active_batch_requests = {}
     checkpoint_tasks = set()
+    checkpoint_task_contexts = {}
     batch_results = {}
     counts = {
         'active': 0,
         'pending': len(pending_batch_numbers),
         'checkpointing': 0,
-        'retry_wait': 0,
+        'retry_wait': len(retry_heap),
     }
     state_lock = asyncio.Lock()
     stop_heartbeat = asyncio.Event()
@@ -3833,13 +4102,22 @@ async def _generate_and_checkpoint_rolling_pool_entries(
         )
     )
     first_error = None
+    recent_failure_signatures = deque(maxlen=max(3, min(total_batches, max(1, batch_concurrency))))
+    circuit_threshold = _safe_float(
+        _get_tabular_generation_rollout_settings_for_run(run, {}).get('tabular_generation_systemic_failure_threshold'),
+        default=TABULAR_GENERATION_DEFAULT_SYSTEMIC_FAILURE_THRESHOLD,
+    )
+    circuit_failure_floor = max(
+        3,
+        math.ceil(max(1, recent_failure_signatures.maxlen) * max(0.1, circuit_threshold)),
+    )
 
     def refresh_counts():
         counts.update({
             'active': len(active_tasks),
             'pending': len(pending_batch_numbers),
             'checkpointing': len(checkpoint_tasks),
-            'retry_wait': 0,
+            'retry_wait': len(retry_heap),
         })
 
     async def advance_durable_progress():
@@ -3861,6 +4139,93 @@ async def _generate_and_checkpoint_rolling_pool_entries(
         last_logged_at = _log_progress_if_due(run, last_logged_at)
         return completed_batches > previous_completed_batches
 
+    def peek_due_retry_batch_number():
+        while retry_heap:
+            _, batch_number = retry_heap[0]
+            retry_record = retry_records.get(batch_number)
+            if not retry_record or retry_record.get('exhausted'):
+                heapq.heappop(retry_heap)
+                continue
+            if batch_number in durable_output_batches:
+                heapq.heappop(retry_heap)
+                retry_records.pop(batch_number, None)
+                _delete_tabular_batch_retry_record(run, batch_number)
+                continue
+            if not _is_tabular_batch_retry_due(retry_record):
+                return None
+            return batch_number
+        return None
+
+    def pop_due_retry_batch_number():
+        batch_number = peek_due_retry_batch_number()
+        if batch_number is None:
+            return None
+        heapq.heappop(retry_heap)
+        return batch_number
+
+    def seconds_until_next_retry():
+        while retry_heap:
+            _, batch_number = retry_heap[0]
+            retry_record = retry_records.get(batch_number)
+            if retry_record and not retry_record.get('exhausted'):
+                return max(0.0, _safe_float(_seconds_until(retry_record.get('next_attempt_at'))))
+            heapq.heappop(retry_heap)
+        return None
+
+    def has_dispatchable_work():
+        return bool(pending_batch_numbers) or peek_due_retry_batch_number() is not None
+
+    def record_batch_retry(batch_number, batch_request, exc, failure_category=None):
+        nonlocal first_error
+        retry_record = _build_tabular_batch_retry_record(
+            run,
+            batch_number,
+            batch_request,
+            exc,
+            existing_record=retry_records.get(batch_number),
+            max_attempts=retry_attempts,
+            failure_category=failure_category,
+        )
+        retry_records[batch_number] = retry_record
+        _persist_tabular_batch_retry_record(run, retry_record)
+        if not retry_record.get('exhausted'):
+            heapq.heappush(retry_heap, _tabular_batch_retry_heap_item(retry_record))
+        log_event(
+            '[TABULAR_GENERATED_OUTPUT] Rolling pool recorded batch retry',
+            {
+                'event_name': 'rolling_batch_retry_recorded',
+                'run_id': run_id,
+                'batch_number': batch_number,
+                'failure_category': retry_record.get('failure_category'),
+                'safe_error_code': retry_record.get('safe_error_code'),
+                'attempt_count': retry_record.get('attempt_count'),
+                'max_attempts': retry_record.get('max_attempts'),
+                'next_attempt_at': retry_record.get('next_attempt_at'),
+                'exhausted': bool(retry_record.get('exhausted')),
+            },
+            level=logging.WARNING,
+        )
+        if retry_record.get('failure_category') not in {'model_validation', 'plan_or_schema_systemic'}:
+            return
+        failure_signature = ':'.join([
+            str(retry_record.get('failure_category') or 'unknown'),
+            str(retry_record.get('safe_error_code') or 'error'),
+            str(retry_record.get('plan_hash') or '')[:12],
+        ])
+        recent_failure_signatures.append(failure_signature)
+        signature_count = Counter(recent_failure_signatures).get(failure_signature, 0)
+        if first_error is None and signature_count >= circuit_failure_floor:
+            now = _now_iso()
+            run.update({
+                'systemic_failure_circuit_open': True,
+                'systemic_failure_category': retry_record.get('failure_category'),
+                'systemic_failure_signature': failure_signature,
+                'systemic_failure_opened_at': now,
+                'last_retry_category': retry_record.get('failure_category'),
+                'last_message': 'Systemic tabular generation failure circuit breaker opened',
+            })
+            first_error = RuntimeError('Systemic tabular batch failure circuit breaker opened')
+
     def build_pending_batch_task(batch_number):
         existing_results, batch_requests = _build_batch_window(
             run,
@@ -3878,7 +4243,7 @@ async def _generate_and_checkpoint_rolling_pool_entries(
         if not batch_requests:
             return None
         batch_request = batch_requests[0]
-        return asyncio.create_task(
+        model_task = asyncio.create_task(
             _generate_batch_entries_for_window(
                 model_semaphore,
                 chat_service,
@@ -3895,9 +4260,11 @@ async def _generate_and_checkpoint_rolling_pool_entries(
                 generation_plan,
             )
         )
+        active_batch_requests[model_task] = batch_request
+        return model_task
 
     try:
-        while pending_batch_numbers or active_tasks or checkpoint_tasks:
+        while pending_batch_numbers or retry_heap or active_tasks or checkpoint_tasks:
             await asyncio.to_thread(_raise_if_tabular_export_canceled, run)
             if heartbeat_task.done() and not stop_heartbeat.is_set():
                 heartbeat_task.result()
@@ -3906,11 +4273,13 @@ async def _generate_and_checkpoint_rolling_pool_entries(
 
             while (
                 not first_error
-                and pending_batch_numbers
                 and len(active_tasks) < max(1, batch_concurrency)
                 and len(checkpoint_tasks) < checkpoint_high_water_mark
+                and has_dispatchable_work()
             ):
-                batch_number = pending_batch_numbers.popleft()
+                batch_number = pop_due_retry_batch_number()
+                if batch_number is None:
+                    batch_number = pending_batch_numbers.popleft()
                 model_task = build_pending_batch_task(batch_number)
                 if model_task is not None:
                     active_tasks[model_task] = batch_number
@@ -3923,6 +4292,9 @@ async def _generate_and_checkpoint_rolling_pool_entries(
             if wait_tasks and not heartbeat_task.done():
                 wait_tasks.add(heartbeat_task)
             if not wait_tasks:
+                retry_wait_seconds = seconds_until_next_retry()
+                if retry_wait_seconds is not None and not heartbeat_task.done():
+                    await asyncio.wait({heartbeat_task}, timeout=retry_wait_seconds)
                 continue
 
             completed_tasks, _ = await asyncio.wait(
@@ -3935,16 +4307,20 @@ async def _generate_and_checkpoint_rolling_pool_entries(
                     continue
                 if completed_task in active_tasks:
                     batch_number = active_tasks.pop(completed_task)
+                    batch_request = active_batch_requests.pop(completed_task, None)
                     try:
                         generated_result = completed_task.result()
                     except Exception as exc:
-                        if first_error is None:
+                        if independent_batch_retries_enabled:
+                            record_batch_retry(batch_number, batch_request, exc)
+                        elif first_error is None:
                             first_error = exc
                         continue
                     checkpoint_task = asyncio.create_task(
                         _checkpoint_generated_result_async(run, generated_result, writer_semaphore)
                     )
                     checkpoint_tasks.add(checkpoint_task)
+                    checkpoint_task_contexts[checkpoint_task] = (batch_number, batch_request)
                     log_event(
                         '[TABULAR_GENERATED_OUTPUT] Rolling pool scheduled checkpoint',
                         {
@@ -3962,14 +4338,29 @@ async def _generate_and_checkpoint_rolling_pool_entries(
                     continue
                 if completed_task in checkpoint_tasks:
                     checkpoint_tasks.remove(completed_task)
+                    checkpoint_batch_number, checkpoint_batch_request = checkpoint_task_contexts.pop(
+                        completed_task,
+                        (None, None),
+                    )
                     try:
                         checkpointed_results = completed_task.result()
                     except Exception as exc:
-                        if first_error is None:
+                        if independent_batch_retries_enabled and checkpoint_batch_number:
+                            record_batch_retry(
+                                checkpoint_batch_number,
+                                checkpoint_batch_request,
+                                exc,
+                                failure_category='checkpoint_storage',
+                            )
+                        elif first_error is None:
                             first_error = exc
                         continue
                     batch_results.update(checkpointed_results)
                     durable_output_batches.update(checkpointed_results)
+                    if independent_batch_retries_enabled:
+                        for checkpointed_batch_number in checkpointed_results:
+                            retry_records.pop(checkpointed_batch_number, None)
+                            _delete_tabular_batch_retry_record(run, checkpointed_batch_number)
                     await advance_durable_progress()
             refresh_counts()
 
@@ -3978,8 +4369,30 @@ async def _generate_and_checkpoint_rolling_pool_entries(
                 'active_batch_count': 0,
                 'pending_batch_count': len(pending_batch_numbers),
                 'checkpointing_batch_count': 0,
+                'retry_wait_batch_count': len(retry_heap),
+                'exhausted_batch_count': sum(
+                    1
+                    for retry_record in retry_records.values()
+                    if bool((retry_record or {}).get('exhausted'))
+                ),
             })
             raise first_error
+        exhausted_batch_count = sum(
+            1
+            for retry_record in retry_records.values()
+            if bool((retry_record or {}).get('exhausted'))
+        )
+        if exhausted_batch_count:
+            run.update({
+                'active_batch_count': 0,
+                'pending_batch_count': len(pending_batch_numbers),
+                'checkpointing_batch_count': 0,
+                'retry_wait_batch_count': len(retry_heap),
+                'exhausted_batch_count': exhausted_batch_count,
+                'last_retry_category': 'batch_exhausted',
+                'last_message': 'Background structured export needs manual intervention for exhausted batches',
+            })
+            raise RuntimeError('One or more tabular generated-output batches exhausted independent retries')
         if completed_batches < total_batches:
             raise RuntimeError(
                 f'Rolling worker pool stopped at batch {completed_batches} of {total_batches}'
@@ -3988,6 +4401,12 @@ async def _generate_and_checkpoint_rolling_pool_entries(
             'active_batch_count': 0,
             'pending_batch_count': 0,
             'checkpointing_batch_count': 0,
+            'retry_wait_batch_count': 0,
+            'exhausted_batch_count': 0,
+            'systemic_failure_circuit_open': False,
+            'systemic_failure_category': None,
+            'systemic_failure_signature': None,
+            'systemic_failure_opened_at': None,
         })
         return run, completed_batches, processed_rows, last_logged_at
     finally:
@@ -3997,6 +4416,7 @@ async def _generate_and_checkpoint_rolling_pool_entries(
             await asyncio.gather(heartbeat_task, return_exceptions=True)
         for model_task in active_tasks:
             model_task.cancel()
+            active_batch_requests.pop(model_task, None)
         if active_tasks:
             await asyncio.gather(*active_tasks, return_exceptions=True)
         if checkpoint_tasks:
@@ -4500,6 +4920,13 @@ def _is_retryable_failed_run(run):
     )
 
 
+def _has_exhausted_independent_batch_retries(run):
+    return (
+        _safe_int((run or {}).get('exhausted_batch_count')) > 0
+        or str((run or {}).get('last_retry_category') or '').strip().lower() == 'batch_exhausted'
+    )
+
+
 def _is_auto_retry_exhausted(run):
     return bool((run or {}).get('auto_retry_exhausted'))
 
@@ -4600,7 +5027,7 @@ def _can_resume_run(run, settings=None):
     if status == TABULAR_EXPORT_STATUS_RUNNING:
         return _is_stale_running_run(run, settings or {})
     if status == TABULAR_EXPORT_STATUS_FAILED:
-        return _is_retryable_failed_run(run)
+        return _is_retryable_failed_run(run) or _has_exhausted_independent_batch_retries(run)
     return False
 
 
@@ -4666,6 +5093,16 @@ def _build_run_status_detail(run, settings, retryable_failure, can_resume):
             'retry_due': False,
             'retry_delay_seconds': None,
         }
+    if bool((run or {}).get('systemic_failure_circuit_open')):
+        return {
+            'status_label': 'Needs Review',
+            'status_tone': 'danger',
+            'status_detail': 'Repeated plan or schema validation failures stopped new batch dispatch before more retry cost was spent.',
+            'is_stale': False,
+            'waiting_for_retry': False,
+            'retry_due': False,
+            'retry_delay_seconds': None,
+        }
     if is_stale:
         return {
             'status_label': 'Needs Attention',
@@ -4689,6 +5126,16 @@ def _build_run_status_detail(run, settings, retryable_failure, can_resume):
                     if is_hierarchical_analysis
                     else 'Export validation passed and the final artifact is being published.'
                 ),
+                'is_stale': False,
+                'waiting_for_retry': False,
+                'retry_due': False,
+                'retry_delay_seconds': None,
+            }
+        if _safe_int((run or {}).get('retry_wait_batch_count')) > 0:
+            return {
+                'status_label': 'Running with Retries',
+                'status_tone': 'warning',
+                'status_detail': 'Export is running; failed batches are waiting to retry while unrelated batches continue.',
                 'is_stale': False,
                 'waiting_for_retry': False,
                 'retry_due': False,
@@ -4752,6 +5199,16 @@ def _build_run_status_detail(run, settings, retryable_failure, can_resume):
                 if is_analysis_like
                 else 'Export stopped after a retryable interruption. Continue will resume from the last checkpoint.'
             ),
+            'is_stale': False,
+            'waiting_for_retry': False,
+            'retry_due': False,
+            'retry_delay_seconds': None,
+        }
+    if status == TABULAR_EXPORT_STATUS_FAILED and _has_exhausted_independent_batch_retries(run):
+        return {
+            'status_label': 'Needs Attention',
+            'status_tone': 'warning' if can_resume else 'danger',
+            'status_detail': 'One or more batches exhausted independent retries. Continue will retry eligible missing batches from saved checkpoints.',
             'is_stale': False,
             'waiting_for_retry': False,
             'retry_due': False,
@@ -4877,6 +5334,9 @@ def _build_run_public_status(run, settings=None):
         'checkpointing_batch_count': _safe_int(run.get('checkpointing_batch_count')),
         'retry_wait_batch_count': _safe_int(run.get('retry_wait_batch_count')),
         'exhausted_batch_count': _safe_int(run.get('exhausted_batch_count')),
+        'systemic_failure_circuit_open': bool(run.get('systemic_failure_circuit_open')),
+        'systemic_failure_category': run.get('systemic_failure_category'),
+        'systemic_failure_signature': run.get('systemic_failure_signature'),
         'checkpointed_row_count': _safe_int(run.get('checkpointed_row_count')),
         'total_chunk_count': total_chunk_count,
         'processed_chunk_count': processed_chunk_count,
@@ -5047,7 +5507,11 @@ def resume_tabular_generated_output_run(user_id, run_id):
             'message': 'Background export is already running.',
             'run': _build_run_public_status(run, settings=settings),
         }
-    if status == TABULAR_EXPORT_STATUS_FAILED and not _is_retryable_failed_run(run):
+    if (
+        status == TABULAR_EXPORT_STATUS_FAILED
+        and not _is_retryable_failed_run(run)
+        and not _has_exhausted_independent_batch_retries(run)
+    ):
         return {
             'success': False,
             'resumed': False,
@@ -5057,6 +5521,9 @@ def resume_tabular_generated_output_run(user_id, run_id):
         }
 
     now = _now_iso()
+    reset_batch_retry_count = 0
+    if _is_independent_batch_retries_enabled(settings, run):
+        reset_batch_retry_count = _reset_exhausted_tabular_batch_retry_records_for_continue(run, now)
     run.update({
         'status': TABULAR_EXPORT_STATUS_QUEUED,
         'updated_at': now,
@@ -5069,6 +5536,12 @@ def resume_tabular_generated_output_run(user_id, run_id):
         'transient_failure_count': 0,
         'auto_retry_exhausted': False,
         'last_retry_category': 'manual_resume',
+        'retry_wait_batch_count': reset_batch_retry_count,
+        'exhausted_batch_count': 0,
+        'systemic_failure_circuit_open': False,
+        'systemic_failure_category': None,
+        'systemic_failure_signature': None,
+        'systemic_failure_opened_at': None,
         'manual_resume_count': _safe_int(run.get('manual_resume_count')) + 1,
         'last_manual_resume_at': now,
     })
@@ -5099,6 +5572,7 @@ def resume_tabular_generated_output_run(user_id, run_id):
             'row_count': run.get('row_count'),
             'submitted_to_executor': submitted,
             'manual_resume_count': run.get('manual_resume_count'),
+            'reset_batch_retry_count': reset_batch_retry_count,
         },
         level=logging.INFO,
     )
@@ -6946,6 +7420,7 @@ def _process_structured_export_rolling_pool(
             'batch_concurrency': batch_concurrency,
             'checkpoint_writer_concurrency': _get_checkpoint_writer_concurrency(settings, run),
             'heartbeat_seconds': _get_tabular_generation_heartbeat_seconds(settings, run),
+            'independent_batch_retries_enabled': _is_independent_batch_retries_enabled(settings, run),
             'response_protocol_version': run.get('response_protocol_version'),
             'plan_hash_present': bool(run.get('plan_hash')),
         },
@@ -6966,6 +7441,7 @@ def _process_structured_export_rolling_pool(
             batch_concurrency,
             _get_checkpoint_writer_concurrency(settings, run),
             _get_tabular_generation_heartbeat_seconds(settings, run),
+            independent_batch_retries_enabled=_is_independent_batch_retries_enabled(settings, run),
             last_logged_at=0.0,
             batch_timeout_seconds=batch_timeout_seconds,
             response_protocol=run.get('response_protocol_version'),
@@ -7438,6 +7914,10 @@ def queue_tabular_generated_output_run(
         'checkpointing_batch_count': 0,
         'retry_wait_batch_count': 0,
         'exhausted_batch_count': 0,
+        'systemic_failure_circuit_open': False,
+        'systemic_failure_category': None,
+        'systemic_failure_signature': None,
+        'systemic_failure_opened_at': None,
         'checkpointed_row_count': 0,
         'generation_started_at': None,
         'generation_completed_at': None,
@@ -7463,6 +7943,8 @@ def queue_tabular_generated_output_run(
         'input_blob_prefix': f'{normalized_user_id}/{normalized_conversation_id}/generated/tabular_runs/{run_id}/input/',
         'output_blob_container': storage_account_personal_chat_container_name,
         'output_blob_prefix': f'{normalized_user_id}/{normalized_conversation_id}/generated/tabular_runs/{run_id}/output/',
+        'retry_blob_container': storage_account_personal_chat_container_name,
+        'retry_blob_prefix': f'{normalized_user_id}/{normalized_conversation_id}/generated/tabular_runs/{run_id}/retry/',
         'staged_input_char_count': staged_char_count,
         'mismatch_count': 0,
         'retry_count': 0,
