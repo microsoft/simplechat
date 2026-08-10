@@ -1,8 +1,8 @@
 # test_tabular_row_orchestration_scale.py
 """
 Functional test for scalable per-row tabular orchestration.
-Version: 0.250.137
-Implemented in: 0.250.060; generated CSV formula safety in 0.250.065; generated file export routing in 0.250.072; source descriptor generalization in 0.250.127; unified durable run contract in 0.250.128; hierarchical analysis in 0.250.129; combined analysis and export in 0.250.130; scale validation in 0.250.132; direct source-backed exhaustive queueing in 0.250.133; direct queue call-site hardening in 0.250.134; model-validation auto retry in 0.250.135; model-aware parallel throughput in 0.250.136; Phase 1 acceleration contracts and observability in 0.250.137
+Version: 0.250.138
+Implemented in: 0.250.060; generated CSV formula safety in 0.250.065; generated file export routing in 0.250.072; source descriptor generalization in 0.250.127; unified durable run contract in 0.250.128; hierarchical analysis in 0.250.129; combined analysis and export in 0.250.130; scale validation in 0.250.132; direct source-backed exhaustive queueing in 0.250.133; direct queue call-site hardening in 0.250.134; model-validation auto retry in 0.250.135; model-aware parallel throughput in 0.250.136; Phase 1 acceleration contracts and observability in 0.250.137; Phase 2 truthful background handoff in 0.250.138
 
 This test ensures generated exports preserve source identity and row order while
 enforcing one stable output schema across independently generated batches.
@@ -117,9 +117,14 @@ LEGACY_MIGRATION_FUNCTIONS = {
 }
 FAILURE_FUNCTIONS = {
     '_build_failed_tabular_generated_output_metadata',
+    '_build_active_tabular_background_handoff_content',
+    '_build_tabular_background_handoff_content',
     '_build_tabular_generated_output_system_message',
     '_has_generated_tabular_csv_output',
+    '_format_tabular_background_handoff_row_phrase',
+    '_is_active_tabular_background_handoff',
     '_normalize_generated_analysis_artifact_metadata',
+    '_tabular_background_handoff_has_preview',
 }
 ARTIFACT_FUNCTIONS = {'_upload_generated_chat_artifact_for_current_user'}
 SCHEDULER_FUNCTIONS = {'_query_scheduler_candidates_by_status'}
@@ -881,6 +886,28 @@ def _load_failed_export_helpers():
     extracted_module = ast.Module(body=selected_nodes, type_ignores=[])
     exec(compile(extracted_module, str(CHAT_ROUTE), 'exec'), namespace)
     return namespace
+
+
+def _assert_concise_background_handoff_contract(text, expected_row_count, expected_output_label):
+    normalized_text = str(text or '')
+    normalized_lower = normalized_text.lower()
+    assert f"{expected_row_count:,}" in normalized_text
+    assert expected_output_label.lower() in normalized_lower
+    assert 'background' in normalized_lower or 'appear in this chat when ready' in normalized_lower
+    prohibited_markers = (
+        'can only',
+        'could not be completed',
+        'available tool results',
+        'schema preview',
+        'if you want, i can',
+        'run id',
+        'run_id',
+        'blob',
+        'batch',
+        'checkpoint',
+    )
+    for marker in prohibited_markers:
+        assert marker not in normalized_lower
 
 
 def _load_idempotent_artifact_helper():
@@ -3033,6 +3060,72 @@ def test_route_queues_replayable_pages_and_suppresses_summary_fallback():
     assert 'output.suppress_assistant_table_export' in chat_messages_source
 
 
+def test_phase_two_background_handoff_contracts_are_server_composed():
+    """Queued export, analysis, and combined runs use concise truthful handoff text."""
+    helpers = _load_failed_export_helpers()
+
+    export_output = {
+        'background_export': True,
+        'status': 'queued',
+        'export_run_id': 'run-export-30000',
+        'output_format': 'csv',
+        'row_count': 30000,
+        'batch_count': 909,
+        'preview_rows': [{'question': 'Sample?', 'answer': 'Yes'}],
+    }
+    export_handoff = helpers['_build_tabular_background_handoff_content'](export_output)
+    _assert_concise_background_handoff_contract(export_handoff, 30000, 'CSV')
+    assert 'rows shown here are a sample' in export_handoff.lower()
+    assert 'complete file will appear in this chat when ready' in export_handoff.lower()
+
+    analysis_output = {
+        'background_export': True,
+        'status': 'running',
+        'export_run_id': 'run-analysis-30000',
+        'task_type': 'hierarchical_analysis',
+        'output_format': 'md',
+        'row_count': 30000,
+        'preview_text': 'sample finding',
+    }
+    analysis_handoff = helpers['_build_tabular_background_handoff_content'](analysis_output)
+    _assert_concise_background_handoff_contract(analysis_handoff, 30000, 'analysis')
+    assert 'any content shown here is a sample' in analysis_handoff.lower()
+    assert 'complete analysis is continuing' in analysis_handoff.lower()
+
+    combined_output = {
+        'background_export': True,
+        'status': 'queued',
+        'export_run_id': 'run-combined-30000',
+        'task_type': 'combined',
+        'output_format': 'csv',
+        'row_count': 30000,
+        'preview_available': True,
+        'preview_row_count': 3,
+    }
+    combined_handoff = helpers['_build_tabular_background_handoff_content'](combined_output)
+    _assert_concise_background_handoff_contract(combined_handoff, 30000, 'CSV')
+    assert 'complete csv and analysis' in combined_handoff.lower()
+    assert 'both completed results will appear in this chat when ready' in combined_handoff.lower()
+
+    system_message = helpers['_build_tabular_generated_output_system_message'](export_output)
+    assert export_handoff in system_message
+    _assert_concise_background_handoff_contract(system_message, 30000, 'CSV')
+
+    final_handoff = helpers['_build_active_tabular_background_handoff_content']([
+        {'background_export': True, 'status': 'completed', 'output_format': 'csv', 'row_count': 30000},
+        combined_output,
+    ])
+    assert final_handoff == combined_handoff
+
+    canceled_handoff = helpers['_build_tabular_background_handoff_content']({
+        'background_export': True,
+        'status': 'canceled',
+        'output_format': 'csv',
+        'row_count': 30000,
+    })
+    assert canceled_handoff == ''
+
+
 def main():
     """Run focused row-orchestration contract checks."""
     tests = [
@@ -3053,6 +3146,7 @@ def main():
         test_filter_rows_pages_queue_combined_analysis_and_export_run,
         test_direct_source_backed_csv_queue_bypasses_tool_paging,
         test_direct_source_backed_queue_failure_falls_back_without_stream_abort,
+        test_phase_two_background_handoff_contracts_are_server_composed,
         test_direct_source_backed_queue_call_sites_use_required_keywords,
         test_model_validation_failures_auto_retry_then_manual_continue,
         test_hierarchical_analysis_routing_requires_feature_flag,

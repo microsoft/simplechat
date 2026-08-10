@@ -3366,6 +3366,17 @@ def build_background_tabular_generated_output_metadata(run):
         'background_export': True,
         'capability': 'tabular',
         'suppress_assistant_table_export': True,
+        'handoff_mode': (
+            'background_combined'
+            if is_combined
+            else 'background_analysis'
+            if is_hierarchical_analysis
+            else 'background_export'
+        ),
+        'requested_row_count': row_count,
+        'preview_available': False,
+        'preview_row_count': 0,
+        'foreground_response_policy_version': 'phase2.v1',
         'summary': (
             f"Queued combined tabular analysis and {output_label} export for {public_status.get('row_count', 0)} row(s) "
             f"across {public_status.get('batch_count', 0)} chunk(s)."

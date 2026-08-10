@@ -1,8 +1,8 @@
 # test_chat_background_generated_export_status.py
 """
 UI test for chat background generated export status cards.
-Version: 0.250.136
-Implemented in: 0.241.046; cancellation in 0.250.060; automatic-only refresh in 0.250.061; combined progress and large-run confirmation in 0.250.131; throughput and concurrency status in 0.250.136
+Version: 0.250.138
+Implemented in: 0.241.046; cancellation in 0.250.060; automatic-only refresh in 0.250.061; combined progress and large-run confirmation in 0.250.131; throughput and concurrency status in 0.250.136; truthful background handoff in 0.250.138
 
 This test ensures queued tabular generated exports render progress in chat and
 turn into a downloadable artifact when complete or a visible canceled state.
@@ -81,7 +81,7 @@ def test_chat_background_generated_export_status_card_auto_refreshes_to_download
                 window.currentConversationId = 'conversation-ui-test';
                 module.appendMessage(
                     'AI',
-                    'The large export is continuing in the background.',
+                    'Understood. I am generating the complete JSON for all 3,539 rows. The rows shown here are a sample; the rest is being generated in the background, and the complete file will appear in this chat when ready.',
                     null,
                     'message-ui-test',
                     false,
@@ -105,7 +105,11 @@ def test_chat_background_generated_export_status_card_auto_refreshes_to_download
                                     processed_rows: 652,
                                     batch_count: 1592,
                                     completed_batches: 298,
-                                    source_file_name: 'query_data.xlsx'
+                                    source_file_name: 'query_data.xlsx',
+                                    preview_rows: [
+                                        { account_id: 'sample-001', risk: 'review' },
+                                        { account_id: 'sample-002', risk: 'clear' }
+                                    ]
                                 }
                             ]
                         }
@@ -117,9 +121,16 @@ def test_chat_background_generated_export_status_card_auto_refreshes_to_download
         )
 
         message = page.locator('[data-message-id="message-ui-test"]')
+        expect(message.get_by_text("Understood. I am generating the complete JSON for all 3,539 rows.")).to_be_visible()
+        expect(message.get_by_text("The rows shown here are a sample")).to_be_visible()
+        expect(message.get_by_text("Preview", exact=True)).to_be_visible()
         expect(message.get_by_text("Background export")).to_be_visible()
         expect(message.get_by_text("Running")).to_be_visible()
         expect(message.get_by_text("298 of 1,592 batches")).to_be_visible()
+        rendered_text = message.inner_text().lower()
+        assert "can only" not in rendered_text
+        assert "schema preview" not in rendered_text
+        assert "if you want, i can" not in rendered_text
         expect(message.get_by_role("button", name="Refresh Status")).to_have_count(0)
         assert message.get_by_role("button", name="Download JSON").count() == 0
 
