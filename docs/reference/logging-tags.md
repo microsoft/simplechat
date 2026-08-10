@@ -6,7 +6,7 @@ Logging tags must use the normalized `[UPPERCASE_WITH_UNDERSCORES]` format. Pref
 
 When adding or renaming a tag in `log_event`, `debug_print`, `print`, or `logger.*` messages, update this list in the same change. Prefer reusing an existing tag when it describes the same component or workflow.
 
-Last inventoried: 2026-08-06
+Last inventoried: 2026-08-10
 
 ## Current tag inventory
 
@@ -213,6 +213,7 @@ Last inventoried: 2026-08-06
 - `[TABLEAU_PLUGIN]`
 - `[TABULAR_CHARTS]`
 - `[TABULAR_GENERATED_OUTPUT]`
+- `[TABULAR_GENERATION_PLAN]`
 - `[TABULAR_MULTI_FILE]`
 - `[TABULAR_PROCESSING_PLUGIN]`
 - `[TABULAR_RELATED_DOCUMENTS]`

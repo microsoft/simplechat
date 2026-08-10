@@ -1,8 +1,8 @@
 # test_tabular_row_orchestration_scale.py
 """
 Functional test for scalable per-row tabular orchestration.
-Version: 0.250.138
-Implemented in: 0.250.060; generated CSV formula safety in 0.250.065; generated file export routing in 0.250.072; source descriptor generalization in 0.250.127; unified durable run contract in 0.250.128; hierarchical analysis in 0.250.129; combined analysis and export in 0.250.130; scale validation in 0.250.132; direct source-backed exhaustive queueing in 0.250.133; direct queue call-site hardening in 0.250.134; model-validation auto retry in 0.250.135; model-aware parallel throughput in 0.250.136; Phase 1 acceleration contracts and observability in 0.250.137; Phase 2 truthful background handoff in 0.250.138
+Version: 0.250.139
+Implemented in: 0.250.060; generated CSV formula safety in 0.250.065; generated file export routing in 0.250.072; source descriptor generalization in 0.250.127; unified durable run contract in 0.250.128; hierarchical analysis in 0.250.129; combined analysis and export in 0.250.130; scale validation in 0.250.132; direct source-backed exhaustive queueing in 0.250.133; direct queue call-site hardening in 0.250.134; model-validation auto retry in 0.250.135; model-aware parallel throughput in 0.250.136; Phase 1 acceleration contracts and observability in 0.250.137; Phase 2 truthful background handoff in 0.250.138; Phase 3 durable LLM generation planning in 0.250.139
 
 This test ensures generated exports preserve source identity and row order while
 enforcing one stable output schema across independently generated batches.
@@ -11,6 +11,7 @@ enforcing one stable output schema across independently generated batches.
 import ast
 import asyncio
 import csv
+import hashlib
 import io
 import importlib.util
 import json
@@ -19,6 +20,7 @@ import math
 import os
 import re
 import sys
+import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -68,6 +70,7 @@ CANDIDATE_FUNCTIONS = {
 }
 STREAM_FUNCTIONS = {
     '_serialize_generated_output_value',
+    '_validate_tabular_output_checkpoint_metadata',
     '_write_ordered_output_stream',
 }
 SOURCE_READER_FUNCTIONS = {
@@ -188,6 +191,50 @@ PERFORMANCE_FUNCTIONS = {
     '_is_schema_discovery_progress_window',
     '_calculate_window_throughput',
     '_advance_run_progress_for_window',
+}
+GENERATION_PLAN_FUNCTIONS = {
+    '_safe_int',
+    '_safe_float',
+    '_settings_bool',
+    '_settings_mode',
+    '_canonical_json_bytes',
+    '_sha256_json',
+    '_hash_tabular_generation_plan',
+    '_describe_tabular_generation_plan_value',
+    '_infer_tabular_generation_plan_value_type',
+    '_build_tabular_generation_plan_input_contract',
+    '_validate_tabular_generation_plan_output_fields',
+    '_get_tabular_generation_plan_source',
+    '_build_tabular_generation_plan',
+    '_validate_tabular_generation_plan',
+    '_get_tabular_generation_plan_output_schema',
+    '_tabular_generation_plan_blob_path',
+    '_get_tabular_generation_plan_source_etag',
+    '_build_tabular_output_checkpoint_metadata',
+    '_validate_tabular_output_checkpoint_metadata',
+    '_get_tabular_generation_plan_mode',
+    '_load_tabular_generation_plan_sample_rows',
+    '_build_tabular_generation_plan_prompt',
+    '_generate_tabular_generation_plan',
+    '_apply_active_tabular_generation_plan',
+    '_recover_tabular_generation_plan',
+    '_mark_tabular_generation_plan_fallback',
+    '_ensure_tabular_generation_plan',
+    '_record_shadow_tabular_generation_plan_comparison',
+    '_dump_generated_output_json',
+}
+GENERATION_PLAN_CONSTANTS = {
+    'TABULAR_RESPONSE_PROTOCOL_OBJECT_V1',
+    'TABULAR_ROLLOUT_PLANNER_MODES',
+    'TABULAR_RUN_TASK_STRUCTURED_EXPORT',
+    'TABULAR_RUN_TASK_HIERARCHICAL_ANALYSIS',
+    'TABULAR_RUN_TASK_COMBINED',
+    'TABULAR_RUN_TASK_TYPES',
+    'TABULAR_EXPORT_INPUT_ROW_NUMBER_FIELD',
+    'TABULAR_EXPORT_INPUT_ROW_IDENTITY_FIELD',
+    'TABULAR_EXPORT_INPUT_ROW_TOKEN_FIELD',
+    'TABULAR_EXPORT_OUTPUT_ROW_NUMBER_FIELD',
+    'TABULAR_EXPORT_OUTPUT_ROW_IDENTITY_FIELD',
 }
 
 
@@ -1085,6 +1132,197 @@ def _load_performance_helpers(progress_updates=None):
     return namespace
 
 
+def _load_generation_plan_helpers():
+    module_tree = ast.parse(EXPORT_MODULE.read_text(encoding='utf-8'), filename=str(EXPORT_MODULE))
+    selected_nodes = []
+    found_functions = set()
+    for node in module_tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in GENERATION_PLAN_FUNCTIONS:
+            selected_nodes.append(node)
+            found_functions.add(node.name)
+        elif isinstance(node, ast.Assign):
+            assigned_names = {
+                target.id
+                for target in node.targets
+                if isinstance(target, ast.Name)
+            }
+            if assigned_names & GENERATION_PLAN_CONSTANTS or any(
+                name.startswith('TABULAR_GENERATION_PLAN_')
+                for name in assigned_names
+            ):
+                selected_nodes.append(node)
+
+    missing_functions = GENERATION_PLAN_FUNCTIONS - found_functions
+    if missing_functions:
+        raise AssertionError(f'Missing generation plan helpers: {sorted(missing_functions)}')
+
+    class PlannerError(RuntimeError):
+        def __init__(self, reason):
+            super().__init__('planner failed')
+            self.reason = reason
+
+    class ChatHistory:
+        def add_system_message(self, message):
+            del message
+
+        def add_user_message(self, message):
+            del message
+
+    class ExecutionSettings:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    state = {
+        'blobs': {},
+        'metadata': {},
+        'uploads': [],
+        'replace_count': 0,
+    }
+
+    def upload_json_blob(path, payload, metadata=None, overwrite=True):
+        state['uploads'].append({
+            'path': path,
+            'payload': payload,
+            'metadata': dict(metadata or {}),
+            'overwrite': overwrite,
+        })
+        if not overwrite and path in state['blobs']:
+            raise FileExistsError(path)
+        state['blobs'][path] = payload
+        state['metadata'][path] = dict(metadata or {})
+
+    def replace_claimed_run(run):
+        state['replace_count'] += 1
+        return dict(run)
+
+    namespace = {
+        'asyncio': asyncio,
+        'hashlib': hashlib,
+        'json': json,
+        'logging': logging,
+        're': re,
+        'time': time,
+        'ResourceExistsError': FileExistsError,
+        'TabularGenerationPlanError': PlannerError,
+        'SKChatHistory': ChatHistory,
+        'AzureChatPromptExecutionSettings': ExecutionSettings,
+        '_now_iso': lambda: '2026-08-10T12:00:00+00:00',
+        '_parse_generated_json_object': lambda content: json.loads(content),
+        '_extract_tabular_response_usage': lambda result: {
+            'input_token_count': 10,
+            'output_token_count': 5,
+            'total_token_count': 15,
+        },
+        '_download_json_blob': lambda path: state['blobs'][path],
+        '_blob_exists': lambda path: path in state['blobs'],
+        '_get_blob_metadata': lambda path: state['metadata'].get(path, {}),
+        '_upload_json_blob': upload_json_blob,
+        '_replace_claimed_run': replace_claimed_run,
+        '_load_input_batch_rows': (
+            lambda run, input_batches, user_id, run_id, batch_number, batch_count:
+            (input_batches or run['_test_batches'])[batch_number - 1]
+        ),
+        '_normalize_tabular_run_task_type': lambda value: value or 'structured_export',
+        '_resolve_tabular_generation_planner_model': lambda run, settings: {
+            'endpoint_id': 'endpoint-1',
+            'model_id': 'gpt-plan',
+            'deployment': 'gpt-plan',
+        },
+        'log_event': lambda *args, **kwargs: None,
+    }
+    extracted_module = ast.Module(body=selected_nodes, type_ignores=[])
+    exec(compile(extracted_module, str(EXPORT_MODULE), 'exec'), namespace)
+    return namespace, PlannerError, state
+
+
+def _build_phase_three_test_run(plan_mode='shadow', plan_status='pending'):
+    return {
+        'id': 'run-phase-3',
+        'user_id': 'user-1',
+        'conversation_id': 'conversation-1',
+        'user_question': 'For every row, return answer and risk.',
+        'output_format': 'csv',
+        'response_protocol_version': 'object-v1',
+        'task_type': 'structured_export',
+        'gpt_model': 'gpt-plan',
+        'model_context': {'endpoint_id': 'endpoint-1', 'model_id': 'gpt-plan'},
+        'source_descriptor': {
+            'blob_path': 'user-1/source.csv',
+            'blob_etag': '"etag-1"',
+        },
+        'row_count': 2,
+        'batch_count': 2,
+        'batch_budget': {
+            'max_rows': 50,
+            'max_chars': 60000,
+            'input_token_budget': 60000,
+            'output_token_budget': 30000,
+        },
+        'generation_rollout_settings': {
+            'enable_tabular_generation_plan': True,
+            'tabular_generation_plan_mode': plan_mode,
+        },
+        'plan_mode': plan_mode,
+        'plan_status': plan_status,
+        'plan_blob_path': None,
+        'plan_hash': None,
+        'output_schema': None,
+        'passthrough_input_rows': False,
+        '_test_batches': [
+            [{
+                'Case ID': 'SC-1',
+                'Comment': 'Sensitive first comment',
+                '__simplechat_source_row_number': 1,
+                '__simplechat_source_row_identity': 'SC-1',
+                '__simplechat_source_row_token': 'token-1',
+            }],
+            [{
+                'Case ID': 'SC-2',
+                'Comment': 'Sensitive second comment',
+                '__simplechat_source_row_number': 2,
+                '__simplechat_source_row_identity': 'SC-2',
+                '__simplechat_source_row_token': 'token-2',
+            }],
+        ],
+    }
+
+
+def _build_phase_three_plan(helpers, run):
+    input_contract = helpers['_build_tabular_generation_plan_input_contract'](
+        run['_test_batches'][0] + run['_test_batches'][1]
+    )
+    plan = helpers['_build_tabular_generation_plan'](
+        run,
+        {
+            'output_fields': [
+                {
+                    'name': 'answer',
+                    'description': 'Answer requested for the source row.',
+                    'type': 'string',
+                    'nullable': False,
+                    'source': 'llm',
+                },
+                {
+                    'name': 'risk',
+                    'description': 'Risk level requested for the source row.',
+                    'type': 'string',
+                    'nullable': True,
+                    'source': 'llm',
+                },
+            ],
+            'output_verbosity': 'concise',
+        },
+        input_contract,
+        {
+            'endpoint_id': 'endpoint-1',
+            'model_id': 'gpt-plan',
+            'deployment': 'gpt-plan',
+        },
+        created_at='2026-08-10T12:00:00+00:00',
+    )
+    return plan, input_contract
+
+
 class FakeTabularModelHarness:
     """Chat-service compatible fake model that releases calls in a caller-chosen order."""
 
@@ -1302,16 +1540,16 @@ def test_phase_one_generation_contract_fields_are_additive_and_compact():
     assert len(serialized_run_document) < 2048
 
 
-def test_phase_one_rollout_gates_default_to_legacy_and_stay_backend_only():
-    """Later-phase rollout gates default off and are filtered from user settings."""
+def test_phase_three_rollout_activates_shadow_only_and_stays_backend_only():
+    """Phase 3 defaults to output-neutral shadow planning and remains backend-only."""
     helpers = _load_performance_helpers()
     normalize_rollout = helpers['_normalize_tabular_generation_rollout_settings']
 
     defaults = normalize_rollout({})
     assert defaults == {
         'tabular_background_handoff_mode': 'legacy',
-        'tabular_generation_plan_mode': 'off',
-        'enable_tabular_generation_plan': False,
+        'tabular_generation_plan_mode': 'shadow',
+        'enable_tabular_generation_plan': True,
         'enable_tabular_compact_response_protocol': False,
         'enable_tabular_completion_driven_checkpointing': False,
         'enable_tabular_rolling_worker_pool': False,
@@ -1423,6 +1661,341 @@ def test_phase_one_fake_harnesses_control_completion_order_and_storage_failures(
         assert 'Injected upload failure' in str(exc)
     else:
         raise AssertionError('Injected storage failures must be observable')
+
+
+def test_phase_three_plan_contract_is_bounded_immutable_and_private():
+    """The planner sees only bounded shapes and persists one canonical, content-free contract."""
+    helpers, _, _ = _load_generation_plan_helpers()
+    run = _build_phase_three_test_run()
+    plan, input_contract = _build_phase_three_plan(helpers, run)
+
+    serialized_input = json.dumps(input_contract, sort_keys=True)
+    serialized_plan = json.dumps(plan, sort_keys=True)
+    assert input_contract['sample_row_count'] == 2
+    assert 'Sensitive first comment' not in serialized_input
+    assert 'Sensitive second comment' not in serialized_input
+    assert '<string:' in serialized_input
+    assert run['user_question'] not in serialized_plan
+    assert 'Sensitive first comment' not in serialized_plan
+    assert plan['plan_hash'] == helpers['_hash_tabular_generation_plan'](plan)
+    assert len(plan['plan_hash']) == 64
+    assert helpers['_get_tabular_generation_plan_output_schema'](plan) == [
+        'source_row_number',
+        'source_row_identity',
+        'answer',
+        'risk',
+    ]
+    helpers['_validate_tabular_generation_plan'](
+        plan,
+        run,
+        input_schema_hash=input_contract['input_schema_hash'],
+    )
+
+    tampered_plan = json.loads(json.dumps(plan))
+    tampered_plan['output_fields'][2]['description'] = 'Changed after persistence.'
+    try:
+        helpers['_validate_tabular_generation_plan'](tampered_plan, run)
+    except ValueError as exc:
+        assert 'hash' in str(exc).lower()
+    else:
+        raise AssertionError('Plan mutation must fail canonical hash validation')
+
+
+def test_phase_three_plan_rejects_malformed_fields_and_source_changes():
+    """Duplicate, reserved, excessive, unsupported, and source-mismatched plans fail closed."""
+    helpers, _, _ = _load_generation_plan_helpers()
+    run = _build_phase_three_test_run()
+    _, input_contract = _build_phase_three_plan(helpers, run)
+    valid_field = {
+        'name': 'answer',
+        'description': 'Answer requested for the source row.',
+        'type': 'string',
+        'nullable': False,
+        'source': 'llm',
+    }
+    invalid_field_sets = [
+        [valid_field, {**valid_field, 'name': 'ANSWER'}],
+        [{**valid_field, 'name': 'source_row_number'}],
+        [{**valid_field, 'type': 'date'}],
+        [{key: value for key, value in valid_field.items() if key != 'source'}],
+        [{**valid_field, 'name': f'field_{index}'} for index in range(51)],
+    ]
+    for invalid_fields in invalid_field_sets:
+        try:
+            helpers['_build_tabular_generation_plan'](
+                run,
+                {'output_fields': invalid_fields},
+                input_contract,
+                {'model_id': 'gpt-plan', 'deployment': 'gpt-plan'},
+            )
+        except ValueError:
+            continue
+        raise AssertionError(f'Invalid planner fields were accepted: {invalid_fields[:2]}')
+
+    plan, _ = _build_phase_three_plan(helpers, run)
+    changed_source_run = dict(run)
+    changed_source_run['source_descriptor'] = {
+        **run['source_descriptor'],
+        'blob_etag': '"etag-2"',
+    }
+    try:
+        helpers['_validate_tabular_generation_plan'](plan, changed_source_run)
+    except ValueError as exc:
+        assert 'etag' in str(exc).lower()
+    else:
+        raise AssertionError('A source ETag change must invalidate the stored plan')
+
+    missing_contract_plan = json.loads(json.dumps(plan))
+    missing_contract_plan.pop('model')
+    missing_contract_plan['plan_hash'] = helpers['_hash_tabular_generation_plan'](
+        missing_contract_plan
+    )
+    try:
+        helpers['_validate_tabular_generation_plan'](missing_contract_plan, run)
+    except ValueError as exc:
+        assert 'required' in str(exc).lower()
+    else:
+        raise AssertionError('A plan missing a required contract must fail validation')
+
+
+def test_phase_three_shadow_active_and_checkpoint_contracts():
+    """Shadow records differences while active mode and checkpoints enforce the planned schema."""
+    helpers, _, state = _load_generation_plan_helpers()
+    shadow_run = _build_phase_three_test_run(plan_mode='shadow', plan_status='ready')
+    plan, _ = _build_phase_three_plan(helpers, shadow_run)
+    plan_path = helpers['_tabular_generation_plan_blob_path'](
+        shadow_run['user_id'],
+        shadow_run['conversation_id'],
+        shadow_run['id'],
+    )
+    shadow_run.update({'plan_blob_path': plan_path, 'plan_hash': plan['plan_hash']})
+    state['blobs'][plan_path] = plan
+
+    changed = helpers['_record_shadow_tabular_generation_plan_comparison'](
+        shadow_run,
+        ['source_row_number', 'source_row_identity', 'risk', 'answer', 'extra'],
+    )
+    assert changed is True
+    assert shadow_run['output_schema'] is None
+    assert shadow_run['plan_shadow_comparison']['agreement'] is False
+    assert shadow_run['plan_shadow_comparison']['additions'] == ['extra']
+    assert shadow_run['plan_shadow_comparison']['omissions'] == []
+    assert shadow_run['plan_shadow_comparison']['reorderings'] == ['risk', 'answer']
+
+    agreement_run = _build_phase_three_test_run(plan_mode='shadow', plan_status='ready')
+    agreement_run.update({'plan_blob_path': plan_path, 'plan_hash': plan['plan_hash']})
+    assert helpers['_record_shadow_tabular_generation_plan_comparison'](
+        agreement_run,
+        ['source_row_number', 'source_row_identity', 'answer', 'risk'],
+    ) is True
+    assert agreement_run['plan_shadow_comparison']['agreement'] is True
+    assert agreement_run['plan_shadow_comparison']['additions'] == []
+    assert agreement_run['plan_shadow_comparison']['omissions'] == []
+    assert agreement_run['plan_shadow_comparison']['reorderings'] == []
+
+    active_run = _build_phase_three_test_run(plan_mode='active')
+    helpers['_apply_active_tabular_generation_plan'](active_run, plan)
+    assert active_run['output_schema'] == [
+        'source_row_number',
+        'source_row_identity',
+        'answer',
+        'risk',
+    ]
+
+    checkpoint_metadata = helpers['_build_tabular_output_checkpoint_metadata'](
+        {**active_run, 'plan_hash': plan['plan_hash']},
+        {'batch_number': 1},
+    )
+    assert checkpoint_metadata['plan_hash'] == plan['plan_hash']
+    assert checkpoint_metadata['source_etag'] == 'etag-1'
+    state['metadata']['output/batch_000001.json'] = checkpoint_metadata
+    helpers['_validate_tabular_output_checkpoint_metadata'](
+        {**active_run, 'plan_hash': plan['plan_hash']},
+        'output/batch_000001.json',
+        1,
+    )
+    state['metadata']['output/batch_000001.json']['plan_hash'] = 'wrong-plan'
+    try:
+        helpers['_validate_tabular_output_checkpoint_metadata'](
+            {**active_run, 'plan_hash': plan['plan_hash']},
+            'output/batch_000001.json',
+            1,
+        )
+    except ValueError as exc:
+        assert 'plan hash' in str(exc).lower()
+    else:
+        raise AssertionError('Checkpoint plan metadata mismatch must fail')
+
+
+def test_phase_three_planner_timeout_retries_before_fallback():
+    """The bounded planner retries provider timeouts and reports a safe fallback reason."""
+    helpers, PlannerError, _ = _load_generation_plan_helpers()
+    run = _build_phase_three_test_run(plan_mode='active')
+    _, input_contract = _build_phase_three_plan(helpers, run)
+
+    class TimeoutPlanner:
+        def __init__(self):
+            self.calls = 0
+
+        async def get_chat_message_contents(self, chat_history, execution_settings):
+            del chat_history, execution_settings
+            self.calls += 1
+            raise asyncio.TimeoutError()
+
+    planner = TimeoutPlanner()
+    try:
+        asyncio.run(helpers['_generate_tabular_generation_plan'](
+            planner,
+            run,
+            input_contract,
+            {'model_id': 'gpt-plan', 'deployment': 'gpt-plan'},
+            30,
+        ))
+    except PlannerError as exc:
+        assert exc.reason == 'timeout'
+    else:
+        raise AssertionError('Planner timeout exhaustion must request legacy fallback')
+    assert planner.calls == 2
+
+
+def test_phase_three_plan_persistence_boundaries_never_replan():
+    """Resume recovers an immutable plan or falls back without automatically replanning."""
+    helpers, PlannerError, state = _load_generation_plan_helpers()
+    active_run = _build_phase_three_test_run(plan_mode='active', plan_status='planning')
+    plan, _ = _build_phase_three_plan(helpers, active_run)
+    plan_path = helpers['_tabular_generation_plan_blob_path'](
+        active_run['user_id'],
+        active_run['conversation_id'],
+        active_run['id'],
+    )
+    state['blobs'][plan_path] = plan
+    planner_calls = []
+
+    async def unexpected_planner_call(*args, **kwargs):
+        planner_calls.append((args, kwargs))
+        raise AssertionError('Resume must not call the planner')
+
+    helpers['_generate_tabular_generation_plan'] = unexpected_planner_call
+    recovered_run = helpers['_ensure_tabular_generation_plan'](
+        active_run,
+        object(),
+        active_run['_test_batches'],
+        {},
+        60,
+    )
+    assert planner_calls == []
+    assert recovered_run['plan_status'] == 'ready'
+    assert recovered_run['plan_blob_path'] == plan_path
+    assert recovered_run['plan_hash'] == plan['plan_hash']
+    assert recovered_run['output_schema'][-2:] == ['answer', 'risk']
+
+    interrupted_run = _build_phase_three_test_run(plan_mode='active', plan_status='planning')
+    state['blobs'].clear()
+    fallback_run = helpers['_ensure_tabular_generation_plan'](
+        interrupted_run,
+        object(),
+        interrupted_run['_test_batches'],
+        {},
+        60,
+    )
+    assert planner_calls == []
+    assert fallback_run['plan_status'] == 'fallback'
+    assert fallback_run['plan_failure_reason'] == 'interrupted_before_persistence'
+    assert fallback_run['output_schema'] is None
+
+    pending_run = _build_phase_three_test_run(plan_mode='active', plan_status='pending')
+
+    async def timed_out_planner(*args, **kwargs):
+        del args, kwargs
+        raise PlannerError('timeout')
+
+    helpers['_generate_tabular_generation_plan'] = timed_out_planner
+    timeout_fallback_run = helpers['_ensure_tabular_generation_plan'](
+        pending_run,
+        object(),
+        pending_run['_test_batches'],
+        {},
+        60,
+    )
+    assert timeout_fallback_run['plan_status'] == 'fallback'
+    assert timeout_fallback_run['plan_failure_reason'] == 'timeout'
+    assert timeout_fallback_run['output_schema'] is None
+
+    upload_helpers, _, upload_state = _load_generation_plan_helpers()
+    new_run = _build_phase_three_test_run(plan_mode='active', plan_status='pending')
+    new_plan, _ = _build_phase_three_plan(upload_helpers, new_run)
+    successful_planner_calls = []
+
+    async def successful_planner(*args, **kwargs):
+        successful_planner_calls.append((args, kwargs))
+        return new_plan, {
+            'attempt_count': 1,
+            'latency_seconds': 0.25,
+            'model_latency_seconds': 0.2,
+            'input_char_count': 1000,
+            'response_char_count': 300,
+            'input_token_count': 250,
+            'output_token_count': 75,
+            'total_token_count': 325,
+        }
+
+    upload_helpers['_generate_tabular_generation_plan'] = successful_planner
+    planned_run = upload_helpers['_ensure_tabular_generation_plan'](
+        new_run,
+        object(),
+        new_run['_test_batches'],
+        {},
+        60,
+    )
+    assert len(successful_planner_calls) == 1
+    assert len(upload_state['uploads']) == 1
+    assert upload_state['uploads'][0]['overwrite'] is False
+    assert upload_state['uploads'][0]['path'].endswith('/plan/plan_v1.json')
+    assert upload_state['uploads'][0]['metadata']['plan_hash'] == new_plan['plan_hash']
+    assert planned_run['plan_status'] == 'ready'
+    assert planned_run['output_schema'][-2:] == ['answer', 'risk']
+
+    async def ready_state_planner(*args, **kwargs):
+        raise AssertionError('A ready run must reload its immutable plan')
+
+    upload_helpers['_generate_tabular_generation_plan'] = ready_state_planner
+    reloaded_run = upload_helpers['_ensure_tabular_generation_plan'](
+        planned_run,
+        object(),
+        planned_run['_test_batches'],
+        {},
+        60,
+    )
+    assert reloaded_run['plan_hash'] == new_plan['plan_hash']
+    assert len(upload_state['uploads']) == 1
+
+    mismatched_run = dict(planned_run)
+    mismatched_run['plan_hash'] = '0' * 64
+    try:
+        upload_helpers['_ensure_tabular_generation_plan'](
+            mismatched_run,
+            object(),
+            mismatched_run['_test_batches'],
+            {},
+            60,
+        )
+    except ValueError as exc:
+        assert 'run record' in str(exc).lower()
+    else:
+        raise AssertionError('A run-level plan hash mismatch must fail resume')
+
+    old_run = _build_phase_three_test_run(plan_mode='off', plan_status='disabled')
+    old_run['generation_rollout_settings'] = {}
+    legacy_run = upload_helpers['_ensure_tabular_generation_plan'](
+        old_run,
+        object(),
+        old_run['_test_batches'],
+        {},
+        60,
+    )
+    assert legacy_run['plan_blob_path'] is None
+    assert legacy_run['plan_hash'] is None
+    assert legacy_run['output_schema'] is None
 
 
 def test_source_identity_and_order_contract():
@@ -3132,9 +3705,14 @@ def main():
         test_model_aware_batch_budget_uses_safe_token_limits,
         test_dynamic_concurrency_and_parallel_window_eta,
         test_phase_one_generation_contract_fields_are_additive_and_compact,
-        test_phase_one_rollout_gates_default_to_legacy_and_stay_backend_only,
+        test_phase_three_rollout_activates_shadow_only_and_stays_backend_only,
         test_phase_one_observability_uses_safe_metrics_not_response_content,
         test_phase_one_fake_harnesses_control_completion_order_and_storage_failures,
+        test_phase_three_plan_contract_is_bounded_immutable_and_private,
+        test_phase_three_plan_rejects_malformed_fields_and_source_changes,
+        test_phase_three_shadow_active_and_checkpoint_contracts,
+        test_phase_three_planner_timeout_retries_before_fallback,
+        test_phase_three_plan_persistence_boundaries_never_replan,
         test_source_identity_and_order_contract,
         test_generated_batch_schema_contract,
         test_durable_runner_enforces_row_contract,

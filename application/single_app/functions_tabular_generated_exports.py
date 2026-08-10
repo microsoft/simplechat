@@ -4,6 +4,7 @@
 import asyncio
 from collections import Counter
 import csv
+import hashlib
 import io
 import json
 import logging
@@ -56,6 +57,24 @@ TABULAR_EXPORT_CONTRACT_VERSION = 3
 TABULAR_GENERATION_CONTRACT_VERSION = 1
 TABULAR_RESPONSE_PROTOCOL_OBJECT_V1 = 'object-v1'
 TABULAR_EXECUTOR_MODE_FIXED_WINDOW = 'fixed-window-v1'
+TABULAR_GENERATION_PLAN_VERSION = 1
+TABULAR_GENERATION_PLAN_PROMPT_VERSION = 'tabular-generation-plan-v1'
+TABULAR_GENERATION_PLAN_DEFAULT_RETRY_ATTEMPTS = 2
+TABULAR_GENERATION_PLAN_MAX_SAMPLE_ROWS = 5
+TABULAR_GENERATION_PLAN_MAX_COLUMNS = 200
+TABULAR_GENERATION_PLAN_MAX_FIELDS = 50
+TABULAR_GENERATION_PLAN_MAX_FIELD_NAME_CHARS = 128
+TABULAR_GENERATION_PLAN_MAX_FIELD_DESCRIPTION_CHARS = 500
+TABULAR_GENERATION_PLAN_MAX_QUESTION_CHARS = 24000
+TABULAR_GENERATION_PLAN_MAX_GUIDANCE_CHARS = 200
+TABULAR_GENERATION_PLAN_VALUE_TYPES = {
+    'array',
+    'boolean',
+    'integer',
+    'number',
+    'object',
+    'string',
+}
 TABULAR_ROLLOUT_PLANNER_MODES = {'off', 'shadow', 'active'}
 TABULAR_ROLLOUT_HANDOFF_MODES = {'legacy', 'server', 'constrained_model'}
 TABULAR_RUN_TASK_STRUCTURED_EXPORT = 'structured_export'
@@ -210,6 +229,13 @@ TABULAR_EXPORT_INPUT_ROW_IDENTITY_FIELD = '__simplechat_source_row_identity'
 TABULAR_EXPORT_INPUT_ROW_TOKEN_FIELD = '__simplechat_source_row_token'
 TABULAR_EXPORT_OUTPUT_ROW_NUMBER_FIELD = 'source_row_number'
 TABULAR_EXPORT_OUTPUT_ROW_IDENTITY_FIELD = 'source_row_identity'
+TABULAR_GENERATION_PLAN_RESERVED_FIELDS = {
+    TABULAR_EXPORT_INPUT_ROW_NUMBER_FIELD,
+    TABULAR_EXPORT_INPUT_ROW_IDENTITY_FIELD,
+    TABULAR_EXPORT_INPUT_ROW_TOKEN_FIELD,
+    TABULAR_EXPORT_OUTPUT_ROW_NUMBER_FIELD,
+    TABULAR_EXPORT_OUTPUT_ROW_IDENTITY_FIELD,
+}
 
 
 class TabularExportCanceledError(RuntimeError):
@@ -218,6 +244,14 @@ class TabularExportCanceledError(RuntimeError):
 
 class TabularExportLeaseLostError(RuntimeError):
     """Raised when a stale worker no longer owns the durable run claim."""
+
+
+class TabularGenerationPlanError(RuntimeError):
+    """Raised when the bounded planner exhausts its allowed attempts."""
+
+    def __init__(self, reason):
+        super().__init__('Tabular generation planner did not produce a valid plan')
+        self.reason = str(reason or 'provider_failure')
 
 
 def _now_utc():
@@ -275,6 +309,398 @@ def _settings_mode(settings, key, default, allowed_modes):
     return default
 
 
+def _canonical_json_bytes(payload):
+    return json.dumps(
+        payload,
+        ensure_ascii=False,
+        separators=(',', ':'),
+        sort_keys=True,
+    ).encode('utf-8')
+
+
+def _sha256_json(payload):
+    return hashlib.sha256(_canonical_json_bytes(payload)).hexdigest()
+
+
+def _hash_tabular_generation_plan(plan):
+    canonical_plan = dict(plan or {})
+    canonical_plan.pop('plan_hash', None)
+    return _sha256_json(canonical_plan)
+
+
+def _describe_tabular_generation_plan_value(value):
+    if value is None:
+        return '<null>'
+    if isinstance(value, bool):
+        return '<boolean>'
+    if isinstance(value, int):
+        return '<integer>'
+    if isinstance(value, float):
+        return '<number>'
+    if isinstance(value, dict):
+        return f'<object:{len(value)} field(s)>'
+    if isinstance(value, (list, tuple, set)):
+        return f'<array:{len(value)} item(s)>'
+    return f'<string:{len(str(value))} char(s)>'
+
+
+def _infer_tabular_generation_plan_value_type(value):
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return 'boolean'
+    if isinstance(value, int):
+        return 'integer'
+    if isinstance(value, float):
+        return 'number'
+    if isinstance(value, dict):
+        return 'object'
+    if isinstance(value, (list, tuple, set)):
+        return 'array'
+    return 'string'
+
+
+def _build_tabular_generation_plan_input_contract(sample_rows):
+    bounded_rows = list(sample_rows or [])[:TABULAR_GENERATION_PLAN_MAX_SAMPLE_ROWS]
+    columns = []
+    columns_by_name = {}
+    sample_shapes = []
+    for row_index, row in enumerate(bounded_rows):
+        if not isinstance(row, dict):
+            raise ValueError(f'Planner sample row {row_index + 1} is not an object')
+
+        public_row = {
+            str(field_name): field_value
+            for field_name, field_value in row.items()
+            if str(field_name) not in TABULAR_GENERATION_PLAN_RESERVED_FIELDS
+        }
+        sample_shape = {}
+        for field_name, field_value in public_row.items():
+            if not field_name or len(field_name) > TABULAR_GENERATION_PLAN_MAX_FIELD_NAME_CHARS:
+                raise ValueError('Planner input column name is empty or too long')
+            if field_name not in columns_by_name:
+                if len(columns) >= TABULAR_GENERATION_PLAN_MAX_COLUMNS:
+                    raise ValueError('Planner input column count exceeds the supported limit')
+                column = {
+                    'name': field_name,
+                    'types': [],
+                    'nullable': row_index > 0,
+                }
+                columns.append(column)
+                columns_by_name[field_name] = column
+            column = columns_by_name[field_name]
+            value_type = _infer_tabular_generation_plan_value_type(field_value)
+            if value_type and value_type not in column['types']:
+                column['types'].append(value_type)
+            if field_value is None:
+                column['nullable'] = True
+            sample_shape[field_name] = _describe_tabular_generation_plan_value(field_value)
+
+        for column in columns:
+            if column['name'] not in public_row:
+                column['nullable'] = True
+        sample_shapes.append(sample_shape)
+
+    if not columns:
+        raise ValueError('Planner input schema is empty')
+    for column in columns:
+        if not column['types']:
+            column['types'] = ['string']
+
+    schema_contract = {'columns': columns}
+    return {
+        'columns': columns,
+        'sample_shapes': sample_shapes,
+        'sample_row_count': len(sample_shapes),
+        'input_schema_hash': _sha256_json(schema_contract),
+    }
+
+
+def _validate_tabular_generation_plan_output_fields(output_fields):
+    if not isinstance(output_fields, list) or not output_fields:
+        raise ValueError('Planner response must include at least one output field')
+    if len(output_fields) > TABULAR_GENERATION_PLAN_MAX_FIELDS:
+        raise ValueError('Planner response contains too many output fields')
+
+    normalized_fields = []
+    seen_names = set()
+    allowed_keys = {'name', 'description', 'type', 'nullable', 'source'}
+    reserved_names = {
+        field_name.casefold()
+        for field_name in TABULAR_GENERATION_PLAN_RESERVED_FIELDS
+    }
+    for field_index, output_field in enumerate(output_fields, start=1):
+        if not isinstance(output_field, dict):
+            raise ValueError(f'Planner output field {field_index} is not an object')
+        if set(output_field) != allowed_keys:
+            raise ValueError(f'Planner output field {field_index} has invalid properties')
+
+        field_name = str(output_field.get('name') or '').strip()
+        normalized_name = field_name.casefold()
+        if not field_name or len(field_name) > TABULAR_GENERATION_PLAN_MAX_FIELD_NAME_CHARS:
+            raise ValueError(f'Planner output field {field_index} has an invalid name')
+        if any(ord(character) < 32 for character in field_name):
+            raise ValueError(f'Planner output field {field_index} contains control characters')
+        if normalized_name in reserved_names:
+            raise ValueError(f'Planner output field {field_index} uses a reserved source field')
+        if normalized_name in seen_names:
+            raise ValueError(f'Planner output field {field_index} duplicates another field')
+        seen_names.add(normalized_name)
+
+        field_description = str(output_field.get('description') or '').strip()
+        if (
+            not field_description
+            or len(field_description) > TABULAR_GENERATION_PLAN_MAX_FIELD_DESCRIPTION_CHARS
+        ):
+            raise ValueError(f'Planner output field {field_index} has an invalid description')
+        value_type = str(output_field.get('type') or '').strip().lower()
+        if value_type not in TABULAR_GENERATION_PLAN_VALUE_TYPES:
+            raise ValueError(f'Planner output field {field_index} has an unsupported type')
+        nullable = output_field.get('nullable')
+        if not isinstance(nullable, bool):
+            raise ValueError(f'Planner output field {field_index} must declare nullability')
+        if str(output_field.get('source') or '').strip().lower() != 'llm':
+            raise ValueError(f'Planner output field {field_index} has an unsupported source')
+
+        normalized_fields.append({
+            'name': field_name,
+            'description': field_description,
+            'type': value_type,
+            'nullable': nullable,
+            'source': 'llm',
+        })
+    return normalized_fields
+
+
+def _get_tabular_generation_plan_source(run):
+    source = (run or {}).get('source_descriptor') or (run or {}).get('source_authorization') or {}
+    return {
+        'blob_path': str(source.get('blob_path') or '').strip(),
+        'blob_etag': str(source.get('blob_etag') or '').strip(),
+        'row_count': _safe_int((run or {}).get('row_count'), minimum=0),
+    }
+
+
+def _build_tabular_generation_plan(run, planner_payload, input_contract, planner_model, created_at=None):
+    if not isinstance(planner_payload, dict):
+        raise ValueError('Planner response was not a JSON object')
+    if set(planner_payload) - {'output_fields', 'output_verbosity'}:
+        raise ValueError('Planner response contains unsupported top-level properties')
+
+    llm_fields = _validate_tabular_generation_plan_output_fields(
+        planner_payload.get('output_fields')
+    )
+    output_verbosity = str(planner_payload.get('output_verbosity') or '').strip()
+    if len(output_verbosity) > TABULAR_GENERATION_PLAN_MAX_GUIDANCE_CHARS:
+        raise ValueError('Planner output verbosity guidance is too long')
+
+    output_format = str((run or {}).get('output_format') or '').strip().lower()
+    if output_format not in {'csv', 'json', 'xml'}:
+        raise ValueError('Planner output format is not supported')
+    response_protocol = str(
+        (run or {}).get('response_protocol_version') or TABULAR_RESPONSE_PROTOCOL_OBJECT_V1
+    ).strip()
+    if response_protocol != TABULAR_RESPONSE_PROTOCOL_OBJECT_V1:
+        raise ValueError('Planner response protocol is not supported')
+
+    batch_budget = (run or {}).get('batch_budget') or {}
+    source = _get_tabular_generation_plan_source(run)
+    source['input_schema_hash'] = str(input_contract.get('input_schema_hash') or '').strip()
+    if not source['input_schema_hash']:
+        raise ValueError('Planner input schema hash is missing')
+
+    normalized_planner_model = {
+        field_name: str((planner_model or {}).get(field_name) or '').strip()
+        for field_name in ('endpoint_id', 'model_id', 'deployment')
+    }
+    if not any(normalized_planner_model.values()):
+        raise ValueError('Planner model identity is missing')
+
+    plan = {
+        'version': TABULAR_GENERATION_PLAN_VERSION,
+        'run_id': str((run or {}).get('id') or '').strip(),
+        'created_at': str(created_at or _now_iso()),
+        'source': source,
+        'model': normalized_planner_model,
+        'request': {
+            'question_hash': hashlib.sha256(
+                str((run or {}).get('user_question') or '').encode('utf-8')
+            ).hexdigest(),
+            'output_format': output_format,
+        },
+        'output_fields': [
+            {
+                'name': TABULAR_EXPORT_OUTPUT_ROW_NUMBER_FIELD,
+                'description': 'One-based source row order reattached by the server.',
+                'type': 'integer',
+                'nullable': False,
+                'source': 'server',
+            },
+            {
+                'name': TABULAR_EXPORT_OUTPUT_ROW_IDENTITY_FIELD,
+                'description': 'Source row identity reattached by the server.',
+                'type': 'string',
+                'nullable': False,
+                'source': 'server',
+            },
+            *llm_fields,
+        ],
+        'response_protocol': response_protocol,
+        'prompt_version': TABULAR_GENERATION_PLAN_PROMPT_VERSION,
+        'batch_budget': {
+            'max_rows': _safe_int(batch_budget.get('max_rows'), minimum=1),
+            'max_chars': _safe_int(batch_budget.get('max_chars'), minimum=1),
+            'input_tokens': _safe_int(batch_budget.get('input_token_budget'), minimum=1),
+            'output_tokens': _safe_int(batch_budget.get('output_token_budget'), minimum=1),
+        },
+    }
+    if output_verbosity:
+        plan['output_verbosity'] = output_verbosity
+    if not plan['run_id']:
+        raise ValueError('Planner run identity is missing')
+    plan['plan_hash'] = _hash_tabular_generation_plan(plan)
+    return plan
+
+
+def _validate_tabular_generation_plan(plan, run, input_schema_hash=None):
+    if not isinstance(plan, dict):
+        raise ValueError('Stored generation plan is not a JSON object')
+    required_keys = {
+        'version',
+        'run_id',
+        'created_at',
+        'source',
+        'model',
+        'request',
+        'output_fields',
+        'response_protocol',
+        'prompt_version',
+        'batch_budget',
+        'plan_hash',
+    }
+    allowed_keys = required_keys | {'output_verbosity'}
+    if set(plan) - allowed_keys:
+        raise ValueError('Stored generation plan contains unsupported properties')
+    if not required_keys.issubset(plan):
+        raise ValueError('Stored generation plan is missing required properties')
+    if _safe_int(plan.get('version')) != TABULAR_GENERATION_PLAN_VERSION:
+        raise ValueError('Stored generation plan version is not supported')
+    if str(plan.get('run_id') or '').strip() != str((run or {}).get('id') or '').strip():
+        raise ValueError('Stored generation plan run identity does not match')
+    if not str(plan.get('created_at') or '').strip():
+        raise ValueError('Stored generation plan creation time is missing')
+    expected_hash = _hash_tabular_generation_plan(plan)
+    if str(plan.get('plan_hash') or '').strip() != expected_hash:
+        raise ValueError('Stored generation plan hash does not match its contents')
+
+    source = plan.get('source')
+    if not isinstance(source, dict) or set(source) != {
+        'blob_path',
+        'blob_etag',
+        'row_count',
+        'input_schema_hash',
+    }:
+        raise ValueError('Stored generation plan source contract is invalid')
+    expected_source = _get_tabular_generation_plan_source(run)
+    for field_name in ('blob_path', 'blob_etag', 'row_count'):
+        if source.get(field_name) != expected_source.get(field_name):
+            raise ValueError(f'Stored generation plan source {field_name} does not match')
+    stored_input_schema_hash = str(source.get('input_schema_hash') or '').strip()
+    if not re.fullmatch(r'[0-9a-f]{64}', stored_input_schema_hash):
+        raise ValueError('Stored generation plan input schema hash is invalid')
+    if input_schema_hash and source.get('input_schema_hash') != input_schema_hash:
+        raise ValueError('Stored generation plan input schema hash does not match')
+
+    model_contract = plan.get('model')
+    if not isinstance(model_contract, dict) or set(model_contract) != {
+        'endpoint_id',
+        'model_id',
+        'deployment',
+    }:
+        raise ValueError('Stored generation plan model contract is invalid')
+    if not any(str(value or '').strip() for value in model_contract.values()):
+        raise ValueError('Stored generation plan model identity is missing')
+    if any(len(str(value or '')) > 500 for value in model_contract.values()):
+        raise ValueError('Stored generation plan model identity is too long')
+    expected_model_contract = (run or {}).get('planner_model')
+    if isinstance(expected_model_contract, dict) and any(expected_model_contract.values()):
+        normalized_expected_model = {
+            field_name: str(expected_model_contract.get(field_name) or '').strip()
+            for field_name in ('endpoint_id', 'model_id', 'deployment')
+        }
+        if model_contract != normalized_expected_model:
+            raise ValueError('Stored generation plan model identity does not match')
+
+    request_contract = plan.get('request')
+    expected_question_hash = hashlib.sha256(
+        str((run or {}).get('user_question') or '').encode('utf-8')
+    ).hexdigest()
+    if not isinstance(request_contract, dict) or request_contract != {
+        'question_hash': expected_question_hash,
+        'output_format': str((run or {}).get('output_format') or '').strip().lower(),
+    }:
+        raise ValueError('Stored generation plan request contract does not match')
+    if plan.get('response_protocol') != (
+        (run or {}).get('response_protocol_version') or TABULAR_RESPONSE_PROTOCOL_OBJECT_V1
+    ):
+        raise ValueError('Stored generation plan response protocol does not match')
+    if plan.get('prompt_version') != TABULAR_GENERATION_PLAN_PROMPT_VERSION:
+        raise ValueError('Stored generation plan prompt version does not match')
+
+    stored_batch_budget = plan.get('batch_budget')
+    run_batch_budget = (run or {}).get('batch_budget') or {}
+    expected_batch_budget = {
+        'max_rows': _safe_int(run_batch_budget.get('max_rows'), minimum=1),
+        'max_chars': _safe_int(run_batch_budget.get('max_chars'), minimum=1),
+        'input_tokens': _safe_int(run_batch_budget.get('input_token_budget'), minimum=1),
+        'output_tokens': _safe_int(run_batch_budget.get('output_token_budget'), minimum=1),
+    }
+    if stored_batch_budget != expected_batch_budget:
+        raise ValueError('Stored generation plan batch budget does not match')
+
+    output_verbosity = str(plan.get('output_verbosity') or '').strip()
+    if len(output_verbosity) > TABULAR_GENERATION_PLAN_MAX_GUIDANCE_CHARS:
+        raise ValueError('Stored generation plan output guidance is too long')
+
+    output_fields = plan.get('output_fields')
+    if not isinstance(output_fields, list) or len(output_fields) < 3:
+        raise ValueError('Stored generation plan output fields are invalid')
+    expected_server_fields = [
+        (TABULAR_EXPORT_OUTPUT_ROW_NUMBER_FIELD, 'integer'),
+        (TABULAR_EXPORT_OUTPUT_ROW_IDENTITY_FIELD, 'string'),
+    ]
+    for output_field, (expected_name, expected_type) in zip(output_fields[:2], expected_server_fields):
+        if not isinstance(output_field, dict) or set(output_field) != {
+            'name',
+            'description',
+            'type',
+            'nullable',
+            'source',
+        }:
+            raise ValueError('Stored generation plan server field properties are invalid')
+        if output_field.get('name') != expected_name:
+            raise ValueError('Stored generation plan server fields are invalid')
+        if output_field.get('type') != expected_type or output_field.get('source') != 'server':
+            raise ValueError('Stored generation plan server field contract is invalid')
+        if output_field.get('nullable') is not False:
+            raise ValueError('Stored generation plan server fields cannot be nullable')
+        description = str(output_field.get('description') or '').strip()
+        if not description or len(description) > TABULAR_GENERATION_PLAN_MAX_FIELD_DESCRIPTION_CHARS:
+            raise ValueError('Stored generation plan server field description is invalid')
+    normalized_llm_fields = _validate_tabular_generation_plan_output_fields(output_fields[2:])
+    if normalized_llm_fields != output_fields[2:]:
+        raise ValueError('Stored generation plan output fields are not normalized')
+    return plan
+
+
+def _get_tabular_generation_plan_output_schema(plan):
+    return [
+        str(output_field.get('name') or '').strip()
+        for output_field in (plan or {}).get('output_fields') or []
+        if isinstance(output_field, dict)
+    ]
+
+
 def _normalize_tabular_generation_rollout_settings(settings):
     settings = settings or {}
     return {
@@ -287,13 +713,13 @@ def _normalize_tabular_generation_rollout_settings(settings):
         'tabular_generation_plan_mode': _settings_mode(
             settings,
             'tabular_generation_plan_mode',
-            'off',
+            'shadow',
             TABULAR_ROLLOUT_PLANNER_MODES,
         ),
         'enable_tabular_generation_plan': _settings_bool(
             settings,
             'enable_tabular_generation_plan',
-            False,
+            True,
         ),
         'enable_tabular_compact_response_protocol': _settings_bool(
             settings,
@@ -887,6 +1313,10 @@ def _input_batches_blob_path(user_id, conversation_id, run_id):
     return f"{user_id}/{conversation_id}/generated/tabular_runs/{run_id}/input/input_batches.json"
 
 
+def _tabular_generation_plan_blob_path(user_id, conversation_id, run_id):
+    return f"{user_id}/{conversation_id}/generated/tabular_runs/{run_id}/plan/plan_v1.json"
+
+
 def _chunk_manifest_blob_prefix(user_id, conversation_id, run_id):
     return f"{user_id}/{conversation_id}/generated/tabular_runs/{run_id}/manifest/chunks/"
 
@@ -1081,6 +1511,50 @@ def _blob_exists(blob_path):
         blob=blob_path,
     )
     return bool(blob_client.exists())
+
+
+def _get_blob_metadata(blob_path):
+    blob_client = _get_blob_service_client().get_blob_client(
+        container=storage_account_personal_chat_container_name,
+        blob=blob_path,
+    )
+    blob_properties = blob_client.get_blob_properties()
+    if isinstance(blob_properties, dict):
+        metadata = blob_properties.get('metadata') or {}
+    else:
+        metadata = getattr(blob_properties, 'metadata', {}) or {}
+    return {
+        str(key).strip().lower(): str(value or '').strip()
+        for key, value in metadata.items()
+    }
+
+
+def _get_tabular_generation_plan_source_etag(run):
+    source = _get_tabular_generation_plan_source(run)
+    return str(source.get('blob_etag') or '').strip().strip('"') or 'unavailable'
+
+
+def _build_tabular_output_checkpoint_metadata(run, metadata=None):
+    checkpoint_metadata = dict(metadata or {})
+    plan_hash = str((run or {}).get('plan_hash') or '').strip()
+    if plan_hash:
+        checkpoint_metadata.update({
+            'plan_hash': plan_hash,
+            'source_etag': _get_tabular_generation_plan_source_etag(run),
+        })
+    return checkpoint_metadata
+
+
+def _validate_tabular_output_checkpoint_metadata(run, blob_path, batch_number):
+    expected_plan_hash = str((run or {}).get('plan_hash') or '').strip()
+    if not expected_plan_hash:
+        return
+    metadata = _get_blob_metadata(blob_path)
+    if metadata.get('plan_hash') != expected_plan_hash:
+        raise ValueError(f'Output checkpoint {batch_number} plan hash does not match')
+    expected_source_etag = _get_tabular_generation_plan_source_etag(run)
+    if metadata.get('source_etag') != expected_source_etag:
+        raise ValueError(f'Output checkpoint {batch_number} source ETag does not match')
 
 
 def _delete_blob_if_exists(blob_path):
@@ -2165,12 +2639,16 @@ def _build_model_aware_source_batch_budget(
     }
 
 
-def _build_chat_service(gpt_model, settings, model_context=None):
-    chunk_gpt_model, chunk_model_context = _resolve_tabular_chunk_model_selection(
-        gpt_model,
-        settings,
-        model_context=model_context,
-    )
+def _build_chat_service(gpt_model, settings, model_context=None, preselected=False):
+    if preselected:
+        chunk_gpt_model = gpt_model
+        chunk_model_context = model_context
+    else:
+        chunk_gpt_model, chunk_model_context = _resolve_tabular_chunk_model_selection(
+            gpt_model,
+            settings,
+            model_context=model_context,
+        )
     chat_service, _ = build_semantic_kernel_chat_service_for_model(
         chunk_gpt_model,
         settings,
@@ -2178,6 +2656,399 @@ def _build_chat_service(gpt_model, settings, model_context=None):
         model_context=chunk_model_context,
     )
     return chat_service
+
+
+def _get_tabular_generation_plan_mode(run):
+    persisted_mode = str((run or {}).get('plan_mode') or '').strip().lower()
+    if (
+        persisted_mode in {'shadow', 'active'}
+        and ((run or {}).get('plan_blob_path') or (run or {}).get('plan_hash'))
+    ):
+        return persisted_mode
+
+    rollout_settings = (run or {}).get('generation_rollout_settings') or {}
+    if not _settings_bool(rollout_settings, 'enable_tabular_generation_plan', False):
+        return 'off'
+    return _settings_mode(
+        rollout_settings,
+        'tabular_generation_plan_mode',
+        'off',
+        TABULAR_ROLLOUT_PLANNER_MODES,
+    )
+
+
+def _resolve_tabular_generation_planner_model(run, settings):
+    chunk_model = str((run or {}).get('chunk_gpt_model') or '').strip()
+    chunk_model_context = (run or {}).get('chunk_model_context')
+    if not chunk_model:
+        chunk_model, chunk_model_context = _resolve_tabular_chunk_model_selection(
+            (run or {}).get('gpt_model'),
+            settings,
+            model_context=(run or {}).get('model_context'),
+        )
+    chunk_model_context = chunk_model_context if isinstance(chunk_model_context, dict) else {}
+    endpoint_id = next((
+        str(chunk_model_context.get(field_name) or '').strip()
+        for field_name in ('endpoint_id', 'endpointId', 'endpoint', 'id')
+        if chunk_model_context.get(field_name)
+    ), '')
+    model_id = next((
+        str(chunk_model_context.get(field_name) or '').strip()
+        for field_name in ('model_id', 'modelId', 'model_name', 'modelName')
+        if chunk_model_context.get(field_name)
+    ), '')
+    deployment = next((
+        str(chunk_model_context.get(field_name) or '').strip()
+        for field_name in ('model_deployment', 'deploymentName', 'deployment_name', 'deployment')
+        if chunk_model_context.get(field_name)
+    ), '')
+    normalized_chunk_model = str(chunk_model or '').strip()
+    return {
+        'endpoint_id': endpoint_id,
+        'model_id': model_id or normalized_chunk_model,
+        'deployment': deployment or normalized_chunk_model,
+    }
+
+
+def _load_tabular_generation_plan_sample_rows(run, input_batches):
+    batch_count = _safe_int((run or {}).get('batch_count'), minimum=0)
+    if batch_count <= 0:
+        raise ValueError('Planner cannot sample a run without input batches')
+
+    sample_rows = []
+    batch_numbers = [1]
+    if batch_count > 1:
+        batch_numbers.append(batch_count)
+    for batch_number in batch_numbers:
+        batch_rows = _load_input_batch_rows(
+            run,
+            input_batches,
+            (run or {}).get('user_id'),
+            (run or {}).get('id'),
+            batch_number,
+            batch_count,
+        )
+        remaining_rows = TABULAR_GENERATION_PLAN_MAX_SAMPLE_ROWS - len(sample_rows)
+        if remaining_rows <= 0:
+            break
+        sample_rows.extend(batch_rows[:remaining_rows])
+    return sample_rows
+
+
+def _build_tabular_generation_plan_prompt(run, input_contract):
+    user_question = str((run or {}).get('user_question') or '').strip()
+    if not user_question:
+        raise ValueError('Planner user instructions are empty')
+    if len(user_question) > TABULAR_GENERATION_PLAN_MAX_QUESTION_CHARS:
+        raise ValueError('Planner user instructions exceed the bounded planning limit')
+
+    planner_input = {
+        'columns': input_contract.get('columns') or [],
+        'sample_shapes': input_contract.get('sample_shapes') or [],
+    }
+    return (
+        'Design the stable output schema for a row-by-row tabular generation run.\n\n'
+        f'User instructions:\n{user_question}\n\n'
+        f"Requested output format: {str((run or {}).get('output_format') or '').strip().lower()}\n"
+        f"Source row count: {_safe_int((run or {}).get('row_count'), minimum=0)}\n"
+        f'Bounded input schema and redacted value shapes:\n{_dump_generated_output_json(planner_input)}\n\n'
+        'Return ONLY one JSON object with output_fields and optional output_verbosity. '
+        'output_fields must be a non-empty array in exact output order. Each field object must contain '
+        'name, description, type, nullable, and source. source must be "llm". Supported types are '
+        'string, integer, number, boolean, object, and array. Do not include source_row_number, '
+        'source_row_identity, or any __simplechat fields; the server adds source metadata. '
+        'Preserve every explicit output field requested by the user. Do not answer any source row, '
+        'copy sample content, include markdown, or add other top-level properties.'
+    )
+
+
+async def _generate_tabular_generation_plan(
+    chat_service,
+    run,
+    input_contract,
+    planner_model,
+    timeout_seconds,
+):
+    planner_prompt = _build_tabular_generation_plan_prompt(run, input_contract)
+    bounded_timeout_seconds = min(
+        max(_safe_float(timeout_seconds, default=120), 30),
+        120,
+    )
+    last_error = None
+    last_reason = 'provider_failure'
+    total_started_at = time.monotonic()
+    for attempt_number in range(1, TABULAR_GENERATION_PLAN_DEFAULT_RETRY_ATTEMPTS + 1):
+        chat_history = SKChatHistory()
+        chat_history.add_system_message(
+            'You plan stable tabular output schemas. Return only the requested compact JSON plan. '
+            'Never answer rows or reproduce source values.'
+        )
+        if attempt_number > 1:
+            chat_history.add_system_message(
+                'The previous response was invalid. Return exactly the requested JSON shape with all '
+                'explicitly requested output fields and no extra properties.'
+            )
+        chat_history.add_user_message(planner_prompt)
+        execution_settings = AzureChatPromptExecutionSettings(
+            service_id='tabular-generated-output-background'
+        )
+        try:
+            attempt_started_at = time.monotonic()
+            result = await asyncio.wait_for(
+                chat_service.get_chat_message_contents(chat_history, execution_settings),
+                timeout=bounded_timeout_seconds,
+            )
+            model_latency_seconds = time.monotonic() - attempt_started_at
+            raw_response_content = result[0].content if result and result[0].content else ''
+            planner_payload = _parse_generated_json_object(raw_response_content)
+            plan = _build_tabular_generation_plan(
+                run,
+                planner_payload,
+                input_contract,
+                planner_model,
+            )
+            usage = _extract_tabular_response_usage(result)
+            metrics = {
+                'attempt_count': attempt_number,
+                'latency_seconds': round(time.monotonic() - total_started_at, 3),
+                'model_latency_seconds': round(model_latency_seconds, 3),
+                'input_char_count': len(planner_prompt),
+                'response_char_count': len(raw_response_content),
+                'input_token_count': usage.get('input_token_count'),
+                'output_token_count': usage.get('output_token_count'),
+                'total_token_count': usage.get('total_token_count'),
+            }
+            return plan, metrics
+        except asyncio.TimeoutError as exc:
+            last_error = exc
+            last_reason = 'timeout'
+        except ValueError as exc:
+            last_error = exc
+            last_reason = 'invalid_response'
+        except Exception as exc:
+            last_error = exc
+            last_reason = 'provider_failure'
+
+        log_event(
+            '[TABULAR_GENERATION_PLAN] Planner attempt failed',
+            {
+                'run_id': (run or {}).get('id'),
+                'attempt_number': attempt_number,
+                'failure_reason': last_reason,
+                'exception_type': type(last_error).__name__ if last_error else None,
+            },
+            debug_only=True,
+        )
+
+    raise TabularGenerationPlanError(last_reason) from last_error
+
+
+def _apply_active_tabular_generation_plan(run, plan):
+    planned_output_schema = _get_tabular_generation_plan_output_schema(plan)
+    current_output_schema = list((run or {}).get('output_schema') or [])
+    if current_output_schema and current_output_schema != planned_output_schema:
+        raise ValueError('Active generation plan schema does not match the persisted run schema')
+    run['output_schema'] = planned_output_schema
+
+
+def _recover_tabular_generation_plan(run, input_contract, plan_blob_path, plan_mode):
+    plan = _download_json_blob(plan_blob_path)
+    _validate_tabular_generation_plan(
+        plan,
+        run,
+        input_schema_hash=input_contract.get('input_schema_hash'),
+    )
+    persisted_plan_hash = str((run or {}).get('plan_hash') or '').strip()
+    if persisted_plan_hash and persisted_plan_hash != plan.get('plan_hash'):
+        raise ValueError('Stored generation plan hash does not match the run record')
+    if plan_mode == 'active':
+        _apply_active_tabular_generation_plan(run, plan)
+
+    run.update({
+        'plan_blob_path': plan_blob_path,
+        'plan_hash': plan.get('plan_hash'),
+        'plan_mode': plan_mode,
+        'plan_status': 'ready',
+        'plan_failure_reason': None,
+        'planner_model': plan.get('model'),
+        'planner_completed_at': plan.get('created_at'),
+        'updated_at': _now_iso(),
+        'last_heartbeat_at': _now_iso(),
+    })
+    return _replace_claimed_run(run), plan
+
+
+def _mark_tabular_generation_plan_fallback(run, reason, attempt_count=0, latency_seconds=None):
+    now = _now_iso()
+    run.update({
+        'plan_status': 'fallback',
+        'plan_failure_reason': str(reason or 'provider_failure'),
+        'planner_attempt_count': _safe_int(attempt_count, minimum=0),
+        'planner_latency_seconds': latency_seconds,
+        'planner_completed_at': now,
+        'updated_at': now,
+        'last_heartbeat_at': now,
+    })
+    persisted_run = _replace_claimed_run(run)
+    log_event(
+        '[TABULAR_GENERATION_PLAN] Planner fell back to LLM schema discovery',
+        {
+            'run_id': persisted_run.get('id'),
+            'plan_mode': persisted_run.get('plan_mode'),
+            'failure_reason': persisted_run.get('plan_failure_reason'),
+            'attempt_count': persisted_run.get('planner_attempt_count'),
+        },
+        level=logging.WARNING,
+    )
+    return persisted_run
+
+
+def _ensure_tabular_generation_plan(
+    run,
+    chat_service,
+    input_batches,
+    settings,
+    batch_timeout_seconds,
+):
+    plan_mode = _get_tabular_generation_plan_mode(run)
+    task_type = _normalize_tabular_run_task_type((run or {}).get('task_type'))
+    if (
+        task_type not in {TABULAR_RUN_TASK_STRUCTURED_EXPORT, TABULAR_RUN_TASK_COMBINED}
+        or (run or {}).get('passthrough_input_rows')
+        or chat_service is None
+    ):
+        if (run or {}).get('plan_status') not in {'ready', 'fallback', 'not_applicable'}:
+            run.update({
+                'plan_mode': 'off',
+                'plan_status': 'not_applicable',
+                'updated_at': _now_iso(),
+            })
+            return _replace_claimed_run(run)
+        return run
+    if plan_mode == 'off' and not ((run or {}).get('plan_blob_path') or (run or {}).get('plan_hash')):
+        if (run or {}).get('plan_status') not in {'disabled', 'fallback'}:
+            run.update({
+                'plan_mode': 'off',
+                'plan_status': 'disabled',
+                'updated_at': _now_iso(),
+            })
+            return _replace_claimed_run(run)
+        return run
+
+    sample_rows = _load_tabular_generation_plan_sample_rows(run, input_batches)
+    input_contract = _build_tabular_generation_plan_input_contract(sample_rows)
+    plan_blob_path = _tabular_generation_plan_blob_path(
+        (run or {}).get('user_id'),
+        (run or {}).get('conversation_id'),
+        (run or {}).get('id'),
+    )
+    stored_plan_blob_path = str((run or {}).get('plan_blob_path') or '').strip()
+    if stored_plan_blob_path and stored_plan_blob_path != plan_blob_path:
+        raise ValueError('Stored generation plan path does not match the run identity')
+    if _blob_exists(plan_blob_path):
+        recovered_run, _ = _recover_tabular_generation_plan(
+            run,
+            input_contract,
+            plan_blob_path,
+            plan_mode,
+        )
+        return recovered_run
+    if stored_plan_blob_path or (run or {}).get('plan_hash'):
+        raise ValueError('Stored generation plan blob is missing')
+    if (run or {}).get('plan_status') == 'fallback':
+        return run
+    if (run or {}).get('plan_status') == 'planning':
+        return _mark_tabular_generation_plan_fallback(run, 'interrupted_before_persistence')
+
+    planner_model = _resolve_tabular_generation_planner_model(run, settings)
+    now = _now_iso()
+    run.update({
+        'plan_mode': plan_mode,
+        'plan_status': 'planning',
+        'plan_failure_reason': None,
+        'planner_model': planner_model,
+        'planner_started_at': now,
+        'updated_at': now,
+        'last_heartbeat_at': now,
+    })
+    run = _replace_claimed_run(run)
+    try:
+        plan, metrics = asyncio.run(_generate_tabular_generation_plan(
+            chat_service,
+            run,
+            input_contract,
+            planner_model,
+            batch_timeout_seconds,
+        ))
+    except TabularGenerationPlanError as exc:
+        return _mark_tabular_generation_plan_fallback(
+            run,
+            exc.reason,
+            attempt_count=TABULAR_GENERATION_PLAN_DEFAULT_RETRY_ATTEMPTS,
+        )
+    except ValueError:
+        return _mark_tabular_generation_plan_fallback(run, 'invalid_input')
+
+    try:
+        _upload_json_blob(
+            plan_blob_path,
+            plan,
+            metadata={
+                'run_id': run.get('id'),
+                'conversation_id': run.get('conversation_id'),
+                'generation_plan': 'true',
+                'plan_hash': plan.get('plan_hash'),
+                'source_etag': str((plan.get('source') or {}).get('blob_etag') or '').strip('"'),
+                'contract_version': TABULAR_GENERATION_PLAN_VERSION,
+            },
+            overwrite=False,
+        )
+    except ResourceExistsError:
+        recovered_run, _ = _recover_tabular_generation_plan(
+            run,
+            input_contract,
+            plan_blob_path,
+            plan_mode,
+        )
+        return recovered_run
+
+    if plan_mode == 'active':
+        _apply_active_tabular_generation_plan(run, plan)
+    run.update({
+        'plan_blob_path': plan_blob_path,
+        'plan_hash': plan.get('plan_hash'),
+        'plan_status': 'ready',
+        'plan_failure_reason': None,
+        'planner_attempt_count': metrics.get('attempt_count'),
+        'planner_latency_seconds': metrics.get('latency_seconds'),
+        'planner_model_latency_seconds': metrics.get('model_latency_seconds'),
+        'planner_input_char_count': metrics.get('input_char_count'),
+        'planner_response_char_count': metrics.get('response_char_count'),
+        'planner_input_token_count': metrics.get('input_token_count'),
+        'planner_output_token_count': metrics.get('output_token_count'),
+        'planner_total_token_count': metrics.get('total_token_count'),
+        'planner_completed_at': plan.get('created_at'),
+        'updated_at': _now_iso(),
+        'last_heartbeat_at': _now_iso(),
+    })
+    persisted_run = _replace_claimed_run(run)
+    log_event(
+        '[TABULAR_GENERATION_PLAN] Immutable generation plan ready',
+        {
+            'run_id': persisted_run.get('id'),
+            'plan_mode': plan_mode,
+            'plan_hash': persisted_run.get('plan_hash'),
+            'planner_attempt_count': persisted_run.get('planner_attempt_count'),
+            'planner_latency_seconds': persisted_run.get('planner_latency_seconds'),
+            'planner_input_char_count': persisted_run.get('planner_input_char_count'),
+            'planner_response_char_count': persisted_run.get('planner_response_char_count'),
+            'planner_input_token_count': persisted_run.get('planner_input_token_count'),
+            'planner_output_token_count': persisted_run.get('planner_output_token_count'),
+            'planner_total_token_count': persisted_run.get('planner_total_token_count'),
+        },
+        level=logging.INFO,
+    )
+    return persisted_run
 
 
 async def _generate_batch_entries(
@@ -4007,6 +4878,7 @@ def _write_ordered_output_stream(run, output_stream):
     expected_source_row_number = 1
     for batch_number in range(1, batch_count + 1):
         batch_blob_path = _output_blob_path(user_id, conversation_id, run_id, batch_number)
+        _validate_tabular_output_checkpoint_metadata(run, batch_blob_path, batch_number)
         batch_entries = _download_json_blob(batch_blob_path)
         if not isinstance(batch_entries, list):
             raise ValueError(f'Output checkpoint {batch_number}/{batch_count} was not a JSON array')
@@ -4448,6 +5320,7 @@ def _build_batch_window(run, input_batches, user_id, run_id, window_start, windo
         )
 
         if _blob_exists(output_blob_path) and not run.get('regenerate_legacy_output_checkpoints'):
+            _validate_tabular_output_checkpoint_metadata(run, output_blob_path, batch_number)
             batch_entries = _download_json_blob(output_blob_path)
             expected_output_schema = set(run.get('output_schema') or [])
             if not isinstance(batch_entries, list) or not batch_entries:
@@ -4471,12 +5344,12 @@ def _build_batch_window(run, input_batches, user_id, run_id, window_start, windo
                 _upload_json_blob(
                     summary_blob_path,
                     _build_generated_batch_summary(batch_entries),
-                    metadata={
+                    metadata=_build_tabular_output_checkpoint_metadata(run, {
                         'run_id': run_id,
                         'conversation_id': run.get('conversation_id'),
                         'batch_number': batch_number,
                         'generated_output_summary': 'true',
-                    },
+                    }),
                 )
             batch_results[batch_number] = {
                 'batch_number': batch_number,
@@ -4570,6 +5443,8 @@ def _build_combined_batch_window(run, input_batches, user_id, run_id, window_sta
         )
 
         if _blob_exists(output_blob_path) and _blob_exists(analysis_blob_path):
+            _validate_tabular_output_checkpoint_metadata(run, output_blob_path, batch_number)
+            _validate_tabular_output_checkpoint_metadata(run, analysis_blob_path, batch_number)
             batch_entries = _download_json_blob(output_blob_path)
             analysis_summary = _download_json_blob(analysis_blob_path)
             expected_output_schema = set(run.get('output_schema') or [])
@@ -4616,6 +5491,60 @@ def _build_combined_batch_window(run, input_batches, user_id, run_id, window_sta
     return batch_results, batch_requests
 
 
+def _record_shadow_tabular_generation_plan_comparison(run, actual_output_schema):
+    if _get_tabular_generation_plan_mode(run) != 'shadow':
+        return False
+    if (run or {}).get('plan_status') != 'ready' or (run or {}).get('plan_shadow_comparison'):
+        return False
+
+    plan_blob_path = str((run or {}).get('plan_blob_path') or '').strip()
+    if not plan_blob_path:
+        raise ValueError('Shadow generation plan path is missing')
+    plan = _download_json_blob(plan_blob_path)
+    _validate_tabular_generation_plan(plan, run)
+    if plan.get('plan_hash') != (run or {}).get('plan_hash'):
+        raise ValueError('Shadow generation plan hash does not match the run record')
+
+    planned_schema = _get_tabular_generation_plan_output_schema(plan)
+    actual_schema = list(actual_output_schema or [])
+    planned_field_set = set(planned_schema)
+    actual_field_set = set(actual_schema)
+    additions = [field_name for field_name in actual_schema if field_name not in planned_field_set]
+    omissions = [field_name for field_name in planned_schema if field_name not in actual_field_set]
+    reorderings = [
+        field_name
+        for field_name in actual_schema
+        if field_name in planned_field_set
+        and actual_schema.index(field_name) != planned_schema.index(field_name)
+    ]
+    comparison = {
+        'agreement': actual_schema == planned_schema,
+        'planned_field_count': len(planned_schema),
+        'actual_field_count': len(actual_schema),
+        'additions': additions[:TABULAR_GENERATION_PLAN_MAX_FIELDS],
+        'omissions': omissions[:TABULAR_GENERATION_PLAN_MAX_FIELDS],
+        'reorderings': reorderings[:TABULAR_GENERATION_PLAN_MAX_FIELDS],
+    }
+    run.update({
+        'plan_shadow_comparison': comparison,
+        'plan_shadow_compared_at': _now_iso(),
+    })
+    log_event(
+        '[TABULAR_GENERATION_PLAN] Shadow schema comparison completed',
+        {
+            'run_id': (run or {}).get('id'),
+            'agreement': comparison['agreement'],
+            'planned_field_count': comparison['planned_field_count'],
+            'actual_field_count': comparison['actual_field_count'],
+            'addition_count': len(additions),
+            'omission_count': len(omissions),
+            'reordering_count': len(reorderings),
+        },
+        debug_only=True,
+    )
+    return True
+
+
 def _checkpoint_generated_batch_results(run, generated_results):
     _raise_if_tabular_export_canceled(run)
     batch_results = {}
@@ -4632,8 +5561,13 @@ def _checkpoint_generated_batch_results(run, generated_results):
 
     if not expected_output_schema:
         raise ValueError('Generated output schema could not be established')
+    run_contract_changed = False
     if list(run.get('output_schema') or []) != expected_output_schema:
         run['output_schema'] = expected_output_schema
+        run_contract_changed = True
+    if _record_shadow_tabular_generation_plan_comparison(run, expected_output_schema):
+        run_contract_changed = True
+    if run_contract_changed:
         persisted_run = _replace_claimed_run(run)
         run.clear()
         run.update(persisted_run)
@@ -4652,16 +5586,17 @@ def _checkpoint_generated_batch_results(run, generated_results):
             _upload_json_blob(
                 output_blob_path,
                 generated_result['batch_entries'],
-                metadata={
+                metadata=_build_tabular_output_checkpoint_metadata(run, {
                     'run_id': run.get('id'),
                     'conversation_id': run.get('conversation_id'),
                     'batch_number': batch_number,
                     'generated_output': 'true',
                     'lease_generation': run.get('lease_generation'),
-                },
+                }),
                 overwrite=bool(run.get('regenerate_legacy_output_checkpoints')),
             )
         except ResourceExistsError:
+            _validate_tabular_output_checkpoint_metadata(run, output_blob_path, batch_number)
             checkpoint_entries = _download_json_blob(output_blob_path)
             if (
                 not isinstance(checkpoint_entries, list)
@@ -4686,12 +5621,12 @@ def _checkpoint_generated_batch_results(run, generated_results):
             generated_result.get('batch_summary') or _build_generated_batch_summary(
                 generated_result['batch_entries']
             ),
-            metadata={
+            metadata=_build_tabular_output_checkpoint_metadata(run, {
                 'run_id': run.get('id'),
                 'conversation_id': run.get('conversation_id'),
                 'batch_number': batch_number,
                 'generated_output_summary': 'true',
-            },
+            }),
         )
         checkpoint_seconds = time.monotonic() - checkpoint_started_at
         log_event(
@@ -4745,16 +5680,17 @@ def _checkpoint_combined_batch_results(run, generated_results):
             _upload_json_blob(
                 analysis_blob_path,
                 analysis_summary,
-                metadata={
+                metadata=_build_tabular_output_checkpoint_metadata(run, {
                     'run_id': run.get('id'),
                     'conversation_id': run.get('conversation_id'),
                     'batch_number': batch_number,
                     'tabular_combined_analysis_summary': 'true',
                     'lease_generation': run.get('lease_generation'),
-                },
+                }),
                 overwrite=False,
             )
         except ResourceExistsError:
+            _validate_tabular_output_checkpoint_metadata(run, analysis_blob_path, batch_number)
             checkpoint_summary = _download_json_blob(analysis_blob_path)
             if not isinstance(checkpoint_summary, dict):
                 raise ValueError(f'Concurrent combined analysis checkpoint {batch_number} was malformed')
@@ -5296,10 +6232,16 @@ def process_tabular_generated_output_run(run_id, user_id):
         )
         chat_service = None
         if not run.get('passthrough_input_rows'):
+            has_snapshotted_chunk_model = bool(str(run.get('chunk_gpt_model') or '').strip())
             chat_service = _build_chat_service(
-                run.get('gpt_model'),
+                run.get('chunk_gpt_model') if has_snapshotted_chunk_model else run.get('gpt_model'),
                 settings,
-                model_context=run.get('model_context'),
+                model_context=(
+                    run.get('chunk_model_context')
+                    if has_snapshotted_chunk_model
+                    else run.get('model_context')
+                ),
+                preselected=has_snapshotted_chunk_model,
             )
         completed_batches = _safe_int(run.get('completed_batches'))
         processed_rows = _safe_int(run.get('processed_rows'))
@@ -5311,6 +6253,14 @@ def process_tabular_generated_output_run(run_id, user_id):
             input_batches = _download_json_blob(input_batches_blob_path)
             if not isinstance(input_batches, list):
                 raise ValueError('Input batches blob was not a JSON array')
+
+        run = _ensure_tabular_generation_plan(
+            run,
+            chat_service,
+            input_batches,
+            settings,
+            batch_timeout_seconds,
+        )
 
         log_event(
             '[TABULAR_GENERATED_OUTPUT] Background export run started',
@@ -5514,7 +6464,19 @@ def queue_tabular_generated_output_run(
         task_type=normalized_task_type,
         user_question=user_question,
     )
+    chunk_gpt_model, chunk_model_context = _resolve_tabular_chunk_model_selection(
+        gpt_model,
+        settings,
+        model_context=model_context,
+    )
     rollout_settings = _normalize_tabular_generation_rollout_settings(settings)
+    requested_plan_mode = (
+        rollout_settings.get('tabular_generation_plan_mode')
+        if rollout_settings.get('enable_tabular_generation_plan')
+        else 'off'
+    )
+    if normalized_task_type == TABULAR_RUN_TASK_HIERARCHICAL_ANALYSIS or passthrough_input_rows:
+        requested_plan_mode = 'off'
 
     if source_descriptor:
         staged_row_count = _safe_int(source_descriptor.get('expected_row_count'))
@@ -5593,6 +6555,8 @@ def queue_tabular_generated_output_run(
         'output_format': normalized_output_format,
         'gpt_model': str(gpt_model or '').strip(),
         'model_context': model_context if isinstance(model_context, dict) else {},
+        'chunk_gpt_model': str(chunk_gpt_model or '').strip(),
+        'chunk_model_context': chunk_model_context if isinstance(chunk_model_context, dict) else {},
         'passthrough_input_rows': bool(passthrough_input_rows),
         'generated_file_name': generated_file_name,
         'analysis_generated_file_name': analysis_generated_file_name,
@@ -5614,6 +6578,12 @@ def queue_tabular_generated_output_run(
         'generation_completed_at': None,
         'plan_blob_path': None,
         'plan_hash': None,
+        'plan_mode': requested_plan_mode,
+        'plan_status': 'pending' if requested_plan_mode in {'shadow', 'active'} else 'disabled',
+        'plan_failure_reason': None,
+        'planner_model': None,
+        'planner_started_at': None,
+        'planner_completed_at': None,
         'processed_rows': 0,
         'output_schema': None,
         'source_descriptor': source_descriptor or None,
