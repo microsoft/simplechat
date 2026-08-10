@@ -1475,6 +1475,10 @@ def _output_blob_path(user_id, conversation_id, run_id, batch_number):
     return f"{user_id}/{conversation_id}/generated/tabular_runs/{run_id}/output/batch_{batch_number:06d}.json"
 
 
+def _output_blob_prefix(user_id, conversation_id, run_id):
+    return f"{user_id}/{conversation_id}/generated/tabular_runs/{run_id}/output/"
+
+
 def _output_summary_blob_path(user_id, conversation_id, run_id, batch_number):
     return f"{user_id}/{conversation_id}/generated/tabular_runs/{run_id}/summary/batch_{batch_number:06d}.json"
 
@@ -1689,6 +1693,36 @@ def _build_tabular_output_checkpoint_metadata(run, metadata=None):
             'source_etag': _get_tabular_generation_plan_source_etag(run),
         })
     return checkpoint_metadata
+
+
+def _scan_output_checkpoint_batches_for_run(run):
+    user_id = str((run or {}).get('user_id') or '').strip()
+    conversation_id = str((run or {}).get('conversation_id') or '').strip()
+    run_id = str((run or {}).get('id') or '').strip()
+    batch_count = _safe_int((run or {}).get('batch_count'), default=0, minimum=0)
+    if not user_id or not conversation_id or not run_id or batch_count <= 0:
+        return set()
+
+    output_prefix = _output_blob_prefix(user_id, conversation_id, run_id)
+    container_client = _get_blob_service_client().get_container_client(
+        storage_account_personal_chat_container_name,
+    )
+    output_batch_numbers = set()
+    for blob_properties in container_client.list_blobs(name_starts_with=output_prefix):
+        if isinstance(blob_properties, dict):
+            blob_name = str(blob_properties.get('name') or '').strip()
+        else:
+            blob_name = str(getattr(blob_properties, 'name', '') or '').strip()
+        if not blob_name.startswith(output_prefix):
+            continue
+        suffix = blob_name[len(output_prefix):]
+        match = re.fullmatch(r'batch_(\d{6})\.json', suffix)
+        if not match:
+            continue
+        batch_number = _safe_int(match.group(1), default=0, minimum=0)
+        if 1 <= batch_number <= batch_count:
+            output_batch_numbers.add(batch_number)
+    return output_batch_numbers
 
 
 def _validate_tabular_output_checkpoint_metadata(run, blob_path, batch_number):
@@ -3541,6 +3575,110 @@ async def _generate_batch_window_entries(
             continue
         successful_results.append(gathered_result)
     return successful_results, first_error
+
+
+def _is_completion_driven_checkpointing_enabled(settings):
+    rollout_settings = _normalize_tabular_generation_rollout_settings(settings or {})
+    return bool(rollout_settings.get('enable_tabular_completion_driven_checkpointing'))
+
+
+def _get_checkpoint_writer_concurrency(settings):
+    rollout_settings = _normalize_tabular_generation_rollout_settings(settings or {})
+    return _safe_int(
+        rollout_settings.get('tabular_generation_checkpoint_writer_concurrency'),
+        default=TABULAR_GENERATION_DEFAULT_CHECKPOINT_WRITER_CONCURRENCY,
+        minimum=1,
+        maximum=16,
+    )
+
+
+async def _checkpoint_generated_result_async(run, generated_result, writer_semaphore):
+    async with writer_semaphore:
+        checkpoint_results = await asyncio.to_thread(
+            _checkpoint_generated_batch_results,
+            run,
+            [generated_result],
+        )
+    return checkpoint_results
+
+
+async def _generate_and_checkpoint_batch_window_entries(
+    run,
+    chat_service,
+    user_question,
+    batch_requests,
+    total_batches,
+    source_file_name,
+    selected_sheet,
+    retry_attempts,
+    run_id,
+    batch_concurrency,
+    checkpoint_writer_concurrency,
+    expected_output_schema=None,
+    batch_timeout_seconds=TABULAR_EXPORT_DEFAULT_BATCH_TIMEOUT_SECONDS,
+    response_protocol=TABULAR_RESPONSE_PROTOCOL_OBJECT_V1,
+    generation_plan=None,
+):
+    semaphore = asyncio.Semaphore(max(1, batch_concurrency))
+    writer_semaphore = asyncio.Semaphore(max(1, checkpoint_writer_concurrency))
+    tasks = [
+        asyncio.create_task(
+            _generate_batch_entries_for_window(
+                semaphore,
+                chat_service,
+                user_question,
+                batch_request,
+                total_batches,
+                source_file_name,
+                selected_sheet,
+                retry_attempts,
+                run_id,
+                expected_output_schema,
+                batch_timeout_seconds,
+                response_protocol,
+                generation_plan,
+            )
+        )
+        for batch_request in batch_requests
+    ]
+    batch_results = {}
+    first_error = None
+    checkpoint_tasks = set()
+    checkpoint_high_water_mark = max(1, checkpoint_writer_concurrency) * 2
+
+    def collect_checkpoint_results(completed_checkpoint_tasks):
+        nonlocal first_error
+        for checkpointed_task in completed_checkpoint_tasks:
+            try:
+                checkpointed_result = checkpointed_task.result()
+            except Exception as exc:
+                if first_error is None:
+                    first_error = exc
+                continue
+            batch_results.update(checkpointed_result)
+
+    for completed_task in asyncio.as_completed(tasks):
+        try:
+            generated_result = await completed_task
+        except Exception as exc:
+            if first_error is None:
+                first_error = exc
+            continue
+        checkpoint_task = asyncio.create_task(
+            _checkpoint_generated_result_async(run, generated_result, writer_semaphore)
+        )
+        checkpoint_tasks.add(checkpoint_task)
+        if len(checkpoint_tasks) >= checkpoint_high_water_mark:
+            completed_checkpoint_tasks, checkpoint_tasks = await asyncio.wait(
+                checkpoint_tasks,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            collect_checkpoint_results(completed_checkpoint_tasks)
+
+    if checkpoint_tasks:
+        completed_checkpoint_tasks, _ = await asyncio.wait(checkpoint_tasks)
+        collect_checkpoint_results(completed_checkpoint_tasks)
+    return batch_results, first_error
 
 
 async def _generate_analysis_chunk_summary(
@@ -5554,9 +5692,19 @@ def _load_input_batch_rows(run, input_batches, user_id, run_id, batch_number, ba
     return batch_rows
 
 
-def _build_batch_window(run, input_batches, user_id, run_id, window_start, window_end, batch_count):
+def _build_batch_window(
+    run,
+    input_batches,
+    user_id,
+    run_id,
+    window_start,
+    window_end,
+    batch_count,
+    durable_output_batches=None,
+):
     batch_results = {}
     batch_requests = []
+    listed_output_batches = durable_output_batches if durable_output_batches is not None else None
     for batch_number in range(window_start, window_end + 1):
         batch_started_at = time.monotonic()
         output_blob_path = _output_blob_path(
@@ -5565,8 +5713,13 @@ def _build_batch_window(run, input_batches, user_id, run_id, window_start, windo
             run_id,
             batch_number,
         )
+        output_checkpoint_exists = (
+            batch_number in listed_output_batches
+            if listed_output_batches is not None
+            else _blob_exists(output_blob_path)
+        )
 
-        if _blob_exists(output_blob_path) and not run.get('regenerate_legacy_output_checkpoints'):
+        if output_checkpoint_exists and not run.get('regenerate_legacy_output_checkpoints'):
             _validate_tabular_output_checkpoint_metadata(run, output_blob_path, batch_number)
             batch_entries = _download_json_blob(output_blob_path)
             expected_output_schema = set(run.get('output_schema') or [])
@@ -6566,6 +6719,7 @@ def process_tabular_generated_output_run(run_id, user_id):
                 settings,
             )
 
+        durable_output_batches = _scan_output_checkpoint_batches_for_run(run)
         while completed_batches < batch_count:
             _raise_if_tabular_export_canceled(run)
             window_start = completed_batches + 1
@@ -6580,6 +6734,7 @@ def process_tabular_generated_output_run(run_id, user_id):
                 window_start,
                 window_end,
                 batch_count,
+                durable_output_batches=durable_output_batches,
             )
 
             generation_error = None
@@ -6601,6 +6756,29 @@ def process_tabular_generated_output_run(run_id, user_id):
                 )
                 if run.get('passthrough_input_rows'):
                     generated_results = _build_passthrough_batch_results(run, batch_requests)
+                elif _is_completion_driven_checkpointing_enabled(settings):
+                    generated_batch_results, generation_error = asyncio.run(
+                        _generate_and_checkpoint_batch_window_entries(
+                            run,
+                            chat_service,
+                            run.get('user_question'),
+                            batch_requests,
+                            batch_count,
+                            run.get('source_file_name'),
+                            run.get('selected_sheet'),
+                            retry_attempts,
+                            normalized_run_id,
+                            batch_concurrency,
+                            _get_checkpoint_writer_concurrency(settings),
+                            expected_output_schema=run.get('output_schema'),
+                            batch_timeout_seconds=batch_timeout_seconds,
+                            response_protocol=run.get('response_protocol_version'),
+                            generation_plan=generation_plan,
+                        )
+                    )
+                    batch_results.update(generated_batch_results)
+                    durable_output_batches.update(generated_batch_results)
+                    generated_results = []
                 else:
                     generated_results, generation_error = asyncio.run(
                         _generate_batch_window_entries(
@@ -6620,7 +6798,10 @@ def process_tabular_generated_output_run(run_id, user_id):
                         )
                     )
                 _raise_if_tabular_export_canceled(run)
-                batch_results.update(_checkpoint_generated_batch_results(run, generated_results))
+                if generated_results:
+                    checkpointed_batch_results = _checkpoint_generated_batch_results(run, generated_results)
+                    batch_results.update(checkpointed_batch_results)
+                    durable_output_batches.update(checkpointed_batch_results)
 
             previous_completed_batches = completed_batches
             run, completed_batches, processed_rows = _advance_run_progress_for_window(
