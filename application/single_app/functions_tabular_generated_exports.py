@@ -56,6 +56,12 @@ TABULAR_EXPORT_RUN_TYPE = 'tabular_generated_output_run'
 TABULAR_EXPORT_CONTRACT_VERSION = 3
 TABULAR_GENERATION_CONTRACT_VERSION = 1
 TABULAR_RESPONSE_PROTOCOL_OBJECT_V1 = 'object-v1'
+TABULAR_RESPONSE_PROTOCOL_COMPACT_ROW_ARRAY_V1 = 'compact-row-array-v1'
+TABULAR_RESPONSE_PROTOCOLS = {
+    TABULAR_RESPONSE_PROTOCOL_OBJECT_V1,
+    TABULAR_RESPONSE_PROTOCOL_COMPACT_ROW_ARRAY_V1,
+}
+TABULAR_COMPACT_PLAN_HASH_PREFIX_LENGTH = 12
 TABULAR_EXECUTOR_MODE_FIXED_WINDOW = 'fixed-window-v1'
 TABULAR_GENERATION_PLAN_VERSION = 1
 TABULAR_GENERATION_PLAN_PROMPT_VERSION = 'tabular-generation-plan-v1'
@@ -227,12 +233,14 @@ TABULAR_EXPORT_MODEL_VALIDATION_RETRYABLE_MESSAGE_MARKERS = (
 TABULAR_EXPORT_INPUT_ROW_NUMBER_FIELD = '__simplechat_source_row_number'
 TABULAR_EXPORT_INPUT_ROW_IDENTITY_FIELD = '__simplechat_source_row_identity'
 TABULAR_EXPORT_INPUT_ROW_TOKEN_FIELD = '__simplechat_source_row_token'
+TABULAR_EXPORT_INPUT_ROW_KEY_FIELD = '__simplechat_batch_row_key'
 TABULAR_EXPORT_OUTPUT_ROW_NUMBER_FIELD = 'source_row_number'
 TABULAR_EXPORT_OUTPUT_ROW_IDENTITY_FIELD = 'source_row_identity'
 TABULAR_GENERATION_PLAN_RESERVED_FIELDS = {
     TABULAR_EXPORT_INPUT_ROW_NUMBER_FIELD,
     TABULAR_EXPORT_INPUT_ROW_IDENTITY_FIELD,
     TABULAR_EXPORT_INPUT_ROW_TOKEN_FIELD,
+    TABULAR_EXPORT_INPUT_ROW_KEY_FIELD,
     TABULAR_EXPORT_OUTPUT_ROW_NUMBER_FIELD,
     TABULAR_EXPORT_OUTPUT_ROW_IDENTITY_FIELD,
 }
@@ -307,6 +315,21 @@ def _settings_mode(settings, key, default, allowed_modes):
     if normalized_mode in allowed_modes:
         return normalized_mode
     return default
+
+
+def _is_compact_row_array_protocol(response_protocol):
+    return str(response_protocol or '').strip() == TABULAR_RESPONSE_PROTOCOL_COMPACT_ROW_ARRAY_V1
+
+
+def _select_tabular_response_protocol(rollout_settings, requested_plan_mode, task_type, passthrough_input_rows=False):
+    if (
+        _settings_bool(rollout_settings, 'enable_tabular_compact_response_protocol', False)
+        and str(requested_plan_mode or '').strip().lower() == 'active'
+        and _normalize_tabular_run_task_type(task_type) == TABULAR_RUN_TASK_STRUCTURED_EXPORT
+        and not passthrough_input_rows
+    ):
+        return TABULAR_RESPONSE_PROTOCOL_COMPACT_ROW_ARRAY_V1
+    return TABULAR_RESPONSE_PROTOCOL_OBJECT_V1
 
 
 def _canonical_json_bytes(payload):
@@ -500,7 +523,7 @@ def _build_tabular_generation_plan(run, planner_payload, input_contract, planner
     response_protocol = str(
         (run or {}).get('response_protocol_version') or TABULAR_RESPONSE_PROTOCOL_OBJECT_V1
     ).strip()
-    if response_protocol != TABULAR_RESPONSE_PROTOCOL_OBJECT_V1:
+    if response_protocol not in TABULAR_RESPONSE_PROTOCOLS:
         raise ValueError('Planner response protocol is not supported')
 
     batch_budget = (run or {}).get('batch_budget') or {}
@@ -699,6 +722,129 @@ def _get_tabular_generation_plan_output_schema(plan):
         for output_field in (plan or {}).get('output_fields') or []
         if isinstance(output_field, dict)
     ]
+
+
+def _get_tabular_generation_plan_llm_fields(plan):
+    return [
+        output_field
+        for output_field in (plan or {}).get('output_fields') or []
+        if isinstance(output_field, dict)
+        and str(output_field.get('source') or '').strip().lower() == 'llm'
+    ]
+
+
+def _get_compact_plan_hash_prefix(plan):
+    plan_hash = str((plan or {}).get('plan_hash') or '').strip()
+    if not plan_hash:
+        raise ValueError('Compact response plan hash is missing')
+    return plan_hash[:TABULAR_COMPACT_PLAN_HASH_PREFIX_LENGTH]
+
+
+def _build_compact_batch_row_key(row_index):
+    return f'r{_safe_int(row_index, minimum=1)}'
+
+
+def _build_compact_batch_key_map(source_rows):
+    key_map = {}
+    ordered_keys = []
+    for row_index, source_row in enumerate(source_rows or [], start=1):
+        if not isinstance(source_row, dict):
+            raise ValueError(f'Source row {row_index} is not an object')
+        row_key = _build_compact_batch_row_key(row_index)
+        ordered_keys.append(row_key)
+        key_map[row_key] = source_row
+    return ordered_keys, key_map
+
+
+def _build_compact_prompt_rows(source_rows):
+    prompt_rows = []
+    ordered_keys, _ = _build_compact_batch_key_map(source_rows)
+    for row_key, source_row in zip(ordered_keys, source_rows or []):
+        prompt_row = {
+            TABULAR_EXPORT_INPUT_ROW_KEY_FIELD: row_key,
+        }
+        prompt_row.update({
+            str(field_name): field_value
+            for field_name, field_value in source_row.items()
+            if str(field_name) not in TABULAR_GENERATION_PLAN_RESERVED_FIELDS
+        })
+        prompt_rows.append(prompt_row)
+    return prompt_rows
+
+
+def _validate_compact_row_field_value(field_contract, field_value, row_key):
+    field_name = str((field_contract or {}).get('name') or '').strip()
+    field_type = str((field_contract or {}).get('type') or '').strip().lower()
+    if field_value is None:
+        if field_contract.get('nullable') is True:
+            return
+        raise ValueError(f'Compact row {row_key} returned null for non-nullable field {field_name}')
+
+    type_matches = (
+        (field_type == 'string' and isinstance(field_value, str))
+        or (field_type == 'boolean' and isinstance(field_value, bool))
+        or (field_type == 'integer' and isinstance(field_value, int) and not isinstance(field_value, bool))
+        or (field_type == 'number' and isinstance(field_value, (int, float)) and not isinstance(field_value, bool))
+        or (field_type == 'array' and isinstance(field_value, list))
+        or (field_type == 'object' and isinstance(field_value, dict))
+    )
+    if not type_matches:
+        raise ValueError(
+            f'Compact row {row_key} field {field_name} did not match expected {field_type} value type'
+        )
+
+
+def _parse_compact_row_array_entries(response_content, source_rows, generation_plan):
+    if not isinstance(generation_plan, dict):
+        raise ValueError('Compact response validation requires an active generation plan')
+    payload = _parse_generated_json_object(response_content)
+    if not isinstance(payload, dict):
+        raise ValueError('Compact response was not a JSON object')
+    if set(payload) != {'p', 'rows'}:
+        raise ValueError('Compact response contained unsupported top-level properties')
+
+    expected_prefix = _get_compact_plan_hash_prefix(generation_plan)
+    if str(payload.get('p') or '').strip() != expected_prefix:
+        raise ValueError('Compact response plan hash prefix mismatch')
+    compact_rows = payload.get('rows')
+    if not isinstance(compact_rows, list):
+        raise ValueError('Compact response rows must be an array')
+
+    llm_fields = _get_tabular_generation_plan_llm_fields(generation_plan)
+    if not llm_fields:
+        raise ValueError('Compact response plan has no LLM output fields')
+    expected_width = 1 + len(llm_fields)
+    ordered_keys, key_map = _build_compact_batch_key_map(source_rows)
+    entries_by_key = {}
+    for response_row_index, compact_row in enumerate(compact_rows, start=1):
+        if not isinstance(compact_row, list):
+            raise ValueError(f'Compact response row {response_row_index} was not an array')
+        if len(compact_row) != expected_width:
+            raise ValueError(
+                f'Compact response row {response_row_index} had {len(compact_row)} value(s); '
+                f'expected {expected_width}'
+            )
+        row_key = str(compact_row[0] or '').strip()
+        if row_key not in key_map:
+            raise ValueError(f'Compact response included unknown row key {row_key}')
+        if row_key in entries_by_key:
+            raise ValueError(f'Compact response duplicated row key {row_key}')
+
+        source_row = key_map[row_key]
+        generated_entry = {
+            TABULAR_EXPORT_INPUT_ROW_TOKEN_FIELD: str(
+                source_row.get(TABULAR_EXPORT_INPUT_ROW_TOKEN_FIELD) or ''
+            ).strip(),
+        }
+        for field_contract, field_value in zip(llm_fields, compact_row[1:]):
+            _validate_compact_row_field_value(field_contract, field_value, row_key)
+            generated_entry[str(field_contract.get('name') or '').strip()] = field_value
+        entries_by_key[row_key] = generated_entry
+
+    missing_keys = [row_key for row_key in ordered_keys if row_key not in entries_by_key]
+    if missing_keys:
+        raise ValueError(f'Compact response missed row key(s): {missing_keys}')
+    return [entries_by_key[row_key] for row_key in ordered_keys]
 
 
 def _normalize_tabular_generation_rollout_settings(settings):
@@ -2313,7 +2459,20 @@ def _build_batch_prompt(
     source_file_name,
     selected_sheet='',
     output_schema=None,
+    response_protocol=TABULAR_RESPONSE_PROTOCOL_OBJECT_V1,
+    generation_plan=None,
 ):
+    if _is_compact_row_array_protocol(response_protocol):
+        return _build_compact_batch_prompt(
+            user_question,
+            batch_rows,
+            batch_index,
+            total_batches,
+            source_file_name,
+            selected_sheet=selected_sheet,
+            generation_plan=generation_plan,
+        )
+
     source_file_name = str(source_file_name or 'unknown file').strip() or 'unknown file'
     selected_sheet = str(selected_sheet or '').strip()
     batch_rows_json = _dump_generated_output_json(batch_rows)
@@ -2352,6 +2511,55 @@ def _build_batch_prompt(
         f'{selected_sheet_line}'
         f'Batch: {batch_index + 1}/{total_batches}\n\n'
         f'Input rows:\n{batch_rows_json}'
+    )
+
+
+def _build_compact_batch_prompt(
+    user_question,
+    batch_rows,
+    batch_index,
+    total_batches,
+    source_file_name,
+    selected_sheet='',
+    generation_plan=None,
+):
+    source_file_name = str(source_file_name or 'unknown file').strip() or 'unknown file'
+    selected_sheet = str(selected_sheet or '').strip()
+    selected_sheet_line = f"Worksheet: {selected_sheet}\n" if selected_sheet else ''
+    llm_fields = _get_tabular_generation_plan_llm_fields(generation_plan)
+    if not llm_fields:
+        raise ValueError('Compact batch prompt requires an active generation plan')
+    row_keys, _ = _build_compact_batch_key_map(batch_rows)
+    field_contract = [
+        {
+            'position': field_index,
+            'name': field.get('name'),
+            'type': field.get('type'),
+            'nullable': field.get('nullable'),
+            'description': field.get('description'),
+        }
+        for field_index, field in enumerate(llm_fields, start=1)
+    ]
+    protocol_contract = {
+        'p': _get_compact_plan_hash_prefix(generation_plan),
+        'row_key_position': 0,
+        'fields': field_contract,
+        'expected_row_keys': row_keys,
+    }
+    prompt_rows = _build_compact_prompt_rows(batch_rows)
+    return (
+        'Transform the tabular input rows below into compact positional JSON for the user.\n\n'
+        f'User instructions:\n{user_question}\n\n'
+        'Return ONLY one valid JSON object with exactly these top-level fields: p, rows.\n'
+        'Do not include markdown fences, explanations, field names inside rows, source metadata, or extra properties.\n'
+        'Each item in rows must be an array. Position 0 is the batch-local row key. Positions 1..N are the field values in the exact plan order below.\n'
+        'Return every expected row key exactly once. Do not use source row tokens. Do not drop, merge, summarize, cap, or reorder by source content.\n'
+        'If a nullable field cannot be derived, return null. Non-nullable fields must contain a value of the requested type.\n\n'
+        f'Compact protocol contract:\n{_dump_generated_output_json(protocol_contract)}\n\n'
+        f'Source file: {source_file_name}\n'
+        f'{selected_sheet_line}'
+        f'Batch: {batch_index + 1}/{total_batches}\n\n'
+        f'Input rows:\n{_dump_generated_output_json(prompt_rows)}'
     )
 
 
@@ -3063,8 +3271,12 @@ async def _generate_batch_entries(
     run_id,
     expected_output_schema=None,
     batch_timeout_seconds=TABULAR_EXPORT_DEFAULT_BATCH_TIMEOUT_SECONDS,
+    response_protocol=TABULAR_RESPONSE_PROTOCOL_OBJECT_V1,
+    generation_plan=None,
 ):
     batch_number = batch_index + 1
+    normalized_response_protocol = str(response_protocol or TABULAR_RESPONSE_PROTOCOL_OBJECT_V1).strip()
+    compact_protocol = _is_compact_row_array_protocol(normalized_response_protocol)
     batch_prompt = _build_batch_prompt(
         user_question,
         batch_rows,
@@ -3073,6 +3285,8 @@ async def _generate_batch_entries(
         source_file_name,
         selected_sheet=selected_sheet,
         output_schema=expected_output_schema,
+        response_protocol=normalized_response_protocol,
+        generation_plan=generation_plan,
     )
 
     parsed_entries = None
@@ -3097,16 +3311,29 @@ async def _generate_batch_entries(
     )
     for attempt_number in range(1, retry_attempts + 1):
         chat_history = SKChatHistory()
-        chat_history.add_system_message(
-            'You transform tabular input rows into deterministic structured output. '
-            'Return only a valid JSON array with one object per input row. '
-            'Never add markdown, explanation text, or omit rows.'
-        )
-        if attempt_number > 1:
+        if compact_protocol:
             chat_history.add_system_message(
-                f'The previous attempt did not return the required {len(batch_rows)} JSON object(s). '
-                'Retry now and preserve the input row count exactly.'
+                'You transform tabular input rows into compact positional output. '
+                'Return only one valid JSON object with p and rows. '
+                'Never repeat field names, source tokens, markdown, explanation text, or omit rows.'
             )
+        else:
+            chat_history.add_system_message(
+                'You transform tabular input rows into deterministic structured output. '
+                'Return only a valid JSON array with one object per input row. '
+                'Never add markdown, explanation text, or omit rows.'
+            )
+        if attempt_number > 1:
+            if compact_protocol:
+                chat_history.add_system_message(
+                    f'The previous attempt did not return the required {len(batch_rows)} compact row array(s). '
+                    'Retry now with the same p value and every expected row key exactly once.'
+                )
+            else:
+                chat_history.add_system_message(
+                    f'The previous attempt did not return the required {len(batch_rows)} JSON object(s). '
+                    'Retry now and preserve the input row count exactly.'
+                )
         chat_history.add_user_message(batch_prompt)
 
         execution_settings = AzureChatPromptExecutionSettings(service_id='tabular-generated-output-background')
@@ -3125,7 +3352,18 @@ async def _generate_batch_entries(
         raw_response_content = result[0].content if result and result[0].content else ''
         usage = _extract_tabular_response_usage(result)
         validation_started_at = time.monotonic()
-        parsed_entries = _parse_generated_json_entries(raw_response_content) if raw_response_content else None
+        try:
+            if compact_protocol and raw_response_content:
+                parsed_entries = _parse_compact_row_array_entries(
+                    raw_response_content,
+                    batch_rows,
+                    generation_plan,
+                )
+            else:
+                parsed_entries = _parse_generated_json_entries(raw_response_content) if raw_response_content else None
+        except ValueError as exc:
+            parsed_entries = None
+            last_validation_error = str(exc)
         parsed_entry_count = len(parsed_entries) if parsed_entries is not None else 0
         last_attempt_metrics = {
             'input_char_count': len(batch_prompt),
@@ -3170,6 +3408,7 @@ async def _generate_batch_entries(
                 'input_token_count': last_attempt_metrics.get('input_token_count'),
                 'output_token_count': last_attempt_metrics.get('output_token_count'),
                 'total_token_count': last_attempt_metrics.get('total_token_count'),
+                'response_protocol_version': normalized_response_protocol,
             },
             debug_only=True,
         )
@@ -3195,6 +3434,8 @@ async def _generate_batch_entries_for_window(
     run_id,
     expected_output_schema,
     batch_timeout_seconds,
+    response_protocol,
+    generation_plan,
 ):
     queued_at = time.monotonic()
     async with semaphore:
@@ -3212,6 +3453,8 @@ async def _generate_batch_entries_for_window(
             run_id,
             expected_output_schema=expected_output_schema,
             batch_timeout_seconds=batch_timeout_seconds,
+            response_protocol=response_protocol,
+            generation_plan=generation_plan,
         )
         elapsed_seconds = time.monotonic() - batch_started_at
         log_event(
@@ -3266,6 +3509,8 @@ async def _generate_batch_window_entries(
     batch_concurrency,
     expected_output_schema=None,
     batch_timeout_seconds=TABULAR_EXPORT_DEFAULT_BATCH_TIMEOUT_SECONDS,
+    response_protocol=TABULAR_RESPONSE_PROTOCOL_OBJECT_V1,
+    generation_plan=None,
 ):
     semaphore = asyncio.Semaphore(max(1, batch_concurrency))
     tasks = [
@@ -3281,6 +3526,8 @@ async def _generate_batch_window_entries(
             run_id,
             expected_output_schema,
             batch_timeout_seconds,
+            response_protocol,
+            generation_plan,
         )
         for batch_request in batch_requests
     ]
@@ -5545,6 +5792,21 @@ def _record_shadow_tabular_generation_plan_comparison(run, actual_output_schema)
     return True
 
 
+def _load_active_compact_generation_plan(run):
+    if not _is_compact_row_array_protocol((run or {}).get('response_protocol_version')):
+        return None
+    if _get_tabular_generation_plan_mode(run) != 'active' or (run or {}).get('plan_status') != 'ready':
+        raise ValueError('Compact row protocol requires a ready active generation plan')
+    plan_blob_path = str((run or {}).get('plan_blob_path') or '').strip()
+    if not plan_blob_path:
+        raise ValueError('Compact row protocol plan path is missing')
+    plan = _download_json_blob(plan_blob_path)
+    _validate_tabular_generation_plan(plan, run)
+    if plan.get('plan_hash') != (run or {}).get('plan_hash'):
+        raise ValueError('Compact row protocol plan hash does not match the run record')
+    return plan
+
+
 def _checkpoint_generated_batch_results(run, generated_results):
     _raise_if_tabular_export_canceled(run)
     batch_results = {}
@@ -6261,6 +6523,7 @@ def process_tabular_generated_output_run(run_id, user_id):
             settings,
             batch_timeout_seconds,
         )
+        generation_plan = _load_active_compact_generation_plan(run)
 
         log_event(
             '[TABULAR_GENERATED_OUTPUT] Background export run started',
@@ -6352,6 +6615,8 @@ def process_tabular_generated_output_run(run_id, user_id):
                             batch_concurrency,
                             expected_output_schema=run.get('output_schema'),
                             batch_timeout_seconds=batch_timeout_seconds,
+                            response_protocol=run.get('response_protocol_version'),
+                            generation_plan=generation_plan,
                         )
                     )
                 _raise_if_tabular_export_canceled(run)
@@ -6477,6 +6742,12 @@ def queue_tabular_generated_output_run(
     )
     if normalized_task_type == TABULAR_RUN_TASK_HIERARCHICAL_ANALYSIS or passthrough_input_rows:
         requested_plan_mode = 'off'
+    response_protocol_version = _select_tabular_response_protocol(
+        rollout_settings,
+        requested_plan_mode,
+        normalized_task_type,
+        passthrough_input_rows=passthrough_input_rows,
+    )
 
     if source_descriptor:
         staged_row_count = _safe_int(source_descriptor.get('expected_row_count'))
@@ -6536,7 +6807,7 @@ def queue_tabular_generated_output_run(
         'type': TABULAR_EXPORT_RUN_TYPE,
         'contract_version': TABULAR_EXPORT_CONTRACT_VERSION,
         'generation_contract_version': TABULAR_GENERATION_CONTRACT_VERSION,
-        'response_protocol_version': TABULAR_RESPONSE_PROTOCOL_OBJECT_V1,
+        'response_protocol_version': response_protocol_version,
         'executor_mode': TABULAR_EXECUTOR_MODE_FIXED_WINDOW,
         'generation_rollout_settings': rollout_settings,
         'task_type': normalized_task_type,
@@ -6643,7 +6914,7 @@ def queue_tabular_generated_output_run(
             'batch_output_token_budget': model_batch_budget.get('output_token_budget'),
             'model_limit_source': model_batch_budget.get('limit_source'),
             'generation_contract_version': TABULAR_GENERATION_CONTRACT_VERSION,
-            'response_protocol_version': TABULAR_RESPONSE_PROTOCOL_OBJECT_V1,
+            'response_protocol_version': response_protocol_version,
             'executor_mode': TABULAR_EXECUTOR_MODE_FIXED_WINDOW,
             'planner_mode': rollout_settings.get('tabular_generation_plan_mode'),
             'compact_protocol_enabled': rollout_settings.get('enable_tabular_compact_response_protocol'),

@@ -2,7 +2,7 @@
 
 Implemented in version: **0.241.046**
 
-Updated through version: **0.250.139**
+Updated through version: **0.250.140**
 
 ## Overview
 
@@ -35,6 +35,7 @@ The feature supports large spreadsheet-driven analysis, including workbooks that
 - Phase 1 acceleration groundwork adds additive generation contract fields, legacy-off rollout gates, safe batch latency/token telemetry, and deterministic fake model/storage harnesses without changing fixed-window execution behavior.
 - Phase 2 foreground handoff uses server-composed acknowledgment text for accepted background export, analysis, and combined runs, so the assistant response describes the complete queued work instead of narrating preview limitations.
 - Phase 3 creates one bounded LLM schema plan after source staging, stores it as an immutable hashed blob, and binds planned output checkpoints to that plan and source ETag.
+- Phase 4 adds an active-plan compact row response protocol for structured exports. The model emits one short batch-local row key plus positional LLM values, while the server reattaches source metadata and checkpoints the same object-shaped rows as before.
 
 ### API Endpoints
 
@@ -90,6 +91,7 @@ The progress card displays current status, completed checkpoint counts, processe
 - Functional regression: `functional_tests/test_tabular_background_generated_exports.py`
 - Scale and performance regression: `functional_tests/test_tabular_row_orchestration_scale.py`
 - Phase 3 immutable plan, recovery, shadow comparison, active schema, and checkpoint-integrity regression: `functional_tests/test_tabular_row_orchestration_scale.py`
+- Phase 4 compact protocol selection, prompt, validation, row-key, plan-hash, and normalized-output equivalence regression: `functional_tests/test_tabular_row_orchestration_scale.py`
 - Phase 2 handoff regression: `functional_tests/test_tabular_row_orchestration_scale.py`
 - Phase 1 baseline and fake harness coverage: `functional_tests/test_tabular_row_orchestration_scale.py`
 - Functional regression for workflow/document-action presentation: `functional_tests/test_document_analysis_lossless_artifacts.py`
@@ -106,6 +108,7 @@ The progress card displays current status, completed checkpoint counts, processe
 - Progress is persisted once per completed parallel window. ETA uses recent wall-clock rows per minute rather than summing concurrent model-call durations as serial work.
 - Phase 1 telemetry separates safe model-call, validation, and checkpoint timing metrics where the current executor can observe them. Validation mismatch logs record counts and timings only, not generated response previews.
 - Phase 3 planning reads at most five staged rows from at most two input checkpoints and sends only column metadata plus redacted value shapes, so planner input remains bounded independently of source row count.
+- Phase 4 compact responses reduce repeated generated field names and avoid model-emitted long source tokens for active planned structured exports. Compact responses are normalized before checkpointing, so final CSV, JSON, and XML serialization remains unchanged.
 - Background processing writes each completed batch before moving on, allowing the run to resume after worker restarts.
 - The run status API returns compact metadata only, not source rows or generated batch content.
 - User-facing status details are derived from run metadata instead of displaying raw backend errors in the progress card.
@@ -118,6 +121,7 @@ The progress card displays current status, completed checkpoint counts, processe
 - Completion appears through status polling or on the next chat reload; no push notification is added in this version.
 - Manual continuation applies to retryable failures, stale running leases, queued retries whose retry time has passed, and stale queued runs; hard validation failures remain terminal.
 - Shadow mode does not remove the first-batch schema barrier. Administrators should move new runs to `active` only after representative shadow comparisons preserve every requested field.
+- Compact row responses apply only to new active planned structured exports. Existing runs, shadow runs, fallback runs, passthrough rows, analysis-only runs, and combined analysis/export runs remain on `object-v1`.
 
 ## Related Version Updates
 
@@ -129,3 +133,4 @@ The progress card displays current status, completed checkpoint counts, processe
 - `application/single_app/config.py` was updated to version **0.250.137** for Phase 1 acceleration baseline contracts, rollout controls, privacy-safe telemetry, and fake model/storage harnesses.
 - `application/single_app/config.py` was updated to version **0.250.138** for Phase 2 truthful foreground handoff wording and metadata.
 - `application/single_app/config.py` was updated to version **0.250.139** for Phase 3 immutable LLM schema planning, shadow comparison, active scheduling, and checkpoint integrity.
+- `application/single_app/config.py` was updated to version **0.250.140** for Phase 4 compact row response protocol validation and normalized checkpoint compatibility.
