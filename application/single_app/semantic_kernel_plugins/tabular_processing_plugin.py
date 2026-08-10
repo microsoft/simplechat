@@ -3483,10 +3483,18 @@ class TabularProcessingPlugin:
         expected_row_count: int = 0,
         blob_version: Optional[dict] = None,
         source_function: str = 'query_tabular_data',
+        selected_sheet: Optional[str] = None,
+        sheet_names: Optional[List[str]] = None,
     ) -> dict:
         """Pin a durable query descriptor to an already-authorized blob location."""
-        if not str(blob_path or '').lower().endswith('.csv'):
-            raise ValueError('Durable source-backed generated exports currently require a CSV source')
+        normalized_blob_path = str(blob_path or '').strip()
+        source_format = next((
+            extension.lstrip('.')
+            for extension in self.SUPPORTED_EXTENSIONS
+            if normalized_blob_path.lower().endswith(extension)
+        ), None)
+        if not source_format:
+            raise ValueError('Durable source-backed generated exports require a supported tabular source')
 
         normalized_query_expression = validate_tabular_csv_query_expression(query_expression)
         blob_version = dict(blob_version or self._get_tabular_blob_version(container_name, blob_path))
@@ -3496,7 +3504,16 @@ class TabularProcessingPlugin:
         resolved_source = self._infer_source_from_container(container_name)
         blob_parts = [part for part in str(blob_path or '').split('/') if part]
         scope_id = blob_parts[0] if resolved_source in {'group', 'public'} and blob_parts else None
-        return {
+        normalized_selected_sheet = str(selected_sheet or '').strip() or None
+        normalized_sheet_names = []
+        for sheet_name in sheet_names or []:
+            normalized_sheet_name = str(sheet_name or '').strip()
+            if normalized_sheet_name and normalized_sheet_name not in normalized_sheet_names:
+                normalized_sheet_names.append(normalized_sheet_name)
+        if normalized_selected_sheet and normalized_selected_sheet not in normalized_sheet_names:
+            normalized_sheet_names = [normalized_selected_sheet]
+
+        descriptor = {
             'version': 1,
             'kind': 'query_tabular_data',
             'source_function': str(source_function or 'query_tabular_data').strip(),
@@ -3507,10 +3524,17 @@ class TabularProcessingPlugin:
             'blob_etag': str(blob_etag),
             'blob_size': int(blob_size or 0),
             'filename': str(filename or '').strip(),
+            'source_format': source_format,
             'query_expression': normalized_query_expression,
             'return_columns': return_columns,
             'expected_row_count': max(0, int(expected_row_count or 0)),
         }
+        if source_format != 'csv':
+            if not normalized_sheet_names:
+                raise ValueError('Durable workbook replay requires an explicit worksheet scope')
+            descriptor['selected_sheet'] = normalized_selected_sheet
+            descriptor['sheet_names'] = normalized_sheet_names
+        return descriptor
 
     def _build_generated_export_column_reference(self, column_name: str) -> str:
         """Return a safe pandas query reference for one resolved source column."""

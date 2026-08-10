@@ -4974,6 +4974,9 @@ def get_tabular_generated_output_format(user_question):
     normalized_question = str(user_question or '').strip().lower()
     if not normalized_question:
         return None
+    shared_output_format = get_requested_generated_file_format(user_question)
+    if shared_output_format == 'csv':
+        return 'csv'
 
     json_markers = (
         'convert into json',
@@ -5009,8 +5012,6 @@ def get_tabular_generated_output_format(user_question):
         'output as xml',
         'format as xml',
     )
-    csv_markers = TABLE_EXPORT_REQUEST_MARKERS
-
     if any(marker in normalized_question for marker in json_markers) or re.search(
         r'\b(convert|create|make|build|generate|produce|return|respond|format|output|save|export|download)\b[\w\s.,:;\-/]{0,80}\ba?\s*json\b',
         normalized_question,
@@ -5021,8 +5022,6 @@ def get_tabular_generated_output_format(user_question):
         normalized_question,
     ):
         return 'xml'
-    if any(marker in normalized_question for marker in csv_markers):
-        return 'csv'
     return None
 
 
@@ -5843,7 +5842,7 @@ def _build_tabular_generated_output_query_descriptor(
 
 
 def _build_direct_tabular_generated_output_source(user_question, file_contexts, user_id, conversation_id, settings):
-    """Build a replayable full-CSV source descriptor without requiring a prior tool page."""
+    """Build a replayable full-tabular source descriptor without requiring a prior tool page."""
     generated_output_requested = question_requests_tabular_generated_output(user_question)
     hierarchical_analysis_requested = question_requests_tabular_hierarchical_analysis(user_question)
     durable_task_type = _get_tabular_generated_output_task_type(
@@ -5864,7 +5863,8 @@ def _build_direct_tabular_generated_output_source(user_question, file_contexts, 
 
     file_context = normalized_contexts[0]
     file_name = str(file_context.get('file_name') or '').strip()
-    if not file_name.lower().endswith('.csv'):
+    source_format = os.path.splitext(file_name)[1].lower().lstrip('.')
+    if source_format not in TABULAR_EXTENSIONS:
         return None
 
     from semantic_kernel_plugins.tabular_processing_plugin import TabularProcessingPlugin
@@ -5890,23 +5890,78 @@ def _build_direct_tabular_generated_output_source(user_question, file_contexts, 
             public_workspace_id=public_workspace_id,
         )
 
-    query_result = tabular_plugin._query_csv_data_in_bounded_chunks(
-        container_name,
-        blob_path,
-        file_name,
-        query_expression,
-        return_columns=None,
-        start_row=0,
-        max_rows=1,
-    )
-    result_payload = json.loads(str(query_result or '{}'))
-    row_count = _safe_int(result_payload.get('total_matches'))
-    if row_count <= 0:
-        raise ValueError('Direct tabular durable source had no CSV rows to process')
+    selected_sheet = None
+    sheet_names = []
+    if source_format == 'csv':
+        query_result = tabular_plugin._query_csv_data_in_bounded_chunks(
+            container_name,
+            blob_path,
+            file_name,
+            query_expression,
+            return_columns=None,
+            start_row=0,
+            max_rows=1,
+        )
+        result_payload = json.loads(str(query_result or '{}'))
+        row_count = _safe_int(result_payload.get('total_matches'))
+        internal_metadata = getattr(query_result, 'internal_metadata', {}) or {}
+        source_descriptor = internal_metadata.get('tabular_generated_export_source') or {}
+        source_authorization = internal_metadata.get('tabular_source_authorization') or {}
+    else:
+        requested_sheet = str(file_context.get('selected_sheet') or '').strip() or None
+        workbook_metadata = tabular_plugin._get_workbook_metadata(container_name, blob_path)
+        if requested_sheet:
+            selected_sheet, _ = tabular_plugin._resolve_sheet_selection(
+                container_name,
+                blob_path,
+                sheet_name=requested_sheet,
+                require_explicit_sheet=True,
+            )
+            sheet_names = [selected_sheet]
+        else:
+            sheet_names = list(workbook_metadata.get('sheet_names') or [])
+        if not sheet_names:
+            raise ValueError('Direct tabular durable source had no readable worksheets')
 
-    internal_metadata = getattr(query_result, 'internal_metadata', {}) or {}
-    source_descriptor = internal_metadata.get('tabular_generated_export_source') or {}
-    source_authorization = internal_metadata.get('tabular_source_authorization') or {}
+        row_count = 0
+        for sheet_name in sheet_names:
+            source_dataframe = tabular_plugin._read_tabular_blob_to_dataframe(
+                container_name,
+                blob_path,
+                sheet_name=sheet_name,
+                require_explicit_sheet=True,
+            )
+            source_dataframe = tabular_plugin._try_numeric_conversion(source_dataframe)
+            filtered_dataframe, _ = tabular_plugin._apply_query_expression_with_fallback(
+                source_dataframe,
+                query_expression=query_expression,
+                normalize_match=False,
+            )
+            row_count += len(filtered_dataframe)
+
+        blob_version = tabular_plugin._get_tabular_blob_version(
+            container_name,
+            blob_path,
+            refresh=True,
+        )
+        source_descriptor = tabular_plugin._build_generated_export_query_descriptor_from_location(
+            container_name=container_name,
+            blob_path=blob_path,
+            filename=file_name,
+            query_expression=query_expression,
+            return_columns=None,
+            expected_row_count=row_count,
+            blob_version=blob_version,
+            selected_sheet=selected_sheet,
+            sheet_names=sheet_names,
+        )
+        source_authorization = tabular_plugin._build_source_authorization_from_location(
+            container_name,
+            blob_path,
+            blob_version=blob_version,
+        )
+    if row_count <= 0:
+        raise ValueError('Direct tabular durable source had no rows to process')
     if not source_descriptor:
         raise ValueError('Direct tabular durable source descriptor could not be created')
 
@@ -5924,13 +5979,14 @@ def _build_direct_tabular_generated_output_source(user_question, file_contexts, 
         'source_candidate': {
             'function_name': 'query_tabular_data',
             'filename': file_name,
-            'selected_sheet': '',
+            'selected_sheet': selected_sheet or ('ALL (workbook order)' if len(sheet_names) > 1 else ''),
             'source_parameters': {
                 'source': source_hint,
                 'group_id': group_id,
                 'public_workspace_id': public_workspace_id,
                 'query_expression': query_expression,
                 'return_columns': None,
+                'sheet_name': selected_sheet,
             },
             'source_descriptor': source_descriptor,
             'source_authorization': source_authorization,
@@ -5969,7 +6025,7 @@ def maybe_queue_direct_tabular_generated_output(
     cancel_requested=None,
     request_correlation_id=None,
 ):
-    """Queue an exhaustive CSV-backed generated-output run directly from an authorized source."""
+    """Queue an exhaustive tabular generated-output run directly from an authorized source."""
     try:
         direct_source = _build_direct_tabular_generated_output_source(
             user_question,
@@ -6004,11 +6060,11 @@ def maybe_queue_direct_tabular_generated_output(
         if callable(thought_callback):
             output_label = str(direct_source['output_format'] or 'json').upper()
             if direct_source.get('combined_requested'):
-                title = 'Queued exhaustive tabular analysis and export from the selected CSV source'
+                title = 'Queued exhaustive tabular analysis and export from the selected tabular source'
             elif direct_source.get('analysis_only_requested'):
-                title = 'Queued exhaustive tabular analysis from the selected CSV source'
+                title = 'Queued exhaustive tabular analysis from the selected tabular source'
             else:
-                title = f'Queued exhaustive {output_label} export from the selected CSV source'
+                title = f'Queued exhaustive {output_label} export from the selected tabular source'
             thought_payload = {
                 'step_type': 'tabular_analysis',
                 'content': title,
@@ -6059,6 +6115,21 @@ def maybe_queue_direct_tabular_generated_output(
             level=logging.WARNING,
             exceptionTraceback=True,
         )
+        normalized_contexts = dedupe_tabular_file_contexts(file_contexts)
+        if question_requests_tabular_generated_output(user_question) and len(normalized_contexts) == 1:
+            file_context = normalized_contexts[0]
+            file_name = str(file_context.get('file_name') or '').strip()
+            source_format = os.path.splitext(file_name)[1].lower().lstrip('.')
+            if source_format in TABULAR_EXTENSIONS:
+                return _build_failed_tabular_generated_output_metadata(
+                    {
+                        'filename': file_name,
+                        'selected_sheet': file_context.get('selected_sheet'),
+                        'total_matches': 0,
+                    },
+                    get_tabular_generated_output_format(user_question) or 'csv',
+                    'The downloadable tabular artifact could not be queued. No inline row output was generated.',
+                )
         return None
 
 
@@ -6269,7 +6340,8 @@ def _build_tabular_generated_output_system_message(output_metadata):
         return (
             f'The requested exhaustive {output_format} export for {row_count} row(s) failed. '
             f'{failure_detail} Do not claim that a full or partial export is attached, and do not recreate '
-            'the assistant summary table as a CSV. Briefly report the failure and preserve any other requested analysis.'
+            'the assistant summary table as a CSV. Do not inline source or generated rows. Briefly report the failure '
+            'and preserve any other requested analysis.'
         )
 
     if output_status == 'canceled':
@@ -12394,7 +12466,7 @@ def _execute_mixed_source_tabular_evidence(
             })
             return {
                 'summary': (
-                    'Queued a durable exhaustive tabular generated-output run from the authorized CSV source. '
+                    'Queued a durable exhaustive tabular generated-output run from the authorized tabular source. '
                     'The final artifact will be published after checkpointed background processing completes.'
                 ),
                 'evidence': [],

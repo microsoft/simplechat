@@ -1,8 +1,8 @@
 # test_tabular_row_orchestration_scale.py
 """
 Functional test for scalable per-row tabular orchestration.
-Version: 0.250.148
-Implemented in: 0.250.060; generated CSV formula safety in 0.250.065; generated file export routing in 0.250.072; source descriptor generalization in 0.250.127; unified durable run contract in 0.250.128; hierarchical analysis in 0.250.129; combined analysis and export in 0.250.130; scale validation in 0.250.132; direct source-backed exhaustive queueing in 0.250.133; direct queue call-site hardening in 0.250.134; model-validation auto retry in 0.250.135; model-aware parallel throughput in 0.250.136; Phase 1 acceleration contracts and observability in 0.250.137; Phase 2 truthful background handoff in 0.250.138; Phase 3 durable LLM generation planning in 0.250.139; Phase 4 compact row response protocol in 0.250.140; Phase 5 completion-driven checkpointing in 0.250.141; Phase 6 rolling worker pool in 0.250.142; Phase 7 independent batch retries in 0.250.143; Phase 8 scale, chaos, and rollout in 0.250.144; background metadata streaming fix in 0.250.145; source-token echo recovery in 0.250.146; fixed-window stale heartbeat fix in 0.250.147; nested CSV output recovery in 0.250.148
+Version: 0.250.149
+Implemented in: 0.250.060; generated CSV formula safety in 0.250.065; generated file export routing in 0.250.072; source descriptor generalization in 0.250.127; unified durable run contract in 0.250.128; hierarchical analysis in 0.250.129; combined analysis and export in 0.250.130; scale validation in 0.250.132; direct source-backed exhaustive queueing in 0.250.133; direct queue call-site hardening in 0.250.134; model-validation auto retry in 0.250.135; model-aware parallel throughput in 0.250.136; Phase 1 acceleration contracts and observability in 0.250.137; Phase 2 truthful background handoff in 0.250.138; Phase 3 durable LLM generation planning in 0.250.139; Phase 4 compact row response protocol in 0.250.140; Phase 5 completion-driven checkpointing in 0.250.141; Phase 6 rolling worker pool in 0.250.142; Phase 7 independent batch retries in 0.250.143; Phase 8 scale, chaos, and rollout in 0.250.144; background metadata streaming fix in 0.250.145; source-token echo recovery in 0.250.146; fixed-window stale heartbeat fix in 0.250.147; nested CSV output recovery in 0.250.148; generic tabular artifact routing and fast startup in 0.250.149
 
 This test ensures generated exports preserve source identity and row order while
 enforcing one stable output schema across independently generated batches.
@@ -19,6 +19,7 @@ import json
 import logging
 import math
 import os
+import pandas
 import re
 import sys
 import time
@@ -37,6 +38,7 @@ SETTINGS_MODULE = REPO_ROOT / 'application' / 'single_app' / 'functions_settings
 CHAT_ROUTE = REPO_ROOT / 'application' / 'single_app' / 'route_backend_chats.py'
 SIMPLECHAT_OPERATIONS = REPO_ROOT / 'application' / 'single_app' / 'functions_simplechat_operations.py'
 CSV_QUERY_MODULE = REPO_ROOT / 'application' / 'single_app' / 'functions_tabular_csv_query.py'
+TABULAR_PLUGIN_MODULE = APP_ROOT / 'semantic_kernel_plugins' / 'tabular_processing_plugin.py'
 sys.path.append(str(APP_ROOT))
 sys.path.append(str(Path(__file__).resolve().parent))
 
@@ -46,10 +48,12 @@ from generate_tabular_scale_fixtures import (  # noqa: E402
 )
 
 from functions_assistant_table_exports import (  # noqa: E402
+    assistant_table_export_requested,
     build_safe_csv_headers,
     has_generated_tabular_csv_output,
     neutralize_csv_spreadsheet_formula,
 )
+from functions_generated_file_exports import get_requested_generated_file_format  # noqa: E402
 CONTRACT_FUNCTIONS = {
     '_safe_int',
     '_normalize_source_identity_label',
@@ -200,6 +204,9 @@ PERFORMANCE_FUNCTIONS = {
     '_extract_tabular_response_usage',
     '_resolve_tabular_batch_concurrency',
     '_normalize_tabular_run_task_type',
+    '_resolve_tabular_schema_probe_rows',
+    '_estimate_tabular_source_batch_count',
+    '_get_tabular_source_batch_row_limit',
     '_resolve_tabular_chunk_model_selection',
     '_normalize_tabular_model_identifier',
     '_get_tabular_model_record_identifiers',
@@ -498,14 +505,91 @@ def _load_direct_source_queue_helpers(route_dependencies):
     namespace = dict(route_dependencies)
     namespace.setdefault('TABULAR_RUN_TASK_HIERARCHICAL_ANALYSIS', 'hierarchical_analysis')
     namespace.setdefault('TABULAR_RUN_TASK_COMBINED', 'combined')
+    namespace.setdefault('TABULAR_EXTENSIONS', {'csv', 'xlsx', 'xls', 'xlsm'})
     namespace.setdefault('json', json)
     namespace.setdefault('math', math)
+    namespace.setdefault('os', os)
     namespace.setdefault('inspect', SimpleNamespace(isawaitable=lambda value: False))
     namespace.setdefault('asyncio', SimpleNamespace(run=lambda value: value))
     namespace.setdefault('MixedSourceCancellationError', type('MixedSourceCancellationError', (Exception,), {}))
     extracted_module = ast.Module(body=selected_nodes, type_ignores=[])
     exec(compile(extracted_module, str(CHAT_ROUTE), 'exec'), namespace)
     return namespace
+
+
+def _load_tabular_request_intent_helpers():
+    """Load tabular artifact intent helpers with the shared file-format detector."""
+    module_tree = ast.parse(CHAT_ROUTE.read_text(encoding='utf-8'), filename=str(CHAT_ROUTE))
+    helper_names = {
+        'get_tabular_generated_output_format',
+        'question_requests_tabular_generated_output',
+    }
+    selected_nodes = [
+        node
+        for node in module_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name in helper_names
+    ]
+    if len(selected_nodes) != len(helper_names):
+        raise AssertionError('Missing tabular request intent helpers')
+    namespace = {
+        'assistant_table_export_requested': assistant_table_export_requested,
+        'get_requested_generated_file_format': get_requested_generated_file_format,
+        're': re,
+    }
+    exec(
+        compile(ast.Module(body=selected_nodes, type_ignores=[]), str(CHAT_ROUTE), 'exec'),
+        namespace,
+    )
+    return namespace
+
+
+def _load_tabular_descriptor_builder():
+    """Load the plugin's version-pinned tabular descriptor builder in isolation."""
+    module_tree = ast.parse(
+        TABULAR_PLUGIN_MODULE.read_text(encoding='utf-8'),
+        filename=str(TABULAR_PLUGIN_MODULE),
+    )
+    plugin_class = next(
+        node
+        for node in module_tree.body
+        if isinstance(node, ast.ClassDef) and node.name == 'TabularProcessingPlugin'
+    )
+    function_node = next(
+        node
+        for node in plugin_class.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == '_build_generated_export_query_descriptor_from_location'
+    )
+    namespace = {
+        'List': list,
+        'Optional': Optional,
+        'validate_tabular_csv_query_expression': _load_source_reader_helpers()[
+            'validate_tabular_csv_query_expression'
+        ],
+    }
+    exec(
+        compile(ast.Module(body=[function_node], type_ignores=[]), str(TABULAR_PLUGIN_MODULE), 'exec'),
+        namespace,
+    )
+    return namespace['_build_generated_export_query_descriptor_from_location']
+
+
+def _load_tabular_source_replay_helper(fake_plugin, version_checks):
+    """Load durable tabular replay with a fake workbook parser and version check."""
+    function_node = _get_function_node('_iter_versioned_tabular_source_rows')
+    namespace = {
+        'MatchConditions': SimpleNamespace(IfNotModified='if-not-modified'),
+        'TABULAR_EXPORT_FINAL_SPOOL_MAX_MEMORY_BYTES': 1024 * 1024,
+        'TabularProcessingPlugin': lambda: fake_plugin,
+        '_get_versioned_source_blob_client': lambda descriptor: version_checks.append(descriptor) or object(),
+        'iter_tabular_csv_query_rows': lambda **kwargs: (),
+        'tempfile': __import__('tempfile'),
+    }
+    exec(
+        compile(ast.Module(body=[function_node], type_ignores=[]), str(EXPORT_MODULE), 'exec'),
+        namespace,
+    )
+    return namespace['_iter_versioned_tabular_source_rows']
 
 
 def _build_query_invocation(start_row, row_count, total_matches=300, source_etag='etag-source-7'):
@@ -1975,6 +2059,57 @@ def test_phase_three_rollout_activates_shadow_only_and_stays_backend_only():
     assert 'if k in TABULAR_GENERATION_BACKEND_SETTING_KEYS' in settings_source
 
 
+def test_shadow_generation_plan_is_deferred_off_the_production_critical_path():
+    """Shadow telemetry must not add a serial model call before batch generation."""
+    helpers, _, _ = _load_generation_plan_helpers()
+    run = _build_phase_three_test_run(plan_mode='shadow', plan_status='pending')
+    planner_calls = []
+
+    async def unexpected_planner_call(*args, **kwargs):
+        planner_calls.append((args, kwargs))
+        raise AssertionError('Shadow planning must not block production generation')
+
+    helpers['_generate_tabular_generation_plan'] = unexpected_planner_call
+    deferred_run = helpers['_ensure_tabular_generation_plan'](
+        run,
+        object(),
+        run['_test_batches'],
+        {},
+        60,
+    )
+
+    assert planner_calls == []
+    assert deferred_run['plan_mode'] == 'shadow'
+    assert deferred_run['plan_status'] == 'deferred'
+    assert deferred_run['plan_failure_reason'] == 'deferred_off_critical_path'
+    assert deferred_run['planner_attempt_count'] == 0
+    assert deferred_run['planner_latency_seconds'] == 0
+    assert deferred_run['output_schema'] is None
+    assert deferred_run['last_message'] == 'Generating the initial schema checkpoint'
+
+
+def test_schema_probe_starts_small_then_uses_normal_batch_budget():
+    """Unplanned source-backed runs checkpoint a small first batch before concurrency opens."""
+    helpers = _load_performance_helpers()
+    resolve_probe = helpers['_resolve_tabular_schema_probe_rows']
+    estimate_batches = helpers['_estimate_tabular_source_batch_count']
+    batch_row_limit = helpers['_get_tabular_source_batch_row_limit']
+
+    probe_rows = resolve_probe({}, 'shadow', 'structured_export', 300, 58)
+    descriptor = {
+        'batch_max_rows': 58,
+        'schema_probe_rows': probe_rows,
+    }
+
+    assert probe_rows == 5
+    assert estimate_batches(300, 58, probe_rows) == 7
+    assert batch_row_limit(descriptor, 0) == 5
+    assert batch_row_limit(descriptor, 1) == 58
+    assert resolve_probe({}, 'active', 'structured_export', 300, 58) == 0
+    assert estimate_batches(300, 58, 0) == 6
+    assert resolve_probe({}, 'shadow', 'hierarchical_analysis', 300, 58) == 0
+
+
 def test_phase_eight_rollout_assignment_is_stable_and_control_runs_stay_legacy():
     """Percentage rollout is deterministic per run and frozen for every resume."""
     helpers = _load_performance_helpers()
@@ -2141,6 +2276,52 @@ def test_retry_status_detail_exposes_safe_retry_reason():
         can_resume=True,
     )
     assert 'transient provider or connection interruption' in failed_detail['status_detail']
+
+
+def test_startup_status_detail_reports_active_phase_before_first_checkpoint():
+    """Zero-row startup reports source, planner, and initial checkpoint activity truthfully."""
+    build_status_detail = _load_run_status_detail_helper()
+    base_run = {
+        'status': 'running',
+        'task_type': 'structured_export',
+        'completed_batches': 0,
+    }
+
+    preparing_source = build_status_detail(
+        {
+            **base_run,
+            'source_descriptor': {'kind': 'query_tabular_data'},
+            'source_staging_complete': False,
+        },
+        {},
+        retryable_failure=False,
+        can_resume=False,
+    )
+    planning_output = build_status_detail(
+        {
+            **base_run,
+            'source_staging_complete': True,
+            'plan_status': 'planning',
+        },
+        {},
+        retryable_failure=False,
+        can_resume=False,
+    )
+    starting_generation = build_status_detail(
+        {
+            **base_run,
+            'source_staging_complete': True,
+            'plan_status': 'deferred',
+        },
+        {},
+        retryable_failure=False,
+        can_resume=False,
+    )
+
+    assert preparing_source['status_label'] == 'Preparing Source'
+    assert planning_output['status_label'] == 'Planning Output'
+    assert starting_generation['status_label'] == 'Starting'
+    assert 'concurrent batches will follow' in starting_generation['status_detail']
 
 
 def test_phase_eight_publication_revalidates_source_version():
@@ -4157,6 +4338,242 @@ def test_filter_rows_pages_queue_combined_analysis_and_export_run():
     assert output_metadata['task_type'] == 'combined'
 
 
+def test_downloadable_complete_csv_request_uses_shared_artifact_intent():
+    """Downloadable CSV wording must not bypass durable tabular routing."""
+    helpers = _load_tabular_request_intent_helpers()
+    user_question = """
+    Do per-row analysis of the complete selected CSV file.
+    Analyze every source item independently and produce exactly one output row for each source row.
+    Produce exactly these columns in this order: Item_ID, Timeline_Status, Overall_Attention.
+    Process all source rows and preserve source-row order.
+    Create one complete downloadable CSV containing all result rows.
+    """
+
+    assert helpers['get_tabular_generated_output_format'](user_question) == 'csv'
+    assert helpers['question_requests_tabular_generated_output'](user_question) is True
+
+
+def test_durable_tabular_descriptor_supports_all_configured_formats():
+    """Version-pinned replay descriptors cover CSV and every supported workbook type."""
+    descriptor_builder = _load_tabular_descriptor_builder()
+
+    class FakeDescriptorPlugin:
+        SUPPORTED_EXTENSIONS = ('.csv', '.xls', '.xlsm', '.xlsx')
+
+        @staticmethod
+        def _infer_source_from_container(container_name):
+            assert container_name == 'user-documents'
+            return 'workspace'
+
+        @staticmethod
+        def _get_tabular_blob_version(*args, **kwargs):
+            raise AssertionError('The supplied version pin must be used')
+
+    plugin = FakeDescriptorPlugin()
+    for source_format in ('csv', 'xlsx', 'xls', 'xlsm'):
+        is_workbook = source_format != 'csv'
+        descriptor = descriptor_builder(
+            plugin,
+            container_name='user-documents',
+            blob_path=f'user-1/source.{source_format}',
+            filename=f'source.{source_format}',
+            query_expression='index == index',
+            expected_row_count=12,
+            blob_version={'blob_etag': 'etag-12', 'blob_size': 2048},
+            sheet_names=['First', 'Second'] if is_workbook else None,
+        )
+
+        assert descriptor['source_format'] == source_format
+        assert descriptor['expected_row_count'] == 12
+        assert descriptor['blob_etag'] == 'etag-12'
+        if is_workbook:
+            assert descriptor['sheet_names'] == ['First', 'Second']
+        else:
+            assert 'sheet_names' not in descriptor
+
+
+def test_durable_workbook_replay_preserves_sheet_order_and_resume_position():
+    """Workbook rows replay in sheet order and resume after the last staged physical row."""
+    class FakeWorkbookPlugin:
+        def __init__(self):
+            self.frames = {
+                'First': pandas.DataFrame([
+                    {'Item_ID': 'A-1', 'Value': 'one'},
+                    {'Item_ID': 'A-2', 'Value': 'two'},
+                ]),
+                'Second': pandas.DataFrame([
+                    {'Item_ID': 'B-1', 'Value': 'three'},
+                ]),
+            }
+
+        @staticmethod
+        def _parse_optional_column_list_argument(value):
+            assert value is None
+            return None
+
+        def _read_tabular_blob_to_dataframe(self, container, blob_path, sheet_name, require_explicit_sheet):
+            assert container == 'user-documents'
+            assert blob_path == 'user-1/source.xlsx'
+            assert require_explicit_sheet is True
+            return self.frames[sheet_name].copy()
+
+        @staticmethod
+        def _try_numeric_conversion(dataframe):
+            return dataframe
+
+        @staticmethod
+        def _apply_query_expression_with_fallback(dataframe, query_expression, normalize_match):
+            assert query_expression == 'index == index'
+            assert normalize_match is False
+            return dataframe.query(query_expression), False
+
+        @staticmethod
+        def _build_row_output_records(dataframe, selected_columns):
+            return dataframe[selected_columns].to_dict(orient='records')
+
+    version_checks = []
+    replay_rows = _load_tabular_source_replay_helper(FakeWorkbookPlugin(), version_checks)
+    descriptor = {
+        'container': 'user-documents',
+        'blob_path': 'user-1/source.xlsx',
+        'blob_etag': 'etag-source',
+        'query_expression': 'index == index',
+        'return_columns': None,
+        'sheet_names': ['First', 'Second'],
+    }
+
+    all_rows = list(replay_rows(descriptor, 'xlsx', 1000, 0))
+    resumed_rows = list(replay_rows(descriptor, 'xlsx', 1000, 2))
+
+    assert [source_row_number for source_row_number, _ in all_rows] == [1, 2, 3]
+    assert [row['Item_ID'] for _, row in all_rows] == ['A-1', 'A-2', 'B-1']
+    assert resumed_rows == [(3, {'Item_ID': 'B-1', 'Value': 'three'})]
+    assert len(version_checks) == 4
+
+
+def test_direct_source_backed_queue_supports_all_workbook_formats():
+    """Selected XLSX, XLS, and XLSM files use the same direct durable route as CSV."""
+    original_module = sys.modules.get('semantic_kernel_plugins.tabular_processing_plugin')
+    fake_module = ModuleType('semantic_kernel_plugins.tabular_processing_plugin')
+
+    class FakeWorkbookPlugin:
+        def _resolve_blob_location_with_fallback(self, user_id, conversation_id, filename, source, **kwargs):
+            assert user_id == 'user-1'
+            assert conversation_id == 'conversation-1'
+            assert source == 'workspace'
+            return 'user-documents', f'user-1/{filename}'
+
+        @staticmethod
+        def _get_workbook_metadata(container_name, blob_path):
+            return {'is_workbook': True, 'sheet_names': ['First', 'Second']}
+
+        @staticmethod
+        def _read_tabular_blob_to_dataframe(*args, sheet_name=None, **kwargs):
+            return [sheet_name, f'{sheet_name}-row-2']
+
+        @staticmethod
+        def _try_numeric_conversion(dataframe):
+            return dataframe
+
+        @staticmethod
+        def _apply_query_expression_with_fallback(dataframe, **kwargs):
+            return dataframe, False
+
+        @staticmethod
+        def _get_tabular_blob_version(*args, **kwargs):
+            return {'blob_etag': 'etag-workbook', 'blob_size': 4096}
+
+        @staticmethod
+        def _build_generated_export_query_descriptor_from_location(**kwargs):
+            return {
+                'version': 1,
+                'kind': 'query_tabular_data',
+                'source': 'workspace',
+                'container': kwargs['container_name'],
+                'blob_path': kwargs['blob_path'],
+                'blob_etag': kwargs['blob_version']['blob_etag'],
+                'filename': kwargs['filename'],
+                'source_format': kwargs['filename'].rsplit('.', 1)[-1],
+                'query_expression': kwargs['query_expression'],
+                'return_columns': kwargs['return_columns'],
+                'expected_row_count': kwargs['expected_row_count'],
+                'selected_sheet': kwargs['selected_sheet'],
+                'sheet_names': kwargs['sheet_names'],
+            }
+
+        @staticmethod
+        def _build_source_authorization_from_location(container_name, blob_path, blob_version):
+            return {
+                'source': 'workspace',
+                'container': container_name,
+                'blob_path': blob_path,
+                'blob_etag': blob_version['blob_etag'],
+            }
+
+    fake_module.TabularProcessingPlugin = FakeWorkbookPlugin
+    sys.modules['semantic_kernel_plugins.tabular_processing_plugin'] = fake_module
+    queued_runs = []
+    try:
+        helpers = _load_direct_source_queue_helpers({
+            '_safe_int': lambda value: int(value or 0),
+            '_get_tabular_generated_output_batch_budget': lambda settings=None: {
+                'max_rows': 60,
+                'max_chars': 60000,
+            },
+            '_get_tabular_generated_output_task_type': lambda *args: None,
+            'question_requests_tabular_generated_output': lambda question: True,
+            'question_requests_tabular_hierarchical_analysis': lambda question: False,
+            'get_tabular_generated_output_format': lambda question: 'csv',
+            'dedupe_tabular_file_contexts': lambda contexts=None: list(contexts or []),
+            'raise_if_mixed_source_cancelled': lambda *args, **kwargs: None,
+            'queue_tabular_generated_output_run': lambda **kwargs: queued_runs.append(kwargs) or {
+                'id': f'run-{len(queued_runs)}',
+                'row_count': kwargs['source_descriptor']['expected_row_count'],
+                'batch_count': 1,
+            },
+            'build_background_tabular_generated_output_metadata': lambda run: {
+                'background_export': True,
+                'export_run_id': run['id'],
+                'row_count': run['row_count'],
+            },
+            'build_tabular_post_processing_activity_payload': lambda *args, **kwargs: {},
+            '_build_failed_tabular_generated_output_metadata': lambda *args: {
+                'status': 'failed',
+            },
+            'logging': logging,
+            'log_event': lambda *args, **kwargs: None,
+        })
+        for source_format in ('xlsx', 'xls', 'xlsm'):
+            output_metadata = helpers['maybe_queue_direct_tabular_generated_output'](
+                user_question='Create one complete downloadable CSV for every source row.',
+                file_contexts=[{
+                    'file_name': f'source.{source_format}',
+                    'source_hint': 'workspace',
+                }],
+                user_id='user-1',
+                conversation_id='conversation-1',
+                gpt_model='test-model',
+                settings={},
+            )
+            assert output_metadata['background_export'] is True
+    finally:
+        if original_module is None:
+            sys.modules.pop('semantic_kernel_plugins.tabular_processing_plugin', None)
+        else:
+            sys.modules['semantic_kernel_plugins.tabular_processing_plugin'] = original_module
+
+    assert len(queued_runs) == 3
+    assert [run['source_descriptor']['source_format'] for run in queued_runs] == [
+        'xlsx',
+        'xls',
+        'xlsm',
+    ]
+    assert all(
+        run['source_descriptor']['sheet_names'] == ['First', 'Second']
+        for run in queued_runs
+    )
+
+
 def test_direct_source_backed_csv_queue_bypasses_tool_paging():
     """Explicit exhaustive CSV prompts queue directly from one authorized source blob."""
     original_module = sys.modules.get('semantic_kernel_plugins.tabular_processing_plugin')
@@ -4285,8 +4702,8 @@ def test_direct_source_backed_csv_queue_bypasses_tool_paging():
     assert 'run_id=direct-run-3000' in thought_payloads[0]['detail']
 
 
-def test_direct_source_backed_queue_failure_falls_back_without_stream_abort():
-    """Direct queue failures return None so existing tabular analysis fallback can continue."""
+def test_direct_source_backed_queue_failure_suppresses_inline_exhaustive_output():
+    """Artifact queue failures return safe metadata instead of dumping rows into chat."""
     original_module = sys.modules.get('semantic_kernel_plugins.tabular_processing_plugin')
     fake_module = ModuleType('semantic_kernel_plugins.tabular_processing_plugin')
 
@@ -4315,6 +4732,14 @@ def test_direct_source_backed_queue_failure_falls_back_without_stream_abort():
             'queue_tabular_generated_output_run': lambda **kwargs: queued_runs.append(kwargs),
             'build_background_tabular_generated_output_metadata': lambda run: run,
             'build_tabular_post_processing_activity_payload': lambda *args, **kwargs: {},
+            '_build_failed_tabular_generated_output_metadata': lambda source, output_format, reason: {
+                'background_export': True,
+                'status': 'failed',
+                'output_format': output_format,
+                'source_file_name': source.get('filename'),
+                'status_detail': reason,
+                'suppress_assistant_table_export': True,
+            },
             'logging': logging,
             'log_event': lambda *args, **kwargs: logged_events.append((args, kwargs)),
         })
@@ -4336,7 +4761,11 @@ def test_direct_source_backed_queue_failure_falls_back_without_stream_abort():
         else:
             sys.modules['semantic_kernel_plugins.tabular_processing_plugin'] = original_module
 
-    assert output_metadata is None
+    assert output_metadata['status'] == 'failed'
+    assert output_metadata['background_export'] is True
+    assert output_metadata['suppress_assistant_table_export'] is True
+    assert output_metadata['source_file_name'] == 'interior_resource_operations_dataset-30000.csv'
+    assert 'No inline row output was generated' in output_metadata['status_detail']
     assert queued_runs == []
     assert any(
         args and args[0] == '[TABULAR_GENERATED_OUTPUT] Direct source-backed generated output queueing skipped'
@@ -4817,9 +5246,11 @@ def test_100000_row_hardening_contracts_revalidate_source_and_cancel_terminally(
     """The largest tier keeps source-version, authorization, and cancel contracts explicit."""
     source_version_source = ast.unparse(_get_function_node('_get_versioned_source_blob_client'))
     staging_source = ast.unparse(_get_function_node('_stage_tabular_generated_output_source'))
+    replay_source = ast.unparse(_get_function_node('_iter_versioned_tabular_source_rows'))
     assert 'blob_etag' in source_version_source
     assert 'Source CSV changed after the export was queued' in source_version_source
-    assert 'MatchConditions.IfNotModified' in staging_source
+    assert '_iter_versioned_tabular_source_rows' in staging_source
+    assert 'MatchConditions.IfNotModified' in replay_source
     assert 'source_scan_row_count' in staging_source
 
     authorize_personal = _load_authorization_helper('user-1')
@@ -5471,9 +5902,12 @@ def main():
         test_dynamic_concurrency_and_parallel_window_eta,
         test_phase_one_generation_contract_fields_are_additive_and_compact,
         test_phase_three_rollout_activates_shadow_only_and_stays_backend_only,
+        test_shadow_generation_plan_is_deferred_off_the_production_critical_path,
+        test_schema_probe_starts_small_then_uses_normal_batch_budget,
         test_phase_eight_rollout_assignment_is_stable_and_control_runs_stay_legacy,
         test_phase_eight_retry_and_stale_reclaim_modes_are_snapshotted,
         test_retry_status_detail_exposes_safe_retry_reason,
+        test_startup_status_detail_reports_active_phase_before_first_checkpoint,
         test_phase_eight_publication_revalidates_source_version,
         test_phase_eight_committed_output_survives_summary_and_progress_crash,
         test_phase_eight_performance_summary_is_bounded_and_cohort_comparable,
@@ -5500,8 +5934,12 @@ def main():
         test_filter_rows_pages_queue_full_3000_row_source_replay,
         test_filter_rows_pages_queue_hierarchical_analysis_run,
         test_filter_rows_pages_queue_combined_analysis_and_export_run,
+        test_downloadable_complete_csv_request_uses_shared_artifact_intent,
+        test_durable_tabular_descriptor_supports_all_configured_formats,
+        test_durable_workbook_replay_preserves_sheet_order_and_resume_position,
+        test_direct_source_backed_queue_supports_all_workbook_formats,
         test_direct_source_backed_csv_queue_bypasses_tool_paging,
-        test_direct_source_backed_queue_failure_falls_back_without_stream_abort,
+        test_direct_source_backed_queue_failure_suppresses_inline_exhaustive_output,
         test_phase_two_background_handoff_contracts_are_server_composed,
         test_background_metadata_uses_public_status_row_count,
         test_direct_source_backed_queue_call_sites_use_required_keywords,
