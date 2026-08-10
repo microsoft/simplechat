@@ -53,6 +53,11 @@ from functions_simplechat_operations import upload_generated_analysis_artifact_s
 
 TABULAR_EXPORT_RUN_TYPE = 'tabular_generated_output_run'
 TABULAR_EXPORT_CONTRACT_VERSION = 3
+TABULAR_GENERATION_CONTRACT_VERSION = 1
+TABULAR_RESPONSE_PROTOCOL_OBJECT_V1 = 'object-v1'
+TABULAR_EXECUTOR_MODE_FIXED_WINDOW = 'fixed-window-v1'
+TABULAR_ROLLOUT_PLANNER_MODES = {'off', 'shadow', 'active'}
+TABULAR_ROLLOUT_HANDOFF_MODES = {'legacy', 'server', 'constrained_model'}
 TABULAR_RUN_TASK_STRUCTURED_EXPORT = 'structured_export'
 TABULAR_RUN_TASK_HIERARCHICAL_ANALYSIS = 'hierarchical_analysis'
 TABULAR_RUN_TASK_COMBINED = 'combined'
@@ -149,6 +154,9 @@ TABULAR_EXPORT_SUMMARY_MAX_FIELDS = 25
 TABULAR_EXPORT_SUMMARY_MAX_VALUES_PER_FIELD = 5
 TABULAR_EXPORT_SUMMARY_AGGREGATE_MAX_VALUES = 25
 TABULAR_EXPORT_PROGRESS_LOG_INTERVAL_SECONDS = 30
+TABULAR_GENERATION_DEFAULT_HEARTBEAT_SECONDS = 30
+TABULAR_GENERATION_DEFAULT_CHECKPOINT_WRITER_CONCURRENCY = 1
+TABULAR_GENERATION_DEFAULT_SYSTEMIC_FAILURE_THRESHOLD = 0.5
 TABULAR_EXPORT_SCHEDULER_STATUSES = (
     TABULAR_EXPORT_STATUS_QUEUED,
     TABULAR_EXPORT_STATUS_RUNNING,
@@ -258,6 +266,188 @@ def _settings_float(settings, key, default, minimum=None, maximum=None):
     if maximum is not None:
         parsed_value = min(maximum, parsed_value)
     return parsed_value
+
+
+def _settings_mode(settings, key, default, allowed_modes):
+    normalized_mode = str((settings or {}).get(key, default) or default).strip().lower()
+    if normalized_mode in allowed_modes:
+        return normalized_mode
+    return default
+
+
+def _normalize_tabular_generation_rollout_settings(settings):
+    settings = settings or {}
+    return {
+        'tabular_background_handoff_mode': _settings_mode(
+            settings,
+            'tabular_background_handoff_mode',
+            'legacy',
+            TABULAR_ROLLOUT_HANDOFF_MODES,
+        ),
+        'tabular_generation_plan_mode': _settings_mode(
+            settings,
+            'tabular_generation_plan_mode',
+            'off',
+            TABULAR_ROLLOUT_PLANNER_MODES,
+        ),
+        'enable_tabular_generation_plan': _settings_bool(
+            settings,
+            'enable_tabular_generation_plan',
+            False,
+        ),
+        'enable_tabular_compact_response_protocol': _settings_bool(
+            settings,
+            'enable_tabular_compact_response_protocol',
+            False,
+        ),
+        'enable_tabular_completion_driven_checkpointing': _settings_bool(
+            settings,
+            'enable_tabular_completion_driven_checkpointing',
+            False,
+        ),
+        'enable_tabular_rolling_worker_pool': _settings_bool(
+            settings,
+            'enable_tabular_rolling_worker_pool',
+            False,
+        ),
+        'enable_tabular_independent_batch_retries': _settings_bool(
+            settings,
+            'enable_tabular_independent_batch_retries',
+            False,
+        ),
+        'tabular_generation_checkpoint_writer_concurrency': _settings_int(
+            settings,
+            'tabular_generation_checkpoint_writer_concurrency',
+            TABULAR_GENERATION_DEFAULT_CHECKPOINT_WRITER_CONCURRENCY,
+            minimum=1,
+            maximum=16,
+        ),
+        'tabular_generation_heartbeat_seconds': _settings_int(
+            settings,
+            'tabular_generation_heartbeat_seconds',
+            TABULAR_GENERATION_DEFAULT_HEARTBEAT_SECONDS,
+            minimum=5,
+            maximum=300,
+        ),
+        'tabular_generation_systemic_failure_threshold': _settings_float(
+            settings,
+            'tabular_generation_systemic_failure_threshold',
+            TABULAR_GENERATION_DEFAULT_SYSTEMIC_FAILURE_THRESHOLD,
+            minimum=0.0,
+            maximum=1.0,
+        ),
+    }
+
+
+def _sync_tabular_generation_contract_fields(run):
+    if not isinstance(run, dict):
+        return run
+
+    batch_count = _safe_int(run.get('batch_count'))
+    completed_batches = _safe_int(run.get('completed_batches'))
+    processed_rows = _safe_int(run.get('processed_rows'))
+    planned_batch_count = _safe_int(run.get('planned_batch_count'))
+    if planned_batch_count <= 0 and batch_count:
+        planned_batch_count = batch_count
+
+    completed_batch_count = _safe_int(run.get('completed_batch_count'))
+    if completed_batch_count <= 0 and completed_batches:
+        completed_batch_count = completed_batches
+
+    highest_contiguous_batch = _safe_int(run.get('highest_contiguous_batch'))
+    if highest_contiguous_batch <= 0 and completed_batches:
+        highest_contiguous_batch = completed_batches
+
+    checkpointed_row_count = _safe_int(run.get('checkpointed_row_count'))
+    if checkpointed_row_count <= 0 and processed_rows:
+        checkpointed_row_count = processed_rows
+
+    run.setdefault('generation_contract_version', TABULAR_GENERATION_CONTRACT_VERSION)
+    run.setdefault('response_protocol_version', TABULAR_RESPONSE_PROTOCOL_OBJECT_V1)
+    run.setdefault('executor_mode', TABULAR_EXECUTOR_MODE_FIXED_WINDOW)
+    run.setdefault('plan_blob_path', None)
+    run.setdefault('plan_hash', None)
+    run['planned_batch_count'] = planned_batch_count
+    run['completed_batch_count'] = completed_batch_count
+    run['highest_contiguous_batch'] = highest_contiguous_batch
+    run['active_batch_count'] = _safe_int(run.get('active_batch_count'))
+    run['retry_wait_batch_count'] = _safe_int(run.get('retry_wait_batch_count'))
+    run['exhausted_batch_count'] = _safe_int(run.get('exhausted_batch_count'))
+    run['checkpointed_row_count'] = checkpointed_row_count
+    run.setdefault('generation_started_at', run.get('started_at'))
+    run.setdefault('generation_completed_at', None)
+    return run
+
+
+def _build_generation_progress_contract_fields(run, completed_batches, processed_rows):
+    batch_count = _safe_int((run or {}).get('batch_count'))
+    normalized_completed_batches = _safe_int(completed_batches)
+    normalized_processed_rows = _safe_int(processed_rows)
+    planned_batch_count = _safe_int((run or {}).get('planned_batch_count'))
+    if planned_batch_count <= 0 and batch_count:
+        planned_batch_count = batch_count
+    return {
+        'planned_batch_count': planned_batch_count,
+        'completed_batch_count': normalized_completed_batches,
+        'highest_contiguous_batch': normalized_completed_batches,
+        'active_batch_count': 0,
+        'retry_wait_batch_count': _safe_int((run or {}).get('retry_wait_batch_count')),
+        'exhausted_batch_count': _safe_int((run or {}).get('exhausted_batch_count')),
+        'checkpointed_row_count': normalized_processed_rows,
+    }
+
+
+def _extract_tabular_response_usage(result):
+    def read_usage_value(source, field_names):
+        if source is None:
+            return None
+        for field_name in field_names:
+            if isinstance(source, dict):
+                value = source.get(field_name)
+            else:
+                value = getattr(source, field_name, None)
+            parsed_value = _safe_int(value, default=0)
+            if parsed_value:
+                return parsed_value
+        return None
+
+    first_message = result[0] if result else None
+    usage_sources = []
+    for source in (
+        getattr(first_message, 'metadata', None),
+        getattr(first_message, 'usage', None),
+        getattr(getattr(first_message, 'inner_content', None), 'usage', None),
+    ):
+        if source is not None:
+            usage_sources.append(source)
+        if isinstance(source, dict):
+            for nested_key in ('usage', 'token_usage', 'tokenUsage'):
+                nested_source = source.get(nested_key)
+                if nested_source is not None:
+                    usage_sources.append(nested_source)
+
+    usage = {
+        'input_token_count': None,
+        'output_token_count': None,
+        'total_token_count': None,
+    }
+    for source in usage_sources:
+        if usage['input_token_count'] is None:
+            usage['input_token_count'] = read_usage_value(
+                source,
+                ('prompt_tokens', 'input_tokens', 'promptTokens', 'inputTokens'),
+            )
+        if usage['output_token_count'] is None:
+            usage['output_token_count'] = read_usage_value(
+                source,
+                ('completion_tokens', 'output_tokens', 'completionTokens', 'outputTokens'),
+            )
+        if usage['total_token_count'] is None:
+            usage['total_token_count'] = read_usage_value(
+                source,
+                ('total_tokens', 'totalTokens'),
+            )
+    return usage
 
 
 def _resolve_tabular_batch_concurrency(settings, batch_count):
@@ -1042,16 +1232,6 @@ def _parse_generated_json_object(response_content):
     return parsed_entries[0]
 
 
-def _truncate_response_preview(response_content, max_chars=400):
-    cleaned = _clean_generated_json_code_fence(response_content)
-    normalized = re.sub(r'\s+', ' ', cleaned).strip()
-    if not normalized:
-        return ''
-    if len(normalized) <= max_chars:
-        return normalized
-    return f"{normalized[:max_chars]}..."
-
-
 def _dump_generated_output_json(value):
     return json.dumps(value, default=str, ensure_ascii=False, separators=(',', ':'))
 
@@ -1531,7 +1711,7 @@ def _stage_tabular_generated_output_source(run, settings):
 
 def _migrate_legacy_tabular_export_run(run):
     if _safe_int(run.get('contract_version')) >= TABULAR_EXPORT_CONTRACT_VERSION:
-        return run
+        return _sync_tabular_generation_contract_fields(run)
 
     batch_count = _safe_int(run.get('batch_count'))
     expected_row_count = _safe_int(run.get('row_count'))
@@ -1618,6 +1798,9 @@ def _migrate_legacy_tabular_export_run(run):
     now = _now_iso()
     run.update({
         'contract_version': TABULAR_EXPORT_CONTRACT_VERSION,
+        'generation_contract_version': TABULAR_GENERATION_CONTRACT_VERSION,
+        'response_protocol_version': TABULAR_RESPONSE_PROTOCOL_OBJECT_V1,
+        'executor_mode': TABULAR_EXECUTOR_MODE_FIXED_WINDOW,
         'task_type': _normalize_tabular_run_task_type(run.get('task_type')),
         'analysis_objective': str(run.get('analysis_objective') or '').strip(),
         'total_chunk_count': batch_count,
@@ -1627,6 +1810,17 @@ def _migrate_legacy_tabular_export_run(run):
         'input_blob_path': None,
         'completed_batches': 0,
         'processed_rows': 0,
+        'planned_batch_count': batch_count,
+        'completed_batch_count': 0,
+        'highest_contiguous_batch': 0,
+        'active_batch_count': 0,
+        'retry_wait_batch_count': 0,
+        'exhausted_batch_count': 0,
+        'checkpointed_row_count': 0,
+        'generation_started_at': run.get('started_at'),
+        'generation_completed_at': None,
+        'plan_blob_path': None,
+        'plan_hash': None,
         'output_schema': None,
         'regenerate_legacy_output_checkpoints': False,
         'updated_at': now,
@@ -2014,6 +2208,15 @@ async def _generate_batch_entries(
     raw_response_content = ''
     mismatch_count = 0
     last_validation_error = None
+    last_attempt_metrics = {
+        'input_char_count': len(batch_prompt),
+        'response_char_count': 0,
+        'model_latency_seconds': None,
+        'validation_seconds': None,
+        'input_token_count': None,
+        'output_token_count': None,
+        'total_token_count': None,
+    }
     timeout_seconds = max(
         _safe_float(
             batch_timeout_seconds,
@@ -2037,18 +2240,31 @@ async def _generate_batch_entries(
 
         execution_settings = AzureChatPromptExecutionSettings(service_id='tabular-generated-output-background')
         try:
+            model_started_at = time.monotonic()
             result = await asyncio.wait_for(
                 chat_service.get_chat_message_contents(chat_history, execution_settings),
                 timeout=timeout_seconds,
             )
+            model_latency_seconds = time.monotonic() - model_started_at
         except asyncio.TimeoutError as exc:
             raise TimeoutError(
                 f'Background structured export batch {batch_number}/{total_batches} '
                 f'timed out after {timeout_seconds:g} seconds.'
             ) from exc
         raw_response_content = result[0].content if result and result[0].content else ''
+        usage = _extract_tabular_response_usage(result)
+        validation_started_at = time.monotonic()
         parsed_entries = _parse_generated_json_entries(raw_response_content) if raw_response_content else None
         parsed_entry_count = len(parsed_entries) if parsed_entries is not None else 0
+        last_attempt_metrics = {
+            'input_char_count': len(batch_prompt),
+            'response_char_count': len(raw_response_content),
+            'model_latency_seconds': round(model_latency_seconds, 3),
+            'validation_seconds': None,
+            'input_token_count': usage.get('input_token_count'),
+            'output_token_count': usage.get('output_token_count'),
+            'total_token_count': usage.get('total_token_count'),
+        }
         if parsed_entries is not None and parsed_entry_count == len(batch_rows):
             try:
                 normalized_entries, output_schema = _normalize_generated_batch_entries(
@@ -2056,14 +2272,20 @@ async def _generate_batch_entries(
                     parsed_entries,
                     expected_output_schema=expected_output_schema,
                 )
-                return normalized_entries, mismatch_count, output_schema
+                last_attempt_metrics['validation_seconds'] = round(
+                    time.monotonic() - validation_started_at,
+                    3,
+                )
+                return normalized_entries, mismatch_count, output_schema, last_attempt_metrics
             except ValueError as exc:
                 last_validation_error = str(exc)
+        last_attempt_metrics['validation_seconds'] = round(time.monotonic() - validation_started_at, 3)
 
         mismatch_count += 1
         log_event(
             '[TABULAR_GENERATED_OUTPUT] Background export batch attempt mismatch',
             {
+                'event_name': 'batch_validated',
                 'run_id': run_id,
                 'batch_number': batch_number,
                 'batch_count': total_batches,
@@ -2072,7 +2294,11 @@ async def _generate_batch_entries(
                 'parsed_row_count': parsed_entry_count,
                 'validation_error': last_validation_error,
                 'response_char_count': len(raw_response_content),
-                'response_preview': _truncate_response_preview(raw_response_content),
+                'model_latency_seconds': last_attempt_metrics.get('model_latency_seconds'),
+                'validation_seconds': last_attempt_metrics.get('validation_seconds'),
+                'input_token_count': last_attempt_metrics.get('input_token_count'),
+                'output_token_count': last_attempt_metrics.get('output_token_count'),
+                'total_token_count': last_attempt_metrics.get('total_token_count'),
             },
             debug_only=True,
         )
@@ -2099,9 +2325,11 @@ async def _generate_batch_entries_for_window(
     expected_output_schema,
     batch_timeout_seconds,
 ):
+    queued_at = time.monotonic()
     async with semaphore:
+        queue_wait_seconds = time.monotonic() - queued_at
         batch_started_at = time.monotonic()
-        batch_entries, mismatch_count, output_schema = await _generate_batch_entries(
+        batch_entries, mismatch_count, output_schema, attempt_metrics = await _generate_batch_entries(
             chat_service,
             user_question,
             batch_request['rows'],
@@ -2114,12 +2342,42 @@ async def _generate_batch_entries_for_window(
             expected_output_schema=expected_output_schema,
             batch_timeout_seconds=batch_timeout_seconds,
         )
+        elapsed_seconds = time.monotonic() - batch_started_at
+        log_event(
+            '[TABULAR_GENERATED_OUTPUT] Background export batch model completed',
+            {
+                'event_name': 'batch_model_completed',
+                'run_id': run_id,
+                'batch_number': batch_request['batch_number'],
+                'batch_count': total_batches,
+                'row_count': len(batch_entries),
+                'queue_wait_seconds': round(queue_wait_seconds, 3),
+                'elapsed_seconds': round(elapsed_seconds, 3),
+                'model_latency_seconds': attempt_metrics.get('model_latency_seconds'),
+                'validation_seconds': attempt_metrics.get('validation_seconds'),
+                'input_char_count': attempt_metrics.get('input_char_count'),
+                'response_char_count': attempt_metrics.get('response_char_count'),
+                'input_token_count': attempt_metrics.get('input_token_count'),
+                'output_token_count': attempt_metrics.get('output_token_count'),
+                'total_token_count': attempt_metrics.get('total_token_count'),
+                'mismatch_count': mismatch_count,
+            },
+            debug_only=True,
+        )
         return {
             'batch_number': batch_request['batch_number'],
             'batch_entries': batch_entries,
             'batch_summary': _build_generated_batch_summary(batch_entries),
             'batch_row_count': len(batch_entries),
-            'elapsed_seconds': time.monotonic() - batch_started_at,
+            'elapsed_seconds': elapsed_seconds,
+            'queue_wait_seconds': queue_wait_seconds,
+            'model_latency_seconds': attempt_metrics.get('model_latency_seconds'),
+            'validation_seconds': attempt_metrics.get('validation_seconds'),
+            'input_char_count': attempt_metrics.get('input_char_count'),
+            'response_char_count': attempt_metrics.get('response_char_count'),
+            'input_token_count': attempt_metrics.get('input_token_count'),
+            'output_token_count': attempt_metrics.get('output_token_count'),
+            'total_token_count': attempt_metrics.get('total_token_count'),
             'mismatch_count': mismatch_count,
             'output_schema': output_schema,
         }
@@ -2219,13 +2477,13 @@ async def _generate_analysis_chunk_summary(
         log_event(
             '[TABULAR_GENERATED_OUTPUT] Background analysis chunk attempt mismatch',
             {
+                'event_name': 'batch_validated',
                 'run_id': run.get('id'),
                 'batch_number': batch_number,
                 'batch_count': total_batches,
                 'attempt_number': attempt_number,
                 'row_count': len(batch_rows),
                 'response_char_count': len(raw_response_content),
-                'response_preview': _truncate_response_preview(raw_response_content),
             },
             debug_only=True,
         )
@@ -2370,6 +2628,7 @@ async def _generate_combined_chunk_result(
         log_event(
             '[TABULAR_GENERATED_OUTPUT] Background combined chunk attempt mismatch',
             {
+                'event_name': 'batch_validated',
                 'run_id': run.get('id'),
                 'batch_number': batch_number,
                 'batch_count': total_batches,
@@ -2377,7 +2636,6 @@ async def _generate_combined_chunk_result(
                 'expected_row_count': len(batch_rows),
                 'validation_error': last_validation_error,
                 'response_char_count': len(raw_response_content),
-                'response_preview': _truncate_response_preview(raw_response_content),
             },
             debug_only=True,
         )
@@ -2512,6 +2770,7 @@ async def _generate_analysis_reduce_summary(
         log_event(
             '[TABULAR_GENERATED_OUTPUT] Background analysis reduce attempt mismatch',
             {
+                'event_name': 'batch_validated',
                 'run_id': run.get('id'),
                 'level_number': level_number,
                 'node_number': node_number,
@@ -2519,7 +2778,6 @@ async def _generate_analysis_reduce_summary(
                 'attempt_number': attempt_number,
                 'input_summary_count': len(summaries),
                 'response_char_count': len(raw_response_content),
-                'response_preview': _truncate_response_preview(raw_response_content),
             },
             debug_only=True,
         )
@@ -2958,6 +3216,7 @@ def _build_run_status_detail(run, settings, retryable_failure, can_resume):
 def _build_run_public_status(run, settings=None):
     if not isinstance(run, dict):
         return None
+    run = _sync_tabular_generation_contract_fields(run)
 
     batch_count = _safe_int(run.get('batch_count'))
     completed_batches = _safe_int(run.get('completed_batches'))
@@ -3030,6 +3289,15 @@ def _build_run_public_status(run, settings=None):
         'processed_rows': processed_rows,
         'batch_count': batch_count,
         'completed_batches': completed_batches,
+        'generation_contract_version': _safe_int(run.get('generation_contract_version')),
+        'response_protocol_version': run.get('response_protocol_version'),
+        'planned_batch_count': _safe_int(run.get('planned_batch_count')),
+        'completed_batch_count': _safe_int(run.get('completed_batch_count')),
+        'highest_contiguous_batch': _safe_int(run.get('highest_contiguous_batch')),
+        'active_batch_count': _safe_int(run.get('active_batch_count')),
+        'retry_wait_batch_count': _safe_int(run.get('retry_wait_batch_count')),
+        'exhausted_batch_count': _safe_int(run.get('exhausted_batch_count')),
+        'checkpointed_row_count': _safe_int(run.get('checkpointed_row_count')),
         'total_chunk_count': total_chunk_count,
         'processed_chunk_count': processed_chunk_count,
         'failed_chunk_count': failed_chunk_count,
@@ -3041,6 +3309,8 @@ def _build_run_public_status(run, settings=None):
         'progress_percent': progress_percent,
         'created_at': run.get('created_at'),
         'started_at': run.get('started_at'),
+        'generation_started_at': run.get('generation_started_at'),
+        'generation_completed_at': run.get('generation_completed_at'),
         'updated_at': run.get('updated_at'),
         'completed_at': run.get('completed_at'),
         'last_heartbeat_at': run.get('last_heartbeat_at'),
@@ -3424,9 +3694,11 @@ def _try_claim_run(user_id, run_id, settings):
     run.update({
         'status': TABULAR_EXPORT_STATUS_RUNNING,
         'started_at': run.get('started_at') or now.isoformat(),
+        'generation_started_at': run.get('generation_started_at') or now.isoformat(),
         'attempt_started_at': now.isoformat(),
         'updated_at': now.isoformat(),
         'completed_at': None,
+        'generation_completed_at': None,
         'last_heartbeat_at': now.isoformat(),
         'lease_holder_id': _lease_holder_id(),
         'lease_generation': _safe_int(run.get('lease_generation')) + 1,
@@ -3434,6 +3706,7 @@ def _try_claim_run(user_id, run_id, settings):
         'next_attempt_at': None,
         'last_message': 'Background structured export is running',
     })
+    _sync_tabular_generation_contract_fields(run)
     try:
         return _replace_run(run)
     except Exception as exc:
@@ -3454,6 +3727,7 @@ def _mark_run_failed(run, error_message):
         'updated_at': now,
         'completed_at': now,
         'last_heartbeat_at': now,
+        'active_batch_count': 0,
         'last_error': str(error_message or 'Unknown error')[:1000],
         'last_message': 'Background structured export failed',
     })
@@ -3525,6 +3799,7 @@ def _mark_run_retryable(run, error_message, settings, retry_category='transient'
         'last_heartbeat_at': now.isoformat(),
         'lease_holder_id': None,
         'lease_expires_at': None,
+        'active_batch_count': 0,
         'last_error': str(error_message or 'Transient background export error')[:1000],
         'last_message': (
             'Background structured export will retry after model-output validation failed'
@@ -3658,6 +3933,7 @@ def _update_run_progress(
         'last_message': f"Processed structured export batch {completed_batches} of {batch_count}",
         'recent_batches': recent_batches,
     })
+    run.update(_build_generation_progress_contract_fields(run, completed_batches, processed_rows))
     run.update(throughput)
     return _replace_claimed_run(run)
 
@@ -3837,6 +4113,7 @@ def _complete_run(run):
         'status': TABULAR_EXPORT_STATUS_COMPLETED,
         'updated_at': now,
         'completed_at': now,
+        'generation_completed_at': now,
         'last_heartbeat_at': now,
         'processed_rows': output_entry_count,
         'completed_batches': _safe_int(run.get('batch_count')),
@@ -3848,6 +4125,11 @@ def _complete_run(run):
         'final_artifact': _build_artifact_metadata(uploaded_message, generated_file_name, output_format),
         'estimated_remaining_seconds': 0,
     })
+    run.update(_build_generation_progress_contract_fields(
+        run,
+        run.get('batch_count'),
+        output_entry_count,
+    ))
     run = _replace_claimed_run(run)
     log_event(
         '[TABULAR_GENERATED_OUTPUT] Background export completed',
@@ -3859,6 +4141,10 @@ def _complete_run(run):
             'output_format': output_format,
             'row_count': output_entry_count,
             'batch_count': run.get('batch_count'),
+            'completed_batch_count': run.get('completed_batch_count'),
+            'checkpointed_row_count': run.get('checkpointed_row_count'),
+            'generation_contract_version': run.get('generation_contract_version'),
+            'response_protocol_version': run.get('response_protocol_version'),
             'artifact_message_id': uploaded_message.get('id'),
             'generated_file_name': uploaded_message.get('file_name') or generated_file_name,
         },
@@ -3979,6 +4265,7 @@ def _complete_analysis_run(run, final_summary):
         'status': TABULAR_EXPORT_STATUS_COMPLETED,
         'updated_at': now,
         'completed_at': now,
+        'generation_completed_at': now,
         'last_heartbeat_at': now,
         'analysis_phase': 'completed',
         'processed_rows': _safe_int(final_summary.get('row_count'), default=_safe_int(run.get('row_count'))),
@@ -3992,6 +4279,11 @@ def _complete_analysis_run(run, final_summary):
         'final_artifact': _build_artifact_metadata(uploaded_message, generated_file_name, 'md'),
         'estimated_remaining_seconds': 0,
     })
+    run.update(_build_generation_progress_contract_fields(
+        run,
+        run.get('batch_count'),
+        run.get('processed_rows'),
+    ))
     run = _replace_claimed_run(run)
     log_event(
         '[TABULAR_GENERATED_OUTPUT] Background tabular analysis completed',
@@ -4072,6 +4364,7 @@ def _complete_combined_analysis_run(run, final_summary):
         'status': TABULAR_EXPORT_STATUS_COMPLETED,
         'updated_at': now,
         'completed_at': now,
+        'generation_completed_at': now,
         'last_heartbeat_at': now,
         'analysis_phase': 'completed',
         'processed_rows': _safe_int(final_summary.get('row_count'), default=_safe_int(run.get('row_count'))),
@@ -4089,6 +4382,11 @@ def _complete_combined_analysis_run(run, final_summary):
         'final_artifact': structured_artifact or analysis_artifact,
         'estimated_remaining_seconds': 0,
     })
+    run.update(_build_generation_progress_contract_fields(
+        run,
+        run.get('batch_count'),
+        run.get('processed_rows'),
+    ))
     run = _replace_claimed_run(run)
     log_event(
         '[TABULAR_GENERATED_OUTPUT] Background combined tabular run completed',
@@ -4338,6 +4636,7 @@ def _checkpoint_generated_batch_results(run, generated_results):
             run.get('id'),
             batch_number,
         )
+        checkpoint_started_at = time.monotonic()
         try:
             _upload_json_blob(
                 output_blob_path,
@@ -4383,10 +4682,35 @@ def _checkpoint_generated_batch_results(run, generated_results):
                 'generated_output_summary': 'true',
             },
         )
+        checkpoint_seconds = time.monotonic() - checkpoint_started_at
+        log_event(
+            '[TABULAR_GENERATED_OUTPUT] Background export batch checkpointed',
+            {
+                'event_name': 'batch_checkpointed',
+                'run_id': run.get('id'),
+                'conversation_id': run.get('conversation_id'),
+                'user_id': run.get('user_id'),
+                'batch_number': batch_number,
+                'batch_row_count': generated_result['batch_row_count'],
+                'checkpoint_seconds': round(checkpoint_seconds, 3),
+                'response_protocol_version': run.get('response_protocol_version'),
+                'plan_hash_present': bool(run.get('plan_hash')),
+            },
+            debug_only=True,
+        )
         batch_results[batch_number] = {
             'batch_number': batch_number,
             'batch_row_count': generated_result['batch_row_count'],
             'elapsed_seconds': generated_result['elapsed_seconds'],
+            'queue_wait_seconds': generated_result.get('queue_wait_seconds'),
+            'model_latency_seconds': generated_result.get('model_latency_seconds'),
+            'validation_seconds': generated_result.get('validation_seconds'),
+            'input_char_count': generated_result.get('input_char_count'),
+            'response_char_count': generated_result.get('response_char_count'),
+            'input_token_count': generated_result.get('input_token_count'),
+            'output_token_count': generated_result.get('output_token_count'),
+            'total_token_count': generated_result.get('total_token_count'),
+            'checkpoint_seconds': checkpoint_seconds,
             'mismatch_count': generated_result['mismatch_count'],
             'from_checkpoint': False,
         }
@@ -4620,6 +4944,7 @@ def _update_analysis_map_progress(
         'last_message': f'Analyzed tabular chunk {completed_batches} of {batch_count}',
         'recent_batches': recent_batches,
     })
+    run.update(_build_generation_progress_contract_fields(run, completed_batches, processed_rows))
     run.update(throughput)
     return _replace_claimed_run(run)
 
@@ -5178,6 +5503,7 @@ def queue_tabular_generated_output_run(
         task_type=normalized_task_type,
         user_question=user_question,
     )
+    rollout_settings = _normalize_tabular_generation_rollout_settings(settings)
 
     if source_descriptor:
         staged_row_count = _safe_int(source_descriptor.get('expected_row_count'))
@@ -5236,6 +5562,10 @@ def queue_tabular_generated_output_run(
         'id': run_id,
         'type': TABULAR_EXPORT_RUN_TYPE,
         'contract_version': TABULAR_EXPORT_CONTRACT_VERSION,
+        'generation_contract_version': TABULAR_GENERATION_CONTRACT_VERSION,
+        'response_protocol_version': TABULAR_RESPONSE_PROTOCOL_OBJECT_V1,
+        'executor_mode': TABULAR_EXECUTOR_MODE_FIXED_WINDOW,
+        'generation_rollout_settings': rollout_settings,
         'task_type': normalized_task_type,
         'analysis_objective': normalized_analysis_objective,
         'user_id': normalized_user_id,
@@ -5262,6 +5592,17 @@ def queue_tabular_generated_output_run(
         'failed_chunk_count': 0,
         'chunk_manifest': chunk_manifest,
         'completed_batches': 0,
+        'planned_batch_count': staged_batch_count,
+        'completed_batch_count': 0,
+        'highest_contiguous_batch': 0,
+        'active_batch_count': 0,
+        'retry_wait_batch_count': 0,
+        'exhausted_batch_count': 0,
+        'checkpointed_row_count': 0,
+        'generation_started_at': None,
+        'generation_completed_at': None,
+        'plan_blob_path': None,
+        'plan_hash': None,
         'processed_rows': 0,
         'output_schema': None,
         'source_descriptor': source_descriptor or None,
@@ -5320,6 +5661,16 @@ def queue_tabular_generated_output_run(
             'batch_input_token_budget': model_batch_budget.get('input_token_budget'),
             'batch_output_token_budget': model_batch_budget.get('output_token_budget'),
             'model_limit_source': model_batch_budget.get('limit_source'),
+            'generation_contract_version': TABULAR_GENERATION_CONTRACT_VERSION,
+            'response_protocol_version': TABULAR_RESPONSE_PROTOCOL_OBJECT_V1,
+            'executor_mode': TABULAR_EXECUTOR_MODE_FIXED_WINDOW,
+            'planner_mode': rollout_settings.get('tabular_generation_plan_mode'),
+            'compact_protocol_enabled': rollout_settings.get('enable_tabular_compact_response_protocol'),
+            'completion_checkpointing_enabled': rollout_settings.get(
+                'enable_tabular_completion_driven_checkpointing'
+            ),
+            'rolling_pool_enabled': rollout_settings.get('enable_tabular_rolling_worker_pool'),
+            'independent_retries_enabled': rollout_settings.get('enable_tabular_independent_batch_retries'),
             'source_backed': bool(source_descriptor),
             'submitted_to_executor': submitted,
         },
