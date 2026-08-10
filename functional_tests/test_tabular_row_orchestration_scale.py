@@ -1,8 +1,8 @@
 # test_tabular_row_orchestration_scale.py
 """
 Functional test for scalable per-row tabular orchestration.
-Version: 0.250.143
-Implemented in: 0.250.060; generated CSV formula safety in 0.250.065; generated file export routing in 0.250.072; source descriptor generalization in 0.250.127; unified durable run contract in 0.250.128; hierarchical analysis in 0.250.129; combined analysis and export in 0.250.130; scale validation in 0.250.132; direct source-backed exhaustive queueing in 0.250.133; direct queue call-site hardening in 0.250.134; model-validation auto retry in 0.250.135; model-aware parallel throughput in 0.250.136; Phase 1 acceleration contracts and observability in 0.250.137; Phase 2 truthful background handoff in 0.250.138; Phase 3 durable LLM generation planning in 0.250.139; Phase 4 compact row response protocol in 0.250.140; Phase 5 completion-driven checkpointing in 0.250.141; Phase 6 rolling worker pool in 0.250.142; Phase 7 independent batch retries in 0.250.143
+Version: 0.250.144
+Implemented in: 0.250.060; generated CSV formula safety in 0.250.065; generated file export routing in 0.250.072; source descriptor generalization in 0.250.127; unified durable run contract in 0.250.128; hierarchical analysis in 0.250.129; combined analysis and export in 0.250.130; scale validation in 0.250.132; direct source-backed exhaustive queueing in 0.250.133; direct queue call-site hardening in 0.250.134; model-validation auto retry in 0.250.135; model-aware parallel throughput in 0.250.136; Phase 1 acceleration contracts and observability in 0.250.137; Phase 2 truthful background handoff in 0.250.138; Phase 3 durable LLM generation planning in 0.250.139; Phase 4 compact row response protocol in 0.250.140; Phase 5 completion-driven checkpointing in 0.250.141; Phase 6 rolling worker pool in 0.250.142; Phase 7 independent batch retries in 0.250.143; Phase 8 scale, chaos, and rollout in 0.250.144
 
 This test ensures generated exports preserve source identity and row order while
 enforcing one stable output schema across independently generated batches.
@@ -74,6 +74,8 @@ STREAM_FUNCTIONS = {
     '_validate_tabular_output_checkpoint_metadata',
     '_write_ordered_output_stream',
 }
+SOURCE_VERSION_FUNCTIONS = {'_revalidate_tabular_source_version_for_publication'}
+CHECKPOINT_RESUME_FUNCTIONS = {'_build_batch_window'}
 SOURCE_READER_FUNCTIONS = {
     'detect_tabular_csv_numeric_columns',
     'iter_tabular_csv_query_rows',
@@ -95,6 +97,8 @@ FENCING_FUNCTIONS = {
 RETRY_FUNCTIONS = {
     '_safe_int',
     '_settings_int',
+    '_parse_iso_datetime',
+    '_build_tabular_generation_performance_summary',
     '_is_retryable_export_error_message',
     '_is_retryable_model_validation_error_message',
     '_is_retryable_failed_run',
@@ -181,6 +185,9 @@ PERFORMANCE_FUNCTIONS = {
     '_settings_float',
     '_settings_mode',
     '_normalize_tabular_generation_rollout_settings',
+    '_get_tabular_generation_rollout_bucket',
+    '_build_tabular_generation_rollout_assignment',
+    '_get_tabular_generation_rollout_settings_for_run',
     '_sync_tabular_generation_contract_fields',
     '_build_generation_progress_contract_fields',
     '_extract_tabular_response_usage',
@@ -196,6 +203,8 @@ PERFORMANCE_FUNCTIONS = {
     '_build_model_aware_source_batch_budget',
     '_is_schema_discovery_progress_window',
     '_calculate_window_throughput',
+    '_parse_iso_datetime',
+    '_build_tabular_generation_performance_summary',
     '_advance_run_progress_for_window',
 }
 GENERATION_PLAN_FUNCTIONS = {
@@ -290,6 +299,7 @@ COMPLETION_CHECKPOINT_FUNCTIONS = {
     '_normalize_tabular_generation_rollout_settings',
     '_get_tabular_generation_rollout_settings_for_run',
     '_select_tabular_executor_mode',
+    '_select_tabular_retry_mode',
     '_is_rolling_worker_pool_enabled',
     '_is_independent_batch_retries_enabled',
     '_get_tabular_generation_plan_mode',
@@ -312,6 +322,7 @@ COMPLETION_CHECKPOINT_FUNCTIONS = {
     '_is_completion_driven_checkpointing_enabled',
     '_get_checkpoint_writer_concurrency',
     '_get_tabular_generation_heartbeat_seconds',
+    '_is_stale_running_run',
     '_checkpoint_generated_result_async',
     '_generate_and_checkpoint_batch_window_entries',
     '_rolling_pool_heartbeat_loop',
@@ -686,6 +697,69 @@ def _load_source_reader_helpers():
     } | {'module': query_module}
 
 
+def _load_source_version_publication_helper(revalidated_descriptors):
+    module_tree = ast.parse(EXPORT_MODULE.read_text(encoding='utf-8'), filename=str(EXPORT_MODULE))
+    selected_nodes = [
+        node
+        for node in module_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name in SOURCE_VERSION_FUNCTIONS
+    ]
+    if len(selected_nodes) != len(SOURCE_VERSION_FUNCTIONS):
+        raise AssertionError('Missing source-version publication helper')
+
+    namespace = {
+        '_get_versioned_source_blob_client': lambda descriptor: revalidated_descriptors.append(
+            dict(descriptor)
+        ),
+    }
+    extracted_module = ast.Module(body=selected_nodes, type_ignores=[])
+    exec(compile(extracted_module, str(EXPORT_MODULE), 'exec'), namespace)
+    return namespace['_revalidate_tabular_source_version_for_publication']
+
+
+def _load_checkpoint_resume_helper(blobs, uploads):
+    module_tree = ast.parse(EXPORT_MODULE.read_text(encoding='utf-8'), filename=str(EXPORT_MODULE))
+    selected_nodes = [
+        node
+        for node in module_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name in CHECKPOINT_RESUME_FUNCTIONS
+    ]
+    if len(selected_nodes) != len(CHECKPOINT_RESUME_FUNCTIONS):
+        raise AssertionError('Missing checkpoint resume helper')
+
+    def output_blob_path(user_id, conversation_id, run_id, batch_number):
+        del user_id, conversation_id, run_id
+        return f'output/batch_{batch_number:06d}.json'
+
+    def summary_blob_path(user_id, conversation_id, run_id, batch_number):
+        del user_id, conversation_id, run_id
+        return f'summary/batch_{batch_number:06d}.json'
+
+    def upload_json_blob(path, payload, metadata=None):
+        blobs[path] = payload
+        uploads.append({'path': path, 'metadata': dict(metadata or {})})
+
+    namespace = {
+        'time': time,
+        '_output_blob_path': output_blob_path,
+        '_output_summary_blob_path': summary_blob_path,
+        '_blob_exists': lambda path: path in blobs,
+        '_download_json_blob': lambda path: blobs[path],
+        '_upload_json_blob': upload_json_blob,
+        '_validate_tabular_output_checkpoint_metadata': lambda *args, **kwargs: None,
+        '_build_generated_batch_summary': lambda rows: {'row_count': len(rows)},
+        '_build_tabular_output_checkpoint_metadata': lambda run, metadata: dict(metadata),
+        '_load_input_batch_rows': (
+            lambda run, input_batches, user_id, run_id, batch_number, batch_count:
+            input_batches[batch_number - 1]
+        ),
+        'log_event': lambda *args, **kwargs: None,
+    }
+    extracted_module = ast.Module(body=selected_nodes, type_ignores=[])
+    exec(compile(extracted_module, str(EXPORT_MODULE), 'exec'), namespace)
+    return namespace['_build_batch_window']
+
+
 def _load_authorization_helper(conversation_owner, visible_public_ids=None, group_authorizer=None):
     class CosmosResourceNotFoundError(Exception):
         pass
@@ -855,7 +929,9 @@ def _load_retry_helpers():
         return dict(stored_run)
 
     namespace = {
+        'datetime': datetime,
         'timedelta': timedelta,
+        'timezone': timezone,
         'logging': logging,
         'TabularExportLeaseLostError': RuntimeError,
         '_now_iso': lambda: '2026-08-09T16:00:00+00:00',
@@ -902,6 +978,7 @@ def _load_legacy_migration_helper(aggregate_batches):
         'TABULAR_GENERATION_CONTRACT_VERSION': 1,
         'TABULAR_RESPONSE_PROTOCOL_OBJECT_V1': 'object-v1',
         'TABULAR_EXECUTOR_MODE_FIXED_WINDOW': 'fixed-window-v1',
+        'TABULAR_RETRY_MODE_RUN_LEVEL': 'run-level-v1',
         'TABULAR_RUN_TASK_STRUCTURED_EXPORT': 'structured_export',
         'TABULAR_RUN_TASK_HIERARCHICAL_ANALYSIS': 'hierarchical_analysis',
         'TABULAR_RUN_TASK_COMBINED': 'combined',
@@ -1179,6 +1256,7 @@ def _load_performance_helpers(progress_updates=None):
                 or name.startswith('TABULAR_GENERATION_')
                 or name.startswith('TABULAR_RESPONSE_')
                 or name.startswith('TABULAR_EXECUTOR_')
+                or name.startswith('TABULAR_RETRY_')
                 or name.startswith('TABULAR_ROLLOUT_')
                 for name in assigned_names
             ):
@@ -1190,10 +1268,13 @@ def _load_performance_helpers(progress_updates=None):
 
     namespace = {
         '__file__': str(EXPORT_MODULE),
+        'datetime': datetime,
+        'hashlib': hashlib,
         'json': json,
         'math': math,
         'os': os,
         're': re,
+        'timezone': timezone,
     }
     extracted_module = ast.Module(body=selected_nodes, type_ignores=[])
     exec(compile(extracted_module, str(EXPORT_MODULE), 'exec'), namespace)
@@ -1789,6 +1870,7 @@ def test_phase_three_rollout_activates_shadow_only_and_stays_backend_only():
 
     defaults = normalize_rollout({})
     assert defaults == {
+        'tabular_generation_rollout_percentage': 100,
         'tabular_background_handoff_mode': 'legacy',
         'tabular_generation_plan_mode': 'shadow',
         'enable_tabular_generation_plan': True,
@@ -1798,6 +1880,7 @@ def test_phase_three_rollout_activates_shadow_only_and_stays_backend_only():
         'enable_tabular_independent_batch_retries': False,
         'tabular_generation_checkpoint_writer_concurrency': 1,
         'tabular_generation_heartbeat_seconds': 30,
+        'tabular_generation_stale_seconds': 120,
         'tabular_generation_systemic_failure_threshold': 0.5,
     }
     overridden = normalize_rollout({
@@ -1828,6 +1911,256 @@ def test_phase_three_rollout_activates_shadow_only_and_stays_backend_only():
         assert f"'{setting_key}'" in settings_source
     assert 'TABULAR_GENERATION_BACKEND_SETTING_KEYS' in settings_source
     assert 'if k in TABULAR_GENERATION_BACKEND_SETTING_KEYS' in settings_source
+
+
+def test_phase_eight_rollout_assignment_is_stable_and_control_runs_stay_legacy():
+    """Percentage rollout is deterministic per run and frozen for every resume."""
+    helpers = _load_performance_helpers()
+    build_assignment = helpers['_build_tabular_generation_rollout_assignment']
+    get_rollout_for_run = helpers['_get_tabular_generation_rollout_settings_for_run']
+    enabled_settings = {
+        'tabular_generation_rollout_percentage': 25,
+        'tabular_background_handoff_mode': 'server',
+        'enable_tabular_generation_plan': True,
+        'tabular_generation_plan_mode': 'active',
+        'enable_tabular_compact_response_protocol': True,
+        'enable_tabular_completion_driven_checkpointing': True,
+        'enable_tabular_rolling_worker_pool': True,
+        'enable_tabular_independent_batch_retries': True,
+    }
+    assignment = build_assignment(
+        enabled_settings,
+        'user-1',
+        'conversation-1',
+        'run-phase-8',
+    )
+    repeated_assignment = build_assignment(
+        enabled_settings,
+        'user-1',
+        'conversation-1',
+        'run-phase-8',
+    )
+
+    assert repeated_assignment == assignment
+    assert 1 <= assignment['tabular_generation_rollout_bucket'] <= 100
+    expected_cohort = (
+        'canary'
+        if assignment['tabular_generation_rollout_bucket'] <= 25
+        else 'control'
+    )
+    assert assignment['tabular_generation_rollout_cohort'] == expected_cohort
+    assert assignment['tabular_generation_rollout_hash_version'] == 1
+
+    if expected_cohort == 'canary':
+        assert assignment['tabular_generation_plan_mode'] == 'active'
+        assert assignment['enable_tabular_rolling_worker_pool'] is True
+    else:
+        assert assignment['tabular_background_handoff_mode'] == 'legacy'
+        assert assignment['tabular_generation_plan_mode'] == 'off'
+        assert assignment['enable_tabular_generation_plan'] is False
+        assert assignment['enable_tabular_compact_response_protocol'] is False
+        assert assignment['enable_tabular_completion_driven_checkpointing'] is False
+        assert assignment['enable_tabular_rolling_worker_pool'] is False
+        assert assignment['enable_tabular_independent_batch_retries'] is False
+
+    resumed_settings = get_rollout_for_run(
+        {'generation_rollout_settings': assignment},
+        {
+            'tabular_generation_rollout_percentage': 100,
+            'tabular_generation_plan_mode': 'active',
+            'enable_tabular_rolling_worker_pool': not assignment['enable_tabular_rolling_worker_pool'],
+        },
+    )
+    assert resumed_settings['tabular_generation_plan_mode'] == assignment['tabular_generation_plan_mode']
+    assert resumed_settings['enable_tabular_rolling_worker_pool'] == assignment['enable_tabular_rolling_worker_pool']
+
+    legacy_settings = get_rollout_for_run(
+        {'id': 'pre-snapshot-run'},
+        enabled_settings,
+    )
+    assert legacy_settings['tabular_generation_rollout_percentage'] == 0
+    assert legacy_settings['tabular_generation_plan_mode'] == 'off'
+    assert legacy_settings['enable_tabular_generation_plan'] is False
+    assert legacy_settings['enable_tabular_rolling_worker_pool'] is False
+    assert legacy_settings['tabular_generation_stale_seconds'] == 900
+
+    control_assignment = build_assignment(
+        {**enabled_settings, 'tabular_generation_rollout_percentage': 0},
+        'user-1',
+        'conversation-1',
+        'run-phase-8-control',
+    )
+    canary_assignment = build_assignment(
+        {**enabled_settings, 'tabular_generation_rollout_percentage': 100},
+        'user-1',
+        'conversation-1',
+        'run-phase-8-canary',
+    )
+    assert control_assignment['tabular_generation_rollout_cohort'] == 'control'
+    assert control_assignment['enable_tabular_generation_plan'] is False
+    assert canary_assignment['tabular_generation_rollout_cohort'] == 'canary'
+    assert canary_assignment['enable_tabular_rolling_worker_pool'] is True
+
+
+def test_phase_eight_retry_and_stale_reclaim_modes_are_snapshotted():
+    """New runs reclaim stale workers promptly while legacy snapshots retain their timeout."""
+    helpers = _load_completion_checkpoint_helpers()
+    now = datetime(2026, 8, 10, 12, 0, 0, tzinfo=timezone.utc)
+    helpers['_now_utc'] = lambda: now
+    rolling_mode = helpers['TABULAR_EXECUTOR_MODE_ROLLING_POOL']
+    fixed_mode = helpers['TABULAR_EXECUTOR_MODE_FIXED_WINDOW']
+
+    assert helpers['_select_tabular_retry_mode'](
+        {'enable_tabular_independent_batch_retries': True},
+        rolling_mode,
+    ) == 'independent-batch-v1'
+    assert helpers['_select_tabular_retry_mode'](
+        {'enable_tabular_independent_batch_retries': True},
+        fixed_mode,
+    ) == 'run-level-v1'
+
+    new_run = {
+        'last_heartbeat_at': (now - timedelta(seconds=121)).isoformat(),
+        'generation_rollout_settings': {
+            'tabular_generation_stale_seconds': 120,
+        },
+    }
+    legacy_run = {
+        'last_heartbeat_at': (now - timedelta(seconds=121)).isoformat(),
+        'generation_rollout_settings': {
+            'enable_tabular_generation_plan': True,
+        },
+    }
+    assert helpers['_is_stale_running_run'](new_run, {}) is True
+    assert helpers['_is_stale_running_run'](legacy_run, {}) is False
+
+
+def test_phase_eight_publication_revalidates_source_version():
+    """Every source-backed artifact rechecks its queued ETag immediately before upload."""
+    revalidated_descriptors = []
+    revalidate_source = _load_source_version_publication_helper(revalidated_descriptors)
+    source_descriptor = {
+        'source': 'chat',
+        'container': 'personal-chat',
+        'blob_path': 'user-1/conversation-1/source.csv',
+        'blob_etag': 'etag-queued',
+    }
+
+    revalidate_source({'source_descriptor': source_descriptor})
+    revalidate_source({'source_authorization': source_descriptor})
+
+    assert revalidated_descriptors == [source_descriptor, source_descriptor]
+    structured_publish_source = ast.unparse(_get_function_node('_publish_structured_export_artifact'))
+    analysis_publish_source = ast.unparse(_get_function_node('_publish_analysis_artifact'))
+    for publish_source in (structured_publish_source, analysis_publish_source):
+        assert publish_source.index('_revalidate_tabular_source_version_for_publication') < publish_source.index(
+            'upload_generated_analysis_artifact_stream_for_user'
+        )
+
+
+def test_phase_eight_committed_output_survives_summary_and_progress_crash():
+    """Resume reuses an authoritative output Blob and regenerates only its derived summary."""
+    committed_output_path = 'output/batch_000001.json'
+    summary_path = 'summary/batch_000001.json'
+    blobs = {
+        committed_output_path: [
+            {'source_row_number': 1, 'answer': 'durable answer'},
+        ],
+    }
+    uploads = []
+    build_batch_window = _load_checkpoint_resume_helper(blobs, uploads)
+    run = {
+        'id': 'run-phase-8-crash',
+        'conversation_id': 'conversation-1',
+        'source_file_name': 'source.csv',
+        'output_format': 'csv',
+        'completed_batches': 0,
+        'processed_rows': 0,
+        'output_schema': ['source_row_number', 'answer'],
+    }
+    input_batches = [
+        [{'Case ID': 'SC-1'}],
+        [{'Case ID': 'SC-2'}],
+    ]
+
+    batch_results, batch_requests = build_batch_window(
+        run,
+        input_batches,
+        'user-1',
+        run['id'],
+        1,
+        2,
+        2,
+        durable_output_batches={1},
+    )
+
+    assert batch_results[1]['from_checkpoint'] is True
+    assert batch_results[1]['batch_row_count'] == 1
+    assert [request['batch_number'] for request in batch_requests] == [2]
+    assert blobs[committed_output_path][0]['answer'] == 'durable answer'
+    assert blobs[summary_path] == {'row_count': 1}
+    assert [upload['path'] for upload in uploads] == [summary_path]
+
+
+def test_phase_eight_performance_summary_is_bounded_and_cohort_comparable():
+    """Terminal metrics retain safe rollout dimensions without prompts or row payloads."""
+    helpers = _load_performance_helpers()
+    helpers['_now_utc'] = lambda: datetime(2026, 8, 10, 12, 20, 0, tzinfo=timezone.utc)
+    summary = helpers['_build_tabular_generation_performance_summary']({
+        'created_at': '2026-08-10T12:00:00+00:00',
+        'started_at': '2026-08-10T12:01:00+00:00',
+        'generation_started_at': '2026-08-10T12:02:00+00:00',
+        'planner_started_at': '2026-08-10T12:02:00+00:00',
+        'planner_completed_at': '2026-08-10T12:02:03.500000+00:00',
+        'row_count': 30000,
+        'processed_rows': 30000,
+        'batch_count': 909,
+        'completed_batch_count': 909,
+        'rows_per_minute': 1625.25,
+        'batch_concurrency': 64,
+        'effective_batch_concurrency': 61,
+        'retry_count': 4,
+        'transient_failure_count': 2,
+        'generation_rollout_settings': {
+            'tabular_generation_rollout_cohort': 'canary',
+        },
+        'plan_mode': 'active',
+        'executor_mode': 'rolling-pool-v1',
+        'response_protocol_version': 'compact-row-array-v1',
+        'retry_mode': 'independent-batch-v1',
+    }, completed_at='2026-08-10T12:20:00+00:00')
+
+    assert summary['planning_latency_seconds'] == 3.5
+    assert summary['queue_latency_seconds'] == 60.0
+    assert summary['generation_elapsed_seconds'] == 1080.0
+    assert summary['end_to_end_elapsed_seconds'] == 1200.0
+    assert summary['durable_rows_per_minute'] == 1625.25
+    assert summary['configured_concurrency'] == 64
+    assert summary['effective_concurrency'] == 61
+    assert summary['rollout_cohort'] == 'canary'
+    serialized_summary = json.dumps(summary, sort_keys=True)
+    assert len(serialized_summary.encode('utf-8')) < 2048
+    assert 'prompt' not in serialized_summary
+    assert 'source_file' not in serialized_summary
+
+
+def test_phase_eight_public_status_omits_private_execution_details():
+    """Browser status contains safe aggregate modes but no raw errors or assignment internals."""
+    public_status_source = ast.unparse(_get_function_node('_build_run_public_status'))
+
+    assert "'executor_mode': run.get('executor_mode')" in public_status_source
+    assert "'retry_mode': run.get('retry_mode')" in public_status_source
+    assert "'plan_mode': run.get('plan_mode')" in public_status_source
+    for private_field in (
+        "'last_error'",
+        'generation_rollout_settings',
+        'tabular_generation_rollout_bucket',
+        'tabular_generation_rollout_hash_version',
+        'lease_holder_id',
+        'user_question',
+        'performance_summary',
+    ):
+        assert private_field not in public_status_source
 
 
 def test_phase_one_observability_uses_safe_metrics_not_response_content():
@@ -4829,6 +5162,12 @@ def main():
         test_dynamic_concurrency_and_parallel_window_eta,
         test_phase_one_generation_contract_fields_are_additive_and_compact,
         test_phase_three_rollout_activates_shadow_only_and_stays_backend_only,
+        test_phase_eight_rollout_assignment_is_stable_and_control_runs_stay_legacy,
+        test_phase_eight_retry_and_stale_reclaim_modes_are_snapshotted,
+        test_phase_eight_publication_revalidates_source_version,
+        test_phase_eight_committed_output_survives_summary_and_progress_crash,
+        test_phase_eight_performance_summary_is_bounded_and_cohort_comparable,
+        test_phase_eight_public_status_omits_private_execution_details,
         test_phase_one_observability_uses_safe_metrics_not_response_content,
         test_phase_one_fake_harnesses_control_completion_order_and_storage_failures,
         test_phase_three_plan_contract_is_bounded_immutable_and_private,
