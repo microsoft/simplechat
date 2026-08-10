@@ -77,17 +77,69 @@ TABULAR_EXPORT_TERMINAL_STATUSES = {
 TABULAR_EXPORT_DEFAULT_INLINE_MAX_BATCHES = 75
 TABULAR_EXPORT_DEFAULT_INLINE_MAX_ROWS = 500
 TABULAR_EXPORT_DEFAULT_BATCH_RETRY_ATTEMPTS = 2
+TABULAR_EXPORT_DEFAULT_MODEL_VALIDATION_AUTO_RETRIES = 3
 TABULAR_EXPORT_DEFAULT_LEASE_SECONDS = 300
-TABULAR_EXPORT_DEFAULT_STALE_SECONDS = 420
+TABULAR_EXPORT_DEFAULT_STALE_SECONDS = 900
 TABULAR_EXPORT_DEFAULT_SCAN_LIMIT = 5
 TABULAR_EXPORT_DEFAULT_MAX_TRANSIENT_FAILURES = 20
-TABULAR_EXPORT_DEFAULT_BATCH_CONCURRENCY = 3
-TABULAR_EXPORT_MAX_BATCH_CONCURRENCY = 5
+TABULAR_EXPORT_DEFAULT_BATCH_CONCURRENCY = 16
+TABULAR_EXPORT_HIGH_BATCH_CONCURRENCY = 64
+TABULAR_EXPORT_MAX_BATCH_CONCURRENCY = 128
+TABULAR_EXPORT_HIGH_CONCURRENCY_BATCH_THRESHOLD = 128
+TABULAR_EXPORT_MAX_CONCURRENCY_BATCH_THRESHOLD = 256
 TABULAR_EXPORT_DEFAULT_BATCH_TIMEOUT_SECONDS = 300
 TABULAR_EXPORT_FINAL_SPOOL_MAX_MEMORY_BYTES = 1024 * 1024
 TABULAR_EXPORT_DEFAULT_SOURCE_CHUNK_ROWS = 1000
 TABULAR_EXPORT_DEFAULT_SOURCE_BATCH_ROWS = 50
 TABULAR_EXPORT_DEFAULT_SOURCE_BATCH_CHARS = 60000
+TABULAR_EXPORT_MAX_SOURCE_BATCH_ROWS = 500
+TABULAR_EXPORT_MAX_SOURCE_BATCH_CHARS = 720000
+TABULAR_EXPORT_DEFAULT_CONTEXT_TOKEN_LIMIT = 128000
+TABULAR_EXPORT_DEFAULT_OUTPUT_TOKEN_LIMIT = 65536
+TABULAR_EXPORT_DEFAULT_INPUT_TOKEN_RATIO = 0.5
+TABULAR_EXPORT_LARGE_CONTEXT_INPUT_TOKEN_RATIO = 0.3
+TABULAR_EXPORT_DEFAULT_OUTPUT_TOKEN_RATIO = 0.6
+TABULAR_EXPORT_LARGE_CONTEXT_TOKEN_THRESHOLD = 500000
+TABULAR_EXPORT_INPUT_TOKEN_SOFT_CAP = 180000
+TABULAR_EXPORT_PROMPT_TOKEN_RESERVE = 4096
+TABULAR_EXPORT_APPROXIMATE_CHARS_PER_TOKEN = 4.0
+TABULAR_EXPORT_DEFAULT_OUTPUT_EXPANSION_RATIO = 1.5
+TABULAR_EXPORT_MODEL_CONTEXT_LIMIT_FIELDS = (
+    'inputTokenLimit',
+    'input_token_limit',
+    'maxInputTokens',
+    'max_input_tokens',
+    'contextWindow',
+    'context_window',
+    'maxContextTokens',
+    'max_context_tokens',
+    'contextLength',
+    'context_length',
+)
+TABULAR_EXPORT_MODEL_OUTPUT_LIMIT_FIELDS = (
+    'outputTokenLimit',
+    'output_token_limit',
+    'maxOutputTokens',
+    'max_output_tokens',
+    'responseLength',
+    'response_length',
+    'maxCompletionTokens',
+    'max_completion_tokens',
+    'maxTokens',
+    'max_tokens',
+)
+TABULAR_EXPORT_MODEL_LIMIT_CONTAINER_FIELDS = ('tokenLimits', 'token_limits', 'limits')
+TABULAR_EXPORT_MODEL_IDENTIFIER_FIELDS = (
+    'id',
+    'modelId',
+    'model_id',
+    'model_deployment',
+    'modelName',
+    'model_name',
+    'deploymentName',
+    'deployment',
+    'name',
+)
 TABULAR_ANALYSIS_DEFAULT_REDUCE_FAN_IN = 25
 TABULAR_ANALYSIS_MAX_REDUCE_FAN_IN = 50
 TABULAR_ANALYSIS_SUMMARY_MAX_CHARS = 24000
@@ -131,6 +183,19 @@ TABULAR_EXPORT_RETRYABLE_MESSAGE_MARKERS = (
     'timeout',
     'worker exiting',
     'worker restart',
+)
+TABULAR_EXPORT_MODEL_VALIDATION_RETRYABLE_MESSAGE_MARKERS = (
+    'failed validation',
+    'schema mismatch',
+    'schema drift',
+    'source row token mismatch',
+    'did not return the required',
+    'returned no content after tool errors',
+    'returned no content after workbook tool errors',
+    'returned no content',
+    'response did not contain valid structured_rows',
+    'was not a valid compact json analysis summary',
+    'was not a valid json object',
 )
 TABULAR_EXPORT_INPUT_ROW_NUMBER_FIELD = '__simplechat_source_row_number'
 TABULAR_EXPORT_INPUT_ROW_IDENTITY_FIELD = '__simplechat_source_row_identity'
@@ -184,6 +249,37 @@ def _settings_bool(settings, key, default=False):
 
 def _settings_int(settings, key, default, minimum=None, maximum=None):
     return _safe_int((settings or {}).get(key, default), default=default, minimum=minimum, maximum=maximum)
+
+
+def _settings_float(settings, key, default, minimum=None, maximum=None):
+    parsed_value = _safe_float((settings or {}).get(key, default), default=default)
+    if minimum is not None:
+        parsed_value = max(minimum, parsed_value)
+    if maximum is not None:
+        parsed_value = min(maximum, parsed_value)
+    return parsed_value
+
+
+def _resolve_tabular_batch_concurrency(settings, batch_count):
+    configured_concurrency = (settings or {}).get('tabular_generated_output_batch_concurrency')
+    if configured_concurrency not in (None, ''):
+        return _safe_int(
+            configured_concurrency,
+            default=TABULAR_EXPORT_DEFAULT_BATCH_CONCURRENCY,
+            minimum=1,
+            maximum=TABULAR_EXPORT_MAX_BATCH_CONCURRENCY,
+        )
+
+    normalized_batch_count = _safe_int(batch_count, minimum=1)
+    if normalized_batch_count <= 4:
+        return normalized_batch_count
+    if normalized_batch_count < TABULAR_EXPORT_DEFAULT_BATCH_CONCURRENCY:
+        return 4
+    if normalized_batch_count < TABULAR_EXPORT_HIGH_CONCURRENCY_BATCH_THRESHOLD:
+        return TABULAR_EXPORT_DEFAULT_BATCH_CONCURRENCY
+    if normalized_batch_count < TABULAR_EXPORT_MAX_CONCURRENCY_BATCH_THRESHOLD:
+        return TABULAR_EXPORT_HIGH_BATCH_CONCURRENCY
+    return TABULAR_EXPORT_MAX_BATCH_CONCURRENCY
 
 
 def _normalize_tabular_run_task_type(task_type):
@@ -242,6 +338,14 @@ def _is_retryable_export_error_message(error_message):
     return any(marker in normalized_message for marker in TABULAR_EXPORT_RETRYABLE_MESSAGE_MARKERS)
 
 
+def _is_retryable_model_validation_error_message(error_message):
+    normalized_message = str(error_message or '').lower()
+    return any(
+        marker in normalized_message
+        for marker in TABULAR_EXPORT_MODEL_VALIDATION_RETRYABLE_MESSAGE_MARKERS
+    )
+
+
 def _is_retryable_export_error(exc):
     status_code = _exception_status_code(exc)
     if status_code in TABULAR_EXPORT_RETRYABLE_STATUS_CODES:
@@ -254,6 +358,13 @@ def _is_retryable_export_error(exc):
         if _is_retryable_export_error_message(candidate):
             return True
     return _is_retryable_export_error_message(exc)
+
+
+def _is_retryable_model_validation_error(exc):
+    for candidate in _iter_exception_chain(exc):
+        if _is_retryable_model_validation_error_message(candidate):
+            return True
+    return _is_retryable_model_validation_error_message(exc)
 
 
 def _sanitize_file_base_name(file_name):
@@ -1305,13 +1416,13 @@ def _stage_tabular_generated_output_source(run, settings):
         source_descriptor.get('batch_max_rows'),
         default=TABULAR_EXPORT_DEFAULT_SOURCE_BATCH_ROWS,
         minimum=1,
-        maximum=100,
+        maximum=TABULAR_EXPORT_MAX_SOURCE_BATCH_ROWS,
     )
     max_batch_chars = _safe_int(
         source_descriptor.get('batch_max_chars'),
         default=TABULAR_EXPORT_DEFAULT_SOURCE_BATCH_CHARS,
         minimum=6000,
-        maximum=120000,
+        maximum=TABULAR_EXPORT_MAX_SOURCE_BATCH_CHARS,
     )
     source_blob_client = _get_versioned_source_blob_client(source_descriptor)
     resume_source_row = _safe_int(run.get('source_scan_row_count'))
@@ -1590,6 +1701,274 @@ def _resolve_tabular_chunk_model_selection(gpt_model, settings, model_context=No
         return gpt_model, model_context
 
     return configured_deployment, {}
+
+
+def _normalize_tabular_model_identifier(value):
+    return re.sub(r'[^a-z0-9]+', '-', str(value or '').strip().lower()).strip('-')
+
+
+def _get_tabular_model_record_identifiers(model_record):
+    if not isinstance(model_record, dict):
+        return set()
+
+    identifiers = {
+        _normalize_tabular_model_identifier(model_record.get(field_name))
+        for field_name in TABULAR_EXPORT_MODEL_IDENTIFIER_FIELDS
+        if model_record.get(field_name)
+    }
+    for alias in model_record.get('aliases') or []:
+        normalized_alias = _normalize_tabular_model_identifier(alias)
+        if normalized_alias:
+            identifiers.add(normalized_alias)
+    return {identifier for identifier in identifiers if identifier}
+
+
+def _read_tabular_model_token_limit(model_record, field_names):
+    if not isinstance(model_record, dict):
+        return None
+
+    containers = [model_record]
+    containers.extend(
+        model_record.get(container_name)
+        for container_name in TABULAR_EXPORT_MODEL_LIMIT_CONTAINER_FIELDS
+        if isinstance(model_record.get(container_name), dict)
+    )
+    for container in containers:
+        for field_name in field_names:
+            value = _safe_int(container.get(field_name))
+            if value > 0:
+                return value
+    return None
+
+
+def _iter_configured_tabular_model_records(settings):
+    settings = settings or {}
+    gpt_model_settings = settings.get('gpt_model')
+    if isinstance(gpt_model_settings, dict):
+        for model_record in gpt_model_settings.get('selected') or []:
+            if isinstance(model_record, dict):
+                yield model_record
+
+    for endpoint in settings.get('model_endpoints') or []:
+        if not isinstance(endpoint, dict):
+            continue
+        for model_record in endpoint.get('models') or []:
+            if isinstance(model_record, dict):
+                yield model_record
+
+
+def _load_tabular_model_limit_catalog():
+    catalog_path = os.path.join(
+        os.path.dirname(__file__),
+        'static',
+        'json',
+        'model_capabilities.json',
+    )
+    try:
+        with open(catalog_path, 'r', encoding='utf-8') as catalog_file:
+            catalog = json.load(catalog_file)
+    except (OSError, json.JSONDecodeError):
+        return []
+    return [
+        model_record
+        for model_record in catalog.get('models') or []
+        if isinstance(model_record, dict)
+    ] if isinstance(catalog, dict) else []
+
+
+def _resolve_tabular_model_token_limits(gpt_model, settings, model_context=None, catalog_records=None):
+    chunk_gpt_model, chunk_model_context = _resolve_tabular_chunk_model_selection(
+        gpt_model,
+        settings,
+        model_context=model_context,
+    )
+    chunk_model_context = chunk_model_context if isinstance(chunk_model_context, dict) else {}
+    requested_identifiers = {
+        _normalize_tabular_model_identifier(identifier)
+        for identifier in (
+            chunk_gpt_model,
+            chunk_model_context.get('model_id'),
+            chunk_model_context.get('model_deployment'),
+        )
+        if identifier
+    }
+    candidate_groups = [
+        ('context', [chunk_model_context]),
+        ('configured', list(_iter_configured_tabular_model_records(settings))),
+        (
+            'catalog',
+            list(catalog_records) if catalog_records is not None else _load_tabular_model_limit_catalog(),
+        ),
+    ]
+    context_token_limit = None
+    output_token_limit = None
+    limit_sources = []
+    for source_name, model_records in candidate_groups:
+        for model_record in model_records:
+            if not isinstance(model_record, dict):
+                continue
+            record_identifiers = _get_tabular_model_record_identifiers(model_record)
+            if requested_identifiers and not requested_identifiers.intersection(record_identifiers):
+                continue
+            requested_identifiers.update(record_identifiers)
+            prior_context_token_limit = context_token_limit
+            prior_output_token_limit = output_token_limit
+            if context_token_limit is None:
+                context_token_limit = _read_tabular_model_token_limit(
+                    model_record,
+                    TABULAR_EXPORT_MODEL_CONTEXT_LIMIT_FIELDS,
+                )
+            if output_token_limit is None:
+                output_token_limit = _read_tabular_model_token_limit(
+                    model_record,
+                    TABULAR_EXPORT_MODEL_OUTPUT_LIMIT_FIELDS,
+                )
+            supplied_limit = (
+                context_token_limit != prior_context_token_limit
+                or output_token_limit != prior_output_token_limit
+            )
+            if supplied_limit and source_name not in limit_sources:
+                limit_sources.append(source_name)
+            if context_token_limit and output_token_limit:
+                break
+        if context_token_limit and output_token_limit:
+            break
+
+    return {
+        'model': chunk_gpt_model,
+        'context_token_limit': context_token_limit or TABULAR_EXPORT_DEFAULT_CONTEXT_TOKEN_LIMIT,
+        'output_token_limit': output_token_limit or TABULAR_EXPORT_DEFAULT_OUTPUT_TOKEN_LIMIT,
+        'source': '+'.join(limit_sources) if limit_sources else 'fallback',
+    }
+
+
+def _build_model_aware_source_batch_budget(
+    gpt_model,
+    settings,
+    model_context=None,
+    task_type=TABULAR_RUN_TASK_STRUCTURED_EXPORT,
+    user_question=None,
+    catalog_records=None,
+):
+    settings = settings or {}
+    token_limits = _resolve_tabular_model_token_limits(
+        gpt_model,
+        settings,
+        model_context=model_context,
+        catalog_records=catalog_records,
+    )
+    context_token_limit = _safe_int(token_limits.get('context_token_limit'), minimum=1)
+    output_token_limit = _safe_int(token_limits.get('output_token_limit'), minimum=1)
+    input_ratio = _settings_float(
+        settings,
+        'tabular_generated_output_input_token_ratio',
+        TABULAR_EXPORT_DEFAULT_INPUT_TOKEN_RATIO,
+        minimum=0.1,
+        maximum=0.8,
+    )
+    if context_token_limit > TABULAR_EXPORT_LARGE_CONTEXT_TOKEN_THRESHOLD:
+        input_ratio = min(
+            input_ratio,
+            _settings_float(
+                settings,
+                'tabular_generated_output_large_context_input_token_ratio',
+                TABULAR_EXPORT_LARGE_CONTEXT_INPUT_TOKEN_RATIO,
+                minimum=0.1,
+                maximum=0.5,
+            ),
+        )
+    input_token_budget = int(context_token_limit * input_ratio)
+    if context_token_limit > TABULAR_EXPORT_LARGE_CONTEXT_TOKEN_THRESHOLD:
+        input_token_budget = min(
+            input_token_budget,
+            _settings_int(
+                settings,
+                'tabular_generated_output_input_token_soft_cap',
+                TABULAR_EXPORT_INPUT_TOKEN_SOFT_CAP,
+                minimum=16000,
+                maximum=400000,
+            ),
+        )
+    question_token_reserve = math.ceil(len(str(user_question or '')) / TABULAR_EXPORT_APPROXIMATE_CHARS_PER_TOKEN)
+    input_token_budget = max(
+        input_token_budget - TABULAR_EXPORT_PROMPT_TOKEN_RESERVE - question_token_reserve,
+        1500,
+    )
+    output_token_budget = max(
+        int(output_token_limit * _settings_float(
+            settings,
+            'tabular_generated_output_output_token_ratio',
+            TABULAR_EXPORT_DEFAULT_OUTPUT_TOKEN_RATIO,
+            minimum=0.1,
+            maximum=0.9,
+        )),
+        1000,
+    )
+    input_bound_chars = int(input_token_budget * TABULAR_EXPORT_APPROXIMATE_CHARS_PER_TOKEN)
+    max_batch_chars = input_bound_chars
+    if _normalize_tabular_run_task_type(task_type) != TABULAR_RUN_TASK_HIERARCHICAL_ANALYSIS:
+        output_expansion_ratio = _settings_float(
+            settings,
+            'tabular_generated_output_output_expansion_ratio',
+            TABULAR_EXPORT_DEFAULT_OUTPUT_EXPANSION_RATIO,
+            minimum=0.5,
+            maximum=5.0,
+        )
+        output_bound_chars = int(
+            output_token_budget
+            * TABULAR_EXPORT_APPROXIMATE_CHARS_PER_TOKEN
+            / output_expansion_ratio
+        )
+        max_batch_chars = min(max_batch_chars, output_bound_chars)
+    max_batch_chars = _safe_int(
+        max_batch_chars,
+        minimum=6000,
+        maximum=TABULAR_EXPORT_MAX_SOURCE_BATCH_CHARS,
+    )
+    configured_max_chars = settings.get('tabular_generated_output_max_batch_chars')
+    if configured_max_chars not in (None, ''):
+        max_batch_chars = min(
+            max_batch_chars,
+            _safe_int(
+                configured_max_chars,
+                default=TABULAR_EXPORT_DEFAULT_SOURCE_BATCH_CHARS,
+                minimum=6000,
+                maximum=TABULAR_EXPORT_MAX_SOURCE_BATCH_CHARS,
+            ),
+        )
+
+    scaled_batch_rows = math.ceil(
+        TABULAR_EXPORT_DEFAULT_SOURCE_BATCH_ROWS
+        * max_batch_chars
+        / TABULAR_EXPORT_DEFAULT_SOURCE_BATCH_CHARS
+    )
+    max_batch_rows = _safe_int(
+        scaled_batch_rows,
+        minimum=1,
+        maximum=TABULAR_EXPORT_MAX_SOURCE_BATCH_ROWS,
+    )
+    configured_max_rows = settings.get('tabular_generated_output_max_batch_rows')
+    if configured_max_rows not in (None, ''):
+        max_batch_rows = min(
+            max_batch_rows,
+            _safe_int(
+                configured_max_rows,
+                default=TABULAR_EXPORT_DEFAULT_SOURCE_BATCH_ROWS,
+                minimum=1,
+                maximum=TABULAR_EXPORT_MAX_SOURCE_BATCH_ROWS,
+            ),
+        )
+
+    return {
+        'max_rows': max_batch_rows,
+        'max_chars': max_batch_chars,
+        'context_token_limit': context_token_limit,
+        'output_token_limit': output_token_limit,
+        'input_token_budget': input_token_budget,
+        'output_token_budget': output_token_budget,
+        'limit_source': token_limits.get('source'),
+        'model': token_limits.get('model'),
+    }
 
 
 def _build_chat_service(gpt_model, settings, model_context=None):
@@ -2278,7 +2657,27 @@ def _is_stale_queued_run(run, settings):
 
 def _is_retryable_failed_run(run):
     status = str((run or {}).get('status') or '').strip().lower()
-    return status == TABULAR_EXPORT_STATUS_FAILED and _is_retryable_export_error_message((run or {}).get('last_error'))
+    last_error = (run or {}).get('last_error')
+    return status == TABULAR_EXPORT_STATUS_FAILED and (
+        _is_retryable_export_error_message(last_error)
+        or _is_retryable_model_validation_error_message(last_error)
+    )
+
+
+def _is_auto_retry_exhausted(run):
+    return bool((run or {}).get('auto_retry_exhausted'))
+
+
+def _can_auto_retry_failed_run(run, settings=None):
+    if not _is_retryable_failed_run(run) or _is_auto_retry_exhausted(run):
+        return False
+    return _safe_int((run or {}).get('transient_failure_count')) < _settings_int(
+        settings or {},
+        'tabular_generated_output_max_transient_failures',
+        TABULAR_EXPORT_DEFAULT_MAX_TRANSIENT_FAILURES,
+        minimum=1,
+        maximum=100,
+    )
 
 
 def _scheduler_candidate_reason(run, settings):
@@ -2294,7 +2693,7 @@ def _scheduler_candidate_reason(run, settings):
             return 'running heartbeat is stale'
         return None
     if status == TABULAR_EXPORT_STATUS_FAILED:
-        if _is_retryable_failed_run(run):
+        if _can_auto_retry_failed_run(run, settings or {}):
             return 'failed run has retryable error'
         return None
     return None
@@ -2314,7 +2713,7 @@ def _query_scheduler_candidates_by_status(status, scan_limit, settings):
     query = (
         "SELECT "
         "c.id, c.user_id, c.status, c.created_at, c.updated_at, c.last_heartbeat_at, "
-        "c.next_attempt_at, c.last_error, c.transient_failure_count "
+        "c.next_attempt_at, c.last_error, c.transient_failure_count, c.auto_retry_exhausted "
         "FROM c WHERE c.type = @type AND c.status = @status "
         "ORDER BY c.updated_at ASC"
     )
@@ -2657,9 +3056,14 @@ def _build_run_public_status(run, settings=None):
         'retry_delay_seconds': status_detail.get('retry_delay_seconds'),
         'estimated_remaining_seconds': run.get('estimated_remaining_seconds'),
         'estimated_total_seconds': run.get('estimated_total_seconds'),
+        'rows_per_minute': run.get('rows_per_minute'),
+        'batch_concurrency': _safe_int(run.get('batch_concurrency')),
+        'effective_batch_concurrency': _safe_int(run.get('effective_batch_concurrency')),
         'mismatch_count': _safe_int(run.get('mismatch_count')),
         'retry_count': _safe_int(run.get('retry_count')),
         'transient_failure_count': _safe_int(run.get('transient_failure_count')),
+        'auto_retry_exhausted': bool(run.get('auto_retry_exhausted')),
+        'last_retry_category': run.get('last_retry_category'),
         'manual_resume_count': _safe_int(run.get('manual_resume_count')),
         'next_attempt_at': run.get('next_attempt_at'),
         'can_resume': can_resume,
@@ -2802,6 +3206,8 @@ def resume_tabular_generated_output_run(user_id, run_id):
         'next_attempt_at': now,
         'last_message': 'Manual resume queued; export will continue from completed checkpoints',
         'transient_failure_count': 0,
+        'auto_retry_exhausted': False,
+        'last_retry_category': 'manual_resume',
         'manual_resume_count': _safe_int(run.get('manual_resume_count')) + 1,
         'last_manual_resume_at': now,
     })
@@ -3002,17 +3408,7 @@ def _try_claim_run(user_id, run_id, settings):
 
     status = str(run.get('status') or '').strip().lower()
     if status in TABULAR_EXPORT_TERMINAL_STATUSES:
-        retryable_failed_run = (
-            status == TABULAR_EXPORT_STATUS_FAILED
-            and _is_retryable_export_error_message(run.get('last_error'))
-            and _safe_int(run.get('transient_failure_count')) < _settings_int(
-                settings,
-                'tabular_generated_output_max_transient_failures',
-                TABULAR_EXPORT_DEFAULT_MAX_TRANSIENT_FAILURES,
-                minimum=1,
-                maximum=100,
-            )
-        )
+        retryable_failed_run = status == TABULAR_EXPORT_STATUS_FAILED and _can_auto_retry_failed_run(run, settings)
         if not retryable_failed_run:
             return None
     if status == TABULAR_EXPORT_STATUS_RUNNING and not _is_stale_running_run(run, settings):
@@ -3083,19 +3479,40 @@ def _mark_run_failed(run, error_message):
     return run
 
 
-def _mark_run_retryable(run, error_message, settings):
-    transient_failure_count = _safe_int(run.get('transient_failure_count')) + 1
-    max_transient_failures = _settings_int(
+def _get_auto_retry_limit_for_category(settings, retry_category):
+    if retry_category == 'model_validation':
+        return _settings_int(
+            settings,
+            'tabular_generated_output_model_validation_auto_retries',
+            TABULAR_EXPORT_DEFAULT_MODEL_VALIDATION_AUTO_RETRIES,
+            minimum=0,
+            maximum=10,
+        )
+    return _settings_int(
         settings,
         'tabular_generated_output_max_transient_failures',
         TABULAR_EXPORT_DEFAULT_MAX_TRANSIENT_FAILURES,
         minimum=1,
         maximum=100,
     )
-    if transient_failure_count > max_transient_failures:
+
+
+def _mark_run_retryable(run, error_message, settings, retry_category='transient'):
+    normalized_retry_category = str(retry_category or 'transient').strip().lower() or 'transient'
+    transient_failure_count = _safe_int(run.get('transient_failure_count')) + 1
+    max_auto_retries = _get_auto_retry_limit_for_category(settings, normalized_retry_category)
+    if transient_failure_count > max_auto_retries:
+        exhausted_message = (
+            'Max automatic model-output retry attempts exceeded; last error: '
+            if normalized_retry_category == 'model_validation'
+            else 'Max transient retry attempts exceeded; last error: '
+        )
+        run['auto_retry_exhausted'] = True
+        run['last_retry_category'] = normalized_retry_category
+        run['last_auto_retry_exhausted_at'] = _now_iso()
         return _mark_run_failed(
             run,
-            f'Max transient retry attempts exceeded; last error: {error_message}',
+            f'{exhausted_message}{error_message}',
         )
 
     now = _now_utc()
@@ -3109,8 +3526,14 @@ def _mark_run_retryable(run, error_message, settings):
         'lease_holder_id': None,
         'lease_expires_at': None,
         'last_error': str(error_message or 'Transient background export error')[:1000],
-        'last_message': 'Background structured export will resume after a transient connection error',
+        'last_message': (
+            'Background structured export will retry after model-output validation failed'
+            if normalized_retry_category == 'model_validation'
+            else 'Background structured export will resume after a transient connection error'
+        ),
         'transient_failure_count': transient_failure_count,
+        'last_retry_category': normalized_retry_category,
+        'auto_retry_exhausted': False,
         'next_attempt_at': next_attempt_at,
     })
     try:
@@ -3128,7 +3551,8 @@ def _mark_run_retryable(run, error_message, settings):
             'processed_rows': run.get('processed_rows'),
             'row_count': run.get('row_count'),
             'transient_failure_count': transient_failure_count,
-            'max_transient_failures': max_transient_failures,
+            'max_transient_failures': max_auto_retries,
+            'retry_category': normalized_retry_category,
             'next_attempt_at': next_attempt_at,
             'error': str(error_message or '')[:1000],
         },
@@ -3137,47 +3561,91 @@ def _mark_run_retryable(run, error_message, settings):
     return run
 
 
-def _update_run_progress(run, completed_batches, processed_rows, batch_rows, batch_elapsed_seconds, mismatch_count=0):
-    now = _now_utc()
-    started_at = str(run.get('started_at') or '').strip()
-    elapsed_seconds = 0.0
-    if started_at:
-        try:
-            started_time = datetime.fromisoformat(started_at)
-            if started_time.tzinfo is None:
-                started_time = started_time.replace(tzinfo=timezone.utc)
-            elapsed_seconds = max((now - started_time).total_seconds(), 0.0)
-        except ValueError:
-            elapsed_seconds = 0.0
+def _is_schema_discovery_progress_window(run, completed_batches, window_batch_count):
+    return (
+        _safe_int(completed_batches) == 1
+        and _safe_int(window_batch_count) == 1
+        and _safe_int((run or {}).get('batch_count')) > 1
+        and _safe_int((run or {}).get('batch_concurrency')) > 1
+    )
 
+
+def _calculate_window_throughput(
+    run,
+    processed_rows,
+    window_rows,
+    window_elapsed_seconds,
+    completed_at,
+):
+    recent_windows = list(run.get('recent_progress_windows') or [])[-9:]
+    normalized_window_rows = _safe_int(window_rows)
+    normalized_window_seconds = max(_safe_float(window_elapsed_seconds), 0.0)
+    if normalized_window_rows > 0 and normalized_window_seconds > 0:
+        recent_windows.append({
+            'row_count': normalized_window_rows,
+            'elapsed_seconds': round(normalized_window_seconds, 3),
+            'completed_at': completed_at.isoformat(),
+        })
+
+    sampled_rows = sum(_safe_int(window.get('row_count')) for window in recent_windows)
+    sampled_seconds = sum(
+        max(_safe_float(window.get('elapsed_seconds')), 0.0)
+        for window in recent_windows
+    )
+    rows_per_minute = None
+    estimated_total_seconds = None
+    estimated_remaining_seconds = None
+    if sampled_rows > 0 and sampled_seconds > 0:
+        rows_per_second = sampled_rows / sampled_seconds
+        row_count = _safe_int(run.get('row_count'))
+        rows_per_minute = round(rows_per_second * 60, 2)
+        estimated_total_seconds = round(row_count / rows_per_second, 1)
+        estimated_remaining_seconds = round(
+            max(row_count - _safe_int(processed_rows), 0) / rows_per_second,
+            1,
+        )
+
+    return {
+        'recent_progress_windows': recent_windows,
+        'rows_per_minute': rows_per_minute,
+        'estimated_total_seconds': estimated_total_seconds,
+        'estimated_remaining_seconds': estimated_remaining_seconds,
+    }
+
+
+def _update_run_progress(
+    run,
+    completed_batches,
+    processed_rows,
+    window_rows,
+    window_elapsed_seconds,
+    window_batch_count,
+    mismatch_count=0,
+):
+    now = _now_utc()
     active_processing_seconds = max(_safe_float(run.get('active_processing_seconds')), 0.0)
-    active_processing_seconds += max(_safe_float(batch_elapsed_seconds), 0.0)
+    active_processing_seconds += max(_safe_float(window_elapsed_seconds), 0.0)
+    batch_count = _safe_int(run.get('batch_count'))
     recent_batches = list(run.get('recent_batches') or [])[-9:]
     recent_batches.append({
         'batch_number': completed_batches,
-        'row_count': _safe_int(batch_rows),
-        'elapsed_seconds': round(_safe_float(batch_elapsed_seconds), 3),
+        'batch_count': _safe_int(window_batch_count),
+        'row_count': _safe_int(window_rows),
+        'elapsed_seconds': round(_safe_float(window_elapsed_seconds), 3),
         'completed_at': now.isoformat(),
     })
-
-    batch_count = _safe_int(run.get('batch_count'))
-    estimated_total_seconds = None
-    estimated_remaining_seconds = None
-    if completed_batches > 0 and batch_count > 0:
-        recent_elapsed_values = [
-            _safe_float(batch.get('elapsed_seconds'))
-            for batch in recent_batches
-            if _safe_float(batch.get('elapsed_seconds')) > 0
-        ]
-        if recent_elapsed_values:
-            seconds_per_batch = sum(recent_elapsed_values) / len(recent_elapsed_values)
-        elif active_processing_seconds > 0:
-            seconds_per_batch = active_processing_seconds / completed_batches
-        else:
-            seconds_per_batch = elapsed_seconds / completed_batches
-        estimated_total_seconds = round(seconds_per_batch * batch_count, 1)
-        estimated_remaining_seconds = round(seconds_per_batch * max(batch_count - completed_batches, 0), 1)
-
+    is_schema_discovery_window = _is_schema_discovery_progress_window(
+        run,
+        completed_batches,
+        window_batch_count,
+    )
+    throughput = _calculate_window_throughput(
+        run,
+        processed_rows,
+        0 if is_schema_discovery_window else window_rows,
+        0 if is_schema_discovery_window else window_elapsed_seconds,
+        now,
+    )
     run.update({
         'completed_batches': completed_batches,
         'processed_rows': processed_rows,
@@ -3185,13 +3653,12 @@ def _update_run_progress(run, completed_batches, processed_rows, batch_rows, bat
         'updated_at': now.isoformat(),
         'last_heartbeat_at': now.isoformat(),
         'active_processing_seconds': round(active_processing_seconds, 3),
-        'estimated_total_seconds': estimated_total_seconds,
-        'estimated_remaining_seconds': estimated_remaining_seconds,
+        'effective_batch_concurrency': _safe_int(window_batch_count),
         'mismatch_count': _safe_int(run.get('mismatch_count')) + _safe_int(mismatch_count),
         'last_message': f"Processed structured export batch {completed_batches} of {batch_count}",
+        'recent_batches': recent_batches,
     })
-    run['recent_batches'] = recent_batches
-
+    run.update(throughput)
     return _replace_claimed_run(run)
 
 
@@ -3217,6 +3684,9 @@ def _log_progress_if_due(run, last_logged_at):
             'row_count': run.get('row_count'),
             'progress_percent': progress_percent,
             'estimated_remaining_seconds': run.get('estimated_remaining_seconds'),
+            'rows_per_minute': run.get('rows_per_minute'),
+            'batch_concurrency': run.get('batch_concurrency'),
+            'effective_batch_concurrency': run.get('effective_batch_concurrency'),
             'mismatch_count': run.get('mismatch_count'),
         },
         debug_only=True,
@@ -4042,63 +4512,102 @@ def _build_passthrough_batch_results(run, batch_requests):
 
 
 def _advance_run_progress_for_window(run, batch_results, completed_batches, processed_rows, window_start, window_end):
+    window_results = []
+    window_rows = 0
+    window_mismatch_count = 0
     for batch_number in range(window_start, window_end + 1):
         batch_result = batch_results.get(batch_number)
         if not batch_result:
             break
+        window_results.append(batch_result)
         completed_batches = batch_number
-        processed_rows += _safe_int(batch_result.get('batch_row_count'))
+        batch_rows = _safe_int(batch_result.get('batch_row_count'))
+        processed_rows += batch_rows
+        window_rows += batch_rows
         mismatch_count = _safe_int(batch_result.get('mismatch_count'))
+        window_mismatch_count += mismatch_count
         if mismatch_count:
             run['retry_count'] = _safe_int(run.get('retry_count')) + max(mismatch_count - 1, 0)
+    if window_results:
+        generated_elapsed_seconds = [
+            max(_safe_float(batch_result.get('elapsed_seconds')), 0.0)
+            for batch_result in window_results
+            if not batch_result.get('from_checkpoint')
+        ]
         run = _update_run_progress(
             run,
             completed_batches,
             processed_rows,
-            batch_result.get('batch_row_count'),
-            batch_result.get('elapsed_seconds'),
-            mismatch_count=mismatch_count,
+            window_rows,
+            max(generated_elapsed_seconds, default=0.0),
+            len(window_results),
+            mismatch_count=window_mismatch_count,
         )
     return run, completed_batches, processed_rows
 
 
 def _advance_analysis_map_progress_for_window(run, batch_results, completed_batches, processed_rows, window_start, window_end):
+    window_results = []
+    window_rows = 0
     for batch_number in range(window_start, window_end + 1):
         batch_result = batch_results.get(batch_number)
         if not batch_result:
             break
+        window_results.append(batch_result)
         completed_batches = batch_number
-        processed_rows += _safe_int(batch_result.get('batch_row_count'))
+        batch_rows = _safe_int(batch_result.get('batch_row_count'))
+        processed_rows += batch_rows
+        window_rows += batch_rows
+    if window_results:
+        generated_elapsed_seconds = [
+            max(_safe_float(batch_result.get('elapsed_seconds')), 0.0)
+            for batch_result in window_results
+            if not batch_result.get('from_checkpoint')
+        ]
         run = _update_analysis_map_progress(
             run,
             completed_batches,
             processed_rows,
-            batch_result.get('batch_row_count'),
-            batch_result.get('elapsed_seconds'),
+            window_rows,
+            max(generated_elapsed_seconds, default=0.0),
+            len(window_results),
         )
     return run, completed_batches, processed_rows
 
 
-def _update_analysis_map_progress(run, completed_batches, processed_rows, batch_rows, batch_elapsed_seconds):
+def _update_analysis_map_progress(
+    run,
+    completed_batches,
+    processed_rows,
+    window_rows,
+    window_elapsed_seconds,
+    window_batch_count,
+):
     now = _now_utc()
     active_processing_seconds = max(_safe_float(run.get('active_processing_seconds')), 0.0)
-    active_processing_seconds += max(_safe_float(batch_elapsed_seconds), 0.0)
+    active_processing_seconds += max(_safe_float(window_elapsed_seconds), 0.0)
     batch_count = _safe_int(run.get('batch_count'))
-    estimated_total_seconds = None
-    estimated_remaining_seconds = None
-    if completed_batches > 0 and batch_count > 0 and active_processing_seconds > 0:
-        seconds_per_batch = active_processing_seconds / completed_batches
-        estimated_total_seconds = round(seconds_per_batch * batch_count, 1)
-        estimated_remaining_seconds = round(seconds_per_batch * max(batch_count - completed_batches, 0), 1)
-
     recent_batches = list(run.get('recent_batches') or [])[-9:]
     recent_batches.append({
         'batch_number': completed_batches,
-        'row_count': _safe_int(batch_rows),
-        'elapsed_seconds': round(_safe_float(batch_elapsed_seconds), 3),
+        'batch_count': _safe_int(window_batch_count),
+        'row_count': _safe_int(window_rows),
+        'elapsed_seconds': round(_safe_float(window_elapsed_seconds), 3),
         'completed_at': now.isoformat(),
         'phase': 'map',
     })
+    is_schema_discovery_window = _is_schema_discovery_progress_window(
+        run,
+        completed_batches,
+        window_batch_count,
+    )
+    throughput = _calculate_window_throughput(
+        run,
+        processed_rows,
+        0 if is_schema_discovery_window else window_rows,
+        0 if is_schema_discovery_window else window_elapsed_seconds,
+        now,
+    )
     run.update({
         'completed_batches': completed_batches,
         'processed_rows': processed_rows,
@@ -4107,11 +4616,11 @@ def _update_analysis_map_progress(run, completed_batches, processed_rows, batch_
         'updated_at': now.isoformat(),
         'last_heartbeat_at': now.isoformat(),
         'active_processing_seconds': round(active_processing_seconds, 3),
-        'estimated_total_seconds': estimated_total_seconds,
-        'estimated_remaining_seconds': estimated_remaining_seconds,
+        'effective_batch_concurrency': _safe_int(window_batch_count),
         'last_message': f'Analyzed tabular chunk {completed_batches} of {batch_count}',
         'recent_batches': recent_batches,
     })
+    run.update(throughput)
     return _replace_claimed_run(run)
 
 
@@ -4422,13 +4931,17 @@ def process_tabular_generated_output_run(run_id, user_id):
             minimum=1,
             maximum=5,
         )
-        batch_concurrency = _settings_int(
+        batch_concurrency = _resolve_tabular_batch_concurrency(
             settings,
-            'tabular_generated_output_batch_concurrency',
-            TABULAR_EXPORT_DEFAULT_BATCH_CONCURRENCY,
-            minimum=1,
-            maximum=TABULAR_EXPORT_MAX_BATCH_CONCURRENCY,
+            run.get('batch_count'),
         )
+        if _safe_int(run.get('batch_concurrency')) != batch_concurrency:
+            run.update({
+                'batch_concurrency': batch_concurrency,
+                'updated_at': _now_iso(),
+                'last_heartbeat_at': _now_iso(),
+            })
+            run = _replace_claimed_run(run)
         stale_seconds = _settings_int(
             settings,
             'tabular_generated_output_stale_seconds',
@@ -4581,7 +5094,9 @@ def process_tabular_generated_output_run(run_id, user_id):
         return _read_run(normalized_user_id, normalized_run_id)
     except Exception as exc:
         if _is_retryable_export_error(exc):
-            return _mark_run_retryable(run, exc, settings)
+            return _mark_run_retryable(run, exc, settings, retry_category='transient')
+        if _is_retryable_model_validation_error(exc):
+            return _mark_run_retryable(run, exc, settings, retry_category='model_validation')
         return _mark_run_failed(run, exc)
 
 
@@ -4656,35 +5171,20 @@ def queue_tabular_generated_output_run(
     staged_char_count = 0
     staged_batch_count = 0
     staged_chunk_row_counts = []
+    model_batch_budget = _build_model_aware_source_batch_budget(
+        gpt_model,
+        settings,
+        model_context=model_context,
+        task_type=normalized_task_type,
+        user_question=user_question,
+    )
 
     if source_descriptor:
         staged_row_count = _safe_int(source_descriptor.get('expected_row_count'))
         if staged_row_count <= 0:
             raise ValueError('Source query descriptor must include the expected row count')
-        source_descriptor['batch_max_rows'] = _safe_int(
-            source_descriptor.get('batch_max_rows'),
-            default=_settings_int(
-                settings,
-                'tabular_generated_output_max_batch_rows',
-                TABULAR_EXPORT_DEFAULT_SOURCE_BATCH_ROWS,
-                minimum=1,
-                maximum=100,
-            ),
-            minimum=1,
-            maximum=100,
-        )
-        source_descriptor['batch_max_chars'] = _safe_int(
-            source_descriptor.get('batch_max_chars'),
-            default=_settings_int(
-                settings,
-                'tabular_generated_output_max_batch_chars',
-                TABULAR_EXPORT_DEFAULT_SOURCE_BATCH_CHARS,
-                minimum=6000,
-                maximum=120000,
-            ),
-            minimum=6000,
-            maximum=120000,
-        )
+        source_descriptor['batch_max_rows'] = model_batch_budget['max_rows']
+        source_descriptor['batch_max_chars'] = model_batch_budget['max_chars']
         staged_batch_count = max(
             1,
             math.ceil(staged_row_count / source_descriptor['batch_max_rows']),
@@ -4765,6 +5265,7 @@ def queue_tabular_generated_output_run(
         'processed_rows': 0,
         'output_schema': None,
         'source_descriptor': source_descriptor or None,
+        'batch_budget': model_batch_budget,
         'source_authorization': source_authorization or None,
         'source_staging_complete': not bool(source_descriptor),
         'source_staged_rows': 0 if source_descriptor else staged_row_count,
@@ -4779,6 +5280,7 @@ def queue_tabular_generated_output_run(
         'mismatch_count': 0,
         'retry_count': 0,
         'recent_batches': [],
+        'recent_progress_windows': [],
         'analysis_phase': 'queued' if _is_tabular_analysis_task(normalized_task_type) else None,
         'active_processing_seconds': 0,
         'last_message': (
@@ -4813,6 +5315,11 @@ def queue_tabular_generated_output_run(
             'batch_count': staged_batch_count,
             'total_chunk_count': staged_batch_count,
             'staged_input_char_count': staged_char_count,
+            'batch_max_rows': model_batch_budget.get('max_rows'),
+            'batch_max_chars': model_batch_budget.get('max_chars'),
+            'batch_input_token_budget': model_batch_budget.get('input_token_budget'),
+            'batch_output_token_budget': model_batch_budget.get('output_token_budget'),
+            'model_limit_source': model_batch_budget.get('limit_source'),
             'source_backed': bool(source_descriptor),
             'submitted_to_executor': submitted,
         },

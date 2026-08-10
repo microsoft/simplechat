@@ -2,7 +2,7 @@
   "$schema": "https://simplechat.local/schemas/model-capabilities.schema.json",
   "schemaVersion": 1,
   "lastUpdated": "2026-08-04",
-  "description": "Initial SimpleChat model capability catalog for multimodal and coding feature selection. This file is data-only and is not wired into runtime behavior yet.",
+  "description": "SimpleChat model capability catalog. Capability flags remain data-only; optional model token-limit fields are consumed by durable tabular batch planning when present.",
   "capabilityFields": {
     "processesText": "Accepts text input.",
     "generatesText": "Produces text output.",

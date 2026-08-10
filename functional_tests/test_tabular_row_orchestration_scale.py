@@ -1,8 +1,8 @@
 # test_tabular_row_orchestration_scale.py
 """
 Functional test for scalable per-row tabular orchestration.
-Version: 0.250.133
-Implemented in: 0.250.060; generated CSV formula safety in 0.250.065; generated file export routing in 0.250.072; source descriptor generalization in 0.250.127; unified durable run contract in 0.250.128; hierarchical analysis in 0.250.129; combined analysis and export in 0.250.130; scale validation in 0.250.132; direct source-backed exhaustive queueing in 0.250.133
+Version: 0.250.136
+Implemented in: 0.250.060; generated CSV formula safety in 0.250.065; generated file export routing in 0.250.072; source descriptor generalization in 0.250.127; unified durable run contract in 0.250.128; hierarchical analysis in 0.250.129; combined analysis and export in 0.250.130; scale validation in 0.250.132; direct source-backed exhaustive queueing in 0.250.133; direct queue call-site hardening in 0.250.134; model-validation auto retry in 0.250.135; model-aware parallel throughput in 0.250.136
 
 This test ensures generated exports preserve source identity and row order while
 enforcing one stable output schema across independently generated batches.
@@ -20,7 +20,7 @@ import os
 import re
 import sys
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from collections import Counter
@@ -87,6 +87,26 @@ FENCING_FUNCTIONS = {
     '_raise_if_tabular_export_canceled',
     '_replace_claimed_run',
 }
+RETRY_FUNCTIONS = {
+    '_safe_int',
+    '_settings_int',
+    '_is_retryable_export_error_message',
+    '_is_retryable_model_validation_error_message',
+    '_is_retryable_failed_run',
+    '_is_auto_retry_exhausted',
+    '_can_auto_retry_failed_run',
+    '_mark_run_failed',
+    '_get_auto_retry_limit_for_category',
+    '_mark_run_retryable',
+}
+RETRY_CONSTANTS = {
+    'TABULAR_EXPORT_STATUS_FAILED',
+    'TABULAR_EXPORT_STATUS_QUEUED',
+    'TABULAR_EXPORT_DEFAULT_MAX_TRANSIENT_FAILURES',
+    'TABULAR_EXPORT_DEFAULT_MODEL_VALIDATION_AUTO_RETRIES',
+    'TABULAR_EXPORT_RETRYABLE_MESSAGE_MARKERS',
+    'TABULAR_EXPORT_MODEL_VALIDATION_RETRYABLE_MESSAGE_MARKERS',
+}
 LEGACY_MIGRATION_FUNCTIONS = {
     '_normalize_source_identity_label',
     '_select_source_row_identity',
@@ -136,6 +156,25 @@ ANALYSIS_CONSTANTS = {
     'TABULAR_ANALYSIS_SUMMARY_MAX_CHARS',
     'TABULAR_ANALYSIS_MAX_FINDINGS',
     'TABULAR_ANALYSIS_MAX_NOTABLE_ROWS',
+}
+PERFORMANCE_FUNCTIONS = {
+    '_safe_int',
+    '_safe_float',
+    '_settings_int',
+    '_settings_float',
+    '_resolve_tabular_batch_concurrency',
+    '_normalize_tabular_run_task_type',
+    '_resolve_tabular_chunk_model_selection',
+    '_normalize_tabular_model_identifier',
+    '_get_tabular_model_record_identifiers',
+    '_read_tabular_model_token_limit',
+    '_iter_configured_tabular_model_records',
+    '_load_tabular_model_limit_catalog',
+    '_resolve_tabular_model_token_limits',
+    '_build_model_aware_source_batch_budget',
+    '_is_schema_discovery_progress_window',
+    '_calculate_window_throughput',
+    '_advance_run_progress_for_window',
 }
 
 
@@ -630,6 +669,55 @@ def _load_fencing_helpers(current_run, replace_error=None):
     return namespace
 
 
+def _load_retry_helpers():
+    module_tree = ast.parse(EXPORT_MODULE.read_text(encoding='utf-8'), filename=str(EXPORT_MODULE))
+    selected_nodes = []
+    found_functions = set()
+    found_constants = set()
+
+    for node in module_tree.body:
+        if isinstance(node, ast.FunctionDef) and node.name in RETRY_FUNCTIONS:
+            selected_nodes.append(node)
+            found_functions.add(node.name)
+        elif isinstance(node, ast.Assign):
+            assigned_names = {
+                target.id
+                for target in node.targets
+                if isinstance(target, ast.Name)
+            }
+            if assigned_names & RETRY_CONSTANTS:
+                selected_nodes.append(node)
+                found_constants.update(assigned_names & RETRY_CONSTANTS)
+
+    missing_functions = RETRY_FUNCTIONS - found_functions
+    missing_constants = RETRY_CONSTANTS - found_constants
+    if missing_functions or missing_constants:
+        raise AssertionError(
+            f'Missing retry helpers: functions={sorted(missing_functions)}, constants={sorted(missing_constants)}'
+        )
+
+    stored_run = {}
+
+    def replace_claimed_run(run):
+        stored_run.clear()
+        stored_run.update(run)
+        return dict(stored_run)
+
+    namespace = {
+        'timedelta': timedelta,
+        'logging': logging,
+        'TabularExportLeaseLostError': RuntimeError,
+        '_now_iso': lambda: '2026-08-09T16:00:00+00:00',
+        '_now_utc': lambda: datetime(2026, 8, 9, 16, 0, 0, tzinfo=timezone.utc),
+        '_replace_claimed_run': replace_claimed_run,
+        '_read_run': lambda user_id, run_id: dict(stored_run),
+        'log_event': lambda *args, **kwargs: None,
+    }
+    extracted_module = ast.Module(body=selected_nodes, type_ignores=[])
+    exec(compile(extracted_module, str(EXPORT_MODULE), 'exec'), namespace)
+    return namespace, stored_run
+
+
 def _load_legacy_migration_helper(aggregate_batches):
     module_tree = ast.parse(EXPORT_MODULE.read_text(encoding='utf-8'), filename=str(EXPORT_MODULE))
     selected_nodes = [
@@ -893,6 +981,185 @@ def _load_scheduler_query_helper(runs):
     extracted_module = ast.Module(body=selected_nodes, type_ignores=[])
     exec(compile(extracted_module, str(EXPORT_MODULE), 'exec'), namespace)
     return namespace['_query_scheduler_candidates_by_status'], run_container
+
+
+def _load_performance_helpers(progress_updates=None):
+    module_tree = ast.parse(EXPORT_MODULE.read_text(encoding='utf-8'), filename=str(EXPORT_MODULE))
+    selected_nodes = []
+    found_functions = set()
+    for node in module_tree.body:
+        if isinstance(node, ast.FunctionDef) and node.name in PERFORMANCE_FUNCTIONS:
+            selected_nodes.append(node)
+            found_functions.add(node.name)
+        elif isinstance(node, ast.Assign):
+            assigned_names = {
+                target.id
+                for target in node.targets
+                if isinstance(target, ast.Name)
+            }
+            if any(
+                name.startswith('TABULAR_EXPORT_') or name.startswith('TABULAR_RUN_TASK_')
+                for name in assigned_names
+            ):
+                selected_nodes.append(node)
+
+    missing_functions = PERFORMANCE_FUNCTIONS - found_functions
+    if missing_functions:
+        raise AssertionError(f'Missing performance helper functions: {sorted(missing_functions)}')
+
+    namespace = {
+        '__file__': str(EXPORT_MODULE),
+        'json': json,
+        'math': math,
+        'os': os,
+        're': re,
+    }
+    extracted_module = ast.Module(body=selected_nodes, type_ignores=[])
+    exec(compile(extracted_module, str(EXPORT_MODULE), 'exec'), namespace)
+
+    progress_updates = progress_updates if progress_updates is not None else []
+
+    def update_progress(
+        run,
+        completed_batches,
+        processed_rows,
+        window_rows,
+        window_elapsed_seconds,
+        window_batch_count,
+        mismatch_count=0,
+    ):
+        progress_updates.append({
+            'completed_batches': completed_batches,
+            'processed_rows': processed_rows,
+            'window_rows': window_rows,
+            'window_elapsed_seconds': window_elapsed_seconds,
+            'window_batch_count': window_batch_count,
+            'mismatch_count': mismatch_count,
+        })
+        return run
+
+    namespace['_update_run_progress'] = update_progress
+    return namespace
+
+
+def test_model_aware_batch_budget_uses_safe_token_limits():
+    """Batch planning uses output limits and caps very large input contexts."""
+    helpers = _load_performance_helpers()
+    build_budget = helpers['_build_model_aware_source_batch_budget']
+
+    fallback_budget = build_budget(
+        'unlisted-model',
+        {},
+        model_context={'model_id': 'unlisted-model'},
+    )
+    assert fallback_budget['limit_source'] == 'fallback'
+    assert fallback_budget['max_chars'] == 104856
+    assert fallback_budget['max_rows'] == 88
+
+    catalog_records = [{
+        'id': 'large-context-model',
+        'tokenLimits': {
+            'inputTokenLimit': 1000000,
+            'outputTokenLimit': 200000,
+        },
+    }]
+    structured_budget = build_budget(
+        'large-context-model',
+        {},
+        model_context={'model_id': 'large-context-model'},
+        catalog_records=catalog_records,
+    )
+    assert structured_budget['limit_source'] == 'catalog'
+    assert structured_budget['context_token_limit'] == 1000000
+    assert structured_budget['output_token_limit'] == 200000
+    assert structured_budget['input_token_budget'] == 175904
+    assert structured_budget['output_token_budget'] == 120000
+    assert structured_budget['max_chars'] == 320000
+    assert structured_budget['max_rows'] == 267
+
+    analysis_budget = build_budget(
+        'large-context-model',
+        {},
+        model_context={'model_id': 'large-context-model'},
+        task_type='hierarchical_analysis',
+        catalog_records=catalog_records,
+    )
+    assert analysis_budget['max_chars'] == 703616
+    assert analysis_budget['max_rows'] == 500
+
+    custom_deployment_budget = build_budget(
+        'prod-west-chat',
+        {
+            'gpt_model': {
+                'selected': [{
+                    'deploymentName': 'prod-west-chat',
+                    'modelName': 'large-context-model',
+                }],
+            },
+        },
+        catalog_records=catalog_records,
+    )
+    assert custom_deployment_budget['limit_source'] == 'catalog'
+    assert custom_deployment_budget['context_token_limit'] == 1000000
+    assert custom_deployment_budget['output_token_limit'] == 200000
+
+
+def test_dynamic_concurrency_and_parallel_window_eta():
+    """Large runs use 16 calls and ETA measures rows per parallel wall-clock window."""
+    progress_updates = []
+    helpers = _load_performance_helpers(progress_updates)
+    resolve_concurrency = helpers['_resolve_tabular_batch_concurrency']
+    assert resolve_concurrency({}, 1) == 1
+    assert resolve_concurrency({}, 10) == 4
+    assert resolve_concurrency({}, 100) == 16
+    assert resolve_concurrency({}, 128) == 64
+    assert resolve_concurrency({}, 256) == 128
+    assert resolve_concurrency({'tabular_generated_output_batch_concurrency': 96}, 1000) == 96
+    is_schema_window = helpers['_is_schema_discovery_progress_window']
+    assert is_schema_window({'batch_count': 909, 'batch_concurrency': 128}, 1, 1) is True
+    assert is_schema_window({'batch_count': 909, 'batch_concurrency': 128}, 129, 128) is False
+    assert is_schema_window({'batch_count': 1, 'batch_concurrency': 1}, 1, 1) is False
+
+    throughput = helpers['_calculate_window_throughput'](
+        {'row_count': 30000},
+        processed_rows=528,
+        window_rows=528,
+        window_elapsed_seconds=155,
+        completed_at=datetime(2026, 8, 9, tzinfo=timezone.utc),
+    )
+    assert math.isclose(throughput['rows_per_minute'], 204.39, abs_tol=0.01)
+    assert throughput['estimated_total_seconds'] == 8806.8
+    assert throughput['estimated_remaining_seconds'] == 8651.8
+
+    run = {'retry_count': 0}
+    updated_run, completed_batches, processed_rows = helpers['_advance_run_progress_for_window'](
+        run,
+        {
+            1: {'batch_row_count': 33, 'elapsed_seconds': 150, 'mismatch_count': 0},
+            2: {'batch_row_count': 33, 'elapsed_seconds': 149, 'mismatch_count': 2},
+            3: {
+                'batch_row_count': 33,
+                'elapsed_seconds': 0.01,
+                'mismatch_count': 0,
+                'from_checkpoint': True,
+            },
+        },
+        completed_batches=0,
+        processed_rows=0,
+        window_start=1,
+        window_end=3,
+    )
+    assert updated_run['retry_count'] == 1
+    assert completed_batches == 3
+    assert processed_rows == 99
+    assert progress_updates == [{
+        'completed_batches': 3,
+        'processed_rows': 99,
+        'window_rows': 99,
+        'window_elapsed_seconds': 150.0,
+        'window_batch_count': 3,
+        'mismatch_count': 2,
+    }]
 
 
 def test_source_identity_and_order_contract():
@@ -1510,6 +1777,87 @@ def test_direct_source_backed_queue_failure_falls_back_without_stream_abort():
         args and args[0] == '[TABULAR_GENERATED_OUTPUT] Direct source-backed generated output queueing skipped'
         for args, _kwargs in logged_events
     )
+
+
+def test_direct_source_backed_queue_call_sites_use_required_keywords():
+    """Every direct queue call site passes required arguments explicitly."""
+    module_tree = ast.parse(CHAT_ROUTE.read_text(encoding='utf-8'), filename=str(CHAT_ROUTE))
+    direct_queue_calls = [
+        call
+        for call in ast.walk(module_tree)
+        if isinstance(call, ast.Call)
+        and isinstance(call.func, ast.Name)
+        and call.func.id == 'maybe_queue_direct_tabular_generated_output'
+    ]
+    assert len(direct_queue_calls) >= 4
+
+    required_keyword_names = {
+        'user_question',
+        'file_contexts',
+        'user_id',
+        'conversation_id',
+        'gpt_model',
+        'settings',
+    }
+    for call in direct_queue_calls:
+        keyword_names = {
+            keyword.arg
+            for keyword in call.keywords
+            if keyword.arg
+        }
+        assert required_keyword_names <= keyword_names
+
+
+def test_model_validation_failures_auto_retry_then_manual_continue():
+    """Model-output validation failures auto retry briefly, then remain manually resumable."""
+    helpers, stored_run = _load_retry_helpers()
+    settings = {
+        'tabular_generated_output_model_validation_auto_retries': 3,
+    }
+    run = {
+        'id': 'validation-run',
+        'user_id': 'user-1',
+        'conversation_id': 'conversation-1',
+        'status': 'running',
+        'completed_batches': 1,
+        'processed_rows': 33,
+        'batch_count': 91,
+        'row_count': 3000,
+        '_etag': 'etag-1',
+    }
+    validation_error = ValueError(
+        'Background structured export batch 2/91 failed validation: returned 0 object(s) for 33 input row(s).'
+    )
+
+    first_retry = helpers['_mark_run_retryable'](
+        dict(run),
+        validation_error,
+        settings,
+        retry_category='model_validation',
+    )
+    assert first_retry['status'] == 'queued'
+    assert first_retry['transient_failure_count'] == 1
+    assert first_retry['last_retry_category'] == 'model_validation'
+    assert first_retry['auto_retry_exhausted'] is False
+    assert first_retry['next_attempt_at']
+
+    exhausted_run = dict(first_retry)
+    exhausted_run.update({
+        'status': 'running',
+        'transient_failure_count': 3,
+        '_etag': 'etag-2',
+    })
+    exhausted_retry = helpers['_mark_run_retryable'](
+        exhausted_run,
+        validation_error,
+        settings,
+        retry_category='model_validation',
+    )
+    assert exhausted_retry['status'] == 'failed'
+    assert exhausted_retry['auto_retry_exhausted'] is True
+    assert exhausted_retry['last_retry_category'] == 'model_validation'
+    assert helpers['_is_retryable_failed_run'](stored_run) is True
+    assert helpers['_can_auto_retry_failed_run'](stored_run, settings) is False
 
 
 def test_hierarchical_analysis_routing_requires_feature_flag():
@@ -2443,6 +2791,8 @@ def test_route_queues_replayable_pages_and_suppresses_summary_fallback():
 def main():
     """Run focused row-orchestration contract checks."""
     tests = [
+        test_model_aware_batch_budget_uses_safe_token_limits,
+        test_dynamic_concurrency_and_parallel_window_eta,
         test_source_identity_and_order_contract,
         test_generated_batch_schema_contract,
         test_durable_runner_enforces_row_contract,
@@ -2454,6 +2804,8 @@ def main():
         test_filter_rows_pages_queue_combined_analysis_and_export_run,
         test_direct_source_backed_csv_queue_bypasses_tool_paging,
         test_direct_source_backed_queue_failure_falls_back_without_stream_abort,
+        test_direct_source_backed_queue_call_sites_use_required_keywords,
+        test_model_validation_failures_auto_retry_then_manual_continue,
         test_hierarchical_analysis_routing_requires_feature_flag,
         test_non_replayable_filter_rows_reports_explicit_failure,
         test_streaming_finalizer_writes_30000_rows_in_bounded_chunks,

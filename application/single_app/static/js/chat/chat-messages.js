@@ -4420,6 +4420,9 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     const manualResumeCount = Number.parseInt(outputMetadata?.manual_resume_count, 10);
     const retryDelaySeconds = Number.parseInt(outputMetadata?.retry_delay_seconds, 10);
     const estimatedRemainingSeconds = Number.parseInt(outputMetadata?.estimated_remaining_seconds, 10);
+    const rowsPerMinute = Number.parseFloat(outputMetadata?.rows_per_minute);
+    const batchConcurrency = Number.parseInt(outputMetadata?.batch_concurrency, 10);
+    const effectiveBatchConcurrency = Number.parseInt(outputMetadata?.effective_batch_concurrency, 10);
     const taskType = String(outputMetadata?.task_type || '').trim().toLowerCase();
     const analysisPhase = String(outputMetadata?.analysis_phase || '').trim().toLowerCase();
     const progressPercent = calculateGeneratedOutputProgress(outputMetadata);
@@ -4487,6 +4490,19 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     }
     if (Number.isFinite(processedChunkCount) && Number.isFinite(totalChunkCount) && totalChunkCount > processedChunkCount) {
       detailParts.push(`Remaining chunks: ${(totalChunkCount - processedChunkCount).toLocaleString()}`);
+    }
+    if (Number.isFinite(rowsPerMinute) && rowsPerMinute > 0) {
+      detailParts.push(`Throughput: ${rowsPerMinute.toLocaleString(undefined, { maximumFractionDigits: 1 })} rows/min`);
+    }
+    if (Number.isFinite(batchConcurrency) && batchConcurrency > 0) {
+      const concurrencyLabel = (
+        Number.isFinite(effectiveBatchConcurrency)
+        && effectiveBatchConcurrency > 0
+        && effectiveBatchConcurrency !== batchConcurrency
+      )
+        ? `${effectiveBatchConcurrency.toLocaleString()} of ${batchConcurrency.toLocaleString()}`
+        : batchConcurrency.toLocaleString();
+      detailParts.push(`Model concurrency: ${concurrencyLabel}`);
     }
 
     if (outputMetadata?.waiting_for_retry) {
