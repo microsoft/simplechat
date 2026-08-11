@@ -15728,6 +15728,7 @@ def register_route_backend_chats(bp):
             history_grounded_search_used = False
             history_only_answerability = None
             prior_grounded_document_refs = []
+            prior_grounded_source_merge = None
             continuity_decision = None
             effective_document_scope = document_scope
             effective_selected_document_ids = list(selected_document_ids or [])
@@ -16067,6 +16068,67 @@ def register_route_backend_chats(bp):
                 selected_document_id = effective_selected_document_id
                 document_scope = effective_document_scope
 
+            prior_grounded_document_refs = _normalize_prior_grounded_document_refs(conversation_item)
+            current_document_context_available = bool(
+                effective_selected_document_ids
+                or effective_selected_document_id
+                or hybrid_search_enabled
+                or document_context_requested
+            )
+            if (
+                current_document_context_available
+                and prior_grounded_document_refs
+                and _prior_grounded_source_reference_requested(user_message)
+            ):
+                prior_search_parameters = build_prior_grounded_document_search_parameters(
+                    prior_grounded_document_refs
+                )
+                prior_search_parameters = revalidate_prior_grounded_document_search_parameters(
+                    user_id,
+                    prior_search_parameters,
+                )
+                prior_grounded_source_merge = _merge_prior_grounded_sources_with_current_context(
+                    effective_selected_document_ids,
+                    effective_document_scope,
+                    effective_active_group_ids,
+                    effective_active_public_workspace_ids,
+                    prior_search_parameters,
+                )
+                if prior_grounded_source_merge.get('used'):
+                    effective_selected_document_ids = list(
+                        prior_grounded_source_merge.get('document_ids') or []
+                    )
+                    effective_selected_document_id = (
+                        effective_selected_document_ids[0]
+                        if len(effective_selected_document_ids) == 1
+                        else None
+                    )
+                    effective_document_scope = prior_grounded_source_merge.get('doc_scope') or 'all'
+                    effective_active_group_ids = list(
+                        prior_grounded_source_merge.get('active_group_ids') or []
+                    )
+                    effective_active_group_id = (
+                        effective_active_group_ids[0]
+                        if effective_active_group_ids
+                        else None
+                    )
+                    effective_active_public_workspace_ids = list(
+                        prior_grounded_source_merge.get('active_public_workspace_ids') or []
+                    )
+                    effective_active_public_workspace_id = (
+                        effective_active_public_workspace_ids[0]
+                        if effective_active_public_workspace_ids
+                        else None
+                    )
+                    selected_document_ids = list(effective_selected_document_ids)
+                    selected_document_id = effective_selected_document_id
+                    document_scope = effective_document_scope
+                    active_group_ids = list(effective_active_group_ids)
+                    active_group_id = effective_active_group_id
+                    active_public_workspace_ids = list(effective_active_public_workspace_ids)
+                    active_public_workspace_id = effective_active_public_workspace_id
+                    hybrid_search_enabled = True
+
             mixed_source_manifest = []
             mixed_source_partitions = {}
             mixed_source_narrative_document_ids = []
@@ -16274,6 +16336,13 @@ def register_route_backend_chats(bp):
                         'tags': tags_filter,
                         'classification': classifications_to_send
                     }
+                    if prior_grounded_source_merge:
+                        user_metadata['workspace_search']['prior_grounded_source_merge'] = {
+                            'used': bool(prior_grounded_source_merge.get('used')),
+                            'prior_document_count': len(prior_grounded_source_merge.get('prior_document_ids') or []),
+                            'added_document_count': len(prior_grounded_source_merge.get('prior_added_document_ids') or []),
+                            'selection_origin': 'selected+history',
+                        }
                     if assigned_knowledge_filters:
                         assigned_knowledge = assigned_knowledge_filters.get('assigned_knowledge') or {}
                         user_metadata['workspace_search']['assigned_knowledge'] = {
@@ -16599,8 +16668,8 @@ def register_route_backend_chats(bp):
                 not original_hybrid_search_enabled
                 and not explicit_external_retrieval_requested
                 and not mixed_source_explicit_selection
+                and not prior_grounded_source_merge
             ):
-                prior_grounded_document_refs = _normalize_prior_grounded_document_refs(conversation_item)
                 if prior_grounded_document_refs:
                     continuity_decision = _resolve_reauthorized_continuity_decision(
                         settings,
@@ -18283,6 +18352,7 @@ def register_route_backend_chats(bp):
                 current_document_context_requested=(
                     is_mixed_source_chat_search_enabled(settings)
                     and document_context_requested
+                    or bool(prior_grounded_source_merge)
                 ),
             ):
                 history_grounding_message = build_history_grounding_system_message()
@@ -19971,6 +20041,7 @@ def register_route_backend_chats(bp):
                 history_grounded_search_used = False
                 history_only_answerability = None
                 prior_grounded_document_refs = []
+                prior_grounded_source_merge = None
                 continuity_decision = None
                 effective_document_scope = document_scope
                 effective_selected_document_ids = list(selected_document_ids or [])
@@ -20330,6 +20401,67 @@ def register_route_backend_chats(bp):
                     selected_document_id = effective_selected_document_id
                     document_scope = effective_document_scope
 
+                prior_grounded_document_refs = _normalize_prior_grounded_document_refs(conversation_item)
+                current_document_context_available = bool(
+                    effective_selected_document_ids
+                    or effective_selected_document_id
+                    or hybrid_search_enabled
+                    or document_context_requested
+                )
+                if (
+                    current_document_context_available
+                    and prior_grounded_document_refs
+                    and _prior_grounded_source_reference_requested(user_message)
+                ):
+                    prior_search_parameters = build_prior_grounded_document_search_parameters(
+                        prior_grounded_document_refs
+                    )
+                    prior_search_parameters = revalidate_prior_grounded_document_search_parameters(
+                        user_id,
+                        prior_search_parameters,
+                    )
+                    prior_grounded_source_merge = _merge_prior_grounded_sources_with_current_context(
+                        effective_selected_document_ids,
+                        effective_document_scope,
+                        effective_active_group_ids,
+                        effective_active_public_workspace_ids,
+                        prior_search_parameters,
+                    )
+                    if prior_grounded_source_merge.get('used'):
+                        effective_selected_document_ids = list(
+                            prior_grounded_source_merge.get('document_ids') or []
+                        )
+                        effective_selected_document_id = (
+                            effective_selected_document_ids[0]
+                            if len(effective_selected_document_ids) == 1
+                            else None
+                        )
+                        effective_document_scope = prior_grounded_source_merge.get('doc_scope') or 'all'
+                        effective_active_group_ids = list(
+                            prior_grounded_source_merge.get('active_group_ids') or []
+                        )
+                        effective_active_group_id = (
+                            effective_active_group_ids[0]
+                            if effective_active_group_ids
+                            else None
+                        )
+                        effective_active_public_workspace_ids = list(
+                            prior_grounded_source_merge.get('active_public_workspace_ids') or []
+                        )
+                        effective_active_public_workspace_id = (
+                            effective_active_public_workspace_ids[0]
+                            if effective_active_public_workspace_ids
+                            else None
+                        )
+                        selected_document_ids = list(effective_selected_document_ids)
+                        selected_document_id = effective_selected_document_id
+                        document_scope = effective_document_scope
+                        active_group_ids = list(effective_active_group_ids)
+                        active_group_id = effective_active_group_id
+                        active_public_workspace_ids = list(effective_active_public_workspace_ids)
+                        active_public_workspace_id = effective_active_public_workspace_id
+                        hybrid_search_enabled = True
+
                 mixed_source_manifest = []
                 mixed_source_partitions = {}
                 mixed_source_narrative_document_ids = []
@@ -20527,6 +20659,13 @@ def register_route_backend_chats(bp):
                             'active_public_workspace_ids': effective_active_public_workspace_ids,
                             'classification': classifications_to_send
                         }
+                        if prior_grounded_source_merge:
+                            user_metadata['workspace_search']['prior_grounded_source_merge'] = {
+                                'used': bool(prior_grounded_source_merge.get('used')),
+                                'prior_document_count': len(prior_grounded_source_merge.get('prior_document_ids') or []),
+                                'added_document_count': len(prior_grounded_source_merge.get('prior_added_document_ids') or []),
+                                'selection_origin': 'selected+history',
+                            }
                         if assigned_knowledge_filters:
                             assigned_knowledge = assigned_knowledge_filters.get('assigned_knowledge') or {}
                             user_metadata['workspace_search']['assigned_knowledge'] = {
@@ -20872,8 +21011,8 @@ def register_route_backend_chats(bp):
                     not original_hybrid_search_enabled
                     and not explicit_external_retrieval_requested
                     and not mixed_source_explicit_selection
+                    and not prior_grounded_source_merge
                 ):
-                    prior_grounded_document_refs = _normalize_prior_grounded_document_refs(conversation_item)
                     if prior_grounded_document_refs:
                         continuity_decision = _resolve_reauthorized_continuity_decision(
                             settings,
@@ -22170,6 +22309,7 @@ def register_route_backend_chats(bp):
                     current_document_context_requested=(
                         is_mixed_source_chat_search_enabled(settings)
                         and document_context_requested
+                        or bool(prior_grounded_source_merge)
                     ),
                 ):
                     history_grounding_message = build_history_grounding_system_message()
@@ -24244,6 +24384,82 @@ def revalidate_prior_grounded_document_search_parameters(user_id, search_paramet
         else 'all'
     )
     return normalized_parameters
+
+
+def _prior_grounded_source_reference_requested(user_message):
+    """Return whether the user is asking to reuse a prior grounded source."""
+    normalized_message = re.sub(r'\s+', ' ', str(user_message or '').strip().casefold())
+    if not normalized_message:
+        return False
+
+    source_noun_pattern = (
+        r'(?:source|document|file|template|spreadsheet|workbook|table|xml|json|pdf|csv|xlsx|xls)'
+    )
+    reference_patterns = (
+        rf'\b(?:that|those|same|previous|prior|earlier|last)\s+{source_noun_pattern}\b',
+        rf'\b(?:that|the|same|previous|prior|earlier|last)\s+'
+        rf'(?:xml|json|pdf|csv|xlsx|xls)\s+(?:source|document|file|template|workbook)\b',
+        rf'\b(?:into|in|with|using|from|against|compare\s+to)\s+'
+        rf'(?:that|the|same|previous|prior|earlier|last)\s+{source_noun_pattern}\b',
+    )
+    return any(re.search(pattern, normalized_message) for pattern in reference_patterns)
+
+
+def _merge_unique_strings(*collections):
+    merged = []
+    seen_values = set()
+    for collection in collections:
+        for value in list(collection or []):
+            normalized_value = str(value or '').strip()
+            if not normalized_value or normalized_value in seen_values:
+                continue
+            seen_values.add(normalized_value)
+            merged.append(normalized_value)
+    return merged
+
+
+def _merge_prior_grounded_sources_with_current_context(
+    current_document_ids,
+    current_document_scope,
+    current_active_group_ids,
+    current_active_public_workspace_ids,
+    prior_search_parameters,
+):
+    """Merge reauthorized prior grounded source parameters into current source context."""
+    prior_document_ids = _normalize_conversation_task_document_ids(
+        (prior_search_parameters or {}).get('document_ids')
+    )
+    current_document_ids = _normalize_conversation_task_document_ids(current_document_ids)
+    current_document_id_set = set(current_document_ids)
+    prior_only_document_ids = [
+        document_id
+        for document_id in prior_document_ids
+        if document_id not in current_document_id_set
+    ]
+    merged_document_ids = _merge_unique_strings(current_document_ids, prior_document_ids)
+
+    current_scope = str(current_document_scope or '').strip().lower()
+    prior_scope = str((prior_search_parameters or {}).get('doc_scope') or '').strip().lower()
+    scope_candidates = [scope for scope in (current_scope, prior_scope) if scope]
+    merged_scope = scope_candidates[0] if len(set(scope_candidates)) == 1 else 'all'
+    if not scope_candidates:
+        merged_scope = None
+
+    return {
+        'used': bool(prior_only_document_ids),
+        'document_ids': merged_document_ids,
+        'prior_document_ids': prior_document_ids,
+        'prior_added_document_ids': prior_only_document_ids,
+        'doc_scope': merged_scope,
+        'active_group_ids': _merge_unique_strings(
+            current_active_group_ids,
+            (prior_search_parameters or {}).get('active_group_ids'),
+        ),
+        'active_public_workspace_ids': _merge_unique_strings(
+            current_active_public_workspace_ids,
+            (prior_search_parameters or {}).get('active_public_workspace_ids'),
+        ),
+    }
 
 
 def build_history_only_assessment_messages(history_segments, default_system_prompt=''):
