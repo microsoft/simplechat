@@ -1,8 +1,8 @@
 # test_chat_history_grounded_follow_up_fix.py
 """
 Functional test for grounded follow-up chat fallback.
-Version: 0.250.002
-Implemented in: 0.240.054; Updated in: 0.250.002
+Version: 0.250.157
+Implemented in: 0.240.054; Updated in: 0.250.002; prior-source merge in 0.250.157
 
 This test ensures follow-up turns with workspace search disabled can reuse
 prior grounded document refs, derive bounded fallback search parameters, and
@@ -13,6 +13,7 @@ Deep Research turns bypass the history-grounded document fallback.
 
 import ast
 import os
+import re
 from test_support.versioning import assert_app_version_at_least
 
 
@@ -28,11 +29,16 @@ FIX_DOC = os.path.join(
     'WEB_RESEARCH_EXTERNAL_RETRIEVAL_PRIORITY_FIX.md',
 )
 ROUTE_TARGET_FUNCTIONS = {
+    '_safe_metadata_int',
     '_normalize_prior_grounded_document_refs',
     'build_prior_grounded_document_search_parameters',
     'build_history_only_assessment_messages',
     'build_history_grounding_system_message',
     '_is_explicit_external_retrieval_requested',
+    '_merge_prior_grounded_sources_with_current_context',
+    '_merge_unique_strings',
+    '_normalize_conversation_task_document_ids',
+    '_prior_grounded_source_reference_requested',
     '_should_auto_merge_chat_upload_workspace_context',
     'should_apply_history_grounding_message',
 }
@@ -67,7 +73,7 @@ def load_route_helpers():
     )
 
     module = ast.Module(body=selected_nodes, type_ignores=[])
-    namespace = {}
+    namespace = {'re': re}
     exec(compile(module, ROUTE_FILE, 'exec'), namespace)
     return namespace, source
 
@@ -189,6 +195,17 @@ def test_prior_grounded_refs_normalize_from_saved_refs_and_tags():
             'scope_id': 'group-1',
             'file_name': 'Plan A.docx',
             'classification': 'internal',
+            'source_role': None,
+            'requested_order': None,
+            'source_kind': None,
+            'engine': None,
+            'source_version': None,
+            'status': None,
+            'coverage': {},
+            'selection_origin': None,
+            'action_mode': None,
+            'citation_count': 0,
+            'artifact_count': 0,
             'group_id': 'group-1',
         },
         {
@@ -197,6 +214,17 @@ def test_prior_grounded_refs_normalize_from_saved_refs_and_tags():
             'scope_id': 'user-1',
             'file_name': 'Notes.txt',
             'classification': None,
+            'source_role': None,
+            'requested_order': None,
+            'source_kind': None,
+            'engine': None,
+            'source_version': None,
+            'status': None,
+            'coverage': {},
+            'selection_origin': None,
+            'action_mode': None,
+            'citation_count': 0,
+            'artifact_count': 0,
             'user_id': 'user-1',
         },
     ], normalized_refs
@@ -220,6 +248,17 @@ def test_prior_grounded_refs_normalize_from_saved_refs_and_tags():
             'scope_id': 'workspace-7',
             'file_name': 'Workspace FAQ.md',
             'classification': 'public',
+            'source_role': None,
+            'requested_order': None,
+            'source_kind': None,
+            'engine': None,
+            'source_version': None,
+            'status': None,
+            'coverage': {},
+            'selection_origin': None,
+            'action_mode': None,
+            'citation_count': 0,
+            'artifact_count': 0,
             'public_workspace_id': 'workspace-7',
         },
     ], tag_fallback_refs
@@ -249,6 +288,12 @@ def test_prior_grounded_search_parameters_stay_bounded():
         'active_group_id': 'group-1',
         'active_public_workspace_ids': ['workspace-1'],
         'active_public_workspace_id': 'workspace-1',
+        'chat_conversation_ids': [],
+        'document_scopes': {
+            'doc-1': {'scope': 'group', 'scope_id': ''},
+            'doc-2': {'scope': 'public', 'scope_id': ''},
+            'doc-3': {'scope': 'personal', 'scope_id': ''},
+        },
         'scope_types': ['group', 'personal', 'public'],
     }, mixed_scope_parameters
 
@@ -262,6 +307,60 @@ def test_prior_grounded_search_parameters_stay_bounded():
     assert group_only_parameters['document_ids'] == ['group-doc-1', 'group-doc-2']
 
     print('✅ Grounded fallback search parameter derivation passed')
+    return True
+
+
+def test_prior_grounded_source_references_merge_with_current_context():
+    """Verify explicit follow-up source references merge prior and current source ids."""
+    print('🔍 Testing prior grounded source merge...')
+
+    namespace, _ = load_route_helpers()
+    reference_requested = namespace['_prior_grounded_source_reference_requested']
+    merge_context = namespace['_merge_prior_grounded_sources_with_current_context']
+
+    assert reference_requested('Add this PDF content into that XML file.') is True
+    assert reference_requested('Use the same template with this source report.') is True
+    assert reference_requested('Compare this file against the previous spreadsheet.') is True
+    assert reference_requested('Summarize the uploaded PDF.') is False
+
+    merged = merge_context(
+        current_document_ids=['current-pdf'],
+        current_document_scope='personal',
+        current_active_group_ids=[],
+        current_active_public_workspace_ids=[],
+        prior_search_parameters={
+            'document_ids': ['prior-xml', 'prior-table'],
+            'doc_scope': 'group',
+            'active_group_ids': ['group-1'],
+            'active_public_workspace_ids': [],
+        },
+    )
+
+    assert merged == {
+        'used': True,
+        'document_ids': ['current-pdf', 'prior-xml', 'prior-table'],
+        'prior_document_ids': ['prior-xml', 'prior-table'],
+        'prior_added_document_ids': ['prior-xml', 'prior-table'],
+        'doc_scope': 'all',
+        'active_group_ids': ['group-1'],
+        'active_public_workspace_ids': [],
+    }, merged
+
+    duplicate_only = merge_context(
+        current_document_ids=['prior-xml'],
+        current_document_scope='group',
+        current_active_group_ids=['group-1'],
+        current_active_public_workspace_ids=[],
+        prior_search_parameters={
+            'document_ids': ['prior-xml'],
+            'doc_scope': 'group',
+            'active_group_ids': ['group-1'],
+        },
+    )
+    assert duplicate_only['used'] is False
+    assert duplicate_only['document_ids'] == ['prior-xml']
+
+    print('✅ Prior grounded source merge passed')
     return True
 
 
@@ -330,17 +429,23 @@ def test_route_and_metadata_wiring_cover_both_chat_paths():
     _, route_source = load_route_helpers()
     _, metadata_source = load_metadata_helpers()
 
-    assert "conversation_item['last_grounded_document_refs'] = _build_last_grounded_document_refs(document_map)" in metadata_source
+    assert "conversation_item['last_grounded_document_refs'] = _build_last_grounded_document_refs(" in metadata_source
+    assert 'source_continuity_refs=source_continuity_refs' in metadata_source
     assert route_source.count('history_grounded_search_used = True') == 2
+    assert route_source.count('prior_grounded_source_merge = None') == 2
+    assert route_source.count('_prior_grounded_source_reference_requested(user_message)') == 3
+    assert route_source.count('_merge_prior_grounded_sources_with_current_context(') >= 3
+    assert route_source.count("'prior_grounded_source_merge'") == 2
     assert route_source.count('Checking whether prior conversation context already answers the question') == 2
     assert route_source.count('Conversation context alone was insufficient; searching previously grounded documents') == 2
     assert route_source.count('No prior grounded documents were available; using conversation history only') == 2
     assert route_source.count("'history_grounded_fallback'") == 2
-    assert route_source.count('if not original_hybrid_search_enabled and not explicit_external_retrieval_requested:') == 2
+    assert route_source.count('not original_hybrid_search_enabled') == 2
+    assert route_source.count('and not prior_grounded_source_merge') == 2
     assert route_source.count('if should_apply_history_grounding_message(') == 2
     assert route_source.count('explicit_external_retrieval_requested,') >= 4
     assert route_source.count('_should_auto_merge_chat_upload_workspace_context(') >= 3
-    assert route_source.count('include_assistant_citation_context=not explicit_external_retrieval_requested') == 2
+    assert route_source.count('include_assistant_citation_context') >= 4
     assert route_source.count("if role == 'assistant' and include_assistant_citation_context:") == 2
     assert route_source.count('history_grounding_message = build_history_grounding_system_message()') == 2
 
@@ -372,6 +477,7 @@ if __name__ == '__main__':
         test_grounded_document_refs_capture_stable_document_ids,
         test_prior_grounded_refs_normalize_from_saved_refs_and_tags,
         test_prior_grounded_search_parameters_stay_bounded,
+        test_prior_grounded_source_references_merge_with_current_context,
         test_history_only_prompt_contract_is_explicit,
         test_route_and_metadata_wiring_cover_both_chat_paths,
         test_version_and_fix_documentation_alignment,
