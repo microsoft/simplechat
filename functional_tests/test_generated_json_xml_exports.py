@@ -2,14 +2,15 @@
 # test_generated_json_xml_exports.py
 """
 Functional test for generated JSON/XML export artifacts.
-Version: 0.250.152
-Implemented in: 0.250.114; completed file-export cards and View actions in 0.250.152
+Version: 0.250.153
+Implemented in: 0.250.114; completed file-export cards and View actions in 0.250.152; truthful private payload streaming in 0.250.153
 
 This test ensures JSON/XML generation requests are recognized as downloadable
 artifact workflows, reuse shared serialization helpers, avoid duplicate XML
 processing implementations, and preserve no-inline-output handoff behavior.
 """
 
+import ast
 import importlib.util
 import sys
 from pathlib import Path
@@ -86,6 +87,19 @@ def test_shared_json_xml_export_helpers():
 
     assert module.normalize_generated_output_format(".xml") == "xml"
     assert module.normalize_generated_output_format("json") == "json"
+    xml_guidance = module.build_generated_file_output_guidance(
+        'Create a downloadable XML file.',
+        requested_format='xml',
+    )
+    json_guidance = module.build_generated_file_output_guidance(
+        'Create a downloadable JSON file.',
+        requested_format='json',
+    )
+    for guidance in (xml_guidance, json_guidance):
+        assert 'server will validate and attach the file' in guidance
+        assert 'claim that files cannot be attached' in guidance
+        assert 'copy or save content manually' in guidance
+        assert 'Return ONLY' in guidance
     print("Shared helper checks passed")
 
 
@@ -108,6 +122,28 @@ def test_chat_route_json_xml_artifact_hooks():
     assert_contains(chat_source, "root_name='GeneratedRows'", "tabular XML root naming")
     assert_contains(chat_source, "'capability': 'file_export'", "completed file-export capability")
     assert_contains(chat_source, "'suppress_assistant_text': True", "completed handoff suppression")
+    assert_contains(chat_source, 'def _build_streaming_assistant_file_status(', 'streaming file status builder')
+    assert_contains(chat_source, "suppress_streamed_file_payload = requested_streamed_file_format in {'json', 'xml'}", 'private file payload streaming')
+    assert chat_source.count('if not suppress_streamed_file_payload:') >= 4, (
+        'Expected agent, direct-model, fallback, and appended-content payload gates.'
+    )
+    assert_contains(chat_source, "'Generating the {normalized_output_format} file. It will appear here when ready.'", 'truthful streaming status')
+    route_tree = ast.parse(chat_source, filename=str(CHAT_ROUTE_FILE))
+    status_helper = next(
+        node
+        for node in route_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == '_build_streaming_assistant_file_status'
+    )
+    namespace = {}
+    exec(compile(ast.Module(body=[status_helper], type_ignores=[]), str(CHAT_ROUTE_FILE), 'exec'), namespace)
+    assert namespace['_build_streaming_assistant_file_status']('xml') == (
+        'Generating the XML file. It will appear here when ready.'
+    )
+    assert namespace['_build_streaming_assistant_file_status']('json') == (
+        'Generating the JSON file. It will appear here when ready.'
+    )
+    assert namespace['_build_streaming_assistant_file_status']('docx') == ''
     print("Chat route checks passed")
 
 
@@ -210,7 +246,7 @@ def test_security_review_fixes():
 
 
 def run_tests():
-    assert_app_version_at_least("0.250.152")
+    assert_app_version_at_least("0.250.153")
 
     tests = [
         test_shared_json_xml_export_helpers,

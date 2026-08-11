@@ -134,11 +134,28 @@ def generated_file_export_requested(user_question: str) -> bool:
     return get_requested_generated_file_format(user_question) is not None
 
 
-def build_generated_file_output_guidance(user_question: str) -> str:
+def build_generated_file_output_guidance(
+    user_question: str,
+    requested_format: Optional[str] = None,
+) -> str:
     """Return shared model guidance for a requested generated output format."""
-    output_format = get_requested_generated_file_format(user_question)
+    output_format = str(requested_format or '').strip().lower() or get_requested_generated_file_format(user_question)
     if output_format == GENERATED_FILE_FORMAT_CSV:
         return build_csv_output_clarification_guidance(user_question)
+    if output_format == 'json':
+        return (
+            'The user requested a downloadable JSON artifact. The server will validate and attach the file after '
+            'generation. Return ONLY the complete valid JSON payload needed for that file. Do not wrap it in Markdown, '
+            'add explanations, claim that files cannot be attached, tell the user to copy or save content manually, '
+            'or mention the publication mechanism.'
+        )
+    if output_format == 'xml':
+        return (
+            'The user requested a downloadable XML artifact. The server will validate and attach the file after '
+            'generation. Return ONLY one complete well-formed XML document needed for that file. Do not wrap it in '
+            'Markdown, add explanations, claim that files cannot be attached, tell the user to copy or save content '
+            'manually, or mention the publication mechanism.'
+        )
     if output_format in {GENERATED_FILE_FORMAT_DOCX, GENERATED_FILE_FORMAT_PDF}:
         return (
             f'The user requested a downloadable {output_format.upper()} artifact. Provide a clear final '

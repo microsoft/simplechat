@@ -1,6 +1,6 @@
 # Generated JSON and XML Completed Card Fix
 
-Fixed in version: **0.250.152**
+Fixed in versions: **0.250.152-0.250.153**
 
 Related issue: **microsoft/simplechat#1031**
 
@@ -31,10 +31,12 @@ Foreground generated-file metadata used the `analysis` capability, while concise
 - View buttons are labeled `View CSV`, `View JSON`, or `View XML` and include a format-specific accessible name.
 - XML and JSON are rendered only inside the bounded preview modal using inert text or safe table cells.
 
+Version **0.250.153** also fixes the in-progress state. The model receives payload-only guidance that explicitly prohibits claiming files cannot be attached or instructing users to copy/save the payload manually. Streaming Chat emits one truthful server-authored generation status while accumulating XML/JSON privately. Successful publication replaces that status with the artifact card; failed publication returns the accumulated response as a fallback.
+
 ## Validation
 
 Functional coverage verifies JSON/XML parsing, file-export metadata, bounded previews, and renderer hooks. Authenticated browser validation confirmed that a completed XML card showed only `Download XML`, `View XML`, and `Add to Workspace`; XML containing a literal `script` element remained inert text in the modal.
 
 ## Related Version Update
 
-`application/single_app/config.py` was incremented from **0.250.151** to **0.250.152** for this completed JSON/XML artifact normalization.
+`application/single_app/config.py` was incremented through **0.250.153** for completed JSON/XML artifact normalization and truthful private payload streaming.

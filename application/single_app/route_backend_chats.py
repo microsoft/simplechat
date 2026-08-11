@@ -2471,6 +2471,13 @@ def _build_assistant_file_output_handoff(output_metadata):
     )
 
 
+def _build_streaming_assistant_file_status(output_format):
+    normalized_output_format = str(output_format or '').strip().upper()
+    if normalized_output_format not in {'JSON', 'XML'}:
+        return ''
+    return f'Generating the {normalized_output_format} file. It will appear here when ready.'
+
+
 def maybe_create_assistant_file_generated_output(
     user_question,
     assistant_content,
@@ -15651,7 +15658,10 @@ def register_route_backend_chats(bp):
             generated_tabular_outputs_list = []
             generated_analysis_artifacts_list = []
             system_messages_for_augmentation = [] # Collect system messages from search
-            generated_file_output_guidance = build_generated_file_output_guidance(user_message)
+            generated_file_output_guidance = build_generated_file_output_guidance(
+                user_message,
+                requested_format=get_tabular_generated_output_format(user_message),
+            )
             if generated_file_output_guidance:
                 system_messages_for_augmentation.append({
                     'role': 'system',
@@ -19888,7 +19898,17 @@ def register_route_backend_chats(bp):
                 generated_tabular_outputs_list = []
                 generated_analysis_artifacts_list = []
                 system_messages_for_augmentation = []
-                generated_file_output_guidance = build_generated_file_output_guidance(user_message)
+                requested_streamed_file_format = str(
+                    get_tabular_generated_output_format(user_message) or ''
+                ).strip().lower()
+                suppress_streamed_file_payload = requested_streamed_file_format in {'json', 'xml'}
+                streamed_file_status_content = _build_streaming_assistant_file_status(
+                    requested_streamed_file_format
+                )
+                generated_file_output_guidance = build_generated_file_output_guidance(
+                    user_message,
+                    requested_format=requested_streamed_file_format,
+                )
                 if generated_file_output_guidance:
                     system_messages_for_augmentation.append({
                         'role': 'system',
@@ -22347,6 +22367,8 @@ def register_route_backend_chats(bp):
                 token_usage_data = None  # Will be populated from final stream chunk
                 # assistant_message_id was generated earlier for thought tracking
                 final_model_used = gpt_model  # Default to gpt_model, will be overridden if agent is used
+                if suppress_streamed_file_payload and streamed_file_status_content:
+                    yield f"data: {json.dumps({'content': streamed_file_status_content})}\n\n"
 
                 def finalize_cancelled_stream_response():
                     cancel_reason = stream_session.get_cancel_reason() if stream_session else 'user_requested'
@@ -22616,7 +22638,8 @@ def register_route_backend_chats(bp):
 
                                         if chunk_content:
                                             accumulated_content += chunk_content
-                                            yield f"data: {json.dumps({'content': chunk_content})}\n\n"
+                                            if not suppress_streamed_file_payload:
+                                                yield f"data: {json.dumps({'content': chunk_content})}\n\n"
 
                                         if stream_cancel_requested():
                                             yield finalize_cancelled_agent_stream_response()
@@ -22872,7 +22895,8 @@ def register_route_backend_chats(bp):
                                 chunk_content = normalize_chat_completion_text(getattr(delta, 'content', None))
                                 if chunk_content:
                                     accumulated_content += chunk_content
-                                    yield f"data: {json.dumps({'content': chunk_content})}\n\n"
+                                    if not suppress_streamed_file_payload:
+                                        yield f"data: {json.dumps({'content': chunk_content})}\n\n"
 
                             if stream_cancel_requested():
                                 yield finalize_cancelled_stream_response()
@@ -22928,7 +22952,8 @@ def register_route_backend_chats(bp):
                             fallback_content = extract_chat_completion_response_text(fallback_response)
                             if fallback_content:
                                 accumulated_content += fallback_content
-                                yield f"data: {json.dumps({'content': fallback_content})}\n\n"
+                                if not suppress_streamed_file_payload:
+                                    yield f"data: {json.dumps({'content': fallback_content})}\n\n"
                                 if hasattr(fallback_response, 'usage') and fallback_response.usage:
                                     token_usage_data = {
                                         'prompt_tokens': fallback_response.usage.prompt_tokens,
@@ -22976,7 +23001,8 @@ def register_route_backend_chats(bp):
                         accumulated_content,
                     )
                     if appended_chart_content:
-                        yield f"data: {json.dumps({'content': appended_chart_content})}\n\n"
+                        if not suppress_streamed_file_payload:
+                            yield f"data: {json.dumps({'content': appended_chart_content})}\n\n"
                     user_info_for_assistant = response_message_context.get('user_info')
                     user_thread_id = response_message_context.get('thread_id')
                     user_previous_thread_id = response_message_context.get('previous_thread_id')
@@ -23041,6 +23067,16 @@ def register_route_backend_chats(bp):
                     if assistant_file_generated_output:
                         generated_analysis_artifacts_list.append(assistant_file_generated_output)
                         accumulated_content = _build_assistant_file_output_handoff(assistant_file_generated_output)
+                    elif suppress_streamed_file_payload and streamed_file_status_content:
+                        log_event(
+                            '[ASSISTANT_FILE_EXPORT] Streaming artifact publication did not complete',
+                            {
+                                'conversation_id': conversation_id,
+                                'output_format': requested_streamed_file_format,
+                                'response_char_count': len(accumulated_content),
+                            },
+                            level=logging.WARNING,
+                        )
                     tabular_background_handoff_content = _build_active_tabular_background_handoff_content(
                         generated_tabular_outputs_list
                     )
