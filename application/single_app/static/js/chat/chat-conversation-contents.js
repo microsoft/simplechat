@@ -1,27 +1,53 @@
 // chat-conversation-contents.js
 
+import {
+    extractPageNumbers,
+    fetchConversationMetadata,
+    getConversationDocumentTags,
+} from "./chat-conversation-details.js";
+import { isColorLight } from "./chat-utils.js";
+
 const CONTENTS_LABEL_MAX_LENGTH = 72;
 const DESKTOP_MEDIA_QUERY = "(min-width: 1200px)";
 const TEMP_MESSAGE_PREFIX = "temp_user_";
+const DRAWER_MODE_CONTENTS = "contents";
+const DRAWER_MODE_DOCUMENTS = "documents";
 
 const chatContainer = document.querySelector(".chat-container");
 const chatbox = document.getElementById("chatbox");
 const scrollContainer = document.getElementById("chat-messages-container");
 const drawer = document.getElementById("conversation-contents-drawer");
+const drawerTitle = document.getElementById("conversation-contents-title");
+const drawerSubtitle = document.getElementById("conversation-contents-subtitle");
+const contentsPanel = document.getElementById("conversation-contents-panel");
 const list = document.getElementById("conversation-contents-list");
 const emptyState = document.getElementById("conversation-contents-empty");
-const toggleButton = document.getElementById("conversation-contents-toggle");
+const contentsToggleButton = document.getElementById("conversation-contents-toggle");
+const documentsToggleButton = document.getElementById("conversation-documents-toggle");
 const closeButton = document.getElementById("conversation-contents-close");
+const contentsModeButton = document.getElementById("conversation-contents-mode-contents");
+const documentsModeButton = document.getElementById("conversation-contents-mode-documents");
+const documentsPanel = document.getElementById("conversation-documents-panel");
+const documentsList = document.getElementById("conversation-documents-list");
+const documentsEmptyState = document.getElementById("conversation-documents-empty");
+const documentsStatus = document.getElementById("conversation-documents-status");
+const documentsCountBadge = document.getElementById("conversation-documents-count");
 const desktopMediaQuery = window.matchMedia(DESKTOP_MEDIA_QUERY);
 
 let contentsEntries = [];
+let documentEntries = [];
 let activeMessageId = "";
 let drawerOpen = false;
+let drawerMode = DRAWER_MODE_CONTENTS;
 let rebuildScheduled = false;
 let scrollUpdateScheduled = false;
 let offcanvasInstance = null;
 let highlightTimeout = null;
 let restoreFocusAfterClose = true;
+let metadataRequestToken = 0;
+let documentLoadState = "idle";
+let activeDocumentConversationId = "";
+const autoOpenedDocumentConversationIds = new Set();
 
 export function normalizeConversationContentsLabel(value, fallbackLabel = "User message") {
     const source = String(value || "").replace(/\r\n?/g, "\n");
@@ -66,6 +92,13 @@ function getMessageLabel(messageElement, index) {
         renderedText || sourceText,
         `User message ${index + 1}`
     );
+}
+
+function getCurrentConversationId() {
+    const conversationId = window.chatConversations?.getCurrentConversationId?.()
+        || window.currentConversationId
+        || "";
+    return String(conversationId || "").trim();
 }
 
 function setActiveEntry(messageId) {
@@ -119,6 +152,84 @@ function scheduleActiveEntryUpdate() {
     window.requestAnimationFrame(updateActiveEntry);
 }
 
+function getDrawerTriggerButton(mode = drawerMode) {
+    return mode === DRAWER_MODE_DOCUMENTS ? documentsToggleButton : contentsToggleButton;
+}
+
+function syncDrawerModeControls() {
+    const documentsAvailable = documentEntries.length > 0;
+    const contentsActive = drawerMode === DRAWER_MODE_CONTENTS;
+    const documentsActive = drawerMode === DRAWER_MODE_DOCUMENTS;
+
+    contentsModeButton?.classList.toggle("active", contentsActive);
+    contentsModeButton?.setAttribute("aria-pressed", String(contentsActive));
+    documentsModeButton?.classList.toggle("active", documentsActive);
+    documentsModeButton?.setAttribute("aria-pressed", String(documentsActive));
+    if (documentsModeButton) {
+        documentsModeButton.disabled = !documentsAvailable && documentLoadState !== "loading";
+    }
+
+    contentsToggleButton?.classList.toggle("active", drawerOpen && contentsActive);
+    documentsToggleButton?.classList.toggle("active", drawerOpen && documentsActive);
+    contentsToggleButton?.setAttribute("aria-expanded", String(drawerOpen && contentsActive));
+    documentsToggleButton?.setAttribute("aria-expanded", String(drawerOpen && documentsActive));
+
+    if (drawerTitle) {
+        drawerTitle.textContent = contentsActive ? "Conversation contents" : "Used documents";
+    }
+    if (drawerSubtitle) {
+        drawerSubtitle.textContent = contentsActive
+            ? "Jump to a user message"
+            : "Documents cited in this conversation";
+    }
+
+    contentsPanel?.classList.toggle("d-none", !contentsActive);
+    documentsPanel?.classList.toggle("d-none", !documentsActive);
+}
+
+function setDrawerMode(mode) {
+    const requestedMode = mode === DRAWER_MODE_DOCUMENTS ? DRAWER_MODE_DOCUMENTS : DRAWER_MODE_CONTENTS;
+    if (requestedMode === DRAWER_MODE_DOCUMENTS && documentEntries.length === 0 && documentLoadState !== "loading") {
+        drawerMode = contentsEntries.length > 0 ? DRAWER_MODE_CONTENTS : DRAWER_MODE_DOCUMENTS;
+    } else if (requestedMode === DRAWER_MODE_CONTENTS && contentsEntries.length === 0 && documentEntries.length > 0) {
+        drawerMode = DRAWER_MODE_DOCUMENTS;
+    } else {
+        drawerMode = requestedMode;
+    }
+    syncDrawerModeControls();
+}
+
+function updateDrawerTriggers() {
+    const hasContents = contentsEntries.length > 0;
+    const hasDocuments = documentEntries.length > 0;
+
+    if (contentsToggleButton) {
+        contentsToggleButton.classList.toggle("d-none", !hasContents);
+        contentsToggleButton.disabled = !hasContents;
+    }
+    if (documentsToggleButton) {
+        documentsToggleButton.classList.toggle("d-none", !hasDocuments);
+        documentsToggleButton.disabled = !hasDocuments;
+    }
+
+    if (documentsCountBadge) {
+        documentsCountBadge.textContent = String(documentEntries.length);
+        documentsCountBadge.classList.toggle("d-none", !hasDocuments);
+    }
+
+    if (drawerMode === DRAWER_MODE_CONTENTS && !hasContents && hasDocuments) {
+        setDrawerMode(DRAWER_MODE_DOCUMENTS);
+    } else if (drawerMode === DRAWER_MODE_DOCUMENTS && !hasDocuments && hasContents) {
+        setDrawerMode(DRAWER_MODE_CONTENTS);
+    } else {
+        syncDrawerModeControls();
+    }
+
+    if (!hasContents && !hasDocuments) {
+        closeDrawer({ restoreFocus: false });
+    }
+}
+
 function closeDrawer({ restoreFocus = true } = {}) {
     if (!drawerOpen) {
         return;
@@ -128,9 +239,9 @@ function closeDrawer({ restoreFocus = true } = {}) {
         drawerOpen = false;
         chatContainer?.classList.remove("conversation-contents-open");
         drawer?.setAttribute("aria-hidden", "true");
-        toggleButton?.setAttribute("aria-expanded", "false");
+        syncDrawerModeControls();
         if (restoreFocus) {
-            toggleButton?.focus();
+            getDrawerTriggerButton()?.focus();
         }
         return;
     }
@@ -139,29 +250,50 @@ function closeDrawer({ restoreFocus = true } = {}) {
     offcanvasInstance?.hide();
 }
 
-function openDrawer() {
-    if (!drawer || contentsEntries.length === 0) {
+function focusActiveDrawerContent() {
+    if (drawerMode === DRAWER_MODE_CONTENTS) {
+        list?.querySelector("button")?.focus();
         return;
     }
 
+    documentsList?.querySelector(".conversation-documents-entry")?.focus();
+}
+
+function openDrawer(mode = drawerMode) {
+    const requestedMode = mode === DRAWER_MODE_DOCUMENTS ? DRAWER_MODE_DOCUMENTS : DRAWER_MODE_CONTENTS;
+    const hasRequestedEntries = requestedMode === DRAWER_MODE_DOCUMENTS
+        ? documentEntries.length > 0
+        : contentsEntries.length > 0;
+    const hasFallbackEntries = requestedMode === DRAWER_MODE_DOCUMENTS
+        ? contentsEntries.length > 0
+        : documentEntries.length > 0;
+
+    if (!drawer || (!hasRequestedEntries && !hasFallbackEntries)) {
+        return;
+    }
+
+    setDrawerMode(hasRequestedEntries ? requestedMode : (
+        requestedMode === DRAWER_MODE_DOCUMENTS ? DRAWER_MODE_CONTENTS : DRAWER_MODE_DOCUMENTS
+    ));
     drawerOpen = true;
-    toggleButton?.setAttribute("aria-expanded", "true");
+    syncDrawerModeControls();
 
     if (desktopMediaQuery.matches) {
         chatContainer?.classList.add("conversation-contents-open");
         drawer.setAttribute("aria-hidden", "false");
-        list?.querySelector("button")?.focus();
+        focusActiveDrawerContent();
         return;
     }
 
     offcanvasInstance?.show();
 }
 
-function toggleDrawer() {
-    if (drawerOpen) {
+function toggleDrawer(mode = drawerMode) {
+    const requestedMode = mode === DRAWER_MODE_DOCUMENTS ? DRAWER_MODE_DOCUMENTS : DRAWER_MODE_CONTENTS;
+    if (drawerOpen && drawerMode === requestedMode) {
         closeDrawer();
     } else {
-        openDrawer();
+        openDrawer(requestedMode);
     }
 }
 
@@ -213,7 +345,7 @@ function createEntry(messageElement, index) {
 
 export function rebuildConversationContents() {
     rebuildScheduled = false;
-    if (!chatbox || !list || !emptyState || !toggleButton) {
+    if (!chatbox || !list || !emptyState || !contentsToggleButton) {
         return;
     }
 
@@ -239,17 +371,188 @@ export function rebuildConversationContents() {
     }
 
     const hasEntries = contentsEntries.length > 0;
-    toggleButton.classList.toggle("d-none", !hasEntries);
-    toggleButton.disabled = !hasEntries;
     emptyState.classList.toggle("d-none", hasEntries);
 
     if (!hasEntries) {
-        closeDrawer({ restoreFocus: false });
         setActiveEntry("");
+        updateDrawerTriggers();
         return;
     }
 
+    updateDrawerTriggers();
     scheduleActiveEntryUpdate();
+}
+
+function getScopeIcon(scope) {
+    switch (scope) {
+        case "personal": return "person";
+        case "group": return "people";
+        case "public": return "globe";
+        default: return "question-circle";
+    }
+}
+
+function createClassificationBadge(classification) {
+    const label = String(classification || "None");
+    const badge = document.createElement("span");
+    badge.className = "badge conversation-documents-classification";
+    badge.textContent = label;
+
+    const allCategories = window.classification_categories || [];
+    const category = allCategories.find(cat => cat.label === label);
+    if (category?.color) {
+        badge.style.backgroundColor = category.color;
+        badge.classList.add(isColorLight(category.color) ? "text-dark" : "text-white");
+    } else {
+        badge.classList.add("bg-warning", "text-dark");
+        badge.title = `Definition for "${label}" not found`;
+    }
+
+    return badge;
+}
+
+function createDocumentMetaLine(iconName, text) {
+    const line = document.createElement("div");
+    line.className = "small text-muted conversation-documents-meta-line";
+
+    const icon = document.createElement("i");
+    icon.className = `bi bi-${iconName} me-1`;
+    icon.setAttribute("aria-hidden", "true");
+
+    const textNode = document.createElement("span");
+    textNode.textContent = text;
+
+    line.append(icon, textNode);
+    return line;
+}
+
+function createDocumentEntry(doc) {
+    const chunkIds = Array.isArray(doc?.chunk_ids) ? doc.chunk_ids : [];
+    const chunkPages = extractPageNumbers(chunkIds);
+    const chunkCount = chunkIds.length;
+    const documentId = String(doc?.document_id || "Unknown Document");
+    const documentTitle = String(doc?.title || documentId);
+    const scopeType = String(doc?.scope?.type || "Unknown");
+    const scopeName = String(doc?.scope?.name || doc?.scope?.id || "Unknown");
+
+    const listItem = document.createElement("li");
+    const entry = document.createElement("article");
+    entry.className = "conversation-documents-entry border rounded";
+    entry.tabIndex = -1;
+
+    const header = document.createElement("div");
+    header.className = "d-flex justify-content-between align-items-start gap-2 mb-2";
+
+    const title = document.createElement("div");
+    title.className = "fw-semibold text-truncate conversation-documents-title";
+    title.title = documentTitle;
+    title.textContent = documentTitle;
+
+    header.append(title, createClassificationBadge(doc?.classification));
+    entry.appendChild(header);
+    entry.appendChild(createDocumentMetaLine(
+        "file-earmark",
+        `${chunkCount} chunk${chunkCount !== 1 ? "s" : ""}${chunkPages.length > 0 ? ` (Pages: ${chunkPages.join(", ")})` : ""}`
+    ));
+    entry.appendChild(createDocumentMetaLine(
+        getScopeIcon(scopeType),
+        `${scopeType} scope: ${scopeName}`
+    ));
+
+    if (doc?.title && doc.title !== doc.document_id) {
+        entry.appendChild(createDocumentMetaLine("hash", `ID: ${documentId}`));
+    }
+
+    listItem.appendChild(entry);
+    return {
+        listItem,
+        documentId,
+    };
+}
+
+function setDocumentsStatus(message, isError = false) {
+    if (!documentsStatus) {
+        return;
+    }
+
+    documentsStatus.textContent = message;
+    documentsStatus.classList.toggle("d-none", !message);
+    documentsStatus.classList.toggle("text-danger", Boolean(isError));
+    documentsStatus.classList.toggle("text-muted", !isError);
+}
+
+function renderConversationDocuments(documents) {
+    if (!documentsList || !documentsEmptyState) {
+        return;
+    }
+
+    documentsList.replaceChildren();
+    documentEntries = documents.map(createDocumentEntry);
+    documentEntries.forEach(entry => documentsList.appendChild(entry.listItem));
+
+    const hasDocuments = documentEntries.length > 0;
+    documentsEmptyState.classList.toggle("d-none", hasDocuments || documentLoadState === "loading");
+    setDocumentsStatus("");
+    updateDrawerTriggers();
+}
+
+async function refreshConversationDocuments(options = {}) {
+    const conversationId = String(options.conversationId || getCurrentConversationId()).trim();
+    const requestToken = ++metadataRequestToken;
+    const autoOpen = Boolean(options.autoOpen);
+    const conversationChanged = conversationId !== activeDocumentConversationId;
+
+    activeDocumentConversationId = conversationId;
+    if (!conversationId) {
+        documentLoadState = "idle";
+        renderConversationDocuments([]);
+        return;
+    }
+
+    documentLoadState = "loading";
+    if (conversationChanged) {
+        documentEntries = [];
+        documentsList?.replaceChildren();
+        setDocumentsStatus("");
+        updateDrawerTriggers();
+    }
+    documentsEmptyState?.classList.add("d-none");
+    if (drawerMode === DRAWER_MODE_DOCUMENTS) {
+        setDocumentsStatus("Loading used documents...");
+    }
+
+    try {
+        const metadata = await fetchConversationMetadata(conversationId);
+        if (requestToken !== metadataRequestToken || conversationId !== activeDocumentConversationId) {
+            return;
+        }
+
+        documentLoadState = "ready";
+        const documents = getConversationDocumentTags(metadata);
+        renderConversationDocuments(documents);
+
+        if (
+            autoOpen
+            && documents.length > 0
+            && conversationId === getCurrentConversationId()
+            && !autoOpenedDocumentConversationIds.has(conversationId)
+        ) {
+            autoOpenedDocumentConversationIds.add(conversationId);
+            openDrawer(DRAWER_MODE_DOCUMENTS);
+        }
+    } catch (error) {
+        if (requestToken !== metadataRequestToken || conversationId !== activeDocumentConversationId) {
+            return;
+        }
+
+        documentLoadState = "error";
+        documentEntries = [];
+        documentsList?.replaceChildren();
+        documentsEmptyState?.classList.add("d-none");
+        setDocumentsStatus("Unable to load used documents.", true);
+        console.warn("Failed to load conversation documents:", error);
+        updateDrawerTriggers();
+    }
 }
 
 function scheduleRebuild() {
@@ -268,7 +571,7 @@ function handleViewportChange() {
     chatContainer?.classList.remove("conversation-contents-open");
     drawerOpen = false;
     drawer?.setAttribute("aria-hidden", "true");
-    toggleButton?.setAttribute("aria-expanded", "false");
+    syncDrawerModeControls();
 }
 
 function mutationAffectsContents(mutations) {
@@ -301,7 +604,7 @@ function handleMessageMutations(mutations) {
 }
 
 function initializeConversationContents() {
-    if (!chatbox || !drawer || !list || !toggleButton || !closeButton) {
+    if (!chatbox || !drawer || !list || !contentsToggleButton || !closeButton) {
         return;
     }
 
@@ -314,20 +617,29 @@ function initializeConversationContents() {
         drawer.addEventListener("shown.bs.offcanvas", () => {
             drawerOpen = true;
             drawer.setAttribute("aria-hidden", "false");
-            toggleButton.setAttribute("aria-expanded", "true");
+            syncDrawerModeControls();
         });
         drawer.addEventListener("hidden.bs.offcanvas", () => {
             drawerOpen = false;
             drawer.setAttribute("aria-hidden", "true");
-            toggleButton.setAttribute("aria-expanded", "false");
+            syncDrawerModeControls();
             if (restoreFocusAfterClose) {
-                toggleButton.focus();
+                getDrawerTriggerButton()?.focus();
             }
             restoreFocusAfterClose = true;
         });
     }
 
-    toggleButton.addEventListener("click", toggleDrawer);
+    contentsToggleButton.addEventListener("click", () => toggleDrawer(DRAWER_MODE_CONTENTS));
+    documentsToggleButton?.addEventListener("click", () => toggleDrawer(DRAWER_MODE_DOCUMENTS));
+    contentsModeButton?.addEventListener("click", () => {
+        setDrawerMode(DRAWER_MODE_CONTENTS);
+    });
+    documentsModeButton?.addEventListener("click", () => {
+        if (documentEntries.length > 0 || documentLoadState === "loading") {
+            setDrawerMode(DRAWER_MODE_DOCUMENTS);
+        }
+    });
     closeButton.addEventListener("click", () => closeDrawer());
     scrollContainer?.addEventListener("scroll", scheduleActiveEntryUpdate, { passive: true });
     desktopMediaQuery.addEventListener("change", handleViewportChange);
@@ -336,6 +648,22 @@ function initializeConversationContents() {
             event.preventDefault();
             closeDrawer();
         }
+    });
+    window.addEventListener("chat:conversation-context-changed", event => {
+        void refreshConversationDocuments({
+            conversationId: event.detail?.conversationId || "",
+            autoOpen: false,
+        });
+    });
+    window.addEventListener("chat:conversation-documents-refresh", event => {
+        const conversationId = String(event.detail?.conversationId || getCurrentConversationId()).trim();
+        if (!conversationId || conversationId !== getCurrentConversationId()) {
+            return;
+        }
+        void refreshConversationDocuments({
+            conversationId,
+            autoOpen: Boolean(event.detail?.autoOpen),
+        });
     });
 
     const messageObserver = new MutationObserver(handleMessageMutations);
@@ -348,6 +676,7 @@ function initializeConversationContents() {
     });
 
     rebuildConversationContents();
+    void refreshConversationDocuments();
 }
 
 initializeConversationContents();

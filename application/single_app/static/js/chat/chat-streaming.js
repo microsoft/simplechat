@@ -351,6 +351,20 @@ function updateStreamContextConversation(streamContext, conversationId) {
     setStreamingStopButtonState(streamContext.tempAiMessageId, streamContext.cancelEndpoint ? 'ready' : 'waiting_for_conversation');
 }
 
+function notifyConversationDocumentsMayHaveChanged(conversationId, autoOpen = false) {
+    const normalizedConversationId = String(conversationId || '').trim();
+    if (!normalizedConversationId) {
+        return;
+    }
+
+    window.dispatchEvent(new CustomEvent('chat:conversation-documents-refresh', {
+        detail: {
+            conversationId: normalizedConversationId,
+            autoOpen,
+        },
+    }));
+}
+
 async function requestStreamCancellation(streamContext = currentStreamContext) {
     if (!streamContext || streamContext.cancellationRequested) {
         return false;
@@ -1281,6 +1295,7 @@ function finalizeStreamingMessage(messageId, userMessageId, finalData, fallbackA
 
     if (existingFinalMessage) {
         markStreamingConversationReadIfActive(finalData.conversation_id, 'live streaming completion');
+        notifyConversationDocumentsMayHaveChanged(finalData.conversation_id, Boolean(finalData.augmented));
         return;
     }
 
@@ -1309,6 +1324,7 @@ function finalizeStreamingMessage(messageId, userMessageId, finalData, fallbackA
         if (finalData.reload_messages && finalData.conversation_id && typeof window.chatMessages?.loadMessages === 'function') {
             window.chatMessages.loadMessages(finalData.conversation_id);
         }
+        notifyConversationDocumentsMayHaveChanged(finalData.conversation_id, Boolean(finalData.augmented));
         return;
     }
 
@@ -1372,6 +1388,7 @@ function finalizeStreamingMessage(messageId, userMessageId, finalData, fallbackA
         window.chatMessages.loadMessages(finalData.conversation_id);
     }
 
+    notifyConversationDocumentsMayHaveChanged(finalData.conversation_id, Boolean(finalData.augmented));
     markStreamingConversationReadIfActive(finalData.conversation_id, 'live streaming completion');
 }
 

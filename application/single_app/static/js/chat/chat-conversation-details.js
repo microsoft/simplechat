@@ -33,6 +33,41 @@ function getConversationDetailsModalInstance() {
   return bootstrap.Modal.getOrCreateInstance(modal);
 }
 
+function getConversationMetadataDomItem(conversationId) {
+  const escapedConversationId = window.CSS?.escape
+    ? CSS.escape(conversationId)
+    : String(conversationId || '').replace(/["\\]/g, '\\$&');
+  return document.querySelector(`.conversation-item[data-conversation-id="${escapedConversationId}"]`)
+    || document.querySelector(`.sidebar-conversation-item[data-conversation-id="${escapedConversationId}"]`);
+}
+
+export async function fetchConversationMetadata(conversationId) {
+  const normalizedConversationId = String(conversationId || '').trim();
+  if (!normalizedConversationId) {
+    throw new Error('Conversation ID is required');
+  }
+
+  const conversationItem = getConversationMetadataDomItem(normalizedConversationId);
+  const isCollaborativeConversation = conversationItem?.dataset?.conversationKind === 'collaborative';
+
+  if (isCollaborativeConversation && window.chatCollaboration?.fetchConversationMetadata) {
+    return window.chatCollaboration.fetchConversationMetadata(normalizedConversationId);
+  }
+
+  const response = await fetch(`/api/conversations/${encodeURIComponent(normalizedConversationId)}/metadata`);
+
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+  }
+
+  return response.json();
+}
+
+export function getConversationDocumentTags(metadata = {}) {
+  const tags = Array.isArray(metadata.tags) ? metadata.tags : [];
+  return tags.filter(tag => tag?.category === 'document');
+}
+
 export function hideConversationDetails() {
   const { modal } = getConversationDetailsModalElements();
   const modalInstance = getConversationDetailsModalInstance();
@@ -121,22 +156,7 @@ export async function showConversationDetails(conversationId) {
   }
 
   try {
-    const conversationItem = document.querySelector(`.conversation-item[data-conversation-id="${conversationId}"]`)
-      || document.querySelector(`.sidebar-conversation-item[data-conversation-id="${conversationId}"]`);
-    const isCollaborativeConversation = conversationItem?.dataset?.conversationKind === 'collaborative';
-    let metadata = null;
-
-    if (isCollaborativeConversation && window.chatCollaboration?.fetchConversationMetadata) {
-      metadata = await window.chatCollaboration.fetchConversationMetadata(conversationId);
-    } else {
-      const response = await fetch(`/api/conversations/${conversationId}/metadata`);
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-      }
-
-      metadata = await response.json();
-    }
+    const metadata = await fetchConversationMetadata(conversationId);
 
     const safeConversationTitle = escapeHtml(metadata.title || 'Conversation Details');
     // Update modal title with conversation title, pin icon, and hidden icon
@@ -334,8 +354,10 @@ function renderConversationMetadata(metadata, conversationId) {
     `;
   }
 
+  const documentTags = getConversationDocumentTags(metadata);
+
   // Documents Section
-  if (tagsByCategory.document.length > 0) {
+  if (documentTags.length > 0) {
     html += `
       <div class="col-md-6">
         <div class="card h-100">
@@ -343,7 +365,7 @@ function renderConversationMetadata(metadata, conversationId) {
             <h6 class="mb-0"><i class="bi bi-file-earmark-text me-2"></i>Documents</h6>
           </div>
           <div class="card-body">
-            ${renderDocumentsSection(tagsByCategory.document)}
+            ${renderDocumentsSection(documentTags)}
           </div>
         </div>
       </div>
@@ -911,7 +933,7 @@ function getScopeIcon(scope) {
   }
 }
 
-function extractPageNumbers(chunkIds) {
+export function extractPageNumbers(chunkIds) {
   const pages = [];
   chunkIds.forEach(chunkId => {
     const parts = chunkId.split('_');
