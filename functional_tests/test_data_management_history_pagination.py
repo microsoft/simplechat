@@ -2,11 +2,12 @@
 #!/usr/bin/env python3
 """
 Functional test for Data Management history pagination.
-Version: 0.250.106
+Version: 0.250.157
 Implemented in: 0.250.103
 Updated in: 0.250.104
 Updated in: 0.250.105
 Updated in: 0.250.106
+Updated in: 0.250.157
 
 This test ensures job history and backup inventory use deterministic, filtered,
 sanitized Cosmos pages with opaque continuation state and global summaries.
@@ -19,6 +20,11 @@ import sys
 import types
 
 import pytest
+import werkzeug
+
+
+if not hasattr(werkzeug, "__version__"):
+    werkzeug.__version__ = "3"
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -117,6 +123,32 @@ class FakeHistoryContainer:
         return True
 
 
+class FailingHistoryContainer:
+    """Raise a configured provider error for history query attempts."""
+
+    def __init__(self):
+        self.error = None
+        self.queries = []
+
+    def query_items(
+        self,
+        query,
+        parameters=None,
+        max_item_count=None,
+        **_kwargs,
+    ):
+        parameter_map = {
+            parameter["name"]: parameter["value"]
+            for parameter in (parameters or [])
+        }
+        self.queries.append({
+            "query": query,
+            "parameters": copy.deepcopy(parameter_map),
+            "max_item_count": max_item_count,
+        })
+        raise self.error or RuntimeError("Configured history query failure.")
+
+
 def build_job(
     job_id,
     created_at,
@@ -152,7 +184,7 @@ def load_data_management_module(monkeypatch, container):
     """Load production helpers with an in-memory Data Management job container."""
     config_module = types.ModuleType("config")
     config_module.CLIENTS = {}
-    config_module.VERSION = "0.250.104"
+    config_module.VERSION = "0.250.157"
     config_module.SECRET_KEY = "history-pagination-functional-test-secret"
     config_module.cosmos_data_management_jobs_container = container
     config_module.cosmos_data_management_job_items_container = container
@@ -185,7 +217,13 @@ def load_data_management_module(monkeypatch, container):
     return module
 
 
-def load_route_module(monkeypatch, jobs_page=None, backup_page=None, history_error=None):
+def load_route_module(
+    monkeypatch,
+    jobs_page=None,
+    backup_page=None,
+    history_error=None,
+    history_unavailable=False,
+):
     """Load the admin routes with identity auth decorators and captured helpers."""
     data_management_module = types.ModuleType("functions_data_management")
 
@@ -198,9 +236,28 @@ def load_route_module(monkeypatch, jobs_page=None, backup_page=None, history_err
     class FakeHistoryPaginationError(ValueError):
         pass
 
+    class FakeHistoryUnavailableError(RuntimeError):
+        def __init__(
+            self,
+            safe_message=(
+                "Data Management history requires an updated Cosmos DB index. Run App "
+                "Maintenance with Apply Cosmos indexing policies enabled, wait for indexing "
+                "to finish, then refresh this page."
+            ),
+            reason="missing_history_index",
+            status_code=503,
+            maintenance_required=True,
+        ):
+            super().__init__(safe_message)
+            self.safe_message = safe_message
+            self.reason = reason
+            self.status_code = status_code
+            self.maintenance_required = maintenance_required
+
     data_management_module.DataManagementSettingsValidationError = FakeSettingsValidationError
     data_management_module.DataManagementCosmosEditorError = FakeCosmosEditorError
     data_management_module.DataManagementHistoryPaginationError = FakeHistoryPaginationError
+    data_management_module.DataManagementHistoryUnavailableError = FakeHistoryUnavailableError
     data_management_module.DATA_MANAGEMENT_OPERATION_BACKUP = "backup"
     data_management_module.DATA_MANAGEMENT_OPERATION_DRY_RUN = "dry_run"
     data_management_module.DATA_MANAGEMENT_OPERATION_MIGRATION = "migration"
@@ -242,6 +299,7 @@ def load_route_module(monkeypatch, jobs_page=None, backup_page=None, history_err
         "summarize_data_management_migration_plan",
         "submit_data_management_job",
         "test_backup_storage_connection",
+        "test_target_cosmos_capacity_management",
         "test_target_cosmos_connection",
         "test_target_enhanced_citation_storage_connection",
         "test_target_search_connection",
@@ -254,6 +312,8 @@ def load_route_module(monkeypatch, jobs_page=None, backup_page=None, history_err
 
     def get_jobs_page(**kwargs):
         captures["jobs"].append(copy.deepcopy(kwargs))
+        if history_unavailable:
+            raise FakeHistoryUnavailableError()
         if history_error:
             raise FakeHistoryPaginationError(history_error)
         return copy.deepcopy(jobs_page or {
@@ -269,6 +329,8 @@ def load_route_module(monkeypatch, jobs_page=None, backup_page=None, history_err
 
     def get_backup_summary(**kwargs):
         captures["backups"].append(copy.deepcopy(kwargs))
+        if history_unavailable:
+            raise FakeHistoryUnavailableError()
         if history_error:
             raise FakeHistoryPaginationError(history_error)
         return copy.deepcopy(backup_page or {
@@ -434,6 +496,33 @@ def test_backup_summary_is_global_and_page_independent(monkeypatch):
     assert result["summary"]["latest_partial"]["id"] == "partial-new"
 
 
+def test_history_provider_index_errors_are_actionable(monkeypatch):
+    """Convert missing Cosmos composite-index failures into admin-safe guidance."""
+    container = FailingHistoryContainer()
+    module = load_data_management_module(monkeypatch, container)
+
+    class FakeCosmosHttpResponseError(Exception):
+        def __init__(self, message, status_code=400):
+            super().__init__(message)
+            self.status_code = status_code
+
+    module.CosmosHttpResponseError = FakeCosmosHttpResponseError
+    container.error = FakeCosmosHttpResponseError(
+        "The order by query does not have a corresponding composite index that it can be served from."
+    )
+
+    with pytest.raises(module.DataManagementHistoryUnavailableError) as exc_info:
+        module.get_data_management_jobs_page(page_size=25)
+
+    error = exc_info.value
+    assert error.reason == "missing_history_index"
+    assert error.status_code == 503
+    assert error.maintenance_required is True
+    assert "Apply Cosmos indexing policies" in error.safe_message
+    assert "corresponding composite index" not in error.safe_message
+    assert "ORDER BY c.created_at DESC, c.id DESC" in container.queries[0]["query"]
+
+
 def test_expired_and_final_empty_continuations_fail_or_finish_safely(monkeypatch):
     """Reject expired state and return a safe empty final page."""
     jobs = [
@@ -562,8 +651,40 @@ def test_admin_history_routes_fail_safely_for_invalid_tokens(monkeypatch):
     assert "Continuation token is invalid or expired." not in response.get_data(as_text=True)
 
 
+def test_admin_history_routes_return_json_for_missing_history_index(monkeypatch):
+    """Return JSON guidance instead of a non-JSON 500 when history indexes lag."""
+    from flask import Blueprint, Flask
+
+    route_module, _captures = load_route_module(
+        monkeypatch,
+        history_unavailable=True,
+    )
+    app = Flask(__name__)
+    app.secret_key = "route-test"
+    blueprint = Blueprint("data_management_unavailable_route_test", __name__)
+    route_module.register_route_backend_data_management(blueprint)
+    app.register_blueprint(blueprint)
+    client = app.test_client()
+
+    for path in (
+        "/api/admin/data-management/jobs?scheduled=all&page_size=25",
+        "/api/admin/data-management/backups?status=available&scheduled=all&page_size=25",
+    ):
+        response = client.get(path)
+        payload = response.get_json()
+
+        assert response.status_code == 503
+        assert response.content_type.startswith("application/json")
+        assert payload["success"] is False
+        assert payload["maintenance_required"] is True
+        assert payload["maintenance_action"] == "cosmos_indexing_policy_maintenance"
+        assert "Apply Cosmos indexing policies" in payload["error"]
+        assert "corresponding composite index" not in response.get_data(as_text=True)
+
+
 def test_deployers_apply_the_data_management_history_index():
     """Keep Bicep, generated ARM, Terraform, and deployer version aligned."""
+    config_source = (APP_ROOT / "config.py").read_text(encoding="utf-8")
     bicep = (
         REPO_ROOT / "deployers" / "bicep" / "modules" / "cosmosDb.bicep"
     ).read_text(encoding="utf-8")
@@ -587,4 +708,8 @@ def test_deployers_apply_the_data_management_history_index():
     assert 'each.key == "data_management_jobs"' in terraform
     assert '{ path = "/created_at", order = "Descending" }' in terraform
     assert '{ path = "/id", order = "Descending" }' in terraform
+    assert "DATA_MANAGEMENT_HISTORY_INDEXING_POLICY" in config_source
+    assert "indexing_policy=DATA_MANAGEMENT_HISTORY_INDEXING_POLICY" in config_source
+    assert '"path": "/created_at", "order": "descending"' in config_source
+    assert '"path": "/id", "order": "descending"' in config_source
     assert deployer_version == "1.0.24"
