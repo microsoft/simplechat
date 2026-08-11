@@ -1,8 +1,8 @@
 # test_chat_background_generated_export_status.py
 """
 UI test for chat background generated export status cards.
-Version: 0.250.138
-Implemented in: 0.241.046; cancellation in 0.250.060; automatic-only refresh in 0.250.061; combined progress and large-run confirmation in 0.250.131; throughput and concurrency status in 0.250.136; truthful background handoff in 0.250.138
+Version: 0.250.150
+Implemented in: 0.241.046; cancellation in 0.250.060; automatic-only refresh in 0.250.061; combined progress and large-run confirmation in 0.250.131; throughput and concurrency status in 0.250.136; truthful background handoff in 0.250.138; collapsed operational details in 0.250.150
 
 This test ensures queued tabular generated exports render progress in chat and
 turn into a downloadable artifact when complete or a visible canceled state.
@@ -123,10 +123,16 @@ def test_chat_background_generated_export_status_card_auto_refreshes_to_download
         message = page.locator('[data-message-id="message-ui-test"]')
         expect(message.get_by_text("Understood. I am generating the complete JSON for all 3,539 rows.")).to_be_visible()
         expect(message.get_by_text("The rows shown here are a sample")).to_be_visible()
-        expect(message.get_by_text("Preview", exact=True)).to_be_visible()
+        expect(message.get_by_text("Preview", exact=True)).to_be_hidden()
         expect(message.get_by_text("Background export")).to_be_visible()
         expect(message.get_by_text("Running")).to_be_visible()
+        details = message.locator('[data-generated-export-details="true"]')
+        expect(details).not_to_have_attribute("open", "")
+        expect(message.get_by_text("298 of 1,592 batches")).to_be_hidden()
+        expect(message.get_by_text("Continuing in the background.", exact=False)).to_be_hidden()
+        details.get_by_text("View details", exact=True).click()
         expect(message.get_by_text("298 of 1,592 batches")).to_be_visible()
+        expect(message.get_by_text("Preview", exact=True)).to_be_visible()
         rendered_text = message.inner_text().lower()
         assert "can only" not in rendered_text
         assert "schema preview" not in rendered_text
@@ -235,6 +241,9 @@ def test_chat_background_generated_export_can_be_canceled(playwright) -> None:
         )
 
         message = page.locator('[data-message-id="message-cancel-test"]')
+        details = message.locator('[data-generated-export-details="true"]')
+        expect(message.get_by_text("25 of 600 batches", exact=False)).to_be_hidden()
+        details.get_by_text("View details", exact=True).click()
         cancel_button = message.get_by_role("button", name="Cancel background export")
         expect(cancel_button).to_be_visible()
         cancel_button.click()
@@ -359,6 +368,18 @@ def test_chat_combined_background_status_shows_reduce_progress(playwright) -> No
         message = page.locator('[data-message-id="message-combined-progress"]')
         expect(message.get_by_text("Background analysis + export")).to_be_visible()
         expect(message.get_by_text("Running", exact=True)).to_be_visible()
+        expect(message.get_by_role("progressbar")).to_be_visible()
+        details = message.locator('[data-generated-export-details="true"]')
+        expect(message.get_by_text("File: combined-output.csv", exact=True)).to_be_hidden()
+        expect(message.get_by_text("Rows: 3,000", exact=True)).to_be_hidden()
+        expect(message.get_by_text("Source: large-source.csv", exact=True)).to_be_hidden()
+        expect(message.get_by_text("Reduce phase level 1 node 2 of 4")).to_be_hidden()
+        expect(message.get_by_text("Remaining batches: 12")).to_be_hidden()
+        expect(message.get_by_text("Model concurrency: 16")).to_be_hidden()
+        details.get_by_text("View details", exact=True).click()
+        expect(message.get_by_text("File: combined-output.csv", exact=True)).to_be_visible()
+        expect(message.get_by_text("Rows: 3,000", exact=True)).to_be_visible()
+        expect(message.get_by_text("Source: large-source.csv", exact=True)).to_be_visible()
         expect(message.get_by_text("Reduce phase level 1 node 2 of 4")).to_be_visible()
         expect(message.get_by_text("Remaining batches: 12")).to_be_visible()
         expect(message.get_by_text("Remaining chunks: 12")).to_be_visible()
@@ -496,6 +517,8 @@ def test_chat_failed_exhaustive_export_without_run_id_remains_visible(playwright
         message = page.locator('[data-message-id="message-failed-export"]')
         expect(message.get_by_text("Background export")).to_be_visible()
         expect(message.get_by_text("Failed", exact=True)).to_be_visible()
+        expect(message.get_by_text("No partial CSV was created.")).to_be_hidden()
+        message.get_by_text("View details", exact=True).click()
         expect(message.get_by_text("No partial CSV was created.")).to_be_visible()
         expect(message.get_by_role("button", name="Continue")).to_have_count(0)
         expect(message.get_by_role("button", name="Cancel background export")).to_have_count(0)
