@@ -4549,7 +4549,7 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     }
   }
 
-  function createBackgroundGeneratedOutputStatusBlock(outputMetadata) {
+  function createBackgroundGeneratedOutputStatusBlock(outputMetadata, supportingDetailElements = []) {
     const wrapper = document.createElement('div');
     wrapper.className = 'generated-tabular-background-status mt-3';
 
@@ -4577,18 +4577,39 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     progress.appendChild(progressBar);
     wrapper.appendChild(progress);
 
+    const details = document.createElement('details');
+    details.className = 'generated-analysis-preview-details generated-tabular-background-details mt-2';
+    details.dataset.generatedExportDetails = 'true';
+
+    const detailsSummary = document.createElement('summary');
+    detailsSummary.className = 'small fw-semibold';
+    detailsSummary.textContent = 'View details';
+    details.appendChild(detailsSummary);
+
+    const detailsContent = document.createElement('div');
+    detailsContent.className = 'mt-2';
+    supportingDetailElements.forEach(detailElement => {
+      if (detailElement instanceof HTMLElement) {
+        detailsContent.appendChild(detailElement);
+      }
+    });
+
     const detailText = document.createElement('div');
-    detailText.className = 'small text-muted mt-2';
-    wrapper.appendChild(detailText);
+    detailText.className = 'small text-muted';
+    detailsContent.appendChild(detailText);
 
     const updatedText = document.createElement('div');
     updatedText.className = 'small text-muted';
-    wrapper.appendChild(updatedText);
+    detailsContent.appendChild(updatedText);
+    details.appendChild(detailsContent);
+    wrapper.appendChild(details);
 
     const statusElements = {
       statusLabel,
       statusBadge,
       progressBar,
+      details,
+      detailsContent,
       detailText,
       updatedText,
     };
@@ -4813,6 +4834,15 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     const previewText = String(
       outputMetadata?.preview_text || outputMetadata?.analysis_text || outputMetadata?.panalysis_text || ''
     ).trim();
+    const isBackgroundExport = Boolean(outputMetadata?.background_export);
+    const backgroundDetailElements = [];
+    const appendSupportingDetail = element => {
+      if (isBackgroundExport) {
+        backgroundDetailElements.push(element);
+      } else {
+        card.appendChild(element);
+      }
+    };
 
     const header = document.createElement('div');
     header.className = 'd-flex flex-wrap justify-content-between align-items-start gap-2';
@@ -4825,15 +4855,24 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
 
     const fileNameText = document.createElement('div');
     fileNameText.className = 'small text-muted text-break';
-    fileNameText.textContent = fileName;
-    headerText.appendChild(fileNameText);
+    fileNameText.textContent = isBackgroundExport ? `File: ${fileName}` : fileName;
+    if (isBackgroundExport) {
+      backgroundDetailElements.push(fileNameText);
+    } else {
+      headerText.appendChild(fileNameText);
+    }
     header.appendChild(headerText);
 
-    if (rowCountLabel) {
+    if (rowCountLabel && !isBackgroundExport) {
       const rowCountBadge = document.createElement('span');
       rowCountBadge.className = 'badge text-bg-light';
       rowCountBadge.textContent = `${rowCountLabel} rows`;
       header.appendChild(rowCountBadge);
+    } else if (rowCountLabel) {
+      const rowCountDetail = document.createElement('div');
+      rowCountDetail.className = 'small text-muted';
+      rowCountDetail.textContent = `Rows: ${rowCountLabel}`;
+      backgroundDetailElements.push(rowCountDetail);
     }
 
     card.appendChild(header);
@@ -4841,7 +4880,7 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     const storageNote = document.createElement('div');
     storageNote.className = 'small text-muted mt-2';
     storageNote.textContent = getGeneratedTabularStorageNote(outputMetadata);
-    card.appendChild(storageNote);
+    appendSupportingDetail(storageNote);
 
     if (sourceFileName || selectedSheet) {
       const sourceNote = document.createElement('div');
@@ -4854,19 +4893,22 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
         sourceSegments.push(`Sheet: ${selectedSheet}`);
       }
       sourceNote.textContent = sourceSegments.join(' | ');
-      card.appendChild(sourceNote);
+      appendSupportingDetail(sourceNote);
     }
 
     if (summary) {
       const summaryText = document.createElement('p');
       summaryText.className = 'small mb-0 mt-2';
       summaryText.textContent = summary;
-      card.appendChild(summaryText);
+      appendSupportingDetail(summaryText);
     }
 
     let backgroundStatusElements = null;
-    if (outputMetadata?.background_export) {
-      const backgroundStatusBlock = createBackgroundGeneratedOutputStatusBlock(outputMetadata);
+    if (isBackgroundExport) {
+      const backgroundStatusBlock = createBackgroundGeneratedOutputStatusBlock(
+        outputMetadata,
+        backgroundDetailElements,
+      );
       backgroundStatusElements = backgroundStatusBlock.statusElements;
       card.appendChild(backgroundStatusBlock.wrapper);
     }
@@ -4888,7 +4930,13 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
       }
 
       if (previewContent) {
-        if (shouldCollapseGeneratedAnalysisPreview(outputMetadata)) {
+        if (isBackgroundExport && backgroundStatusElements?.detailsContent) {
+          const previewLabel = document.createElement('div');
+          previewLabel.className = 'small fw-semibold mt-3 mb-2';
+          previewLabel.textContent = 'Preview';
+          backgroundStatusElements.detailsContent.appendChild(previewLabel);
+          backgroundStatusElements.detailsContent.appendChild(previewContent);
+        } else if (shouldCollapseGeneratedAnalysisPreview(outputMetadata)) {
           const previewDetails = document.createElement('details');
           previewDetails.className = 'generated-analysis-preview-details mt-3';
 

@@ -2,7 +2,7 @@
 
 Implemented in version: **0.241.046**
 
-Updated through version: **0.250.149**
+Updated through version: **0.250.150**
 
 ## Overview
 
@@ -47,6 +47,7 @@ The feature supports large spreadsheet-driven analysis, including workbooks that
 - Direct durable artifact routing accepts every configured tabular input format (`csv`, `xlsx`, `xls`, and `xlsm`) through one version-pinned replay contract. Multi-sheet workbooks replay worksheets in workbook order.
 - Recognized exhaustive artifact requests never fall back to dumping generated rows into the assistant response when source preparation fails. The chat receives a concise artifact handoff or safe failure status instead.
 - Shadow schema planning is deferred off the production critical path. Unplanned source-backed runs checkpoint a small first batch before opening normal batch concurrency, and the status card identifies source preparation, active planning, or initial checkpoint generation before row progress appears.
+- Running background cards keep the status badge, progress bar, and available actions visible by default. File/source metadata, checkpoint counts, remaining work, throughput, concurrency, timestamps, and previews are grouped under a collapsed `View details` disclosure.
 
 ### API Endpoints
 
@@ -116,6 +117,7 @@ The progress card displays current status, completed checkpoint counts, processe
 - Nested CSV output recovery regression: `functional_tests/test_tabular_row_orchestration_scale.py`
 - Generic CSV and workbook durable routing regressions: `functional_tests/test_tabular_row_orchestration_scale.py`
 - Artifact-only failure and fast-start regressions: `functional_tests/test_tabular_row_orchestration_scale.py`
+- Collapsed background status detail regressions: `functional_tests/test_tabular_background_generated_exports.py` and `ui_tests/test_chat_background_generated_export_status.py`
 - Phase 2 handoff regression: `functional_tests/test_tabular_row_orchestration_scale.py`
 - Phase 1 baseline and fake harness coverage: `functional_tests/test_tabular_row_orchestration_scale.py`
 - Functional regression for workflow/document-action presentation: `functional_tests/test_document_analysis_lossless_artifacts.py`
@@ -173,3 +175,4 @@ The progress card displays current status, completed checkpoint counts, processe
 - `application/single_app/config.py` was updated to version **0.250.147** to prevent fixed-window runs from being falsely marked stale during normal long model calls and to show safe retry-reason details in the status card.
 - `application/single_app/config.py` was updated to version **0.250.148** to flatten single-row nested CSV model outputs before generated-export schema inference.
 - `application/single_app/config.py` was updated to version **0.250.149** to route every supported tabular input through artifact-only durable generation and reduce time to the first visible checkpoint.
+- `application/single_app/config.py` was updated to version **0.250.150** to simplify background export cards while preserving expandable operational detail.

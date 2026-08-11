@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Functional test for durable tabular generated-output background exports.
-Version: 0.250.147
-Implemented in: 0.241.060; throughput and timeout hardening in: 0.250.070; unified durable run contract in: 0.250.128; Phase 6 rolling worker pool compatibility in: 0.250.142; safe retry reason status text in: 0.250.147
+Version: 0.250.150
+Implemented in: 0.241.060; throughput and timeout hardening in: 0.250.070; unified durable run contract in: 0.250.128; Phase 6 rolling worker pool compatibility in: 0.250.142; safe retry reason status text in: 0.250.147; collapsed operational details in: 0.250.150
 
 This test ensures that large tabular structured exports are wired through the
 durable background queue, status API, queued retry recovery, and chat progress
@@ -284,6 +284,12 @@ def test_chat_ui_renders_and_polls_background_exports():
     assert_contains(source_text, 'status_detail', 'safe status detail rendering')
     assert_contains(source_text, '/api/tabular/generated-output/runs/', 'status polling endpoint')
     assert_contains(source_text, 'textContent', 'safe text rendering boundary')
+    assert_contains(source_text, "details.dataset.generatedExportDetails = 'true'", 'collapsed details selector')
+    assert_contains(source_text, "detailsSummary.textContent = 'View details'", 'details disclosure label')
+    assert_contains(source_text, 'supportingDetailElements.forEach', 'supporting metadata disclosure routing')
+    assert_contains(source_text, 'backgroundStatusElements?.detailsContent', 'background preview disclosure routing')
+    if 'details.open = true' in source_text:
+        raise AssertionError('Background export operational details must remain collapsed until the user expands them')
     if 'generated-tabular-refresh-status-btn' in source_text or 'Refresh Status' in source_text:
         raise AssertionError('Background export cards must rely on automatic polling without a manual refresh button')
 
