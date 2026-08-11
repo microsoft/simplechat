@@ -1,8 +1,8 @@
 # test_tabular_shared_request_planner.py
 """
 Functional test for the shared tabular request planner.
-Version: 0.250.158
-Implemented in: 0.250.158
+Version: 0.250.162
+Implemented in: 0.250.158; Phase 6 execution units added in 0.250.162
 
 This test ensures Phase 2 tabular request planning classifies Search and
 Analyze caller metadata through one route-neutral planner before row retrieval.
@@ -64,11 +64,12 @@ from functions_tabular_orchestration import (  # noqa: E402
 )
 
 
-def build_context(file_name="survey.csv", source_hint="workspace"):
+def build_context(file_name="survey.csv", source_hint="workspace", source_version=None):
     return {
         "document_id": f"doc-{file_name}",
         "file_name": file_name,
         "source_hint": source_hint,
+        "source_version": source_version or f"etag-{file_name}",
         "storage_locator": {
             "container": "documents",
             "blob_path": f"user/{file_name}",
@@ -213,6 +214,88 @@ def test_replayable_context_boundaries():
     print("Source-context boundary checks passed")
 
 
+def test_phase6_multifile_execution_units_are_explicit():
+    print("Testing Phase 6 multi-file execution-unit planning...")
+    exhaustive_prompt = "Analyze all rows and summarize the risk patterns."
+    contexts = [
+        build_context("one.csv", source_version="etag-one"),
+        build_context("two.xlsx", source_version="etag-two"),
+    ]
+
+    gate_off_plan = plan_for(exhaustive_prompt, contexts=contexts)
+    assert_equal(
+        len(gate_off_plan["execution_units"]),
+        1,
+        "gate-off collective unit count",
+    )
+    assert_equal(
+        gate_off_plan["execution_units"][0]["operation_relationship"],
+        "collective",
+        "gate-off operation relationship",
+    )
+    assert_equal(
+        gate_off_plan["execution_units"][0]["source_count"],
+        2,
+        "gate-off collective source count",
+    )
+
+    gate_on_plan = plan_for(
+        exhaustive_prompt,
+        settings={
+            "enable_tabular_hierarchical_analysis": True,
+            "enable_tabular_multifile_durable_preflight": True,
+        },
+        contexts=contexts,
+    )
+    assert_equal(
+        gate_on_plan["execution_state"],
+        TABULAR_EXECUTION_STATE_DECLINED,
+        "gate-on multi-file top-level state",
+    )
+    assert_equal(
+        gate_on_plan["reason_code"],
+        "multi_context_execution_units_planned",
+        "gate-on multi-file reason code",
+    )
+    assert_equal(
+        gate_on_plan["execution_group_id"],
+        gate_on_plan["request_fingerprint"],
+        "execution group fingerprint",
+    )
+    assert_equal(len(gate_on_plan["execution_units"]), 2, "gate-on unit count")
+    assert_equal(
+        [unit["request_order"] for unit in gate_on_plan["execution_units"]],
+        [1, 2],
+        "unit request order",
+    )
+    assert_equal(
+        [unit["operation_relationship"] for unit in gate_on_plan["execution_units"]],
+        ["independent", "independent"],
+        "unit relationships",
+    )
+    assert_equal(
+        [unit["source_ids"] for unit in gate_on_plan["execution_units"]],
+        [["doc-one.csv"], ["doc-two.xlsx"]],
+        "unit source ids",
+    )
+    assert_equal(
+        [unit["source_versions"] for unit in gate_on_plan["execution_units"]],
+        [["etag-one"], ["etag-two"]],
+        "unit source versions",
+    )
+    assert_equal(
+        {unit["required_completion_policy"] for unit in gate_on_plan["execution_units"]},
+        {"all_units_required"},
+        "unit completion policy",
+    )
+    assert_true(
+        gate_on_plan["execution_units"][0]["idempotency_fingerprint"]
+        != gate_on_plan["execution_units"][1]["idempotency_fingerprint"],
+        "per-source idempotency fingerprints",
+    )
+    print("Phase 6 multi-file execution-unit planning checks passed")
+
+
 def test_compatibility_intent_helpers_delegate_to_shared_contract():
     print("Testing shared helper compatibility surface...")
     assert_true(
@@ -300,6 +383,7 @@ def test_backend_rollout_settings_are_not_frontend_visible():
         "tabular_request_planner_mode",
         "enable_tabular_search_shared_preflight",
         "enable_tabular_analyze_durable_preflight",
+        "enable_tabular_multifile_durable_preflight",
     ):
         assert_true(
             f"'{setting_key}'" in settings_source,
@@ -358,6 +442,7 @@ def run_tests():
     tests = [
         test_classification_contracts,
         test_replayable_context_boundaries,
+        test_phase6_multifile_execution_units_are_explicit,
         test_compatibility_intent_helpers_delegate_to_shared_contract,
         test_shadow_and_active_facade_side_effect_boundaries,
         test_backend_rollout_settings_are_not_frontend_visible,
