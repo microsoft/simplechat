@@ -2,6 +2,15 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.156)**
+
+#### Bug Fixes
+
+*   **JSON/XML Source-Only Intent Guardrails**
+    *   Prevented source-reading prompts such as "Summarize this XML document" and "Validate this JSON object" from being misclassified as generated artifact requests.
+    *   Kept explicit output requests such as "Export as JSON" and "Create an XML file" routed to generated artifact workflows.
+    *   (Ref: #1198, structured artifact intent detection, `functions_generated_file_exports.py`, `test_generated_json_xml_exports.py`)
+
 ### **(v0.250.155)**
 
 #### Bug Fixes
