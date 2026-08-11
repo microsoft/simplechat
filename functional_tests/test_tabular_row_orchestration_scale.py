@@ -1,8 +1,8 @@
 # test_tabular_row_orchestration_scale.py
 """
 Functional test for scalable per-row tabular orchestration.
-Version: 0.250.149
-Implemented in: 0.250.060; generated CSV formula safety in 0.250.065; generated file export routing in 0.250.072; source descriptor generalization in 0.250.127; unified durable run contract in 0.250.128; hierarchical analysis in 0.250.129; combined analysis and export in 0.250.130; scale validation in 0.250.132; direct source-backed exhaustive queueing in 0.250.133; direct queue call-site hardening in 0.250.134; model-validation auto retry in 0.250.135; model-aware parallel throughput in 0.250.136; Phase 1 acceleration contracts and observability in 0.250.137; Phase 2 truthful background handoff in 0.250.138; Phase 3 durable LLM generation planning in 0.250.139; Phase 4 compact row response protocol in 0.250.140; Phase 5 completion-driven checkpointing in 0.250.141; Phase 6 rolling worker pool in 0.250.142; Phase 7 independent batch retries in 0.250.143; Phase 8 scale, chaos, and rollout in 0.250.144; background metadata streaming fix in 0.250.145; source-token echo recovery in 0.250.146; fixed-window stale heartbeat fix in 0.250.147; nested CSV output recovery in 0.250.148; generic tabular artifact routing and fast startup in 0.250.149
+Version: 0.250.152
+Implemented in: 0.250.060; generated CSV formula safety in 0.250.065; generated file export routing in 0.250.072; source descriptor generalization in 0.250.127; unified durable run contract in 0.250.128; hierarchical analysis in 0.250.129; combined analysis and export in 0.250.130; scale validation in 0.250.132; direct source-backed exhaustive queueing in 0.250.133; direct queue call-site hardening in 0.250.134; model-validation auto retry in 0.250.135; model-aware parallel throughput in 0.250.136; Phase 1 acceleration contracts and observability in 0.250.137; Phase 2 truthful background handoff in 0.250.138; Phase 3 durable LLM generation planning in 0.250.139; Phase 4 compact row response protocol in 0.250.140; Phase 5 completion-driven checkpointing in 0.250.141; Phase 6 rolling worker pool in 0.250.142; Phase 7 independent batch retries in 0.250.143; Phase 8 scale, chaos, and rollout in 0.250.144; background metadata streaming fix in 0.250.145; source-token echo recovery in 0.250.146; fixed-window stale heartbeat fix in 0.250.147; nested CSV output recovery in 0.250.148; generic tabular artifact routing and fast startup in 0.250.149; balanced concurrency waves and default completion checkpoints in 0.250.152
 
 This test ensures generated exports preserve source identity and row order while
 enforcing one stable output schema across independently generated batches.
@@ -206,6 +206,8 @@ PERFORMANCE_FUNCTIONS = {
     '_normalize_tabular_run_task_type',
     '_resolve_tabular_schema_probe_rows',
     '_estimate_tabular_source_batch_count',
+    '_resolve_tabular_source_batch_capacity',
+    '_balance_tabular_source_batch_rows',
     '_get_tabular_source_batch_row_limit',
     '_resolve_tabular_chunk_model_selection',
     '_normalize_tabular_model_identifier',
@@ -506,6 +508,10 @@ def _load_direct_source_queue_helpers(route_dependencies):
     namespace.setdefault('TABULAR_RUN_TASK_HIERARCHICAL_ANALYSIS', 'hierarchical_analysis')
     namespace.setdefault('TABULAR_RUN_TASK_COMBINED', 'combined')
     namespace.setdefault('TABULAR_EXTENSIONS', {'csv', 'xlsx', 'xls', 'xlsm'})
+    namespace.setdefault(
+        '_dump_tabular_generated_output_json',
+        lambda value: json.dumps(value, default=str, ensure_ascii=False, separators=(',', ':')),
+    )
     namespace.setdefault('json', json)
     namespace.setdefault('math', math)
     namespace.setdefault('os', os)
@@ -2021,9 +2027,10 @@ def test_phase_three_rollout_activates_shadow_only_and_stays_backend_only():
         'tabular_generation_plan_mode': 'shadow',
         'enable_tabular_generation_plan': True,
         'enable_tabular_compact_response_protocol': False,
-        'enable_tabular_completion_driven_checkpointing': False,
+        'enable_tabular_completion_driven_checkpointing': True,
         'enable_tabular_rolling_worker_pool': False,
         'enable_tabular_independent_batch_retries': False,
+        'enable_tabular_generation_balanced_batches': True,
         'tabular_generation_checkpoint_writer_concurrency': 1,
         'tabular_generation_heartbeat_seconds': 30,
         'tabular_generation_stale_seconds': 120,
@@ -2037,6 +2044,7 @@ def test_phase_three_rollout_activates_shadow_only_and_stays_backend_only():
         'enable_tabular_completion_driven_checkpointing': '1',
         'enable_tabular_rolling_worker_pool': 'on',
         'enable_tabular_independent_batch_retries': True,
+        'enable_tabular_generation_balanced_batches': True,
         'tabular_generation_checkpoint_writer_concurrency': 99,
         'tabular_generation_heartbeat_seconds': 1,
         'tabular_generation_systemic_failure_threshold': 2,
@@ -2048,6 +2056,7 @@ def test_phase_three_rollout_activates_shadow_only_and_stays_backend_only():
     assert overridden['enable_tabular_completion_driven_checkpointing'] is True
     assert overridden['enable_tabular_rolling_worker_pool'] is True
     assert overridden['enable_tabular_independent_batch_retries'] is True
+    assert overridden['enable_tabular_generation_balanced_batches'] is True
     assert overridden['tabular_generation_checkpoint_writer_concurrency'] == 16
     assert overridden['tabular_generation_heartbeat_seconds'] == 5
     assert overridden['tabular_generation_systemic_failure_threshold'] == 1.0
@@ -2057,6 +2066,7 @@ def test_phase_three_rollout_activates_shadow_only_and_stays_backend_only():
         assert f"'{setting_key}'" in settings_source
     assert 'TABULAR_GENERATION_BACKEND_SETTING_KEYS' in settings_source
     assert 'if k in TABULAR_GENERATION_BACKEND_SETTING_KEYS' in settings_source
+    assert "'enable_tabular_generation_balanced_batches'" in settings_source
 
 
 def test_shadow_generation_plan_is_deferred_off_the_production_critical_path():
@@ -2093,6 +2103,8 @@ def test_schema_probe_starts_small_then_uses_normal_batch_budget():
     helpers = _load_performance_helpers()
     resolve_probe = helpers['_resolve_tabular_schema_probe_rows']
     estimate_batches = helpers['_estimate_tabular_source_batch_count']
+    resolve_capacity = helpers['_resolve_tabular_source_batch_capacity']
+    balance_batches = helpers['_balance_tabular_source_batch_rows']
     batch_row_limit = helpers['_get_tabular_source_batch_row_limit']
 
     probe_rows = resolve_probe({}, 'shadow', 'structured_export', 300, 58)
@@ -2108,6 +2120,18 @@ def test_schema_probe_starts_small_then_uses_normal_batch_budget():
     assert resolve_probe({}, 'active', 'structured_export', 300, 58) == 0
     assert estimate_batches(300, 58, 0) == 6
     assert resolve_probe({}, 'shadow', 'hierarchical_analysis', 300, 58) == 0
+    assert balance_batches({}, 300, 58, probe_rows) == 37
+    assert estimate_batches(300, 37, probe_rows) == 9
+    assert balance_batches({}, 200, 58, probe_rows) == 58
+    assert balance_batches(
+        {'enable_tabular_generation_balanced_batches': False},
+        300,
+        58,
+        probe_rows,
+    ) == 58
+    assert resolve_capacity(88, 104856, 1800) == 58
+    character_aware_rows = resolve_capacity(88, 104856, 1800)
+    assert balance_batches({}, 300, character_aware_rows, probe_rows) == 37
 
 
 def test_phase_eight_rollout_assignment_is_stable_and_control_runs_stay_legacy():
@@ -2159,6 +2183,7 @@ def test_phase_eight_rollout_assignment_is_stable_and_control_runs_stay_legacy()
         assert assignment['enable_tabular_completion_driven_checkpointing'] is False
         assert assignment['enable_tabular_rolling_worker_pool'] is False
         assert assignment['enable_tabular_independent_batch_retries'] is False
+        assert assignment['enable_tabular_generation_balanced_batches'] is False
 
     resumed_settings = get_rollout_for_run(
         {'generation_rollout_settings': assignment},
@@ -4008,11 +4033,15 @@ def test_model_batch_nested_csv_output_supports_arbitrary_csv_headers():
 def test_durable_runner_enforces_row_contract():
     """Queueing, generation, and checkpointing must all enforce the shared contract."""
     queue_calls = _called_function_names(_get_function_node('queue_tabular_generated_output_run'))
+    queue_source = ast.unparse(_get_function_node('queue_tabular_generated_output_run'))
     generation_calls = _called_function_names(_get_function_node('_generate_batch_entries'))
     checkpoint_source = ast.unparse(_get_function_node('_checkpoint_generated_batch_results'))
     process_source = ast.unparse(_get_function_node('process_tabular_generated_output_run'))
 
     assert '_prepare_tabular_source_rows' in queue_calls
+    assert '_balance_tabular_source_batch_rows' in queue_calls
+    assert "model_batch_budget['token_max_rows']" in queue_source
+    assert "model_batch_budget['max_rows'] = source_descriptor['batch_max_rows']" in queue_source
     assert '_normalize_model_generated_batch_entries' in generation_calls
     assert "run['output_schema']" in checkpoint_source
     assert "run.get('output_schema')" in process_source
@@ -4469,7 +4498,10 @@ def test_direct_source_backed_queue_supports_all_workbook_formats():
 
         @staticmethod
         def _read_tabular_blob_to_dataframe(*args, sheet_name=None, **kwargs):
-            return [sheet_name, f'{sheet_name}-row-2']
+            return pandas.DataFrame([
+                {'item_id': f'{sheet_name}-1', 'value': 'first'},
+                {'item_id': f'{sheet_name}-2', 'value': 'second'},
+            ])
 
         @staticmethod
         def _try_numeric_conversion(dataframe):
@@ -4478,6 +4510,10 @@ def test_direct_source_backed_queue_supports_all_workbook_formats():
         @staticmethod
         def _apply_query_expression_with_fallback(dataframe, **kwargs):
             return dataframe, False
+
+        @staticmethod
+        def _build_row_output_records(dataframe, selected_columns):
+            return dataframe[selected_columns].to_dict(orient='records')
 
         @staticmethod
         def _get_tabular_blob_version(*args, **kwargs):
@@ -4602,7 +4638,7 @@ def test_direct_source_backed_csv_queue_bypasses_tool_paging():
             assert query_expression == 'index == index'
             assert return_columns is None
             assert start_row == 0
-            assert max_rows == 1
+            assert max_rows == 5
             return FakePluginResult(
                 json.dumps({'total_matches': 3000, 'data': [{'transaction_id': 'BT-000001'}]}),
                 internal_metadata={

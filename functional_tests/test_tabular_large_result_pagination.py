@@ -2,8 +2,8 @@
 # test_tabular_large_result_pagination.py
 """
 Functional test for tabular SK large-result pagination and output trimming.
-Version: 0.250.127
-Implemented in: 0.242.067; bounded CSV query path in 0.250.060; source descriptor generalization in 0.250.127
+Version: 0.250.152
+Implemented in: 0.242.067; bounded CSV query path in 0.250.060; source descriptor generalization in 0.250.127; serialized row-size estimation in 0.250.152
 
 This test ensures row-returning tabular processing tools support start_row/max_rows
 pagination, avoid skipped rows after auto-trimming oversized output, honor
@@ -388,6 +388,7 @@ def test_query_tabular_csv_uses_bounded_shared_engine_and_exact_descriptor():
         assert descriptor['blob_path'] == 'nested/version-7/large-results.csv', descriptor
         assert descriptor['blob_etag'] == 'etag-csv-300', descriptor
         assert descriptor['expected_row_count'] == 300, descriptor
+        assert descriptor['estimated_serialized_row_chars'] > 0, descriptor
 
         print('✅ Bounded CSV query pagination and source identity passed')
         return True

@@ -2513,7 +2513,7 @@ def maybe_create_assistant_file_generated_output(
             conversation_id=conversation_id,
             file_name=generated_file_name,
             file_content=file_content,
-            capability='analysis',
+            capability='file_export',
             output_format=output_format,
             summary=summary,
         )
@@ -2546,16 +2546,19 @@ def maybe_create_assistant_file_generated_output(
         debug_only=True,
     )
     output_metadata = {
-        'capability': 'analysis',
+        'capability': 'file_export',
         'artifact_message_id': artifact_message_id,
         'conversation_id': conversation_id,
         'storage_scope': 'chat',
         'file_name': uploaded_file_name,
         'output_format': output_format,
         'summary': summary,
+        'suppress_assistant_text': True,
     }
     if preview_items:
         output_metadata['preview_items'] = preview_items
+        output_metadata['preview_columns'] = list(preview_items[0]) if isinstance(preview_items[0], dict) else []
+        output_metadata['row_count'] = len(json_payload) if isinstance(json_payload, list) else 1
     if preview_lines:
         output_metadata['preview_lines'] = preview_lines
     return output_metadata
@@ -5892,6 +5895,7 @@ def _build_direct_tabular_generated_output_source(user_question, file_contexts, 
 
     selected_sheet = None
     sheet_names = []
+    source_sample_rows = []
     if source_format == 'csv':
         query_result = tabular_plugin._query_csv_data_in_bounded_chunks(
             container_name,
@@ -5900,10 +5904,15 @@ def _build_direct_tabular_generated_output_source(user_question, file_contexts, 
             query_expression,
             return_columns=None,
             start_row=0,
-            max_rows=1,
+            max_rows=5,
         )
         result_payload = json.loads(str(query_result or '{}'))
         row_count = _safe_int(result_payload.get('total_matches'))
+        source_sample_rows = [
+            row
+            for row in (result_payload.get('data') or [])
+            if isinstance(row, dict)
+        ][:5]
         internal_metadata = getattr(query_result, 'internal_metadata', {}) or {}
         source_descriptor = internal_metadata.get('tabular_generated_export_source') or {}
         source_authorization = internal_metadata.get('tabular_source_authorization') or {}
@@ -5938,6 +5947,15 @@ def _build_direct_tabular_generated_output_source(user_question, file_contexts, 
                 normalize_match=False,
             )
             row_count += len(filtered_dataframe)
+            remaining_sample_rows = 5 - len(source_sample_rows)
+            if remaining_sample_rows > 0:
+                sample_dataframe = filtered_dataframe.head(remaining_sample_rows)
+                source_sample_rows.extend(
+                    tabular_plugin._build_row_output_records(
+                        sample_dataframe,
+                        list(sample_dataframe.columns),
+                    )
+                )
 
         blob_version = tabular_plugin._get_tabular_blob_version(
             container_name,
@@ -5967,10 +5985,21 @@ def _build_direct_tabular_generated_output_source(user_question, file_contexts, 
 
     batch_budget = _get_tabular_generated_output_batch_budget(settings)
     source_descriptor = dict(source_descriptor)
+    serialized_sample_row_sizes = [
+        len(_dump_tabular_generated_output_json(row))
+        for row in source_sample_rows
+        if isinstance(row, dict)
+    ]
     source_descriptor.update({
         'expected_row_count': row_count,
         'batch_max_rows': batch_budget['max_rows'],
         'batch_max_chars': batch_budget['max_chars'],
+        'estimated_serialized_row_chars': (
+            max(
+                [_safe_int(source_descriptor.get('estimated_serialized_row_chars'))]
+                + serialized_sample_row_sizes
+            )
+        ),
     })
     output_format = get_tabular_generated_output_format(user_question) or 'md'
     queued_output_format = 'md' if analysis_only_requested else output_format

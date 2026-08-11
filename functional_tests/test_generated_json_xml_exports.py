@@ -2,8 +2,8 @@
 # test_generated_json_xml_exports.py
 """
 Functional test for generated JSON/XML export artifacts.
-Version: 0.250.119
-Implemented in: 0.250.114
+Version: 0.250.152
+Implemented in: 0.250.114; completed file-export cards and View actions in 0.250.152
 
 This test ensures JSON/XML generation requests are recognized as downloadable
 artifact workflows, reuse shared serialization helpers, avoid duplicate XML
@@ -13,6 +13,8 @@ processing implementations, and preserve no-inline-output handoff behavior.
 import importlib.util
 import sys
 from pathlib import Path
+
+from test_support.versioning import assert_app_version_at_least
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -25,7 +27,7 @@ CHAT_ROUTE_FILE = APP_ROOT / "route_backend_chats.py"
 WORKFLOW_RUNNER_FILE = APP_ROOT / "functions_workflow_runner.py"
 DOCUMENT_ANALYSIS_FILE = APP_ROOT / "functions_document_analysis.py"
 DOCUMENTS_FILE = APP_ROOT / "functions_documents.py"
-EXPECTED_VERSION = "0.250.119"
+CHAT_MESSAGES_FILE = APP_ROOT / "static" / "js" / "chat" / "chat-messages.js"
 
 
 def read_text(path):
@@ -104,7 +106,63 @@ def test_chat_route_json_xml_artifact_hooks():
     )
     assert_contains(chat_source, "serialize_generated_xml(", "XML serialization for generated tabular exports")
     assert_contains(chat_source, "root_name='GeneratedRows'", "tabular XML root naming")
+    assert_contains(chat_source, "'capability': 'file_export'", "completed file-export capability")
+    assert_contains(chat_source, "'suppress_assistant_text': True", "completed handoff suppression")
     print("Chat route checks passed")
+
+
+def test_json_xml_completed_artifact_metadata_and_view_actions():
+    """JSON/XML artifacts use concise completed cards with bounded View metadata."""
+    module = load_generated_exports_module()
+    json_metadata = module.build_generated_file_artifact_metadata(
+        {
+            'capability': 'file_export',
+            'file_name': 'generated.json',
+            'output_format': 'json',
+            'row_count': 2,
+            'preview_rows': [
+                {'id': 'A-1', 'status': 'ready'},
+                {'id': 'A-2', 'status': 'review'},
+            ],
+            'summary': 'Generated JSON artifact.',
+        },
+        {'message': {'id': 'artifact-json', 'file_name': 'generated.json'}},
+        'conversation-1',
+    )
+    xml_metadata = module.build_generated_file_artifact_metadata(
+        {
+            'capability': 'file_export',
+            'file_name': 'generated.xml',
+            'output_format': 'xml',
+            'preview_lines': ['<Report>', '<Item id="A-1" />', '</Report>'],
+            'summary': 'Generated XML artifact.',
+        },
+        {'message': {'id': 'artifact-xml', 'file_name': 'generated.xml'}},
+        'conversation-1',
+    )
+    docx_metadata = module.build_generated_file_artifact_metadata(
+        {
+            'capability': 'file_export',
+            'file_name': 'generated.docx',
+            'output_format': 'docx',
+            'summary': 'Generated Word artifact.',
+        },
+        {'message': {'id': 'artifact-docx', 'file_name': 'generated.docx'}},
+        'conversation-1',
+    )
+
+    assert json_metadata['capability'] == 'file_export'
+    assert json_metadata['preview_columns'] == ['id', 'status']
+    assert json_metadata['row_count'] == 2
+    assert json_metadata['suppress_assistant_text'] is True
+    assert xml_metadata['preview_lines'][0] == '<Report>'
+    assert xml_metadata['suppress_assistant_text'] is True
+    assert docx_metadata['suppress_assistant_text'] is False
+
+    chat_messages_source = read_text(CHAT_MESSAGES_FILE)
+    assert_contains(chat_messages_source, "['csv', 'json', 'xml']", 'completed structured formats')
+    assert_contains(chat_messages_source, '`View ${outputFormat.toUpperCase()}`', 'format-specific View label')
+    assert_contains(chat_messages_source, 'showGeneratedArtifactPreviewModal', 'bounded View modal')
 
 
 def test_document_analysis_xml_json_intent_and_artifacts():
@@ -135,7 +193,7 @@ def test_xml_processing_consolidated():
     assert_contains(documents_source, "token_usage = save_chunks(**args)", "XML token usage accumulation")
     assert_contains(documents_source, "return total_chunks_saved, total_embedding_tokens, embedding_model_name", "XML token-aware return")
     assert "print(f\"Skipping empty XML chunk" not in documents_source
-    assert_contains(documents_source, "[Documents] XML processing failed", "XML log_event error logging")
+    assert_contains(documents_source, "[DOCUMENTS] XML processing failed", "XML log_event error logging")
     print("XML processing checks passed")
 
 
@@ -152,13 +210,12 @@ def test_security_review_fixes():
 
 
 def run_tests():
-    current_version = read_current_version()
-    if current_version != EXPECTED_VERSION:
-        raise AssertionError(f"Expected config.py version {EXPECTED_VERSION}, got {current_version}")
+    assert_app_version_at_least("0.250.152")
 
     tests = [
         test_shared_json_xml_export_helpers,
         test_chat_route_json_xml_artifact_hooks,
+        test_json_xml_completed_artifact_metadata_and_view_actions,
         test_document_analysis_xml_json_intent_and_artifacts,
         test_xml_processing_consolidated,
         test_security_review_fixes,

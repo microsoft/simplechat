@@ -3813,6 +3813,16 @@ class TabularProcessingPlugin:
             expected_row_count=matched_row_count,
             blob_version=blob_version,
         )
+        serialized_page_row_sizes = [
+            len(json.dumps(row, default=str, ensure_ascii=False, separators=(',', ':')))
+            for row in page_rows
+            if isinstance(row, dict)
+        ]
+        source_descriptor['estimated_serialized_row_chars'] = (
+            max(serialized_page_row_sizes)
+            if serialized_page_row_sizes
+            else 0
+        )
         return PluginInvocationResult(
             json.dumps(response_payload, indent=2, default=str),
             internal_metadata={

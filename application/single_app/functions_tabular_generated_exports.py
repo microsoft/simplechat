@@ -902,7 +902,7 @@ def _normalize_tabular_generation_rollout_settings(settings):
         'enable_tabular_completion_driven_checkpointing': _settings_bool(
             settings,
             'enable_tabular_completion_driven_checkpointing',
-            False,
+            True,
         ),
         'enable_tabular_rolling_worker_pool': _settings_bool(
             settings,
@@ -913,6 +913,11 @@ def _normalize_tabular_generation_rollout_settings(settings):
             settings,
             'enable_tabular_independent_batch_retries',
             False,
+        ),
+        'enable_tabular_generation_balanced_batches': _settings_bool(
+            settings,
+            'enable_tabular_generation_balanced_batches',
+            True,
         ),
         'tabular_generation_checkpoint_writer_concurrency': _settings_int(
             settings,
@@ -974,6 +979,7 @@ def _build_tabular_generation_rollout_assignment(settings, user_id, conversation
             'enable_tabular_completion_driven_checkpointing': False,
             'enable_tabular_rolling_worker_pool': False,
             'enable_tabular_independent_batch_retries': False,
+            'enable_tabular_generation_balanced_batches': False,
         })
     rollout_settings.update({
         'tabular_generation_rollout_bucket': rollout_bucket,
@@ -1000,6 +1006,7 @@ def _get_tabular_generation_rollout_settings_for_run(run=None, settings=None):
             'enable_tabular_completion_driven_checkpointing': False,
             'enable_tabular_rolling_worker_pool': False,
             'enable_tabular_independent_batch_retries': False,
+            'enable_tabular_generation_balanced_batches': False,
             'tabular_generation_stale_seconds': TABULAR_EXPORT_DEFAULT_STALE_SECONDS,
         })
     return _normalize_tabular_generation_rollout_settings(settings or {})
@@ -1261,6 +1268,61 @@ def _estimate_tabular_source_batch_count(row_count, max_batch_rows, schema_probe
             (normalized_row_count - normalized_probe_rows) / normalized_max_batch_rows
         )
     return max(1, math.ceil(normalized_row_count / normalized_max_batch_rows))
+
+
+def _resolve_tabular_source_batch_capacity(
+    max_batch_rows,
+    max_batch_chars,
+    estimated_serialized_row_chars=0,
+):
+    normalized_max_batch_rows = _safe_int(max_batch_rows, minimum=1)
+    normalized_max_batch_chars = _safe_int(max_batch_chars, minimum=1)
+    normalized_estimated_row_chars = _safe_int(
+        estimated_serialized_row_chars,
+        minimum=0,
+    )
+    if not normalized_estimated_row_chars:
+        return normalized_max_batch_rows
+    character_limited_rows = max(
+        1,
+        normalized_max_batch_chars // normalized_estimated_row_chars,
+    )
+    return min(normalized_max_batch_rows, character_limited_rows)
+
+
+def _balance_tabular_source_batch_rows(
+    settings,
+    row_count,
+    max_batch_rows,
+    schema_probe_rows=0,
+):
+    normalized_row_count = _safe_int(row_count, minimum=0)
+    normalized_max_batch_rows = _safe_int(max_batch_rows, minimum=1)
+    normalized_probe_rows = min(
+        _safe_int(schema_probe_rows, minimum=0),
+        normalized_row_count,
+        normalized_max_batch_rows,
+    )
+    remaining_rows = max(normalized_row_count - normalized_probe_rows, 0)
+    if not remaining_rows or not _settings_bool(
+        settings or {},
+        'enable_tabular_generation_balanced_batches',
+        True,
+    ):
+        return normalized_max_batch_rows
+
+    unbalanced_batch_count = math.ceil(remaining_rows / normalized_max_batch_rows)
+    total_batch_count = unbalanced_batch_count + (1 if normalized_probe_rows else 0)
+    batch_concurrency = _resolve_tabular_batch_concurrency(settings or {}, total_batch_count)
+    if unbalanced_batch_count <= batch_concurrency or unbalanced_batch_count % batch_concurrency == 0:
+        return normalized_max_batch_rows
+
+    concurrency_waves = math.ceil(unbalanced_batch_count / batch_concurrency)
+    balanced_batch_count = concurrency_waves * batch_concurrency
+    return min(
+        normalized_max_batch_rows,
+        max(1, math.ceil(remaining_rows / balanced_batch_count)),
+    )
 
 
 def _get_tabular_source_batch_row_limit(source_descriptor, staged_batch_count):
@@ -5862,15 +5924,12 @@ def build_background_tabular_generated_output_metadata(run):
         'preview_row_count': 0,
         'foreground_response_policy_version': 'phase2.v1',
         'summary': (
-            f"Queued combined tabular analysis and {output_label} export for {row_count} row(s) "
-            f"across {public_status.get('batch_count', 0)} chunk(s)."
+            f"Queued combined tabular analysis and {output_label} export for {row_count} row(s)."
             if is_combined
             else
-            f"Queued hierarchical tabular analysis for {row_count} row(s) "
-            f"across {public_status.get('batch_count', 0)} chunk(s)."
+            f"Queued hierarchical tabular analysis for {row_count} row(s)."
             if is_hierarchical_analysis
-            else f"Queued structured {output_label} export for {row_count} row(s) "
-            f"across {public_status.get('batch_count', 0)} batch(es)."
+            else f"Queued structured {output_label} export for {row_count} row(s)."
         ),
     })
     return public_status
@@ -8453,11 +8512,61 @@ def queue_tabular_generated_output_run(
             source_descriptor['batch_max_rows'],
         )
         source_descriptor['schema_probe_rows'] = schema_probe_rows
+        token_max_batch_rows = source_descriptor['batch_max_rows']
+        estimated_serialized_row_chars = _safe_int(
+            source_descriptor.get('estimated_serialized_row_chars'),
+            minimum=0,
+        )
+        if not estimated_serialized_row_chars:
+            sampled_candidate_rows = [
+                row
+                for row in (source_candidate.get('rows') or [])[:5]
+                if isinstance(row, dict)
+            ]
+            if sampled_candidate_rows:
+                estimated_serialized_row_chars = max(
+                    len(_dump_generated_output_json(row))
+                    for row in sampled_candidate_rows
+                )
+                source_descriptor['estimated_serialized_row_chars'] = estimated_serialized_row_chars
+        character_aware_batch_rows = _resolve_tabular_source_batch_capacity(
+            token_max_batch_rows,
+            source_descriptor['batch_max_chars'],
+            estimated_serialized_row_chars,
+        )
+        balance_settings = dict(settings)
+        balance_settings['enable_tabular_generation_balanced_batches'] = bool(
+            rollout_settings.get('enable_tabular_generation_balanced_batches')
+        )
+        unbalanced_batch_rows = character_aware_batch_rows
+        source_descriptor['batch_max_rows'] = _balance_tabular_source_batch_rows(
+            balance_settings,
+            staged_row_count,
+            unbalanced_batch_rows,
+            schema_probe_rows,
+        )
+        model_batch_budget['token_max_rows'] = token_max_batch_rows
+        model_batch_budget['character_max_rows'] = character_aware_batch_rows
+        model_batch_budget['max_rows'] = source_descriptor['batch_max_rows']
         staged_batch_count = _estimate_tabular_source_batch_count(
             staged_row_count,
             source_descriptor['batch_max_rows'],
             schema_probe_rows,
         )
+        if source_descriptor['batch_max_rows'] != unbalanced_batch_rows:
+            log_event(
+                '[TABULAR_GENERATED_OUTPUT] Balanced source batches across concurrency waves',
+                {
+                    'run_id': run_id,
+                    'row_count': staged_row_count,
+                    'schema_probe_rows': schema_probe_rows,
+                    'token_max_rows': token_max_batch_rows,
+                    'character_max_rows': character_aware_batch_rows,
+                    'balanced_max_rows': source_descriptor['batch_max_rows'],
+                    'balanced_batch_count': staged_batch_count,
+                },
+                level=logging.INFO,
+            )
         source_authorization = {
             field_name: source_descriptor.get(field_name)
             for field_name in ('source', 'scope_id', 'container', 'blob_path')
@@ -8620,6 +8729,8 @@ def queue_tabular_generated_output_run(
             'total_chunk_count': staged_batch_count,
             'staged_input_char_count': staged_char_count,
             'batch_max_rows': model_batch_budget.get('max_rows'),
+            'batch_token_max_rows': model_batch_budget.get('token_max_rows'),
+            'batch_character_max_rows': model_batch_budget.get('character_max_rows'),
             'batch_max_chars': model_batch_budget.get('max_chars'),
             'batch_input_token_budget': model_batch_budget.get('input_token_budget'),
             'batch_output_token_budget': model_batch_budget.get('output_token_budget'),
