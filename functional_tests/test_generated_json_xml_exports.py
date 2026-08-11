@@ -2,8 +2,8 @@
 # test_generated_json_xml_exports.py
 """
 Functional test for generated JSON/XML export artifacts.
-Version: 0.250.154
-Implemented in: 0.250.114; completed file-export cards and View actions in 0.250.152; truthful private payload streaming in 0.250.153; shared structured-format intent terminology in 0.250.154
+Version: 0.250.156
+Implemented in: 0.250.114; completed file-export cards and View actions in 0.250.152; truthful private payload streaming in 0.250.153; shared structured-format intent terminology in 0.250.154; source-only intent guardrails in 0.250.156
 
 This test ensures JSON/XML generation requests are recognized as downloadable
 artifact workflows, reuse shared serialization helpers, avoid duplicate XML
@@ -96,7 +96,12 @@ def test_shared_json_xml_export_helpers():
         'Put the XML into JSON.': 'json',
         'Explain what XML namespaces are.': None,
         'Use the selected XML source and summarize it.': None,
+        'Summarize this XML document.': None,
+        'Validate this JSON object.': None,
+        'Summarize this JSON file.': None,
         'Do not create XML; summarize the source instead.': None,
+        'Export as JSON.': 'json',
+        'Create an XML file.': 'xml',
     }
     for prompt, expected_format in intent_cases.items():
         assert module.get_requested_structured_artifact_format(prompt) == expected_format
@@ -300,7 +305,7 @@ def test_security_review_fixes():
 
 
 def run_tests():
-    assert_app_version_at_least("0.250.154")
+    assert_app_version_at_least("0.250.156")
 
     tests = [
         test_shared_json_xml_export_helpers,
