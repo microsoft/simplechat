@@ -2,6 +2,15 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.129)**
+
+#### New Features
+
+*   **Configurable Workflow Task Limit**
+    *   Added an admin setting that controls how many ordered instruction tasks users can add to a workflow.
+    *   The default is 50 tasks, with backend and browser enforcement clamped to a supported range of 1-100 tasks.
+    *   (Ref: workflow task sequences, Admin Settings Workflow section, `functions_personal_workflows.py`, `workspace_workflows.js`)
+
 ### **(v0.250.128)**
 
 #### Bug Fixes

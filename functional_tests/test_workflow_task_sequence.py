@@ -1,9 +1,10 @@
 # test_workflow_task_sequence.py
 """
 Functional test for ordered workflow task sequences.
-Version: 0.250.105
+Version: 0.250.129
 Implemented in: 0.250.064
 Enhanced in: 0.250.065
+Enhanced in: 0.250.129
 
 This test ensures workflow tasks are normalized in order, execute with bounded
 prior-task context, retry safely, and honor halt or continue error strategies.
@@ -19,7 +20,7 @@ APP_ROOT = ROOT / "application" / "single_app"
 STORE_FILE = APP_ROOT / "functions_personal_workflows.py"
 GROUP_STORE_FILE = APP_ROOT / "functions_group_workflows.py"
 RUNNER_FILE = APP_ROOT / "functions_workflow_runner.py"
-EXPECTED_VERSION = "0.250.105"
+EXPECTED_VERSION = "0.250.129"
 
 
 def read_text(path: Path) -> str:
@@ -43,13 +44,17 @@ def load_store_helpers() -> dict:
         STORE_FILE,
         {
             "_normalize_text",
+            "normalize_workflow_max_tasks",
             "_normalize_workflow_tasks",
             "_normalize_workflow_error_handling",
         },
         {
             "uuid": uuid,
             "WORKFLOW_ERROR_STRATEGIES": {"halt", "continue"},
-            "WORKFLOW_MAX_TASKS": 20,
+            "WORKFLOW_TASK_LIMIT_DEFAULT": 50,
+            "WORKFLOW_TASK_LIMIT_MIN": 1,
+            "WORKFLOW_TASK_LIMIT_MAX": 100,
+            "WORKFLOW_MAX_TASKS": 50,
             "WORKFLOW_TASK_INSTRUCTIONS_MAX_LENGTH": 12000,
             "WORKFLOW_TASK_NAME_MAX_LENGTH": 120,
             "WORKFLOW_TASK_RUNNER_TYPES": {"inherit", "agent", "model"},
@@ -197,6 +202,64 @@ def test_task_and_error_policy_normalization() -> None:
         assert "at least one" in str(exc)
 
     print("PASS: workflow task normalization")
+
+
+def test_configurable_task_limit_normalization() -> None:
+    """Clamp admin-configured task limits and enforce the effective limit."""
+    print("Testing configurable workflow task limit normalization...")
+    helpers = load_store_helpers()
+
+    assert helpers["normalize_workflow_max_tasks"](None) == 50
+    assert helpers["normalize_workflow_max_tasks"](0) == 1
+    assert helpers["normalize_workflow_max_tasks"](150) == 100
+
+    fifty_tasks = [
+        {
+            "id": f"task-{index}",
+            "name": f"Task {index}",
+            "instructions": f"Complete task {index}.",
+        }
+        for index in range(1, 51)
+    ]
+    assert len(helpers["_normalize_workflow_tasks"]({"tasks": fifty_tasks}, max_tasks=50)) == 50
+
+    try:
+        helpers["_normalize_workflow_tasks"](
+            {
+                "tasks": [
+                    {
+                        "id": f"task-{index}",
+                        "name": f"Task {index}",
+                        "instructions": f"Complete task {index}.",
+                    }
+                    for index in range(1, 52)
+                ]
+            },
+            max_tasks=50,
+        )
+        raise AssertionError("Expected the configured 50-task limit to be enforced.")
+    except ValueError as exc:
+        assert "up to 50 tasks" in str(exc)
+
+    try:
+        helpers["_normalize_workflow_tasks"](
+            {
+                "tasks": [
+                    {
+                        "id": f"task-{index}",
+                        "name": f"Task {index}",
+                        "instructions": f"Complete task {index}.",
+                    }
+                    for index in range(1, 102)
+                ]
+            },
+            max_tasks=150,
+        )
+        raise AssertionError("Expected the hard 100-task limit to be enforced.")
+    except ValueError as exc:
+        assert "up to 100 tasks" in str(exc)
+
+    print("PASS: configurable workflow task limit normalization")
 
 
 def test_personal_task_runner_normalization_and_authorization() -> None:
@@ -744,6 +807,7 @@ def test_version_and_legacy_dispatch_contract() -> None:
 def run_tests() -> bool:
     tests = [
         test_task_and_error_policy_normalization,
+        test_configurable_task_limit_normalization,
         test_personal_task_runner_normalization_and_authorization,
         test_group_task_agent_authorization,
         test_ordered_tasks_chain_context_and_apply_documents_once,

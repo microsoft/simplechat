@@ -9438,6 +9438,23 @@
                         </div>
                     </div>
 
+                    <div class="form-group mt-3 mb-3">
+                        <label for="workflow_max_tasks" class="form-label">
+                            Workflow Task Limit
+                        </label>
+                        <input type="number"
+                            class="form-control"
+                            id="workflow_max_tasks"
+                            name="workflow_max_tasks"
+                            min="1"
+                            max="100"
+                            step="1"
+                            value="{{ settings.workflow_max_tasks|default(50, true) }}">
+                        <div class="form-text">
+                            Maximum ordered instruction tasks users can add to one workflow. Default is 50; supported range is 1-100.
+                        </div>
+                    </div>
+
                     <hr>
 
                     <div class="form-group form-check form-switch mb-3">
