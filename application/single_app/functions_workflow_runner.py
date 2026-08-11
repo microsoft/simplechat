@@ -127,9 +127,11 @@ from functions_mixed_source_orchestration import (
     EVIDENCE_ENGINE_TABULAR_TOOLS,
     EVIDENCE_STATUS_COMPLETED,
     EVIDENCE_STATUS_FAILED,
+    EVIDENCE_STATUS_PENDING,
     MixedSourceCancellationError,
     MixedSourceFinalizationError,
     SELECTION_MODE_SELECTED,
+    build_tabular_file_contexts_from_manifest,
     build_evidence_envelope,
     build_failed_narrative_evidence_envelopes,
     build_mixed_source_evidence_handoff,
@@ -187,6 +189,10 @@ from functions_tabular_parity_contract import (
     TABULAR_PARITY_EVENT_FIRST_FOREGROUND_TABULAR_INVOCATION,
     classify_tabular_parity_request,
     emit_tabular_parity_event,
+)
+from functions_tabular_analysis import (
+    orchestrate_tabular_request as _shared_orchestrate_tabular_request,
+    queue_direct_tabular_generated_output_from_plan as _shared_queue_direct_tabular_generated_output_from_plan,
 )
 from functions_tabular_generated_exports import (
     build_background_tabular_generated_output_metadata,
@@ -2305,6 +2311,273 @@ def _build_mixed_source_analysis_coverage(handoff):
     return coverage
 
 
+def _settings_bool(settings, key, default=False):
+    value = (settings or {}).get(key, default)
+    if isinstance(value, str):
+        return value.strip().lower() in {'1', 'true', 'yes', 'on'}
+    return bool(value)
+
+
+def _emit_analyze_shared_preflight_event(
+    event_name,
+    settings,
+    file_contexts,
+    result=None,
+    generated_output=None,
+    dimensions=None,
+    level=logging.INFO,
+):
+    safe_dimensions = {
+        'preflight_owner': 'shared',
+        'caller': 'analyze',
+    }
+    if isinstance(result, dict):
+        safe_dimensions.update({
+            'planner_mode': str(result.get('planner_mode') or '').strip().lower()[:40],
+            'execution_contract': str(result.get('execution_contract') or '').strip().lower()[:80],
+            'execution_state': str(result.get('execution_state') or '').strip().lower()[:40],
+            'reason_code': str(result.get('reason_code') or '').strip().lower()[:80],
+            'planner_contract_version': str(result.get('planner_contract_version') or '').strip()[:80],
+        })
+    if isinstance(generated_output, dict):
+        safe_dimensions.update({
+            'output_status': str(generated_output.get('status') or '').strip().lower()[:40],
+            'task_type': str(generated_output.get('task_type') or '').strip().lower()[:80],
+            'output_format': str(generated_output.get('output_format') or '').strip().lower()[:20],
+        })
+    for key, value in (dimensions or {}).items():
+        safe_dimensions[str(key)[:60]] = str(value or '').strip().lower()[:80]
+
+    log_event(
+        f'[TABULAR_SHARED_PREFLIGHT] Analyze shared preflight {event_name}',
+        {
+            'event_name': event_name,
+            'source_count': len(list(file_contexts or [])),
+            **safe_dimensions,
+        },
+        level=level,
+        debug_only=True,
+    )
+
+
+def _build_tabular_analyze_durable_handoff(generated_output):
+    generated_output = generated_output if isinstance(generated_output, dict) else {}
+    task_type = str(generated_output.get('task_type') or '').strip().lower()
+    if task_type == 'structured_export':
+        intent_label = 'structured output'
+    elif task_type == 'combined':
+        intent_label = 'full-source analysis and structured output'
+    else:
+        intent_label = 'full-source analysis'
+    return (
+        f'The {intent_label} has been accepted for full-source background processing. '
+        'Progress and the final result will appear in the generated-output card when processing finishes.'
+    )
+
+
+def _maybe_execute_pure_tabular_analyze_preflight(
+    workflow,
+    settings,
+    manifest,
+    partitions,
+    conversation_id='',
+    thought_tracker=None,
+    live_thought_callback=None,
+    cancel_requested=None,
+    request_correlation_id=None,
+):
+    if not _settings_bool(settings, 'enable_tabular_analyze_durable_preflight', False):
+        return None
+
+    planner_mode = str((settings or {}).get('tabular_request_planner_mode') or '').strip().lower()
+    if planner_mode not in {'shadow', 'active'}:
+        return None
+    if partitions.get('narrative_sources') or partitions.get('unsupported_sources') or partitions.get('unresolved_sources'):
+        return None
+
+    tabular_sources = list(partitions.get('tabular_sources') or [])
+    if len(tabular_sources) != 1 or len(list(manifest or [])) != 1:
+        return None
+
+    user_id = str(workflow.get('user_id') or '').strip()
+    gpt_model = _resolve_tabular_document_action_model_name(workflow, settings)
+    if not user_id or not gpt_model:
+        return None
+
+    file_contexts = build_tabular_file_contexts_from_manifest(tabular_sources)
+    if len(file_contexts) != 1:
+        return None
+
+    def publish_post_processing_thought(thought_payload):
+        payload = thought_payload if isinstance(thought_payload, dict) else {}
+        if thought_tracker is not None:
+            thought_tracker.add_thought(
+                payload.get('step_type', 'tabular_analysis'),
+                payload.get('content', ''),
+                detail=payload.get('detail'),
+                activity=payload.get('activity'),
+            )
+        if callable(live_thought_callback):
+            live_payload = dict(payload)
+            if thought_tracker is not None:
+                live_payload['message_id'] = getattr(thought_tracker, 'message_id', None)
+                live_payload['step_index'] = thought_tracker.current_index - 1
+            live_thought_callback(live_payload)
+
+    try:
+        _emit_analyze_shared_preflight_event(
+            'attempted',
+            settings,
+            file_contexts,
+            dimensions={'planner_mode': planner_mode},
+        )
+        result = _shared_orchestrate_tabular_request(
+            str(workflow.get('task_prompt') or ''),
+            file_contexts,
+            action_mode='analyze',
+            caller='analyze',
+            settings=settings,
+            planner_mode=planner_mode,
+            durable_execution_callback=_shared_queue_direct_tabular_generated_output_from_plan,
+            user_id=user_id,
+            conversation_id=conversation_id,
+            gpt_model=gpt_model,
+            thought_callback=publish_post_processing_thought,
+            cancel_requested=cancel_requested,
+            request_correlation_id=request_correlation_id,
+        )
+    except MixedSourceCancellationError:
+        raise
+    except Exception as exc:
+        _emit_analyze_shared_preflight_event(
+            'failed',
+            settings,
+            file_contexts,
+            dimensions={'error_type': exc.__class__.__name__},
+            level=logging.WARNING,
+        )
+        return None
+
+    generated_output = (result or {}).get('generated_output_metadata') if isinstance(result, dict) else None
+    if planner_mode == 'shadow':
+        _emit_analyze_shared_preflight_event(
+            'shadow_compared',
+            settings,
+            file_contexts,
+            result=result,
+        )
+        return None
+
+    if planner_mode == 'active' and generated_output:
+        output_status = str(generated_output.get('status') or '').strip().lower()
+        event_name = 'failed' if output_status == 'failed' else 'accepted'
+        _emit_analyze_shared_preflight_event(
+            event_name,
+            settings,
+            file_contexts,
+            result=result,
+            generated_output=generated_output,
+            level=logging.WARNING if event_name == 'failed' else logging.INFO,
+        )
+        source = tabular_sources[0]
+        execution_failed = output_status == 'failed'
+        evidence_status = EVIDENCE_STATUS_FAILED if execution_failed else EVIDENCE_STATUS_PENDING
+        handoff_reply = (
+            'The full-source tabular work could not be started. No exhaustive tabular result has been completed.'
+            if execution_failed
+            else _build_tabular_analyze_durable_handoff(
+                generated_output,
+            )
+        )
+        coverage = {
+            'document_count': 1,
+            'total_windows': 1,
+            'processed_windows': 0,
+            'failed_windows': 1 if execution_failed else 0,
+            'total_chunks': 1,
+            'processed_chunks': 0,
+            'failed_chunks': 1 if execution_failed else 0,
+            'retries': 0,
+            'window_unit': 'tabular',
+            'documents': [{
+                'document_id': source.get('document_id'),
+                'document_name': source.get('display_name') or source.get('file_name'),
+                'file_name': source.get('file_name'),
+                'title': source.get('display_name') or source.get('file_name'),
+                'scope': source.get('scope'),
+                'scope_id': source.get('scope_id'),
+                'source_version': source.get('source_version'),
+                'total_windows': 1,
+                'processed_windows': 0,
+                'failed_windows': 1 if execution_failed else 0,
+                'total_chunks': 1,
+                'processed_chunks': 0,
+                'failed_chunks': 1 if execution_failed else 0,
+                'status': evidence_status,
+                'status_text': (
+                    'Full-source tabular work could not be started'
+                    if execution_failed
+                    else 'Full-source tabular work is pending'
+                ),
+                'failed_ranges': [],
+                'ranges': [],
+            }],
+            'progress_meta': {
+                'phase': 'failed' if execution_failed else 'queued',
+                'phase_label': 'Failed' if execution_failed else 'Queued',
+                'phase_detail': (
+                    'Full-source tabular work could not be started'
+                    if execution_failed
+                    else 'Full-source tabular work is running in the background'
+                ),
+                'status': evidence_status,
+                'percent_override': 100 if execution_failed else 0,
+                'phase_step': 1,
+                'phase_total_steps': 1,
+            },
+            'execution_contract': result.get('execution_contract'),
+            'execution_state': result.get('execution_state'),
+            'planner_contract_version': result.get('planner_contract_version'),
+            'planner_reason_code': result.get('reason_code'),
+            'durable_task_type': generated_output.get('task_type') or result.get('durable_task_type'),
+            'terminal': False,
+        }
+        evidence_envelope = build_evidence_envelope(
+            document_id=source.get('document_id'),
+            source_kind='tabular',
+            engine=EVIDENCE_ENGINE_TABULAR_TOOLS,
+            status=evidence_status,
+            summary=handoff_reply,
+            citations=[],
+            generated_artifacts=[generated_output],
+            coverage=coverage,
+        )
+        return {
+            'reply': handoff_reply,
+            'analysis_reply': handoff_reply,
+            'coverage': coverage,
+            'documents': list(coverage.get('documents') or []),
+            'document_ids': [source.get('document_id')],
+            'mixed_source_manifest': list(manifest or []),
+            'mixed_source_evidence': [evidence_envelope],
+            'generated_tabular_outputs': [generated_output],
+            'agent_citations': [],
+            'tabular_execution_contract': result.get('execution_contract'),
+            'tabular_execution_state': result.get('execution_state'),
+            'tabular_planner_contract_version': result.get('planner_contract_version'),
+            'tabular_durable_task_type': generated_output.get('task_type') or result.get('durable_task_type'),
+            'tabular_preflight_result': result,
+        }
+
+    _emit_analyze_shared_preflight_event(
+        'declined',
+        settings,
+        file_contexts,
+        result=result,
+    )
+    return None
+
+
 def _execute_mixed_source_analyze_workflow(
     workflow,
     analysis_config,
@@ -2367,6 +2640,20 @@ def _execute_mixed_source_analyze_workflow(
     evidence_envelopes = []
     generated_tabular_outputs = []
     tabular_agent_citations = []
+
+    tabular_preflight_result = _maybe_execute_pure_tabular_analyze_preflight(
+        workflow,
+        settings,
+        manifest,
+        partitions,
+        conversation_id=conversation_id,
+        thought_tracker=thought_tracker,
+        live_thought_callback=live_thought_callback,
+        cancel_requested=cancel_requested,
+        request_correlation_id=request_correlation_id,
+    )
+    if tabular_preflight_result:
+        return tabular_preflight_result
 
     narrative_sources = partitions['narrative_sources']
     if narrative_sources:
