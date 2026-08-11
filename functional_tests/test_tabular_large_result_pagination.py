@@ -2,8 +2,8 @@
 # test_tabular_large_result_pagination.py
 """
 Functional test for tabular SK large-result pagination and output trimming.
-Version: 0.250.152
-Implemented in: 0.242.067; bounded CSV query path in 0.250.060; source descriptor generalization in 0.250.127; serialized row-size estimation in 0.250.152
+Version: 0.250.155
+Implemented in: 0.242.067; bounded CSV query path in 0.250.060; source descriptor generalization in 0.250.127; serialized row-size estimation in 0.250.152; contains replay semantics in 0.250.155
 
 This test ensures row-returning tabular processing tools support start_row/max_rows
 pagination, avoid skipped rows after auto-trimming oversized output, honor
@@ -459,6 +459,61 @@ def test_filter_rows_csv_attaches_replayable_descriptor_for_full_cohort():
         return False
 
 
+def test_filter_rows_csv_contains_replay_uses_literal_semantics():
+    """Verify contains filters use literal semantics in foreground and durable replay."""
+    print('🔍 Testing filter_rows contains replay literal semantics...')
+
+    try:
+        source_frame = pd.DataFrame([
+            {'transaction_id': 'A.*', 'status': 'Open'},
+            {'transaction_id': 'ABCD', 'status': 'Open'},
+            {'transaction_id': 'a.*', 'status': 'Closed'},
+            {'transaction_id': 'B-100', 'status': 'Closed'},
+        ])
+        csv_content = source_frame.to_csv(index=False).encode('utf-8')
+        plugin = TabularProcessingPlugin()
+        plugin._resolve_blob_location_with_fallback = lambda *args, **kwargs: (
+            'mock-container',
+            'nested/version-7/large-results.csv',
+        )
+        plugin._get_blob_service_client = lambda: MockCsvBlobServiceClient(csv_content)
+        plugin._read_tabular_blob_to_dataframe = lambda *args, **kwargs: source_frame.copy()
+
+        result = asyncio.run(plugin.filter_rows(
+            user_id='test-user',
+            conversation_id='test-conversation',
+            filename='large-results.csv',
+            column='transaction_id',
+            operator='contains',
+            value='A.*',
+            source='chat',
+            return_columns='transaction_id,status',
+            max_rows='100',
+        ))
+        payload = json.loads(result)
+        descriptor = result.internal_metadata['tabular_generated_export_source']
+        replayed_rows = list(PLUGIN_MODULE.iter_tabular_csv_query_rows(
+            csv_stream=io.BytesIO(csv_content),
+            query_expression=descriptor['query_expression'],
+            return_columns=descriptor['return_columns'],
+            source_chunk_rows=2,
+            tabular_plugin=plugin,
+        ))
+
+        assert payload['total_matches'] == 2, payload
+        assert descriptor['expected_row_count'] == 2, descriptor
+        assert 'regex=False' in descriptor['query_expression'], descriptor
+        assert [row['transaction_id'] for _, row in replayed_rows] == ['A.*', 'a.*'], replayed_rows
+
+        print('✅ filter_rows contains replay literal semantics passed')
+        return True
+    except Exception as exc:
+        print(f'❌ Test failed: {exc}')
+        import traceback
+        traceback.print_exc()
+        return False
+
+
 def test_filter_rows_csv_rejects_non_replayable_normalized_matching():
     """Verify normalized matching fails closed instead of advertising partial replay."""
     print('🔍 Testing normalized filter_rows replay rejection...')
@@ -575,6 +630,7 @@ if __name__ == '__main__':
         test_query_tabular_data_supports_return_columns_and_pagination,
         test_query_tabular_csv_uses_bounded_shared_engine_and_exact_descriptor,
         test_filter_rows_csv_attaches_replayable_descriptor_for_full_cohort,
+        test_filter_rows_csv_contains_replay_uses_literal_semantics,
         test_filter_rows_csv_rejects_non_replayable_normalized_matching,
         test_search_rows_csv_attaches_replayable_multi_column_descriptor,
     ]

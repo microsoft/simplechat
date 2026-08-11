@@ -2418,7 +2418,7 @@ class TabularProcessingPlugin:
             text_series = series.astype(str)
             value_text = str(value)
             if op == 'contains':
-                return text_series.str.contains(value_text, case=False, na=False)
+                return text_series.str.contains(value_text, case=False, regex=False, na=False)
             if op == 'startswith':
                 return text_series.str.lower().str.startswith(value_text.lower())
             if op == 'endswith':
