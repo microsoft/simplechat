@@ -2,12 +2,12 @@
 #!/usr/bin/env python3
 """
 Functional test for Data Management history pagination.
-Version: 0.250.157
+Version: 0.250.159
 Implemented in: 0.250.103
 Updated in: 0.250.104
 Updated in: 0.250.105
 Updated in: 0.250.106
-Updated in: 0.250.157
+Updated in: 0.250.159
 
 This test ensures job history and backup inventory use deterministic, filtered,
 sanitized Cosmos pages with opaque continuation state and global summaries.
@@ -184,7 +184,7 @@ def load_data_management_module(monkeypatch, container):
     """Load production helpers with an in-memory Data Management job container."""
     config_module = types.ModuleType("config")
     config_module.CLIENTS = {}
-    config_module.VERSION = "0.250.157"
+    config_module.VERSION = "0.250.159"
     config_module.SECRET_KEY = "history-pagination-functional-test-secret"
     config_module.cosmos_data_management_jobs_container = container
     config_module.cosmos_data_management_job_items_container = container

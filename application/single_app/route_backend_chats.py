@@ -57,6 +57,19 @@ from functions_mixed_source_orchestration import (
 from functions_tabular_analysis import (
     get_new_plugin_invocations as _shared_get_new_plugin_invocations,
 )
+from functions_tabular_orchestration import (
+    get_tabular_generated_output_format as _shared_get_tabular_generated_output_format,
+    get_tabular_generated_output_task_type as _shared_get_tabular_generated_output_task_type,
+    question_requests_tabular_generated_output as _shared_question_requests_tabular_generated_output,
+    question_requests_tabular_hierarchical_analysis as _shared_question_requests_tabular_hierarchical_analysis,
+    settings_flag_enabled as _shared_settings_flag_enabled,
+)
+from functions_tabular_parity_contract import (
+    TABULAR_PARITY_STATE_QUEUED,
+    build_tabular_parity_planner_result,
+    classify_tabular_parity_request,
+    emit_tabular_parity_event,
+)
 import builtins
 import asyncio, types
 import ast
@@ -4982,105 +4995,29 @@ def build_tabular_computed_results_system_message(source_label, tabular_analysis
 
 def get_tabular_generated_output_format(user_question):
     """Return the requested generated-output file format when the user asked for one."""
-    return get_requested_structured_artifact_format(user_question)
+    return _shared_get_tabular_generated_output_format(user_question)
 
 
 def question_requests_tabular_generated_output(user_question):
     """Return True when the prompt asks for a downloadable structured tabular export."""
-    normalized_question = str(user_question or '').strip().lower()
-    requested_format = get_tabular_generated_output_format(user_question)
-    if not normalized_question or not requested_format:
-        return False
-
-    exhaustive_markers = (
-        'all rows',
-        'every row',
-        'for each row',
-        'for every row',
-        'full json',
-        'full csv',
-        'full xml',
-        'entire',
-        'complete',
-        'convert',
-        'download',
-        'save',
-        'export',
-        'create',
-        'generate',
-        'populate',
-        'one object per',
-        'one row per',
-        'one output row per',
-        'each object',
-        'each row',
-    )
-    if requested_format == 'csv' and assistant_table_export_requested(user_question):
-        return True
-
-    return any(marker in normalized_question for marker in exhaustive_markers)
+    return _shared_question_requests_tabular_generated_output(user_question)
 
 
 def question_requests_tabular_hierarchical_analysis(user_question):
     """Return True when the prompt asks for whole-dataset row-level synthesis."""
-    normalized_question = str(user_question or '').strip().lower()
-    if not normalized_question:
-        return False
-
-    exhaustive_markers = (
-        'all rows',
-        'every row',
-        'each row',
-        'for each row',
-        'for every row',
-        'entire dataset',
-        'entire file',
-        'whole dataset',
-        'whole file',
-    )
-    analysis_markers = (
-        'analyze',
-        'analyse',
-        'summarize',
-        'summarise',
-        'synthesize',
-        'synthesise',
-        'evaluate',
-        'assess',
-        'classify',
-        'review',
-        'find patterns',
-        'patterns',
-        'themes',
-        'risks',
-        'risk patterns',
-        'answer',
-        'answer each question',
-        'answer every question',
-    )
-    return any(marker in normalized_question for marker in exhaustive_markers) and any(
-        marker in normalized_question for marker in analysis_markers
-    )
+    return _shared_question_requests_tabular_hierarchical_analysis(user_question)
 
 
 def _settings_flag_enabled(settings, key, default=False):
-    value = (settings or {}).get(key, default)
-    if isinstance(value, str):
-        return value.strip().lower() in {'1', 'true', 'yes', 'on'}
-    return bool(value)
+    return _shared_settings_flag_enabled(settings, key, default=default)
 
 
 def _get_tabular_generated_output_task_type(generated_output_requested, hierarchical_analysis_requested, settings):
-    hierarchical_analysis_enabled = _settings_flag_enabled(
+    return _shared_get_tabular_generated_output_task_type(
+        generated_output_requested,
+        hierarchical_analysis_requested,
         settings,
-        'enable_tabular_hierarchical_analysis',
-        False,
     )
-    if generated_output_requested and hierarchical_analysis_requested and hierarchical_analysis_enabled:
-        return TABULAR_RUN_TASK_COMBINED
-    if not generated_output_requested and hierarchical_analysis_requested and hierarchical_analysis_enabled:
-        return TABULAR_RUN_TASK_HIERARCHICAL_ANALYSIS
-    return None
 
 
 def question_requests_tabular_structured_object_output(user_question):
@@ -6012,6 +5949,35 @@ def maybe_queue_direct_tabular_generated_output(
     request_correlation_id=None,
 ):
     """Queue an exhaustive tabular generated-output run directly from an authorized source."""
+    parity_classifier = globals().get('classify_tabular_parity_request')
+    parity_emitter = globals().get('emit_tabular_parity_event')
+    parity_result_builder = globals().get('build_tabular_parity_planner_result')
+    parity_result = parity_classifier(user_question) if callable(parity_classifier) else None
+
+    def emit_search_parity_event(event_name, planner_result=None, metrics=None, dimensions=None, level=None):
+        if not callable(parity_emitter):
+            return None
+        kwargs = {
+            'planner_result': planner_result or parity_result,
+            'metrics': metrics,
+            'dimensions': dimensions,
+        }
+        if level is not None:
+            kwargs['level'] = level
+        return parity_emitter(settings, event_name, 'search', **kwargs)
+
+    emit_search_parity_event(
+        'classification_started',
+        metrics={'source_count': len(file_contexts or [])},
+    )
+    emit_search_parity_event(
+        'classification_completed',
+        metrics={'source_count': len(file_contexts or [])},
+    )
+    emit_search_parity_event(
+        'durable_preflight_attempted',
+        metrics={'source_count': len(file_contexts or [])},
+    )
     try:
         direct_source = _build_direct_tabular_generated_output_source(
             user_question,
@@ -6021,6 +5987,11 @@ def maybe_queue_direct_tabular_generated_output(
             settings,
         )
         if not direct_source:
+            emit_search_parity_event(
+                'durable_preflight_declined',
+                metrics={'source_count': len(file_contexts or [])},
+                dimensions={'reason_code': 'no_direct_source'},
+            )
             return None
 
         raise_if_mixed_source_cancelled(
@@ -6043,6 +6014,31 @@ def maybe_queue_direct_tabular_generated_output(
             analysis_objective=direct_source.get('analysis_objective'),
         )
         background_metadata = build_background_tabular_generated_output_metadata(background_run)
+        accepted_parity_result = parity_result
+        if callable(parity_result_builder):
+            accepted_parity_result = parity_result_builder(
+                direct_source.get('task_type') or getattr(parity_result, 'execution_contract', 'structured_export'),
+                execution_state=globals().get('TABULAR_PARITY_STATE_QUEUED', 'queued'),
+                requires_full_source=True,
+                requires_structured_artifact=not direct_source.get('analysis_only_requested'),
+                requested_output_format=direct_source.get('output_format'),
+                decision_reason_code=getattr(parity_result, 'decision_reason_code', 'direct_source_backed_preflight'),
+                generated_tabular_outputs=[background_metadata],
+            )
+        emit_search_parity_event(
+            'durable_preflight_accepted',
+            planner_result=accepted_parity_result,
+            metrics={
+                'source_count': len(file_contexts or []),
+                'row_count': direct_source.get('row_count'),
+                'batch_count_estimate': direct_source.get('batch_count_estimate'),
+            },
+        )
+        emit_search_parity_event(
+            'response_metadata_emitted',
+            planner_result=accepted_parity_result,
+            metrics={'generated_output_count': 1},
+        )
         if callable(thought_callback):
             output_label = str(direct_source['output_format'] or 'json').upper()
             if direct_source.get('combined_requested'):
@@ -6090,6 +6086,12 @@ def maybe_queue_direct_tabular_generated_output(
     except MixedSourceCancellationError:
         raise
     except Exception as exc:
+        emit_search_parity_event(
+            'durable_preflight_failed',
+            metrics={'source_count': len(file_contexts or [])},
+            dimensions={'error_type': exc.__class__.__name__},
+            level=logging.WARNING,
+        )
         log_event(
             '[TABULAR_GENERATED_OUTPUT] Direct source-backed generated output queueing skipped',
             {
@@ -6651,6 +6653,7 @@ async def maybe_create_tabular_generated_output(
     cancel_requested=None,
     request_correlation_id=None,
     token_usage_callback=None,
+    mode='search',
 ):
     """Build, upload, or queue generated tabular exports and analysis artifacts when requested."""
     raise_if_mixed_source_cancelled(
@@ -6671,6 +6674,36 @@ async def maybe_create_tabular_generated_output(
         return None
     if not generated_output_requested and not hierarchical_analysis_requested:
         return None
+
+    parity_classifier = globals().get('classify_tabular_parity_request')
+    parity_emitter = globals().get('emit_tabular_parity_event')
+    parity_result_builder = globals().get('build_tabular_parity_planner_result')
+    parity_result = parity_classifier(user_question) if callable(parity_classifier) else None
+
+    def emit_fallback_parity_event(event_name, planner_result=None, metrics=None, dimensions=None, level=None):
+        if not callable(parity_emitter):
+            return None
+        kwargs = {
+            'planner_result': planner_result or parity_result,
+            'metrics': metrics,
+            'dimensions': dimensions,
+        }
+        if level is not None:
+            kwargs['level'] = level
+        return parity_emitter(settings, event_name, mode, **kwargs)
+
+    emit_fallback_parity_event(
+        'classification_started',
+        metrics={'invocation_count': len(invocations or [])},
+    )
+    emit_fallback_parity_event(
+        'classification_completed',
+        metrics={'invocation_count': len(invocations or [])},
+    )
+    emit_fallback_parity_event(
+        'post_tool_generated_output_fallback_attempted',
+        metrics={'invocation_count': len(invocations or [])},
+    )
 
     output_format = get_tabular_generated_output_format(user_question) or 'md'
     candidate_diagnostics = _build_tabular_generated_output_candidate_diagnostics(invocations)
@@ -6849,6 +6882,27 @@ async def maybe_create_tabular_generated_output(
                 batch_count=len(materialized_batches),
             ),
         )
+        queued_parity_result = parity_result
+        if callable(parity_result_builder):
+            queued_parity_result = parity_result_builder(
+                queued_task_type or getattr(parity_result, 'execution_contract', 'structured_export'),
+                execution_state=globals().get('TABULAR_PARITY_STATE_QUEUED', 'queued'),
+                requires_full_source=True,
+                requires_structured_artifact=not analysis_only_requested,
+                requested_output_format=queued_output_format,
+                decision_reason_code=getattr(parity_result, 'decision_reason_code', 'post_tool_fallback'),
+                generated_tabular_outputs=[background_metadata],
+            )
+        emit_fallback_parity_event(
+            'post_tool_generated_output_fallback_used',
+            planner_result=queued_parity_result,
+            metrics={'generated_output_count': 1, 'row_count': expected_row_count},
+        )
+        emit_fallback_parity_event(
+            'response_metadata_emitted',
+            planner_result=queued_parity_result,
+            metrics={'generated_output_count': 1},
+        )
         return background_metadata
 
     should_queue_source_backed_run = bool(
@@ -6945,6 +6999,27 @@ async def maybe_create_tabular_generated_output(
                 batch_index=0,
                 batch_count=estimated_batch_count,
             ),
+        )
+        queued_parity_result = parity_result
+        if callable(parity_result_builder):
+            queued_parity_result = parity_result_builder(
+                queued_task_type or getattr(parity_result, 'execution_contract', 'structured_export'),
+                execution_state=globals().get('TABULAR_PARITY_STATE_QUEUED', 'queued'),
+                requires_full_source=True,
+                requires_structured_artifact=not analysis_only_requested,
+                requested_output_format=queued_output_format,
+                decision_reason_code=getattr(parity_result, 'decision_reason_code', 'post_tool_fallback'),
+                generated_tabular_outputs=[background_metadata],
+            )
+        emit_fallback_parity_event(
+            'post_tool_generated_output_fallback_used',
+            planner_result=queued_parity_result,
+            metrics={'generated_output_count': 1, 'row_count': expected_row_count},
+        )
+        emit_fallback_parity_event(
+            'response_metadata_emitted',
+            planner_result=queued_parity_result,
+            metrics={'generated_output_count': 1},
         )
         return background_metadata
 
@@ -15728,6 +15803,7 @@ def register_route_backend_chats(bp):
             history_grounded_search_used = False
             history_only_answerability = None
             prior_grounded_document_refs = []
+            prior_grounded_source_merge = None
             continuity_decision = None
             effective_document_scope = document_scope
             effective_selected_document_ids = list(selected_document_ids or [])
@@ -16067,6 +16143,67 @@ def register_route_backend_chats(bp):
                 selected_document_id = effective_selected_document_id
                 document_scope = effective_document_scope
 
+            prior_grounded_document_refs = _normalize_prior_grounded_document_refs(conversation_item)
+            current_document_context_available = bool(
+                effective_selected_document_ids
+                or effective_selected_document_id
+                or hybrid_search_enabled
+                or document_context_requested
+            )
+            if (
+                current_document_context_available
+                and prior_grounded_document_refs
+                and _prior_grounded_source_reference_requested(user_message)
+            ):
+                prior_search_parameters = build_prior_grounded_document_search_parameters(
+                    prior_grounded_document_refs
+                )
+                prior_search_parameters = revalidate_prior_grounded_document_search_parameters(
+                    user_id,
+                    prior_search_parameters,
+                )
+                prior_grounded_source_merge = _merge_prior_grounded_sources_with_current_context(
+                    effective_selected_document_ids,
+                    effective_document_scope,
+                    effective_active_group_ids,
+                    effective_active_public_workspace_ids,
+                    prior_search_parameters,
+                )
+                if prior_grounded_source_merge.get('used'):
+                    effective_selected_document_ids = list(
+                        prior_grounded_source_merge.get('document_ids') or []
+                    )
+                    effective_selected_document_id = (
+                        effective_selected_document_ids[0]
+                        if len(effective_selected_document_ids) == 1
+                        else None
+                    )
+                    effective_document_scope = prior_grounded_source_merge.get('doc_scope') or 'all'
+                    effective_active_group_ids = list(
+                        prior_grounded_source_merge.get('active_group_ids') or []
+                    )
+                    effective_active_group_id = (
+                        effective_active_group_ids[0]
+                        if effective_active_group_ids
+                        else None
+                    )
+                    effective_active_public_workspace_ids = list(
+                        prior_grounded_source_merge.get('active_public_workspace_ids') or []
+                    )
+                    effective_active_public_workspace_id = (
+                        effective_active_public_workspace_ids[0]
+                        if effective_active_public_workspace_ids
+                        else None
+                    )
+                    selected_document_ids = list(effective_selected_document_ids)
+                    selected_document_id = effective_selected_document_id
+                    document_scope = effective_document_scope
+                    active_group_ids = list(effective_active_group_ids)
+                    active_group_id = effective_active_group_id
+                    active_public_workspace_ids = list(effective_active_public_workspace_ids)
+                    active_public_workspace_id = effective_active_public_workspace_id
+                    hybrid_search_enabled = True
+
             mixed_source_manifest = []
             mixed_source_partitions = {}
             mixed_source_narrative_document_ids = []
@@ -16274,6 +16411,13 @@ def register_route_backend_chats(bp):
                         'tags': tags_filter,
                         'classification': classifications_to_send
                     }
+                    if prior_grounded_source_merge:
+                        user_metadata['workspace_search']['prior_grounded_source_merge'] = {
+                            'used': bool(prior_grounded_source_merge.get('used')),
+                            'prior_document_count': len(prior_grounded_source_merge.get('prior_document_ids') or []),
+                            'added_document_count': len(prior_grounded_source_merge.get('prior_added_document_ids') or []),
+                            'selection_origin': 'selected+history',
+                        }
                     if assigned_knowledge_filters:
                         assigned_knowledge = assigned_knowledge_filters.get('assigned_knowledge') or {}
                         user_metadata['workspace_search']['assigned_knowledge'] = {
@@ -16599,8 +16743,8 @@ def register_route_backend_chats(bp):
                 not original_hybrid_search_enabled
                 and not explicit_external_retrieval_requested
                 and not mixed_source_explicit_selection
+                and not prior_grounded_source_merge
             ):
-                prior_grounded_document_refs = _normalize_prior_grounded_document_refs(conversation_item)
                 if prior_grounded_document_refs:
                     continuity_decision = _resolve_reauthorized_continuity_decision(
                         settings,
@@ -18283,6 +18427,7 @@ def register_route_backend_chats(bp):
                 current_document_context_requested=(
                     is_mixed_source_chat_search_enabled(settings)
                     and document_context_requested
+                    or bool(prior_grounded_source_merge)
                 ),
             ):
                 history_grounding_message = build_history_grounding_system_message()
@@ -19971,6 +20116,7 @@ def register_route_backend_chats(bp):
                 history_grounded_search_used = False
                 history_only_answerability = None
                 prior_grounded_document_refs = []
+                prior_grounded_source_merge = None
                 continuity_decision = None
                 effective_document_scope = document_scope
                 effective_selected_document_ids = list(selected_document_ids or [])
@@ -20330,6 +20476,67 @@ def register_route_backend_chats(bp):
                     selected_document_id = effective_selected_document_id
                     document_scope = effective_document_scope
 
+                prior_grounded_document_refs = _normalize_prior_grounded_document_refs(conversation_item)
+                current_document_context_available = bool(
+                    effective_selected_document_ids
+                    or effective_selected_document_id
+                    or hybrid_search_enabled
+                    or document_context_requested
+                )
+                if (
+                    current_document_context_available
+                    and prior_grounded_document_refs
+                    and _prior_grounded_source_reference_requested(user_message)
+                ):
+                    prior_search_parameters = build_prior_grounded_document_search_parameters(
+                        prior_grounded_document_refs
+                    )
+                    prior_search_parameters = revalidate_prior_grounded_document_search_parameters(
+                        user_id,
+                        prior_search_parameters,
+                    )
+                    prior_grounded_source_merge = _merge_prior_grounded_sources_with_current_context(
+                        effective_selected_document_ids,
+                        effective_document_scope,
+                        effective_active_group_ids,
+                        effective_active_public_workspace_ids,
+                        prior_search_parameters,
+                    )
+                    if prior_grounded_source_merge.get('used'):
+                        effective_selected_document_ids = list(
+                            prior_grounded_source_merge.get('document_ids') or []
+                        )
+                        effective_selected_document_id = (
+                            effective_selected_document_ids[0]
+                            if len(effective_selected_document_ids) == 1
+                            else None
+                        )
+                        effective_document_scope = prior_grounded_source_merge.get('doc_scope') or 'all'
+                        effective_active_group_ids = list(
+                            prior_grounded_source_merge.get('active_group_ids') or []
+                        )
+                        effective_active_group_id = (
+                            effective_active_group_ids[0]
+                            if effective_active_group_ids
+                            else None
+                        )
+                        effective_active_public_workspace_ids = list(
+                            prior_grounded_source_merge.get('active_public_workspace_ids') or []
+                        )
+                        effective_active_public_workspace_id = (
+                            effective_active_public_workspace_ids[0]
+                            if effective_active_public_workspace_ids
+                            else None
+                        )
+                        selected_document_ids = list(effective_selected_document_ids)
+                        selected_document_id = effective_selected_document_id
+                        document_scope = effective_document_scope
+                        active_group_ids = list(effective_active_group_ids)
+                        active_group_id = effective_active_group_id
+                        active_public_workspace_ids = list(effective_active_public_workspace_ids)
+                        active_public_workspace_id = effective_active_public_workspace_id
+                        hybrid_search_enabled = True
+
                 mixed_source_manifest = []
                 mixed_source_partitions = {}
                 mixed_source_narrative_document_ids = []
@@ -20527,6 +20734,13 @@ def register_route_backend_chats(bp):
                             'active_public_workspace_ids': effective_active_public_workspace_ids,
                             'classification': classifications_to_send
                         }
+                        if prior_grounded_source_merge:
+                            user_metadata['workspace_search']['prior_grounded_source_merge'] = {
+                                'used': bool(prior_grounded_source_merge.get('used')),
+                                'prior_document_count': len(prior_grounded_source_merge.get('prior_document_ids') or []),
+                                'added_document_count': len(prior_grounded_source_merge.get('prior_added_document_ids') or []),
+                                'selection_origin': 'selected+history',
+                            }
                         if assigned_knowledge_filters:
                             assigned_knowledge = assigned_knowledge_filters.get('assigned_knowledge') or {}
                             user_metadata['workspace_search']['assigned_knowledge'] = {
@@ -20872,8 +21086,8 @@ def register_route_backend_chats(bp):
                     not original_hybrid_search_enabled
                     and not explicit_external_retrieval_requested
                     and not mixed_source_explicit_selection
+                    and not prior_grounded_source_merge
                 ):
-                    prior_grounded_document_refs = _normalize_prior_grounded_document_refs(conversation_item)
                     if prior_grounded_document_refs:
                         continuity_decision = _resolve_reauthorized_continuity_decision(
                             settings,
@@ -22170,6 +22384,7 @@ def register_route_backend_chats(bp):
                     current_document_context_requested=(
                         is_mixed_source_chat_search_enabled(settings)
                         and document_context_requested
+                        or bool(prior_grounded_source_merge)
                     ),
                 ):
                     history_grounding_message = build_history_grounding_system_message()
@@ -24244,6 +24459,82 @@ def revalidate_prior_grounded_document_search_parameters(user_id, search_paramet
         else 'all'
     )
     return normalized_parameters
+
+
+def _prior_grounded_source_reference_requested(user_message):
+    """Return whether the user is asking to reuse a prior grounded source."""
+    normalized_message = re.sub(r'\s+', ' ', str(user_message or '').strip().casefold())
+    if not normalized_message:
+        return False
+
+    source_noun_pattern = (
+        r'(?:source|document|file|template|spreadsheet|workbook|table|xml|json|pdf|csv|xlsx|xls)'
+    )
+    reference_patterns = (
+        rf'\b(?:that|those|same|previous|prior|earlier|last)\s+{source_noun_pattern}\b',
+        rf'\b(?:that|the|same|previous|prior|earlier|last)\s+'
+        rf'(?:xml|json|pdf|csv|xlsx|xls)\s+(?:source|document|file|template|workbook)\b',
+        rf'\b(?:into|in|with|using|from|against|compare\s+to)\s+'
+        rf'(?:that|the|same|previous|prior|earlier|last)\s+{source_noun_pattern}\b',
+    )
+    return any(re.search(pattern, normalized_message) for pattern in reference_patterns)
+
+
+def _merge_unique_strings(*collections):
+    merged = []
+    seen_values = set()
+    for collection in collections:
+        for value in list(collection or []):
+            normalized_value = str(value or '').strip()
+            if not normalized_value or normalized_value in seen_values:
+                continue
+            seen_values.add(normalized_value)
+            merged.append(normalized_value)
+    return merged
+
+
+def _merge_prior_grounded_sources_with_current_context(
+    current_document_ids,
+    current_document_scope,
+    current_active_group_ids,
+    current_active_public_workspace_ids,
+    prior_search_parameters,
+):
+    """Merge reauthorized prior grounded source parameters into current source context."""
+    prior_document_ids = _normalize_conversation_task_document_ids(
+        (prior_search_parameters or {}).get('document_ids')
+    )
+    current_document_ids = _normalize_conversation_task_document_ids(current_document_ids)
+    current_document_id_set = set(current_document_ids)
+    prior_only_document_ids = [
+        document_id
+        for document_id in prior_document_ids
+        if document_id not in current_document_id_set
+    ]
+    merged_document_ids = _merge_unique_strings(current_document_ids, prior_document_ids)
+
+    current_scope = str(current_document_scope or '').strip().lower()
+    prior_scope = str((prior_search_parameters or {}).get('doc_scope') or '').strip().lower()
+    scope_candidates = [scope for scope in (current_scope, prior_scope) if scope]
+    merged_scope = scope_candidates[0] if len(set(scope_candidates)) == 1 else 'all'
+    if not scope_candidates:
+        merged_scope = None
+
+    return {
+        'used': bool(prior_only_document_ids),
+        'document_ids': merged_document_ids,
+        'prior_document_ids': prior_document_ids,
+        'prior_added_document_ids': prior_only_document_ids,
+        'doc_scope': merged_scope,
+        'active_group_ids': _merge_unique_strings(
+            current_active_group_ids,
+            (prior_search_parameters or {}).get('active_group_ids'),
+        ),
+        'active_public_workspace_ids': _merge_unique_strings(
+            current_active_public_workspace_ids,
+            (prior_search_parameters or {}).get('active_public_workspace_ids'),
+        ),
+    }
 
 
 def build_history_only_assessment_messages(history_segments, default_system_prompt=''):

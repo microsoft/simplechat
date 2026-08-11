@@ -1,4 +1,4 @@
-# Data Management History Index 500 Fix (v0.250.157)
+# Data Management History Index 500 Fix (v0.250.159)
 
 ## Issue Description
 
@@ -13,9 +13,9 @@ The browser then showed a non-JSON response message in the table because Flask r
 
 Data Management history pagination orders durable job records by `created_at` and `id`. Existing `data_management_jobs` Cosmos DB containers can be missing the composite index required for that ordered cross-partition query, especially if the container was created before the history pagination index was introduced. The route only handled validation errors, so Cosmos provider failures could escape as generic HTML 500 responses.
 
-## Fixed in version: **0.250.157**
+## Fixed in version: **0.250.159**
 
-`application/single_app/config.py` was updated from `0.250.156` to `0.250.157`.
+`application/single_app/config.py` was updated from `0.250.158` to `0.250.159` during PR conflict resolution.
 
 ## Technical Details
 
