@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Functional test for durable tabular generated-output background exports.
-Version: 0.250.150
-Implemented in: 0.241.060; throughput and timeout hardening in: 0.250.070; unified durable run contract in: 0.250.128; Phase 6 rolling worker pool compatibility in: 0.250.142; safe retry reason status text in: 0.250.147; collapsed operational details in: 0.250.150
+Version: 0.250.151
+Implemented in: 0.241.060; throughput and timeout hardening in: 0.250.070; unified durable run contract in: 0.250.128; Phase 6 rolling worker pool compatibility in: 0.250.142; safe retry reason status text in: 0.250.147; collapsed operational details in: 0.250.150; simplified completed artifact cards in: 0.250.151
 
 This test ensures that large tabular structured exports are wired through the
 durable background queue, status API, queued retry recovery, and chat progress
@@ -288,10 +288,87 @@ def test_chat_ui_renders_and_polls_background_exports():
     assert_contains(source_text, "detailsSummary.textContent = 'View details'", 'details disclosure label')
     assert_contains(source_text, 'supportingDetailElements.forEach', 'supporting metadata disclosure routing')
     assert_contains(source_text, 'backgroundStatusElements?.detailsContent', 'background preview disclosure routing')
+    assert_contains(source_text, 'isCompletedTabularArtifact', 'completed tabular card state')
+    assert_contains(source_text, 'generated-artifact-view-btn', 'completed artifact View action')
+    assert_contains(source_text, 'generated-artifact-preview-modal', 'bounded artifact preview modal')
+    assert_contains(source_text, 'hideCompletedGeneratedArtifactHandoff', 'stale completion handoff suppression')
     if 'details.open = true' in source_text:
         raise AssertionError('Background export operational details must remain collapsed until the user expands them')
     if 'generated-tabular-refresh-status-btn' in source_text or 'Refresh Status' in source_text:
         raise AssertionError('Background export cards must rely on automatic polling without a manual refresh button')
+
+
+def test_completed_artifact_preview_is_bounded_and_ordered():
+    """Completed artifact metadata carries only a bounded validated preview."""
+    module_tree = parse_python(EXPORT_MODULE)
+    helper_names = {
+        '_build_structured_export_preview_rows',
+        '_build_artifact_metadata',
+    }
+    helper_nodes = [
+        node
+        for node in module_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name in helper_names
+    ]
+    if len(helper_nodes) != len(helper_names):
+        raise AssertionError('Completed artifact preview helpers were not found')
+
+    batches = {
+        'output-1': [
+            {'source_row_number': 1, 'source_row_identity': 'A-1', 'answer': 'first'},
+            {'source_row_number': 2, 'source_row_identity': 'A-2', 'answer': 'x' * 20},
+        ],
+        'output-2': [
+            {'source_row_number': 3, 'source_row_identity': 'A-3', 'answer': 'third'},
+            {'source_row_number': 4, 'source_row_identity': 'A-4', 'answer': 'fourth'},
+        ],
+    }
+    validated_batches = []
+    namespace = {
+        'TABULAR_EXPORT_ARTIFACT_PREVIEW_MAX_ROWS': 3,
+        'TABULAR_EXPORT_ARTIFACT_PREVIEW_MAX_CHARS': 24000,
+        'TABULAR_EXPORT_ARTIFACT_PREVIEW_CELL_MAX_CHARS': 12,
+        'TABULAR_EXPORT_OUTPUT_ROW_NUMBER_FIELD': 'source_row_number',
+        '_safe_int': lambda value: int(value or 0),
+        '_output_blob_path': lambda user_id, conversation_id, run_id, batch_number: f'output-{batch_number}',
+        '_validate_tabular_output_checkpoint_metadata': (
+            lambda run, path, batch_number: validated_batches.append((path, batch_number))
+        ),
+        '_download_json_blob': lambda path: batches[path],
+        '_serialize_generated_output_value': lambda value: '' if value is None else str(value),
+        'build_safe_csv_headers': lambda values: list(values),
+        'json': __import__('json'),
+    }
+    exec(
+        compile(ast.Module(body=helper_nodes, type_ignores=[]), str(EXPORT_MODULE), 'exec'),
+        namespace,
+    )
+
+    run = {
+        'id': 'run-preview',
+        'user_id': 'user-1',
+        'conversation_id': 'conversation-1',
+        'batch_count': 2,
+        'output_format': 'csv',
+        'output_schema': ['source_row_number', 'source_row_identity', 'answer'],
+    }
+    preview_rows = namespace['_build_structured_export_preview_rows'](run)
+    artifact = namespace['_build_artifact_metadata'](
+        {'id': 'artifact-1', 'file_name': 'generated.csv'},
+        'fallback.csv',
+        'csv',
+        preview_rows=preview_rows,
+        preview_text='m' * 25000,
+        suppress_assistant_text=True,
+    )
+
+    assert [row['source_row_number'] for row in preview_rows] == ['1', '2', '3']
+    assert preview_rows[1]['answer'] == 'xxxxxxxxx...'
+    assert validated_batches == [('output-1', 1), ('output-2', 2)]
+    assert artifact['preview_rows'] == preview_rows
+    assert artifact['preview_columns'] == ['source_row_number', 'source_row_identity', 'answer']
+    assert len(artifact['preview_text']) == 24000
+    assert artifact['suppress_assistant_text'] is True
 
 
 def main():
@@ -304,6 +381,7 @@ def main():
         test_generated_export_batch_packing_phase_three,
         test_background_scheduler_and_config_registered,
         test_chat_ui_renders_and_polls_background_exports,
+        test_completed_artifact_preview_is_bounded_and_ordered,
     ]
     results = []
 
