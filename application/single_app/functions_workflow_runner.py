@@ -183,6 +183,11 @@ from functions_settings import (
     normalize_model_endpoints,
     resolve_model_endpoint_foundry_scope,
 )
+from functions_tabular_parity_contract import (
+    TABULAR_PARITY_EVENT_FIRST_FOREGROUND_TABULAR_INVOCATION,
+    classify_tabular_parity_request,
+    emit_tabular_parity_event,
+)
 from functions_tabular_generated_exports import (
     build_background_tabular_generated_output_metadata,
     build_tabular_generated_output_row_batches,
@@ -3170,6 +3175,17 @@ def _maybe_execute_tabular_document_action(
                     plugin_logger.get_invocations_for_conversation(user_id, conversation_id, limit=1000)
                 )
 
+            parity_result = classify_tabular_parity_request(task_prompt)
+            emit_tabular_parity_event(
+                settings,
+                TABULAR_PARITY_EVENT_FIRST_FOREGROUND_TABULAR_INVOCATION,
+                'analyze',
+                planner_result=parity_result,
+                metrics={
+                    'document_count': len(tabular_documents),
+                    'document_index': len(generated_tabular_outputs) + 1,
+                },
+            )
             tabular_analysis, _ = asyncio.run(
                 run_tabular_analysis_with_thought_tracking(
                     user_question=_build_tabular_analysis_request_prompt(
@@ -3242,6 +3258,7 @@ def _maybe_execute_tabular_document_action(
                         cancel_requested=cancel_requested,
                         request_correlation_id=request_correlation_id,
                         token_usage_callback=token_usage_callback,
+                        mode='analyze',
                     )
                 )
                 raise_if_mixed_source_cancelled(
