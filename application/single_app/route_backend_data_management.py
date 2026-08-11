@@ -16,6 +16,7 @@ from functions_data_management import (
     DATA_MANAGEMENT_OPERATION_RESTORE,
     DataManagementCosmosEditorError,
     DataManagementHistoryPaginationError,
+    DataManagementHistoryUnavailableError,
     DataManagementSettingsValidationError,
     cleanup_expired_data_management_backups,
     create_data_management_migration_review_authorization,
@@ -66,6 +67,31 @@ from swagger_wrapper import get_auth_security, swagger_route
 DATA_MANAGEMENT_HISTORY_VALIDATION_ERROR = (
     "Data Management history filters or continuation token are invalid."
 )
+
+
+def _data_management_history_unavailable_response(list_kind, exc):
+    original_error = getattr(exc, "__cause__", None)
+    log_event(
+        "[DATA_MANAGEMENT] Data Management history could not be loaded.",
+        {
+            "history_list": list_kind,
+            "reason": getattr(exc, "reason", "history_provider_unavailable"),
+            "maintenance_required": bool(getattr(exc, "maintenance_required", False)),
+            "error_type": type(original_error).__name__ if original_error else "",
+        },
+        level=logging.WARNING if getattr(exc, "maintenance_required", False) else logging.ERROR,
+        exceptionTraceback=True,
+    )
+    payload = {
+        "success": False,
+        "error": getattr(exc, "safe_message", "Data Management history could not be loaded."),
+    }
+    if getattr(exc, "maintenance_required", False):
+        payload.update({
+            "maintenance_required": True,
+            "maintenance_action": "cosmos_indexing_policy_maintenance",
+        })
+    return jsonify(payload), getattr(exc, "status_code", 503)
 
 
 def _get_admin_context():
@@ -504,6 +530,8 @@ def register_route_backend_data_management(bp):
                 "success": False,
                 "error": DATA_MANAGEMENT_HISTORY_VALIDATION_ERROR,
             }), 400
+        except DataManagementHistoryUnavailableError as exc:
+            return _data_management_history_unavailable_response("jobs", exc)
         return jsonify({
             "success": True,
             "jobs": page["items"],
@@ -659,6 +687,8 @@ def register_route_backend_data_management(bp):
                 "success": False,
                 "error": DATA_MANAGEMENT_HISTORY_VALIDATION_ERROR,
             }), 400
+        except DataManagementHistoryUnavailableError as exc:
+            return _data_management_history_unavailable_response("backups", exc)
         return jsonify({"success": True, **backup_summary}), 200
 
     @bp.route("/api/admin/data-management/backups/retention/cleanup", methods=["POST"])
