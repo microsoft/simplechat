@@ -2,8 +2,8 @@
 # test_mixed_source_hardening.py
 """
 Functional tests for mixed-source hardening, extraction, and rollout.
-Version: 0.250.070
-Implemented in: 0.250.070
+Version: 0.250.160
+Implemented in: 0.250.070; direct-run telemetry isolation updated in 0.250.160
 
 This test ensures Phase 6 of #1061 preserves the bounded Phase 1-5 evidence
 contracts from #1056, #1057, #1058, #1059, and #1060 under parent #1055.
@@ -928,6 +928,7 @@ def test_mixed_analyze_forwards_observed_native_token_usage():
         "resolve_authorized_source_manifest": lambda *args, **kwargs: list(manifest),
         "partition_source_manifest": orchestration.partition_source_manifest,
         "run_document_analysis": lambda **kwargs: {},
+        "_maybe_execute_pure_tabular_analyze_preflight": lambda *args, **kwargs: None,
         "_maybe_execute_tabular_document_action": execute_tabular,
         "build_evidence_envelope": orchestration.build_evidence_envelope,
         "build_mixed_source_evidence_handoff": orchestration.build_mixed_source_evidence_handoff,
@@ -1227,6 +1228,7 @@ def test_analyze_all_action_is_analyze_only_and_manifest_is_fresh():
         "resolve_authorized_source_manifest": resolve_manifest,
         "partition_source_manifest": orchestration.partition_source_manifest,
         "run_document_analysis": lambda **kwargs: {},
+        "_maybe_execute_pure_tabular_analyze_preflight": lambda *args, **kwargs: None,
         "_maybe_execute_tabular_document_action": execute_tabular,
         "build_evidence_envelope": orchestration.build_evidence_envelope,
         "build_mixed_source_evidence_handoff": orchestration.build_mixed_source_evidence_handoff,
@@ -1313,23 +1315,28 @@ def test_development_telemetry_is_default_off_allowlisted_and_privacy_safe():
 
 
 if __name__ == "__main__":
-    test_handoff_exposes_the_same_bounded_envelopes_used_for_synthesis()
-    test_terminal_ledger_preserves_canonical_identity_and_rejects_stale_evidence()
-    test_mode_failure_policy_requires_success_and_a_prepared_compare_source()
-    test_compare_failed_source_is_fatal_and_failed_target_does_not_stop_later_targets()
-    test_tabular_invocation_slicing_is_extracted_without_route_runtime_import()
-    test_manifest_and_tabular_cancellation_stop_work_without_failure_downgrade()
-    test_narrative_comparison_and_reduction_cancellation_stop_later_work()
-    test_export_cancellation_rolls_back_queued_and_uploaded_artifacts()
-    test_citation_artifact_cancellation_rolls_back_partial_publication()
-    test_finalization_reauthorizes_scope_and_version_before_publication()
-    test_bounded_catalog_query_uses_approved_rows_only()
-    test_foundry_context_opt_out_filters_mixed_evidence_for_all_runtime_shapes()
-    test_mixed_analyze_forwards_observed_native_token_usage()
-    test_publication_rollback_uses_exact_ids_without_source_metadata()
-    test_continuity_keeps_terminal_state_and_never_reuses_incomplete_evidence()
-    test_reference_deduplication_preserves_first_payload_and_envelope_compatibility()
-    test_bounded_analyze_all_catalog_rejects_over_limit_without_truncation()
-    test_analyze_all_action_is_analyze_only_and_manifest_is_fresh()
-    test_development_telemetry_is_default_off_allowlisted_and_privacy_safe()
+    original_main_log_event = orchestration.log_event
+    orchestration.log_event = lambda *args, **kwargs: None
+    try:
+        test_handoff_exposes_the_same_bounded_envelopes_used_for_synthesis()
+        test_terminal_ledger_preserves_canonical_identity_and_rejects_stale_evidence()
+        test_mode_failure_policy_requires_success_and_a_prepared_compare_source()
+        test_compare_failed_source_is_fatal_and_failed_target_does_not_stop_later_targets()
+        test_tabular_invocation_slicing_is_extracted_without_route_runtime_import()
+        test_manifest_and_tabular_cancellation_stop_work_without_failure_downgrade()
+        test_narrative_comparison_and_reduction_cancellation_stop_later_work()
+        test_export_cancellation_rolls_back_queued_and_uploaded_artifacts()
+        test_citation_artifact_cancellation_rolls_back_partial_publication()
+        test_finalization_reauthorizes_scope_and_version_before_publication()
+        test_bounded_catalog_query_uses_approved_rows_only()
+        test_foundry_context_opt_out_filters_mixed_evidence_for_all_runtime_shapes()
+        test_mixed_analyze_forwards_observed_native_token_usage()
+        test_publication_rollback_uses_exact_ids_without_source_metadata()
+        test_continuity_keeps_terminal_state_and_never_reuses_incomplete_evidence()
+        test_reference_deduplication_preserves_first_payload_and_envelope_compatibility()
+        test_bounded_analyze_all_catalog_rejects_over_limit_without_truncation()
+        test_analyze_all_action_is_analyze_only_and_manifest_is_fresh()
+        test_development_telemetry_is_default_off_allowlisted_and_privacy_safe()
+    finally:
+        orchestration.log_event = original_main_log_event
     print("Mixed-source hardening functional tests passed.")
