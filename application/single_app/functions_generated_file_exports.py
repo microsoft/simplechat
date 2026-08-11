@@ -134,11 +134,28 @@ def generated_file_export_requested(user_question: str) -> bool:
     return get_requested_generated_file_format(user_question) is not None
 
 
-def build_generated_file_output_guidance(user_question: str) -> str:
+def build_generated_file_output_guidance(
+    user_question: str,
+    requested_format: Optional[str] = None,
+) -> str:
     """Return shared model guidance for a requested generated output format."""
-    output_format = get_requested_generated_file_format(user_question)
+    output_format = str(requested_format or '').strip().lower() or get_requested_generated_file_format(user_question)
     if output_format == GENERATED_FILE_FORMAT_CSV:
         return build_csv_output_clarification_guidance(user_question)
+    if output_format == 'json':
+        return (
+            'The user requested a downloadable JSON artifact. The server will validate and attach the file after '
+            'generation. Return ONLY the complete valid JSON payload needed for that file. Do not wrap it in Markdown, '
+            'add explanations, claim that files cannot be attached, tell the user to copy or save content manually, '
+            'or mention the publication mechanism.'
+        )
+    if output_format == 'xml':
+        return (
+            'The user requested a downloadable XML artifact. The server will validate and attach the file after '
+            'generation. Return ONLY one complete well-formed XML document needed for that file. Do not wrap it in '
+            'Markdown, add explanations, claim that files cannot be attached, tell the user to copy or save content '
+            'manually, or mention the publication mechanism.'
+        )
     if output_format in {GENERATED_FILE_FORMAT_DOCX, GENERATED_FILE_FORMAT_PDF}:
         return (
             f'The user requested a downloadable {output_format.upper()} artifact. Provide a clear final '
@@ -271,14 +288,16 @@ def build_generated_file_artifact_metadata(
         return None
 
     generated_file_name = str(export_payload.get('file_name') or '').strip()
+    normalized_output_format = str(export_payload.get('output_format') or '').strip().lower()
     artifact_metadata = {
         'capability': str(export_payload.get('capability') or 'file_export').strip().lower() or 'file_export',
         'artifact_message_id': artifact_message_id,
         'conversation_id': str(conversation_id or '').strip(),
         'storage_scope': 'chat',
         'file_name': uploaded_message.get('file_name') or generated_file_name,
-        'output_format': str(export_payload.get('output_format') or '').strip().lower(),
+        'output_format': normalized_output_format,
         'summary': str(export_payload.get('summary') or '').strip(),
+        'suppress_assistant_text': normalized_output_format in {'csv', 'json', 'xml'},
     }
     row_count = export_payload.get('row_count')
     if isinstance(row_count, int) and row_count > 0:
@@ -286,6 +305,8 @@ def build_generated_file_artifact_metadata(
     preview_rows = export_payload.get('preview_rows')
     if isinstance(preview_rows, list) and preview_rows:
         artifact_metadata['preview_rows'] = preview_rows
+        if isinstance(preview_rows[0], dict):
+            artifact_metadata['preview_columns'] = list(preview_rows[0])[:50]
     preview_lines = export_payload.get('preview_lines')
     if isinstance(preview_lines, list) and preview_lines:
         artifact_metadata['preview_lines'] = preview_lines

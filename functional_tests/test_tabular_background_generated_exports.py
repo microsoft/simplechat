@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Functional test for durable tabular generated-output background exports.
-Version: 0.250.151
-Implemented in: 0.241.060; throughput and timeout hardening in: 0.250.070; unified durable run contract in: 0.250.128; Phase 6 rolling worker pool compatibility in: 0.250.142; safe retry reason status text in: 0.250.147; collapsed operational details in: 0.250.150; simplified completed artifact cards in: 0.250.151
+Version: 0.250.152
+Implemented in: 0.241.060; throughput and timeout hardening in: 0.250.070; unified durable run contract in: 0.250.128; Phase 6 rolling worker pool compatibility in: 0.250.142; safe retry reason status text in: 0.250.147; collapsed operational details in: 0.250.150; simplified completed artifact cards in: 0.250.151; balanced batches and foreground JSON/XML cards in: 0.250.152
 
 This test ensures that large tabular structured exports are wired through the
 durable background queue, status API, queued retry recovery, and chat progress
@@ -145,6 +145,8 @@ def test_background_runner_bounded_batch_concurrency():
     assert_contains(source_text, '_checkpoint_generated_batch_results', 'checkpoint successful concurrent batches')
     assert_contains(source_text, '_advance_run_progress_for_window', 'contiguous progress advancement after batch window')
     assert_contains(source_text, 'Building background structured export batch window', 'batch window diagnostics')
+    assert_contains(source_text, '_balance_tabular_source_batch_rows', 'concurrency-wave batch balancer')
+    assert_contains(source_text, "'token_max_rows'", 'token-derived batch limit telemetry')
 
 
 def test_background_batch_timeout_prevents_indefinite_model_wait():

@@ -4030,7 +4030,7 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     if (rowInfo) {
       const totalRows = formatGeneratedTabularRowCount(outputMetadata?.row_count);
       rowInfo.textContent = previewRows.length
-        ? `Showing ${previewRows.length.toLocaleString()}${totalRows ? ` of ${totalRows}` : ''} rows`
+        ? `Showing ${previewRows.length.toLocaleString()}${totalRows ? ` of ${totalRows}` : ''} rows. Preview values may be shortened; download for complete content.`
         : 'Generated artifact preview';
     }
 
@@ -5002,7 +5002,11 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     ).trim();
     const isBackgroundExport = Boolean(outputMetadata?.background_export);
     const capability = String(outputMetadata?.capability || '').trim().toLowerCase();
-    const isCompletedTabularArtifact = !isBackgroundExport && capability === 'tabular';
+    const isCompletedTabularArtifact = Boolean(
+      !isBackgroundExport
+      && ['csv', 'json', 'xml'].includes(outputFormat)
+      && ['tabular', 'file_export'].includes(capability)
+    );
     const backgroundDetailElements = [];
     const appendSupportingDetail = element => {
       if (isBackgroundExport) {
@@ -5180,7 +5184,7 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
       const viewButton = document.createElement('button');
       viewButton.type = 'button';
       viewButton.className = 'btn btn-sm btn-outline-secondary generated-artifact-view-btn';
-      viewButton.textContent = 'View';
+      viewButton.textContent = `View ${outputFormat.toUpperCase()}`;
       viewButton.setAttribute('aria-label', `View generated ${outputFormat.toUpperCase()} preview`);
       viewButton.addEventListener('click', () => {
         showGeneratedArtifactPreviewModal(outputMetadata, outputFormat);
