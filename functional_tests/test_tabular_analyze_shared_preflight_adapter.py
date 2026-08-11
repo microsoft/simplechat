@@ -2,8 +2,8 @@
 # test_tabular_analyze_shared_preflight_adapter.py
 """
 Functional test for the Analyze shared tabular preflight adapter.
-Version: 0.250.160
-Implemented in: 0.250.160
+Version: 0.250.161
+Implemented in: 0.250.160; updated in 0.250.161
 
 This test ensures Phase 4 routes pure single-source tabular Analyze durable
 work through the shared planner before foreground tabular tools or immediate
@@ -65,9 +65,19 @@ def load_workflow_namespace(orchestration_result=None, manifest=None):
     source = WORKFLOW_RUNNER.read_text(encoding="utf-8")
     module_tree = ast.parse(source, filename=str(WORKFLOW_RUNNER))
     function_names = {
+        "_coerce_document_analysis_count",
         "_settings_bool",
+        "_utc_now_iso",
         "_emit_analyze_shared_preflight_event",
         "_build_tabular_analyze_durable_handoff",
+        "_get_tabular_generated_output_run_id",
+        "_get_tabular_generated_output_status",
+        "_is_nonterminal_tabular_generated_output",
+        "_get_pending_tabular_generated_output",
+        "_build_pending_tabular_run_reference",
+        "_build_pending_tabular_evidence_envelope",
+        "_build_mixed_source_deferred_composition_descriptor",
+        "_build_mixed_source_deferred_reply",
         "_maybe_execute_pure_tabular_analyze_preflight",
         "_build_mixed_source_analysis_coverage",
         "_execute_mixed_source_analyze_workflow",
