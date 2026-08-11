@@ -8,6 +8,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 from functions_appinsights import log_event
 from functions_debug import debug_print
+from functions_generated_file_exports import get_requested_structured_artifact_format
 from functions_search import normalize_search_id_list, normalize_search_scope
 
 
@@ -374,85 +375,11 @@ def _build_window_label(document_name, window_range):
 
 
 def _prompt_requests_json_output(analysis_prompt):
-    prompt_text = str(analysis_prompt or '').strip().lower()
-    if not prompt_text:
-        return False
-
-    json_markers = (
-        'json artifact',
-        'json export',
-        'json output',
-        'json array',
-        'json object',
-        'json file',
-        'json format',
-        'valid json',
-        'convert into json',
-        'convert to json',
-        'return json',
-        'return only json',
-        'respond with json',
-        'format as json',
-        'output as json',
-        'save as json',
-        'export as json',
-        'download as json',
-        'create json',
-        'create a json',
-        'make json',
-        'make a json',
-        'generate json',
-        'generate a json',
-    )
-    if any(marker in prompt_text for marker in json_markers):
-        return True
-
-    return bool(re.search(
-        r'\b(convert|create|make|build|generate|produce|return|respond|format|output|save|export|download)\b[\w\s.,:;\-/]{0,80}\bjson\b',
-        prompt_text,
-    ))
+    return get_requested_structured_artifact_format(analysis_prompt) == 'json'
 
 
 def _prompt_requests_xml_output(analysis_prompt):
-    prompt_text = str(analysis_prompt or '').strip().lower()
-    if not prompt_text:
-        return False
-
-    xml_markers = (
-        'xml artifact',
-        'xml export',
-        'xml output',
-        'xml document',
-        'xml file',
-        'xml template',
-        'valid xml',
-        'well-formed xml',
-        'convert into xml',
-        'convert to xml',
-        'populate xml',
-        'populate the xml',
-        'return xml',
-        'return only xml',
-        'respond with xml',
-        'format as xml',
-        'output as xml',
-        'save as xml',
-        'export as xml',
-        'download as xml',
-        'create xml',
-        'create an xml',
-        'make xml',
-        'make an xml',
-        'generate xml',
-        'generate an xml',
-    )
-    if any(marker in prompt_text for marker in xml_markers):
-        return True
-
-    return bool(re.search(
-        r'\b(convert|populate|create|make|build|generate|produce|return|respond|format|output|save|export|download)\b[\w\s.,:;\-/]{0,80}\bxml\b',
-        prompt_text,
-    ))
+    return get_requested_structured_artifact_format(analysis_prompt) == 'xml'
 
 
 def _build_requested_output_guidance(analysis_prompt, stage):

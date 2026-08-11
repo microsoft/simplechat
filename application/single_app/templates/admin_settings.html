@@ -10631,6 +10631,36 @@
                                     Increase for larger files if your compute has sufficient memory, or decrease to protect smaller instances. Default: 200 MB.
                                 </small>
                             </div>
+                            <hr>
+                            <h6><strong>Large Tabular Run Controls</strong></h6>
+                            <div class="form-check form-switch mb-3">
+                                <input class="form-check-input" type="checkbox" role="switch" id="enable_tabular_durable_run_confirmation" name="enable_tabular_durable_run_confirmation" {% if settings.enable_tabular_durable_run_confirmation | default(true) %}checked{% endif %}>
+                                <label class="form-check-label" for="enable_tabular_durable_run_confirmation">Confirm very large row-level runs before starting</label>
+                                <div class="form-text">When a prompt includes an explicit large row count, users are asked to continue or narrow scope before the run starts.</div>
+                            </div>
+                            <div class="row g-3 mb-3">
+                                <div class="col-md-6">
+                                    <label for="tabular_durable_run_confirmation_threshold_rows" class="form-label">Confirmation Row Threshold</label>
+                                    <input type="number" class="form-control" id="tabular_durable_run_confirmation_threshold_rows" name="tabular_durable_run_confirmation_threshold_rows" min="1" max="1000000" value="{{ settings.tabular_durable_run_confirmation_threshold_rows | default(500, true) }}">
+                                </div>
+                                <div class="col-md-6">
+                                    <label for="tabular_durable_run_confirmation_threshold_batches" class="form-label">Confirmation Batch Threshold</label>
+                                    <input type="number" class="form-control" id="tabular_durable_run_confirmation_threshold_batches" name="tabular_durable_run_confirmation_threshold_batches" min="1" max="100000" value="{{ settings.tabular_durable_run_confirmation_threshold_batches | default(75, true) }}">
+                                </div>
+                            </div>
+                            <div class="row g-3">
+                                <div class="col-md-6">
+                                    <label for="tabular_generated_output_chunk_model_mode" class="form-label">Chunk Processing Model</label>
+                                    <select class="form-select" id="tabular_generated_output_chunk_model_mode" name="tabular_generated_output_chunk_model_mode">
+                                        <option value="current" {% if settings.tabular_generated_output_chunk_model_mode | default('current', true) != 'configured' %}selected{% endif %}>Use the user's selected model</option>
+                                        <option value="configured" {% if settings.tabular_generated_output_chunk_model_mode | default('current', true) == 'configured' %}selected{% endif %}>Use a configured deployment for chunk work</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-6">
+                                    <label for="tabular_generated_output_chunk_model_deployment" class="form-label">Configured Chunk Model Deployment</label>
+                                    <input type="text" class="form-control" id="tabular_generated_output_chunk_model_deployment" name="tabular_generated_output_chunk_model_deployment" maxlength="120" value="{{ settings.tabular_generated_output_chunk_model_deployment | default('', true) }}" autocomplete="off">
+                                </div>
+                            </div>
                         </div>
 
 

@@ -20,6 +20,16 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Added schema-aware normalization before MCP argument validation and invocation while preserving tools that explicitly define a real top-level `kwargs` property.
     *   (Ref: #1163, MCP `tools/call` arguments, `functions_mcp_operations.py`, `mcp_plugin.py`, `mcp_plugin_factory.py`)
 
+### **(v0.250.127)**
+
+#### Bug Fixes
+
+*   **Replayable Exhaustive Tabular Exports**
+    *   Generalized version-pinned CSV source descriptors so exhaustive `filter_rows` and `search_rows` requests can replay the complete authorized cohort through the existing durable export runner instead of failing on bounded preview gaps.
+    *   Added exhaustive per-row request routing for natural phrases such as "for each row," "every row," and "one row per," while preserving direct deterministic aggregation behavior.
+    *   Non-replayable semantics such as normalized entity matching now fail closed with an explicit reason and never publish a partial CSV.
+    *   (Ref: #1031, tabular source descriptors, durable generated exports, `functions_tabular_csv_query.py`, `tabular_processing_plugin.py`, `route_backend_chats.py`)
+
 ### **(v0.250.126)**
 
 #### Bug Fixes

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Functional test for durable tabular generated-output background exports.
-Version: 0.250.070
-Implemented in: 0.241.060; throughput and timeout hardening in: 0.250.070
+Version: 0.250.152
+Implemented in: 0.241.060; throughput and timeout hardening in: 0.250.070; unified durable run contract in: 0.250.128; Phase 6 rolling worker pool compatibility in: 0.250.142; safe retry reason status text in: 0.250.147; collapsed operational details in: 0.250.150; simplified completed artifact cards in: 0.250.151; balanced batches and foreground JSON/XML cards in: 0.250.152
 
 This test ensures that large tabular structured exports are wired through the
 durable background queue, status API, queued retry recovery, and chat progress
@@ -83,7 +83,11 @@ def test_export_runner_module():
     assert_contains(source_text, '_stage_tabular_generated_output_source', 'bounded source-query staging')
     assert_contains(source_text, '_authorize_tabular_export_run_execution', 'worker-boundary authorization')
     assert_contains(source_text, '_migrate_legacy_tabular_export_run', 'legacy run contract migration')
-    assert_contains(source_text, 'TABULAR_EXPORT_CONTRACT_VERSION = 2', 'versioned row orchestration contract')
+    assert_contains(source_text, 'TABULAR_EXPORT_CONTRACT_VERSION = 3', 'versioned row orchestration contract')
+    assert_contains(source_text, "TABULAR_RUN_TASK_STRUCTURED_EXPORT = 'structured_export'", 'structured export task type')
+    assert_contains(source_text, "'total_chunk_count': staged_batch_count", 'compact chunk counter')
+    assert_contains(source_text, "'chunk_manifest': chunk_manifest", 'blob-backed chunk manifest pointer')
+    assert_contains(source_text, '_write_chunk_manifest_for_run', 'paged chunk manifest writer')
     assert_contains(source_text, 'lease_generation', 'worker fencing generation')
     assert_contains(source_text, '_replace_claimed_run', 'ETag-fenced worker persistence')
     assert_contains(source_text, 'TABULAR_EXPORT_INPUT_ROW_TOKEN_FIELD', 'opaque row binding token')
@@ -95,7 +99,9 @@ def test_export_runner_module():
     assert_contains(source_text, 'TABULAR_EXPORT_DEFAULT_SCAN_LIMIT = 5', 'non-starving scheduler scan limit')
     assert_contains(source_text, 'APIConnectionError', 'OpenAI connection error retry classification')
     assert_contains(source_text, 'build_semantic_kernel_chat_service_for_model', 'provider-aware background model service')
-    assert_contains(source_text, 'model_context=run.get(\'model_context\')', 'background model context rehydration')
+    assert_contains(source_text, 'has_snapshotted_chunk_model', 'snapshot-aware chunk model rehydration')
+    assert_contains(source_text, "run.get('chunk_model_context')", 'chunk model context rehydration')
+    assert_contains(source_text, "else run.get('model_context')", 'fallback model context rehydration')
     assert_contains(source_text, "'model_context': model_context if isinstance(model_context, dict) else {}", 'persisted non-secret model context')
     assert_contains(source_text, 'TABULAR_EXPORT_STATUS_FAILED', 'retryable failed-run scheduler pickup')
     assert_contains(source_text, 'TABULAR_EXPORT_SCHEDULER_STATUSES', 'status-specific scheduler scans')
@@ -107,7 +113,7 @@ def test_export_runner_module():
     assert_contains(source_text, 'active_processing_seconds', 'active-time ETA accounting')
     assert_contains(source_text, 'or _is_due_queued_retry_run(run)', 'queued retry-due manual resume eligibility')
     assert_contains(source_text, 'or _is_stale_queued_run(run, settings or {})', 'stale queued manual resume eligibility')
-    assert_contains(source_text, 'Automatic retry is due but no worker has picked it up', 'queued retry-due status detail')
+    assert_contains(source_text, 'Automatic retry is due because', 'queued retry-due status detail')
     assert_contains(source_text, "'retry_due': status_detail.get('retry_due')", 'retry-due public status payload')
     assert_contains(source_text, 'Manual resume queued', 'manual checkpoint resume message')
     assert_contains(source_text, 'manual_resume_count', 'manual resume counter')
@@ -124,10 +130,11 @@ def test_export_runner_module():
 
 
 def test_background_runner_bounded_batch_concurrency():
-    """Validate Phase 4 bounded model-batch concurrency in the background runner."""
+    """Validate bounded adaptive model-batch concurrency in the background runner."""
     source_text = read_text(EXPORT_MODULE)
-    assert_contains(source_text, 'TABULAR_EXPORT_DEFAULT_BATCH_CONCURRENCY = 3', 'default batch concurrency')
-    assert_contains(source_text, 'TABULAR_EXPORT_MAX_BATCH_CONCURRENCY = 5', 'maximum batch concurrency')
+    assert_contains(source_text, 'TABULAR_EXPORT_DEFAULT_BATCH_CONCURRENCY = 16', 'default batch concurrency')
+    assert_contains(source_text, 'TABULAR_EXPORT_HIGH_BATCH_CONCURRENCY = 64', 'high batch concurrency')
+    assert_contains(source_text, 'TABULAR_EXPORT_MAX_BATCH_CONCURRENCY = 128', 'maximum batch concurrency')
     assert_contains(source_text, 'TABULAR_EXPORT_DEFAULT_BATCH_TIMEOUT_SECONDS = 300', 'bounded batch timeout')
     assert_contains(source_text, 'tabular_generated_output_batch_concurrency', 'settings override for batch concurrency')
     assert_contains(source_text, 'tabular_generated_output_batch_timeout_seconds', 'settings override for batch timeout')
@@ -138,6 +145,8 @@ def test_background_runner_bounded_batch_concurrency():
     assert_contains(source_text, '_checkpoint_generated_batch_results', 'checkpoint successful concurrent batches')
     assert_contains(source_text, '_advance_run_progress_for_window', 'contiguous progress advancement after batch window')
     assert_contains(source_text, 'Building background structured export batch window', 'batch window diagnostics')
+    assert_contains(source_text, '_balance_tabular_source_batch_rows', 'concurrency-wave batch balancer')
+    assert_contains(source_text, "'token_max_rows'", 'token-derived batch limit telemetry')
 
 
 def test_background_batch_timeout_prevents_indefinite_model_wait():
@@ -168,7 +177,10 @@ def test_background_batch_timeout_prevents_indefinite_model_wait():
         'SKChatHistory': FakeChatHistory,
         'AzureChatPromptExecutionSettings': FakeExecutionSettings,
         'TABULAR_EXPORT_DEFAULT_BATCH_TIMEOUT_SECONDS': 300,
+        'TABULAR_RESPONSE_PROTOCOL_OBJECT_V1': 'object-v1',
+        'time': __import__('time'),
         '_safe_float': lambda value, default=0.0: float(value) if value is not None else default,
+        '_is_compact_row_array_protocol': lambda _response_protocol: False,
         '_build_batch_prompt': lambda *args, **kwargs: 'test prompt',
     }
     extracted_module = ast.Module(body=[helper_node], type_ignores=[])
@@ -274,8 +286,91 @@ def test_chat_ui_renders_and_polls_background_exports():
     assert_contains(source_text, 'status_detail', 'safe status detail rendering')
     assert_contains(source_text, '/api/tabular/generated-output/runs/', 'status polling endpoint')
     assert_contains(source_text, 'textContent', 'safe text rendering boundary')
+    assert_contains(source_text, "details.dataset.generatedExportDetails = 'true'", 'collapsed details selector')
+    assert_contains(source_text, "detailsSummary.textContent = 'View details'", 'details disclosure label')
+    assert_contains(source_text, 'supportingDetailElements.forEach', 'supporting metadata disclosure routing')
+    assert_contains(source_text, 'backgroundStatusElements?.detailsContent', 'background preview disclosure routing')
+    assert_contains(source_text, 'isCompletedTabularArtifact', 'completed tabular card state')
+    assert_contains(source_text, 'generated-artifact-view-btn', 'completed artifact View action')
+    assert_contains(source_text, 'generated-artifact-preview-modal', 'bounded artifact preview modal')
+    assert_contains(source_text, 'hideCompletedGeneratedArtifactHandoff', 'stale completion handoff suppression')
+    if 'details.open = true' in source_text:
+        raise AssertionError('Background export operational details must remain collapsed until the user expands them')
     if 'generated-tabular-refresh-status-btn' in source_text or 'Refresh Status' in source_text:
         raise AssertionError('Background export cards must rely on automatic polling without a manual refresh button')
+
+
+def test_completed_artifact_preview_is_bounded_and_ordered():
+    """Completed artifact metadata carries only a bounded validated preview."""
+    module_tree = parse_python(EXPORT_MODULE)
+    helper_names = {
+        '_build_structured_export_preview_rows',
+        '_build_artifact_metadata',
+    }
+    helper_nodes = [
+        node
+        for node in module_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name in helper_names
+    ]
+    if len(helper_nodes) != len(helper_names):
+        raise AssertionError('Completed artifact preview helpers were not found')
+
+    batches = {
+        'output-1': [
+            {'source_row_number': 1, 'source_row_identity': 'A-1', 'answer': 'first'},
+            {'source_row_number': 2, 'source_row_identity': 'A-2', 'answer': 'x' * 20},
+        ],
+        'output-2': [
+            {'source_row_number': 3, 'source_row_identity': 'A-3', 'answer': 'third'},
+            {'source_row_number': 4, 'source_row_identity': 'A-4', 'answer': 'fourth'},
+        ],
+    }
+    validated_batches = []
+    namespace = {
+        'TABULAR_EXPORT_ARTIFACT_PREVIEW_MAX_ROWS': 3,
+        'TABULAR_EXPORT_ARTIFACT_PREVIEW_MAX_CHARS': 24000,
+        'TABULAR_EXPORT_ARTIFACT_PREVIEW_CELL_MAX_CHARS': 12,
+        'TABULAR_EXPORT_OUTPUT_ROW_NUMBER_FIELD': 'source_row_number',
+        '_safe_int': lambda value: int(value or 0),
+        '_output_blob_path': lambda user_id, conversation_id, run_id, batch_number: f'output-{batch_number}',
+        '_validate_tabular_output_checkpoint_metadata': (
+            lambda run, path, batch_number: validated_batches.append((path, batch_number))
+        ),
+        '_download_json_blob': lambda path: batches[path],
+        '_serialize_generated_output_value': lambda value: '' if value is None else str(value),
+        'build_safe_csv_headers': lambda values: list(values),
+        'json': __import__('json'),
+    }
+    exec(
+        compile(ast.Module(body=helper_nodes, type_ignores=[]), str(EXPORT_MODULE), 'exec'),
+        namespace,
+    )
+
+    run = {
+        'id': 'run-preview',
+        'user_id': 'user-1',
+        'conversation_id': 'conversation-1',
+        'batch_count': 2,
+        'output_format': 'csv',
+        'output_schema': ['source_row_number', 'source_row_identity', 'answer'],
+    }
+    preview_rows = namespace['_build_structured_export_preview_rows'](run)
+    artifact = namespace['_build_artifact_metadata'](
+        {'id': 'artifact-1', 'file_name': 'generated.csv'},
+        'fallback.csv',
+        'csv',
+        preview_rows=preview_rows,
+        preview_text='m' * 25000,
+        suppress_assistant_text=True,
+    )
+
+    assert [row['source_row_number'] for row in preview_rows] == ['1', '2', '3']
+    assert preview_rows[1]['answer'] == 'xxxxxxxxx...'
+    assert validated_batches == [('output-1', 1), ('output-2', 2)]
+    assert artifact['preview_rows'] == preview_rows
+    assert artifact['preview_columns'] == ['source_row_number', 'source_row_identity', 'answer']
+    assert len(artifact['preview_text']) == 24000
+    assert artifact['suppress_assistant_text'] is True
 
 
 def main():
@@ -288,6 +383,7 @@ def main():
         test_generated_export_batch_packing_phase_three,
         test_background_scheduler_and_config_registered,
         test_chat_ui_renders_and_polls_background_exports,
+        test_completed_artifact_preview_is_bounded_and_ordered,
     ]
     results = []
 
