@@ -8893,6 +8893,9 @@ app_settings.app_title }} {% endblock %} {% block head %}
     enable_url_access: {{ settings.enable_url_access|default(false, true)|tojson }},
     url_access_max_workflow_urls_per_run: {{ settings.url_access_max_workflow_urls_per_run|default(50, true)|tojson }}
   };
+  window.workflowSettings = {
+    workflow_max_tasks: {{ settings.workflow_max_tasks|default(50, true)|tojson }}
+  };
   window.workflowWorkspaceConfig = {
     scope: 'group',
     apiBase: '/api/group/workflows',

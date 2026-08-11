@@ -1058,6 +1058,7 @@ def get_settings(use_cosmos=False, include_source=False):
         'allow_user_plugins': False,
         'allow_user_workflows': False,
         'require_member_of_workflow_user': False,
+        'workflow_max_tasks': 50,
         'allow_group_workflows': False,
         'require_group_assignment_for_group_workflows': False,
         'group_workflow_allowed_group_ids': [],

@@ -3,6 +3,7 @@
 Implemented in version: **0.250.063**
 Enhanced in version: **0.250.065**
 Task-level runner selection implemented in version: **0.250.065**
+Configurable task limits implemented in version: **0.250.129**
 
 Related issues: #1082, #1084
 
@@ -17,9 +18,10 @@ scheduling are optional capabilities that can be added when they are relevant
 to the task.
 
 Fixed/Implemented in version: **0.250.063**
+Configurable task limits implemented in version: **0.250.129**
 
 Related version update:
-- `application/single_app/config.py` reports version `0.250.065`.
+- `application/single_app/config.py` reports version `0.250.129`.
 
 Dependencies:
 - `application/single_app/functions_personal_workflows.py`
@@ -44,7 +46,8 @@ Dependencies:
   without requiring document analysis.
 - Each run records its messages and result in the workflow conversation and
   retains the normal workflow run history.
-- A workflow can contain up to 20 ordered instruction tasks. A task runner can
+- A workflow can contain up to the admin-configured ordered instruction task
+   limit, which defaults to 50 and is hard-capped at 100. A task runner can
    inherit the workflow default, use an authorized Direct Model override, or use
    an authorized Agent override. Every task receives a bounded copy of the
    previous task's response as context.
