@@ -45,6 +45,7 @@ from functions_personal_workflows import (
     _strip_cosmos_metadata,
     _utc_now_iso,
     compute_next_run_at,
+    get_workflow_max_tasks,
 )
 from functions_settings import get_settings, normalize_model_endpoints
 
@@ -448,6 +449,7 @@ def save_group_workflow(group_id, workflow_data, actor_user_id, user_info=None):
             runner,
             settings=settings,
         ),
+        max_tasks=get_workflow_max_tasks(settings),
     )
     task_prompt = _normalize_text(
         workflow_data.get('task_prompt') or (tasks[0].get('instructions') if tasks else ''),

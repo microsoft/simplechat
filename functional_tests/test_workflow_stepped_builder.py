@@ -1,9 +1,10 @@
 # test_workflow_stepped_builder.py
 """
 Functional test for the stepped workflow builder.
-Version: 0.250.065
+Version: 0.250.129
 Implemented in: 0.250.064
 Enhanced in: 0.250.065
+Enhanced in: 0.250.129
 
 This test ensures personal and group workflow modals use the same five-step
 builder and submit ordered tasks and error handling through existing routes.
@@ -13,7 +14,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-EXPECTED_VERSION = "0.250.065"
+EXPECTED_VERSION = "0.250.129"
 
 
 def read_text(relative_path: str) -> str:
@@ -55,6 +56,7 @@ def test_personal_and_group_templates_share_five_step_builder() -> None:
         assert '<option value="inherit">Workflow default</option>' in content
         assert "cdn.tailwindcss.com" not in content
         assert "fonts.googleapis.com" not in content
+        assert "window.workflowSettings" in content
 
     print("PASS: stepped workflow template contract")
 
@@ -78,10 +80,13 @@ def test_shared_browser_behavior_builds_safe_ordered_task_payload() -> None:
         "validateWorkflowStep",
         "showWorkflowStep",
         "navigateWorkflowStep",
+        "getWorkflowMaxTasks",
     ):
         assert f"function {function_name}(" in content
     assert "workflowTasks.map((task, index) => ({" in content
     assert "runner: serializeWorkflowTaskRunner(task.runner)," in content
+    assert "const WORKFLOW_MAX_TASKS = getWorkflowMaxTasks();" in content
+    assert "const WORKFLOW_MAX_TASKS = 20;" not in content
     assert "error_handling:" in content
     assert "workflow-review-summary__item" in content
     assert 'name.textContent = task.name || `Task ${index + 1}`;' in content
@@ -104,8 +109,10 @@ def test_existing_routes_persist_tasks_without_new_endpoints() -> None:
     assert f'VERSION = "{EXPECTED_VERSION}"' in config
     assert "'tasks': tasks," in personal_store
     assert "'error_handling': error_handling," in personal_store
+    assert "max_tasks=get_workflow_max_tasks(settings)" in personal_store
     assert "'tasks': tasks," in group_store
     assert "'error_handling': error_handling," in group_store
+    assert "max_tasks=get_workflow_max_tasks(settings)" in group_store
     assert "save_personal_workflow(" in routes
     assert "save_group_workflow(" in routes
     assert "/api/user/workflows/<workflow_id>/run" in routes

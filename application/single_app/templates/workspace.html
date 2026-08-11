@@ -2572,6 +2572,9 @@
       enable_url_access: {{ settings.enable_url_access|default(false, true)|tojson }},
       url_access_max_workflow_urls_per_run: {{ settings.url_access_max_workflow_urls_per_run|default(50, true)|tojson }}
     };
+    window.workflowSettings = {
+      workflow_max_tasks: {{ settings.workflow_max_tasks|default(50, true)|tojson }}
+    };
     window.max_file_size_mb = {{ settings.max_file_size_mb | default(16) }};
     
     // Pass current user ID for ownership checks

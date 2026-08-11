@@ -57,6 +57,11 @@ from functions_terms_of_use import (
 from swagger_wrapper import swagger_route, get_auth_security
 from datetime import datetime, timedelta, timezone
 from admin_settings_int_utils import safe_int_with_source
+from functions_personal_workflows import (
+    WORKFLOW_TASK_LIMIT_DEFAULT,
+    WORKFLOW_TASK_LIMIT_MAX,
+    WORKFLOW_TASK_LIMIT_MIN,
+)
 from support_menu_config import (
     get_admin_latest_feature_release_groups_for_settings,
     get_support_latest_feature_catalog,
@@ -1140,6 +1145,18 @@ def register_route_frontend_admin_settings(bp):
                         settings.get('workflow_max_auto_invoke_attempts', 60),
                         'workflow_max_auto_invoke_attempts',
                         60
+                    )
+                )
+            )
+            workflow_max_tasks = min(
+                WORKFLOW_TASK_LIMIT_MAX,
+                max(
+                    WORKFLOW_TASK_LIMIT_MIN,
+                    parse_admin_int(
+                        form_data.get('workflow_max_tasks'),
+                        settings.get('workflow_max_tasks', WORKFLOW_TASK_LIMIT_DEFAULT),
+                        'workflow_max_tasks',
+                        WORKFLOW_TASK_LIMIT_DEFAULT
                     )
                 )
             )
@@ -2450,6 +2467,7 @@ def register_route_frontend_admin_settings(bp):
                 'require_group_assignment_for_group_workflows': form_data.get('require_group_assignment_for_group_workflows') == 'on',
                 'group_workflow_allowed_group_ids': group_workflow_allowed_group_ids,
                 'workflow_max_auto_invoke_attempts': workflow_max_auto_invoke_attempts,
+                'workflow_max_tasks': workflow_max_tasks,
                 'allow_personal_workspace_file_downloads': form_data.get('allow_personal_workspace_file_downloads') == 'on',
                 'allow_group_workspace_file_downloads': form_data.get('allow_group_workspace_file_downloads') == 'on',
                 'require_group_assignment_for_file_downloads': form_data.get('require_group_assignment_for_file_downloads') == 'on',
