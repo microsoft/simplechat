@@ -1,8 +1,8 @@
 # test_tabular_row_orchestration_scale.py
 """
 Functional test for scalable per-row tabular orchestration.
-Version: 0.250.152
-Implemented in: 0.250.060; generated CSV formula safety in 0.250.065; generated file export routing in 0.250.072; source descriptor generalization in 0.250.127; unified durable run contract in 0.250.128; hierarchical analysis in 0.250.129; combined analysis and export in 0.250.130; scale validation in 0.250.132; direct source-backed exhaustive queueing in 0.250.133; direct queue call-site hardening in 0.250.134; model-validation auto retry in 0.250.135; model-aware parallel throughput in 0.250.136; Phase 1 acceleration contracts and observability in 0.250.137; Phase 2 truthful background handoff in 0.250.138; Phase 3 durable LLM generation planning in 0.250.139; Phase 4 compact row response protocol in 0.250.140; Phase 5 completion-driven checkpointing in 0.250.141; Phase 6 rolling worker pool in 0.250.142; Phase 7 independent batch retries in 0.250.143; Phase 8 scale, chaos, and rollout in 0.250.144; background metadata streaming fix in 0.250.145; source-token echo recovery in 0.250.146; fixed-window stale heartbeat fix in 0.250.147; nested CSV output recovery in 0.250.148; generic tabular artifact routing and fast startup in 0.250.149; balanced concurrency waves and default completion checkpoints in 0.250.152
+Version: 0.250.159
+Implemented in: 0.250.060; generated CSV formula safety in 0.250.065; generated file export routing in 0.250.072; source descriptor generalization in 0.250.127; unified durable run contract in 0.250.128; hierarchical analysis in 0.250.129; combined analysis and export in 0.250.130; scale validation in 0.250.132; direct source-backed exhaustive queueing in 0.250.133; direct queue call-site hardening in 0.250.134; model-validation auto retry in 0.250.135; model-aware parallel throughput in 0.250.136; Phase 1 acceleration contracts and observability in 0.250.137; Phase 2 truthful background handoff in 0.250.138; Phase 3 durable LLM generation planning in 0.250.139; Phase 4 compact row response protocol in 0.250.140; Phase 5 completion-driven checkpointing in 0.250.141; Phase 6 rolling worker pool in 0.250.142; Phase 7 independent batch retries in 0.250.143; Phase 8 scale, chaos, and rollout in 0.250.144; background metadata streaming fix in 0.250.145; source-token echo recovery in 0.250.146; fixed-window stale heartbeat fix in 0.250.147; nested CSV output recovery in 0.250.148; generic tabular artifact routing and fast startup in 0.250.149; balanced concurrency waves and default completion checkpoints in 0.250.152; Search shared preflight adapter in 0.250.159
 
 This test ensures generated exports preserve source identity and row order while
 enforcing one stable output schema across independently generated batches.
@@ -4814,8 +4814,15 @@ def test_direct_source_backed_queue_failure_suppresses_inline_exhaustive_output(
 
 
 def test_direct_source_backed_queue_call_sites_use_required_keywords():
-    """Every direct queue call site passes required arguments explicitly."""
+    """Every Search queue call site passes required arguments explicitly."""
     module_tree = ast.parse(CHAT_ROUTE.read_text(encoding='utf-8'), filename=str(CHAT_ROUTE))
+    search_queue_calls = [
+        call
+        for call in ast.walk(module_tree)
+        if isinstance(call, ast.Call)
+        and isinstance(call.func, ast.Name)
+        and call.func.id == 'maybe_queue_search_tabular_generated_output'
+    ]
     direct_queue_calls = [
         call
         for call in ast.walk(module_tree)
@@ -4823,7 +4830,8 @@ def test_direct_source_backed_queue_call_sites_use_required_keywords():
         and isinstance(call.func, ast.Name)
         and call.func.id == 'maybe_queue_direct_tabular_generated_output'
     ]
-    assert len(direct_queue_calls) >= 4
+    assert len(search_queue_calls) >= 4
+    assert len(direct_queue_calls) >= 1
 
     required_keyword_names = {
         'user_question',
@@ -4833,7 +4841,7 @@ def test_direct_source_backed_queue_call_sites_use_required_keywords():
         'gpt_model',
         'settings',
     }
-    for call in direct_queue_calls:
+    for call in search_queue_calls + direct_queue_calls:
         keyword_names = {
             keyword.arg
             for keyword in call.keywords

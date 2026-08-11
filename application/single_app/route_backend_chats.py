@@ -56,6 +56,8 @@ from functions_mixed_source_orchestration import (
 )
 from functions_tabular_analysis import (
     get_new_plugin_invocations as _shared_get_new_plugin_invocations,
+    orchestrate_tabular_request as _shared_orchestrate_tabular_request,
+    queue_direct_tabular_generated_output_from_plan as _shared_queue_direct_tabular_generated_output_from_plan,
 )
 from functions_tabular_orchestration import (
     get_tabular_generated_output_format as _shared_get_tabular_generated_output_format,
@@ -6119,6 +6121,164 @@ def maybe_queue_direct_tabular_generated_output(
                     'The downloadable tabular artifact could not be queued. No inline row output was generated.',
                 )
         return None
+
+
+def _build_search_shared_preflight_metrics(file_contexts, result=None, generated_output=None):
+    metrics = {
+        'source_count': len(file_contexts or []),
+    }
+    if isinstance(result, dict):
+        metrics['planned_source_count'] = _safe_int(result.get('source_count'))
+    if isinstance(generated_output, dict):
+        metrics['generated_output_count'] = 1
+        metrics['row_count'] = _safe_int(generated_output.get('row_count'))
+    return metrics
+
+
+def _emit_search_shared_preflight_event(
+    event_name,
+    settings,
+    file_contexts,
+    result=None,
+    generated_output=None,
+    dimensions=None,
+    level=logging.INFO,
+):
+    safe_dimensions = {
+        'preflight_owner': 'shared',
+    }
+    if isinstance(result, dict):
+        safe_dimensions.update({
+            'planner_mode': str(result.get('planner_mode') or '').strip().lower()[:40],
+            'execution_contract': str(result.get('execution_contract') or '').strip().lower()[:80],
+            'execution_state': str(result.get('execution_state') or '').strip().lower()[:40],
+            'reason_code': str(result.get('reason_code') or '').strip().lower()[:80],
+            'planner_contract_version': str(result.get('planner_contract_version') or '').strip()[:80],
+        })
+    if isinstance(generated_output, dict):
+        safe_dimensions.update({
+            'output_status': str(generated_output.get('status') or '').strip().lower()[:40],
+            'task_type': str(generated_output.get('task_type') or '').strip().lower()[:80],
+            'output_format': str(generated_output.get('output_format') or '').strip().lower()[:20],
+        })
+    for key, value in (dimensions or {}).items():
+        safe_dimensions[str(key)[:60]] = str(value or '').strip().lower()[:80]
+
+    log_event(
+        f'[TABULAR_SHARED_PREFLIGHT] Search shared preflight {event_name}',
+        {
+            'event_name': event_name,
+            **safe_dimensions,
+            **_build_search_shared_preflight_metrics(
+                file_contexts,
+                result=result,
+                generated_output=generated_output,
+            ),
+        },
+        level=level,
+        debug_only=True,
+    )
+
+
+def maybe_queue_search_tabular_generated_output(
+    user_question,
+    file_contexts,
+    user_id,
+    conversation_id,
+    gpt_model,
+    settings,
+    thought_callback=None,
+    model_context=None,
+    cancel_requested=None,
+    request_correlation_id=None,
+):
+    """Queue Search durable tabular work through the shared preflight when enabled."""
+    legacy_direct_preflight = lambda: maybe_queue_direct_tabular_generated_output(
+        user_question=user_question,
+        file_contexts=file_contexts,
+        user_id=user_id,
+        conversation_id=conversation_id,
+        gpt_model=gpt_model,
+        settings=settings,
+        thought_callback=thought_callback,
+        model_context=model_context,
+        cancel_requested=cancel_requested,
+        request_correlation_id=request_correlation_id,
+    )
+
+    if not _settings_flag_enabled(settings, 'enable_tabular_search_shared_preflight', False):
+        return legacy_direct_preflight()
+
+    planner_mode = str((settings or {}).get('tabular_request_planner_mode') or '').strip().lower()
+    if planner_mode not in {'shadow', 'active'}:
+        return legacy_direct_preflight()
+
+    try:
+        _emit_search_shared_preflight_event(
+            'attempted',
+            settings,
+            file_contexts,
+            dimensions={'planner_mode': planner_mode},
+        )
+        result = _shared_orchestrate_tabular_request(
+            user_question,
+            file_contexts,
+            action_mode='search',
+            caller='search',
+            settings=settings,
+            planner_mode=planner_mode,
+            durable_execution_callback=_shared_queue_direct_tabular_generated_output_from_plan,
+            user_id=user_id,
+            conversation_id=conversation_id,
+            gpt_model=gpt_model,
+            thought_callback=thought_callback,
+            model_context=model_context,
+            cancel_requested=cancel_requested,
+            request_correlation_id=request_correlation_id,
+        )
+    except MixedSourceCancellationError:
+        raise
+    except Exception as exc:
+        _emit_search_shared_preflight_event(
+            'failed',
+            settings,
+            file_contexts,
+            dimensions={'error_type': exc.__class__.__name__},
+            level=logging.WARNING,
+        )
+        return legacy_direct_preflight()
+
+    planner_mode = str((result or {}).get('planner_mode') or '').strip().lower()
+    generated_output = (result or {}).get('generated_output_metadata') if isinstance(result, dict) else None
+    if planner_mode == 'shadow':
+        _emit_search_shared_preflight_event(
+            'shadow_compared',
+            settings,
+            file_contexts,
+            result=result,
+        )
+        return legacy_direct_preflight()
+
+    if planner_mode == 'active' and generated_output:
+        output_status = str(generated_output.get('status') or '').strip().lower()
+        event_name = 'failed' if output_status == 'failed' else 'accepted'
+        _emit_search_shared_preflight_event(
+            event_name,
+            settings,
+            file_contexts,
+            result=result,
+            generated_output=generated_output,
+            level=logging.WARNING if event_name == 'failed' else logging.INFO,
+        )
+        return generated_output
+
+    _emit_search_shared_preflight_event(
+        'declined',
+        settings,
+        file_contexts,
+        result=result,
+    )
+    return None
 
 
 def _build_tabular_generated_output_source_authorization(source_candidate):
@@ -12507,7 +12667,7 @@ def _execute_mixed_source_tabular_evidence(
         if not file_context:
             raise ValueError('Authorized tabular source context is unavailable')
 
-        direct_generated_output = maybe_queue_direct_tabular_generated_output(
+        direct_generated_output = maybe_queue_search_tabular_generated_output(
             user_question=user_question,
             file_contexts=[file_context],
             user_id=user_id,
@@ -17896,7 +18056,7 @@ def register_route_backend_chats(bp):
                 streamed_tabular_tool_thoughts = []
                 tabular_invocations = []
                 tabular_related_document_summary = ''
-                tabular_generated_output = maybe_queue_direct_tabular_generated_output(
+                tabular_generated_output = maybe_queue_search_tabular_generated_output(
                     user_question=user_message,
                     file_contexts=workspace_tabular_file_contexts,
                     user_id=user_id,
@@ -18263,7 +18423,7 @@ def register_route_backend_chats(bp):
                         build_tabular_file_context(file_name, source_hint='chat')
                         for file_name in chat_tabular_files
                     ]
-                    chat_tabular_generated_output = maybe_queue_direct_tabular_generated_output(
+                    chat_tabular_generated_output = maybe_queue_search_tabular_generated_output(
                         user_question=user_message,
                         file_contexts=chat_tabular_file_contexts,
                         user_id=user_id,
@@ -21832,7 +21992,7 @@ def register_route_backend_chats(bp):
                     streamed_tabular_tool_thoughts = []
                     tabular_invocations = []
                     tabular_related_document_summary = ''
-                    tabular_generated_output = maybe_queue_direct_tabular_generated_output(
+                    tabular_generated_output = maybe_queue_search_tabular_generated_output(
                         user_question=user_message,
                         file_contexts=workspace_tabular_file_contexts,
                         user_id=user_id,
@@ -22216,7 +22376,7 @@ def register_route_backend_chats(bp):
                             build_tabular_file_context(file_name, source_hint='chat')
                             for file_name in chat_tabular_files
                         ]
-                        chat_tabular_generated_output = maybe_queue_direct_tabular_generated_output(
+                        chat_tabular_generated_output = maybe_queue_search_tabular_generated_output(
                             user_question=user_message,
                             file_contexts=chat_tabular_file_contexts,
                             user_id=user_id,
