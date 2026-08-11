@@ -53,7 +53,10 @@ from functions_assistant_table_exports import (  # noqa: E402
     has_generated_tabular_csv_output,
     neutralize_csv_spreadsheet_formula,
 )
-from functions_generated_file_exports import get_requested_generated_file_format  # noqa: E402
+from functions_generated_file_exports import (  # noqa: E402
+    get_requested_generated_file_format,
+    get_requested_structured_artifact_format,
+)
 CONTRACT_FUNCTIONS = {
     '_safe_int',
     '_normalize_source_identity_label',
@@ -540,6 +543,7 @@ def _load_tabular_request_intent_helpers():
     namespace = {
         'assistant_table_export_requested': assistant_table_export_requested,
         'get_requested_generated_file_format': get_requested_generated_file_format,
+        'get_requested_structured_artifact_format': get_requested_structured_artifact_format,
         're': re,
     }
     exec(

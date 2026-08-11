@@ -32,6 +32,68 @@ GENERATED_FILE_FORMATS = {
 }
 SUPPORTED_GENERATED_EXPORT_FORMATS = {'csv', 'json', 'xml'}
 GENERATED_FILE_PREVIEW_ROWS = 3
+STRUCTURED_ARTIFACT_FORMAT_MARKERS = {
+    'json': (
+        'json artifact',
+        'json export',
+        'json output',
+        'json array',
+        'json object',
+        'json file',
+        'json format',
+        'valid json',
+        'convert into json',
+        'convert to json',
+        'return json',
+        'return only json',
+        'respond with json',
+        'format as json',
+        'output as json',
+        'save as json',
+        'export as json',
+        'download as json',
+        'create json',
+        'create a json',
+        'make json',
+        'make a json',
+        'generate json',
+        'generate a json',
+    ),
+    'xml': (
+        'xml artifact',
+        'xml export',
+        'xml output',
+        'xml document',
+        'xml file',
+        'xml template',
+        'valid xml',
+        'well-formed xml',
+        'convert into xml',
+        'convert to xml',
+        'populate xml',
+        'populate the xml',
+        'return xml',
+        'return only xml',
+        'respond with xml',
+        'format as xml',
+        'output as xml',
+        'save as xml',
+        'export as xml',
+        'download as xml',
+        'create xml',
+        'create an xml',
+        'make xml',
+        'make an xml',
+        'generate xml',
+        'generate an xml',
+    ),
+}
+STRUCTURED_ARTIFACT_ACTION_PATTERN = (
+    r'convert|populate|create|make|build|generate|produce|return|respond|format|output|save|export|download'
+)
+STRUCTURED_ARTIFACT_DESTINATION_ACTION_PATTERN = (
+    r'convert|transform|translate|turn|put|place|write|map|load|insert|transfer|copy|move'
+)
 FUNCTION_RESULT_ROW_KEYS = (
     'rows',
     'data',
@@ -129,6 +191,64 @@ def get_requested_generated_file_format(user_question: str) -> Optional[str]:
     return None
 
 
+def get_requested_structured_artifact_format(user_question: str) -> Optional[str]:
+    """Return a requested CSV, JSON, or XML artifact target without resolving source orchestration."""
+    normalized_question = re.sub(r'\s+', ' ', str(user_question or '').strip().casefold())
+    if not normalized_question:
+        return None
+
+    clauses = [
+        clause.strip()
+        for clause in re.split(r'[.!?;\n]+', normalized_question)
+        if clause.strip()
+    ]
+    destination_matches = []
+    for clause_index, clause in enumerate(clauses):
+        for output_format in ('json', 'xml'):
+            if output_format not in clause or _structured_artifact_format_is_negated(clause, output_format):
+                continue
+            destination_match = re.search(
+                rf'\b(?:{STRUCTURED_ARTIFACT_DESTINATION_ACTION_PATTERN})\b'
+                rf'[\w\s,():;\-/]{{0,120}}\b(?:into|in|to|as)\s+'
+                rf'(?:(?:an?|the)\s+)?(?:new\s+)?{output_format}'
+                rf'(?:\s+(?:artifact|document|file|format|output|template))?\b',
+                clause,
+            )
+            if destination_match:
+                destination_matches.append((clause_index, destination_match.start(), output_format))
+    if destination_matches:
+        return min(destination_matches)[2]
+
+    for output_format in ('json', 'xml'):
+        for clause in clauses:
+            if output_format not in clause or _structured_artifact_format_is_negated(clause, output_format):
+                continue
+            if any(marker in clause for marker in STRUCTURED_ARTIFACT_FORMAT_MARKERS[output_format]):
+                return output_format
+            if re.search(
+                rf'\b(?:{STRUCTURED_ARTIFACT_ACTION_PATTERN})\b'
+                rf'[\w\s.,:;\-/]{{0,80}}\b(?:an?\s+)?{output_format}\b',
+                clause,
+            ):
+                return output_format
+    if assistant_table_export_requested(user_question):
+        return GENERATED_FILE_FORMAT_CSV
+    return None
+
+
+def _structured_artifact_format_is_negated(clause: str, output_format: str) -> bool:
+    """Return whether a clause directly negates creating the target structured format."""
+    return bool(
+        re.search(
+            rf"\b(?:do\s+not|don't|dont|never)\s+"
+            rf"(?:{STRUCTURED_ARTIFACT_ACTION_PATTERN}|{STRUCTURED_ARTIFACT_DESTINATION_ACTION_PATTERN})"
+            rf"\b[\w\s.,:;\-/]{{0,80}}\b{output_format}\b",
+            clause,
+        )
+        or re.search(rf'\bwithout\s+(?:(?:an?|the)\s+)?{output_format}\b', clause)
+    )
+
+
 def generated_file_export_requested(user_question: str) -> bool:
     """Return whether the user asked for a supported generated file artifact."""
     return get_requested_generated_file_format(user_question) is not None
@@ -139,7 +259,11 @@ def build_generated_file_output_guidance(
     requested_format: Optional[str] = None,
 ) -> str:
     """Return shared model guidance for a requested generated output format."""
-    output_format = str(requested_format or '').strip().lower() or get_requested_generated_file_format(user_question)
+    output_format = (
+        str(requested_format or '').strip().lower()
+        or get_requested_generated_file_format(user_question)
+        or get_requested_structured_artifact_format(user_question)
+    )
     if output_format == GENERATED_FILE_FORMAT_CSV:
         return build_csv_output_clarification_guidance(user_question)
     if output_format == 'json':

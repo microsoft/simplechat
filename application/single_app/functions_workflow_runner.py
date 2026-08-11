@@ -66,6 +66,7 @@ from functions_generated_file_exports import (
     build_generated_file_output_guidance,
     get_generated_file_export_content,
     get_requested_generated_file_format,
+    get_requested_structured_artifact_format,
     has_generated_file_output,
 )
 from functions_chart_operations import append_proactive_chart_guidance
@@ -436,106 +437,11 @@ def _prompt_explicitly_requests_artifact(analysis_prompt):
 
 
 def _prompt_explicitly_requests_json_artifact(analysis_prompt):
-    prompt_text = str(analysis_prompt or '').strip().lower()
-    if not prompt_text:
-        return False
-
-    json_markers = (
-        'json artifact',
-        'json export',
-        'json output',
-        'json array',
-        'json object',
-        'json format',
-        'valid json',
-        'convert into json',
-        'convert to json',
-        'return json',
-        'return only json',
-        'return only valid json',
-        'respond with json',
-        'format as json',
-        'output as json',
-        'save as json',
-        'save it as json',
-        'export as json',
-        'download as json',
-        'create json',
-        'create a json',
-        'make json',
-        'make a json',
-        'generate json',
-        'generate a json',
-        'produce json',
-        'produce a json',
-        'save to .json',
-        'export to .json',
-        'download .json',
-        'create .json',
-        'make .json',
-        'generate .json',
-    )
-    if any(marker in prompt_text for marker in json_markers):
-        return True
-
-    return bool(re.search(
-        r'\b(convert|create|make|build|generate|produce|return|respond|format|output|save|export|download)\b[\w\s.,:;\-/]{0,60}\bjson\b',
-        prompt_text,
-    ))
+    return get_requested_structured_artifact_format(analysis_prompt) == 'json'
 
 
 def _prompt_explicitly_requests_xml_artifact(analysis_prompt):
-    prompt_text = str(analysis_prompt or '').strip().lower()
-    if not prompt_text:
-        return False
-
-    xml_markers = (
-        'xml artifact',
-        'xml export',
-        'xml output',
-        'xml document',
-        'xml file',
-        'xml template',
-        'valid xml',
-        'well-formed xml',
-        'convert into xml',
-        'convert to xml',
-        'populate xml',
-        'populate the xml',
-        'return xml',
-        'return only xml',
-        'return only valid xml',
-        'respond with xml',
-        'format as xml',
-        'output as xml',
-        'save as xml',
-        'save it as xml',
-        'export as xml',
-        'download as xml',
-        'create xml',
-        'create an xml',
-        'create a xml',
-        'make xml',
-        'make an xml',
-        'make a xml',
-        'generate xml',
-        'generate an xml',
-        'produce xml',
-        'produce an xml',
-        'save to .xml',
-        'export to .xml',
-        'download .xml',
-        'create .xml',
-        'make .xml',
-        'generate .xml',
-    )
-    if any(marker in prompt_text for marker in xml_markers):
-        return True
-
-    return bool(re.search(
-        r'\b(convert|populate|create|make|build|generate|produce|return|respond|format|output|save|export|download)\b[\w\s.,:;\-/]{0,80}\bxml\b',
-        prompt_text,
-    ))
+    return get_requested_structured_artifact_format(analysis_prompt) == 'xml'
 
 
 def _normalize_generated_artifact_file_stem(value, fallback_value='analysis-artifact'):

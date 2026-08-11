@@ -2,7 +2,7 @@
 
 Implemented in version: **0.250.072**
 
-Updated through version: **0.250.153**
+Updated through version: **0.250.154**
 
 GitHub issue: [#1071](https://github.com/microsoft/simplechat/issues/1071)
 
@@ -76,6 +76,8 @@ Completed CSV, JSON, and XML file-export cards omit inline payloads and supporti
 
 During streaming JSON/XML generation, the browser receives one server-authored status such as `Generating the XML file. It will appear here when ready.` The model payload is accumulated privately for validation and publication rather than rendered token by token. If artifact publication cannot complete, finalization falls back to the accumulated model response instead of leaving the temporary status in place.
 
+Structured artifact intent is normalized once for Chat, document Analyze, and workflow output selection. Destination phrasing such as `put the PDF content into the XML`, `place these fields in an XML document`, or `write these records as JSON` selects the existing artifact generation path without requiring words such as `create`, `download`, `file`, or `populate`. Source-only mentions such as `summarize the selected XML` and explicitly negated generation requests do not select an output artifact.
+
 ## Usage
 
 Examples:
@@ -93,6 +95,7 @@ When an action returns structured data and the assistant summarizes it instead o
 - `functional_tests/test_generated_json_xml_exports.py` covers JSON/XML parsing, hardened XML handling, completed file-export metadata, and format-specific View actions.
 - `ui_tests/test_chat_generated_tabular_output_card.py` covers concise completed cards and bounded CSV, JSON, and XML preview modals.
 - `functional_tests/test_generated_json_xml_exports.py` also covers payload-only model guidance, private stream gates for agent and direct-model paths, truthful generation status, and safe failure fallback.
+- The same test executes a cross-path terminology matrix for Chat, Analyze, and workflow wrappers, including destination disambiguation such as `Convert JSON to XML`.
 - `functional_tests/test_mixed_source_hardening.py` covers cancellation and artifact rollback through the generic finalizer.
 - `functional_tests/test_document_action_token_usage_aggregation.py` covers workflow assistant-message persistence with the shared finalizer.
 - Existing durable CSV, document action, workflow, and generated-artifact tests remain part of validation.
