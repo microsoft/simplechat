@@ -2,6 +2,15 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.155)**
+
+#### Bug Fixes
+
+*   **Tabular Contains Replay Semantics**
+    *   Aligned foreground `filter_rows contains` matching with durable CSV replay by using literal, case-insensitive containment in both paths.
+    *   Added regression coverage for regex-shaped values such as `A.*` so previews and generated export replays select the same row cohort.
+    *   (Ref: #1197, tabular durable replay descriptors, `tabular_processing_plugin.py`, `test_tabular_large_result_pagination.py`)
+
 ### **(v0.250.129)**
 
 #### New Features
