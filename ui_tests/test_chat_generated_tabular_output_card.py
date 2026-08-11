@@ -1,9 +1,9 @@
 # test_chat_generated_tabular_output_card.py
 """
 UI test for chat generated tabular output cards.
-Version: 0.241.096
+Version: 0.250.151
 Implemented in: 0.241.033
-Updated in: 0.241.096
+Updated in: 0.241.096; simplified completed artifact cards and bounded View modal in 0.250.151
 
 This test ensures assistant replies with generic generated analysis artifact
 metadata render a reusable export card, preserve untrusted values as text,
@@ -55,7 +55,7 @@ def _wait_for_chatbox_or_skip(page):
 
 @pytest.mark.ui
 def test_chat_generated_tabular_output_card(playwright):
-    """Validate generated tabular output cards render preview data and trigger downloads."""
+    """Validate completed tabular cards stay concise and open bounded previews on demand."""
     _require_ui_env()
 
     download_requests = []
@@ -158,6 +158,8 @@ def test_chat_generated_tabular_output_card(playwright):
                                     source_file_name: 'feedback_comments.xlsx',
                                     selected_sheet: 'Comments',
                                     summary: 'The full export is saved separately so the reply can stay concise. <analysis>',
+                                    suppress_assistant_text: true,
+                                    preview_columns: ['comment_id', 'author', 'comment'],
                                     preview_rows: [
                                         {
                                             comment_id: '001',
@@ -181,15 +183,31 @@ def test_chat_generated_tabular_output_card(playwright):
         )
 
         card = page.locator('.generated-tabular-output-card')
+        message = page.locator('[data-message-id="assistant-generated-output"]')
         expect(card).to_be_visible()
         expect(card).to_contain_text('Generated JSON export')
-        expect(card).to_contain_text('Saved to this chat for download in this conversation.')
         expect(card).to_contain_text('124 rows')
-        expect(card).to_contain_text('Source: feedback_comments.xlsx | Sheet: Comments')
         expect(card).to_contain_text('comments<script>alert(1)</script>.json')
-        expect(card).to_contain_text('The full export is saved separately so the reply can stay concise. <analysis>')
-        expect(card).to_contain_text('Alicia <Admin>')
-        expect(card).to_contain_text('First <tag> comment')
+        expect(card).not_to_contain_text('Saved to this chat for download in this conversation.')
+        expect(card).not_to_contain_text('Source: feedback_comments.xlsx | Sheet: Comments')
+        expect(card).not_to_contain_text('The full export is saved separately so the reply can stay concise. <analysis>')
+        expect(card).not_to_contain_text('Alicia <Admin>')
+        expect(message.locator('.message-text')).to_be_hidden()
+        expect(message.locator('.message-footer')).to_be_hidden()
+
+        view_button = card.get_by_role('button', name='View generated JSON preview', exact=True)
+        expect(view_button).to_be_visible()
+        view_button.click()
+        preview_modal = page.locator('#generated-artifact-preview-modal')
+        expect(preview_modal).to_be_visible()
+        expect(preview_modal.get_by_role('heading', name='Preview: comments<script>alert(1)</script>.json')).to_be_visible()
+        expect(preview_modal).to_contain_text('Alicia <Admin>')
+        expect(preview_modal).to_contain_text('First <tag> comment')
+        expect(preview_modal).to_contain_text('Showing 2 of 124 rows')
+        assert preview_modal.locator('thead th').all_text_contents() == ['comment_id', 'author', 'comment']
+        expect(preview_modal.locator('script')).to_have_count(0)
+        preview_modal.locator('.modal-footer button').click()
+        expect(preview_modal).to_be_hidden()
 
         assert page.locator('.generated-tabular-output-card script').count() == 0
 

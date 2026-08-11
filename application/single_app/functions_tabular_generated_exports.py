@@ -189,6 +189,9 @@ TABULAR_ANALYSIS_MAX_NOTABLE_ROWS = 25
 TABULAR_EXPORT_SUMMARY_MAX_FIELDS = 25
 TABULAR_EXPORT_SUMMARY_MAX_VALUES_PER_FIELD = 5
 TABULAR_EXPORT_SUMMARY_AGGREGATE_MAX_VALUES = 25
+TABULAR_EXPORT_ARTIFACT_PREVIEW_MAX_ROWS = 10
+TABULAR_EXPORT_ARTIFACT_PREVIEW_MAX_CHARS = 24000
+TABULAR_EXPORT_ARTIFACT_PREVIEW_CELL_MAX_CHARS = 240
 TABULAR_EXPORT_PROGRESS_LOG_INTERVAL_SECONDS = 30
 TABULAR_GENERATION_DEFAULT_HEARTBEAT_SECONDS = 30
 TABULAR_GENERATION_DEFAULT_STALE_SECONDS = 120
@@ -5715,6 +5718,16 @@ def _build_run_public_status(run, settings=None):
             'source_file_name': run.get('source_file_name'),
             'selected_sheet': run.get('selected_sheet'),
             'summary': summary,
+            'preview_rows': list(artifact.get('preview_rows') or [])[
+                :TABULAR_EXPORT_ARTIFACT_PREVIEW_MAX_ROWS
+            ],
+            'preview_columns': list(artifact.get('preview_columns') or [])[
+                :TABULAR_GENERATION_PLAN_MAX_FIELDS + 2
+            ],
+            'preview_text': str(artifact.get('preview_text') or '')[
+                :TABULAR_EXPORT_ARTIFACT_PREVIEW_MAX_CHARS
+            ],
+            'suppress_assistant_text': bool(artifact.get('suppress_assistant_text')),
             'suppress_assistant_table_export': True,
         })
 
@@ -6605,8 +6618,79 @@ def _write_ordered_output_stream(run, output_stream):
     return written_row_count
 
 
-def _build_artifact_metadata(uploaded_message, generated_file_name, output_format):
+def _build_structured_export_preview_rows(run):
+    output_schema = list((run or {}).get('output_schema') or [])
+    if not output_schema:
+        return []
+
+    output_format = str((run or {}).get('output_format') or 'json').strip().lower() or 'json'
+    preview_schema = (
+        build_safe_csv_headers(output_schema)
+        if output_format == 'csv'
+        else output_schema
+    )
+    preview_rows = []
+    preview_char_count = 0
+    expected_source_row_number = 1
+    batch_count = _safe_int((run or {}).get('batch_count'))
+    for batch_number in range(1, batch_count + 1):
+        batch_blob_path = _output_blob_path(
+            (run or {}).get('user_id'),
+            (run or {}).get('conversation_id'),
+            (run or {}).get('id'),
+            batch_number,
+        )
+        _validate_tabular_output_checkpoint_metadata(run, batch_blob_path, batch_number)
+        batch_entries = _download_json_blob(batch_blob_path)
+        if not isinstance(batch_entries, list):
+            raise ValueError(f'Output checkpoint {batch_number}/{batch_count} was not a JSON array')
+
+        for batch_row_index, entry in enumerate(batch_entries, start=1):
+            if not isinstance(entry, dict) or set(entry) != set(output_schema):
+                raise ValueError(
+                    f'Output checkpoint {batch_number}/{batch_count} row {batch_row_index} has schema drift'
+                )
+            source_row_number = _safe_int(entry.get(TABULAR_EXPORT_OUTPUT_ROW_NUMBER_FIELD))
+            if source_row_number != expected_source_row_number:
+                raise ValueError(
+                    f'Source row order gap or overlap: expected {expected_source_row_number}, '
+                    f'found {source_row_number}'
+                )
+
+            preview_row = {}
+            for field_name, preview_field_name in zip(output_schema, preview_schema):
+                rendered_value = _serialize_generated_output_value(entry.get(field_name))
+                if len(rendered_value) > TABULAR_EXPORT_ARTIFACT_PREVIEW_CELL_MAX_CHARS:
+                    rendered_value = (
+                        f'{rendered_value[:TABULAR_EXPORT_ARTIFACT_PREVIEW_CELL_MAX_CHARS - 3]}...'
+                    )
+                preview_row[preview_field_name] = rendered_value
+
+            preview_row_char_count = len(json.dumps(preview_row, ensure_ascii=False, separators=(',', ':')))
+            if (
+                preview_rows
+                and preview_char_count + preview_row_char_count > TABULAR_EXPORT_ARTIFACT_PREVIEW_MAX_CHARS
+            ):
+                return preview_rows
+            preview_rows.append(preview_row)
+            preview_char_count += preview_row_char_count
+            expected_source_row_number += 1
+            if len(preview_rows) >= TABULAR_EXPORT_ARTIFACT_PREVIEW_MAX_ROWS:
+                return preview_rows
+
+    return preview_rows
+
+
+def _build_artifact_metadata(
+    uploaded_message,
+    generated_file_name,
+    output_format,
+    preview_rows=None,
+    preview_text='',
+    suppress_assistant_text=False,
+):
     uploaded_message = uploaded_message or {}
+    normalized_preview_rows = list(preview_rows or [])[:TABULAR_EXPORT_ARTIFACT_PREVIEW_MAX_ROWS]
     return {
         'artifact_message_id': uploaded_message.get('id'),
         'file_name': uploaded_message.get('file_name') or generated_file_name,
@@ -6614,6 +6698,10 @@ def _build_artifact_metadata(uploaded_message, generated_file_name, output_forma
         'blob_path': uploaded_message.get('blob_path'),
         'capability': uploaded_message.get('capability') or 'tabular',
         'output_format': uploaded_message.get('output_format') or output_format,
+        'preview_rows': normalized_preview_rows,
+        'preview_columns': list(normalized_preview_rows[0]) if normalized_preview_rows else [],
+        'preview_text': str(preview_text or '')[:TABULAR_EXPORT_ARTIFACT_PREVIEW_MAX_CHARS],
+        'suppress_assistant_text': bool(suppress_assistant_text),
     }
 
 
@@ -6672,6 +6760,7 @@ def _complete_run(run):
     run, uploaded_message, post_run_summary, output_entry_count, output_format, generated_file_name = (
         _publish_structured_export_artifact(run)
     )
+    artifact_preview_rows = _build_structured_export_preview_rows(run)
     now = _now_iso()
     run.update({
         'status': TABULAR_EXPORT_STATUS_COMPLETED,
@@ -6686,7 +6775,13 @@ def _complete_run(run):
         'last_message': 'Background structured export completed',
         'post_run_summary': post_run_summary,
         'generated_file_name': uploaded_message.get('file_name') or generated_file_name,
-        'final_artifact': _build_artifact_metadata(uploaded_message, generated_file_name, output_format),
+        'final_artifact': _build_artifact_metadata(
+            uploaded_message,
+            generated_file_name,
+            output_format,
+            preview_rows=artifact_preview_rows,
+            suppress_assistant_text=True,
+        ),
         'estimated_remaining_seconds': 0,
     })
     run.update(_build_generation_progress_contract_fields(
@@ -6827,6 +6922,7 @@ def _publish_analysis_artifact(run, final_summary):
 
 def _complete_analysis_run(run, final_summary):
     run, uploaded_message, final_summary, generated_file_name = _publish_analysis_artifact(run, final_summary)
+    artifact_preview_text = _build_analysis_summary_markdown(run, final_summary)
     now = _now_iso()
     run.update({
         'status': TABULAR_EXPORT_STATUS_COMPLETED,
@@ -6843,7 +6939,13 @@ def _complete_analysis_run(run, final_summary):
         'post_run_summary': final_summary.get('summary'),
         'generated_file_name': uploaded_message.get('file_name') or generated_file_name,
         'output_format': 'md',
-        'final_artifact': _build_artifact_metadata(uploaded_message, generated_file_name, 'md'),
+        'final_artifact': _build_artifact_metadata(
+            uploaded_message,
+            generated_file_name,
+            'md',
+            preview_text=artifact_preview_text,
+            suppress_assistant_text=True,
+        ),
         'estimated_remaining_seconds': 0,
     })
     run.update(_build_generation_progress_contract_fields(
@@ -6878,7 +6980,13 @@ def _publish_combined_structured_export_phase(run):
     run, uploaded_message, post_run_summary, output_entry_count, output_format, generated_file_name = (
         _publish_structured_export_artifact(run)
     )
-    structured_artifact = _build_artifact_metadata(uploaded_message, generated_file_name, output_format)
+    structured_artifact = _build_artifact_metadata(
+        uploaded_message,
+        generated_file_name,
+        output_format,
+        preview_rows=_build_structured_export_preview_rows(run),
+        suppress_assistant_text=True,
+    )
     now = _now_iso()
     run.update({
         'updated_at': now,
@@ -6925,7 +7033,13 @@ def _complete_combined_analysis_run(run, final_summary):
         generated_file_name = existing_analysis_artifact.get('file_name') or run.get('analysis_generated_file_name')
     else:
         run, uploaded_message, final_summary, generated_file_name = _publish_analysis_artifact(run, final_summary)
-        analysis_artifact = _build_artifact_metadata(uploaded_message, generated_file_name, 'md')
+        analysis_artifact = _build_artifact_metadata(
+            uploaded_message,
+            generated_file_name,
+            'md',
+            preview_text=_build_analysis_summary_markdown(run, final_summary),
+            suppress_assistant_text=True,
+        )
 
     structured_artifact = run.get('structured_export_artifact') or run.get('final_artifact') or {}
     now = _now_iso()

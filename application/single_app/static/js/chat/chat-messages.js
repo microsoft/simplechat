@@ -3773,12 +3773,14 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     return Boolean(row) && typeof row === 'object' && !Array.isArray(row);
   }
 
-  function buildGeneratedTabularPreviewTable(previewRows) {
+  function buildGeneratedTabularPreviewTable(previewRows, options = {}) {
     if (!Array.isArray(previewRows) || !previewRows.length || !previewRows.every(isGeneratedTabularPreviewObjectRow)) {
       return null;
     }
 
-    const previewColumns = [];
+    const previewColumns = Array.isArray(options.columns)
+      ? options.columns.map(columnName => String(columnName || '')).filter(Boolean)
+      : [];
     previewRows.forEach(row => {
       Object.keys(row).forEach(columnName => {
         if (!previewColumns.includes(columnName)) {
@@ -3791,7 +3793,15 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
       return null;
     }
 
-    const displayedColumns = previewColumns.slice(0, 4);
+    const requestedMaxColumns = Number.parseInt(options.maxColumns, 10);
+    const maxColumns = Number.isFinite(requestedMaxColumns) && requestedMaxColumns > 0
+      ? requestedMaxColumns
+      : 4;
+    const requestedCellLength = Number.parseInt(options.maxCellLength, 10);
+    const maxCellLength = Number.isFinite(requestedCellLength) && requestedCellLength > 0
+      ? requestedCellLength
+      : 120;
+    const displayedColumns = previewColumns.slice(0, maxColumns);
     const tableWrapper = document.createElement('div');
     tableWrapper.className = 'table-responsive small border rounded';
 
@@ -3814,7 +3824,7 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
       const tableRow = document.createElement('tr');
       displayedColumns.forEach(columnName => {
         const valueCell = document.createElement('td');
-        valueCell.textContent = formatGeneratedTabularPreviewValue(row[columnName]);
+        valueCell.textContent = formatGeneratedTabularPreviewValue(row[columnName], maxCellLength);
         tableRow.appendChild(valueCell);
       });
       tbody.appendChild(tableRow);
@@ -3887,6 +3897,149 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     const previewBlock = formatGeneratedAnalysisPreviewBlock(document.createElement('pre'));
     previewBlock.textContent = String(previewText || '').trim();
     return previewBlock;
+  }
+
+  function getGeneratedArtifactPreviewRows(outputMetadata) {
+    if (Array.isArray(outputMetadata?.preview_rows) && outputMetadata.preview_rows.length) {
+      return outputMetadata.preview_rows;
+    }
+    if (Array.isArray(outputMetadata?.preview_items) && outputMetadata.preview_items.length) {
+      return outputMetadata.preview_items;
+    }
+    return [];
+  }
+
+  function hasGeneratedArtifactPreview(outputMetadata, outputFormat) {
+    void outputFormat;
+    return Boolean(
+      getGeneratedArtifactPreviewRows(outputMetadata).length
+      || (Array.isArray(outputMetadata?.preview_lines) && outputMetadata.preview_lines.length)
+      || String(
+        outputMetadata?.preview_text
+        || outputMetadata?.analysis_text
+        || outputMetadata?.panalysis_text
+        || ''
+      ).trim()
+    );
+  }
+
+  function getOrCreateGeneratedArtifactPreviewModal() {
+    let modal = document.getElementById('generated-artifact-preview-modal');
+    if (modal) {
+      return modal;
+    }
+
+    modal = document.createElement('div');
+    modal.id = 'generated-artifact-preview-modal';
+    modal.className = 'modal fade';
+    modal.tabIndex = -1;
+    modal.setAttribute('aria-labelledby', 'generated-artifact-preview-modal-label');
+    modal.setAttribute('aria-hidden', 'true');
+
+    const dialog = document.createElement('div');
+    dialog.className = 'modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable';
+    modal.appendChild(dialog);
+
+    const content = document.createElement('div');
+    content.className = 'modal-content';
+    dialog.appendChild(content);
+
+    const header = document.createElement('div');
+    header.className = 'modal-header';
+    content.appendChild(header);
+
+    const title = document.createElement('h5');
+    title.id = 'generated-artifact-preview-modal-label';
+    title.className = 'modal-title';
+    header.appendChild(title);
+
+    const closeButton = document.createElement('button');
+    closeButton.type = 'button';
+    closeButton.className = 'btn-close';
+    closeButton.setAttribute('data-bs-dismiss', 'modal');
+    closeButton.setAttribute('aria-label', 'Close');
+    header.appendChild(closeButton);
+
+    const body = document.createElement('div');
+    body.className = 'modal-body';
+    body.dataset.generatedArtifactPreviewBody = 'true';
+    content.appendChild(body);
+
+    const footer = document.createElement('div');
+    footer.className = 'modal-footer justify-content-between';
+    content.appendChild(footer);
+
+    const rowInfo = document.createElement('span');
+    rowInfo.className = 'small text-muted';
+    rowInfo.dataset.generatedArtifactPreviewInfo = 'true';
+    footer.appendChild(rowInfo);
+
+    const footerCloseButton = document.createElement('button');
+    footerCloseButton.type = 'button';
+    footerCloseButton.className = 'btn btn-sm btn-secondary';
+    footerCloseButton.setAttribute('data-bs-dismiss', 'modal');
+    footerCloseButton.textContent = 'Close';
+    footer.appendChild(footerCloseButton);
+
+    document.body.appendChild(modal);
+    return modal;
+  }
+
+  function showGeneratedArtifactPreviewModal(outputMetadata, outputFormat) {
+    const previewRows = getGeneratedArtifactPreviewRows(outputMetadata);
+    const previewLines = Array.isArray(outputMetadata?.preview_lines) ? outputMetadata.preview_lines : [];
+    const previewText = String(
+      outputMetadata?.preview_text
+      || outputMetadata?.analysis_text
+      || outputMetadata?.panalysis_text
+      || ''
+    ).trim();
+    let previewContent = null;
+    if (previewRows.length) {
+      previewContent = buildGeneratedTabularPreviewTable(previewRows, {
+        columns: outputMetadata?.preview_columns,
+        maxColumns: 50,
+        maxCellLength: 240,
+      }) || buildGeneratedTabularPreviewFallback(previewRows);
+    } else if (previewLines.length) {
+      previewContent = buildGeneratedAnalysisPreviewText(
+        previewLines.join('\n'),
+        outputMetadata,
+        outputFormat,
+      );
+    } else if (previewText) {
+      previewContent = buildGeneratedAnalysisPreviewText(previewText, outputMetadata, outputFormat);
+    }
+
+    if (!previewContent) {
+      showToast('A preview is not available for this generated artifact.', 'warning');
+      return;
+    }
+
+    const modal = getOrCreateGeneratedArtifactPreviewModal();
+    const title = modal.querySelector('.modal-title');
+    const body = modal.querySelector('[data-generated-artifact-preview-body="true"]');
+    const rowInfo = modal.querySelector('[data-generated-artifact-preview-info="true"]');
+    const fileName = String(outputMetadata?.file_name || `generated-output.${outputFormat}`).trim();
+    if (title) {
+      title.textContent = `Preview: ${fileName}`;
+    }
+    if (body) {
+      body.replaceChildren(previewContent);
+    }
+    if (rowInfo) {
+      const totalRows = formatGeneratedTabularRowCount(outputMetadata?.row_count);
+      rowInfo.textContent = previewRows.length
+        ? `Showing ${previewRows.length.toLocaleString()}${totalRows ? ` of ${totalRows}` : ''} rows`
+        : 'Generated artifact preview';
+    }
+
+    const modalInstance = window.bootstrap?.Modal?.getOrCreateInstance(modal);
+    if (!modalInstance) {
+      showToast('Could not open the generated artifact preview.', 'warning');
+      return;
+    }
+    modalInstance.show();
   }
 
   function getGeneratedAnalysisArtifactTitle(outputMetadata, outputFormat) {
@@ -4621,6 +4774,17 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     };
   }
 
+  function hideCompletedGeneratedArtifactHandoff(container, outputMetadata) {
+    if (outputMetadata?.background_export || !outputMetadata?.suppress_assistant_text) {
+      return;
+    }
+    const message = container?.matches?.('.message')
+      ? container
+      : container?.closest?.('.message');
+    message?.querySelector('.message-text')?.classList.add('d-none');
+    message?.querySelector('.message-footer')?.classList.add('d-none');
+  }
+
   async function refreshBackgroundGeneratedOutputStatus(outputMetadata, card, statusElements = {}) {
     const runId = String(outputMetadata?.export_run_id || outputMetadata?.run_id || '').trim();
     if (!runId || !(card instanceof HTMLElement) || !document.body.contains(card)) {
@@ -4655,6 +4819,7 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
           run_id: runStatus.run_id || runId,
         });
         const refreshedCard = createGeneratedAnalysisArtifactCard(outputMetadata);
+        hideCompletedGeneratedArtifactHandoff(card, outputMetadata);
         card.replaceWith(refreshedCard);
         return;
       }
@@ -4711,6 +4876,7 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
           run_id: runStatus.run_id || runId,
         });
         const refreshedCard = createGeneratedAnalysisArtifactCard(outputMetadata);
+        hideCompletedGeneratedArtifactHandoff(card, outputMetadata);
         card.replaceWith(refreshedCard);
         showToast(responseData?.message || 'Background export is already complete.', 'success');
         return;
@@ -4835,6 +5001,8 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
       outputMetadata?.preview_text || outputMetadata?.analysis_text || outputMetadata?.panalysis_text || ''
     ).trim();
     const isBackgroundExport = Boolean(outputMetadata?.background_export);
+    const capability = String(outputMetadata?.capability || '').trim().toLowerCase();
+    const isCompletedTabularArtifact = !isBackgroundExport && capability === 'tabular';
     const backgroundDetailElements = [];
     const appendSupportingDetail = element => {
       if (isBackgroundExport) {
@@ -4877,30 +5045,32 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
 
     card.appendChild(header);
 
-    const storageNote = document.createElement('div');
-    storageNote.className = 'small text-muted mt-2';
-    storageNote.textContent = getGeneratedTabularStorageNote(outputMetadata);
-    appendSupportingDetail(storageNote);
+    if (!isCompletedTabularArtifact) {
+      const storageNote = document.createElement('div');
+      storageNote.className = 'small text-muted mt-2';
+      storageNote.textContent = getGeneratedTabularStorageNote(outputMetadata);
+      appendSupportingDetail(storageNote);
 
-    if (sourceFileName || selectedSheet) {
-      const sourceNote = document.createElement('div');
-      sourceNote.className = 'small text-muted';
-      const sourceSegments = [];
-      if (sourceFileName) {
-        sourceSegments.push(`Source: ${sourceFileName}`);
+      if (sourceFileName || selectedSheet) {
+        const sourceNote = document.createElement('div');
+        sourceNote.className = 'small text-muted';
+        const sourceSegments = [];
+        if (sourceFileName) {
+          sourceSegments.push(`Source: ${sourceFileName}`);
+        }
+        if (selectedSheet) {
+          sourceSegments.push(`Sheet: ${selectedSheet}`);
+        }
+        sourceNote.textContent = sourceSegments.join(' | ');
+        appendSupportingDetail(sourceNote);
       }
-      if (selectedSheet) {
-        sourceSegments.push(`Sheet: ${selectedSheet}`);
-      }
-      sourceNote.textContent = sourceSegments.join(' | ');
-      appendSupportingDetail(sourceNote);
-    }
 
-    if (summary) {
-      const summaryText = document.createElement('p');
-      summaryText.className = 'small mb-0 mt-2';
-      summaryText.textContent = summary;
-      appendSupportingDetail(summaryText);
+      if (summary) {
+        const summaryText = document.createElement('p');
+        summaryText.className = 'small mb-0 mt-2';
+        summaryText.textContent = summary;
+        appendSupportingDetail(summaryText);
+      }
     }
 
     let backgroundStatusElements = null;
@@ -4913,7 +5083,7 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
       card.appendChild(backgroundStatusBlock.wrapper);
     }
 
-    if (previewRows.length || previewItems.length || previewLines.length || previewText) {
+    if (!isCompletedTabularArtifact && (previewRows.length || previewItems.length || previewLines.length || previewText)) {
       let previewContent = null;
       if (previewRows.length) {
         previewContent = buildGeneratedTabularPreviewTable(previewRows) || buildGeneratedTabularPreviewFallback(previewRows);
@@ -5006,7 +5176,19 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     });
     actions.appendChild(downloadButton);
 
-    if (isGeneratedMarkdownArtifact(outputMetadata, outputFormat)) {
+    if (isCompletedTabularArtifact && hasGeneratedArtifactPreview(outputMetadata, outputFormat)) {
+      const viewButton = document.createElement('button');
+      viewButton.type = 'button';
+      viewButton.className = 'btn btn-sm btn-outline-secondary generated-artifact-view-btn';
+      viewButton.textContent = 'View';
+      viewButton.setAttribute('aria-label', `View generated ${outputFormat.toUpperCase()} preview`);
+      viewButton.addEventListener('click', () => {
+        showGeneratedArtifactPreviewModal(outputMetadata, outputFormat);
+      });
+      actions.appendChild(viewButton);
+    }
+
+    if (isGeneratedMarkdownArtifact(outputMetadata, outputFormat) && !isCompletedTabularArtifact) {
       const normalizedArtifactMessageId = String(outputMetadata?.artifact_message_id || '').trim();
       const normalizedConversationId = String(outputMetadata?.conversation_id || window.currentConversationId || '').trim();
       if (normalizedArtifactMessageId && normalizedConversationId) {
@@ -5069,6 +5251,7 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
 
     generatedOutputs.forEach(outputMetadata => {
       generatedOutputsContainer.appendChild(createGeneratedAnalysisArtifactCard(outputMetadata));
+      hideCompletedGeneratedArtifactHandoff(messageDiv, outputMetadata);
     });
     generatedOutputsContainer.classList.remove('d-none');
   }
@@ -5088,6 +5271,7 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
 
     generatedOutputs.forEach(outputMetadata => {
       generatedOutputsContainer.appendChild(createGeneratedTabularOutputCard(outputMetadata));
+      hideCompletedGeneratedArtifactHandoff(messageDiv, outputMetadata);
     });
     generatedOutputsContainer.classList.remove('d-none');
   }
