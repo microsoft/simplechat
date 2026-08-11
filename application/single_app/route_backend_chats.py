@@ -57,6 +57,13 @@ from functions_mixed_source_orchestration import (
 from functions_tabular_analysis import (
     get_new_plugin_invocations as _shared_get_new_plugin_invocations,
 )
+from functions_tabular_orchestration import (
+    get_tabular_generated_output_format as _shared_get_tabular_generated_output_format,
+    get_tabular_generated_output_task_type as _shared_get_tabular_generated_output_task_type,
+    question_requests_tabular_generated_output as _shared_question_requests_tabular_generated_output,
+    question_requests_tabular_hierarchical_analysis as _shared_question_requests_tabular_hierarchical_analysis,
+    settings_flag_enabled as _shared_settings_flag_enabled,
+)
 import builtins
 import asyncio, types
 import ast
@@ -4982,105 +4989,29 @@ def build_tabular_computed_results_system_message(source_label, tabular_analysis
 
 def get_tabular_generated_output_format(user_question):
     """Return the requested generated-output file format when the user asked for one."""
-    return get_requested_structured_artifact_format(user_question)
+    return _shared_get_tabular_generated_output_format(user_question)
 
 
 def question_requests_tabular_generated_output(user_question):
     """Return True when the prompt asks for a downloadable structured tabular export."""
-    normalized_question = str(user_question or '').strip().lower()
-    requested_format = get_tabular_generated_output_format(user_question)
-    if not normalized_question or not requested_format:
-        return False
-
-    exhaustive_markers = (
-        'all rows',
-        'every row',
-        'for each row',
-        'for every row',
-        'full json',
-        'full csv',
-        'full xml',
-        'entire',
-        'complete',
-        'convert',
-        'download',
-        'save',
-        'export',
-        'create',
-        'generate',
-        'populate',
-        'one object per',
-        'one row per',
-        'one output row per',
-        'each object',
-        'each row',
-    )
-    if requested_format == 'csv' and assistant_table_export_requested(user_question):
-        return True
-
-    return any(marker in normalized_question for marker in exhaustive_markers)
+    return _shared_question_requests_tabular_generated_output(user_question)
 
 
 def question_requests_tabular_hierarchical_analysis(user_question):
     """Return True when the prompt asks for whole-dataset row-level synthesis."""
-    normalized_question = str(user_question or '').strip().lower()
-    if not normalized_question:
-        return False
-
-    exhaustive_markers = (
-        'all rows',
-        'every row',
-        'each row',
-        'for each row',
-        'for every row',
-        'entire dataset',
-        'entire file',
-        'whole dataset',
-        'whole file',
-    )
-    analysis_markers = (
-        'analyze',
-        'analyse',
-        'summarize',
-        'summarise',
-        'synthesize',
-        'synthesise',
-        'evaluate',
-        'assess',
-        'classify',
-        'review',
-        'find patterns',
-        'patterns',
-        'themes',
-        'risks',
-        'risk patterns',
-        'answer',
-        'answer each question',
-        'answer every question',
-    )
-    return any(marker in normalized_question for marker in exhaustive_markers) and any(
-        marker in normalized_question for marker in analysis_markers
-    )
+    return _shared_question_requests_tabular_hierarchical_analysis(user_question)
 
 
 def _settings_flag_enabled(settings, key, default=False):
-    value = (settings or {}).get(key, default)
-    if isinstance(value, str):
-        return value.strip().lower() in {'1', 'true', 'yes', 'on'}
-    return bool(value)
+    return _shared_settings_flag_enabled(settings, key, default=default)
 
 
 def _get_tabular_generated_output_task_type(generated_output_requested, hierarchical_analysis_requested, settings):
-    hierarchical_analysis_enabled = _settings_flag_enabled(
+    return _shared_get_tabular_generated_output_task_type(
+        generated_output_requested,
+        hierarchical_analysis_requested,
         settings,
-        'enable_tabular_hierarchical_analysis',
-        False,
     )
-    if generated_output_requested and hierarchical_analysis_requested and hierarchical_analysis_enabled:
-        return TABULAR_RUN_TASK_COMBINED
-    if not generated_output_requested and hierarchical_analysis_requested and hierarchical_analysis_enabled:
-        return TABULAR_RUN_TASK_HIERARCHICAL_ANALYSIS
-    return None
 
 
 def question_requests_tabular_structured_object_output(user_question):

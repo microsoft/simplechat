@@ -25,6 +25,7 @@ if str(APP_ROOT) not in sys.path:
 CONFIG_FILE = APP_ROOT / "config.py"
 GENERATED_EXPORTS_FILE = APP_ROOT / "functions_generated_file_exports.py"
 CHAT_ROUTE_FILE = APP_ROOT / "route_backend_chats.py"
+TABULAR_ORCHESTRATION_FILE = APP_ROOT / "functions_tabular_orchestration.py"
 WORKFLOW_RUNNER_FILE = APP_ROOT / "functions_workflow_runner.py"
 DOCUMENT_ANALYSIS_FILE = APP_ROOT / "functions_document_analysis.py"
 DOCUMENTS_FILE = APP_ROOT / "functions_documents.py"
@@ -123,12 +124,18 @@ def test_shared_json_xml_export_helpers():
 def test_chat_route_json_xml_artifact_hooks():
     print("Testing chat route JSON/XML artifact hooks...")
     chat_source = read_text(CHAT_ROUTE_FILE)
+    orchestration_source = read_text(TABULAR_ORCHESTRATION_FILE)
 
     assert_contains(chat_source, "normalize_json_artifact_payload", "JSON artifact extraction import")
     assert_contains(chat_source, "normalize_xml_artifact_payload", "XML artifact extraction import")
     assert_contains(chat_source, "def maybe_create_assistant_file_generated_output(", "assistant JSON/XML artifact helper")
     assert_contains(chat_source, "get_requested_structured_artifact_format", "shared structured format detector")
-    assert_contains(chat_source, "return get_requested_structured_artifact_format(user_question)", "Chat format delegation")
+    assert_contains(chat_source, "return _shared_get_tabular_generated_output_format(user_question)", "Chat format delegation")
+    assert_contains(
+        orchestration_source,
+        "return get_requested_structured_artifact_format(user_question)",
+        "Shared planner format delegation",
+    )
     assert_contains(chat_source, "_build_assistant_file_output_handoff", "no-inline assistant handoff builder")
     assert chat_source.count("maybe_create_assistant_file_generated_output(") >= 4, (
         "Expected helper definition plus document-action, non-streaming, and streaming save path calls."
