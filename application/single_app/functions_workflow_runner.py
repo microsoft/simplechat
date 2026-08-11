@@ -1341,6 +1341,9 @@ def _maybe_create_document_analysis_generated_artifacts(
         or xml_artifact_requested
         or primary_tabular_outputs
     )
+    deferred_composition = analysis_result.get('deferred_composition') if isinstance(analysis_result.get('deferred_composition'), dict) else {}
+    if deferred_composition.get('status') in {'pending', 'gate_disabled'}:
+        return {'artifacts': [], 'assistant_reply': None}
 
     if create_lossless_artifacts:
         artifacts = []
@@ -2301,6 +2304,19 @@ def _build_mixed_source_analysis_coverage(handoff):
         )
     coverage['engine_status_totals'] = engine_status_totals
     coverage['document_count'] = coverage.get('requested_source_count', 0)
+    try:
+        pending_source_count = max(0, int(coverage.get('pending_source_count') or 0))
+    except (TypeError, ValueError):
+        pending_source_count = 0
+    if pending_source_count:
+        coverage['progress_meta'] = {
+            'phase': 'waiting_for_tabular_outputs',
+            'phase_label': 'Pending tabular evidence',
+            'phase_detail': 'Mixed-source Analyze is waiting for full-source tabular work to finish',
+            'status': EVIDENCE_STATUS_PENDING,
+            'percent_override': 0,
+        }
+        return coverage
     coverage['progress_meta'] = {
         'phase': 'complete',
         'phase_label': 'Complete' if not coverage.get('partial_coverage') else 'Partial',
@@ -2316,6 +2332,190 @@ def _settings_bool(settings, key, default=False):
     if isinstance(value, str):
         return value.strip().lower() in {'1', 'true', 'yes', 'on'}
     return bool(value)
+
+
+def _get_tabular_generated_output_run_id(generated_output):
+    generated_output = generated_output if isinstance(generated_output, dict) else {}
+    for key in ('export_run_id', 'run_id', 'id'):
+        run_id = str(generated_output.get(key) or '').strip()
+        if run_id:
+            return run_id
+    return ''
+
+
+def _get_tabular_generated_output_status(generated_output):
+    generated_output = generated_output if isinstance(generated_output, dict) else {}
+    for key in ('status', 'execution_status', 'output_status'):
+        status = str(generated_output.get(key) or '').strip().lower()
+        if status:
+            return status
+    return 'queued' if _get_tabular_generated_output_run_id(generated_output) else ''
+
+
+def _is_nonterminal_tabular_generated_output(generated_output):
+    generated_output = generated_output if isinstance(generated_output, dict) else {}
+    if not generated_output:
+        return False
+
+    status = _get_tabular_generated_output_status(generated_output)
+    if status in {'completed', 'failed', 'canceled', 'cancelled'}:
+        return False
+    if status in {'queued', 'running', 'retrying', 'finalizing'}:
+        return True
+    return bool(
+        generated_output.get('background_export')
+        or str(generated_output.get('handoff_mode') or '').strip().lower().startswith('background_')
+        or _get_tabular_generated_output_run_id(generated_output)
+    )
+
+
+def _get_pending_tabular_generated_output(generated_outputs):
+    for generated_output in list(generated_outputs or []):
+        if _is_nonterminal_tabular_generated_output(generated_output):
+            return generated_output
+    return None
+
+
+def _build_pending_tabular_run_reference(source, generated_output):
+    source = source if isinstance(source, dict) else {}
+    generated_output = generated_output if isinstance(generated_output, dict) else {}
+    return {
+        'document_id': str(source.get('document_id') or '').strip(),
+        'run_id': _get_tabular_generated_output_run_id(generated_output),
+        'status': _get_tabular_generated_output_status(generated_output),
+        'task_type': str(generated_output.get('task_type') or '').strip().lower(),
+        'output_format': str(generated_output.get('output_format') or '').strip().lower(),
+        'source_version': source.get('source_version'),
+    }
+
+
+def _build_pending_tabular_evidence_envelope(source, generated_outputs, settings):
+    source = source if isinstance(source, dict) else {}
+    generated_outputs = [
+        output
+        for output in list(generated_outputs or [])
+        if isinstance(output, dict)
+    ]
+    primary_output = _get_pending_tabular_generated_output(generated_outputs) or (
+        generated_outputs[0] if generated_outputs else {}
+    )
+    execution_status = _get_tabular_generated_output_status(primary_output) or 'queued'
+    deferred_enabled = _settings_bool(
+        settings,
+        'enable_tabular_mixed_deferred_composition',
+        False,
+    )
+    if deferred_enabled:
+        summary = (
+            'Full-source tabular analysis is pending in a generated-output run. '
+            'Collective mixed-source synthesis will wait until that run reaches a terminal state.'
+        )
+    else:
+        summary = (
+            'Full-source tabular analysis is pending in a generated-output run. '
+            'Collective mixed-source synthesis was not started because deferred composition is disabled.'
+        )
+
+    return build_evidence_envelope(
+        document_id=source.get('document_id'),
+        source_kind='tabular',
+        engine=EVIDENCE_ENGINE_TABULAR_TOOLS,
+        status=EVIDENCE_STATUS_PENDING,
+        summary=summary,
+        citations=[],
+        generated_artifacts=generated_outputs,
+        coverage={
+            'terminal': False,
+            'execution_status': execution_status,
+            'execution_state': EVIDENCE_STATUS_PENDING,
+            'tool_call_count': 0,
+            'execution_mode': 'durable_background',
+            'generated_output_run_ids': [
+                run_id
+                for run_id in (
+                    _get_tabular_generated_output_run_id(output)
+                    for output in generated_outputs
+                )
+                if run_id
+            ],
+            'durable_task_type': str(primary_output.get('task_type') or '').strip().lower(),
+            'deferred_composition': {
+                'required': True,
+                'enabled': deferred_enabled,
+                'status': 'waiting_for_tabular_output' if deferred_enabled else 'gate_disabled',
+            },
+        },
+    )
+
+
+def _build_mixed_source_deferred_composition_descriptor(
+    workflow,
+    conversation_id,
+    manifest,
+    pending_tabular_runs,
+    settings,
+    request_correlation_id=None,
+):
+    manifest_identity = []
+    for source in list(manifest or []):
+        if not isinstance(source, dict):
+            continue
+        manifest_identity.append({
+            'document_id': str(source.get('document_id') or '').strip(),
+            'scope': source.get('scope'),
+            'scope_id': source.get('scope_id'),
+            'source_kind': source.get('source_kind'),
+            'source_version': source.get('source_version'),
+        })
+    manifest_fingerprint = str(uuid.uuid5(
+        uuid.NAMESPACE_URL,
+        json.dumps(manifest_identity, sort_keys=True, default=str, separators=(',', ':')),
+    ))
+    deferred_enabled = _settings_bool(
+        settings,
+        'enable_tabular_mixed_deferred_composition',
+        False,
+    )
+    return {
+        'composition_id': str(uuid.uuid4()),
+        'contract_version': 'phase5.v1',
+        'status': 'pending' if deferred_enabled else 'gate_disabled',
+        'enabled': deferred_enabled,
+        'created_at': _utc_now_iso(),
+        'user_id': str((workflow or {}).get('user_id') or '').strip(),
+        'conversation_id': str(conversation_id or '').strip(),
+        'workflow_id': str((workflow or {}).get('id') or '').strip(),
+        'request_correlation_id': normalize_mixed_source_correlation_id(
+            request_correlation_id,
+        ),
+        'manifest_fingerprint': manifest_fingerprint,
+        'required_tabular_runs': [
+            run_reference
+            for run_reference in list(pending_tabular_runs or [])
+            if isinstance(run_reference, dict)
+        ],
+        'required_source_count': len(manifest_identity),
+        'pending_source_count': len(list(pending_tabular_runs or [])),
+    }
+
+
+def _build_mixed_source_deferred_reply(deferred_descriptor):
+    descriptor = deferred_descriptor if isinstance(deferred_descriptor, dict) else {}
+    pending_source_count = _coerce_document_analysis_count(
+        descriptor.get('pending_source_count'),
+    )
+    source_label = 'source' if pending_source_count == 1 else 'sources'
+    if descriptor.get('enabled'):
+        return (
+            f'Completed narrative and bounded evidence has been preserved. '
+            f'Collective mixed-source conclusions are deferred while {pending_source_count} tabular {source_label} '
+            'finish full-source generated-output processing.'
+        )
+    return (
+        f'Completed narrative and bounded evidence has been preserved, but {pending_source_count} tabular {source_label} '
+        'still require full-source generated-output processing. Deferred mixed-source composition is currently disabled, '
+        'so no collective conclusion was generated from incomplete table evidence.'
+    )
 
 
 def _emit_analyze_shared_preflight_event(
@@ -2639,6 +2839,7 @@ def _execute_mixed_source_analyze_workflow(
     partitions = partition_source_manifest(manifest)
     evidence_envelopes = []
     generated_tabular_outputs = []
+    pending_tabular_runs = []
     tabular_agent_citations = []
 
     tabular_preflight_result = _maybe_execute_pure_tabular_analyze_preflight(
@@ -2746,15 +2947,32 @@ def _execute_mixed_source_analyze_workflow(
                 ))
                 continue
             tabular_result = tabular_payload.get('result') or {}
+            tabular_generated_outputs = list(tabular_payload.get('generated_tabular_outputs') or [])
+            pending_generated_output = _get_pending_tabular_generated_output(
+                tabular_generated_outputs,
+            )
+            if pending_generated_output:
+                evidence_envelopes.append(_build_pending_tabular_evidence_envelope(
+                    source,
+                    tabular_generated_outputs,
+                    settings,
+                ))
+                pending_tabular_runs.append(_build_pending_tabular_run_reference(
+                    source,
+                    pending_generated_output,
+                ))
+                generated_tabular_outputs.extend(tabular_generated_outputs)
+                tabular_agent_citations.extend(tabular_payload.get('agent_citations') or [])
+                continue
             evidence_envelopes.append(build_evidence_envelope(
                 document_id=source.get('document_id'), source_kind='tabular',
                 engine=EVIDENCE_ENGINE_TABULAR_TOOLS, status=EVIDENCE_STATUS_COMPLETED,
                 summary=str(tabular_result.get('analysis_reply') or tabular_result.get('reply') or ''),
                 citations=list(tabular_payload.get('agent_citations') or []),
-                generated_artifacts=list(tabular_payload.get('generated_tabular_outputs') or []),
+                generated_artifacts=tabular_generated_outputs,
                 coverage={'terminal': True, 'tool_call_count': 1},
             ))
-            generated_tabular_outputs.extend(tabular_payload.get('generated_tabular_outputs') or [])
+            generated_tabular_outputs.extend(tabular_generated_outputs)
             tabular_agent_citations.extend(tabular_payload.get('agent_citations') or [])
 
     handoff = build_mixed_source_evidence_handoff(
@@ -2773,6 +2991,36 @@ def _execute_mixed_source_analyze_workflow(
         },
     )
     if not mode_outcome['should_reduce']:
+        if mode_outcome.get('status') == EVIDENCE_STATUS_PENDING:
+            coverage = _build_mixed_source_analysis_coverage(handoff)
+            deferred_descriptor = _build_mixed_source_deferred_composition_descriptor(
+                workflow,
+                conversation_id,
+                manifest,
+                pending_tabular_runs,
+                settings,
+                request_correlation_id=request_correlation_id,
+            )
+            deferred_reply = _build_mixed_source_deferred_reply(deferred_descriptor)
+            if callable(activity_callback):
+                activity_callback({
+                    'type': 'mixed_source_progress',
+                    'phase': 'waiting_for_tabular_outputs',
+                    'label': coverage['progress_meta']['phase_label'],
+                    'status': coverage['progress_meta']['status'],
+                })
+            return {
+                'reply': deferred_reply,
+                'analysis_reply': deferred_reply,
+                'coverage': coverage,
+                'documents': list(coverage.get('sources') or []),
+                'document_ids': [source.get('document_id') for source in manifest],
+                'mixed_source_manifest': manifest,
+                'mixed_source_evidence': handoff.get('evidence_envelopes') or [],
+                'generated_tabular_outputs': generated_tabular_outputs,
+                'agent_citations': tabular_agent_citations,
+                'deferred_composition': deferred_descriptor,
+            }
         raise RuntimeError(
             'Mixed-source Analyze could not prepare evidence from any selected source.'
         )
@@ -5095,6 +5343,7 @@ def _create_assistant_message(conversation, workflow, result, trigger_source, ru
                 'mixed_source_coverage': result.get('mixed_source_coverage') or {},
                 'analyze': workflow.get('analyze') or {},
                 'analysis_coverage': result.get('analysis_coverage') or {},
+                'deferred_composition': result.get('deferred_composition') or {},
             },
             'thread_info': {
                 'thread_id': str(uuid.uuid4()),
@@ -7181,6 +7430,7 @@ def _execute_document_analysis_workflow(
                         analysis_result.get('generated_tabular_outputs')
                         or []
                     ),
+                    'deferred_composition': analysis_result.get('deferred_composition') or {},
                     'alert_targets': alert_targets,
                 }
             finally:
@@ -7334,6 +7584,7 @@ def _execute_document_analysis_workflow(
             analysis_result.get('generated_tabular_outputs')
             or []
         ),
+        'deferred_composition': analysis_result.get('deferred_composition') or {},
     }
 
 

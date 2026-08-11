@@ -94,6 +94,7 @@ TABULAR_GENERATION_BACKEND_SETTING_KEYS = {
     'tabular_request_planner_mode',
     'enable_tabular_search_shared_preflight',
     'enable_tabular_analyze_durable_preflight',
+    'enable_tabular_mixed_deferred_composition',
     'enable_tabular_generation_plan',
     'tabular_generation_plan_mode',
     'enable_tabular_compact_response_protocol',
@@ -1032,6 +1033,7 @@ def get_settings(use_cosmos=False, include_source=False):
         'tabular_request_planner_mode': 'off',
         'enable_tabular_search_shared_preflight': False,
         'enable_tabular_analyze_durable_preflight': False,
+        'enable_tabular_mixed_deferred_composition': False,
         'enable_tabular_generation_plan': True,
         'tabular_generation_plan_mode': 'shadow',
         'enable_tabular_compact_response_protocol': False,
@@ -1787,6 +1789,7 @@ def update_settings(new_settings):
             exceptionTraceback=True
         )
         return False
+
 
 
 def coerce_multi_model_endpoint_enablement(existing_enabled, requested_enabled):

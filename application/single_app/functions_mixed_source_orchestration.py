@@ -133,6 +133,7 @@ MIXED_SOURCE_TELEMETRY_METRICS = frozenset({
     "narrative_source_count",
     "partial_failure_count",
     "partial_source_count",
+    "pending_source_count",
     "prompt_tokens",
     "request_count",
     "skipped_source_count",
@@ -1478,6 +1479,8 @@ def _get_terminal_reason(status, source, envelope=None):
         return "unsupported_source"
     if status == EVIDENCE_STATUS_SKIPPED:
         return "bounded_policy_skip"
+    if status == EVIDENCE_STATUS_PENDING:
+        return "pending_durable_evidence"
     if status == EVIDENCE_STATUS_PARTIAL:
         return "incomplete_native_coverage"
     if status == EVIDENCE_STATUS_FAILED:
@@ -1490,7 +1493,7 @@ def build_terminal_coverage_ledger(
     evidence_envelopes,
     max_handoff_envelopes=MIXED_SOURCE_HANDOFF_MAX_ENVELOPES,
 ):
-    """Align exactly one terminal state and bounded evidence item to each manifest source."""
+    """Align one source state and bounded evidence item to each manifest source."""
     manifest_entries = [entry for entry in list(manifest or []) if isinstance(entry, dict)]
     raw_envelopes = [
         envelope
@@ -1586,6 +1589,7 @@ def build_terminal_coverage_ledger(
 
     partial_coverage = bool(
         status_counts[EVIDENCE_STATUS_PARTIAL]
+        or status_counts[EVIDENCE_STATUS_PENDING]
         or status_counts[EVIDENCE_STATUS_FAILED]
         or status_counts[EVIDENCE_STATUS_SKIPPED]
         or missing_coverage_violation_count
@@ -1598,6 +1602,7 @@ def build_terminal_coverage_ledger(
         "evidence_envelopes": aligned_envelopes,
         "requested_source_count": len(manifest_entries),
         "completed_source_count": status_counts[EVIDENCE_STATUS_COMPLETED],
+        "pending_source_count": status_counts[EVIDENCE_STATUS_PENDING],
         "partial_source_count": status_counts[EVIDENCE_STATUS_PARTIAL],
         "failed_source_count": status_counts[EVIDENCE_STATUS_FAILED],
         "skipped_source_count": status_counts[EVIDENCE_STATUS_SKIPPED],
@@ -1614,7 +1619,7 @@ def build_terminal_coverage_ledger(
 
 
 def evaluate_mixed_source_mode_outcome(mode, coverage_ledger):
-    """Apply the Phase 6 terminal failure policy to one aggregate-only ledger."""
+    """Apply the mixed-source reduction policy to one aggregate ledger."""
     normalized_mode = str(mode or "").strip().lower()
     if normalized_mode not in MIXED_SOURCE_MODES:
         raise ValueError(f"Unsupported mixed-source mode: {normalized_mode}")
@@ -1628,6 +1633,10 @@ def evaluate_mixed_source_mode_outcome(mode, coverage_ledger):
     successful_statuses = {EVIDENCE_STATUS_COMPLETED, EVIDENCE_STATUS_PARTIAL}
     successful_source_count = sum(
         str(entry.get("status") or "").strip().lower() in successful_statuses
+        for entry in entries
+    )
+    pending_source_count = sum(
+        str(entry.get("status") or "").strip().lower() == EVIDENCE_STATUS_PENDING
         for entry in entries
     )
     partial_coverage = bool(coverage_ledger.get("partial_coverage"))
@@ -1659,9 +1668,15 @@ def evaluate_mixed_source_mode_outcome(mode, coverage_ledger):
             reason = "no_target_prepared"
         partial_coverage = partial_coverage or successful_target_count < len(target_entries)
 
+    if pending_source_count:
+        should_reduce = False
+        reason = "pending_required_evidence"
+
     if not should_reduce:
         status = EVIDENCE_STATUS_FAILED
         reason = reason or "no_successful_source"
+        if pending_source_count:
+            status = EVIDENCE_STATUS_PENDING
     elif partial_coverage:
         status = EVIDENCE_STATUS_PARTIAL
     else:
@@ -1672,6 +1687,7 @@ def evaluate_mixed_source_mode_outcome(mode, coverage_ledger):
         "status": status,
         "should_reduce": should_reduce,
         "successful_source_count": successful_source_count,
+        "pending_source_count": pending_source_count,
         "partial_coverage": partial_coverage,
         "reason": reason,
     }
@@ -1813,11 +1829,16 @@ def build_mixed_source_evidence_handoff(
     if len(serialized_payload.encode("utf-8")) > MIXED_SOURCE_HANDOFF_MAX_BYTES:
         raise ValueError("Mixed-source evidence handoff exceeds its size bound")
 
-    partial_coverage_instruction = (
-        "State clearly that source coverage was partial and identify unavailable authorized source labels."
-        if coverage["partial_coverage"]
-        else "Do not claim that selected sources were omitted."
-    )
+    if coverage.get("pending_source_count"):
+        partial_coverage_instruction = (
+            "State clearly that required source evidence is still pending and do not treat pending sources as completed."
+        )
+    elif coverage["partial_coverage"]:
+        partial_coverage_instruction = (
+            "State clearly that source coverage was partial and identify unavailable authorized source labels."
+        )
+    else:
+        partial_coverage_instruction = "Do not claim that selected sources were omitted."
     if mode:
         emit_mixed_source_coverage_telemetry(
             telemetry_settings,
