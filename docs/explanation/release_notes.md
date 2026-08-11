@@ -2,6 +2,15 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.159)**
+
+#### New Features
+
+*   **Chat Used Documents Pane**
+    *   Added a Used Documents mode to the existing chat conversation side pane so users can review documents that were actually cited in the conversation without opening the full details modal.
+    *   Reuses the same conversation metadata document tags as the details modal, excludes selected-but-unused documents, and auto-opens once when cited documents first appear.
+    *   (Ref: #1209, conversation contents drawer, cited document metadata, `chat-conversation-contents.js`, `chat-conversation-details.js`)
+
 ### **(v0.250.157)**
 
 #### Bug Fixes

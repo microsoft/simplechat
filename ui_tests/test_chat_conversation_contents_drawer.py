@@ -1,13 +1,16 @@
 # test_chat_conversation_contents_drawer.py
 """
 UI test for the conversation contents drawer.
-Version: 0.250.074
+Version: 0.250.159
 Implemented in: 0.250.074
+Documents mode added in: 0.250.159
 
-This test validates user-message filtering, safe labels, navigation, live
-updates, conversation replacement, keyboard closing, and responsive layouts.
+This test validates user-message filtering, cited-document mode, safe labels,
+navigation, live updates, conversation replacement, keyboard closing, and
+responsive layouts.
 """
 
+import json
 import os
 from pathlib import Path
 
@@ -17,6 +20,14 @@ from playwright.sync_api import expect
 
 BASE_URL = os.getenv("SIMPLECHAT_UI_BASE_URL", "").rstrip("/")
 STORAGE_STATE = os.getenv("SIMPLECHAT_UI_STORAGE_STATE", "")
+
+
+def _fulfill_json(route, payload, status=200):
+    route.fulfill(
+        status=status,
+        content_type="application/json",
+        body=json.dumps(payload),
+    )
 
 
 def _require_authenticated_chat_env():
@@ -197,6 +208,74 @@ def test_chat_conversation_contents_drawer(playwright, viewport):
         )
         expect(entries).to_have_count(1)
         expect(entries.nth(0)).to_have_text("Next conversation topic")
+
+        document_title = "Policy Handbook <img src=x onerror='window.__documentsPaneXss = true'>"
+        page.route(
+            "**/api/conversations/conversation-documents-pane/metadata",
+            lambda route: _fulfill_json(route, {
+                "title": "Documents pane conversation",
+                "tags": [
+                    {
+                        "category": "document",
+                        "document_id": "doc-1",
+                        "title": document_title,
+                        "classification": "Confidential",
+                        "chunk_ids": ["doc-1_1", "doc-1_2"],
+                        "scope": {
+                            "type": "group",
+                            "id": "group-1",
+                            "name": "Product Docs",
+                        },
+                    },
+                    {
+                        "category": "document",
+                        "document_id": "doc-2",
+                        "title": "Release Plan",
+                        "classification": "None",
+                        "chunk_ids": ["doc-2_4"],
+                        "scope": {
+                            "type": "personal",
+                            "id": "user-1",
+                            "name": "Personal",
+                        },
+                    },
+                ],
+            }),
+        )
+
+        page.evaluate(
+            """
+            () => {
+                window.__documentsPaneXss = false;
+                window.currentConversationId = 'conversation-documents-pane';
+                window.dispatchEvent(new CustomEvent('chat:conversation-documents-refresh', {
+                    detail: {
+                        conversationId: 'conversation-documents-pane',
+                        autoOpen: true
+                    }
+                }));
+            }
+            """
+        )
+
+        documents_toggle = page.locator("#conversation-documents-toggle")
+        documents_entries = page.locator(".conversation-documents-entry")
+        expect(documents_toggle).to_be_visible()
+        expect(page.locator("#conversation-contents-drawer")).to_be_visible()
+        expect(page.locator("#conversation-contents-title")).to_have_text("Used documents")
+        expect(documents_entries).to_have_count(2)
+        expect(documents_entries.nth(0)).to_contain_text(document_title)
+        expect(documents_entries.nth(0)).to_contain_text("2 chunks (Pages: 1, 2)")
+        expect(documents_entries.nth(0)).to_contain_text("group scope: Product Docs")
+        expect(documents_entries.nth(1)).to_contain_text("Release Plan")
+        expect(page.locator("#conversation-documents-count")).to_have_text("2")
+        expect(page.locator("#conversation-documents-panel img[src='x']")).to_have_count(0)
+        assert page.evaluate("() => window.__documentsPaneXss") is False
+
+        page.locator("#conversation-contents-mode-contents").click()
+        expect(page.locator("#conversation-contents-title")).to_have_text("Conversation contents")
+        expect(page.locator("#conversation-contents-panel")).to_be_visible()
+        expect(page.locator("#conversation-documents-panel")).to_be_hidden()
 
         toggle.click()
         page.keyboard.press("Escape")
