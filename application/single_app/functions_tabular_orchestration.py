@@ -206,6 +206,117 @@ def _build_source_coverage(file_contexts):
     return coverage_entries
 
 
+def _build_execution_group_id(
+    user_question,
+    action_mode,
+    execution_contract,
+    output_format,
+    source_coverage,
+):
+    return _build_request_fingerprint(
+        user_question,
+        action_mode,
+        execution_contract,
+        output_format,
+        source_coverage,
+    )
+
+
+def _build_tabular_execution_unit(
+    unit_index,
+    user_question,
+    action_mode,
+    execution_contract,
+    durable_task_type,
+    output_format,
+    relationship,
+    source_contexts,
+    source_coverage,
+    required_completion_policy,
+):
+    unit_fingerprint = _build_request_fingerprint(
+        user_question,
+        action_mode,
+        execution_contract,
+        output_format,
+        source_coverage,
+    )
+    return {
+        "unit_id": f"tabular-unit-{int(unit_index)}-{unit_fingerprint[:12]}",
+        "request_order": int(unit_index),
+        "operation_relationship": relationship,
+        "source_ids": [
+            str(source.get("document_id") or "").strip()
+            for source in source_contexts
+            if str(source.get("document_id") or "").strip()
+        ],
+        "source_versions": [
+            str(source.get("source_version") or "").strip()
+            for source in source_contexts
+        ],
+        "source_count": len(source_contexts),
+        "source_coverage": list(source_coverage or []),
+        "execution_contract": execution_contract,
+        "durable_task_type": durable_task_type,
+        "output_format": output_format,
+        "idempotency_fingerprint": unit_fingerprint,
+        "required_completion_policy": required_completion_policy,
+        "execution_state": "planned",
+    }
+
+
+def _build_tabular_execution_units(
+    user_question,
+    normalized_contexts,
+    action_mode,
+    execution_contract,
+    durable_task_type,
+    output_format,
+    source_coverage,
+    settings,
+):
+    if not normalized_contexts:
+        return []
+
+    multifile_enabled = settings_flag_enabled(
+        settings,
+        "enable_tabular_multifile_durable_preflight",
+        False,
+    )
+    if durable_task_type and len(normalized_contexts) > 1 and multifile_enabled:
+        execution_units = []
+        for unit_index, (source_context, source_entry) in enumerate(
+            zip(normalized_contexts, source_coverage),
+            start=1,
+        ):
+            execution_units.append(_build_tabular_execution_unit(
+                unit_index,
+                user_question,
+                action_mode,
+                execution_contract,
+                durable_task_type,
+                output_format,
+                "independent",
+                [source_context],
+                [source_entry],
+                "all_units_required",
+            ))
+        return execution_units
+
+    return [_build_tabular_execution_unit(
+        1,
+        user_question,
+        action_mode,
+        execution_contract,
+        durable_task_type,
+        output_format,
+        "independent" if len(normalized_contexts) == 1 else "collective",
+        list(normalized_contexts),
+        list(source_coverage or []),
+        "single_unit_complete",
+    )]
+
+
 def _build_request_fingerprint(
     user_question,
     action_mode,
@@ -259,6 +370,23 @@ def plan_tabular_request(
     output_format = get_tabular_generated_output_format(user_question)
     execution_contract = durable_task_type or TABULAR_EXECUTION_CONTRACT_FOREGROUND_AGGREGATE
     source_coverage = _build_source_coverage(normalized_contexts)
+    execution_group_id = _build_execution_group_id(
+        user_question,
+        action_mode,
+        execution_contract,
+        output_format,
+        source_coverage,
+    )
+    execution_units = _build_tabular_execution_units(
+        user_question,
+        normalized_contexts,
+        action_mode,
+        execution_contract,
+        durable_task_type,
+        output_format,
+        source_coverage,
+        settings,
+    )
     reason_code = "bounded_foreground"
     execution_state = TABULAR_EXECUTION_STATE_FOREGROUND
 
@@ -273,7 +401,10 @@ def plan_tabular_request(
         reason_code = "no_replayable_tabular_context"
     elif durable_task_type and len(normalized_contexts) != 1:
         execution_state = TABULAR_EXECUTION_STATE_DECLINED
-        reason_code = "multi_context_durable_not_enabled"
+        if settings_flag_enabled(settings, "enable_tabular_multifile_durable_preflight", False):
+            reason_code = "multi_context_execution_units_planned"
+        else:
+            reason_code = "multi_context_durable_not_enabled"
 
     return {
         "planner_contract_version": TABULAR_ORCHESTRATION_PLANNER_CONTRACT_VERSION,
@@ -287,6 +418,8 @@ def plan_tabular_request(
         "caller": str(caller or "").strip().lower(),
         "source_count": len(normalized_contexts),
         "source_coverage": source_coverage,
+        "execution_group_id": execution_group_id,
+        "execution_units": execution_units,
         "request_fingerprint": _build_request_fingerprint(
             user_question,
             action_mode,

@@ -6812,8 +6812,114 @@ def _merge_token_usage_summaries(results):
     return _finalize_token_usage(aggregate)
 
 
+def _get_per_document_analysis_coverage(result):
+    result = result if isinstance(result, dict) else {}
+    for coverage_key in ('analysis_coverage', 'coverage', 'mixed_source_coverage'):
+        coverage = result.get(coverage_key)
+        if isinstance(coverage, dict):
+            return coverage
+    return {}
+
+
+def _get_per_document_coverage_entries(coverage):
+    coverage = coverage if isinstance(coverage, dict) else {}
+    for entry_key in ('documents', 'sources'):
+        entries = [
+            entry
+            for entry in list(coverage.get(entry_key) or [])
+            if isinstance(entry, dict)
+        ]
+        if entries:
+            return entries
+    return []
+
+
+def _get_per_document_execution_state(result, coverage, generated_outputs):
+    result = result if isinstance(result, dict) else {}
+    coverage = coverage if isinstance(coverage, dict) else {}
+    generated_outputs = [
+        output
+        for output in list(generated_outputs or [])
+        if isinstance(output, dict)
+    ]
+
+    deferred_composition = result.get('deferred_composition')
+    if isinstance(deferred_composition, dict) and deferred_composition.get('status') in {'pending', 'gate_disabled'}:
+        return EVIDENCE_STATUS_PENDING
+
+    if any(_is_nonterminal_tabular_generated_output(output) for output in generated_outputs):
+        return EVIDENCE_STATUS_PENDING
+
+    output_statuses = {
+        _get_tabular_generated_output_status(output)
+        for output in generated_outputs
+    }
+    output_statuses.discard('')
+    if output_statuses:
+        if output_statuses <= {'canceled', 'cancelled'}:
+            return 'canceled'
+        if 'failed' in output_statuses:
+            return EVIDENCE_STATUS_FAILED
+        if output_statuses <= {'completed'}:
+            return EVIDENCE_STATUS_COMPLETED
+
+    progress_meta = coverage.get('progress_meta') if isinstance(coverage.get('progress_meta'), dict) else {}
+    progress_status = str(progress_meta.get('status') or '').strip().lower()
+    if progress_status in {EVIDENCE_STATUS_PENDING, 'partial', EVIDENCE_STATUS_FAILED, EVIDENCE_STATUS_COMPLETED, 'canceled', 'cancelled'}:
+        return 'canceled' if progress_status == 'cancelled' else progress_status
+
+    entry_statuses = {
+        str(entry.get('status') or '').strip().lower()
+        for entry in _get_per_document_coverage_entries(coverage)
+    }
+    entry_statuses.discard('')
+    if EVIDENCE_STATUS_PENDING in entry_statuses:
+        return EVIDENCE_STATUS_PENDING
+    if 'canceled' in entry_statuses or 'cancelled' in entry_statuses:
+        return 'canceled'
+    if EVIDENCE_STATUS_FAILED in entry_statuses:
+        return 'partial' if EVIDENCE_STATUS_COMPLETED in entry_statuses else EVIDENCE_STATUS_FAILED
+    if 'partial' in entry_statuses:
+        return 'partial'
+    if entry_statuses and entry_statuses <= {EVIDENCE_STATUS_COMPLETED}:
+        return EVIDENCE_STATUS_COMPLETED
+
+    if coverage.get('partial_coverage'):
+        return 'partial'
+    if _resolve_document_action_reply(result):
+        return EVIDENCE_STATUS_COMPLETED
+    return EVIDENCE_STATUS_FAILED
+
+
+def _get_per_document_status_label(execution_state):
+    normalized_state = str(execution_state or '').strip().lower()
+    if normalized_state == EVIDENCE_STATUS_PENDING:
+        return 'background analysis in progress'
+    if normalized_state == EVIDENCE_STATUS_COMPLETED:
+        return 'analysis complete'
+    if normalized_state == 'partial':
+        return 'partial'
+    if normalized_state == 'canceled':
+        return 'canceled'
+    return 'failed'
+
+
+def _get_per_document_fallback_reply(execution_state):
+    normalized_state = str(execution_state or '').strip().lower()
+    if normalized_state == EVIDENCE_STATUS_PENDING:
+        return 'Background analysis is in progress for this document.'
+    if normalized_state == 'canceled':
+        return 'Analysis was canceled for this document.'
+    if normalized_state == 'partial':
+        return 'Partial analysis was produced for this document.'
+    if normalized_state == EVIDENCE_STATUS_FAILED:
+        return 'Analysis could not be completed for this document.'
+    return 'No response was generated for this document.'
+
+
 def _combine_per_document_analysis_results(document_results):
     combined_documents = []
+    combined_sources = []
     combined_reply_lines = [
         '# Per-document workflow results',
         '',
@@ -6823,6 +6929,8 @@ def _combine_per_document_analysis_results(document_results):
         'processed_windows': 0,
         'failed_windows': 0,
         'documents': [],
+        'sources': [],
+        'status_counts': {},
     }
     agent_citations = []
     generated_analysis_artifacts = []
@@ -6836,40 +6944,82 @@ def _combine_per_document_analysis_results(document_results):
     for index, item in enumerate(document_results or [], start=1):
         result = item.get('result') if isinstance(item.get('result'), dict) else {}
         document_id = str(item.get('document_id') or '').strip()
-        reply = str(result.get('reply') or '').strip()
-        coverage = result.get('analysis_coverage') if isinstance(result.get('analysis_coverage'), dict) else {}
-        coverage_documents = list(coverage.get('documents') or [])
+        reply = _resolve_document_action_reply(result)
+        coverage = _get_per_document_analysis_coverage(result)
+        coverage_documents = _get_per_document_coverage_entries(coverage)
+        child_generated_tabular_outputs = list(result.get('generated_tabular_outputs') or [])
+        execution_state = _get_per_document_execution_state(
+            result,
+            coverage,
+            child_generated_tabular_outputs,
+        )
+        status_label = _get_per_document_status_label(execution_state)
         document_label = document_id
         if coverage_documents:
             document_label = str(
                 coverage_documents[0].get('document_name')
                 or coverage_documents[0].get('file_name')
+                or coverage_documents[0].get('source')
                 or coverage_documents[0].get('document_id')
                 or document_id
             ).strip()
 
         combined_documents.extend(coverage_documents)
+        combined_sources.extend(list(coverage.get('sources') or []))
         combined_coverage['processed_windows'] += int(coverage.get('processed_windows') or 0)
         combined_coverage['failed_windows'] += int(coverage.get('failed_windows') or 0)
+        combined_coverage['status_counts'][execution_state] = (
+            combined_coverage['status_counts'].get(execution_state, 0) + 1
+        )
 
         combined_reply_lines.extend([
             f'## {index}. {document_label or document_id}',
             '',
-            reply or 'No response was generated for this document.',
+            f'Status: {status_label}',
+            '',
+            reply or _get_per_document_fallback_reply(execution_state),
             '',
         ])
 
         agent_citations.extend(list(result.get('agent_citations') or []))
         generated_analysis_artifacts.extend(list(result.get('generated_analysis_artifacts') or []))
-        generated_tabular_outputs.extend(list(result.get('generated_tabular_outputs') or []))
+        generated_tabular_outputs.extend(child_generated_tabular_outputs)
         alert_targets.extend(list(result.get('alert_targets') or []))
         model_deployment_name = model_deployment_name or result.get('model_deployment_name') or ''
         provider = provider or result.get('provider') or ''
         agent_name = agent_name or result.get('agent_name') or ''
         agent_display_name = agent_display_name or result.get('agent_display_name') or ''
 
+    generated_tabular_outputs = deduplicate_mixed_source_references(
+        generated_tabular_outputs,
+        reference_type='artifact',
+    )
     combined_coverage['documents'] = combined_documents
+    combined_coverage['sources'] = combined_sources
     combined_coverage['document_count'] = len(combined_documents) or len(document_results or [])
+    pending_count = int(combined_coverage['status_counts'].get(EVIDENCE_STATUS_PENDING, 0))
+    failed_count = int(combined_coverage['status_counts'].get(EVIDENCE_STATUS_FAILED, 0))
+    partial_count = int(combined_coverage['status_counts'].get('partial', 0))
+    canceled_count = int(combined_coverage['status_counts'].get('canceled', 0))
+    if pending_count:
+        progress_status = EVIDENCE_STATUS_PENDING
+        phase_label = 'Pending per-document analysis'
+        percent_override = 0
+    elif failed_count or partial_count or canceled_count:
+        progress_status = 'partial' if combined_coverage['status_counts'].get(EVIDENCE_STATUS_COMPLETED) else EVIDENCE_STATUS_FAILED
+        phase_label = 'Partial' if progress_status == 'partial' else 'Failed'
+        percent_override = 100
+    else:
+        progress_status = EVIDENCE_STATUS_COMPLETED
+        phase_label = 'Complete'
+        percent_override = 100
+    combined_coverage['progress_meta'] = {
+        'phase': 'per_document_analysis',
+        'phase_label': phase_label,
+        'phase_detail': 'Per-document Analyze preserved one execution state per selected document.',
+        'status': progress_status,
+        'percent_override': percent_override,
+    }
     combined_reply = '\n'.join(combined_reply_lines).strip()
     combined_result = {
         'reply': combined_reply,
@@ -6880,8 +7030,16 @@ def _combine_per_document_analysis_results(document_results):
         'document_results': [
             {
                 'document_id': item.get('document_id'),
-                'reply': (item.get('result') or {}).get('reply'),
-                'coverage': (item.get('result') or {}).get('analysis_coverage') or {},
+                'reply': _resolve_document_action_reply(item.get('result') or {}),
+                'execution_state': _get_per_document_execution_state(
+                    item.get('result') or {},
+                    _get_per_document_analysis_coverage(item.get('result') or {}),
+                    (item.get('result') or {}).get('generated_tabular_outputs') or [],
+                ),
+                'execution_contract': (item.get('result') or {}).get('tabular_execution_contract'),
+                'deferred_composition': (item.get('result') or {}).get('deferred_composition') or {},
+                'generated_tabular_outputs': list((item.get('result') or {}).get('generated_tabular_outputs') or []),
+                'coverage': _get_per_document_analysis_coverage(item.get('result') or {}),
             }
             for item in document_results or []
         ],
