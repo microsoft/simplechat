@@ -3564,7 +3564,8 @@ class TabularProcessingPlugin:
         try:
             numeric_value = float(value)
         except (TypeError, ValueError):
-            pass
+            # Non-numeric values are valid for string-based operators; leave numeric_value as None.
+            numeric_value = None
 
         if (
             normalized_operator in {'==', 'equals', '!=', '>', '<', '>=', '<='}
