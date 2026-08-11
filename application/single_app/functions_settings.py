@@ -87,6 +87,8 @@ ADMIN_SETTINGS_NESTED_SECRET_FIELDS = (
     "web_search_agent.other_settings.azure_ai_foundry.client_secret",
 )
 TABULAR_GENERATION_BACKEND_SETTING_KEYS = {
+    'enable_tabular_parity_contract_telemetry',
+    'tabular_parity_contract_mode',
     'tabular_generation_rollout_percentage',
     'tabular_background_handoff_mode',
     'enable_tabular_generation_plan',
@@ -1013,6 +1015,8 @@ def get_settings(use_cosmos=False, include_source=False):
         'enable_fact_memory_plugin': True,
         'enable_tabular_processing_plugin': False,
         'enable_tabular_hierarchical_analysis': False,
+        'enable_tabular_parity_contract_telemetry': False,
+        'tabular_parity_contract_mode': 'off',
         'tabular_hierarchical_analysis_reduce_fan_in': 25,
         'enable_tabular_durable_run_confirmation': True,
         'tabular_durable_run_confirmation_threshold_rows': 500,

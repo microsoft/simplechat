@@ -57,6 +57,12 @@ from functions_mixed_source_orchestration import (
 from functions_tabular_analysis import (
     get_new_plugin_invocations as _shared_get_new_plugin_invocations,
 )
+from functions_tabular_parity_contract import (
+    TABULAR_PARITY_STATE_QUEUED,
+    build_tabular_parity_planner_result,
+    classify_tabular_parity_request,
+    emit_tabular_parity_event,
+)
 import builtins
 import asyncio, types
 import ast
@@ -6012,6 +6018,35 @@ def maybe_queue_direct_tabular_generated_output(
     request_correlation_id=None,
 ):
     """Queue an exhaustive tabular generated-output run directly from an authorized source."""
+    parity_classifier = globals().get('classify_tabular_parity_request')
+    parity_emitter = globals().get('emit_tabular_parity_event')
+    parity_result_builder = globals().get('build_tabular_parity_planner_result')
+    parity_result = parity_classifier(user_question) if callable(parity_classifier) else None
+
+    def emit_search_parity_event(event_name, planner_result=None, metrics=None, dimensions=None, level=None):
+        if not callable(parity_emitter):
+            return None
+        kwargs = {
+            'planner_result': planner_result or parity_result,
+            'metrics': metrics,
+            'dimensions': dimensions,
+        }
+        if level is not None:
+            kwargs['level'] = level
+        return parity_emitter(settings, event_name, 'search', **kwargs)
+
+    emit_search_parity_event(
+        'classification_started',
+        metrics={'source_count': len(file_contexts or [])},
+    )
+    emit_search_parity_event(
+        'classification_completed',
+        metrics={'source_count': len(file_contexts or [])},
+    )
+    emit_search_parity_event(
+        'durable_preflight_attempted',
+        metrics={'source_count': len(file_contexts or [])},
+    )
     try:
         direct_source = _build_direct_tabular_generated_output_source(
             user_question,
@@ -6021,6 +6056,11 @@ def maybe_queue_direct_tabular_generated_output(
             settings,
         )
         if not direct_source:
+            emit_search_parity_event(
+                'durable_preflight_declined',
+                metrics={'source_count': len(file_contexts or [])},
+                dimensions={'reason_code': 'no_direct_source'},
+            )
             return None
 
         raise_if_mixed_source_cancelled(
@@ -6043,6 +6083,31 @@ def maybe_queue_direct_tabular_generated_output(
             analysis_objective=direct_source.get('analysis_objective'),
         )
         background_metadata = build_background_tabular_generated_output_metadata(background_run)
+        accepted_parity_result = parity_result
+        if callable(parity_result_builder):
+            accepted_parity_result = parity_result_builder(
+                direct_source.get('task_type') or getattr(parity_result, 'execution_contract', 'structured_export'),
+                execution_state=globals().get('TABULAR_PARITY_STATE_QUEUED', 'queued'),
+                requires_full_source=True,
+                requires_structured_artifact=not direct_source.get('analysis_only_requested'),
+                requested_output_format=direct_source.get('output_format'),
+                decision_reason_code=getattr(parity_result, 'decision_reason_code', 'direct_source_backed_preflight'),
+                generated_tabular_outputs=[background_metadata],
+            )
+        emit_search_parity_event(
+            'durable_preflight_accepted',
+            planner_result=accepted_parity_result,
+            metrics={
+                'source_count': len(file_contexts or []),
+                'row_count': direct_source.get('row_count'),
+                'batch_count_estimate': direct_source.get('batch_count_estimate'),
+            },
+        )
+        emit_search_parity_event(
+            'response_metadata_emitted',
+            planner_result=accepted_parity_result,
+            metrics={'generated_output_count': 1},
+        )
         if callable(thought_callback):
             output_label = str(direct_source['output_format'] or 'json').upper()
             if direct_source.get('combined_requested'):
@@ -6090,6 +6155,12 @@ def maybe_queue_direct_tabular_generated_output(
     except MixedSourceCancellationError:
         raise
     except Exception as exc:
+        emit_search_parity_event(
+            'durable_preflight_failed',
+            metrics={'source_count': len(file_contexts or [])},
+            dimensions={'error_type': exc.__class__.__name__},
+            level=logging.WARNING,
+        )
         log_event(
             '[TABULAR_GENERATED_OUTPUT] Direct source-backed generated output queueing skipped',
             {
@@ -6651,6 +6722,7 @@ async def maybe_create_tabular_generated_output(
     cancel_requested=None,
     request_correlation_id=None,
     token_usage_callback=None,
+    mode='search',
 ):
     """Build, upload, or queue generated tabular exports and analysis artifacts when requested."""
     raise_if_mixed_source_cancelled(
@@ -6671,6 +6743,36 @@ async def maybe_create_tabular_generated_output(
         return None
     if not generated_output_requested and not hierarchical_analysis_requested:
         return None
+
+    parity_classifier = globals().get('classify_tabular_parity_request')
+    parity_emitter = globals().get('emit_tabular_parity_event')
+    parity_result_builder = globals().get('build_tabular_parity_planner_result')
+    parity_result = parity_classifier(user_question) if callable(parity_classifier) else None
+
+    def emit_fallback_parity_event(event_name, planner_result=None, metrics=None, dimensions=None, level=None):
+        if not callable(parity_emitter):
+            return None
+        kwargs = {
+            'planner_result': planner_result or parity_result,
+            'metrics': metrics,
+            'dimensions': dimensions,
+        }
+        if level is not None:
+            kwargs['level'] = level
+        return parity_emitter(settings, event_name, mode, **kwargs)
+
+    emit_fallback_parity_event(
+        'classification_started',
+        metrics={'invocation_count': len(invocations or [])},
+    )
+    emit_fallback_parity_event(
+        'classification_completed',
+        metrics={'invocation_count': len(invocations or [])},
+    )
+    emit_fallback_parity_event(
+        'post_tool_generated_output_fallback_attempted',
+        metrics={'invocation_count': len(invocations or [])},
+    )
 
     output_format = get_tabular_generated_output_format(user_question) or 'md'
     candidate_diagnostics = _build_tabular_generated_output_candidate_diagnostics(invocations)
@@ -6849,6 +6951,27 @@ async def maybe_create_tabular_generated_output(
                 batch_count=len(materialized_batches),
             ),
         )
+        queued_parity_result = parity_result
+        if callable(parity_result_builder):
+            queued_parity_result = parity_result_builder(
+                queued_task_type or getattr(parity_result, 'execution_contract', 'structured_export'),
+                execution_state=globals().get('TABULAR_PARITY_STATE_QUEUED', 'queued'),
+                requires_full_source=True,
+                requires_structured_artifact=not analysis_only_requested,
+                requested_output_format=queued_output_format,
+                decision_reason_code=getattr(parity_result, 'decision_reason_code', 'post_tool_fallback'),
+                generated_tabular_outputs=[background_metadata],
+            )
+        emit_fallback_parity_event(
+            'post_tool_generated_output_fallback_used',
+            planner_result=queued_parity_result,
+            metrics={'generated_output_count': 1, 'row_count': expected_row_count},
+        )
+        emit_fallback_parity_event(
+            'response_metadata_emitted',
+            planner_result=queued_parity_result,
+            metrics={'generated_output_count': 1},
+        )
         return background_metadata
 
     should_queue_source_backed_run = bool(
@@ -6945,6 +7068,27 @@ async def maybe_create_tabular_generated_output(
                 batch_index=0,
                 batch_count=estimated_batch_count,
             ),
+        )
+        queued_parity_result = parity_result
+        if callable(parity_result_builder):
+            queued_parity_result = parity_result_builder(
+                queued_task_type or getattr(parity_result, 'execution_contract', 'structured_export'),
+                execution_state=globals().get('TABULAR_PARITY_STATE_QUEUED', 'queued'),
+                requires_full_source=True,
+                requires_structured_artifact=not analysis_only_requested,
+                requested_output_format=queued_output_format,
+                decision_reason_code=getattr(parity_result, 'decision_reason_code', 'post_tool_fallback'),
+                generated_tabular_outputs=[background_metadata],
+            )
+        emit_fallback_parity_event(
+            'post_tool_generated_output_fallback_used',
+            planner_result=queued_parity_result,
+            metrics={'generated_output_count': 1, 'row_count': expected_row_count},
+        )
+        emit_fallback_parity_event(
+            'response_metadata_emitted',
+            planner_result=queued_parity_result,
+            metrics={'generated_output_count': 1},
         )
         return background_metadata
 
