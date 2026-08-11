@@ -133,6 +133,7 @@ from functions_generated_file_exports import (
     build_generated_file_output_guidance,
     get_generated_file_export_content,
     get_requested_generated_file_format,
+    get_requested_structured_artifact_format,
     has_generated_file_output,
     normalize_json_artifact_payload,
     normalize_generated_output_format,
@@ -4981,58 +4982,7 @@ def build_tabular_computed_results_system_message(source_label, tabular_analysis
 
 def get_tabular_generated_output_format(user_question):
     """Return the requested generated-output file format when the user asked for one."""
-    normalized_question = str(user_question or '').strip().lower()
-    if not normalized_question:
-        return None
-    shared_output_format = get_requested_generated_file_format(user_question)
-    if shared_output_format == 'csv':
-        return 'csv'
-
-    json_markers = (
-        'convert into json',
-        'convert to json',
-        'json array',
-        'json file',
-        'download json',
-        'save json',
-        'make a json',
-        'create a json',
-        'generate json',
-        'generate a json',
-        'return json',
-        'valid json',
-    )
-    xml_markers = (
-        'convert into xml',
-        'convert to xml',
-        'xml file',
-        'download xml',
-        'save xml',
-        'make an xml',
-        'make a xml',
-        'create an xml',
-        'create a xml',
-        'generate xml',
-        'generate an xml',
-        'populate xml',
-        'populate the xml',
-        'return xml',
-        'valid xml',
-        'well-formed xml',
-        'output as xml',
-        'format as xml',
-    )
-    if any(marker in normalized_question for marker in json_markers) or re.search(
-        r'\b(convert|create|make|build|generate|produce|return|respond|format|output|save|export|download)\b[\w\s.,:;\-/]{0,80}\ba?\s*json\b',
-        normalized_question,
-    ):
-        return 'json'
-    if any(marker in normalized_question for marker in xml_markers) or re.search(
-        r'\b(convert|populate|create|make|build|generate|produce|return|respond|format|output|save|export|download)\b[\w\s.,:;\-/]{0,80}\ba?\s*xml\b',
-        normalized_question,
-    ):
-        return 'xml'
-    return None
+    return get_requested_structured_artifact_format(user_question)
 
 
 def question_requests_tabular_generated_output(user_question):
