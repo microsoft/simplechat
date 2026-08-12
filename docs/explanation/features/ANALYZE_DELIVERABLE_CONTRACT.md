@@ -201,7 +201,7 @@ Each member keeps its own Download, View, PowerPoint, and workspace-promotion ac
 
 Shared tabular planning attaches a `deliverable_contract` field to planner results. When `enable_analysis_deliverable_contract_telemetry` is true and `analysis_deliverable_contract_mode` is `observe` or `shadow`, the planner emits debug-only `[ANALYSIS_DELIVERABLE_CONTRACT]` events with safe dimensions.
 
-The planner preserves explicit requested artifact order and direct negation. For example, Analyze with CSV plans Markdown first and CSV second. Analyze with JSON and XML preserves both requested siblings in order, but declines durable tabular execution until multi-artifact publication is available. Search can request Markdown as a normal requested output, but Search does not receive automatic primary Markdown.
+The planner preserves explicit requested artifact order and direct negation. For example, Analyze with CSV plans Markdown first and CSV second. Analyze with JSON and XML preserves both requested siblings in order and selects durable combined execution when hierarchical analysis is enabled. Search can request Markdown as a normal requested output, but Search does not receive automatic primary Markdown.
 
 After Phase 6, a completed combined Analyze plus CSV run visibly presents both artifacts after live polling, after Continue, and when compatible completed metadata is hydrated. The progress card remains visible for queued, running, retry-waiting, failed, canceled, rollback, or otherwise nonterminal sets and does not expose staged or rolled-back downloads.
 
