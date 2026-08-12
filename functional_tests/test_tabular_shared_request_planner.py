@@ -1,15 +1,18 @@
 # test_tabular_shared_request_planner.py
 """
 Functional test for the shared tabular request planner.
-Version: 0.250.158
-Implemented in: 0.250.158
+Version: 0.250.167
+Implemented in: 0.250.158; Phase 6 execution units added in 0.250.162; rollout and fingerprint hardening in 0.250.167
 
 This test ensures Phase 2 tabular request planning classifies Search and
 Analyze caller metadata through one route-neutral planner before row retrieval.
 """
 
+import ast
+import logging
 import os
 import sys
+import traceback
 import types
 import importlib
 
@@ -19,6 +22,7 @@ from test_support.versioning import assert_app_version_at_least
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 APP_ROOT = os.path.join(REPO_ROOT, "application", "single_app")
 SETTINGS_FILE = os.path.join(APP_ROOT, "functions_settings.py")
+CHAT_ROUTE = os.path.join(APP_ROOT, "route_backend_chats.py")
 if APP_ROOT not in sys.path:
     sys.path.insert(0, APP_ROOT)
 
@@ -64,11 +68,12 @@ from functions_tabular_orchestration import (  # noqa: E402
 )
 
 
-def build_context(file_name="survey.csv", source_hint="workspace"):
+def build_context(file_name="survey.csv", source_hint="workspace", source_version=None):
     return {
         "document_id": f"doc-{file_name}",
         "file_name": file_name,
         "source_hint": source_hint,
+        "source_version": source_version or f"etag-{file_name}",
         "storage_locator": {
             "container": "documents",
             "blob_path": f"user/{file_name}",
@@ -213,6 +218,132 @@ def test_replayable_context_boundaries():
     print("Source-context boundary checks passed")
 
 
+def test_phase6_multifile_execution_units_are_explicit():
+    print("Testing Phase 6 multi-file execution-unit planning...")
+    exhaustive_prompt = "Analyze all rows and summarize the risk patterns."
+    contexts = [
+        build_context("one.csv", source_version="etag-one"),
+        build_context("two.xlsx", source_version="etag-two"),
+    ]
+
+    gate_off_plan = plan_for(exhaustive_prompt, contexts=contexts)
+    assert_equal(
+        len(gate_off_plan["execution_units"]),
+        1,
+        "gate-off collective unit count",
+    )
+    assert_equal(
+        gate_off_plan["execution_units"][0]["operation_relationship"],
+        "collective",
+        "gate-off operation relationship",
+    )
+    assert_equal(
+        gate_off_plan["execution_units"][0]["source_count"],
+        2,
+        "gate-off collective source count",
+    )
+
+    gate_on_plan = plan_for(
+        exhaustive_prompt,
+        settings={
+            "enable_tabular_hierarchical_analysis": True,
+            "enable_tabular_multifile_execution_unit_planning": True,
+        },
+        contexts=contexts,
+    )
+    assert_equal(
+        gate_on_plan["execution_state"],
+        TABULAR_EXECUTION_STATE_DECLINED,
+        "gate-on multi-file top-level state",
+    )
+    assert_equal(
+        gate_on_plan["reason_code"],
+        "multi_context_execution_units_unavailable",
+        "gate-on multi-file reason code",
+    )
+    assert_true(gate_on_plan["safe_failure_details"], "gate-on unavailable detail")
+    assert_equal(
+        gate_on_plan["execution_group_id"],
+        gate_on_plan["request_fingerprint"],
+        "execution group fingerprint",
+    )
+    assert_equal(len(gate_on_plan["execution_units"]), 2, "gate-on unit count")
+    assert_equal(
+        [unit["request_order"] for unit in gate_on_plan["execution_units"]],
+        [1, 2],
+        "unit request order",
+    )
+    assert_equal(
+        [unit["operation_relationship"] for unit in gate_on_plan["execution_units"]],
+        ["independent", "independent"],
+        "unit relationships",
+    )
+    assert_equal(
+        [unit["source_ids"] for unit in gate_on_plan["execution_units"]],
+        [["doc-one.csv"], ["doc-two.xlsx"]],
+        "unit source ids",
+    )
+    assert_equal(
+        [unit["source_versions"] for unit in gate_on_plan["execution_units"]],
+        [["etag-one"], ["etag-two"]],
+        "unit source versions",
+    )
+    assert_equal(
+        {unit["required_completion_policy"] for unit in gate_on_plan["execution_units"]},
+        {"all_units_required"},
+        "unit completion policy",
+    )
+    assert_true(
+        gate_on_plan["execution_units"][0]["idempotency_fingerprint"]
+        != gate_on_plan["execution_units"][1]["idempotency_fingerprint"],
+        "per-source idempotency fingerprints",
+    )
+
+    updated_source_plan = plan_for(
+        exhaustive_prompt,
+        settings={
+            "enable_tabular_hierarchical_analysis": True,
+            "enable_tabular_multifile_execution_unit_planning": True,
+        },
+        contexts=[
+            build_context("one.csv", source_version="etag-one-updated"),
+            build_context("two.xlsx", source_version="etag-two"),
+        ],
+    )
+    assert_true(
+        updated_source_plan["request_fingerprint"] != gate_on_plan["request_fingerprint"],
+        "source-version request fingerprint",
+    )
+    assert_true(
+        updated_source_plan["execution_units"][0]["idempotency_fingerprint"]
+        != gate_on_plan["execution_units"][0]["idempotency_fingerprint"],
+        "source-version unit fingerprint",
+    )
+
+    active_gate_on_result = orchestrate_tabular_request(
+        exhaustive_prompt,
+        contexts,
+        action_mode="analyze",
+        caller="analyze",
+        settings={
+            "enable_tabular_hierarchical_analysis": True,
+            "enable_tabular_multifile_execution_unit_planning": True,
+            "tabular_analyze_parity_rollout_percent": 0,
+        },
+        planner_mode="active",
+        durable_execution_callback=lambda **kwargs: (_ for _ in ()).throw(
+            AssertionError("Multi-file planning must not invoke durable execution")
+        ),
+    )
+    assert_equal(
+        active_gate_on_result["reason_code"],
+        "multi_context_execution_units_unavailable",
+        "active multi-file unavailable reason",
+    )
+    assert_true(active_gate_on_result["safe_failure_details"], "active unavailable detail")
+    print("Phase 6 multi-file execution-unit planning checks passed")
+
+
 def test_compatibility_intent_helpers_delegate_to_shared_contract():
     print("Testing shared helper compatibility surface...")
     assert_true(
@@ -290,6 +421,23 @@ def test_shadow_and_active_facade_side_effect_boundaries():
         "workflow-123",
         "execution context propagation",
     )
+
+    rollout_call_count = len(calls)
+    excluded_result = orchestrate_tabular_request(
+        prompt,
+        [build_context()],
+        action_mode="analyze",
+        caller="analyze",
+        settings={
+            "enable_tabular_hierarchical_analysis": True,
+            "tabular_analyze_parity_rollout_percent": 0,
+        },
+        planner_mode="active",
+        durable_execution_callback=fake_durable_executor,
+    )
+    assert_equal(len(calls), rollout_call_count, "rollout-excluded executor calls")
+    assert_equal(excluded_result["execution_state"], TABULAR_EXECUTION_STATE_DECLINED, "rollout state")
+    assert_equal(excluded_result["reason_code"], "rollout_not_assigned", "rollout reason")
     print("Facade side-effect boundary checks passed")
 
 
@@ -300,6 +448,7 @@ def test_backend_rollout_settings_are_not_frontend_visible():
         "tabular_request_planner_mode",
         "enable_tabular_search_shared_preflight",
         "enable_tabular_analyze_durable_preflight",
+        "enable_tabular_multifile_execution_unit_planning",
     ):
         assert_true(
             f"'{setting_key}'" in settings_source,
@@ -354,14 +503,50 @@ def test_active_facade_can_use_existing_direct_preflight_adapter():
     print("Direct preflight adapter checks passed")
 
 
+def test_direct_preflight_uses_planner_action_mode_for_parity_events():
+    print("Testing route-neutral direct preflight telemetry mode...")
+    route_source = read_text(CHAT_ROUTE)
+    module_tree = ast.parse(route_source, filename=CHAT_ROUTE)
+    function_node = next(
+        node for node in module_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "maybe_queue_direct_tabular_generated_output"
+    )
+    parity_modes = []
+    namespace = {
+        "classify_tabular_parity_request": lambda prompt: {"execution_contract": "combined"},
+        "emit_tabular_parity_event": lambda settings, event_name, mode, **kwargs: parity_modes.append(mode),
+        "_build_direct_tabular_generated_output_source": lambda *args, **kwargs: None,
+        "logging": logging,
+    }
+    exec(compile(ast.Module(body=[function_node], type_ignores=[]), CHAT_ROUTE, "exec"), namespace)
+
+    result = namespace["maybe_queue_direct_tabular_generated_output"](
+        user_question="Analyze every row.",
+        file_contexts=[build_context()],
+        user_id="user-1",
+        conversation_id="conversation-1",
+        gpt_model="gpt-4o",
+        settings={},
+        planner_metadata={"action_mode": "analyze"},
+    )
+
+    assert_equal(result, None, "declined direct preflight result")
+    assert_true(parity_modes, "direct preflight parity events")
+    assert_equal(set(parity_modes), {"analyze"}, "direct preflight parity modes")
+    print("Route-neutral direct preflight telemetry checks passed")
+
+
 def run_tests():
     tests = [
         test_classification_contracts,
         test_replayable_context_boundaries,
+        test_phase6_multifile_execution_units_are_explicit,
         test_compatibility_intent_helpers_delegate_to_shared_contract,
         test_shadow_and_active_facade_side_effect_boundaries,
         test_backend_rollout_settings_are_not_frontend_visible,
         test_active_facade_can_use_existing_direct_preflight_adapter,
+        test_direct_preflight_uses_planner_action_mode_for_parity_events,
     ]
     results = []
     for test in tests:
@@ -371,8 +556,6 @@ def run_tests():
             results.append(True)
         except Exception as exc:
             print(f"Test failed: {exc}")
-            import traceback
-
             traceback.print_exc()
             results.append(False)
     print(f"\nResults: {sum(results)}/{len(results)} tests passed")

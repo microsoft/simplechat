@@ -2,6 +2,26 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.167)**
+
+#### Bug Fixes
+
+*   **Tabular Parity Rollout and Lifecycle Hardening**
+    *   Enforced parity canary assignment before durable execution and included authorized source versions in request and unit fingerprints.
+    *   Preserved failed and canceled durable outputs as terminal incomplete evidence, including all-canceled per-document Analyze results, and corrected Analyze parity telemetry classification.
+    *   Renamed incomplete multi-file and deferred-composition controls as planning-only and exposed that durable fan-out and automatic continuation are unavailable without changing working single-source or per-document behavior.
+    *   (Ref: PR #1219, #1031, #1055, #1058, `functions_tabular_orchestration.py`, `functions_workflow_runner.py`, `route_backend_chats.py`)
+
+### **(v0.250.166)**
+
+#### New Features
+
+*   **Tabular Analyze/Search Durable Preflight Parity**
+    *   Unified exhaustive tabular Search and Analyze requests behind a shared route-neutral planner that can queue durable work before bounded foreground tools or immediate synthesis run.
+    *   Preserved truthful pending, failed, canceled, and completed evidence across pure tabular, mixed-source, per-document, and multi-table workflows, including deferred mixed-source composition and public lifecycle coverage.
+    *   Added backend-only shadow and canary controls, privacy-safe telemetry and status metadata, and evidence-backed legacy fallback retirement while reusing existing authorization, source-version, rollback, and artifact-card contracts.
+    *   (Ref: #1031, #1055, #1058, `functions_tabular_orchestration.py`, `functions_workflow_runner.py`, `route_backend_chats.py`)
+
 ### **(v0.250.160)**
 
 #### Bug Fixes

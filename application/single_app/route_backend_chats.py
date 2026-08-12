@@ -56,8 +56,11 @@ from functions_mixed_source_orchestration import (
 )
 from functions_tabular_analysis import (
     get_new_plugin_invocations as _shared_get_new_plugin_invocations,
+    orchestrate_tabular_request as _shared_orchestrate_tabular_request,
+    queue_direct_tabular_generated_output_from_plan as _shared_queue_direct_tabular_generated_output_from_plan,
 )
 from functions_tabular_orchestration import (
+    build_tabular_legacy_post_tool_fallback_decision as _shared_build_tabular_legacy_post_tool_fallback_decision,
     get_tabular_generated_output_format as _shared_get_tabular_generated_output_format,
     get_tabular_generated_output_task_type as _shared_get_tabular_generated_output_task_type,
     question_requests_tabular_generated_output as _shared_question_requests_tabular_generated_output,
@@ -5947,14 +5950,17 @@ def maybe_queue_direct_tabular_generated_output(
     model_context=None,
     cancel_requested=None,
     request_correlation_id=None,
+    planner_metadata=None,
 ):
     """Queue an exhaustive tabular generated-output run directly from an authorized source."""
     parity_classifier = globals().get('classify_tabular_parity_request')
     parity_emitter = globals().get('emit_tabular_parity_event')
     parity_result_builder = globals().get('build_tabular_parity_planner_result')
     parity_result = parity_classifier(user_question) if callable(parity_classifier) else None
+    planner_action_mode = str((planner_metadata or {}).get('action_mode') or '').strip().lower()
+    parity_mode = planner_action_mode if planner_action_mode in {'search', 'analyze'} else 'search'
 
-    def emit_search_parity_event(event_name, planner_result=None, metrics=None, dimensions=None, level=None):
+    def emit_direct_parity_event(event_name, planner_result=None, metrics=None, dimensions=None, level=None):
         if not callable(parity_emitter):
             return None
         kwargs = {
@@ -5964,17 +5970,17 @@ def maybe_queue_direct_tabular_generated_output(
         }
         if level is not None:
             kwargs['level'] = level
-        return parity_emitter(settings, event_name, 'search', **kwargs)
+        return parity_emitter(settings, event_name, parity_mode, **kwargs)
 
-    emit_search_parity_event(
+    emit_direct_parity_event(
         'classification_started',
         metrics={'source_count': len(file_contexts or [])},
     )
-    emit_search_parity_event(
+    emit_direct_parity_event(
         'classification_completed',
         metrics={'source_count': len(file_contexts or [])},
     )
-    emit_search_parity_event(
+    emit_direct_parity_event(
         'durable_preflight_attempted',
         metrics={'source_count': len(file_contexts or [])},
     )
@@ -5987,7 +5993,7 @@ def maybe_queue_direct_tabular_generated_output(
             settings,
         )
         if not direct_source:
-            emit_search_parity_event(
+            emit_direct_parity_event(
                 'durable_preflight_declined',
                 metrics={'source_count': len(file_contexts or [])},
                 dimensions={'reason_code': 'no_direct_source'},
@@ -6012,6 +6018,7 @@ def maybe_queue_direct_tabular_generated_output(
             source_descriptor=direct_source['source_descriptor'],
             task_type=direct_source.get('task_type') or None,
             analysis_objective=direct_source.get('analysis_objective'),
+            planner_metadata=planner_metadata,
         )
         background_metadata = build_background_tabular_generated_output_metadata(background_run)
         accepted_parity_result = parity_result
@@ -6025,7 +6032,7 @@ def maybe_queue_direct_tabular_generated_output(
                 decision_reason_code=getattr(parity_result, 'decision_reason_code', 'direct_source_backed_preflight'),
                 generated_tabular_outputs=[background_metadata],
             )
-        emit_search_parity_event(
+        emit_direct_parity_event(
             'durable_preflight_accepted',
             planner_result=accepted_parity_result,
             metrics={
@@ -6034,7 +6041,7 @@ def maybe_queue_direct_tabular_generated_output(
                 'batch_count_estimate': direct_source.get('batch_count_estimate'),
             },
         )
-        emit_search_parity_event(
+        emit_direct_parity_event(
             'response_metadata_emitted',
             planner_result=accepted_parity_result,
             metrics={'generated_output_count': 1},
@@ -6086,7 +6093,7 @@ def maybe_queue_direct_tabular_generated_output(
     except MixedSourceCancellationError:
         raise
     except Exception as exc:
-        emit_search_parity_event(
+        emit_direct_parity_event(
             'durable_preflight_failed',
             metrics={'source_count': len(file_contexts or [])},
             dimensions={'error_type': exc.__class__.__name__},
@@ -6119,6 +6126,196 @@ def maybe_queue_direct_tabular_generated_output(
                     'The downloadable tabular artifact could not be queued. No inline row output was generated.',
                 )
         return None
+
+
+def _build_search_shared_preflight_metrics(file_contexts, result=None, generated_output=None):
+    metrics = {
+        'source_count': len(file_contexts or []),
+    }
+    if isinstance(result, dict):
+        metrics['planned_source_count'] = _safe_int(result.get('source_count'))
+    if isinstance(generated_output, dict):
+        metrics['generated_output_count'] = 1
+        metrics['row_count'] = _safe_int(generated_output.get('row_count'))
+    return metrics
+
+
+def _emit_search_shared_preflight_event(
+    event_name,
+    settings,
+    file_contexts,
+    result=None,
+    generated_output=None,
+    dimensions=None,
+    level=logging.INFO,
+):
+    safe_dimensions = {
+        'preflight_owner': 'shared',
+    }
+    if isinstance(result, dict):
+        safe_dimensions.update({
+            'planner_mode': str(result.get('planner_mode') or '').strip().lower()[:40],
+            'execution_contract': str(result.get('execution_contract') or '').strip().lower()[:80],
+            'execution_state': str(result.get('execution_state') or '').strip().lower()[:40],
+            'reason_code': str(result.get('reason_code') or '').strip().lower()[:80],
+            'planner_contract_version': str(result.get('planner_contract_version') or '').strip()[:80],
+        })
+        rollout_assignment = result.get('rollout_assignment') if isinstance(result.get('rollout_assignment'), dict) else {}
+        if rollout_assignment:
+            safe_dimensions.update({
+                'rollout_contract_version': str(rollout_assignment.get('contract_version') or '').strip()[:80],
+                'rollout_mode': str(rollout_assignment.get('mode') or '').strip().lower()[:40],
+                'rollout_assigned': str(bool(rollout_assignment.get('assigned'))).lower(),
+                'rollout_percent': str(_safe_int(rollout_assignment.get('rollout_percent'))),
+                'rollout_cohort_bucket': str(_safe_int(rollout_assignment.get('cohort_bucket'))),
+                'legacy_post_tool_fallback_mode': str(
+                    rollout_assignment.get('legacy_post_tool_fallback_mode') or 'enabled'
+                ).strip().lower()[:40],
+            })
+        fallback_decision = (
+            result.get('legacy_post_tool_fallback_decision')
+            if isinstance(result.get('legacy_post_tool_fallback_decision'), dict)
+            else {}
+        )
+        if fallback_decision:
+            safe_dimensions.update({
+                'legacy_post_tool_fallback_contract_version': str(
+                    fallback_decision.get('contract_version') or ''
+                ).strip()[:80],
+                'legacy_post_tool_fallback_action': str(
+                    fallback_decision.get('action') or ''
+                ).strip().lower()[:40],
+                'legacy_post_tool_fallback_reason': str(
+                    fallback_decision.get('reason_code') or ''
+                ).strip().lower()[:80],
+                'legacy_post_tool_fallback_should_invoke': str(
+                    bool(fallback_decision.get('should_invoke'))
+                ).lower(),
+            })
+    if isinstance(generated_output, dict):
+        safe_dimensions.update({
+            'output_status': str(generated_output.get('status') or '').strip().lower()[:40],
+            'task_type': str(generated_output.get('task_type') or '').strip().lower()[:80],
+            'output_format': str(generated_output.get('output_format') or '').strip().lower()[:20],
+        })
+    for key, value in (dimensions or {}).items():
+        safe_dimensions[str(key)[:60]] = str(value or '').strip().lower()[:80]
+
+    log_event(
+        f'[TABULAR_SHARED_PREFLIGHT] Search shared preflight {event_name}',
+        {
+            'event_name': event_name,
+            **safe_dimensions,
+            **_build_search_shared_preflight_metrics(
+                file_contexts,
+                result=result,
+                generated_output=generated_output,
+            ),
+        },
+        level=level,
+        debug_only=True,
+    )
+
+
+def maybe_queue_search_tabular_generated_output(
+    user_question,
+    file_contexts,
+    user_id,
+    conversation_id,
+    gpt_model,
+    settings,
+    thought_callback=None,
+    model_context=None,
+    cancel_requested=None,
+    request_correlation_id=None,
+):
+    """Queue Search durable tabular work through the shared preflight when enabled."""
+    legacy_direct_preflight = lambda: maybe_queue_direct_tabular_generated_output(
+        user_question=user_question,
+        file_contexts=file_contexts,
+        user_id=user_id,
+        conversation_id=conversation_id,
+        gpt_model=gpt_model,
+        settings=settings,
+        thought_callback=thought_callback,
+        model_context=model_context,
+        cancel_requested=cancel_requested,
+        request_correlation_id=request_correlation_id,
+    )
+
+    if not _settings_flag_enabled(settings, 'enable_tabular_search_shared_preflight', False):
+        return legacy_direct_preflight()
+
+    planner_mode = str((settings or {}).get('tabular_request_planner_mode') or '').strip().lower()
+    if planner_mode not in {'shadow', 'active'}:
+        return legacy_direct_preflight()
+
+    try:
+        _emit_search_shared_preflight_event(
+            'attempted',
+            settings,
+            file_contexts,
+            dimensions={'planner_mode': planner_mode},
+        )
+        result = _shared_orchestrate_tabular_request(
+            user_question,
+            file_contexts,
+            action_mode='search',
+            caller='search',
+            settings=settings,
+            planner_mode=planner_mode,
+            durable_execution_callback=_shared_queue_direct_tabular_generated_output_from_plan,
+            user_id=user_id,
+            conversation_id=conversation_id,
+            gpt_model=gpt_model,
+            thought_callback=thought_callback,
+            model_context=model_context,
+            cancel_requested=cancel_requested,
+            request_correlation_id=request_correlation_id,
+        )
+    except MixedSourceCancellationError:
+        raise
+    except Exception as exc:
+        _emit_search_shared_preflight_event(
+            'failed',
+            settings,
+            file_contexts,
+            dimensions={'error_type': exc.__class__.__name__},
+            level=logging.WARNING,
+        )
+        return legacy_direct_preflight()
+
+    planner_mode = str((result or {}).get('planner_mode') or '').strip().lower()
+    generated_output = (result or {}).get('generated_output_metadata') if isinstance(result, dict) else None
+    if planner_mode == 'shadow':
+        _emit_search_shared_preflight_event(
+            'shadow_compared',
+            settings,
+            file_contexts,
+            result=result,
+        )
+        return legacy_direct_preflight()
+
+    if planner_mode == 'active' and generated_output:
+        output_status = str(generated_output.get('status') or '').strip().lower()
+        event_name = 'failed' if output_status == 'failed' else 'accepted'
+        _emit_search_shared_preflight_event(
+            event_name,
+            settings,
+            file_contexts,
+            result=result,
+            generated_output=generated_output,
+            level=logging.WARNING if event_name == 'failed' else logging.INFO,
+        )
+        return generated_output
+
+    _emit_search_shared_preflight_event(
+        'declined',
+        settings,
+        file_contexts,
+        result=result,
+    )
+    return None
 
 
 def _build_tabular_generated_output_source_authorization(source_candidate):
@@ -6679,6 +6876,17 @@ async def maybe_create_tabular_generated_output(
     parity_emitter = globals().get('emit_tabular_parity_event')
     parity_result_builder = globals().get('build_tabular_parity_planner_result')
     parity_result = parity_classifier(user_question) if callable(parity_classifier) else None
+    fallback_decision = _shared_build_tabular_legacy_post_tool_fallback_decision(
+        settings=settings,
+        fallback_source='post_tool_generated_output',
+    )
+    fallback_dimensions = {
+        'legacy_post_tool_fallback_contract_version': fallback_decision.get('contract_version'),
+        'legacy_post_tool_fallback_mode': fallback_decision.get('mode'),
+        'legacy_post_tool_fallback_action': fallback_decision.get('action'),
+        'legacy_post_tool_fallback_reason': fallback_decision.get('reason_code'),
+        'legacy_post_tool_fallback_should_invoke': str(bool(fallback_decision.get('should_invoke'))).lower(),
+    }
 
     def emit_fallback_parity_event(event_name, planner_result=None, metrics=None, dimensions=None, level=None):
         if not callable(parity_emitter):
@@ -6700,9 +6908,28 @@ async def maybe_create_tabular_generated_output(
         'classification_completed',
         metrics={'invocation_count': len(invocations or [])},
     )
+    if not fallback_decision.get('should_invoke'):
+        emit_fallback_parity_event(
+            'post_tool_generated_output_fallback_suppressed',
+            metrics={'invocation_count': len(invocations or [])},
+            dimensions=fallback_dimensions,
+        )
+        log_event(
+            '[TABULAR_GENERATED_OUTPUT] Legacy post-tool generated output fallback suppressed',
+            {
+                'conversation_id': conversation_id,
+                'mode': mode,
+                'invocation_count': len(invocations or []),
+                **fallback_dimensions,
+            },
+            debug_only=True,
+        )
+        return None
+
     emit_fallback_parity_event(
         'post_tool_generated_output_fallback_attempted',
         metrics={'invocation_count': len(invocations or [])},
+        dimensions=fallback_dimensions,
     )
 
     output_format = get_tabular_generated_output_format(user_question) or 'md'
@@ -12507,7 +12734,7 @@ def _execute_mixed_source_tabular_evidence(
         if not file_context:
             raise ValueError('Authorized tabular source context is unavailable')
 
-        direct_generated_output = maybe_queue_direct_tabular_generated_output(
+        direct_generated_output = maybe_queue_search_tabular_generated_output(
             user_question=user_question,
             file_contexts=[file_context],
             user_id=user_id,
@@ -17896,7 +18123,7 @@ def register_route_backend_chats(bp):
                 streamed_tabular_tool_thoughts = []
                 tabular_invocations = []
                 tabular_related_document_summary = ''
-                tabular_generated_output = maybe_queue_direct_tabular_generated_output(
+                tabular_generated_output = maybe_queue_search_tabular_generated_output(
                     user_question=user_message,
                     file_contexts=workspace_tabular_file_contexts,
                     user_id=user_id,
@@ -18263,7 +18490,7 @@ def register_route_backend_chats(bp):
                         build_tabular_file_context(file_name, source_hint='chat')
                         for file_name in chat_tabular_files
                     ]
-                    chat_tabular_generated_output = maybe_queue_direct_tabular_generated_output(
+                    chat_tabular_generated_output = maybe_queue_search_tabular_generated_output(
                         user_question=user_message,
                         file_contexts=chat_tabular_file_contexts,
                         user_id=user_id,
@@ -21832,7 +22059,7 @@ def register_route_backend_chats(bp):
                     streamed_tabular_tool_thoughts = []
                     tabular_invocations = []
                     tabular_related_document_summary = ''
-                    tabular_generated_output = maybe_queue_direct_tabular_generated_output(
+                    tabular_generated_output = maybe_queue_search_tabular_generated_output(
                         user_question=user_message,
                         file_contexts=workspace_tabular_file_contexts,
                         user_id=user_id,
@@ -22216,7 +22443,7 @@ def register_route_backend_chats(bp):
                             build_tabular_file_context(file_name, source_hint='chat')
                             for file_name in chat_tabular_files
                         ]
-                        chat_tabular_generated_output = maybe_queue_direct_tabular_generated_output(
+                        chat_tabular_generated_output = maybe_queue_search_tabular_generated_output(
                             user_question=user_message,
                             file_contexts=chat_tabular_file_contexts,
                             user_id=user_id,

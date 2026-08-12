@@ -125,11 +125,14 @@ from functions_message_artifacts import (
 from functions_mixed_source_orchestration import (
     EVIDENCE_ENGINE_DOCUMENT_ANALYSIS,
     EVIDENCE_ENGINE_TABULAR_TOOLS,
+    EVIDENCE_STATUS_CANCELED,
     EVIDENCE_STATUS_COMPLETED,
     EVIDENCE_STATUS_FAILED,
+    EVIDENCE_STATUS_PENDING,
     MixedSourceCancellationError,
     MixedSourceFinalizationError,
     SELECTION_MODE_SELECTED,
+    build_tabular_file_contexts_from_manifest,
     build_evidence_envelope,
     build_failed_narrative_evidence_envelopes,
     build_mixed_source_evidence_handoff,
@@ -187,6 +190,10 @@ from functions_tabular_parity_contract import (
     TABULAR_PARITY_EVENT_FIRST_FOREGROUND_TABULAR_INVOCATION,
     classify_tabular_parity_request,
     emit_tabular_parity_event,
+)
+from functions_tabular_analysis import (
+    orchestrate_tabular_request as _shared_orchestrate_tabular_request,
+    queue_direct_tabular_generated_output_from_plan as _shared_queue_direct_tabular_generated_output_from_plan,
 )
 from functions_tabular_generated_exports import (
     build_background_tabular_generated_output_metadata,
@@ -1335,6 +1342,9 @@ def _maybe_create_document_analysis_generated_artifacts(
         or xml_artifact_requested
         or primary_tabular_outputs
     )
+    deferred_composition = analysis_result.get('deferred_composition') if isinstance(analysis_result.get('deferred_composition'), dict) else {}
+    if deferred_composition.get('status') in {'pending', 'gate_disabled', 'continuation_unavailable'}:
+        return {'artifacts': [], 'assistant_reply': None}
 
     if create_lossless_artifacts:
         artifacts = []
@@ -2295,6 +2305,19 @@ def _build_mixed_source_analysis_coverage(handoff):
         )
     coverage['engine_status_totals'] = engine_status_totals
     coverage['document_count'] = coverage.get('requested_source_count', 0)
+    try:
+        pending_source_count = max(0, int(coverage.get('pending_source_count') or 0))
+    except (TypeError, ValueError):
+        pending_source_count = 0
+    if pending_source_count:
+        coverage['progress_meta'] = {
+            'phase': 'waiting_for_tabular_outputs',
+            'phase_label': 'Pending tabular evidence',
+            'phase_detail': 'Mixed-source Analyze is waiting for full-source tabular work to finish',
+            'status': EVIDENCE_STATUS_PENDING,
+            'percent_override': 0,
+        }
+        return coverage
     coverage['progress_meta'] = {
         'phase': 'complete',
         'phase_label': 'Complete' if not coverage.get('partial_coverage') else 'Partial',
@@ -2303,6 +2326,533 @@ def _build_mixed_source_analysis_coverage(handoff):
         'percent_override': 100,
     }
     return coverage
+
+
+def _settings_bool(settings, key, default=False):
+    value = (settings or {}).get(key, default)
+    if isinstance(value, str):
+        return value.strip().lower() in {'1', 'true', 'yes', 'on'}
+    return bool(value)
+
+
+def _get_tabular_generated_output_run_id(generated_output):
+    generated_output = generated_output if isinstance(generated_output, dict) else {}
+    for key in ('export_run_id', 'run_id', 'id'):
+        run_id = str(generated_output.get(key) or '').strip()
+        if run_id:
+            return run_id
+    return ''
+
+
+def _get_tabular_generated_output_status(generated_output):
+    generated_output = generated_output if isinstance(generated_output, dict) else {}
+    for key in ('status', 'execution_status', 'output_status'):
+        status = str(generated_output.get(key) or '').strip().lower()
+        if status:
+            return status
+    return 'queued' if _get_tabular_generated_output_run_id(generated_output) else ''
+
+
+def _is_nonterminal_tabular_generated_output(generated_output):
+    generated_output = generated_output if isinstance(generated_output, dict) else {}
+    if not generated_output:
+        return False
+
+    status = _get_tabular_generated_output_status(generated_output)
+    if status in {'completed', 'failed', 'canceled', 'cancelled'}:
+        return False
+    if status in {'queued', 'running', 'retrying', 'finalizing'}:
+        return True
+    return bool(
+        generated_output.get('background_export')
+        or str(generated_output.get('handoff_mode') or '').strip().lower().startswith('background_')
+        or _get_tabular_generated_output_run_id(generated_output)
+    )
+
+
+def _get_pending_tabular_generated_output(generated_outputs):
+    for generated_output in list(generated_outputs or []):
+        if _is_nonterminal_tabular_generated_output(generated_output):
+            return generated_output
+    return None
+
+
+def _get_terminal_unsuccessful_tabular_generated_output(generated_outputs):
+    for generated_output in list(generated_outputs or []):
+        status = _get_tabular_generated_output_status(generated_output)
+        if status in {'failed', 'canceled', 'cancelled'}:
+            return generated_output
+    return None
+
+
+def _build_pending_tabular_run_reference(source, generated_output):
+    source = source if isinstance(source, dict) else {}
+    generated_output = generated_output if isinstance(generated_output, dict) else {}
+    return {
+        'document_id': str(source.get('document_id') or '').strip(),
+        'run_id': _get_tabular_generated_output_run_id(generated_output),
+        'status': _get_tabular_generated_output_status(generated_output),
+        'task_type': str(generated_output.get('task_type') or '').strip().lower(),
+        'output_format': str(generated_output.get('output_format') or '').strip().lower(),
+        'source_version': source.get('source_version'),
+    }
+
+
+def _build_pending_tabular_evidence_envelope(source, generated_outputs, settings):
+    source = source if isinstance(source, dict) else {}
+    generated_outputs = [
+        output
+        for output in list(generated_outputs or [])
+        if isinstance(output, dict)
+    ]
+    primary_output = _get_pending_tabular_generated_output(generated_outputs) or (
+        generated_outputs[0] if generated_outputs else {}
+    )
+    execution_status = _get_tabular_generated_output_status(primary_output) or 'queued'
+    planning_enabled = _settings_bool(
+        settings,
+        'enable_tabular_mixed_deferred_composition_planning',
+        False,
+    )
+    summary = (
+        'Full-source tabular analysis is pending in a generated-output run. '
+        'Automatic collective mixed-source synthesis is unavailable, so no collective conclusion was started.'
+    )
+
+    return build_evidence_envelope(
+        document_id=source.get('document_id'),
+        source_kind='tabular',
+        engine=EVIDENCE_ENGINE_TABULAR_TOOLS,
+        status=EVIDENCE_STATUS_PENDING,
+        summary=summary,
+        citations=[],
+        generated_artifacts=generated_outputs,
+        coverage={
+            'terminal': False,
+            'execution_status': execution_status,
+            'execution_state': EVIDENCE_STATUS_PENDING,
+            'tool_call_count': 0,
+            'execution_mode': 'durable_background',
+            'generated_output_run_ids': [
+                run_id
+                for run_id in (
+                    _get_tabular_generated_output_run_id(output)
+                    for output in generated_outputs
+                )
+                if run_id
+            ],
+            'durable_task_type': str(primary_output.get('task_type') or '').strip().lower(),
+            'deferred_composition': {
+                'required': True,
+                'planning_enabled': planning_enabled,
+                'enabled': False,
+                'continuation_available': False,
+                'status': 'continuation_unavailable',
+            },
+        },
+    )
+
+
+def _build_terminal_unsuccessful_tabular_evidence_envelope(source, generated_outputs):
+    source = source if isinstance(source, dict) else {}
+    generated_outputs = [
+        output
+        for output in list(generated_outputs or [])
+        if isinstance(output, dict)
+    ]
+    primary_output = _get_terminal_unsuccessful_tabular_generated_output(generated_outputs) or {}
+    execution_status = _get_tabular_generated_output_status(primary_output)
+    canceled = execution_status in {'canceled', 'cancelled'}
+    evidence_status = EVIDENCE_STATUS_CANCELED if canceled else EVIDENCE_STATUS_FAILED
+    summary = (
+        'Full-source tabular analysis was canceled before completion.'
+        if canceled
+        else 'Full-source tabular analysis failed before completion.'
+    )
+    return build_evidence_envelope(
+        document_id=source.get('document_id'),
+        source_kind='tabular',
+        engine=EVIDENCE_ENGINE_TABULAR_TOOLS,
+        status=evidence_status,
+        summary=summary,
+        citations=[],
+        generated_artifacts=generated_outputs,
+        coverage={
+            'terminal': True,
+            'execution_status': execution_status,
+            'execution_state': evidence_status,
+            'tool_call_count': 0,
+            'execution_mode': 'durable_background',
+            'generated_output_run_ids': [
+                run_id
+                for run_id in (
+                    _get_tabular_generated_output_run_id(output)
+                    for output in generated_outputs
+                )
+                if run_id
+            ],
+            'durable_task_type': str(primary_output.get('task_type') or '').strip().lower(),
+        },
+        error=None if canceled else 'Tabular analysis could not be completed.',
+    )
+
+
+def _build_mixed_source_deferred_composition_descriptor(
+    workflow,
+    conversation_id,
+    manifest,
+    pending_tabular_runs,
+    settings,
+    request_correlation_id=None,
+):
+    manifest_identity = []
+    for source in list(manifest or []):
+        if not isinstance(source, dict):
+            continue
+        manifest_identity.append({
+            'document_id': str(source.get('document_id') or '').strip(),
+            'scope': source.get('scope'),
+            'scope_id': source.get('scope_id'),
+            'source_kind': source.get('source_kind'),
+            'source_version': source.get('source_version'),
+        })
+    manifest_fingerprint = str(uuid.uuid5(
+        uuid.NAMESPACE_URL,
+        json.dumps(manifest_identity, sort_keys=True, default=str, separators=(',', ':')),
+    ))
+    planning_enabled = _settings_bool(
+        settings,
+        'enable_tabular_mixed_deferred_composition_planning',
+        False,
+    )
+    return {
+        'composition_id': str(uuid.uuid4()),
+        'contract_version': 'phase5.v1',
+        'status': 'continuation_unavailable',
+        'enabled': False,
+        'planning_enabled': planning_enabled,
+        'continuation_available': False,
+        'created_at': _utc_now_iso(),
+        'user_id': str((workflow or {}).get('user_id') or '').strip(),
+        'conversation_id': str(conversation_id or '').strip(),
+        'workflow_id': str((workflow or {}).get('id') or '').strip(),
+        'request_correlation_id': normalize_mixed_source_correlation_id(
+            request_correlation_id,
+        ),
+        'manifest_fingerprint': manifest_fingerprint,
+        'required_tabular_runs': [
+            run_reference
+            for run_reference in list(pending_tabular_runs or [])
+            if isinstance(run_reference, dict)
+        ],
+        'required_source_count': len(manifest_identity),
+        'pending_source_count': len(list(pending_tabular_runs or [])),
+    }
+
+
+def _build_mixed_source_deferred_reply(deferred_descriptor):
+    descriptor = deferred_descriptor if isinstance(deferred_descriptor, dict) else {}
+    pending_source_count = _coerce_document_analysis_count(
+        descriptor.get('pending_source_count'),
+    )
+    source_label = 'source' if pending_source_count == 1 else 'sources'
+    return (
+        f'Completed narrative and bounded evidence has been preserved, but {pending_source_count} tabular {source_label} '
+        'still require full-source generated-output processing. Automatic deferred composition is unavailable, so no '
+        'collective conclusion was generated from incomplete table evidence. Individual generated outputs will continue.'
+    )
+
+
+def _emit_analyze_shared_preflight_event(
+    event_name,
+    settings,
+    file_contexts,
+    result=None,
+    generated_output=None,
+    dimensions=None,
+    level=logging.INFO,
+):
+    safe_dimensions = {
+        'preflight_owner': 'shared',
+        'caller': 'analyze',
+    }
+    if isinstance(result, dict):
+        safe_dimensions.update({
+            'planner_mode': str(result.get('planner_mode') or '').strip().lower()[:40],
+            'execution_contract': str(result.get('execution_contract') or '').strip().lower()[:80],
+            'execution_state': str(result.get('execution_state') or '').strip().lower()[:40],
+            'reason_code': str(result.get('reason_code') or '').strip().lower()[:80],
+            'planner_contract_version': str(result.get('planner_contract_version') or '').strip()[:80],
+        })
+        rollout_assignment = result.get('rollout_assignment') if isinstance(result.get('rollout_assignment'), dict) else {}
+        if rollout_assignment:
+            safe_dimensions.update({
+                'rollout_contract_version': str(rollout_assignment.get('contract_version') or '').strip()[:80],
+                'rollout_mode': str(rollout_assignment.get('mode') or '').strip().lower()[:40],
+                'rollout_assigned': str(bool(rollout_assignment.get('assigned'))).lower(),
+                'rollout_percent': str(_coerce_document_analysis_count(rollout_assignment.get('rollout_percent'))),
+                'rollout_cohort_bucket': str(_coerce_document_analysis_count(rollout_assignment.get('cohort_bucket'))),
+                'legacy_post_tool_fallback_mode': str(
+                    rollout_assignment.get('legacy_post_tool_fallback_mode') or 'enabled'
+                ).strip().lower()[:40],
+            })
+        fallback_decision = (
+            result.get('legacy_post_tool_fallback_decision')
+            if isinstance(result.get('legacy_post_tool_fallback_decision'), dict)
+            else {}
+        )
+        if fallback_decision:
+            safe_dimensions.update({
+                'legacy_post_tool_fallback_contract_version': str(
+                    fallback_decision.get('contract_version') or ''
+                ).strip()[:80],
+                'legacy_post_tool_fallback_action': str(
+                    fallback_decision.get('action') or ''
+                ).strip().lower()[:40],
+                'legacy_post_tool_fallback_reason': str(
+                    fallback_decision.get('reason_code') or ''
+                ).strip().lower()[:80],
+                'legacy_post_tool_fallback_should_invoke': str(
+                    bool(fallback_decision.get('should_invoke'))
+                ).lower(),
+            })
+    if isinstance(generated_output, dict):
+        safe_dimensions.update({
+            'output_status': str(generated_output.get('status') or '').strip().lower()[:40],
+            'task_type': str(generated_output.get('task_type') or '').strip().lower()[:80],
+            'output_format': str(generated_output.get('output_format') or '').strip().lower()[:20],
+        })
+    for key, value in (dimensions or {}).items():
+        safe_dimensions[str(key)[:60]] = str(value or '').strip().lower()[:80]
+
+    log_event(
+        f'[TABULAR_SHARED_PREFLIGHT] Analyze shared preflight {event_name}',
+        {
+            'event_name': event_name,
+            'source_count': len(list(file_contexts or [])),
+            **safe_dimensions,
+        },
+        level=level,
+        debug_only=True,
+    )
+
+
+def _build_tabular_analyze_durable_handoff(generated_output):
+    generated_output = generated_output if isinstance(generated_output, dict) else {}
+    task_type = str(generated_output.get('task_type') or '').strip().lower()
+    if task_type == 'structured_export':
+        intent_label = 'structured output'
+    elif task_type == 'combined':
+        intent_label = 'full-source analysis and structured output'
+    else:
+        intent_label = 'full-source analysis'
+    return (
+        f'The {intent_label} has been accepted for full-source background processing. '
+        'Progress and the final result will appear in the generated-output card when processing finishes.'
+    )
+
+
+def _maybe_execute_pure_tabular_analyze_preflight(
+    workflow,
+    settings,
+    manifest,
+    partitions,
+    conversation_id='',
+    thought_tracker=None,
+    live_thought_callback=None,
+    cancel_requested=None,
+    request_correlation_id=None,
+):
+    if not _settings_bool(settings, 'enable_tabular_analyze_durable_preflight', False):
+        return None
+
+    planner_mode = str((settings or {}).get('tabular_request_planner_mode') or '').strip().lower()
+    if planner_mode not in {'shadow', 'active'}:
+        return None
+    if partitions.get('narrative_sources') or partitions.get('unsupported_sources') or partitions.get('unresolved_sources'):
+        return None
+
+    tabular_sources = list(partitions.get('tabular_sources') or [])
+    if len(tabular_sources) != 1 or len(list(manifest or [])) != 1:
+        return None
+
+    user_id = str(workflow.get('user_id') or '').strip()
+    gpt_model = _resolve_tabular_document_action_model_name(workflow, settings)
+    if not user_id or not gpt_model:
+        return None
+
+    file_contexts = build_tabular_file_contexts_from_manifest(tabular_sources)
+    if len(file_contexts) != 1:
+        return None
+
+    def publish_post_processing_thought(thought_payload):
+        payload = thought_payload if isinstance(thought_payload, dict) else {}
+        if thought_tracker is not None:
+            thought_tracker.add_thought(
+                payload.get('step_type', 'tabular_analysis'),
+                payload.get('content', ''),
+                detail=payload.get('detail'),
+                activity=payload.get('activity'),
+            )
+        if callable(live_thought_callback):
+            live_payload = dict(payload)
+            if thought_tracker is not None:
+                live_payload['message_id'] = getattr(thought_tracker, 'message_id', None)
+                live_payload['step_index'] = thought_tracker.current_index - 1
+            live_thought_callback(live_payload)
+
+    try:
+        _emit_analyze_shared_preflight_event(
+            'attempted',
+            settings,
+            file_contexts,
+            dimensions={'planner_mode': planner_mode},
+        )
+        result = _shared_orchestrate_tabular_request(
+            str(workflow.get('task_prompt') or ''),
+            file_contexts,
+            action_mode='analyze',
+            caller='analyze',
+            settings=settings,
+            planner_mode=planner_mode,
+            durable_execution_callback=_shared_queue_direct_tabular_generated_output_from_plan,
+            user_id=user_id,
+            conversation_id=conversation_id,
+            gpt_model=gpt_model,
+            thought_callback=publish_post_processing_thought,
+            cancel_requested=cancel_requested,
+            request_correlation_id=request_correlation_id,
+        )
+    except MixedSourceCancellationError:
+        raise
+    except Exception as exc:
+        _emit_analyze_shared_preflight_event(
+            'failed',
+            settings,
+            file_contexts,
+            dimensions={'error_type': exc.__class__.__name__},
+            level=logging.WARNING,
+        )
+        return None
+
+    generated_output = (result or {}).get('generated_output_metadata') if isinstance(result, dict) else None
+    if planner_mode == 'shadow':
+        _emit_analyze_shared_preflight_event(
+            'shadow_compared',
+            settings,
+            file_contexts,
+            result=result,
+        )
+        return None
+
+    if planner_mode == 'active' and generated_output:
+        output_status = str(generated_output.get('status') or '').strip().lower()
+        event_name = 'failed' if output_status == 'failed' else 'accepted'
+        _emit_analyze_shared_preflight_event(
+            event_name,
+            settings,
+            file_contexts,
+            result=result,
+            generated_output=generated_output,
+            level=logging.WARNING if event_name == 'failed' else logging.INFO,
+        )
+        source = tabular_sources[0]
+        execution_failed = output_status == 'failed'
+        evidence_status = EVIDENCE_STATUS_FAILED if execution_failed else EVIDENCE_STATUS_PENDING
+        handoff_reply = (
+            'The full-source tabular work could not be started. No exhaustive tabular result has been completed.'
+            if execution_failed
+            else _build_tabular_analyze_durable_handoff(
+                generated_output,
+            )
+        )
+        coverage = {
+            'document_count': 1,
+            'total_windows': 1,
+            'processed_windows': 0,
+            'failed_windows': 1 if execution_failed else 0,
+            'total_chunks': 1,
+            'processed_chunks': 0,
+            'failed_chunks': 1 if execution_failed else 0,
+            'retries': 0,
+            'window_unit': 'tabular',
+            'documents': [{
+                'document_id': source.get('document_id'),
+                'document_name': source.get('display_name') or source.get('file_name'),
+                'file_name': source.get('file_name'),
+                'title': source.get('display_name') or source.get('file_name'),
+                'scope': source.get('scope'),
+                'scope_id': source.get('scope_id'),
+                'source_version': source.get('source_version'),
+                'total_windows': 1,
+                'processed_windows': 0,
+                'failed_windows': 1 if execution_failed else 0,
+                'total_chunks': 1,
+                'processed_chunks': 0,
+                'failed_chunks': 1 if execution_failed else 0,
+                'status': evidence_status,
+                'status_text': (
+                    'Full-source tabular work could not be started'
+                    if execution_failed
+                    else 'Full-source tabular work is pending'
+                ),
+                'failed_ranges': [],
+                'ranges': [],
+            }],
+            'progress_meta': {
+                'phase': 'failed' if execution_failed else 'queued',
+                'phase_label': 'Failed' if execution_failed else 'Queued',
+                'phase_detail': (
+                    'Full-source tabular work could not be started'
+                    if execution_failed
+                    else 'Full-source tabular work is running in the background'
+                ),
+                'status': evidence_status,
+                'percent_override': 100 if execution_failed else 0,
+                'phase_step': 1,
+                'phase_total_steps': 1,
+            },
+            'execution_contract': result.get('execution_contract'),
+            'execution_state': result.get('execution_state'),
+            'planner_contract_version': result.get('planner_contract_version'),
+            'planner_reason_code': result.get('reason_code'),
+            'durable_task_type': generated_output.get('task_type') or result.get('durable_task_type'),
+            'terminal': execution_failed,
+        }
+        evidence_envelope = build_evidence_envelope(
+            document_id=source.get('document_id'),
+            source_kind='tabular',
+            engine=EVIDENCE_ENGINE_TABULAR_TOOLS,
+            status=evidence_status,
+            summary=handoff_reply,
+            citations=[],
+            generated_artifacts=[generated_output],
+            coverage=coverage,
+        )
+        return {
+            'reply': handoff_reply,
+            'analysis_reply': handoff_reply,
+            'coverage': coverage,
+            'documents': list(coverage.get('documents') or []),
+            'document_ids': [source.get('document_id')],
+            'mixed_source_manifest': list(manifest or []),
+            'mixed_source_evidence': [evidence_envelope],
+            'generated_tabular_outputs': [generated_output],
+            'agent_citations': [],
+            'tabular_execution_contract': result.get('execution_contract'),
+            'tabular_execution_state': result.get('execution_state'),
+            'tabular_planner_contract_version': result.get('planner_contract_version'),
+            'tabular_durable_task_type': generated_output.get('task_type') or result.get('durable_task_type'),
+            'tabular_preflight_result': result,
+        }
+
+    _emit_analyze_shared_preflight_event(
+        'declined',
+        settings,
+        file_contexts,
+        result=result,
+    )
+    return None
 
 
 def _execute_mixed_source_analyze_workflow(
@@ -2366,7 +2916,22 @@ def _execute_mixed_source_analyze_workflow(
     partitions = partition_source_manifest(manifest)
     evidence_envelopes = []
     generated_tabular_outputs = []
+    pending_tabular_runs = []
     tabular_agent_citations = []
+
+    tabular_preflight_result = _maybe_execute_pure_tabular_analyze_preflight(
+        workflow,
+        settings,
+        manifest,
+        partitions,
+        conversation_id=conversation_id,
+        thought_tracker=thought_tracker,
+        live_thought_callback=live_thought_callback,
+        cancel_requested=cancel_requested,
+        request_correlation_id=request_correlation_id,
+    )
+    if tabular_preflight_result:
+        return tabular_preflight_result
 
     narrative_sources = partitions['narrative_sources']
     if narrative_sources:
@@ -2459,15 +3024,42 @@ def _execute_mixed_source_analyze_workflow(
                 ))
                 continue
             tabular_result = tabular_payload.get('result') or {}
+            tabular_generated_outputs = list(tabular_payload.get('generated_tabular_outputs') or [])
+            pending_generated_output = _get_pending_tabular_generated_output(
+                tabular_generated_outputs,
+            )
+            if pending_generated_output:
+                evidence_envelopes.append(_build_pending_tabular_evidence_envelope(
+                    source,
+                    tabular_generated_outputs,
+                    settings,
+                ))
+                pending_tabular_runs.append(_build_pending_tabular_run_reference(
+                    source,
+                    pending_generated_output,
+                ))
+                generated_tabular_outputs.extend(tabular_generated_outputs)
+                tabular_agent_citations.extend(tabular_payload.get('agent_citations') or [])
+                continue
+            terminal_unsuccessful_output = _get_terminal_unsuccessful_tabular_generated_output(
+                tabular_generated_outputs,
+            )
+            if terminal_unsuccessful_output:
+                evidence_envelopes.append(_build_terminal_unsuccessful_tabular_evidence_envelope(
+                    source,
+                    tabular_generated_outputs,
+                ))
+                generated_tabular_outputs.extend(tabular_generated_outputs)
+                continue
             evidence_envelopes.append(build_evidence_envelope(
                 document_id=source.get('document_id'), source_kind='tabular',
                 engine=EVIDENCE_ENGINE_TABULAR_TOOLS, status=EVIDENCE_STATUS_COMPLETED,
                 summary=str(tabular_result.get('analysis_reply') or tabular_result.get('reply') or ''),
                 citations=list(tabular_payload.get('agent_citations') or []),
-                generated_artifacts=list(tabular_payload.get('generated_tabular_outputs') or []),
+                generated_artifacts=tabular_generated_outputs,
                 coverage={'terminal': True, 'tool_call_count': 1},
             ))
-            generated_tabular_outputs.extend(tabular_payload.get('generated_tabular_outputs') or [])
+            generated_tabular_outputs.extend(tabular_generated_outputs)
             tabular_agent_citations.extend(tabular_payload.get('agent_citations') or [])
 
     handoff = build_mixed_source_evidence_handoff(
@@ -2486,6 +3078,36 @@ def _execute_mixed_source_analyze_workflow(
         },
     )
     if not mode_outcome['should_reduce']:
+        if mode_outcome.get('status') == EVIDENCE_STATUS_PENDING:
+            coverage = _build_mixed_source_analysis_coverage(handoff)
+            deferred_descriptor = _build_mixed_source_deferred_composition_descriptor(
+                workflow,
+                conversation_id,
+                manifest,
+                pending_tabular_runs,
+                settings,
+                request_correlation_id=request_correlation_id,
+            )
+            deferred_reply = _build_mixed_source_deferred_reply(deferred_descriptor)
+            if callable(activity_callback):
+                activity_callback({
+                    'type': 'mixed_source_progress',
+                    'phase': 'waiting_for_tabular_outputs',
+                    'label': coverage['progress_meta']['phase_label'],
+                    'status': coverage['progress_meta']['status'],
+                })
+            return {
+                'reply': deferred_reply,
+                'analysis_reply': deferred_reply,
+                'coverage': coverage,
+                'documents': list(coverage.get('sources') or []),
+                'document_ids': [source.get('document_id') for source in manifest],
+                'mixed_source_manifest': manifest,
+                'mixed_source_evidence': handoff.get('evidence_envelopes') or [],
+                'generated_tabular_outputs': generated_tabular_outputs,
+                'agent_citations': tabular_agent_citations,
+                'deferred_composition': deferred_descriptor,
+            }
         raise RuntimeError(
             'Mixed-source Analyze could not prepare evidence from any selected source.'
         )
@@ -4808,6 +5430,7 @@ def _create_assistant_message(conversation, workflow, result, trigger_source, ru
                 'mixed_source_coverage': result.get('mixed_source_coverage') or {},
                 'analyze': workflow.get('analyze') or {},
                 'analysis_coverage': result.get('analysis_coverage') or {},
+                'deferred_composition': result.get('deferred_composition') or {},
             },
             'thread_info': {
                 'thread_id': str(uuid.uuid4()),
@@ -6276,8 +6899,114 @@ def _merge_token_usage_summaries(results):
     return _finalize_token_usage(aggregate)
 
 
+def _get_per_document_analysis_coverage(result):
+    result = result if isinstance(result, dict) else {}
+    for coverage_key in ('analysis_coverage', 'coverage', 'mixed_source_coverage'):
+        coverage = result.get(coverage_key)
+        if isinstance(coverage, dict):
+            return coverage
+    return {}
+
+
+def _get_per_document_coverage_entries(coverage):
+    coverage = coverage if isinstance(coverage, dict) else {}
+    for entry_key in ('documents', 'sources'):
+        entries = [
+            entry
+            for entry in list(coverage.get(entry_key) or [])
+            if isinstance(entry, dict)
+        ]
+        if entries:
+            return entries
+    return []
+
+
+def _get_per_document_execution_state(result, coverage, generated_outputs):
+    result = result if isinstance(result, dict) else {}
+    coverage = coverage if isinstance(coverage, dict) else {}
+    generated_outputs = [
+        output
+        for output in list(generated_outputs or [])
+        if isinstance(output, dict)
+    ]
+
+    deferred_composition = result.get('deferred_composition')
+    if isinstance(deferred_composition, dict) and deferred_composition.get('status') in {'pending', 'gate_disabled', 'continuation_unavailable'}:
+        return EVIDENCE_STATUS_PENDING
+
+    if any(_is_nonterminal_tabular_generated_output(output) for output in generated_outputs):
+        return EVIDENCE_STATUS_PENDING
+
+    output_statuses = {
+        _get_tabular_generated_output_status(output)
+        for output in generated_outputs
+    }
+    output_statuses.discard('')
+    if output_statuses:
+        if output_statuses <= {'canceled', 'cancelled'}:
+            return 'canceled'
+        if 'failed' in output_statuses:
+            return EVIDENCE_STATUS_FAILED
+        if output_statuses <= {'completed'}:
+            return EVIDENCE_STATUS_COMPLETED
+
+    progress_meta = coverage.get('progress_meta') if isinstance(coverage.get('progress_meta'), dict) else {}
+    progress_status = str(progress_meta.get('status') or '').strip().lower()
+    if progress_status in {EVIDENCE_STATUS_PENDING, 'partial', EVIDENCE_STATUS_FAILED, EVIDENCE_STATUS_COMPLETED, 'canceled', 'cancelled'}:
+        return 'canceled' if progress_status == 'cancelled' else progress_status
+
+    entry_statuses = {
+        str(entry.get('status') or '').strip().lower()
+        for entry in _get_per_document_coverage_entries(coverage)
+    }
+    entry_statuses.discard('')
+    if EVIDENCE_STATUS_PENDING in entry_statuses:
+        return EVIDENCE_STATUS_PENDING
+    if 'canceled' in entry_statuses or 'cancelled' in entry_statuses:
+        return 'canceled'
+    if EVIDENCE_STATUS_FAILED in entry_statuses:
+        return 'partial' if EVIDENCE_STATUS_COMPLETED in entry_statuses else EVIDENCE_STATUS_FAILED
+    if 'partial' in entry_statuses:
+        return 'partial'
+    if entry_statuses and entry_statuses <= {EVIDENCE_STATUS_COMPLETED}:
+        return EVIDENCE_STATUS_COMPLETED
+
+    if coverage.get('partial_coverage'):
+        return 'partial'
+    if _resolve_document_action_reply(result):
+        return EVIDENCE_STATUS_COMPLETED
+    return EVIDENCE_STATUS_FAILED
+
+
+def _get_per_document_status_label(execution_state):
+    normalized_state = str(execution_state or '').strip().lower()
+    if normalized_state == EVIDENCE_STATUS_PENDING:
+        return 'background analysis in progress'
+    if normalized_state == EVIDENCE_STATUS_COMPLETED:
+        return 'analysis complete'
+    if normalized_state == 'partial':
+        return 'partial'
+    if normalized_state == 'canceled':
+        return 'canceled'
+    return 'failed'
+
+
+def _get_per_document_fallback_reply(execution_state):
+    normalized_state = str(execution_state or '').strip().lower()
+    if normalized_state == EVIDENCE_STATUS_PENDING:
+        return 'Background analysis is in progress for this document.'
+    if normalized_state == 'canceled':
+        return 'Analysis was canceled for this document.'
+    if normalized_state == 'partial':
+        return 'Partial analysis was produced for this document.'
+    if normalized_state == EVIDENCE_STATUS_FAILED:
+        return 'Analysis could not be completed for this document.'
+    return 'No response was generated for this document.'
+
+
 def _combine_per_document_analysis_results(document_results):
     combined_documents = []
+    combined_sources = []
     combined_reply_lines = [
         '# Per-document workflow results',
         '',
@@ -6287,6 +7016,8 @@ def _combine_per_document_analysis_results(document_results):
         'processed_windows': 0,
         'failed_windows': 0,
         'documents': [],
+        'sources': [],
+        'status_counts': {},
     }
     agent_citations = []
     generated_analysis_artifacts = []
@@ -6300,40 +7031,86 @@ def _combine_per_document_analysis_results(document_results):
     for index, item in enumerate(document_results or [], start=1):
         result = item.get('result') if isinstance(item.get('result'), dict) else {}
         document_id = str(item.get('document_id') or '').strip()
-        reply = str(result.get('reply') or '').strip()
-        coverage = result.get('analysis_coverage') if isinstance(result.get('analysis_coverage'), dict) else {}
-        coverage_documents = list(coverage.get('documents') or [])
+        reply = _resolve_document_action_reply(result)
+        coverage = _get_per_document_analysis_coverage(result)
+        coverage_documents = _get_per_document_coverage_entries(coverage)
+        child_generated_tabular_outputs = list(result.get('generated_tabular_outputs') or [])
+        execution_state = _get_per_document_execution_state(
+            result,
+            coverage,
+            child_generated_tabular_outputs,
+        )
+        status_label = _get_per_document_status_label(execution_state)
         document_label = document_id
         if coverage_documents:
             document_label = str(
                 coverage_documents[0].get('document_name')
                 or coverage_documents[0].get('file_name')
+                or coverage_documents[0].get('source')
                 or coverage_documents[0].get('document_id')
                 or document_id
             ).strip()
 
         combined_documents.extend(coverage_documents)
+        combined_sources.extend(list(coverage.get('sources') or []))
         combined_coverage['processed_windows'] += int(coverage.get('processed_windows') or 0)
         combined_coverage['failed_windows'] += int(coverage.get('failed_windows') or 0)
+        combined_coverage['status_counts'][execution_state] = (
+            combined_coverage['status_counts'].get(execution_state, 0) + 1
+        )
 
         combined_reply_lines.extend([
             f'## {index}. {document_label or document_id}',
             '',
-            reply or 'No response was generated for this document.',
+            f'Status: {status_label}',
+            '',
+            reply or _get_per_document_fallback_reply(execution_state),
             '',
         ])
 
         agent_citations.extend(list(result.get('agent_citations') or []))
         generated_analysis_artifacts.extend(list(result.get('generated_analysis_artifacts') or []))
-        generated_tabular_outputs.extend(list(result.get('generated_tabular_outputs') or []))
+        generated_tabular_outputs.extend(child_generated_tabular_outputs)
         alert_targets.extend(list(result.get('alert_targets') or []))
         model_deployment_name = model_deployment_name or result.get('model_deployment_name') or ''
         provider = provider or result.get('provider') or ''
         agent_name = agent_name or result.get('agent_name') or ''
         agent_display_name = agent_display_name or result.get('agent_display_name') or ''
 
+    generated_tabular_outputs = deduplicate_mixed_source_references(
+        generated_tabular_outputs,
+        reference_type='artifact',
+    )
     combined_coverage['documents'] = combined_documents
+    combined_coverage['sources'] = combined_sources
     combined_coverage['document_count'] = len(combined_documents) or len(document_results or [])
+    pending_count = int(combined_coverage['status_counts'].get(EVIDENCE_STATUS_PENDING, 0))
+    failed_count = int(combined_coverage['status_counts'].get(EVIDENCE_STATUS_FAILED, 0))
+    partial_count = int(combined_coverage['status_counts'].get('partial', 0))
+    canceled_count = int(combined_coverage['status_counts'].get('canceled', 0))
+    if pending_count:
+        progress_status = EVIDENCE_STATUS_PENDING
+        phase_label = 'Pending per-document analysis'
+        percent_override = 0
+    elif canceled_count and canceled_count == len(document_results or []):
+        progress_status = EVIDENCE_STATUS_CANCELED
+        phase_label = 'Canceled'
+        percent_override = 100
+    elif failed_count or partial_count or canceled_count:
+        progress_status = 'partial' if combined_coverage['status_counts'].get(EVIDENCE_STATUS_COMPLETED) else EVIDENCE_STATUS_FAILED
+        phase_label = 'Partial' if progress_status == 'partial' else 'Failed'
+        percent_override = 100
+    else:
+        progress_status = EVIDENCE_STATUS_COMPLETED
+        phase_label = 'Complete'
+        percent_override = 100
+    combined_coverage['progress_meta'] = {
+        'phase': 'per_document_analysis',
+        'phase_label': phase_label,
+        'phase_detail': 'Per-document Analyze preserved one execution state per selected document.',
+        'status': progress_status,
+        'percent_override': percent_override,
+    }
     combined_reply = '\n'.join(combined_reply_lines).strip()
     combined_result = {
         'reply': combined_reply,
@@ -6344,8 +7121,16 @@ def _combine_per_document_analysis_results(document_results):
         'document_results': [
             {
                 'document_id': item.get('document_id'),
-                'reply': (item.get('result') or {}).get('reply'),
-                'coverage': (item.get('result') or {}).get('analysis_coverage') or {},
+                'reply': _resolve_document_action_reply(item.get('result') or {}),
+                'execution_state': _get_per_document_execution_state(
+                    item.get('result') or {},
+                    _get_per_document_analysis_coverage(item.get('result') or {}),
+                    (item.get('result') or {}).get('generated_tabular_outputs') or [],
+                ),
+                'execution_contract': (item.get('result') or {}).get('tabular_execution_contract'),
+                'deferred_composition': (item.get('result') or {}).get('deferred_composition') or {},
+                'generated_tabular_outputs': list((item.get('result') or {}).get('generated_tabular_outputs') or []),
+                'coverage': _get_per_document_analysis_coverage(item.get('result') or {}),
             }
             for item in document_results or []
         ],
@@ -6894,6 +7679,7 @@ def _execute_document_analysis_workflow(
                         analysis_result.get('generated_tabular_outputs')
                         or []
                     ),
+                    'deferred_composition': analysis_result.get('deferred_composition') or {},
                     'alert_targets': alert_targets,
                 }
             finally:
@@ -7047,6 +7833,7 @@ def _execute_document_analysis_workflow(
             analysis_result.get('generated_tabular_outputs')
             or []
         ),
+        'deferred_composition': analysis_result.get('deferred_composition') or {},
     }
 
 

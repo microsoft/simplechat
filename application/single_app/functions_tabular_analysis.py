@@ -92,6 +92,7 @@ def queue_direct_tabular_generated_output_from_plan(
         model_context=model_context,
         cancel_requested=cancel_requested,
         request_correlation_id=request_correlation_id,
+        planner_metadata=plan,
     )
 
 
