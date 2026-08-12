@@ -5560,8 +5560,12 @@ def _normalize_tabular_run_rollout_assignment(raw_assignment):
         'rollout_percent': _safe_int(raw_assignment.get('rollout_percent'), minimum=0, maximum=100),
         'search_shared_preflight_enabled': bool(raw_assignment.get('search_shared_preflight_enabled')),
         'analyze_durable_preflight_enabled': bool(raw_assignment.get('analyze_durable_preflight_enabled')),
-        'mixed_deferred_composition_enabled': bool(raw_assignment.get('mixed_deferred_composition_enabled')),
-        'multifile_durable_preflight_enabled': bool(raw_assignment.get('multifile_durable_preflight_enabled')),
+        'mixed_deferred_composition_planning_enabled': bool(
+            raw_assignment.get('mixed_deferred_composition_planning_enabled')
+        ),
+        'multifile_execution_unit_planning_enabled': bool(
+            raw_assignment.get('multifile_execution_unit_planning_enabled')
+        ),
         'legacy_post_tool_fallback_mode': str(
             raw_assignment.get('legacy_post_tool_fallback_mode') or 'enabled'
         ).strip().lower()[:40],
@@ -5673,6 +5677,8 @@ def _build_tabular_run_deferred_composition_reference(run):
         'contract_version': str(descriptor.get('contract_version') or '').strip()[:80],
         'status': str(descriptor.get('status') or '').strip().lower()[:40],
         'enabled': bool(descriptor.get('enabled')),
+        'planning_enabled': bool(descriptor.get('planning_enabled')),
+        'continuation_available': bool(descriptor.get('continuation_available')),
         'pending_source_count': _safe_int(descriptor.get('pending_source_count'), minimum=0),
         'required_source_count': _safe_int(descriptor.get('required_source_count'), minimum=0),
         'required_tabular_run_count': len(required_runs),
@@ -5715,8 +5721,8 @@ def _build_tabular_run_rollout_assignment_public_fields(run):
         ),
         'search_shared_preflight_enabled': False,
         'analyze_durable_preflight_enabled': False,
-        'mixed_deferred_composition_enabled': False,
-        'multifile_durable_preflight_enabled': False,
+        'mixed_deferred_composition_planning_enabled': False,
+        'multifile_execution_unit_planning_enabled': False,
         'legacy_post_tool_fallback_mode': 'enabled',
     }
 

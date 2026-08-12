@@ -2,7 +2,7 @@
 # test_mixed_source_hardening.py
 """
 Functional tests for mixed-source hardening, extraction, and rollout.
-Version: 0.250.166
+Version: 0.250.167
 Implemented in: 0.250.070; direct-run telemetry isolation updated in 0.250.160; aggregate tabular parity harness coverage updated in 0.250.166
 
 This test ensures Phase 6 of #1061 preserves the bounded Phase 1-5 evidence
@@ -921,6 +921,7 @@ def test_mixed_analyze_forwards_observed_native_token_usage():
         "DOCUMENT_ACTION_TYPE_ANALYZE": "analyze",
         "EVIDENCE_ENGINE_DOCUMENT_ANALYSIS": orchestration.EVIDENCE_ENGINE_DOCUMENT_ANALYSIS,
         "EVIDENCE_ENGINE_TABULAR_TOOLS": orchestration.EVIDENCE_ENGINE_TABULAR_TOOLS,
+        "EVIDENCE_STATUS_CANCELED": orchestration.EVIDENCE_STATUS_CANCELED,
         "EVIDENCE_STATUS_COMPLETED": orchestration.EVIDENCE_STATUS_COMPLETED,
         "EVIDENCE_STATUS_FAILED": orchestration.EVIDENCE_STATUS_FAILED,
         "MixedSourceCancellationError": orchestration.MixedSourceCancellationError,
@@ -930,6 +931,7 @@ def test_mixed_analyze_forwards_observed_native_token_usage():
         "run_document_analysis": lambda **kwargs: {},
         "_maybe_execute_pure_tabular_analyze_preflight": lambda *args, **kwargs: None,
         "_get_pending_tabular_generated_output": lambda outputs: None,
+        "_get_terminal_unsuccessful_tabular_generated_output": lambda outputs: None,
         "_maybe_execute_tabular_document_action": execute_tabular,
         "build_evidence_envelope": orchestration.build_evidence_envelope,
         "build_mixed_source_evidence_handoff": orchestration.build_mixed_source_evidence_handoff,
@@ -1215,6 +1217,7 @@ def test_analyze_all_action_is_analyze_only_and_manifest_is_fresh():
         "DOCUMENT_ACTION_TYPE_ANALYZE": "analyze",
         "EVIDENCE_ENGINE_DOCUMENT_ANALYSIS": orchestration.EVIDENCE_ENGINE_DOCUMENT_ANALYSIS,
         "EVIDENCE_ENGINE_TABULAR_TOOLS": orchestration.EVIDENCE_ENGINE_TABULAR_TOOLS,
+        "EVIDENCE_STATUS_CANCELED": orchestration.EVIDENCE_STATUS_CANCELED,
         "EVIDENCE_STATUS_COMPLETED": orchestration.EVIDENCE_STATUS_COMPLETED,
         "EVIDENCE_STATUS_FAILED": orchestration.EVIDENCE_STATUS_FAILED,
         "MixedSourceCancellationError": orchestration.MixedSourceCancellationError,
@@ -1231,6 +1234,7 @@ def test_analyze_all_action_is_analyze_only_and_manifest_is_fresh():
         "run_document_analysis": lambda **kwargs: {},
         "_maybe_execute_pure_tabular_analyze_preflight": lambda *args, **kwargs: None,
         "_get_pending_tabular_generated_output": lambda outputs: None,
+        "_get_terminal_unsuccessful_tabular_generated_output": lambda outputs: None,
         "_maybe_execute_tabular_document_action": execute_tabular,
         "build_evidence_envelope": orchestration.build_evidence_envelope,
         "build_mixed_source_evidence_handoff": orchestration.build_mixed_source_evidence_handoff,

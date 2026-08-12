@@ -2,8 +2,8 @@
 # test_tabular_phase8_ui_telemetry_rollout.py
 """
 Functional test for Phase 8 tabular UI telemetry and rollout metadata.
-Version: 0.250.166
-Implemented in: 0.250.164
+Version: 0.250.167
+Implemented in: 0.250.164; planning-only metadata hardening in 0.250.167
 
 This test ensures shared tabular planner rollout assignment is stable and
 redacted, backend-only rollout controls remain sanitized from frontend
@@ -188,8 +188,8 @@ def test_rollout_assignment_is_stable_redacted_and_percent_gated():
         "tabular_analyze_parity_rollout_percent": 100,
         "enable_tabular_search_shared_preflight": True,
         "enable_tabular_analyze_durable_preflight": True,
-        "enable_tabular_mixed_deferred_composition": True,
-        "enable_tabular_multifile_durable_preflight": True,
+        "enable_tabular_mixed_deferred_composition_planning": True,
+        "enable_tabular_multifile_execution_unit_planning": True,
         "tabular_legacy_post_tool_fallback_mode": "observe",
     }
     first_assignment = build_tabular_parity_rollout_assignment(
@@ -244,6 +244,8 @@ def test_backend_rollout_settings_stay_sanitized():
         "tabular_request_planner_mode": "active",
         "enable_tabular_search_shared_preflight": True,
         "enable_tabular_analyze_durable_preflight": True,
+        "enable_tabular_mixed_deferred_composition_planning": True,
+        "enable_tabular_multifile_execution_unit_planning": True,
     }
     sanitized = sanitize_settings_for_user(raw_settings)
     assert_equal(sanitized["app_title"], "SimpleChat", "ordinary setting remains")
@@ -253,6 +255,8 @@ def test_backend_rollout_settings_stay_sanitized():
         "tabular_request_planner_mode",
         "enable_tabular_search_shared_preflight",
         "enable_tabular_analyze_durable_preflight",
+        "enable_tabular_mixed_deferred_composition_planning",
+        "enable_tabular_multifile_execution_unit_planning",
     ):
         assert_false(setting_key in sanitized, f"sanitized {setting_key}")
 
@@ -260,6 +264,8 @@ def test_backend_rollout_settings_stay_sanitized():
     for setting_key in (
         "tabular_analyze_parity_rollout_percent",
         "tabular_legacy_post_tool_fallback_mode",
+        "enable_tabular_mixed_deferred_composition_planning",
+        "enable_tabular_multifile_execution_unit_planning",
     ):
         assert_true(f"'{setting_key}'" in settings_source, f"default setting {setting_key}")
         backend_key_start = settings_source.index("TABULAR_GENERATION_BACKEND_SETTING_KEYS = {")
@@ -294,8 +300,8 @@ def test_public_generated_output_status_has_safe_phase8_metadata():
             "rollout_percent": 25,
             "search_shared_preflight_enabled": True,
             "analyze_durable_preflight_enabled": True,
-            "mixed_deferred_composition_enabled": True,
-            "multifile_durable_preflight_enabled": False,
+            "mixed_deferred_composition_planning_enabled": True,
+            "multifile_execution_unit_planning_enabled": False,
             "legacy_post_tool_fallback_mode": "observe",
             "raw_prompt": "do not echo",
         },
@@ -322,8 +328,10 @@ def test_public_generated_output_status_has_safe_phase8_metadata():
         "deferred_composition": {
             "composition_id": "composition-1",
             "contract_version": "phase5.v1",
-            "status": "pending",
-            "enabled": True,
+            "status": "continuation_unavailable",
+            "enabled": False,
+            "planning_enabled": True,
+            "continuation_available": False,
             "pending_source_count": 1,
             "required_source_count": 2,
             "required_tabular_runs": [{"run_id": "run-1", "document_id": "table-1"}],
@@ -340,6 +348,8 @@ def test_public_generated_output_status_has_safe_phase8_metadata():
     assert_equal(public_status["source_coverage_summary"]["pending_source_count"], 1, "pending source count")
     assert_equal(public_status["deferred_composition"]["composition_id"], "composition-1", "composition id")
     assert_equal(public_status["deferred_composition"]["required_tabular_run_count"], 1, "required run count")
+    assert_true(public_status["deferred_composition"]["planning_enabled"], "composition planning enabled")
+    assert_false(public_status["deferred_composition"]["continuation_available"], "composition continuation")
     assert_equal(public_status["rollout_assignment"]["rollout_percent"], 25, "rollout percent")
     assert_equal(public_status["rollout_assignment"]["legacy_post_tool_fallback_mode"], "observe", "legacy fallback")
 

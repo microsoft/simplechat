@@ -3,7 +3,7 @@
 Implemented in version: **0.250.164**
 
 Related version update:
-- `application/single_app/config.py` reports version `0.250.166`.
+- `application/single_app/config.py` reports version `0.250.167`.
 
 ## Overview
 
@@ -30,8 +30,8 @@ Configuration options:
 - `tabular_request_planner_mode`: `off`, `shadow`, or `active`.
 - `enable_tabular_search_shared_preflight`: enables shared planner use in Search when planner mode allows it.
 - `enable_tabular_analyze_durable_preflight`: enables pure tabular Analyze durable preflight when planner mode allows it.
-- `enable_tabular_mixed_deferred_composition`: enables pending mixed-source composition handoff.
-- `enable_tabular_multifile_durable_preflight`: enables explicit multi-table execution-unit planning.
+- `enable_tabular_mixed_deferred_composition_planning`: records pending mixed-source composition planning metadata; automatic continuation is unavailable.
+- `enable_tabular_multifile_execution_unit_planning`: records explicit multi-table execution units; durable fan-out and aggregate publication are unavailable.
 - `tabular_analyze_parity_rollout_percent`: deterministic rollout percentage for new parity assignments.
 - `tabular_legacy_post_tool_fallback_mode`: `enabled`, `observe`, or `disabled`.
 
@@ -42,7 +42,7 @@ All Phase 8 rollout controls are backend-only and are removed by `sanitize_setti
 How to enable/configure:
 1. Keep the planner mode `off` for the default legacy behavior.
 2. Use `shadow` mode to compare planner decisions without queueing shared-planner durable work.
-3. Enable the relevant Search or Analyze gate before switching that mode to active traffic.
+3. Enable the relevant single-source Search or Analyze gate before switching that mode to active traffic.
 4. Adjust `tabular_analyze_parity_rollout_percent` for canary cohorts.
 5. Keep `tabular_legacy_post_tool_fallback_mode='enabled'` until operator telemetry shows no required legacy recovery traffic.
 
@@ -61,5 +61,6 @@ Functional coverage:
 
 Performance and limitations:
 - Phase 8 does not introduce a second generated-output runner, source resolver, authorization path, or UI card.
+- Planning-only multi-file and mixed deferred-composition controls do not queue grouped runs or resume collective synthesis.
 - Existing frontend generated-output cards render the normalized metadata; no separate Analyze card or polling implementation is introduced.
 - Existing runs without Phase 8 planner metadata remain readable and receive source coverage derived from their durable run state.

@@ -125,6 +125,7 @@ from functions_message_artifacts import (
 from functions_mixed_source_orchestration import (
     EVIDENCE_ENGINE_DOCUMENT_ANALYSIS,
     EVIDENCE_ENGINE_TABULAR_TOOLS,
+    EVIDENCE_STATUS_CANCELED,
     EVIDENCE_STATUS_COMPLETED,
     EVIDENCE_STATUS_FAILED,
     EVIDENCE_STATUS_PENDING,
@@ -1342,7 +1343,7 @@ def _maybe_create_document_analysis_generated_artifacts(
         or primary_tabular_outputs
     )
     deferred_composition = analysis_result.get('deferred_composition') if isinstance(analysis_result.get('deferred_composition'), dict) else {}
-    if deferred_composition.get('status') in {'pending', 'gate_disabled'}:
+    if deferred_composition.get('status') in {'pending', 'gate_disabled', 'continuation_unavailable'}:
         return {'artifacts': [], 'assistant_reply': None}
 
     if create_lossless_artifacts:
@@ -2376,6 +2377,14 @@ def _get_pending_tabular_generated_output(generated_outputs):
     return None
 
 
+def _get_terminal_unsuccessful_tabular_generated_output(generated_outputs):
+    for generated_output in list(generated_outputs or []):
+        status = _get_tabular_generated_output_status(generated_output)
+        if status in {'failed', 'canceled', 'cancelled'}:
+            return generated_output
+    return None
+
+
 def _build_pending_tabular_run_reference(source, generated_output):
     source = source if isinstance(source, dict) else {}
     generated_output = generated_output if isinstance(generated_output, dict) else {}
@@ -2400,21 +2409,15 @@ def _build_pending_tabular_evidence_envelope(source, generated_outputs, settings
         generated_outputs[0] if generated_outputs else {}
     )
     execution_status = _get_tabular_generated_output_status(primary_output) or 'queued'
-    deferred_enabled = _settings_bool(
+    planning_enabled = _settings_bool(
         settings,
-        'enable_tabular_mixed_deferred_composition',
+        'enable_tabular_mixed_deferred_composition_planning',
         False,
     )
-    if deferred_enabled:
-        summary = (
-            'Full-source tabular analysis is pending in a generated-output run. '
-            'Collective mixed-source synthesis will wait until that run reaches a terminal state.'
-        )
-    else:
-        summary = (
-            'Full-source tabular analysis is pending in a generated-output run. '
-            'Collective mixed-source synthesis was not started because deferred composition is disabled.'
-        )
+    summary = (
+        'Full-source tabular analysis is pending in a generated-output run. '
+        'Automatic collective mixed-source synthesis is unavailable, so no collective conclusion was started.'
+    )
 
     return build_evidence_envelope(
         document_id=source.get('document_id'),
@@ -2441,10 +2444,56 @@ def _build_pending_tabular_evidence_envelope(source, generated_outputs, settings
             'durable_task_type': str(primary_output.get('task_type') or '').strip().lower(),
             'deferred_composition': {
                 'required': True,
-                'enabled': deferred_enabled,
-                'status': 'waiting_for_tabular_output' if deferred_enabled else 'gate_disabled',
+                'planning_enabled': planning_enabled,
+                'enabled': False,
+                'continuation_available': False,
+                'status': 'continuation_unavailable',
             },
         },
+    )
+
+
+def _build_terminal_unsuccessful_tabular_evidence_envelope(source, generated_outputs):
+    source = source if isinstance(source, dict) else {}
+    generated_outputs = [
+        output
+        for output in list(generated_outputs or [])
+        if isinstance(output, dict)
+    ]
+    primary_output = _get_terminal_unsuccessful_tabular_generated_output(generated_outputs) or {}
+    execution_status = _get_tabular_generated_output_status(primary_output)
+    canceled = execution_status in {'canceled', 'cancelled'}
+    evidence_status = EVIDENCE_STATUS_CANCELED if canceled else EVIDENCE_STATUS_FAILED
+    summary = (
+        'Full-source tabular analysis was canceled before completion.'
+        if canceled
+        else 'Full-source tabular analysis failed before completion.'
+    )
+    return build_evidence_envelope(
+        document_id=source.get('document_id'),
+        source_kind='tabular',
+        engine=EVIDENCE_ENGINE_TABULAR_TOOLS,
+        status=evidence_status,
+        summary=summary,
+        citations=[],
+        generated_artifacts=generated_outputs,
+        coverage={
+            'terminal': True,
+            'execution_status': execution_status,
+            'execution_state': evidence_status,
+            'tool_call_count': 0,
+            'execution_mode': 'durable_background',
+            'generated_output_run_ids': [
+                run_id
+                for run_id in (
+                    _get_tabular_generated_output_run_id(output)
+                    for output in generated_outputs
+                )
+                if run_id
+            ],
+            'durable_task_type': str(primary_output.get('task_type') or '').strip().lower(),
+        },
+        error=None if canceled else 'Tabular analysis could not be completed.',
     )
 
 
@@ -2471,16 +2520,18 @@ def _build_mixed_source_deferred_composition_descriptor(
         uuid.NAMESPACE_URL,
         json.dumps(manifest_identity, sort_keys=True, default=str, separators=(',', ':')),
     ))
-    deferred_enabled = _settings_bool(
+    planning_enabled = _settings_bool(
         settings,
-        'enable_tabular_mixed_deferred_composition',
+        'enable_tabular_mixed_deferred_composition_planning',
         False,
     )
     return {
         'composition_id': str(uuid.uuid4()),
         'contract_version': 'phase5.v1',
-        'status': 'pending' if deferred_enabled else 'gate_disabled',
-        'enabled': deferred_enabled,
+        'status': 'continuation_unavailable',
+        'enabled': False,
+        'planning_enabled': planning_enabled,
+        'continuation_available': False,
         'created_at': _utc_now_iso(),
         'user_id': str((workflow or {}).get('user_id') or '').strip(),
         'conversation_id': str(conversation_id or '').strip(),
@@ -2505,16 +2556,10 @@ def _build_mixed_source_deferred_reply(deferred_descriptor):
         descriptor.get('pending_source_count'),
     )
     source_label = 'source' if pending_source_count == 1 else 'sources'
-    if descriptor.get('enabled'):
-        return (
-            f'Completed narrative and bounded evidence has been preserved. '
-            f'Collective mixed-source conclusions are deferred while {pending_source_count} tabular {source_label} '
-            'finish full-source generated-output processing.'
-        )
     return (
         f'Completed narrative and bounded evidence has been preserved, but {pending_source_count} tabular {source_label} '
-        'still require full-source generated-output processing. Deferred mixed-source composition is currently disabled, '
-        'so no collective conclusion was generated from incomplete table evidence.'
+        'still require full-source generated-output processing. Automatic deferred composition is unavailable, so no '
+        'collective conclusion was generated from incomplete table evidence. Individual generated outputs will continue.'
     )
 
 
@@ -2995,6 +3040,16 @@ def _execute_mixed_source_analyze_workflow(
                 ))
                 generated_tabular_outputs.extend(tabular_generated_outputs)
                 tabular_agent_citations.extend(tabular_payload.get('agent_citations') or [])
+                continue
+            terminal_unsuccessful_output = _get_terminal_unsuccessful_tabular_generated_output(
+                tabular_generated_outputs,
+            )
+            if terminal_unsuccessful_output:
+                evidence_envelopes.append(_build_terminal_unsuccessful_tabular_evidence_envelope(
+                    source,
+                    tabular_generated_outputs,
+                ))
+                generated_tabular_outputs.extend(tabular_generated_outputs)
                 continue
             evidence_envelopes.append(build_evidence_envelope(
                 document_id=source.get('document_id'), source_kind='tabular',
@@ -6876,7 +6931,7 @@ def _get_per_document_execution_state(result, coverage, generated_outputs):
     ]
 
     deferred_composition = result.get('deferred_composition')
-    if isinstance(deferred_composition, dict) and deferred_composition.get('status') in {'pending', 'gate_disabled'}:
+    if isinstance(deferred_composition, dict) and deferred_composition.get('status') in {'pending', 'gate_disabled', 'continuation_unavailable'}:
         return EVIDENCE_STATUS_PENDING
 
     if any(_is_nonterminal_tabular_generated_output(output) for output in generated_outputs):
@@ -7037,6 +7092,10 @@ def _combine_per_document_analysis_results(document_results):
         progress_status = EVIDENCE_STATUS_PENDING
         phase_label = 'Pending per-document analysis'
         percent_override = 0
+    elif canceled_count and canceled_count == len(document_results or []):
+        progress_status = EVIDENCE_STATUS_CANCELED
+        phase_label = 'Canceled'
+        percent_override = 100
     elif failed_count or partial_count or canceled_count:
         progress_status = 'partial' if combined_coverage['status_counts'].get(EVIDENCE_STATUS_COMPLETED) else EVIDENCE_STATUS_FAILED
         phase_label = 'Partial' if progress_status == 'partial' else 'Failed'

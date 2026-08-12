@@ -242,12 +242,14 @@ Tabular Analyze/Search parity uses backend-only controls so operators can shadow
 | Shared planner mode | `tabular_request_planner_mode` | `off` |
 | Search shared preflight | `enable_tabular_search_shared_preflight` | Off |
 | Pure tabular Analyze durable preflight | `enable_tabular_analyze_durable_preflight` | Off |
-| Mixed deferred composition | `enable_tabular_mixed_deferred_composition` | Off |
-| Multi-file tabular preflight | `enable_tabular_multifile_durable_preflight` | Off |
+| Mixed deferred-composition planning | `enable_tabular_mixed_deferred_composition_planning` | Off |
+| Multi-file execution-unit planning | `enable_tabular_multifile_execution_unit_planning` | Off |
 | Parity rollout percentage | `tabular_analyze_parity_rollout_percent` | `100` |
 | Legacy post-tool fallback mode | `tabular_legacy_post_tool_fallback_mode` | `enabled` |
 
 The shared preflight telemetry tag is `[TABULAR_SHARED_PREFLIGHT]`. Use allowlisted dimensions such as planner mode, execution contract, execution state, reason code, rollout assignment, rollout percentage, and fallback mode. Do not log prompt text, file names, source locators, generated answers, raw errors, credentials, or raw settings.
+
+The two planning controls expose metadata only. Multi-file planning does not queue grouped durable runs, and deferred-composition planning does not resume collective synthesis after individual runs finish.
 
 ### 7. Safety Configuration
 

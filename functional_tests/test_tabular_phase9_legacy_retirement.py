@@ -2,7 +2,7 @@
 # test_tabular_phase9_legacy_retirement.py
 """
 Functional test for Phase 9 tabular legacy fallback retirement controls.
-Version: 0.250.166
+Version: 0.250.167
 Implemented in: 0.250.165
 
 This test ensures the shared planner records safe legacy post-tool fallback
@@ -14,6 +14,7 @@ effects while emitting safe telemetry.
 import ast
 import asyncio
 import sys
+import traceback
 import types
 from pathlib import Path
 
@@ -252,8 +253,6 @@ def run_tests():
             results.append(True)
         except Exception as exc:
             print(f"Test failed: {exc}")
-            import traceback
-
             traceback.print_exc()
             results.append(False)
     print(f"\nResults: {sum(results)}/{len(results)} tests passed")

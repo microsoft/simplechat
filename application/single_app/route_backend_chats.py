@@ -5957,8 +5957,10 @@ def maybe_queue_direct_tabular_generated_output(
     parity_emitter = globals().get('emit_tabular_parity_event')
     parity_result_builder = globals().get('build_tabular_parity_planner_result')
     parity_result = parity_classifier(user_question) if callable(parity_classifier) else None
+    planner_action_mode = str((planner_metadata or {}).get('action_mode') or '').strip().lower()
+    parity_mode = planner_action_mode if planner_action_mode in {'search', 'analyze'} else 'search'
 
-    def emit_search_parity_event(event_name, planner_result=None, metrics=None, dimensions=None, level=None):
+    def emit_direct_parity_event(event_name, planner_result=None, metrics=None, dimensions=None, level=None):
         if not callable(parity_emitter):
             return None
         kwargs = {
@@ -5968,17 +5970,17 @@ def maybe_queue_direct_tabular_generated_output(
         }
         if level is not None:
             kwargs['level'] = level
-        return parity_emitter(settings, event_name, 'search', **kwargs)
+        return parity_emitter(settings, event_name, parity_mode, **kwargs)
 
-    emit_search_parity_event(
+    emit_direct_parity_event(
         'classification_started',
         metrics={'source_count': len(file_contexts or [])},
     )
-    emit_search_parity_event(
+    emit_direct_parity_event(
         'classification_completed',
         metrics={'source_count': len(file_contexts or [])},
     )
-    emit_search_parity_event(
+    emit_direct_parity_event(
         'durable_preflight_attempted',
         metrics={'source_count': len(file_contexts or [])},
     )
@@ -5991,7 +5993,7 @@ def maybe_queue_direct_tabular_generated_output(
             settings,
         )
         if not direct_source:
-            emit_search_parity_event(
+            emit_direct_parity_event(
                 'durable_preflight_declined',
                 metrics={'source_count': len(file_contexts or [])},
                 dimensions={'reason_code': 'no_direct_source'},
@@ -6030,7 +6032,7 @@ def maybe_queue_direct_tabular_generated_output(
                 decision_reason_code=getattr(parity_result, 'decision_reason_code', 'direct_source_backed_preflight'),
                 generated_tabular_outputs=[background_metadata],
             )
-        emit_search_parity_event(
+        emit_direct_parity_event(
             'durable_preflight_accepted',
             planner_result=accepted_parity_result,
             metrics={
@@ -6039,7 +6041,7 @@ def maybe_queue_direct_tabular_generated_output(
                 'batch_count_estimate': direct_source.get('batch_count_estimate'),
             },
         )
-        emit_search_parity_event(
+        emit_direct_parity_event(
             'response_metadata_emitted',
             planner_result=accepted_parity_result,
             metrics={'generated_output_count': 1},
@@ -6091,7 +6093,7 @@ def maybe_queue_direct_tabular_generated_output(
     except MixedSourceCancellationError:
         raise
     except Exception as exc:
-        emit_search_parity_event(
+        emit_direct_parity_event(
             'durable_preflight_failed',
             metrics={'source_count': len(file_contexts or [])},
             dimensions={'error_type': exc.__class__.__name__},

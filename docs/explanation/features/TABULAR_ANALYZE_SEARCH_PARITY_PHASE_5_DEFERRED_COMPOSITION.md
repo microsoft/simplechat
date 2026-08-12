@@ -14,7 +14,7 @@ The behavior prevents queued or running generated-output cards from being interp
 - Mixed-source Analyze workflow coordination in `application/single_app/functions_workflow_runner.py`
 - Existing durable tabular generated-output runner in `application/single_app/functions_tabular_generated_exports.py`
 - Backend settings defaults and frontend sanitization in `application/single_app/functions_settings.py`
-- Current application version from `application/single_app/config.py`: **0.250.166**
+- Current application version from `application/single_app/config.py`: **0.250.167**
 
 ## Technical Specifications
 
@@ -26,25 +26,27 @@ The shared mixed-source ledger now counts `pending` as a first-class nonterminal
 - blocks mixed-source reduction with `pending_required_evidence`
 - is not counted as successful completed factual evidence
 
-The mixed Analyze workflow inspects tabular generated-output metadata returned from the tabular document-action helper. Queued, running, retrying, or finalizing tabular generated-output metadata builds a pending tabular evidence envelope with `coverage.terminal = false`. The workflow then returns an interim response and a compact deferred-composition descriptor containing source/run identities and a manifest fingerprint. It does not include source rows, generated row payloads, credentials, raw prompts, or unsanitized errors.
+The mixed Analyze workflow inspects tabular generated-output metadata returned from the tabular document-action helper. Queued, running, retrying, or finalizing tabular generated-output metadata builds a pending tabular evidence envelope with `coverage.terminal = false`. The workflow then returns an interim response and a compact deferred-composition planning descriptor containing source/run identities and a manifest fingerprint. It does not include source rows, generated row payloads, credentials, raw prompts, or unsanitized errors.
+
+Automatic continuation is not implemented. The descriptor reports `status = continuation_unavailable`, `enabled = false`, and `continuation_available = false`. Individual generated-output runs continue normally, but their completion does not invoke a later collective model synthesis.
 
 The document-analysis artifact finalizer leaves pending deferred-composition replies intact instead of replacing them with the generic generated-output summary text.
 
 ## Rollout Controls
 
-Phase 5 adds the backend-only setting:
+Phase 5 adds the backend-only planning setting:
 
-- `enable_tabular_mixed_deferred_composition`: default `False`
+- `enable_tabular_mixed_deferred_composition_planning`: default `False`
 
-When the setting is disabled, mixed Analyze still refuses to run a collective answer from incomplete tabular evidence. The response states that deferred composition is disabled and that no collective conclusion was generated from pending table evidence.
+The setting records planning metadata only. It does not register a continuation, resume a workflow, or publish a later collective answer. Mixed Analyze always refuses to run a collective answer from incomplete tabular evidence.
 
 The setting is included in the backend settings denylist used by `sanitize_settings_for_user(...)`, so non-admin frontend routes do not receive it.
 
 ## Usage Instructions
 
-Operators can keep the setting disabled to preserve honest gate-off behavior while validating pending-source telemetry and generated-output handoff behavior. Enabling the setting marks new pending descriptors as continuation-eligible for later lifecycle processing.
+Operators can keep the setting disabled or enable it to inspect planning metadata while validating pending-source telemetry and generated-output handoff behavior. Enabling it does not make descriptors continuation-eligible.
 
-Rollback for new requests is immediate: set `enable_tabular_mixed_deferred_composition` to `False`. Existing generated-output runs continue under their recorded durable runner contract.
+Rollback for planning metadata is immediate: set `enable_tabular_mixed_deferred_composition_planning` to `False`. Existing generated-output runs continue under their recorded durable runner contract.
 
 ## Testing and Validation
 
@@ -61,4 +63,4 @@ The test validates:
 
 ## Known Limitations
 
-This phase creates the nonterminal evidence contract and interim handoff behavior. Terminal notification, persisted continuation execution after generated-output completion, restart recovery, and broader lifecycle hardening are reserved for subsequent Phase 5 hardening and Phase 7 coverage. Per-document and multi-table Analyze remain separate Phase 6 scope.
+This phase creates the nonterminal evidence contract and interim handoff behavior. Terminal notification, persisted continuation execution after generated-output completion, restart recovery, and idempotent collective publication are not implemented. Per-document processing remains available independently; grouped multi-file durable execution requires separate fan-out and aggregation work.

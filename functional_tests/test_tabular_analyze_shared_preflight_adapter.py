@@ -2,7 +2,7 @@
 # test_tabular_analyze_shared_preflight_adapter.py
 """
 Functional test for the Analyze shared tabular preflight adapter.
-Version: 0.250.166
+Version: 0.250.167
 Implemented in: 0.250.160; updated in 0.250.161
 
 This test ensures Phase 4 routes pure single-source tabular Analyze durable
@@ -74,8 +74,10 @@ def load_workflow_namespace(orchestration_result=None, manifest=None):
         "_get_tabular_generated_output_status",
         "_is_nonterminal_tabular_generated_output",
         "_get_pending_tabular_generated_output",
+        "_get_terminal_unsuccessful_tabular_generated_output",
         "_build_pending_tabular_run_reference",
         "_build_pending_tabular_evidence_envelope",
+        "_build_terminal_unsuccessful_tabular_evidence_envelope",
         "_build_mixed_source_deferred_composition_descriptor",
         "_build_mixed_source_deferred_reply",
         "_maybe_execute_pure_tabular_analyze_preflight",
@@ -122,6 +124,7 @@ def load_workflow_namespace(orchestration_result=None, manifest=None):
         "DOCUMENT_ACTION_TYPE_ANALYZE": "analyze",
         "EVIDENCE_ENGINE_DOCUMENT_ANALYSIS": orchestration.EVIDENCE_ENGINE_DOCUMENT_ANALYSIS,
         "EVIDENCE_ENGINE_TABULAR_TOOLS": orchestration.EVIDENCE_ENGINE_TABULAR_TOOLS,
+        "EVIDENCE_STATUS_CANCELED": orchestration.EVIDENCE_STATUS_CANCELED,
         "EVIDENCE_STATUS_COMPLETED": orchestration.EVIDENCE_STATUS_COMPLETED,
         "EVIDENCE_STATUS_FAILED": orchestration.EVIDENCE_STATUS_FAILED,
         "EVIDENCE_STATUS_PENDING": orchestration.EVIDENCE_STATUS_PENDING,

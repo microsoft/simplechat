@@ -14,7 +14,7 @@ This phase reuses the existing durable tabular generated-output runner, source a
 - Mixed-source evidence ledger in `application/single_app/functions_mixed_source_orchestration.py`
 - Durable tabular generated-output runner in `application/single_app/functions_tabular_generated_exports.py`
 - Deferred mixed-source workflow coordination in `application/single_app/functions_workflow_runner.py`
-- Current application version from `application/single_app/config.py`: **0.250.166**
+- Current application version from `application/single_app/config.py`: **0.250.167**
 
 ## Technical Specifications
 
@@ -47,8 +47,8 @@ Rollback for new parity assignment remains controlled by the existing backend ga
 - `tabular_request_planner_mode`
 - `enable_tabular_search_shared_preflight`
 - `enable_tabular_analyze_durable_preflight`
-- `enable_tabular_mixed_deferred_composition`
-- `enable_tabular_multifile_durable_preflight`
+- `enable_tabular_mixed_deferred_composition_planning`
+- `enable_tabular_multifile_execution_unit_planning`
 
 The lifecycle readers must remain in place while any accepted generated-output run or deferred composition descriptor can still reference them.
 
@@ -75,4 +75,4 @@ Adjacent regression coverage includes:
 
 ## Known Limitations
 
-This phase establishes explicit lifecycle status and coverage semantics. Broader restart recovery, terminal notification replay, and full deferred-composition continuation execution still rely on subsequent lifecycle work and existing durable worker recovery paths.
+This phase establishes explicit lifecycle status and coverage semantics. Multi-file execution-unit planning does not queue grouped durable runs, and deferred-composition planning does not register automatic continuation. Both require later restart-safe coordination, authorization revalidation, idempotency, and aggregate publication work.

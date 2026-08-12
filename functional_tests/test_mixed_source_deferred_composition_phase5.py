@@ -2,8 +2,8 @@
 # test_mixed_source_deferred_composition_phase5.py
 """
 Functional test for Phase 5 mixed-source deferred composition.
-Version: 0.250.166
-Implemented in: 0.250.161
+Version: 0.250.167
+Implemented in: 0.250.161; review hardening in 0.250.167
 
 This test ensures pending durable tabular work remains nonterminal evidence,
 blocks mixed-source Analyze reduction, and is guarded by a backend-only rollout
@@ -25,7 +25,9 @@ from functions_mixed_source_orchestration import (  # noqa: E402
     AUTHORIZATION_STATUS_AUTHORIZED,
     EVIDENCE_ENGINE_DOCUMENT_ANALYSIS,
     EVIDENCE_ENGINE_TABULAR_TOOLS,
+    EVIDENCE_STATUS_CANCELED,
     EVIDENCE_STATUS_COMPLETED,
+    EVIDENCE_STATUS_FAILED,
     EVIDENCE_STATUS_PENDING,
     SOURCE_KIND_NARRATIVE,
     SOURCE_KIND_TABULAR,
@@ -127,6 +129,7 @@ def test_workflow_runner_defers_pending_tabular_outputs_before_reduction():
     reduction_call = "stage='mixed_source_reduction'"
     assert pending_branch in helper_source
     assert "_build_pending_tabular_evidence_envelope(" in helper_source
+    assert "_build_terminal_unsuccessful_tabular_evidence_envelope(" in helper_source
     assert "pending_tabular_runs.append(" in helper_source
     assert "if mode_outcome.get('status') == EVIDENCE_STATUS_PENDING:" in helper_source
     assert "'deferred_composition': deferred_descriptor" in helper_source
@@ -141,18 +144,56 @@ def test_workflow_runner_defers_pending_tabular_outputs_before_reduction():
         and node.name == '_maybe_create_document_analysis_generated_artifacts'
     )
     artifact_source = ast.get_source_segment(source, artifact_helper) or ''
-    assert "deferred_composition.get('status') in {'pending', 'gate_disabled'}" in artifact_source
+    assert "'continuation_unavailable'" in artifact_source
     assert "return {'artifacts': [], 'assistant_reply': None}" in artifact_source
     assert "'deferred_composition': result.get('deferred_composition') or {}" in source
     assert source.count("'deferred_composition': analysis_result.get('deferred_composition') or {}") >= 2
 
 
-def test_deferred_composition_setting_defaults_backend_only():
-    """The Phase 5 gate must default off and remain sanitized from frontend settings."""
+def test_terminal_unsuccessful_outputs_remain_truthful_evidence():
+    """Failed and canceled durable outputs must never become completed evidence."""
+    source = WORKFLOW_RUNNER.read_text(encoding='utf-8')
+    tree = ast.parse(source)
+    function_names = {
+        '_get_tabular_generated_output_run_id',
+        '_get_tabular_generated_output_status',
+        '_get_terminal_unsuccessful_tabular_generated_output',
+        '_build_terminal_unsuccessful_tabular_evidence_envelope',
+    }
+    selected_nodes = [
+        node for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name in function_names
+    ]
+    namespace = {
+        'EVIDENCE_ENGINE_TABULAR_TOOLS': EVIDENCE_ENGINE_TABULAR_TOOLS,
+        'EVIDENCE_STATUS_CANCELED': EVIDENCE_STATUS_CANCELED,
+        'EVIDENCE_STATUS_FAILED': EVIDENCE_STATUS_FAILED,
+        'build_evidence_envelope': build_evidence_envelope,
+    }
+    exec(compile(ast.Module(body=selected_nodes, type_ignores=[]), str(WORKFLOW_RUNNER), 'exec'), namespace)
+
+    failed = namespace['_build_terminal_unsuccessful_tabular_evidence_envelope'](
+        {'document_id': 'table-failed'},
+        [{'export_run_id': 'run-failed', 'status': 'failed', 'task_type': 'combined'}],
+    )
+    canceled = namespace['_build_terminal_unsuccessful_tabular_evidence_envelope'](
+        {'document_id': 'table-canceled'},
+        [{'export_run_id': 'run-canceled', 'status': 'canceled', 'task_type': 'combined'}],
+    )
+
+    assert failed['status'] == EVIDENCE_STATUS_FAILED
+    assert failed['coverage']['terminal'] is True
+    assert canceled['status'] == EVIDENCE_STATUS_CANCELED
+    assert canceled['coverage']['terminal'] is True
+
+
+def test_deferred_composition_planning_setting_defaults_backend_only():
+    """The Phase 5 planning control must default off and remain backend-only."""
     settings_source = SETTINGS.read_text(encoding='utf-8')
-    assert "'enable_tabular_mixed_deferred_composition': False" in settings_source
-    assert "'enable_tabular_mixed_deferred_composition'," in settings_source
-    backend_key_index = settings_source.index("'enable_tabular_mixed_deferred_composition',")
+    setting_key = 'enable_tabular_mixed_deferred_composition_planning'
+    assert f"'{setting_key}': False" in settings_source
+    assert f"'{setting_key}'," in settings_source
+    backend_key_index = settings_source.index(f"'{setting_key}',")
     sanitizer_index = settings_source.index('def sanitize_settings_for_user')
     assert backend_key_index < sanitizer_index
 
@@ -161,7 +202,8 @@ if __name__ == '__main__':
     tests = [
         test_pending_tabular_evidence_blocks_mixed_analyze_reduction,
         test_workflow_runner_defers_pending_tabular_outputs_before_reduction,
-        test_deferred_composition_setting_defaults_backend_only,
+        test_terminal_unsuccessful_outputs_remain_truthful_evidence,
+        test_deferred_composition_planning_setting_defaults_backend_only,
     ]
     failures = []
     for test in tests:

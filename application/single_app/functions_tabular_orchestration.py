@@ -165,14 +165,14 @@ def build_tabular_parity_rollout_assignment(settings=None, request_key=None, mod
             "enable_tabular_analyze_durable_preflight",
             False,
         ),
-        "mixed_deferred_composition_enabled": settings_flag_enabled(
+        "mixed_deferred_composition_planning_enabled": settings_flag_enabled(
             settings,
-            "enable_tabular_mixed_deferred_composition",
+            "enable_tabular_mixed_deferred_composition_planning",
             False,
         ),
-        "multifile_durable_preflight_enabled": settings_flag_enabled(
+        "multifile_execution_unit_planning_enabled": settings_flag_enabled(
             settings,
-            "enable_tabular_multifile_durable_preflight",
+            "enable_tabular_multifile_execution_unit_planning",
             False,
         ),
         "legacy_post_tool_fallback_mode": normalize_tabular_legacy_post_tool_fallback_mode(settings),
@@ -328,6 +328,7 @@ def _build_source_coverage(file_contexts):
             "source_format": source_format,
             "source_hint": str(file_context.get("source_hint") or "workspace").strip().lower(),
             "document_id": str(file_context.get("document_id") or "").strip(),
+            "source_version": str(file_context.get("source_version") or "").strip(),
             "coverage_state": TABULAR_LIFECYCLE_STATE_PLANNED,
             "execution_state": TABULAR_LIFECYCLE_STATE_PLANNED,
             "evidence_status": TABULAR_LIFECYCLE_EVIDENCE_PENDING,
@@ -413,7 +414,7 @@ def _build_tabular_execution_units(
 
     multifile_enabled = settings_flag_enabled(
         settings,
-        "enable_tabular_multifile_durable_preflight",
+        "enable_tabular_multifile_execution_unit_planning",
         False,
     )
     if durable_task_type and len(normalized_contexts) > 1 and multifile_enabled:
@@ -529,6 +530,7 @@ def plan_tabular_request(
     )
     reason_code = "bounded_foreground"
     execution_state = TABULAR_EXECUTION_STATE_FOREGROUND
+    safe_failure_details = None
 
     if durable_task_type:
         execution_state = TABULAR_EXECUTION_STATE_DECLINED
@@ -541,8 +543,11 @@ def plan_tabular_request(
         reason_code = "no_replayable_tabular_context"
     elif durable_task_type and len(normalized_contexts) != 1:
         execution_state = TABULAR_EXECUTION_STATE_DECLINED
-        if settings_flag_enabled(settings, "enable_tabular_multifile_durable_preflight", False):
-            reason_code = "multi_context_execution_units_planned"
+        if settings_flag_enabled(settings, "enable_tabular_multifile_execution_unit_planning", False):
+            reason_code = "multi_context_execution_units_unavailable"
+            safe_failure_details = (
+                "Multi-file execution units were planned, but durable fan-out is unavailable."
+            )
         else:
             reason_code = "multi_context_durable_not_enabled"
 
@@ -581,7 +586,7 @@ def plan_tabular_request(
         "generated_output_metadata": None,
         "bounded_evidence": None,
         "deferred_composition": None,
-        "safe_failure_details": None,
+        "safe_failure_details": safe_failure_details,
     }
 
 
@@ -628,7 +633,25 @@ def execute_tabular_plan(
         result.update({
             "execution_state": TABULAR_EXECUTION_STATE_DECLINED,
             "generated_output_metadata": None,
-            "safe_failure_details": "Tabular durable execution was not eligible.",
+            "safe_failure_details": (
+                plan.get("safe_failure_details")
+                or "Tabular durable execution was not eligible."
+            ),
+        })
+        return result
+
+    rollout_assignment = (
+        plan.get("rollout_assignment")
+        if isinstance(plan.get("rollout_assignment"), Mapping)
+        else {}
+    )
+    if rollout_assignment and rollout_assignment.get("assigned") is False:
+        result = dict(plan)
+        result.update({
+            "execution_state": TABULAR_EXECUTION_STATE_DECLINED,
+            "generated_output_metadata": None,
+            "reason_code": "rollout_not_assigned",
+            "safe_failure_details": "Request is outside the active tabular parity rollout cohort.",
         })
         return result
 

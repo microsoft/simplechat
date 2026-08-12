@@ -2,7 +2,7 @@
 # test_tabular_search_shared_preflight_adapter.py
 """
 Functional test for the Search shared tabular preflight adapter.
-Version: 0.250.166
+Version: 0.250.167
 Implemented in: 0.250.159
 
 This test ensures Phase 3 routes Search durable tabular preflight through the
@@ -13,6 +13,7 @@ gate is disabled or shadow-only.
 import ast
 import logging
 import sys
+import traceback
 from pathlib import Path
 
 from test_support.versioning import assert_app_version_at_least
@@ -309,8 +310,6 @@ def run_tests():
             results.append(True)
         except Exception as exc:
             print(f"Test failed: {exc}")
-            import traceback
-
             traceback.print_exc()
             results.append(False)
     print(f"\nResults: {sum(results)}/{len(results)} tests passed")

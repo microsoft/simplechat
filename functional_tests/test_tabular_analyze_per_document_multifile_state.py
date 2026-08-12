@@ -1,8 +1,8 @@
 # test_tabular_analyze_per_document_multifile_state.py
 """
 Functional test for Phase 6 per-document tabular Analyze state preservation.
-Version: 0.250.166
-Implemented in: 0.250.162
+Version: 0.250.167
+Implemented in: 0.250.162; all-canceled aggregate coverage in 0.250.167
 
 This test ensures recursive per-document Analyze preserves pending tabular
 generated-output handoffs and coverage state instead of replacing them with a
@@ -86,6 +86,7 @@ def load_per_document_namespace():
         return deduplicated
 
     namespace = {
+        "EVIDENCE_STATUS_CANCELED": "canceled",
         "EVIDENCE_STATUS_COMPLETED": "completed",
         "EVIDENCE_STATUS_FAILED": "failed",
         "EVIDENCE_STATUS_PENDING": "pending",
@@ -183,5 +184,35 @@ def test_per_document_pending_tabular_state_is_preserved():
     print("Per-document pending tabular state checks passed")
 
 
+def test_all_canceled_per_document_state_is_preserved():
+    print("Testing all-canceled per-document state preservation...")
+    namespace = load_per_document_namespace()
+    combine_results = namespace["_combine_per_document_analysis_results"]
+    result = combine_results([
+        {
+            "document_id": "table-1",
+            "result": {
+                "coverage": {"progress_meta": {"status": "canceled"}},
+                "generated_tabular_outputs": [{"export_run_id": "run-1", "status": "canceled"}],
+            },
+        },
+        {
+            "document_id": "table-2",
+            "result": {
+                "coverage": {"progress_meta": {"status": "cancelled"}},
+                "generated_tabular_outputs": [{"export_run_id": "run-2", "status": "cancelled"}],
+            },
+        },
+    ])
+
+    coverage = result["analysis_coverage"]
+    assert_equal(coverage["status_counts"]["canceled"], 2, "canceled status count")
+    assert_equal(coverage["progress_meta"]["status"], "canceled", "aggregate canceled status")
+    assert_equal(coverage["progress_meta"]["phase_label"], "Canceled", "aggregate canceled label")
+    assert_true("Status: canceled" in result["reply"], "canceled reply status")
+    print("All-canceled per-document state checks passed")
+
+
 if __name__ == "__main__":
     test_per_document_pending_tabular_state_is_preserved()
+    test_all_canceled_per_document_state_is_preserved()
