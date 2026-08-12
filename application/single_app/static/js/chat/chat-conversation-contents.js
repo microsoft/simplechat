@@ -7,7 +7,7 @@ import {
 } from "./chat-conversation-details.js";
 import { isColorLight } from "./chat-utils.js";
 
-const CONTENTS_LABEL_MAX_LENGTH = 72;
+const CONTENTS_LABEL_MAX_LENGTH = 30;
 const DESKTOP_MEDIA_QUERY = "(min-width: 1200px)";
 const TEMP_MESSAGE_PREFIX = "temp_user_";
 const DRAWER_MODE_CONTENTS = "contents";
@@ -420,7 +420,9 @@ function createDocumentMetaLine(iconName, text) {
     icon.setAttribute("aria-hidden", "true");
 
     const textNode = document.createElement("span");
+    textNode.className = "conversation-documents-meta-text";
     textNode.textContent = text;
+    textNode.title = text;
 
     line.append(icon, textNode);
     return line;
@@ -429,9 +431,9 @@ function createDocumentMetaLine(iconName, text) {
 function createDocumentEntry(doc) {
     const chunkIds = Array.isArray(doc?.chunk_ids) ? doc.chunk_ids : [];
     const chunkPages = extractPageNumbers(chunkIds);
-    const chunkCount = chunkIds.length;
     const documentId = String(doc?.document_id || "Unknown Document");
-    const documentTitle = String(doc?.title || documentId);
+    const documentTitle = String(doc?.title || doc?.file_name || documentId);
+    const documentFileName = String(doc?.file_name || "");
     const scopeType = String(doc?.scope?.type || "Unknown");
     const scopeName = String(doc?.scope?.name || doc?.scope?.id || "Unknown");
 
@@ -441,7 +443,7 @@ function createDocumentEntry(doc) {
     entry.tabIndex = -1;
 
     const header = document.createElement("div");
-    header.className = "d-flex justify-content-between align-items-start gap-2 mb-2";
+    header.className = "d-flex justify-content-between align-items-start gap-2 mb-1 conversation-documents-header";
 
     const title = document.createElement("div");
     title.className = "fw-semibold text-truncate conversation-documents-title";
@@ -450,18 +452,21 @@ function createDocumentEntry(doc) {
 
     header.append(title, createClassificationBadge(doc?.classification));
     entry.appendChild(header);
-    entry.appendChild(createDocumentMetaLine(
-        "file-earmark",
-        `${chunkCount} chunk${chunkCount !== 1 ? "s" : ""}${chunkPages.length > 0 ? ` (Pages: ${chunkPages.join(", ")})` : ""}`
-    ));
+
+    if (
+        documentFileName
+        && documentFileName !== "Unknown Document"
+        && documentFileName !== documentTitle
+    ) {
+        entry.appendChild(createDocumentMetaLine("file-earmark", documentFileName));
+    }
+    if (chunkPages.length > 0) {
+        entry.appendChild(createDocumentMetaLine("file-earmark-text", `Pages: ${chunkPages.join(", ")}`));
+    }
     entry.appendChild(createDocumentMetaLine(
         getScopeIcon(scopeType),
         `${scopeType} scope: ${scopeName}`
     ));
-
-    if (doc?.title && doc.title !== doc.document_id) {
-        entry.appendChild(createDocumentMetaLine("hash", `ID: ${documentId}`));
-    }
 
     listItem.appendChild(entry);
     return {
