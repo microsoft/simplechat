@@ -2,7 +2,7 @@
 # test_tabular_search_shared_preflight_adapter.py
 """
 Functional test for the Search shared tabular preflight adapter.
-Version: 0.250.159
+Version: 0.250.166
 Implemented in: 0.250.159
 
 This test ensures Phase 3 routes Search durable tabular preflight through the
