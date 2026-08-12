@@ -2,7 +2,7 @@
 # test_tabular_analyze_shared_preflight_adapter.py
 """
 Functional test for the Analyze shared tabular preflight adapter.
-Version: 0.250.161
+Version: 0.250.166
 Implemented in: 0.250.160; updated in 0.250.161
 
 This test ensures Phase 4 routes pure single-source tabular Analyze durable
