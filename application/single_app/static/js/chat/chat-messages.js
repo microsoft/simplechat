@@ -65,6 +65,7 @@ const conversationForkButtonLabel = document.getElementById('fork-conversation-b
 const conversationForkButtonSpinner = document.getElementById('fork-conversation-button-spinner');
 let pendingConversationFork = null;
 let conversationForkRequestPending = false;
+let largeTabularRunConfirmationPending = false;
 let comparisonVersionLoadToken = 0;
 let comparisonVersionCatalog = [];
 let comparisonChatUploadCatalog = [];
@@ -6324,7 +6325,21 @@ export async function sendMessage() {
     return;
   }
 
-  const largeTabularRunConfirmed = await confirmLargeTabularRunForPrompt(combinedMessage);
+  if (largeTabularRunConfirmationPending) {
+    return;
+  }
+
+  const largeTabularRunEstimate = estimateLargeTabularRunForPrompt(combinedMessage);
+  let largeTabularRunConfirmed = true;
+  if (largeTabularRunEstimate.shouldConfirm) {
+    largeTabularRunConfirmationPending = true;
+    try {
+      largeTabularRunConfirmed = await confirmLargeTabularRunForPrompt(combinedMessage);
+    } finally {
+      largeTabularRunConfirmationPending = false;
+    }
+  }
+
   if (!largeTabularRunConfirmed) {
     userInput.focus();
     return;

@@ -2,6 +2,15 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.168)**
+
+#### Bug Fixes
+
+*   **Large Tabular Run Confirmation Deduplication**
+    *   Prevented repeated Send clicks or Enter presses from opening concurrent confirmation waiters and starting the same expensive tabular run more than once.
+    *   Restored normal sending after the user continues, narrows scope, dismisses the dialog, or an unexpected confirmation error occurs.
+    *   (Ref: Fixes #1200, `chat-messages.js`, `test_chat_background_generated_export_status.py`)
+
 ### **(v0.250.167)**
 
 #### Bug Fixes
