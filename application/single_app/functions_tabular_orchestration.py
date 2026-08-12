@@ -569,13 +569,12 @@ def plan_tabular_request(
         action_mode=normalized_action_mode,
     )
     output_format = structured_output_formats[0] if structured_output_formats else None
-    unsupported_multi_artifact_request = len(structured_output_formats) > 1
     analysis_durable_capability_disabled = bool(
         analysis_required
         and generated_output_requested
         and not settings_flag_enabled(settings, "enable_tabular_hierarchical_analysis", False)
     )
-    if unsupported_multi_artifact_request or analysis_durable_capability_disabled:
+    if analysis_durable_capability_disabled:
         durable_task_type = None
     execution_contract = durable_task_type or TABULAR_EXECUTION_CONTRACT_FOREGROUND_AGGREGATE
     source_coverage = _build_source_coverage(normalized_contexts)
@@ -610,10 +609,6 @@ def plan_tabular_request(
     if durable_task_type:
         execution_state = TABULAR_EXECUTION_STATE_DECLINED
         reason_code = "durable_intent"
-    elif unsupported_multi_artifact_request:
-        execution_state = TABULAR_EXECUTION_STATE_DECLINED
-        reason_code = "unsupported_multi_artifact_request"
-        safe_failure_details = "Multiple durable tabular artifact formats are not yet supported for one request."
     elif analysis_durable_capability_disabled:
         execution_state = TABULAR_EXECUTION_STATE_DECLINED
         reason_code = "analysis_required_durable_capability_disabled"

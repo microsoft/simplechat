@@ -1,8 +1,8 @@
 # test_tabular_row_orchestration_scale.py
 """
 Functional test for scalable per-row tabular orchestration.
-Version: 0.250.179
-Implemented in: 0.250.060; generated CSV formula safety in 0.250.065; generated file export routing in 0.250.072; source descriptor generalization in 0.250.127; unified durable run contract in 0.250.128; hierarchical analysis in 0.250.129; combined analysis and export in 0.250.130; scale validation in 0.250.132; direct source-backed exhaustive queueing in 0.250.133; direct queue call-site hardening in 0.250.134; model-validation auto retry in 0.250.135; model-aware parallel throughput in 0.250.136; Phase 1 acceleration contracts and observability in 0.250.137; Phase 2 truthful background handoff in 0.250.138; Phase 3 durable LLM generation planning in 0.250.139; Phase 4 compact row response protocol in 0.250.140; Phase 5 completion-driven checkpointing in 0.250.141; Phase 6 rolling worker pool in 0.250.142; Phase 7 independent batch retries in 0.250.143; Phase 8 scale, chaos, and rollout in 0.250.144; background metadata streaming fix in 0.250.145; source-token echo recovery in 0.250.146; fixed-window stale heartbeat fix in 0.250.147; nested CSV output recovery in 0.250.148; generic tabular artifact routing and fast startup in 0.250.149; balanced concurrency waves and default completion checkpoints in 0.250.152; Search shared preflight adapter in 0.250.159; aggregate route-helper harness coverage in 0.250.166; Analyze artifact Phase 7A harness compatibility updated in 0.250.178; reviewed correctness planning and semantic validation updated in 0.250.179
+Version: 0.250.180
+Implemented in: 0.250.060; generated CSV formula safety in 0.250.065; generated file export routing in 0.250.072; source descriptor generalization in 0.250.127; unified durable run contract in 0.250.128; hierarchical analysis in 0.250.129; combined analysis and export in 0.250.130; scale validation in 0.250.132; direct source-backed exhaustive queueing in 0.250.133; direct queue call-site hardening in 0.250.134; model-validation auto retry in 0.250.135; model-aware parallel throughput in 0.250.136; Phase 1 acceleration contracts and observability in 0.250.137; Phase 2 truthful background handoff in 0.250.138; Phase 3 durable LLM generation planning in 0.250.139; Phase 4 compact row response protocol in 0.250.140; Phase 5 completion-driven checkpointing in 0.250.141; Phase 6 rolling worker pool in 0.250.142; Phase 7 independent batch retries in 0.250.143; Phase 8 scale, chaos, and rollout in 0.250.144; background metadata streaming fix in 0.250.145; source-token echo recovery in 0.250.146; fixed-window stale heartbeat fix in 0.250.147; nested CSV output recovery in 0.250.148; generic tabular artifact routing and fast startup in 0.250.149; balanced concurrency waves and default completion checkpoints in 0.250.152; Search shared preflight adapter in 0.250.159; aggregate route-helper harness coverage in 0.250.166; Analyze artifact Phase 7A harness compatibility updated in 0.250.178; reviewed correctness planning and semantic validation updated in 0.250.179; artifact publication lifecycle updated in 0.250.180
 
 This test ensures generated exports preserve source identity and row order while
 enforcing one stable output schema across independently generated batches.
@@ -113,6 +113,7 @@ SOURCE_READER_FUNCTIONS = {
 }
 AUTHORIZATION_FUNCTIONS = {'_authorize_tabular_export_run_execution'}
 CANCELLATION_FUNCTIONS = {
+    '_is_artifact_publication_recoverable',
     '_can_cancel_run',
     'cancel_tabular_generated_output_run',
 }
@@ -135,6 +136,7 @@ RETRY_FUNCTIONS = {
     '_has_exhausted_independent_batch_retries',
     '_is_auto_retry_exhausted',
     '_can_auto_retry_failed_run',
+    '_is_artifact_publication_recoverable',
     '_can_resume_run',
     '_mark_run_failed',
     '_get_auto_retry_limit_for_category',
@@ -171,7 +173,12 @@ FAILURE_FUNCTIONS = {
 }
 BACKGROUND_METADATA_FUNCTIONS = {'build_background_tabular_generated_output_metadata'}
 STATUS_DETAIL_FUNCTIONS = {'_build_run_status_detail'}
-ARTIFACT_FUNCTIONS = {'_upload_generated_chat_artifact_for_current_user'}
+ARTIFACT_FUNCTIONS = {
+    '_safe_positive_int',
+    '_build_generated_chat_artifact_lifecycle_metadata',
+    '_build_generated_chat_artifact_lifecycle_response',
+    '_upload_generated_chat_artifact_for_current_user',
+}
 SCHEDULER_FUNCTIONS = {'_query_scheduler_candidates_by_status'}
 MANIFEST_FUNCTIONS = {
     '_normalize_tabular_run_task_type',
@@ -974,8 +981,13 @@ def _load_cancellation_helpers(initial_run):
     namespace = {
         'logging': logging,
         'CosmosResourceNotFoundError': CosmosResourceNotFoundError,
+        'TABULAR_EXPORT_STATUS_FAILED': 'failed',
         'TABULAR_EXPORT_STATUS_COMPLETED': 'completed',
         'TABULAR_EXPORT_STATUS_CANCELED': 'canceled',
+        'TABULAR_ARTIFACT_SET_LIFECYCLE_VALIDATING': 'validating',
+        'TABULAR_ARTIFACT_SET_LIFECYCLE_PUBLISHING': 'publishing',
+        'TABULAR_ARTIFACT_SET_LIFECYCLE_ROLLBACK_REQUIRED': 'rollback_required',
+        'TABULAR_ARTIFACT_SET_LIFECYCLE_FAILED': 'failed',
         'get_settings': lambda: {},
         '_read_run': read_run,
         '_replace_run': replace_run,
@@ -1374,13 +1386,19 @@ def _load_idempotent_artifact_helper():
             return self.clients.setdefault((container, blob), BlobClient())
 
     module_tree = ast.parse(SIMPLECHAT_OPERATIONS.read_text(encoding='utf-8'), filename=str(SIMPLECHAT_OPERATIONS))
-    selected_nodes = [
-        node
-        for node in module_tree.body
-        if isinstance(node, ast.FunctionDef) and node.name in ARTIFACT_FUNCTIONS
-    ]
-    if len(selected_nodes) != len(ARTIFACT_FUNCTIONS):
-        raise AssertionError('Missing idempotent artifact helper')
+    selected_nodes = []
+    found_functions = set()
+    for node in module_tree.body:
+        if isinstance(node, ast.Assign):
+            assigned_names = {target.id for target in node.targets if isinstance(target, ast.Name)}
+            if any(name.startswith('GENERATED_CHAT_ARTIFACT_') for name in assigned_names):
+                selected_nodes.append(node)
+        elif isinstance(node, ast.FunctionDef) and node.name in ARTIFACT_FUNCTIONS:
+            selected_nodes.append(node)
+            found_functions.add(node.name)
+    missing_functions = ARTIFACT_FUNCTIONS - found_functions
+    if missing_functions:
+        raise AssertionError(f'Missing idempotent artifact helpers: {sorted(missing_functions)}')
 
     message_container = MessageContainer()
     blob_service_client = BlobServiceClient()

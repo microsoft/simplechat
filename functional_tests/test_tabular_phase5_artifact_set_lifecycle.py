@@ -2,8 +2,8 @@
 # test_tabular_phase5_artifact_set_lifecycle.py
 """
 Functional test for Phase 5 tabular artifact-set lifecycle publication.
-Version: 0.250.175
-Implemented in: 0.250.175
+Version: 0.250.180
+Implemented in: 0.250.175; publication commit compatibility updated in 0.250.180
 
 This test ensures durable tabular artifact sets hide staged members until the
 whole required set is valid, publish Analyze Markdown as the primary member,
@@ -32,7 +32,7 @@ from functions_analysis_deliverables import (  # noqa: E402
 )
 
 
-IMPLEMENTED_VERSION = "0.250.175"
+IMPLEMENTED_VERSION = "0.250.180"
 
 
 def load_artifact_set_helpers():
@@ -51,6 +51,7 @@ def load_artifact_set_helpers():
         "_get_artifact_descriptors_for_run",
         "_get_primary_artifact_member_id",
         "_get_structured_artifact_member_id",
+        "_get_structured_export_artifact_for_member",
         "_get_analysis_artifact_member_id",
         "_build_artifact_member_idempotency_key",
         "_build_artifact_set_member",
@@ -68,9 +69,23 @@ def load_artifact_set_helpers():
         node for node in tree.body
         if isinstance(node, ast.FunctionDef) and node.name in helper_names
     ]
+    publication_commits = []
+
+    def commit_publication(current_user_id, conversation_id, artifact_message_id, artifact_set_id, artifact_member_id, publication_generation):
+        publication_commits.append({
+            "current_user_id": current_user_id,
+            "conversation_id": conversation_id,
+            "artifact_message_id": artifact_message_id,
+            "artifact_set_id": artifact_set_id,
+            "artifact_member_id": artifact_member_id,
+            "publication_generation": publication_generation,
+        })
+
     namespace = {
         "re": re,
         "validate_analysis_artifact_set": validate_analysis_artifact_set,
+        "commit_generated_chat_artifact_publication_for_user": commit_publication,
+        "publication_commits": publication_commits,
         "ANALYSIS_ARTIFACT_ROLE_PRIMARY_ANALYSIS": ANALYSIS_ARTIFACT_ROLE_PRIMARY_ANALYSIS,
         "ANALYSIS_ARTIFACT_ROLE_REQUESTED_OUTPUT": ANALYSIS_ARTIFACT_ROLE_REQUESTED_OUTPUT,
         "ANALYSIS_ARTIFACT_ROLE_SUPPORTING_OUTPUT": "supporting_output",
@@ -140,6 +155,15 @@ def build_combined_contract():
     return build_analysis_deliverable_contract(
         action_mode="analyze",
         requested_output_format="csv",
+        source_fingerprint="source-fingerprint",
+        request_fingerprint="request-fingerprint",
+    ).to_dict()
+
+
+def build_multi_format_combined_contract():
+    return build_analysis_deliverable_contract(
+        action_mode="analyze",
+        requested_output_formats=["json", "xml"],
         source_fingerprint="source-fingerprint",
         request_fingerprint="request-fingerprint",
     ).to_dict()
@@ -223,6 +247,24 @@ def test_completed_combined_set_publishes_markdown_primary_then_sibling():
     assert manifest["validation_state"] == "validated"
     assert manifest["primary_artifact_id"] == "analysis"
     assert manifest["publication_generation"] == 1
+    assert helpers["publication_commits"] == [
+        {
+            "current_user_id": "user-1",
+            "conversation_id": "conversation-1",
+            "artifact_message_id": "md-message",
+            "artifact_set_id": "tabular-artifact-set:run-1",
+            "artifact_member_id": "analysis",
+            "publication_generation": 1,
+        },
+        {
+            "current_user_id": "user-1",
+            "conversation_id": "conversation-1",
+            "artifact_message_id": "csv-message",
+            "artifact_set_id": "tabular-artifact-set:run-1",
+            "artifact_member_id": "requested-csv",
+            "publication_generation": 1,
+        },
+    ]
 
     public_artifacts = helpers["_build_public_generated_artifacts_from_manifest"](run, manifest)
     assert [artifact["artifact_id"] for artifact in public_artifacts] == ["analysis", "requested-csv"]
@@ -230,6 +272,43 @@ def test_completed_combined_set_publishes_markdown_primary_then_sibling():
     assert public_artifacts[0]["output_format"] == "md"
     assert public_artifacts[1]["role"] == ANALYSIS_ARTIFACT_ROLE_REQUESTED_OUTPUT
     assert public_artifacts[1]["output_format"] == "csv"
+
+
+def test_completed_combined_set_publishes_multiple_requested_siblings():
+    print("Testing completed multi-sibling artifact-set publication order...")
+    assert_app_version_at_least("0.250.180")
+    helpers = load_artifact_set_helpers()
+    run = build_run(status="running")
+    run["output_format"] = "json"
+    run["tabular_planner_metadata"]["deliverable_contract"] = build_multi_format_combined_contract()
+    json_artifact = build_artifact("json-message", "financial_review.json", "json")
+    json_artifact["artifact_id"] = "requested-json"
+    xml_artifact = build_artifact("xml-message", "financial_review.xml", "xml")
+    xml_artifact["artifact_id"] = "requested-xml"
+    analysis_artifact = build_artifact("md-message", "financial_review.md", "md")
+
+    run["structured_export_artifacts"] = [json_artifact, xml_artifact]
+    run["structured_export_artifact"] = json_artifact
+    run["analysis_artifact"] = analysis_artifact
+    run["status"] = "completed"
+
+    manifest = helpers["_publish_artifact_set_members"](run, ["analysis", "requested-json", "requested-xml"])
+    assert manifest["lifecycle_state"] == "completed"
+    assert manifest["validation_state"] == "validated"
+    assert manifest["publication_generation"] == 1
+    assert [commit["artifact_member_id"] for commit in helpers["publication_commits"]] == [
+        "analysis",
+        "requested-json",
+        "requested-xml",
+    ]
+
+    public_artifacts = helpers["_build_public_generated_artifacts_from_manifest"](run, manifest)
+    assert [artifact["artifact_id"] for artifact in public_artifacts] == [
+        "analysis",
+        "requested-json",
+        "requested-xml",
+    ]
+    assert [artifact["output_format"] for artifact in public_artifacts] == ["md", "json", "xml"]
 
 
 def test_invalid_required_set_fails_closed_without_public_artifacts():
@@ -243,6 +322,7 @@ def test_invalid_required_set_fails_closed_without_public_artifacts():
     assert manifest["lifecycle_state"] == "rollback_required"
     assert manifest["validation_state"] == "invalid"
     assert "required_artifact_not_valid" in manifest["validation_report"]["reason_codes"]
+    assert helpers["publication_commits"] == []
     assert helpers["_build_public_generated_artifacts_from_manifest"](run, manifest) == []
 
 
@@ -250,6 +330,7 @@ if __name__ == "__main__":
     tests = [
         test_staged_structured_member_is_not_public_until_set_completion,
         test_completed_combined_set_publishes_markdown_primary_then_sibling,
+        test_completed_combined_set_publishes_multiple_requested_siblings,
         test_invalid_required_set_fails_closed_without_public_artifacts,
     ]
     results = []

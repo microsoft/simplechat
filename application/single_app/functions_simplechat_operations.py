@@ -23,6 +23,7 @@ from config import (
     cosmos_conversations_container,
     cosmos_groups_container,
     cosmos_messages_container,
+    cosmos_tabular_export_runs_container,
     storage_account_personal_chat_container_name,
     TABULAR_EXTENSIONS,
 )
@@ -71,6 +72,10 @@ from utils_cache import invalidate_group_search_cache, invalidate_personal_searc
 
 SIMPLECHAT_PLUGIN_TYPE = "simplechat"
 SIMPLECHAT_DEFAULT_ENDPOINT = "simplechat://internal"
+GENERATED_CHAT_ARTIFACT_LIFECYCLE_STAGED = "staged"
+GENERATED_CHAT_ARTIFACT_LIFECYCLE_PUBLISHED = "published"
+GENERATED_CHAT_ARTIFACT_LIFECYCLE_ROLLED_BACK = "rolled_back"
+GENERATED_CHAT_ARTIFACT_VALIDATION_VALIDATED = "validated"
 FORKABLE_SINGLE_USER_CHAT_TYPES = {
     "",
     "new",
@@ -1295,6 +1300,7 @@ def upload_generated_analysis_artifact_for_user(
     capability: str = "analysis",
     output_format: str = "",
     summary: str = "",
+    artifact_lifecycle_metadata: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Upload generated analysis content for a known authorized user outside request context."""
     normalized_user_id = str(current_user_id or "").strip()
@@ -1340,6 +1346,7 @@ def upload_generated_analysis_artifact_for_user(
             "capability": normalized_capability,
             "output_format": normalized_output_format,
             "summary": normalized_summary,
+            **(artifact_lifecycle_metadata if isinstance(artifact_lifecycle_metadata, dict) else {}),
         },
     )
 
@@ -1354,6 +1361,7 @@ def upload_generated_analysis_artifact_stream_for_user(
     output_format: str = "",
     summary: str = "",
     artifact_idempotency_key: str = "",
+    artifact_lifecycle_metadata: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Upload a bounded-memory generated artifact stream for an authorized user."""
     normalized_user_id = str(current_user_id or "").strip()
@@ -1399,6 +1407,7 @@ def upload_generated_analysis_artifact_stream_for_user(
             "capability": normalized_capability,
             "output_format": normalized_output_format,
             "summary": normalized_summary,
+            **(artifact_lifecycle_metadata if isinstance(artifact_lifecycle_metadata, dict) else {}),
         },
         artifact_idempotency_key=artifact_idempotency_key,
     )
@@ -2567,6 +2576,7 @@ def _upload_generated_chat_artifact_for_current_user(
     artifact_capability = str(artifact_metadata.get("capability") or "analysis").strip().lower() or "analysis"
     artifact_output_format = str(artifact_metadata.get("output_format") or file_extension).strip().lower() or file_extension
     artifact_summary = str(artifact_metadata.get("summary") or "").strip()
+    lifecycle_metadata = _build_generated_chat_artifact_lifecycle_metadata(artifact_metadata)
 
     message_doc = {
         "id": artifact_message_id,
@@ -2586,6 +2596,7 @@ def _upload_generated_chat_artifact_for_current_user(
             "generated_artifact_output_format": artifact_output_format,
             "generated_artifact_summary": artifact_summary,
             "generated_artifact_idempotency_key": normalized_idempotency_key or None,
+            **lifecycle_metadata,
             "thread_info": {
                 "thread_id": current_thread_id,
                 "previous_thread_id": previous_thread_id,
@@ -2618,9 +2629,178 @@ def _upload_generated_chat_artifact_for_current_user(
             "blob_path": blob_path,
             "capability": artifact_capability,
             "output_format": artifact_output_format,
+            **_build_generated_chat_artifact_lifecycle_response(message_doc.get("metadata")),
         },
         "conversation_id": conversation_id,
     }
+
+
+def _safe_positive_int(value: Any) -> int:
+    try:
+        return max(0, int(value or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _build_generated_chat_artifact_lifecycle_metadata(artifact_metadata: Dict[str, Any]) -> Dict[str, Any]:
+    metadata = artifact_metadata if isinstance(artifact_metadata, dict) else {}
+    run_id = str(metadata.get("artifact_run_id") or metadata.get("run_id") or "").strip()
+    set_id = str(metadata.get("artifact_set_id") or "").strip()
+    member_id = str(metadata.get("artifact_member_id") or "").strip()
+    if not run_id and not set_id and not member_id:
+        return {}
+
+    lifecycle_state = str(
+        metadata.get("artifact_lifecycle_state") or GENERATED_CHAT_ARTIFACT_LIFECYCLE_STAGED
+    ).strip().lower()
+    if lifecycle_state not in {
+        GENERATED_CHAT_ARTIFACT_LIFECYCLE_STAGED,
+        GENERATED_CHAT_ARTIFACT_LIFECYCLE_PUBLISHED,
+        GENERATED_CHAT_ARTIFACT_LIFECYCLE_ROLLED_BACK,
+    }:
+        lifecycle_state = GENERATED_CHAT_ARTIFACT_LIFECYCLE_STAGED
+    validation_state = str(metadata.get("artifact_validation_state") or lifecycle_state).strip().lower()[:40]
+    return {
+        "generated_artifact_run_id": run_id,
+        "generated_artifact_set_id": set_id,
+        "generated_artifact_member_id": member_id,
+        "generated_artifact_lifecycle_state": lifecycle_state,
+        "generated_artifact_validation_state": validation_state,
+        "generated_artifact_publication_generation": _safe_positive_int(
+            metadata.get("artifact_publication_generation")
+        ),
+        "generated_artifact_staged_at": str(metadata.get("artifact_staged_at") or datetime.now(timezone.utc).isoformat()),
+        "generated_artifact_committed_at": metadata.get("artifact_committed_at"),
+    }
+
+
+def _build_generated_chat_artifact_lifecycle_response(metadata: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    normalized_metadata = metadata if isinstance(metadata, dict) else {}
+    response = {}
+    for key in (
+        "generated_artifact_run_id",
+        "generated_artifact_set_id",
+        "generated_artifact_member_id",
+        "generated_artifact_lifecycle_state",
+        "generated_artifact_validation_state",
+        "generated_artifact_publication_generation",
+    ):
+        if key in normalized_metadata:
+            response[key] = normalized_metadata.get(key)
+    return response
+
+
+def _generated_artifact_has_lifecycle_contract(metadata: Dict[str, Any]) -> bool:
+    return bool(
+        metadata.get("generated_artifact_run_id")
+        or metadata.get("generated_artifact_set_id")
+        or metadata.get("generated_artifact_member_id")
+        or metadata.get("generated_artifact_lifecycle_state")
+    )
+
+
+def assert_generated_chat_artifact_is_published_for_user(current_user_id: str, message_item: Dict[str, Any]) -> None:
+    """Reauthorize a generated artifact against its committed artifact-set manifest."""
+    metadata = message_item.get("metadata") if isinstance(message_item.get("metadata"), dict) else {}
+    if not _generated_artifact_has_lifecycle_contract(metadata):
+        return
+
+    lifecycle_state = str(metadata.get("generated_artifact_lifecycle_state") or "").strip().lower()
+    validation_state = str(metadata.get("generated_artifact_validation_state") or "").strip().lower()
+    publication_generation = _safe_positive_int(metadata.get("generated_artifact_publication_generation"))
+    if (
+        lifecycle_state != GENERATED_CHAT_ARTIFACT_LIFECYCLE_PUBLISHED
+        or validation_state != GENERATED_CHAT_ARTIFACT_VALIDATION_VALIDATED
+        or publication_generation <= 0
+    ):
+        raise PermissionError("Artifact is not published")
+
+    run_id = str(metadata.get("generated_artifact_run_id") or "").strip()
+    set_id = str(metadata.get("generated_artifact_set_id") or "").strip()
+    member_id = str(metadata.get("generated_artifact_member_id") or "").strip()
+    conversation_id = str(message_item.get("conversation_id") or "").strip()
+    if not run_id or not set_id or not member_id or not conversation_id:
+        raise PermissionError("Artifact publication metadata is incomplete")
+
+    try:
+        run = cosmos_tabular_export_runs_container.read_item(
+            item=run_id,
+            partition_key=str(current_user_id or "").strip(),
+        )
+    except CosmosResourceNotFoundError as exc:
+        raise PermissionError("Artifact publication run is unavailable") from exc
+
+    manifest = run.get("artifact_set_manifest") if isinstance(run.get("artifact_set_manifest"), dict) else {}
+    if (
+        str(run.get("conversation_id") or "").strip() != conversation_id
+        or str(run.get("user_id") or "").strip() != str(current_user_id or "").strip()
+        or str(manifest.get("set_id") or "").strip() != set_id
+        or str(manifest.get("lifecycle_state") or "").strip().lower() != "completed"
+        or str(manifest.get("validation_state") or "").strip().lower() != GENERATED_CHAT_ARTIFACT_VALIDATION_VALIDATED
+        or _safe_positive_int(manifest.get("publication_generation")) < publication_generation
+    ):
+        raise PermissionError("Artifact is not published")
+
+    for member in list(manifest.get("members") or []):
+        if not isinstance(member, dict) or str(member.get("member_id") or "").strip() != member_id:
+            continue
+        if (
+            str(member.get("artifact_message_id") or "").strip() == str(message_item.get("id") or "").strip()
+            and str(member.get("lifecycle_state") or "").strip().lower() == GENERATED_CHAT_ARTIFACT_LIFECYCLE_PUBLISHED
+            and str(member.get("validation_state") or "").strip().lower() == GENERATED_CHAT_ARTIFACT_VALIDATION_VALIDATED
+        ):
+            return
+        break
+    raise PermissionError("Artifact is not published")
+
+
+def commit_generated_chat_artifact_publication_for_user(
+    current_user_id: str,
+    conversation_id: str,
+    artifact_message_id: str,
+    artifact_set_id: str,
+    artifact_member_id: str,
+    publication_generation: int,
+) -> Dict[str, Any]:
+    """Mark one staged generated artifact message as published after manifest validation."""
+    current_user_id = str(current_user_id or "").strip()
+    normalized_conversation_id = str(conversation_id or "").strip()
+    normalized_message_id = str(artifact_message_id or "").strip()
+    normalized_set_id = str(artifact_set_id or "").strip()
+    normalized_member_id = str(artifact_member_id or "").strip()
+    if not current_user_id or not normalized_conversation_id or not normalized_message_id:
+        raise ValueError("Artifact publication target is incomplete")
+
+    conversation_item = cosmos_conversations_container.read_item(
+        item=normalized_conversation_id,
+        partition_key=normalized_conversation_id,
+    )
+    if str(conversation_item.get("user_id") or "").strip() != current_user_id:
+        raise PermissionError("Forbidden")
+    message_item = cosmos_messages_container.read_item(
+        item=normalized_message_id,
+        partition_key=normalized_conversation_id,
+    )
+    metadata = message_item.get("metadata") if isinstance(message_item.get("metadata"), dict) else {}
+    if (
+        str(message_item.get("conversation_id") or "").strip() != normalized_conversation_id
+        or message_item.get("role") != "file"
+        or not metadata.get("is_generated_chat_artifact")
+        or str(metadata.get("generated_artifact_set_id") or "").strip() != normalized_set_id
+        or str(metadata.get("generated_artifact_member_id") or "").strip() != normalized_member_id
+    ):
+        raise PermissionError("Forbidden")
+
+    metadata.update({
+        "generated_artifact_lifecycle_state": GENERATED_CHAT_ARTIFACT_LIFECYCLE_PUBLISHED,
+        "generated_artifact_validation_state": GENERATED_CHAT_ARTIFACT_VALIDATION_VALIDATED,
+        "generated_artifact_publication_generation": _safe_positive_int(publication_generation),
+        "generated_artifact_committed_at": datetime.now(timezone.utc).isoformat(),
+    })
+    message_item["metadata"] = metadata
+    cosmos_messages_container.upsert_item(message_item)
+    return message_item
+
 
 
 def _resolve_group_upload_target_for_current_user(

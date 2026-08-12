@@ -69,7 +69,10 @@ from functions_generated_file_exports import (
 from functions_model_endpoint_runtime import build_semantic_kernel_chat_service_for_model
 from functions_public_workspaces import get_user_visible_public_workspace_ids_from_settings
 from functions_settings import get_settings
-from functions_simplechat_operations import upload_generated_analysis_artifact_stream_for_user
+from functions_simplechat_operations import (
+    commit_generated_chat_artifact_publication_for_user,
+    upload_generated_analysis_artifact_stream_for_user,
+)
 from functions_tabular_semantic_validation import (
     TABULAR_SEMANTIC_VALIDATION_CONTRACT_VERSION,
     build_safe_semantic_validation_counts,
@@ -6686,12 +6689,34 @@ def _can_resume_run(run, settings=None):
     if status == TABULAR_EXPORT_STATUS_RUNNING:
         return _is_stale_running_run(run, settings or {})
     if status == TABULAR_EXPORT_STATUS_FAILED:
-        return _is_retryable_failed_run(run) or _has_exhausted_independent_batch_retries(run)
+        return (
+            _is_artifact_publication_recoverable(run)
+            or _is_retryable_failed_run(run)
+            or _has_exhausted_independent_batch_retries(run)
+        )
     return False
+
+
+def _is_artifact_publication_recoverable(run):
+    status = str((run or {}).get('status') or '').strip().lower()
+    manifest = (run or {}).get('artifact_set_manifest') if isinstance((run or {}).get('artifact_set_manifest'), dict) else {}
+    manifest_state = str(manifest.get('lifecycle_state') or '').strip().lower()
+    return bool(
+        status == TABULAR_EXPORT_STATUS_FAILED
+        and (run or {}).get('publishing_started_at')
+        and manifest_state in {
+            TABULAR_ARTIFACT_SET_LIFECYCLE_VALIDATING,
+            TABULAR_ARTIFACT_SET_LIFECYCLE_PUBLISHING,
+            TABULAR_ARTIFACT_SET_LIFECYCLE_ROLLBACK_REQUIRED,
+            TABULAR_ARTIFACT_SET_LIFECYCLE_FAILED,
+        }
+    )
 
 
 def _can_cancel_run(run):
     status = str((run or {}).get('status') or '').strip().lower()
+    if _is_artifact_publication_recoverable(run):
+        return True
     return not run.get('publishing_started_at') and status not in {
         TABULAR_EXPORT_STATUS_COMPLETED,
         TABULAR_EXPORT_STATUS_CANCELED,
@@ -7549,6 +7574,7 @@ def resume_tabular_generated_output_run(user_id, run_id):
         'lease_holder_id': None,
         'lease_expires_at': None,
         'next_attempt_at': now,
+        'publishing_started_at': None,
         'last_message': 'Manual resume queued; export will continue from completed checkpoints',
         'transient_failure_count': 0,
         'auto_retry_exhausted': False,
@@ -8448,6 +8474,40 @@ def _get_structured_artifact_member_id(run):
     return f'requested-{output_format}'
 
 
+def _get_structured_artifact_descriptors_for_run(run):
+    descriptors = [
+        descriptor for descriptor in _get_artifact_descriptors_for_run(run)
+        if descriptor.get('role') == ANALYSIS_ARTIFACT_ROLE_REQUESTED_OUTPUT
+    ]
+    if descriptors:
+        return descriptors
+    output_format = _normalize_tabular_artifact_format((run or {}).get('output_format'), fallback_format='json')
+    return [{
+        'member_id': f'requested-{output_format}',
+        'artifact_id': f'requested-{output_format}',
+        'role': ANALYSIS_ARTIFACT_ROLE_REQUESTED_OUTPUT,
+        'format': output_format,
+        'required': True,
+        'request_order': 0,
+    }]
+
+
+def _get_structured_export_artifact_for_member(run, member):
+    member_id = str((member or {}).get('member_id') or '').strip()
+    member_format = str((member or {}).get('format') or '').strip().lower()
+    for artifact in list((run or {}).get('structured_export_artifacts') or []):
+        if not isinstance(artifact, dict):
+            continue
+        if str(artifact.get('artifact_id') or artifact.get('member_id') or '').strip() == member_id:
+            return artifact
+    artifact = (run or {}).get('structured_export_artifact') if isinstance((run or {}).get('structured_export_artifact'), dict) else {}
+    if artifact and str(artifact.get('output_format') or '').strip().lower() == member_format:
+        return artifact
+    if artifact and not (run or {}).get('structured_export_artifacts'):
+        return artifact
+    return {}
+
+
 def _get_analysis_artifact_member_id(run):
     for descriptor in _get_artifact_descriptors_for_run(run):
         if descriptor.get('role') == ANALYSIS_ARTIFACT_ROLE_PRIMARY_ANALYSIS:
@@ -8594,7 +8654,7 @@ def _build_or_update_artifact_set_manifest(run):
                 validation_state='validated' if artifact.get('artifact_message_id') else None,
             )
         elif member.get('role') == ANALYSIS_ARTIFACT_ROLE_REQUESTED_OUTPUT:
-            artifact = run.get('structured_export_artifact') if isinstance(run.get('structured_export_artifact'), dict) else {}
+            artifact = _get_structured_export_artifact_for_member(run, member)
             if not artifact and _normalize_tabular_run_task_type(run.get('task_type')) != TABULAR_RUN_TASK_COMBINED:
                 artifact = run.get('final_artifact') if isinstance(run.get('final_artifact'), dict) else {}
             _merge_artifact_metadata_into_member(
@@ -8648,6 +8708,18 @@ def _set_artifact_set_member_state(run, member_id, artifact=None, lifecycle_stat
     return manifest
 
 
+def _build_artifact_member_upload_metadata(run, member_id):
+    manifest = _build_or_update_artifact_set_manifest(run)
+    return {
+        'artifact_run_id': run.get('id'),
+        'artifact_set_id': manifest.get('set_id'),
+        'artifact_member_id': member_id,
+        'artifact_lifecycle_state': TABULAR_ARTIFACT_MEMBER_LIFECYCLE_STAGED,
+        'artifact_validation_state': TABULAR_ARTIFACT_MEMBER_LIFECYCLE_STAGED,
+        'artifact_publication_generation': _safe_int(manifest.get('publication_generation'), minimum=0),
+    }
+
+
 def _publish_artifact_set_members(run, published_member_ids):
     published_ids = {str(member_id or '').strip() for member_id in list(published_member_ids or []) if member_id}
     manifest = _build_or_update_artifact_set_manifest(run)
@@ -8678,7 +8750,20 @@ def _publish_artifact_set_members(run, published_member_ids):
         if artifact_set_valid
         else TABULAR_ARTIFACT_SET_LIFECYCLE_ROLLBACK_REQUIRED
     )
-    manifest['publication_generation'] = _safe_int(manifest.get('publication_generation'), minimum=0) + 1
+    next_publication_generation = _safe_int(manifest.get('publication_generation'), minimum=0) + 1
+    if artifact_set_valid:
+        for member in manifest.get('members') or []:
+            if member.get('member_id') not in published_ids or not member.get('artifact_message_id'):
+                continue
+            commit_generated_chat_artifact_publication_for_user(
+                run.get('user_id'),
+                run.get('conversation_id'),
+                member.get('artifact_message_id'),
+                manifest.get('set_id'),
+                member.get('member_id'),
+                next_publication_generation,
+            )
+    manifest['publication_generation'] = next_publication_generation
     run['artifact_set_manifest'] = manifest
     return manifest
 
@@ -8759,12 +8844,17 @@ def _build_public_artifact_projection(artifact):
     }
 
 
-def _publish_structured_export_artifact(run):
-    output_format = normalize_generated_output_format(run.get('output_format'))
+def _publish_structured_export_artifact(run, descriptor=None):
+    descriptor = descriptor if isinstance(descriptor, dict) else {}
+    member_id = str(descriptor.get('member_id') or _get_structured_artifact_member_id(run)).strip()
+    output_format = normalize_generated_output_format(descriptor.get('format') or run.get('output_format'))
     generated_file_name = run.get('generated_file_name') or _build_generated_file_name(
         run.get('source_file_name'),
         output_format,
     )
+    run_for_output = dict(run)
+    run_for_output['output_format'] = output_format
+    run_for_output['generated_file_name'] = generated_file_name
     with tempfile.SpooledTemporaryFile(
         max_size=TABULAR_EXPORT_FINAL_SPOOL_MAX_MEMORY_BYTES,
         mode='w+b',
@@ -8776,18 +8866,21 @@ def _publish_structured_export_artifact(run):
             write_through=True,
         )
         try:
-            output_entry_count = _write_ordered_output_stream(run, text_output_stream)
-            post_run_summary = _build_compact_post_run_summary(run)
-            _authorize_tabular_export_run_execution(run)
-            _raise_if_tabular_export_canceled(run)
+            output_entry_count = _write_ordered_output_stream(run_for_output, text_output_stream)
+            post_run_summary = _build_compact_post_run_summary(run_for_output)
+            _authorize_tabular_export_run_execution(run_for_output)
+            _raise_if_tabular_export_canceled(run_for_output)
             if not run.get('publishing_started_at'):
                 run.update({
                     'publishing_started_at': _now_iso(),
                     'last_message': 'Final validation passed; publishing the generated artifact',
                 })
                 run = _replace_claimed_run(run)
-            _authorize_tabular_export_run_execution(run)
-            _revalidate_tabular_source_version_for_publication(run)
+                run_for_output.update(run)
+                run_for_output['output_format'] = output_format
+                run_for_output['generated_file_name'] = generated_file_name
+            _authorize_tabular_export_run_execution(run_for_output)
+            _revalidate_tabular_source_version_for_publication(run_for_output)
             text_output_stream.flush()
             output_size = binary_output_stream.tell()
             binary_output_stream.seek(0)
@@ -8800,21 +8893,64 @@ def _publish_structured_export_artifact(run):
                 capability='tabular',
                 output_format=output_format,
                 summary=post_run_summary,
-                artifact_idempotency_key=f"tabular-generated-output:{run.get('id')}",
+                artifact_idempotency_key=_build_artifact_member_idempotency_key(run, {
+                    'role': ANALYSIS_ARTIFACT_ROLE_REQUESTED_OUTPUT,
+                    'format': output_format,
+                    'member_id': member_id,
+                }),
+                artifact_lifecycle_metadata=_build_artifact_member_upload_metadata(
+                    run,
+                    member_id,
+                ),
             )
-            _raise_if_tabular_export_canceled(run)
+            _raise_if_tabular_export_canceled(run_for_output)
         finally:
             text_output_stream.detach()
 
     uploaded_message = upload_result.get('message') or {}
-    return run, uploaded_message, post_run_summary, output_entry_count, output_format, generated_file_name
+    artifact_metadata = _build_artifact_metadata(
+        uploaded_message,
+        generated_file_name,
+        output_format,
+        preview_rows=_build_structured_export_preview_rows(run_for_output),
+        suppress_assistant_text=True,
+    )
+    artifact_metadata['artifact_id'] = member_id
+    artifact_metadata['member_id'] = member_id
+    artifact_metadata['request_order'] = _safe_int(descriptor.get('request_order'), minimum=0)
+    return run, artifact_metadata, post_run_summary, output_entry_count, output_format, generated_file_name
+
+
+def _publish_structured_export_artifacts(run):
+    artifacts = []
+    first_summary = ''
+    first_entry_count = None
+    first_output_format = normalize_generated_output_format(run.get('output_format'))
+    first_file_name = run.get('generated_file_name') or _build_generated_file_name(
+        run.get('source_file_name'),
+        first_output_format,
+    )
+    for descriptor in _get_structured_artifact_descriptors_for_run(run):
+        run, artifact, post_run_summary, output_entry_count, output_format, generated_file_name = _publish_structured_export_artifact(
+            run,
+            descriptor=descriptor,
+        )
+        if first_entry_count is None:
+            first_entry_count = output_entry_count
+            first_summary = post_run_summary
+            first_output_format = output_format
+            first_file_name = generated_file_name
+        elif first_entry_count != output_entry_count:
+            raise ValueError('Structured artifact sibling row counts do not match')
+        artifacts.append(artifact)
+    return run, artifacts, first_summary, _safe_int(first_entry_count), first_output_format, first_file_name
 
 
 def _complete_run(run):
-    run, uploaded_message, post_run_summary, output_entry_count, output_format, generated_file_name = (
-        _publish_structured_export_artifact(run)
+    run, structured_artifacts, post_run_summary, output_entry_count, output_format, generated_file_name = (
+        _publish_structured_export_artifacts(run)
     )
-    artifact_preview_rows = _build_structured_export_preview_rows(run)
+    structured_artifact = structured_artifacts[0] if structured_artifacts else {}
     now = _now_iso()
     run.update({
         'status': TABULAR_EXPORT_STATUS_COMPLETED,
@@ -8828,17 +8964,16 @@ def _complete_run(run):
         'failed_chunk_count': 0,
         'last_message': 'Background structured export completed',
         'post_run_summary': post_run_summary,
-        'generated_file_name': uploaded_message.get('file_name') or generated_file_name,
-        'final_artifact': _build_artifact_metadata(
-            uploaded_message,
-            generated_file_name,
-            output_format,
-            preview_rows=artifact_preview_rows,
-            suppress_assistant_text=True,
-        ),
+        'generated_file_name': structured_artifact.get('file_name') or generated_file_name,
+        'structured_export_artifacts': structured_artifacts,
+        'structured_export_artifact': structured_artifact,
+        'final_artifact': structured_artifact,
         'estimated_remaining_seconds': 0,
     })
-    _publish_artifact_set_members(run, [_get_structured_artifact_member_id(run)])
+    _publish_artifact_set_members(
+        run,
+        [artifact.get('artifact_id') or artifact.get('member_id') for artifact in structured_artifacts],
+    )
     run.update(_build_generation_progress_contract_fields(
         run,
         run.get('batch_count'),
@@ -8860,8 +8995,8 @@ def _complete_run(run):
             'checkpointed_row_count': run.get('checkpointed_row_count'),
             'generation_contract_version': run.get('generation_contract_version'),
             'response_protocol_version': run.get('response_protocol_version'),
-            'artifact_message_id': uploaded_message.get('id'),
-            'generated_file_name': uploaded_message.get('file_name') or generated_file_name,
+            'artifact_message_id': structured_artifact.get('artifact_message_id'),
+            'generated_file_name': structured_artifact.get('file_name') or generated_file_name,
             **run.get('performance_summary', {}),
         },
         level=logging.INFO,
@@ -8968,6 +9103,10 @@ def _publish_analysis_artifact(run, final_summary):
             output_format='md',
             summary=final_summary.get('summary'),
             artifact_idempotency_key=f"tabular-hierarchical-analysis:{run.get('id')}",
+            artifact_lifecycle_metadata=_build_artifact_member_upload_metadata(
+                run,
+                _get_analysis_artifact_member_id(run),
+            ),
         )
         _raise_if_tabular_export_canceled(run)
 
@@ -9033,16 +9172,10 @@ def _publish_combined_structured_export_phase(run):
     if isinstance(run.get('structured_export_artifact'), dict) and run.get('structured_export_artifact'):
         return run
 
-    run, uploaded_message, post_run_summary, output_entry_count, output_format, generated_file_name = (
-        _publish_structured_export_artifact(run)
+    run, structured_artifacts, post_run_summary, output_entry_count, output_format, generated_file_name = (
+        _publish_structured_export_artifacts(run)
     )
-    structured_artifact = _build_artifact_metadata(
-        uploaded_message,
-        generated_file_name,
-        output_format,
-        preview_rows=_build_structured_export_preview_rows(run),
-        suppress_assistant_text=True,
-    )
+    structured_artifact = structured_artifacts[0] if structured_artifacts else {}
     now = _now_iso()
     run.update({
         'updated_at': now,
@@ -9054,18 +9187,20 @@ def _publish_combined_structured_export_phase(run):
         'analysis_phase': 'reducing',
         'last_message': 'Combined structured export published; reducing tabular analysis summaries',
         'post_run_export_summary': post_run_summary,
-        'generated_file_name': uploaded_message.get('file_name') or generated_file_name,
+        'generated_file_name': structured_artifact.get('file_name') or generated_file_name,
+        'structured_export_artifacts': structured_artifacts,
         'structured_export_artifact': structured_artifact,
         'final_artifact': structured_artifact,
         'estimated_remaining_seconds': None,
     })
-    _set_artifact_set_member_state(
-        run,
-        _get_structured_artifact_member_id(run),
-        artifact=structured_artifact,
-        lifecycle_state=TABULAR_ARTIFACT_MEMBER_LIFECYCLE_STAGED,
-        validation_state='validated',
-    )
+    for artifact in structured_artifacts:
+        _set_artifact_set_member_state(
+            run,
+            artifact.get('artifact_id') or artifact.get('member_id'),
+            artifact=artifact,
+            lifecycle_state=TABULAR_ARTIFACT_MEMBER_LIFECYCLE_STAGED,
+            validation_state='validated',
+        )
     run = _replace_claimed_run(run)
     log_event(
         '[TABULAR_GENERATED_OUTPUT] Combined structured export artifact published',
@@ -9077,8 +9212,8 @@ def _publish_combined_structured_export_phase(run):
             'output_format': output_format,
             'row_count': output_entry_count,
             'batch_count': run.get('batch_count'),
-            'artifact_message_id': uploaded_message.get('id'),
-            'generated_file_name': uploaded_message.get('file_name') or generated_file_name,
+            'artifact_message_id': structured_artifact.get('artifact_message_id'),
+            'generated_file_name': structured_artifact.get('file_name') or generated_file_name,
         },
         level=logging.INFO,
     )
@@ -9105,14 +9240,18 @@ def _complete_combined_analysis_run(run, final_summary):
             suppress_assistant_text=True,
         )
 
+    structured_artifacts = list(run.get('structured_export_artifacts') or [])
     structured_artifact = run.get('structured_export_artifact') or run.get('final_artifact') or {}
-    _set_artifact_set_member_state(
-        run,
-        _get_structured_artifact_member_id(run),
-        artifact=structured_artifact,
-        lifecycle_state=TABULAR_ARTIFACT_MEMBER_LIFECYCLE_STAGED,
-        validation_state='validated',
-    )
+    if not structured_artifacts and structured_artifact:
+        structured_artifacts = [structured_artifact]
+    for artifact in structured_artifacts:
+        _set_artifact_set_member_state(
+            run,
+            artifact.get('artifact_id') or artifact.get('member_id') or _get_structured_artifact_member_id(run),
+            artifact=artifact,
+            lifecycle_state=TABULAR_ARTIFACT_MEMBER_LIFECYCLE_STAGED,
+            validation_state='validated',
+        )
     _set_artifact_set_member_state(
         run,
         _get_analysis_artifact_member_id(run),
@@ -9135,17 +9274,24 @@ def _complete_combined_analysis_run(run, final_summary):
         'last_message': 'Background combined tabular analysis and export completed',
         'post_run_summary': final_summary.get('summary'),
         'analysis_generated_file_name': uploaded_message.get('file_name') or generated_file_name,
+        'structured_export_artifacts': structured_artifacts,
         'structured_export_artifact': structured_artifact,
         'analysis_artifact': analysis_artifact,
         'combined_artifacts': [
-            artifact for artifact in (analysis_artifact, structured_artifact) if artifact
+            artifact for artifact in [analysis_artifact, *structured_artifacts] if artifact
         ],
         'final_artifact': analysis_artifact or structured_artifact,
         'estimated_remaining_seconds': 0,
     })
     _publish_artifact_set_members(
         run,
-        [_get_analysis_artifact_member_id(run), _get_structured_artifact_member_id(run)],
+        [
+            _get_analysis_artifact_member_id(run),
+            *[
+                artifact.get('artifact_id') or artifact.get('member_id')
+                for artifact in structured_artifacts
+            ],
+        ],
     )
     run.update(_build_generation_progress_contract_fields(
         run,
