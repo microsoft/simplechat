@@ -2,7 +2,7 @@
 # test_tabular_phase8_ui_telemetry_rollout.py
 """
 Functional test for Phase 8 tabular UI telemetry and rollout metadata.
-Version: 0.250.164
+Version: 0.250.166
 Implemented in: 0.250.164
 
 This test ensures shared tabular planner rollout assignment is stable and
