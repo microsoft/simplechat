@@ -233,6 +233,22 @@ Mixed-source document orchestration uses independently reversible settings. Keep
 
 Analyze All requires a ready document access index and uses the configured workflow Analyze document limit. A catalog above that limit is rejected rather than truncated. Development telemetry contains allowlisted aggregate counts and timings only; source identifiers, filenames, prompts, evidence, paths, locators, credentials, and raw settings are prohibited.
 
+#### Tabular Analyze/Search Parity Controls
+
+Tabular Analyze/Search parity uses backend-only controls so operators can shadow, canary, and roll back shared preflight behavior without exposing rollout settings to the browser:
+
+| Stage | Setting | Default |
+|---|---|---|
+| Shared planner mode | `tabular_request_planner_mode` | `off` |
+| Search shared preflight | `enable_tabular_search_shared_preflight` | Off |
+| Pure tabular Analyze durable preflight | `enable_tabular_analyze_durable_preflight` | Off |
+| Mixed deferred composition | `enable_tabular_mixed_deferred_composition` | Off |
+| Multi-file tabular preflight | `enable_tabular_multifile_durable_preflight` | Off |
+| Parity rollout percentage | `tabular_analyze_parity_rollout_percent` | `100` |
+| Legacy post-tool fallback mode | `tabular_legacy_post_tool_fallback_mode` | `enabled` |
+
+The shared preflight telemetry tag is `[TABULAR_SHARED_PREFLIGHT]`. Use allowlisted dimensions such as planner mode, execution contract, execution state, reason code, rollout assignment, rollout percentage, and fallback mode. Do not log prompt text, file names, source locators, generated answers, raw errors, credentials, or raw settings.
+
 ### 7. Safety Configuration
 
 Configure content moderation and user feedback systems.

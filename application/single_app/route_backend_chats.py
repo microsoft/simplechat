@@ -5949,6 +5949,7 @@ def maybe_queue_direct_tabular_generated_output(
     model_context=None,
     cancel_requested=None,
     request_correlation_id=None,
+    planner_metadata=None,
 ):
     """Queue an exhaustive tabular generated-output run directly from an authorized source."""
     parity_classifier = globals().get('classify_tabular_parity_request')
@@ -6014,6 +6015,7 @@ def maybe_queue_direct_tabular_generated_output(
             source_descriptor=direct_source['source_descriptor'],
             task_type=direct_source.get('task_type') or None,
             analysis_objective=direct_source.get('analysis_objective'),
+            planner_metadata=planner_metadata,
         )
         background_metadata = build_background_tabular_generated_output_metadata(background_run)
         accepted_parity_result = parity_result
@@ -6155,6 +6157,18 @@ def _emit_search_shared_preflight_event(
             'reason_code': str(result.get('reason_code') or '').strip().lower()[:80],
             'planner_contract_version': str(result.get('planner_contract_version') or '').strip()[:80],
         })
+        rollout_assignment = result.get('rollout_assignment') if isinstance(result.get('rollout_assignment'), dict) else {}
+        if rollout_assignment:
+            safe_dimensions.update({
+                'rollout_contract_version': str(rollout_assignment.get('contract_version') or '').strip()[:80],
+                'rollout_mode': str(rollout_assignment.get('mode') or '').strip().lower()[:40],
+                'rollout_assigned': str(bool(rollout_assignment.get('assigned'))).lower(),
+                'rollout_percent': str(_safe_int(rollout_assignment.get('rollout_percent'))),
+                'rollout_cohort_bucket': str(_safe_int(rollout_assignment.get('cohort_bucket'))),
+                'legacy_post_tool_fallback_mode': str(
+                    rollout_assignment.get('legacy_post_tool_fallback_mode') or 'enabled'
+                ).strip().lower()[:40],
+            })
     if isinstance(generated_output, dict):
         safe_dimensions.update({
             'output_status': str(generated_output.get('status') or '').strip().lower()[:40],

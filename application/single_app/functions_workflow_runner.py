@@ -2539,6 +2539,18 @@ def _emit_analyze_shared_preflight_event(
             'reason_code': str(result.get('reason_code') or '').strip().lower()[:80],
             'planner_contract_version': str(result.get('planner_contract_version') or '').strip()[:80],
         })
+        rollout_assignment = result.get('rollout_assignment') if isinstance(result.get('rollout_assignment'), dict) else {}
+        if rollout_assignment:
+            safe_dimensions.update({
+                'rollout_contract_version': str(rollout_assignment.get('contract_version') or '').strip()[:80],
+                'rollout_mode': str(rollout_assignment.get('mode') or '').strip().lower()[:40],
+                'rollout_assigned': str(bool(rollout_assignment.get('assigned'))).lower(),
+                'rollout_percent': str(_coerce_document_analysis_count(rollout_assignment.get('rollout_percent'))),
+                'rollout_cohort_bucket': str(_coerce_document_analysis_count(rollout_assignment.get('cohort_bucket'))),
+                'legacy_post_tool_fallback_mode': str(
+                    rollout_assignment.get('legacy_post_tool_fallback_mode') or 'enabled'
+                ).strip().lower()[:40],
+            })
     if isinstance(generated_output, dict):
         safe_dimensions.update({
             'output_status': str(generated_output.get('status') or '').strip().lower()[:40],

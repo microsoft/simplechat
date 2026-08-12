@@ -33,6 +33,8 @@ TABULAR_PLANNER_MODES = {
     TABULAR_PLANNER_MODE_SHADOW,
     TABULAR_PLANNER_MODE_ACTIVE,
 }
+TABULAR_PARITY_ROLLOUT_CONTRACT_VERSION = "tabular-parity-rollout-v1"
+TABULAR_LEGACY_POST_TOOL_FALLBACK_MODES = {"enabled", "observe", "disabled"}
 
 
 def settings_flag_enabled(settings, key, default=False):
@@ -52,6 +54,79 @@ def normalize_tabular_request_planner_mode(settings=None, mode=None):
     if normalized_mode in TABULAR_PLANNER_MODES:
         return normalized_mode
     return TABULAR_PLANNER_MODE_OFF
+
+
+def _coerce_rollout_percentage(value, default=100):
+    try:
+        parsed_value = int(value)
+    except (TypeError, ValueError):
+        parsed_value = int(default)
+    return max(0, min(100, parsed_value))
+
+
+def normalize_tabular_legacy_post_tool_fallback_mode(settings=None, mode=None):
+    """Return the supported legacy fallback mode for post-tool recovery."""
+    raw_mode = mode
+    if raw_mode is None:
+        raw_mode = (settings or {}).get("tabular_legacy_post_tool_fallback_mode", "enabled")
+    normalized_mode = str(raw_mode or "").strip().lower()
+    if normalized_mode in TABULAR_LEGACY_POST_TOOL_FALLBACK_MODES:
+        return normalized_mode
+    return "enabled"
+
+
+def build_tabular_parity_rollout_assignment(settings=None, request_key=None, mode=None):
+    """Build a stable, frontend-safe Phase 8 rollout assignment summary."""
+    settings = settings if isinstance(settings, Mapping) else {}
+    normalized_mode = str(mode or "").strip().lower()
+    if normalized_mode not in {"search", "analyze", "multifile", "mixed"}:
+        normalized_mode = "tabular"
+    rollout_percent = _coerce_rollout_percentage(
+        settings.get(
+            "tabular_analyze_parity_rollout_percent",
+            settings.get("tabular_generation_rollout_percentage", 100),
+        ),
+        default=100,
+    )
+    assignment_key = json.dumps(
+        {
+            "contract_version": TABULAR_PARITY_ROLLOUT_CONTRACT_VERSION,
+            "mode": normalized_mode,
+            "request_key": str(request_key or "").strip(),
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    cohort_bucket = int(hashlib.sha256(assignment_key.encode("utf-8")).hexdigest()[:8], 16) % 100
+    return {
+        "contract_version": TABULAR_PARITY_ROLLOUT_CONTRACT_VERSION,
+        "mode": normalized_mode,
+        "planner_mode": normalize_tabular_request_planner_mode(settings),
+        "assigned": cohort_bucket < rollout_percent,
+        "cohort_bucket": cohort_bucket,
+        "rollout_percent": rollout_percent,
+        "search_shared_preflight_enabled": settings_flag_enabled(
+            settings,
+            "enable_tabular_search_shared_preflight",
+            False,
+        ),
+        "analyze_durable_preflight_enabled": settings_flag_enabled(
+            settings,
+            "enable_tabular_analyze_durable_preflight",
+            False,
+        ),
+        "mixed_deferred_composition_enabled": settings_flag_enabled(
+            settings,
+            "enable_tabular_mixed_deferred_composition",
+            False,
+        ),
+        "multifile_durable_preflight_enabled": settings_flag_enabled(
+            settings,
+            "enable_tabular_multifile_durable_preflight",
+            False,
+        ),
+        "legacy_post_tool_fallback_mode": normalize_tabular_legacy_post_tool_fallback_mode(settings),
+    }
 
 
 def get_tabular_generated_output_format(user_question):
@@ -385,6 +460,13 @@ def plan_tabular_request(
         output_format,
         source_coverage,
     )
+    request_fingerprint = _build_request_fingerprint(
+        user_question,
+        action_mode,
+        execution_contract,
+        output_format,
+        source_coverage,
+    )
     execution_units = _build_tabular_execution_units(
         user_question,
         normalized_contexts,
@@ -428,12 +510,11 @@ def plan_tabular_request(
         "source_coverage": source_coverage,
         "execution_group_id": execution_group_id,
         "execution_units": execution_units,
-        "request_fingerprint": _build_request_fingerprint(
-            user_question,
-            action_mode,
-            execution_contract,
-            output_format,
-            source_coverage,
+        "request_fingerprint": request_fingerprint,
+        "rollout_assignment": build_tabular_parity_rollout_assignment(
+            settings,
+            request_key=request_fingerprint,
+            mode=action_mode,
         ),
         "reason_code": reason_code,
         "requested_output_hints": dict(requested_output_hints or {})
