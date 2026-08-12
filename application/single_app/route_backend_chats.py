@@ -60,6 +60,7 @@ from functions_tabular_analysis import (
     queue_direct_tabular_generated_output_from_plan as _shared_queue_direct_tabular_generated_output_from_plan,
 )
 from functions_tabular_orchestration import (
+    build_tabular_legacy_post_tool_fallback_decision as _shared_build_tabular_legacy_post_tool_fallback_decision,
     get_tabular_generated_output_format as _shared_get_tabular_generated_output_format,
     get_tabular_generated_output_task_type as _shared_get_tabular_generated_output_task_type,
     question_requests_tabular_generated_output as _shared_question_requests_tabular_generated_output,
@@ -6169,6 +6170,26 @@ def _emit_search_shared_preflight_event(
                     rollout_assignment.get('legacy_post_tool_fallback_mode') or 'enabled'
                 ).strip().lower()[:40],
             })
+        fallback_decision = (
+            result.get('legacy_post_tool_fallback_decision')
+            if isinstance(result.get('legacy_post_tool_fallback_decision'), dict)
+            else {}
+        )
+        if fallback_decision:
+            safe_dimensions.update({
+                'legacy_post_tool_fallback_contract_version': str(
+                    fallback_decision.get('contract_version') or ''
+                ).strip()[:80],
+                'legacy_post_tool_fallback_action': str(
+                    fallback_decision.get('action') or ''
+                ).strip().lower()[:40],
+                'legacy_post_tool_fallback_reason': str(
+                    fallback_decision.get('reason_code') or ''
+                ).strip().lower()[:80],
+                'legacy_post_tool_fallback_should_invoke': str(
+                    bool(fallback_decision.get('should_invoke'))
+                ).lower(),
+            })
     if isinstance(generated_output, dict):
         safe_dimensions.update({
             'output_status': str(generated_output.get('status') or '').strip().lower()[:40],
@@ -6853,6 +6874,17 @@ async def maybe_create_tabular_generated_output(
     parity_emitter = globals().get('emit_tabular_parity_event')
     parity_result_builder = globals().get('build_tabular_parity_planner_result')
     parity_result = parity_classifier(user_question) if callable(parity_classifier) else None
+    fallback_decision = _shared_build_tabular_legacy_post_tool_fallback_decision(
+        settings=settings,
+        fallback_source='post_tool_generated_output',
+    )
+    fallback_dimensions = {
+        'legacy_post_tool_fallback_contract_version': fallback_decision.get('contract_version'),
+        'legacy_post_tool_fallback_mode': fallback_decision.get('mode'),
+        'legacy_post_tool_fallback_action': fallback_decision.get('action'),
+        'legacy_post_tool_fallback_reason': fallback_decision.get('reason_code'),
+        'legacy_post_tool_fallback_should_invoke': str(bool(fallback_decision.get('should_invoke'))).lower(),
+    }
 
     def emit_fallback_parity_event(event_name, planner_result=None, metrics=None, dimensions=None, level=None):
         if not callable(parity_emitter):
@@ -6874,9 +6906,28 @@ async def maybe_create_tabular_generated_output(
         'classification_completed',
         metrics={'invocation_count': len(invocations or [])},
     )
+    if not fallback_decision.get('should_invoke'):
+        emit_fallback_parity_event(
+            'post_tool_generated_output_fallback_suppressed',
+            metrics={'invocation_count': len(invocations or [])},
+            dimensions=fallback_dimensions,
+        )
+        log_event(
+            '[TABULAR_GENERATED_OUTPUT] Legacy post-tool generated output fallback suppressed',
+            {
+                'conversation_id': conversation_id,
+                'mode': mode,
+                'invocation_count': len(invocations or []),
+                **fallback_dimensions,
+            },
+            debug_only=True,
+        )
+        return None
+
     emit_fallback_parity_event(
         'post_tool_generated_output_fallback_attempted',
         metrics={'invocation_count': len(invocations or [])},
+        dimensions=fallback_dimensions,
     )
 
     output_format = get_tabular_generated_output_format(user_question) or 'md'
