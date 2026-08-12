@@ -1,6 +1,6 @@
 # Large Tabular Run Confirmation Deduplication Fix
 
-Fixed/Implemented in version: **0.250.168**
+Fixed/Implemented in version: **0.250.169**
 
 Related work: Fixes #1200
 
@@ -36,7 +36,7 @@ resolved every waiting send path.
   and unexpected errors cannot leave later sends blocked.
 - Added browser regression coverage for repeated sends, single submission, and
   guard reuse after the confirmation settles.
-- Updated the application version from `0.250.167` to `0.250.168`.
+- Updated the application version from `0.250.168` to `0.250.169`.
 
 ## Impact Analysis
 
