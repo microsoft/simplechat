@@ -15,7 +15,7 @@ The behavior remains default-off. With the gate disabled, planner mode set to `o
 - Authorized source manifest contexts from `application/single_app/functions_mixed_source_orchestration.py`
 - Existing workflow coordinator in `application/single_app/functions_workflow_runner.py`
 - Existing durable generated-output runner in `application/single_app/functions_tabular_generated_exports.py`
-- Current application version from `application/single_app/config.py`: **0.250.160**
+- Current application version from `application/single_app/config.py`: **0.250.166**
 
 ## Technical Specifications
 
