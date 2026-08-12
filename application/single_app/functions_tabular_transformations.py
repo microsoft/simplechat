@@ -4,6 +4,7 @@
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from graphlib import CycleError, TopologicalSorter
+import math
 
 
 TABULAR_TRANSFORMATION_SPEC_VERSION = "tabular-transform-v1"
@@ -105,7 +106,7 @@ def _validate_literal_value(value):
     if isinstance(value, int) and not isinstance(value, bool):
         return value
     if isinstance(value, float):
-        if value != value or value in (float("inf"), float("-inf")):
+        if not math.isfinite(value):
             raise TabularTransformationSpecError("Tabular transformation literal number is not finite")
         return value
     if isinstance(value, str):

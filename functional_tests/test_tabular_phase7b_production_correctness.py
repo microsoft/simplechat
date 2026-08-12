@@ -2,8 +2,8 @@
 #!/usr/bin/env python3
 """
 Functional test for Phase 7B production tabular correctness planning.
-Version: 0.250.179
-Implemented in: 0.250.179
+Version: 0.250.181
+Implemented in: 0.250.179; Advanced Security cleanup updated in 0.250.181
 
 This test ensures real Search and Analyze shared-facade requests need no
 injected output hints, persist the same reviewed deterministic contract, write
@@ -189,6 +189,10 @@ def _load_checkpoint_writer():
             raise FileExistsError(path)
         blobs[path] = payload
 
+    def record_shadow_plan_comparison(run, schema):
+        del run, schema
+        return False
+
     namespace = {
         "ResourceExistsError": FileExistsError,
         "logging": logging,
@@ -196,7 +200,7 @@ def _load_checkpoint_writer():
         "_raise_if_tabular_export_canceled": lambda run: None,
         "_get_tabular_run_public_output_schema": lambda run: list(run["public_output_schema"]),
         "_get_tabular_run_internal_checkpoint_schema": lambda run: list(run["internal_checkpoint_schema"]),
-        "_record_shadow_tabular_generation_plan_comparison": lambda run, schema: False,
+        "_record_shadow_tabular_generation_plan_comparison": record_shadow_plan_comparison,
         "_replace_claimed_run": lambda run: dict(run),
         "_output_blob_path": lambda user_id, conversation_id, run_id, batch_number: f"output/{batch_number}",
         "_output_summary_blob_path": lambda user_id, conversation_id, run_id, batch_number: f"summary/{batch_number}",

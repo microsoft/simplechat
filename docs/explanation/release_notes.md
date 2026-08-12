@@ -2,6 +2,15 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.181)**
+
+#### Bug Fixes
+
+*   **Analyze Artifact Advanced Security Cleanup**
+    *   Replaced a self-comparison float finite check in the tabular transformation validator with an explicit finite-number check.
+    *   Simplified an unnecessary callable wrapper in the Phase 7B production-correctness functional test harness.
+    *   (Ref: PR #1238, GitHub Advanced Security comments, tabular transformation validation)
+
 ### **(v0.250.180)**
 
 #### Bug Fixes
