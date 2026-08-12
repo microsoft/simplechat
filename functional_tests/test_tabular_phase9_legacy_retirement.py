@@ -2,7 +2,7 @@
 # test_tabular_phase9_legacy_retirement.py
 """
 Functional test for Phase 9 tabular legacy fallback retirement controls.
-Version: 0.250.165
+Version: 0.250.166
 Implemented in: 0.250.165
 
 This test ensures the shared planner records safe legacy post-tool fallback
