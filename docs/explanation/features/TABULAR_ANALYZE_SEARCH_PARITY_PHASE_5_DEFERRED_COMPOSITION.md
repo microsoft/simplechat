@@ -14,7 +14,7 @@ The behavior prevents queued or running generated-output cards from being interp
 - Mixed-source Analyze workflow coordination in `application/single_app/functions_workflow_runner.py`
 - Existing durable tabular generated-output runner in `application/single_app/functions_tabular_generated_exports.py`
 - Backend settings defaults and frontend sanitization in `application/single_app/functions_settings.py`
-- Current application version from `application/single_app/config.py`: **0.250.161**
+- Current application version from `application/single_app/config.py`: **0.250.166**
 
 ## Technical Specifications
 
