@@ -14,6 +14,8 @@ Phase 7 updated in version: **0.250.177**
 
 Phase 7A stabilization updated in version: **0.250.178**
 
+Phase 7B correctness updated in version: **0.250.179**
+
 ## Overview
 
 The Analyze deliverable contract defines a server-owned, versioned plan for analysis artifacts before production routing changes are made. It records whether an action requires a primary Markdown analysis artifact, which sibling artifacts were explicitly requested, the public structured schema, row cardinality, ordering, transformation mode, validation profile, and publication policy.
@@ -30,12 +32,15 @@ Phase 7 adds an explicit rollout state for new shared tabular parity assignments
 
 Phase 7A restores explicit Word/DOCX serialization of authorized current-turn non-tabular function-result rows. The passthrough guard still rejects derived requests before serialization, keeps tabular tool rows on their coverage-aware durable path, and omits sensitive fields. It also restores the cumulative lifecycle and scale harnesses to the current schema, planner, and artifact-set contracts.
 
+Phase 7B makes the production durable runner own rule-faithful structured output planning. Generation plan version 2 carries one normalized allowlisted transformation specification, deterministic or semantic field ownership, and an independent bounded review result. Active plans update the persisted deliverable contract before row generation. Deterministic fields execute server-side, semantic fields receive isolated field-level verification, and only failed or uncertain row-field pairs enter bounded targeted repair before canonical checkpoints are written.
+
 ## Dependencies
 
 - `application/single_app/functions_analysis_deliverables.py` for contract construction, artifact-set validation, structured-row validation, and gated shadow telemetry.
 - `application/single_app/functions_generated_file_exports.py` for ordered, negation-aware requested artifact format detection.
 - `application/single_app/functions_tabular_orchestration.py` for attaching the contract to shared tabular planner results and selecting Analyze-safe execution contracts.
 - `application/single_app/functions_tabular_generated_exports.py` for durable checkpoint lineage, public projection, and final artifact serialization.
+- `application/single_app/functions_tabular_semantic_validation.py` for exact verifier responses, targeted repair, exhaustion policy, and safe aggregate counts.
 - `application/single_app/functions_workflow_runner.py` for bounded Analyze Markdown artifact finalization.
 - `functional_tests/test_analyze_deliverable_contract.py` for the executable regression oracle.
 - `functional_tests/test_tabular_phase3_public_schema_projection.py` for public schema projection and passthrough guard coverage.
@@ -132,6 +137,46 @@ Public generated-output status treats `generated_artifacts` as the authoritative
 
 If a required member remains missing or unpublished, the set validation state becomes `invalid`, the lifecycle becomes `rollback_required`, and no generated artifact is projected as a completed request.
 
+### Reviewed Correctness Planning
+
+New active generated-output runs persist `tabular-generation-plan-v2` in a
+versioned plan blob. The plan contains:
+
+- exact public output fields and field order
+- a normalized `tabular-transform-v1` specification
+- server or model ownership for every field
+- source, request, model, batch-budget, and response-protocol fingerprints
+- an independent plan review with exact represented-field coverage
+
+The reviewer checks requested field and rule coverage, condition precedence,
+date boundaries, source references, and unrequested inference. Planner or
+review exhaustion fails active required output before row generation. Existing
+version 1 plans retain their persisted schema and behavior and remain resumable.
+New version 2 plans require explicit transformation ownership for every field
+and an initialized deliverable contract; missing ownership or contract state
+fails before active row generation.
+When active generation planning is enabled before shared-preflight rollout, a
+new legacy-direct run receives the equivalent server-owned Search or Analyze
+deliverable contract at queue time. Persisted older runs are not modified.
+
+Deterministic fields use the allowlisted evaluator and do not enter row-model
+generation. Semantic and hybrid fields use a separate verifier response with
+field-level `pass`, `fail`, `uncertain`, or `unsupported` status. Active mode
+repairs only failed or uncertain row-field pairs, re-verifies the repaired
+candidate, detects repeated responses, and fails closed when bounded attempts
+are exhausted. Shadow mode records safe counts without changing generated rows.
+
+Before verification, each semantic candidate is written to a plan-hash-fenced
+per-batch checkpoint. Repaired candidates replace that checkpoint after every
+attempt. A restarted worker reloads the checkpoint before constructing a new
+row-generation prompt, preserving successful fields while re-verifying the
+current candidate. Combined Analyze runs use the same structured candidate
+checkpoint while their analysis summary may be regenerated.
+
+Verifier responses, repair payloads, row values, and reasoning are not stored
+in run metadata. Durable batch summaries and telemetry retain only bounded
+pass, fail, uncertain, unsupported, target, and attempt counts.
+
 ### Browser Artifact-Set Rendering
 
 The chat UI treats `generated_artifacts` as the authoritative completed set when present. It falls back to the legacy singular `generated_artifact` only for old status payloads. The client deduplicates members by artifact message id first, then stable artifact id, and only renders completed artifacts when the run status is `completed` and any supplied artifact-set lifecycle is also `completed`.
@@ -162,6 +207,18 @@ The default settings keep telemetry off:
 enable_analysis_deliverable_contract_telemetry = False
 analysis_deliverable_contract_mode = "off"
 ```
+
+Phase 7B semantic validation is also backend-only and defaults off:
+
+```python
+tabular_semantic_validation_mode = "off"
+tabular_semantic_repair_max_attempts = 2
+tabular_semantic_repair_max_rows = 100
+```
+
+Operators may move validation through `off`, `shadow`, and `active` after the
+Phase 7D rollout gates. The effective mode and bounds are snapshotted on each
+new run; accepted runs are never reinterpreted from current settings.
 
 ## Testing and Validation
 
@@ -201,6 +258,18 @@ The committed 200-row fixture builder in `functional_tests/test_support/analyze_
 - Each member retains unique Download and View actions.
 - The client emits bounded artifact-set UI events without filenames or storage details.
 
+`functional_tests/test_tabular_phase7b_production_correctness.py` verifies the
+real shared Search and Analyze facade with no injected output hints. The
+200-row financial-review fixture produces exactly nine requested fields, zero
+value mismatches, four durable output checkpoints, no row-model-owned fields,
+equivalent Search/Analyze structured output, and the additional Analyze
+Markdown member.
+
+`functional_tests/test_tabular_semantic_validation_phase7b.py` verifies exact
+verifier contracts, evidence-field bounds, active targeted repair,
+re-verification, shadow observation, repair exhaustion, service separation,
+pre-checkpoint ownership, and safe count-only batch summaries.
+
 ## Known Limitations
 
-Phase 6 introduces plural rendering for the existing chat completion paths. It does not yet expand durable execution to every requested format or add full cleanup sweepers for abandoned staged members; those remain later-phase work.
+Phase 7B does not yet expand durable execution to every requested format or add full cleanup sweepers and direct-route lifecycle authorization for abandoned staged members. Those publication concerns remain Phase 7C work.

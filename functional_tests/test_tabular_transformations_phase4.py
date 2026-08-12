@@ -2,8 +2,8 @@
 # test_tabular_transformations_phase4.py
 """
 Functional test for Phase 4 tabular transformation correctness.
-Version: 0.250.174
-Implemented in: 0.250.174
+Version: 0.250.179
+Implemented in: 0.250.174; semantic object/array ownership compatibility updated in 0.250.179
 
 This test ensures deterministic tabular transformation specs are bounded,
 server-evaluable, persisted in deliverable contracts, and sufficient to
@@ -421,12 +421,58 @@ def test_model_field_selection_excludes_deterministic_fields():
     ) == ["Narrative"]
 
 
+def test_semantic_object_and_array_types_do_not_expand_comparison_coercion():
+    print("Testing semantic object/array field ownership and scalar comparison safety...")
+    assert_app_version_at_least("0.250.179")
+
+    normalized_spec = normalize_tabular_transformation_spec(
+        {
+            "version": TABULAR_TRANSFORMATION_SPEC_VERSION,
+            "fields": [
+                {"name": "Metadata", "mode": "semantic", "type": "object", "nullable": False},
+                {"name": "Tags", "mode": "semantic", "type": "array", "nullable": True},
+            ],
+        },
+        public_output_schema=["Metadata", "Tags"],
+    )
+    assert get_tabular_transformation_model_fields(
+        normalized_spec,
+        public_output_schema=["Metadata", "Tags"],
+    ) == ["Metadata", "Tags"]
+
+    unsafe_comparison_spec = {
+        "version": TABULAR_TRANSFORMATION_SPEC_VERSION,
+        "fields": [{
+            "name": "Invalid",
+            "mode": "deterministic",
+            "type": "boolean",
+            "expression": {
+                "op": "eq",
+                "left": {"source": "Payload"},
+                "right": {"value": {}},
+                "value_type": "object",
+            },
+        }],
+    }
+    try:
+        normalize_tabular_transformation_spec(
+            unsafe_comparison_spec,
+            public_output_schema=["Invalid"],
+            source_schema=["Payload"],
+        )
+    except TabularTransformationSpecError:
+        pass
+    else:
+        raise AssertionError("Object comparison coercion must remain unsupported")
+
+
 def run_tests():
     tests = [
         test_financial_review_transformation_matches_oracle,
         test_transformation_spec_rejects_unsafe_and_ambiguous_contracts,
         test_contract_and_planner_persist_transformation_spec,
         test_model_field_selection_excludes_deterministic_fields,
+        test_semantic_object_and_array_types_do_not_expand_comparison_coercion,
     ]
     results = []
     for test in tests:
