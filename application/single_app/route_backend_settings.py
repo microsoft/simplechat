@@ -10,6 +10,10 @@ from functions_model_endpoint_runtime import (
     build_model_endpoint_sync_chat_client,
     resolve_model_endpoint_from_context,
 )
+from functions_model_endpoint_types import (
+    get_model_endpoint_api_type,
+    resolve_model_endpoint_request_model,
+)
 from functions_activity_logging import (
     log_admin_feedback_email_submission,
     log_general_admin_action,
@@ -1389,6 +1393,7 @@ def _test_multimodal_vision_connection(payload):
 
     # Create a simple test image (1x1 red pixel PNG)
     test_image_base64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg=="
+    is_custom_model_endpoint = False
 
     try:
         multi_endpoint_selection = payload.get('multi_endpoint') if isinstance(payload.get('multi_endpoint'), dict) else None
@@ -1407,6 +1412,9 @@ def _test_multimodal_vision_connection(payload):
             resolved_endpoint = resolve_model_endpoint_from_context(settings, model_context)
             if not resolved_endpoint:
                 return jsonify({'error': 'Selected vision model endpoint could not be resolved from saved settings'}), 400
+            is_custom_model_endpoint = (
+                str(resolved_endpoint.get('provider') or '').strip().lower() == 'custom'
+            )
 
             resolved_models = resolved_endpoint.get('models', []) or []
             matched_model = next(
@@ -1420,18 +1428,14 @@ def _test_multimodal_vision_connection(payload):
                 matched_model = next(
                     (
                         model for model in resolved_models
-                        if str(model.get('deploymentName') or model.get('deployment') or '').strip() == model_context['model_deployment']
+                        if resolve_model_endpoint_request_model(resolved_endpoint, model) == model_context['model_deployment']
                     ),
                     None,
                 )
             if not matched_model:
                 return jsonify({'error': 'Selected vision model could not be resolved from saved settings'}), 400
 
-            vision_model = str(
-                matched_model.get('deploymentName')
-                or matched_model.get('deployment')
-                or model_context['model_deployment']
-            ).strip()
+            vision_model = resolve_model_endpoint_request_model(resolved_endpoint, matched_model)
             vision_model_name = str(matched_model.get('modelName') or vision_model).strip()
             connection = resolved_endpoint.get('connection', {}) or {}
             gpt_client, _ = build_model_endpoint_sync_chat_client(
@@ -1440,6 +1444,11 @@ def _test_multimodal_vision_connection(payload):
                 connection.get('endpoint'),
                 connection.get('openai_api_version') or connection.get('api_version'),
                 deployment_name=vision_model,
+                api_type=get_model_endpoint_api_type(resolved_endpoint),
+                anthropic_version=connection.get('anthropic_version') or '',
+                allow_private_custom_endpoints=bool(
+                    settings.get('allow_private_custom_model_endpoints', False)
+                ),
             )
         elif enable_apim:
             apim_data = payload.get('apim', {})
@@ -1525,6 +1534,15 @@ def _test_multimodal_vision_connection(payload):
         }), 200
 
     except Exception as e:
+        if is_custom_model_endpoint:
+            log_event(
+                "[MODEL_ENDPOINT] Custom vision model test failed",
+                extra={"exception_type": type(e).__name__},
+                level=logging.WARNING,
+            )
+            return jsonify({
+                'error': 'The Custom vision model test failed. Review the endpoint and model configuration.'
+            }), 500
         return jsonify({'error': f'Vision test failed: {str(e)}'}), 500
 
 def get_index_client() -> SearchIndexClient:

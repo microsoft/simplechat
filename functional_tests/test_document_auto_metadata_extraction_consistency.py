@@ -2,8 +2,9 @@
 # test_document_auto_metadata_extraction_consistency.py
 """
 Functional test for document auto metadata extraction consistency.
-Version: 0.241.111
+Version: 0.250.168
 Implemented in: 0.241.110
+Updated in: 0.250.168
 
 This test ensures upload processing runs final metadata extraction consistently
 for all supported file types and preserves public workspace scope for media files.
@@ -11,15 +12,14 @@ for all supported file types and preserves public workspace scope for media file
 
 import ast
 import os
-import re
 import sys
+
+from test_support.versioning import assert_app_version_at_least
 
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SINGLE_APP_ROOT = os.path.join(ROOT_DIR, 'application', 'single_app')
 FUNCTIONS_DOCUMENTS_FILE = os.path.join(SINGLE_APP_ROOT, 'functions_documents.py')
-CONFIG_FILE = os.path.join(SINGLE_APP_ROOT, 'config.py')
-
 
 def read_file(path):
     with open(path, 'r', encoding='utf-8') as file_handle:
@@ -182,10 +182,7 @@ def test_config_version_bumped_for_auto_metadata_fix():
     """Verify config.py version was bumped for this fix."""
     print('Testing config version bump...')
 
-    config_source = read_file(CONFIG_FILE)
-    version_match = re.search(r'VERSION = "([0-9.]+)"', config_source)
-    assert version_match, 'Could not find VERSION in config.py'
-    assert version_match.group(1) == '0.241.111', 'Expected config.py version 0.241.111'
+    assert_app_version_at_least("0.241.111")
 
     print('Config version bump passed')
     return True

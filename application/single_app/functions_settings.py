@@ -1,6 +1,7 @@
 # functions_settings.py
 
 from functools import wraps
+import logging
 
 from flask import g, has_request_context, jsonify, request, session
 
@@ -14,6 +15,14 @@ from functions_document_actions import get_default_document_action_capabilities
 from functions_icon_utils import normalize_icon_payload
 from functions_latest_features_nav import LATEST_FEATURES_HIDDEN_VERSION_SETTING
 from functions_mcp_server_config import INBOUND_MCP_SETTINGS_DEFAULTS, normalize_inbound_mcp_settings
+from functions_model_endpoint_types import (
+    DEFAULT_ANTHROPIC_VERSION,
+    MODEL_ENDPOINT_API_TYPE_ANTHROPIC,
+    MODEL_ENDPOINT_API_TYPE_AZURE_OPENAI,
+    MODEL_ENDPOINT_PROVIDER_CUSTOM,
+    get_model_endpoint_api_type,
+    normalize_model_endpoint_api_type,
+)
 from functions_service_health import get_default_service_health
 import app_settings_cache
 import inspect
@@ -1072,6 +1081,7 @@ def get_settings(use_cosmos=False, include_source=False):
         },
         'allow_user_agents': False,
         'allow_user_custom_endpoints': False,
+        'allow_private_custom_model_endpoints': False,
         'allow_user_custom_agent_endpoints': False,
         'allow_user_plugins': False,
         'allow_user_workflows': False,
@@ -2164,6 +2174,24 @@ def normalize_model_endpoint_auth_for_environment(endpoint_copy):
 
     provider = str(endpoint_copy.get("provider") or "").strip().lower()
     auth_type = str(auth.get("type") or "").strip().lower()
+    if provider == MODEL_ENDPOINT_PROVIDER_CUSTOM:
+        if auth.get("type") != "api_key":
+            auth["type"] = "api_key"
+            changed = True
+        for field_name in (
+            "management_cloud",
+            "custom_authority",
+            "foundry_scope",
+            "tenant_id",
+            "client_id",
+            "client_secret",
+            "managed_identity_client_id",
+        ):
+            if field_name in auth:
+                auth.pop(field_name, None)
+                changed = True
+        return changed
+
     current_cloud = normalize_model_endpoint_management_cloud(auth.get("management_cloud"))
     default_cloud = get_model_endpoint_management_cloud_for_environment()
     cloud_user_editable = is_model_endpoint_management_cloud_user_editable(provider, auth_type)
@@ -2243,6 +2271,48 @@ def normalize_model_endpoints(endpoints):
         endpoint_copy.pop("has_api_key", None)
         endpoint_copy.pop("has_client_secret", None)
         connection = endpoint_copy.get("connection") or {}
+        provider = str(endpoint_copy.get("provider") or "aoai").strip().lower()
+        if endpoint_copy.get("provider") != provider:
+            endpoint_copy["provider"] = provider
+            changed = True
+        if provider == MODEL_ENDPOINT_PROVIDER_CUSTOM:
+            api_type = normalize_model_endpoint_api_type(
+                provider,
+                endpoint_copy.get("api_type"),
+            )
+            if endpoint_copy.get("api_type") != api_type:
+                endpoint_copy["api_type"] = api_type
+                changed = True
+            if not isinstance(connection, dict):
+                connection = {}
+                changed = True
+            connection = json.loads(json.dumps(connection))
+            if api_type == MODEL_ENDPOINT_API_TYPE_AZURE_OPENAI:
+                if "anthropic_version" in connection:
+                    connection.pop("anthropic_version", None)
+                    changed = True
+            elif api_type == MODEL_ENDPOINT_API_TYPE_ANTHROPIC:
+                anthropic_version = str(
+                    connection.get("anthropic_version")
+                    or DEFAULT_ANTHROPIC_VERSION
+                ).strip()
+                if connection.get("anthropic_version") != anthropic_version:
+                    connection["anthropic_version"] = anthropic_version
+                    changed = True
+                for field_name in ("api_version", "openai_api_version"):
+                    if field_name in connection:
+                        connection.pop(field_name, None)
+                        changed = True
+            else:
+                for field_name in (
+                    "api_version",
+                    "openai_api_version",
+                    "anthropic_version",
+                ):
+                    if field_name in connection:
+                        connection.pop(field_name, None)
+                        changed = True
+            endpoint_copy["connection"] = connection
 
         if not endpoint_copy.get("id"):
             fallback_id = endpoint_copy.get("name") or connection.get("endpoint")
@@ -2259,10 +2329,38 @@ def normalize_model_endpoints(endpoints):
 
         models = endpoint_copy.get("models") or []
         normalized_models = []
+        custom_api_type = get_model_endpoint_api_type(endpoint_copy)
         for model in models:
             if not isinstance(model, dict):
                 continue
             model_copy = json.loads(json.dumps(model))
+            if provider == MODEL_ENDPOINT_PROVIDER_CUSTOM:
+                if custom_api_type == MODEL_ENDPOINT_API_TYPE_AZURE_OPENAI:
+                    deployment_name = str(
+                        model_copy.get("deploymentName")
+                        or model_copy.get("deployment")
+                        or ""
+                    ).strip()
+                    if deployment_name and model_copy.get("deploymentName") != deployment_name:
+                        model_copy["deploymentName"] = deployment_name
+                        changed = True
+                    for field_name in ("deployment", "modelName", "name"):
+                        if field_name in model_copy:
+                            model_copy.pop(field_name, None)
+                            changed = True
+                else:
+                    model_name = str(
+                        model_copy.get("modelName")
+                        or model_copy.get("name")
+                        or ""
+                    ).strip()
+                    if model_name and model_copy.get("modelName") != model_name:
+                        model_copy["modelName"] = model_name
+                        changed = True
+                    for field_name in ("deploymentName", "deployment", "name"):
+                        if field_name in model_copy:
+                            model_copy.pop(field_name, None)
+                            changed = True
             if not model_copy.get("id"):
                 model_id = (
                     model_copy.get("deploymentName")
@@ -2308,7 +2406,12 @@ def normalize_model_endpoints(endpoints):
 def is_frontend_visible_model_endpoint_provider(provider):
     """Return whether the provider should be exposed in user-facing endpoint UIs."""
     normalized_provider = (provider or "aoai").lower()
-    return normalized_provider in {"aoai", "aifoundry", "new_foundry"}
+    return normalized_provider in {
+        "aoai",
+        "aifoundry",
+        "new_foundry",
+        MODEL_ENDPOINT_PROVIDER_CUSTOM,
+    }
 
 
 def merge_model_endpoint_auth(existing_auth, incoming_auth):

@@ -5,6 +5,7 @@ from config import *
 from functions_authentication import *
 from functions_content import *
 from functions_settings import *
+from functions_model_endpoint_types import resolve_model_endpoint_request_model
 from functions_agent_catalog import build_accessible_agent_catalog
 from functions_ai_notice import get_ai_notice_config, is_ai_notice_dismissed
 from functions_collaboration import (
@@ -460,15 +461,22 @@ def _build_initial_chat_model_selection(*, chat_model_options, preferred_model_i
         selection_key = _normalize_chat_model_value(option.get('selection_key'))
         model_id = _normalize_chat_model_value(option.get('model_id'))
         display_name = _normalize_chat_model_value(
-            option.get('display_name') or option.get('deployment_name') or option.get('model_id')
+            option.get('display_name')
+            or option.get('request_model')
+            or option.get('deployment_name')
+            or option.get('model_id')
         ) or 'Select a Model'
         deployment_name = _normalize_chat_model_value(option.get('deployment_name'))
+        request_model = _normalize_chat_model_value(
+            option.get('request_model') or deployment_name
+        )
         scope_type = _normalize_chat_model_value(option.get('scope_type'))
         scope_name = _normalize_chat_model_value(option.get('scope_name'))
 
         search_parts = [
             display_name,
             model_id,
+            request_model,
             deployment_name,
             scope_name or scope_type,
         ]
@@ -476,6 +484,7 @@ def _build_initial_chat_model_selection(*, chat_model_options, preferred_model_i
             'selection_key': selection_key,
             'model_id': model_id,
             'display_name': display_name,
+            'request_model': request_model,
             'deployment_name': deployment_name,
             'endpoint_id': _normalize_chat_model_value(option.get('endpoint_id')),
             'provider': _normalize_chat_model_value(option.get('provider')),
@@ -483,23 +492,28 @@ def _build_initial_chat_model_selection(*, chat_model_options, preferred_model_i
             'scope_id': _normalize_chat_model_value(option.get('scope_id')),
             'scope_name': scope_name,
             'icon': option.get('icon') if isinstance(option.get('icon'), dict) else {},
-            'option_value': deployment_name or model_id or selection_key,
+            'option_value': request_model or deployment_name or model_id or selection_key,
             'search_text': ' '.join(part for part in search_parts if part),
         }
 
     def sort_key(option):
         scope_type = _normalize_chat_model_value(option.get('scope_type'))
         display_name = _normalize_chat_model_value(
-            option.get('display_name') or option.get('deployment_name') or option.get('model_id')
+            option.get('display_name')
+            or option.get('request_model')
+            or option.get('deployment_name')
+            or option.get('model_id')
         ).lower()
         scope_name = _normalize_chat_model_value(option.get('scope_name')).lower()
         model_id = _normalize_chat_model_value(option.get('model_id')).lower()
         deployment_name = _normalize_chat_model_value(option.get('deployment_name')).lower()
+        request_model = _normalize_chat_model_value(option.get('request_model')).lower()
         return (
             scope_order.get(scope_type, 99),
             scope_name,
             display_name,
             model_id,
+            request_model,
             deployment_name,
         )
 
@@ -521,7 +535,13 @@ def _build_initial_chat_model_selection(*, chat_model_options, preferred_model_i
     if normalized_preferred_model_deployment:
         for option in sorted_options:
             deployment_name = _normalize_chat_model_value(option.get('deployment_name'))
-            if deployment_name == normalized_preferred_model_deployment:
+            request_model = _normalize_chat_model_value(
+                option.get('request_model') or deployment_name
+            )
+            if (
+                deployment_name == normalized_preferred_model_deployment
+                or request_model == normalized_preferred_model_deployment
+            ):
                 return serialize_option(option)
 
     return serialize_option(sorted_options[0])
@@ -551,13 +571,15 @@ def _build_chat_model_catalog(*, user_id, settings, user_settings_dict, user_gro
 
                 model_id = model.get('id') or model.get('deploymentName') or model.get('deployment') or model.get('modelName') or model.get('name') or ''
                 deployment_name = model.get('deploymentName') or model.get('deployment') or ''
-                display_name = model.get('displayName') or model.get('modelName') or deployment_name or model.get('name') or model_id
-                selection_key = f"{scope_type}:{scope_id or ''}:{endpoint_id}:{model_id or deployment_name}"
+                request_model = resolve_model_endpoint_request_model(endpoint, model)
+                display_name = model.get('displayName') or model.get('modelName') or request_model or deployment_name or model.get('name') or model_id
+                selection_key = f"{scope_type}:{scope_id or ''}:{endpoint_id}:{model_id or deployment_name or request_model}"
 
                 catalog.append({
                     'selection_key': selection_key,
                     'model_id': model_id,
                     'display_name': display_name,
+                    'request_model': request_model,
                     'deployment_name': deployment_name,
                     'endpoint_id': endpoint_id,
                     'provider': provider,
@@ -751,6 +773,7 @@ def register_route_frontend_chats(bp):
                     multi_endpoint_models.append({
                         "id": model.get("id"),
                         "display_name": model.get("displayName") or model.get("deploymentName") or model.get("modelName") or "",
+                        "request_model": resolve_model_endpoint_request_model(endpoint, model),
                         "deployment_name": model.get("deploymentName") or "",
                         "endpoint_id": endpoint.get("id"),
                         "provider": endpoint.get("provider"),

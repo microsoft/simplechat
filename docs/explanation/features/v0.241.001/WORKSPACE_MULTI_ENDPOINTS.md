@@ -5,7 +5,7 @@ Workspace multi-endpoint management extends the admin multi-endpoint system to p
 
 **Implemented in version: 0.236.045**
 
-**Updated in version: 0.242.071**
+**Updated in version: 0.250.168**
 
 ## Dependencies
 - Global model endpoints configured in admin settings
@@ -19,6 +19,8 @@ Workspace multi-endpoint management extends the admin multi-endpoint system to p
 - Group endpoints are stored on group documents under `model_endpoints`.
 - Agent modal requests a combined, sanitized endpoint list for model selection.
 - Foundry agent lookup uses endpoint IDs to resolve authentication and list agents.
+- Custom endpoints use an explicit OpenAI API, Azure OpenAI API, or Anthropic contract and manual model entry.
+- Runtime calls resolve the saved endpoint and model by scope; client-supplied connection details do not replace stored personal or group configuration.
 
 ### API Endpoints
 - `GET /api/user/model-endpoints` / `POST /api/user/model-endpoints`
@@ -32,6 +34,8 @@ Workspace multi-endpoint management extends the admin multi-endpoint system to p
 ### Configuration
 - Global toggle: `enable_multi_model_endpoints` in [application/single_app/config.py](application/single_app/config.py)
 - Workspace endpoints stored per user and per group
+- `allow_user_custom_endpoints` and `allow_group_custom_endpoints` control personal and group endpoint management.
+- `allow_private_custom_model_endpoints` is an administrator-controlled network policy shared by all Custom endpoint scopes.
 
 ### File Structure
 - Frontend templates: [application/single_app/templates/workspace.html](application/single_app/templates/workspace.html), [application/single_app/templates/group_workspaces.html](application/single_app/templates/group_workspaces.html), [application/single_app/templates/_agent_modal.html](application/single_app/templates/_agent_modal.html)
@@ -43,6 +47,8 @@ Workspace multi-endpoint management extends the admin multi-endpoint system to p
 1. Admin enables multi-endpoint model management in admin settings.
 2. Users open Personal Workspace or Group Workspace and add endpoints under the new Workspace/Group Model Endpoints card.
 3. In the agent modal, select a model from the combined endpoint list.
+
+For a Custom endpoint, choose its API Type, enter the HTTPS endpoint and API key, and add each model manually. OpenAI API and Anthropic use Model Name; Azure OpenAI API uses Deployment Name.
 
 Use the **Setup Guide** button in the endpoint table or Model Endpoint modal for in-product RBAC reminders. For Azure OpenAI, Foundry (classic), or New Foundry managed identity and service principal setup, see [Configure Model Endpoint Identity]({{ '/how-to/model_endpoint_identity_setup/' | relative_url }}). The same RBAC guidance applies to global, personal, and group-scoped endpoints.
 
@@ -63,7 +69,8 @@ Use the **Setup Guide** button in the endpoint table or Model Endpoint modal for
   - Verify Foundry agent list import using configured endpoints.
 
 ## Performance Considerations
-- Model discovery uses on-demand API calls to Azure/Foundry endpoints.
+- Model discovery uses on-demand API calls to Azure/Foundry endpoints. Custom endpoints do not perform discovery.
 
 ## Known Limitations
 - Workspace endpoints require configured credentials; only stored secrets are used for runtime resolution.
+- Custom endpoints support API-key authentication and manual chat-model entry only.

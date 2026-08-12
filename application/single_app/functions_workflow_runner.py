@@ -153,6 +153,10 @@ from functions_model_endpoint_runtime import (
     build_model_endpoint_sync_chat_client,
     build_semantic_kernel_chat_service_for_model,
 )
+from functions_model_endpoint_types import (
+    get_model_endpoint_api_type,
+    resolve_model_endpoint_request_model,
+)
 from functions_notifications import create_workflow_priority_notification
 from functions_personal_workflows import (
     get_personal_workflow,
@@ -5524,14 +5528,11 @@ def _build_multi_endpoint_client(user_id, endpoint_id, model_id, settings, group
     connection = resolved_endpoint.get('connection', {}) if isinstance(resolved_endpoint, dict) else {}
     auth = resolved_endpoint.get('auth', {}) if isinstance(resolved_endpoint, dict) else {}
     provider = str(resolved_endpoint.get('provider') or endpoint_cfg.get('provider') or 'aoai').strip().lower()
-    deployment_name = (
-        model_cfg.get('deploymentName')
-        or model_cfg.get('deployment')
-        or model_cfg.get('displayName')
-        or model_id
-    )
-    api_version = connection.get('api_version') or connection.get('openai_api_version') or settings.get('azure_openai_gpt_api_version')
+    deployment_name = resolve_model_endpoint_request_model(resolved_endpoint, model_cfg)
+    api_version = connection.get('api_version') or connection.get('openai_api_version') or ''
     endpoint = connection.get('endpoint')
+    api_type = get_model_endpoint_api_type(resolved_endpoint)
+    anthropic_version = connection.get('anthropic_version') or ''
     auth_type = str(auth.get('type') or 'api_key').strip().lower()
     auth_settings = {
         **auth,
@@ -5546,6 +5547,11 @@ def _build_multi_endpoint_client(user_id, endpoint_id, model_id, settings, group
         endpoint,
         api_version,
         deployment_name=deployment_name,
+        api_type=api_type,
+        anthropic_version=anthropic_version,
+        allow_private_custom_endpoints=bool(
+            settings.get('allow_private_custom_model_endpoints', False)
+        ),
     )
 
     return client, deployment_name, provider

@@ -1,8 +1,8 @@
 # test_workspace_multi_endpoints.py
 """
 Functional test for workspace multi-endpoint routing.
-Version: 0.239.155
-Implemented in: 0.239.155
+Version: 0.250.168
+Implemented in: 0.239.155; updated in 0.250.168
 
 This test ensures that workspace multi-endpoint payloads are sanitized and that
 agent payloads accept multi-endpoint selection fields.
@@ -10,9 +10,6 @@ agent payloads accept multi-endpoint selection fields.
 
 import sys
 import os
-import importlib
-import json
-import types
 
 repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 single_app_root = os.path.join(repo_root, "application", "single_app")
@@ -20,6 +17,9 @@ sys.path.append(repo_root)
 sys.path.append(single_app_root)
 
 from application.single_app.functions_agent_payload import sanitize_agent_payload
+from test_model_endpoint_normalization_backend import (
+    _load_functions_settings_module as load_functions_settings_module,
+)
 
 
 def _restore_modules(original_modules):
@@ -31,29 +31,7 @@ def _restore_modules(original_modules):
 
 
 def _load_functions_settings_module():
-    config_stub = types.ModuleType("config")
-    config_stub.json = json
-
-    appinsights_stub = types.ModuleType("functions_appinsights")
-    appinsights_stub.log_event = lambda *args, **kwargs: None
-
-    cache_stub = types.ModuleType("app_settings_cache")
-    cache_stub.get_settings_cache = lambda: None
-    cache_stub.update_settings_cache = lambda settings: None
-
-    original_modules = {}
-    for module_name, module_stub in {
-        "config": config_stub,
-        "functions_appinsights": appinsights_stub,
-        "app_settings_cache": cache_stub,
-    }.items():
-        original_modules[module_name] = sys.modules.get(module_name)
-        sys.modules[module_name] = module_stub
-
-    original_modules["application.single_app.functions_settings"] = sys.modules.get("application.single_app.functions_settings")
-    sys.modules.pop("application.single_app.functions_settings", None)
-    module = importlib.import_module("application.single_app.functions_settings")
-    return module, original_modules
+    return load_functions_settings_module()
 
 
 def test_model_endpoint_sanitization():

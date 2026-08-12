@@ -2,6 +2,16 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.168)**
+
+#### New Features
+
+*   **Custom Model Endpoint Provider**
+    *   Added manually configured Custom endpoints for OpenAI API, Azure OpenAI API, and Anthropic chat models across global, personal, and group scopes.
+    *   Added type-specific model identifiers, API-key authentication, connection testing, response-length controls, and Anthropic Version support without model discovery.
+    *   Enforced HTTPS, DNS/address safety with connection-time address pinning, runtime URL revalidation, redirect refusal, Key Vault secret handling, and an administrator-controlled private-host policy.
+    *   (Ref: #1222, Custom model endpoints, `functions_model_endpoint_runtime.py`, `_multiendpoint_modal.html`, `CUSTOM_MODEL_ENDPOINT_PROVIDER.md`)
+
 ### **(v0.250.167)**
 
 #### Bug Fixes

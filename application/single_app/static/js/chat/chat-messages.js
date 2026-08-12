@@ -6367,7 +6367,10 @@ function getCurrentModelSelection() {
     modelId = selectedOption?.dataset?.modelId || selectedOption?.value || null;
     modelEndpointId = selectedOption?.dataset?.endpointId || null;
     modelProvider = selectedOption?.dataset?.provider || null;
-    modelDeployment = selectedOption?.dataset?.deploymentName || null;
+    modelDeployment = selectedOption?.dataset?.requestModel
+      || selectedOption?.value
+      || selectedOption?.dataset?.deploymentName
+      || null;
     modelIcon = parseSafeJsonObject(selectedOption?.dataset?.modelIcon || '');
   }
 
@@ -6528,7 +6531,14 @@ function buildCollaborativeModelTarget(option = {}) {
     return null;
   }
 
-  const modelDeployment = String(dataset.deploymentName || option.deployment_name || option.value || '').trim() || null;
+  const modelDeployment = String(
+    dataset.requestModel
+    || option.request_model
+    || dataset.deploymentName
+    || option.deployment_name
+    || option.value
+    || ''
+  ).trim() || null;
   const modelId = String(dataset.modelId || option.model_id || option.value || '').trim() || null;
   const modelEndpointId = String(dataset.endpointId || option.endpoint_id || '').trim() || null;
   const modelProvider = String(dataset.provider || option.provider || '').trim() || null;

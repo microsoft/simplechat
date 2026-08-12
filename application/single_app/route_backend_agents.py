@@ -262,6 +262,8 @@ def _format_model_provider_label(provider):
         return 'Foundry (classic)'
     if normalized_provider == 'new_foundry':
         return 'New Foundry'
+    if normalized_provider == 'custom':
+        return 'Custom'
     return 'Azure OpenAI'
 
 
@@ -2001,4 +2003,3 @@ def get_global_agent_settings(include_admin_extras=False, user_id=None, group_id
         "enable_multi_model_endpoints": effective_multi_flag,
         "model_endpoints": combined_endpoints,
     })
-

@@ -704,17 +704,22 @@ export function getAvailableModels({ apimEnabled, settings, agent }) {
 				return;
 			}
 			const endpointId = endpoint.id || '';
+			const apiType = (endpoint.api_type || '').toLowerCase();
 			const endpointModels = endpoint.models || [];
 			endpointModels.forEach(model => {
 				if (!model || model.enabled === false) return;
 				const modelId = model.id || model.deploymentName || model.deployment || model.modelName || model.name || '';
 				const deploymentName = model.deploymentName || model.deployment || '';
 				const modelName = model.modelName || model.name || '';
-				const displayName = model.displayName || deploymentName || modelName || modelId;
+				const requestModel = provider === 'custom' && ['openai', 'anthropic'].includes(apiType)
+					? modelName
+					: deploymentName || modelName;
+				const displayName = model.displayName || requestModel || modelId;
 				if (!displayName) return;
 				models.push({
 					id: modelId,
-					deployment: deploymentName,
+					deployment: requestModel,
+					request_model: requestModel,
 					name: modelName,
 					display_name: displayName,
 					endpoint_id: endpointId,
@@ -832,7 +837,10 @@ export function populateGlobalModelDropdown(selectEl, models, selectedModel) {
 		if (model.deployment) {
 			opt.dataset.deploymentName = model.deployment;
 		}
-		if (selectedModel && (model.name === selectedModel || model.deployment === selectedModel || model.id === selectedModel)) {
+		if (model.request_model) {
+			opt.dataset.requestModel = model.request_model;
+		}
+		if (selectedModel && (model.name === selectedModel || model.request_model === selectedModel || model.deployment === selectedModel || model.id === selectedModel)) {
 			opt.selected = true;
 		}
 		selectEl.appendChild(opt);

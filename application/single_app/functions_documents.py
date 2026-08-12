@@ -33,6 +33,11 @@ from functions_authentication import *
 from functions_debug import *
 from functions_keyvault import SecretReturnType, keyvault_model_endpoint_get_helper
 from functions_model_endpoint_runtime import MODEL_ENDPOINT_PROVIDER_ALLOWLIST, build_model_endpoint_sync_chat_client
+from functions_model_endpoint_types import (
+    get_model_endpoint_api_type,
+    resolve_model_endpoint_request_model,
+)
+from model_endpoint_clients import MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI, infer_model_endpoint_protocol
 import azure.cognitiveservices.speech as speechsdk
 
 _AUDIO_RUNTIME_CAPABILITIES_CACHE = None
@@ -126,13 +131,26 @@ def _resolve_model_endpoint_scope(provider, auth_settings, endpoint=None):
     return "https://ai.azure.com/.default"
 
 
-def _build_model_endpoint_client(auth_settings, provider, endpoint, api_version, deployment_name):
+def _build_model_endpoint_client(
+    auth_settings,
+    provider,
+    endpoint,
+    api_version,
+    deployment_name,
+    *,
+    api_type='',
+    anthropic_version='',
+    allow_private_custom_endpoints=False,
+):
     client, _ = build_model_endpoint_sync_chat_client(
         auth_settings,
         provider,
         endpoint,
         api_version,
         deployment_name=deployment_name,
+        api_type=api_type,
+        anthropic_version=anthropic_version,
+        allow_private_custom_endpoints=allow_private_custom_endpoints,
     )
     return client
 
@@ -169,16 +187,37 @@ def _resolve_metadata_extraction_client(settings):
         provider = str(endpoint_cfg.get("provider") or selection["provider"] or "aoai").lower()
         connection = endpoint_cfg.get("connection", {}) or {}
         auth_settings = endpoint_cfg.get("auth", {}) or {}
-        deployment = str(model_cfg.get("deploymentName") or model_cfg.get("deployment") or "").strip()
+        deployment = resolve_model_endpoint_request_model(endpoint_cfg, model_cfg)
         endpoint = str(connection.get("endpoint") or "").strip()
         api_version = str(connection.get("openai_api_version") or connection.get("api_version") or "").strip()
+        api_type = get_model_endpoint_api_type(endpoint_cfg)
+        anthropic_version = str(connection.get("anthropic_version") or "").strip()
+        runtime_protocol = infer_model_endpoint_protocol(
+            provider,
+            endpoint,
+            deployment,
+            api_type,
+        )
 
         if provider not in MODEL_ENDPOINT_PROVIDER_ALLOWLIST:
             raise ValueError(f"Selected metadata extraction provider '{provider}' is not supported.")
-        if not endpoint or not api_version or not deployment:
-            raise ValueError("Selected metadata extraction endpoint is missing endpoint, API version, or deployment configuration.")
+        if not endpoint or not deployment or (
+            runtime_protocol == MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI and not api_version
+        ):
+            raise ValueError("Selected metadata extraction endpoint is incomplete.")
 
-        return _build_model_endpoint_client(auth_settings, provider, endpoint, api_version, deployment), deployment
+        return _build_model_endpoint_client(
+            auth_settings,
+            provider,
+            endpoint,
+            api_version,
+            deployment,
+            api_type=api_type,
+            anthropic_version=anthropic_version,
+            allow_private_custom_endpoints=bool(
+                settings.get("allow_private_custom_model_endpoints", False)
+            ),
+        ), deployment
 
     gpt_model = settings.get('metadata_extraction_model')
     if not gpt_model:

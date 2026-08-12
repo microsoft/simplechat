@@ -47,6 +47,11 @@ from functions_message_artifacts import (
 )
 from functions_settings import *
 from functions_keyvault import SecretReturnType, keyvault_model_endpoint_get_helper
+from functions_model_endpoint_runtime import build_model_endpoint_sync_chat_client
+from functions_model_endpoint_types import (
+    get_model_endpoint_api_type,
+    resolve_model_endpoint_request_model,
+)
 from functions_simplechat_operations import download_blob_content
 from functions_thoughts import get_thoughts_for_conversation
 from foundry_agent_runtime import resolve_authority
@@ -1125,13 +1130,24 @@ def _get_summary_model_endpoint_candidates(settings: Dict[str, Any], user_id: st
     return candidates
 
 
-def _summary_model_matches(model_cfg: Dict[str, Any], requested_model: str, requested_model_id: str) -> bool:
+def _summary_model_matches(
+    endpoint_cfg: Dict[str, Any],
+    model_cfg: Dict[str, Any],
+    requested_model: str,
+    requested_model_id: str,
+) -> bool:
+    request_model = ''
+    if _normalize_summary_model_value(endpoint_cfg.get('provider')).lower() == 'custom':
+        request_model = _normalize_summary_model_value(
+            resolve_model_endpoint_request_model(endpoint_cfg, model_cfg)
+        )
     model_values = {
         _normalize_summary_model_value(model_cfg.get('id')),
         _normalize_summary_model_value(model_cfg.get('deploymentName')),
         _normalize_summary_model_value(model_cfg.get('deployment')),
         _normalize_summary_model_value(model_cfg.get('modelName')),
         _normalize_summary_model_value(model_cfg.get('name')),
+        request_model,
     }
     model_values.discard('')
 
@@ -1149,7 +1165,12 @@ def _find_summary_endpoint_model(
     for model_cfg in models:
         if not isinstance(model_cfg, dict) or not model_cfg.get('enabled', True):
             continue
-        if _summary_model_matches(model_cfg, requested_model, requested_model_id):
+        if _summary_model_matches(
+            endpoint_cfg,
+            model_cfg,
+            requested_model,
+            requested_model_id,
+        ):
             return model_cfg
     return None
 
@@ -1185,55 +1206,88 @@ def _build_summary_model_endpoint_client(
     endpoint: str,
     api_version: str,
     deployment_name: str,
+    *,
+    api_type: str = '',
+    anthropic_version: str = '',
+    allow_private_custom_endpoints: bool = False,
 ):
     auth_settings = auth_settings or {}
-    auth_type = _normalize_summary_model_value(auth_settings.get('type') or 'managed_identity').lower()
     normalized_provider = _normalize_summary_model_value(provider or 'aoai').lower()
-    runtime_protocol = infer_model_endpoint_protocol(normalized_provider, endpoint, deployment_name)
+    if normalized_provider != 'custom':
+        auth_type = _normalize_summary_model_value(
+            auth_settings.get('type') or 'managed_identity'
+        ).lower()
+        runtime_protocol = infer_model_endpoint_protocol(
+            normalized_provider,
+            endpoint,
+            deployment_name,
+        )
 
-    if auth_type in ('api_key', 'key'):
-        api_key = auth_settings.get('api_key')
-        if not api_key:
-            raise ValueError('Selected summary model endpoint is missing an API key.')
+        if auth_type in ('api_key', 'key'):
+            api_key = auth_settings.get('api_key')
+            if not api_key:
+                raise ValueError('Selected summary model endpoint is missing an API key.')
+            if runtime_protocol == MODEL_ENDPOINT_PROTOCOL_ANTHROPIC:
+                return build_anthropic_chat_client(endpoint=endpoint, api_key=api_key)
+            if runtime_protocol == MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE:
+                return build_openai_style_chat_client(api_key, endpoint, api_version)
+            return AzureOpenAI(
+                api_version=api_version,
+                azure_endpoint=endpoint,
+                api_key=api_key,
+            )
+
+        if auth_type == 'service_principal':
+            credential = ClientSecretCredential(
+                tenant_id=auth_settings.get('tenant_id'),
+                client_id=auth_settings.get('client_id'),
+                client_secret=auth_settings.get('client_secret'),
+                authority=resolve_authority(auth_settings),
+            )
+        else:
+            managed_identity_client_id = auth_settings.get(
+                'managed_identity_client_id'
+            ) or None
+            credential = DefaultAzureCredential(
+                managed_identity_client_id=managed_identity_client_id
+            )
+
+        scope = cognitive_services_scope
+        if (
+            normalized_provider in ('aifoundry', 'new_foundry')
+            or runtime_protocol != MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI
+        ):
+            scope = _resolve_summary_foundry_scope_for_auth(
+                auth_settings,
+                endpoint=endpoint,
+            )
+
         if runtime_protocol == MODEL_ENDPOINT_PROTOCOL_ANTHROPIC:
-            return build_anthropic_chat_client(endpoint=endpoint, api_key=api_key)
+            token = credential.get_token(scope).token
+            return build_anthropic_chat_client(endpoint=endpoint, bearer_token=token)
+
         if runtime_protocol == MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE:
-            return build_openai_style_chat_client(api_key, endpoint, api_version)
+            token = credential.get_token(scope).token
+            return build_openai_style_chat_client(token, endpoint, api_version)
+
+        token_provider = get_bearer_token_provider(credential, scope)
         return AzureOpenAI(
             api_version=api_version,
             azure_endpoint=endpoint,
-            api_key=api_key,
+            azure_ad_token_provider=token_provider,
         )
 
-    if auth_type == 'service_principal':
-        credential = ClientSecretCredential(
-            tenant_id=auth_settings.get('tenant_id'),
-            client_id=auth_settings.get('client_id'),
-            client_secret=auth_settings.get('client_secret'),
-            authority=resolve_authority(auth_settings),
-        )
-    else:
-        managed_identity_client_id = auth_settings.get('managed_identity_client_id') or None
-        credential = DefaultAzureCredential(managed_identity_client_id=managed_identity_client_id)
-
-    scope = cognitive_services_scope
-    if normalized_provider in ('aifoundry', 'new_foundry') or runtime_protocol != MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI:
-        scope = _resolve_summary_foundry_scope_for_auth(auth_settings, endpoint=endpoint)
-
-    if runtime_protocol == MODEL_ENDPOINT_PROTOCOL_ANTHROPIC:
-        token = credential.get_token(scope).token
-        return build_anthropic_chat_client(endpoint=endpoint, bearer_token=token)
-
-    if runtime_protocol == MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE:
-        token = credential.get_token(scope).token
-        return build_openai_style_chat_client(token, endpoint, api_version)
-
-    token_provider = get_bearer_token_provider(credential, scope)
-    return AzureOpenAI(
-        api_version=api_version,
-        azure_endpoint=endpoint,
-        azure_ad_token_provider=token_provider,
+    client, _ = build_model_endpoint_sync_chat_client(
+        auth_settings,
+        provider,
+        endpoint,
+        api_version,
+        deployment_name=deployment_name,
+        api_type=api_type,
+        anthropic_version=anthropic_version,
+        allow_private_custom_endpoints=allow_private_custom_endpoints,
     )
+    return client
 
 
 def _resolve_summary_multi_endpoint_client(
@@ -1297,12 +1351,34 @@ def _resolve_summary_multi_endpoint_client(
         provider = _normalize_summary_model_value(resolved_endpoint_cfg.get('provider') or requested_provider or 'aoai').lower()
         connection = resolved_endpoint_cfg.get('connection', {}) or {}
         auth_settings = resolved_endpoint_cfg.get('auth', {}) or {}
-        deployment = _normalize_summary_model_value(
-            model_cfg.get('deploymentName') or model_cfg.get('deployment') or model_cfg.get('id')
-        )
+        if provider == 'custom':
+            deployment = resolve_model_endpoint_request_model(
+                resolved_endpoint_cfg,
+                model_cfg,
+            )
+        else:
+            deployment = _normalize_summary_model_value(
+                model_cfg.get('deploymentName')
+                or model_cfg.get('deployment')
+                or model_cfg.get('modelName')
+                or model_cfg.get('name')
+            )
         endpoint = _normalize_summary_model_value(connection.get('endpoint'))
         api_version = _normalize_summary_model_value(connection.get('openai_api_version') or connection.get('api_version'))
-        runtime_protocol = infer_model_endpoint_protocol(provider, endpoint, deployment)
+        api_type = (
+            get_model_endpoint_api_type(resolved_endpoint_cfg)
+            if provider == 'custom'
+            else ''
+        )
+        anthropic_version = _normalize_summary_model_value(
+            connection.get('anthropic_version')
+        )
+        runtime_protocol = infer_model_endpoint_protocol(
+            provider,
+            endpoint,
+            deployment,
+            api_type,
+        )
 
         missing_required_config = not endpoint or not deployment or (
             runtime_protocol == MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI and not api_version
@@ -1318,11 +1394,16 @@ def _resolve_summary_multi_endpoint_client(
             endpoint,
             api_version,
             deployment,
+            api_type=api_type,
+            anthropic_version=anthropic_version,
+            allow_private_custom_endpoints=bool(
+                settings.get('allow_private_custom_model_endpoints', False)
+            ),
         )
         debug_print(
             f"[SUMMARY][Model Resolution] Resolved {selection_source} multi-endpoint model | "
             f"provider={provider} | endpoint_id={endpoint_id} | model_id={model_cfg.get('id')} | "
-            f"deployment={deployment} | api_version={api_version} | protocol={runtime_protocol}"
+            f"request_model={deployment} | api_version={api_version} | api_type={api_type} | protocol={runtime_protocol}"
         )
         return gpt_client, deployment
 
