@@ -2,7 +2,7 @@
 # test_tabular_phase7_lifecycle_coverage.py
 """
 Functional test for Phase 7 tabular lifecycle coverage hardening.
-Version: 0.250.163
+Version: 0.250.166
 Implemented in: 0.250.163
 
 This test ensures shared tabular planner coverage starts as planned pending
