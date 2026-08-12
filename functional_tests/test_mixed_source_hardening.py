@@ -2,8 +2,8 @@
 # test_mixed_source_hardening.py
 """
 Functional tests for mixed-source hardening, extraction, and rollout.
-Version: 0.250.160
-Implemented in: 0.250.070; direct-run telemetry isolation updated in 0.250.160
+Version: 0.250.166
+Implemented in: 0.250.070; direct-run telemetry isolation updated in 0.250.160; aggregate tabular parity harness coverage updated in 0.250.166
 
 This test ensures Phase 6 of #1061 preserves the bounded Phase 1-5 evidence
 contracts from #1056, #1057, #1058, #1059, and #1060 under parent #1055.
@@ -929,6 +929,7 @@ def test_mixed_analyze_forwards_observed_native_token_usage():
         "partition_source_manifest": orchestration.partition_source_manifest,
         "run_document_analysis": lambda **kwargs: {},
         "_maybe_execute_pure_tabular_analyze_preflight": lambda *args, **kwargs: None,
+        "_get_pending_tabular_generated_output": lambda outputs: None,
         "_maybe_execute_tabular_document_action": execute_tabular,
         "build_evidence_envelope": orchestration.build_evidence_envelope,
         "build_mixed_source_evidence_handoff": orchestration.build_mixed_source_evidence_handoff,
@@ -1229,6 +1230,7 @@ def test_analyze_all_action_is_analyze_only_and_manifest_is_fresh():
         "partition_source_manifest": orchestration.partition_source_manifest,
         "run_document_analysis": lambda **kwargs: {},
         "_maybe_execute_pure_tabular_analyze_preflight": lambda *args, **kwargs: None,
+        "_get_pending_tabular_generated_output": lambda outputs: None,
         "_maybe_execute_tabular_document_action": execute_tabular,
         "build_evidence_envelope": orchestration.build_evidence_envelope,
         "build_mixed_source_evidence_handoff": orchestration.build_mixed_source_evidence_handoff,

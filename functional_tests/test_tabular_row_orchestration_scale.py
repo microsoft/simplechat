@@ -1,8 +1,8 @@
 # test_tabular_row_orchestration_scale.py
 """
 Functional test for scalable per-row tabular orchestration.
-Version: 0.250.159
-Implemented in: 0.250.060; generated CSV formula safety in 0.250.065; generated file export routing in 0.250.072; source descriptor generalization in 0.250.127; unified durable run contract in 0.250.128; hierarchical analysis in 0.250.129; combined analysis and export in 0.250.130; scale validation in 0.250.132; direct source-backed exhaustive queueing in 0.250.133; direct queue call-site hardening in 0.250.134; model-validation auto retry in 0.250.135; model-aware parallel throughput in 0.250.136; Phase 1 acceleration contracts and observability in 0.250.137; Phase 2 truthful background handoff in 0.250.138; Phase 3 durable LLM generation planning in 0.250.139; Phase 4 compact row response protocol in 0.250.140; Phase 5 completion-driven checkpointing in 0.250.141; Phase 6 rolling worker pool in 0.250.142; Phase 7 independent batch retries in 0.250.143; Phase 8 scale, chaos, and rollout in 0.250.144; background metadata streaming fix in 0.250.145; source-token echo recovery in 0.250.146; fixed-window stale heartbeat fix in 0.250.147; nested CSV output recovery in 0.250.148; generic tabular artifact routing and fast startup in 0.250.149; balanced concurrency waves and default completion checkpoints in 0.250.152; Search shared preflight adapter in 0.250.159
+Version: 0.250.166
+Implemented in: 0.250.060; generated CSV formula safety in 0.250.065; generated file export routing in 0.250.072; source descriptor generalization in 0.250.127; unified durable run contract in 0.250.128; hierarchical analysis in 0.250.129; combined analysis and export in 0.250.130; scale validation in 0.250.132; direct source-backed exhaustive queueing in 0.250.133; direct queue call-site hardening in 0.250.134; model-validation auto retry in 0.250.135; model-aware parallel throughput in 0.250.136; Phase 1 acceleration contracts and observability in 0.250.137; Phase 2 truthful background handoff in 0.250.138; Phase 3 durable LLM generation planning in 0.250.139; Phase 4 compact row response protocol in 0.250.140; Phase 5 completion-driven checkpointing in 0.250.141; Phase 6 rolling worker pool in 0.250.142; Phase 7 independent batch retries in 0.250.143; Phase 8 scale, chaos, and rollout in 0.250.144; background metadata streaming fix in 0.250.145; source-token echo recovery in 0.250.146; fixed-window stale heartbeat fix in 0.250.147; nested CSV output recovery in 0.250.148; generic tabular artifact routing and fast startup in 0.250.149; balanced concurrency waves and default completion checkpoints in 0.250.152; Search shared preflight adapter in 0.250.159; aggregate route-helper harness coverage in 0.250.166
 
 This test ensures generated exports preserve source identity and row order while
 enforcing one stable output schema across independently generated batches.
@@ -56,6 +56,13 @@ from functions_assistant_table_exports import (  # noqa: E402
 from functions_generated_file_exports import (  # noqa: E402
     get_requested_generated_file_format,
     get_requested_structured_artifact_format,
+)
+from functions_tabular_orchestration import (  # noqa: E402
+    build_tabular_legacy_post_tool_fallback_decision,
+    get_tabular_generated_output_format,
+    get_tabular_generated_output_task_type,
+    question_requests_tabular_generated_output,
+    settings_flag_enabled,
 )
 CONTRACT_FUNCTIONS = {
     '_safe_int',
@@ -486,6 +493,15 @@ def _load_generated_output_router(route_dependencies):
     namespace = dict(route_dependencies)
     namespace.setdefault('TABULAR_RUN_TASK_HIERARCHICAL_ANALYSIS', 'hierarchical_analysis')
     namespace.setdefault('TABULAR_RUN_TASK_COMBINED', 'combined')
+    namespace.setdefault(
+        '_shared_get_tabular_generated_output_task_type',
+        get_tabular_generated_output_task_type,
+    )
+    namespace.setdefault(
+        '_shared_build_tabular_legacy_post_tool_fallback_decision',
+        build_tabular_legacy_post_tool_fallback_decision,
+    )
+    namespace.setdefault('_shared_settings_flag_enabled', settings_flag_enabled)
     namespace.setdefault('question_requests_tabular_hierarchical_analysis', lambda question: False)
     extracted_module = ast.Module(body=[*helper_nodes, function_node], type_ignores=[])
     exec(compile(extracted_module, str(CHAT_ROUTE), 'exec'), namespace)
@@ -541,6 +557,10 @@ def _load_tabular_request_intent_helpers():
     if len(selected_nodes) != len(helper_names):
         raise AssertionError('Missing tabular request intent helpers')
     namespace = {
+        '_shared_get_tabular_generated_output_format': get_tabular_generated_output_format,
+        '_shared_question_requests_tabular_generated_output': (
+            question_requests_tabular_generated_output
+        ),
         'assistant_table_export_requested': assistant_table_export_requested,
         'get_requested_generated_file_format': get_requested_generated_file_format,
         'get_requested_structured_artifact_format': get_requested_structured_artifact_format,
