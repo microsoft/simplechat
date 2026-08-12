@@ -147,6 +147,7 @@ from functions_generated_file_exports import (
     build_generated_file_artifact_metadata,
     build_generated_file_export,
     build_generated_file_output_guidance,
+    evaluate_generated_file_passthrough_eligibility,
     get_generated_file_export_content,
     get_requested_generated_file_format,
     get_requested_structured_artifact_format,
@@ -2301,6 +2302,7 @@ def maybe_create_generated_file_output(
                 source_candidate={
                     'filename': generated_file_name,
                     'selected_sheet': '',
+                    'passthrough_reason_code': export_payload.get('passthrough_reason_code'),
                     'source_authorization': {
                         'source': 'chat',
                     },
@@ -5037,6 +5039,11 @@ def question_requests_tabular_structured_object_output(user_question):
         'one row per comment',
         'one object per submission',
         'one object for each row',
+        'one output row for each source row',
+        'one output row per source row',
+        'one output row for every source row',
+        'one output row for each row',
+        'exactly one output row',
         'for each row',
         'for every row',
         'every row',
@@ -7294,6 +7301,7 @@ async def maybe_create_tabular_generated_output(
     if not output_format or not rows:
         return None
 
+    passthrough_reason_code = None
     if question_requests_tabular_structured_object_output(user_question):
         raise_if_mixed_source_cancelled(
             cancel_requested,
@@ -7325,6 +7333,31 @@ async def maybe_create_tabular_generated_output(
         if isinstance(output_entries, dict) and output_entries.get('background_export'):
             return output_entries
     else:
+        passthrough_eligibility = evaluate_generated_file_passthrough_eligibility(
+            user_question,
+            rows=rows,
+        )
+        if not passthrough_eligibility.get('allowed'):
+            reason_code = str(passthrough_eligibility.get('reason_code') or 'schema_not_satisfied').strip()
+            log_event(
+                '[TABULAR_GENERATED_OUTPUT] Refused source-row passthrough for generated export',
+                {
+                    'conversation_id': conversation_id,
+                    'source_file_name': source_candidate.get('filename'),
+                    'output_format': output_format,
+                    'row_count': len(rows),
+                    'passthrough_reason_code': reason_code,
+                },
+                level=logging.WARNING,
+            )
+            return _build_failed_tabular_generated_output_metadata(
+                source_candidate,
+                output_format,
+                'The requested export requires generated output and could not be safely created from raw source rows. No partial file was created.',
+            )
+        passthrough_reason_code = str(
+            passthrough_eligibility.get('reason_code') or 'explicit_format_conversion'
+        ).strip()[:80]
         output_entries = rows
 
     if output_format == 'csv':
@@ -7364,6 +7397,7 @@ async def maybe_create_tabular_generated_output(
             'generated_file_name': generated_file_name,
             'output_format': output_format,
             'row_count': len(output_entries),
+            'passthrough_reason_code': passthrough_reason_code,
         },
         debug_only=True,
     )
@@ -7414,6 +7448,7 @@ async def maybe_create_tabular_generated_output(
             'generated_file_name': uploaded_file_name,
             'output_format': output_format,
             'row_count': len(output_entries),
+            'passthrough_reason_code': passthrough_reason_code,
         },
         debug_only=True,
     )
@@ -7429,6 +7464,7 @@ async def maybe_create_tabular_generated_output(
         'source_file_name': source_candidate.get('filename'),
         'selected_sheet': source_candidate.get('selected_sheet'),
         'preview_rows': preview_rows,
+        'passthrough_reason_code': passthrough_reason_code,
         'summary': (
             f"Saved {len(output_entries)} row(s) to {uploaded_file_name} "
             'in this chat as a downloadable export.'

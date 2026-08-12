@@ -4,32 +4,40 @@ Implemented in version: **0.250.171**
 
 Phase 2 updated in version: **0.250.172**
 
+Phase 3 updated in version: **0.250.173**
+
 ## Overview
 
 The Analyze deliverable contract defines a server-owned, versioned plan for analysis artifacts before production routing changes are made. It records whether an action requires a primary Markdown analysis artifact, which sibling artifacts were explicitly requested, the public structured schema, row cardinality, ordering, transformation mode, validation profile, and publication policy.
 
 Phase 2 keeps the contract additive, but begins enforcing intent admission for shared tabular planning and bounded document Analyze finalization. Successful bounded Analyze results now publish a primary Markdown artifact. Explicit JSON, XML, or CSV requests are represented as ordered sibling artifacts, and Analyze plus structured output can no longer silently downgrade to structured-only export work when analysis is required.
 
+Phase 3 separates public structured schemas from internal checkpoint lineage. Durable tabular checkpoints still retain source row number and identity for validation, retries, audit, and restart, but final CSV, JSON, XML, preview rows, and preview columns are projected through the persisted public schema. Raw source or function rows are no longer accepted as a derived generated-output artifact unless the request is an explicit unchanged copy, serialization, or format conversion and the rows satisfy the public schema contract.
+
 ## Dependencies
 
 - `application/single_app/functions_analysis_deliverables.py` for contract construction, artifact-set validation, structured-row validation, and gated shadow telemetry.
 - `application/single_app/functions_generated_file_exports.py` for ordered, negation-aware requested artifact format detection.
 - `application/single_app/functions_tabular_orchestration.py` for attaching the contract to shared tabular planner results and selecting Analyze-safe execution contracts.
+- `application/single_app/functions_tabular_generated_exports.py` for durable checkpoint lineage, public projection, and final artifact serialization.
 - `application/single_app/functions_workflow_runner.py` for bounded Analyze Markdown artifact finalization.
 - `functional_tests/test_analyze_deliverable_contract.py` for the executable regression oracle.
+- `functional_tests/test_tabular_phase3_public_schema_projection.py` for public schema projection and passthrough guard coverage.
 - `functional_tests/test_document_analysis_lossless_artifacts.py` for document-analysis artifact finalizer behavior.
-- `application/single_app/config.py` version `0.250.172`.
+- `application/single_app/config.py` version `0.250.173`.
 
 ## Technical Specifications
 
 ### Contract Fields
 
-- `contract_version`: currently `analysis-deliverables-v1`.
+- `contract_version`: currently `analysis-deliverables-v2`.
 - `action_mode`: normalized caller action such as `analyze` or `search`.
 - `analysis_required`: true for Analyze by server policy.
 - `requested_artifacts`: ordered artifact descriptors with role, format, required state, and request order.
 - `primary_artifact_role`: `primary_analysis` when Analyze requires Markdown.
 - `public_output_schema`: ordered public fields for a requested structured output.
+- `internal_checkpoint_schema`: lineage fields followed by public fields for durable validation and resume.
+- `lineage_schema`: server-owned row lineage fields such as `source_row_number` and `source_row_identity`.
 - `row_cardinality` and `ordering`: row coverage expectations for structured deliverables.
 - `transformation_mode`: `passthrough`, `deterministic`, `semantic`, or `hybrid`.
 - `validation_profile`: artifact-only, exact row/schema, or exact row/schema/rule validation.
@@ -43,6 +51,40 @@ Phase 2 keeps the contract additive, but begins enforcing intent admission for s
 - `supporting_output`: optional server-generated supporting material.
 
 Roles are product semantics, not formats. A Search-requested Markdown file is `requested_output`; an Analyze-required Markdown file is `primary_analysis`.
+
+### Public Schema Projection
+
+Durable structured export checkpoints keep the internal schema required by the runner:
+
+```text
+source_row_number, source_row_identity, <public fields...>
+```
+
+Published artifacts and browser metadata use only `public_output_schema`:
+
+- CSV headers and row values
+- JSON object fields and order
+- XML row elements and escaped text
+- preview rows and preview columns
+- generated artifact summaries consumed by the chat UI
+
+Reserved fields such as `source_row_number`, `source_row_identity`, and `__simplechat_*` cannot be requested as public output fields. Legacy runs that only have `output_schema` are interpreted by filtering reserved lineage fields at publication time; old checkpoints are not rewritten.
+
+### Passthrough Eligibility
+
+Raw source or function rows can satisfy a generated file request only when the request is explicitly an unchanged copy, serialization, or format conversion, and any supplied public schema matches the row fields. Derived requests are refused instead of publishing source-shaped output.
+
+Refusal reason codes include:
+
+- `derived_output_requires_transform`
+- `source_result_incomplete`
+- `schema_not_satisfied`
+- `no_explicit_passthrough_contract`
+
+Allowed passthrough reason codes include:
+
+- `explicit_unchanged_copy`
+- `explicit_format_conversion`
 
 ### Validation
 
@@ -89,6 +131,14 @@ The committed 200-row fixture builder in `functional_tests/test_support/analyze_
 - The Search-shaped output with `source_row_number`, `source_row_identity`, and five known rule mismatches is rejected.
 - Safe telemetry excludes prompt text, row values, file names, and storage paths.
 
+`functional_tests/test_tabular_phase3_public_schema_projection.py` verifies:
+
+- Contract version `analysis-deliverables-v2` persists distinct public, internal checkpoint, and lineage schemas.
+- Reserved lineage fields are rejected in public schemas.
+- Durable CSV, JSON, XML, and preview metadata expose only public fields in order.
+- XML output escapes projected values without leaking lineage fields.
+- Generic generated-file finalizers refuse raw function rows for derived requests but allow explicit serialization.
+
 ## Known Limitations
 
-Phase 2 decides and preserves the required artifact set, but it does not implement deterministic rule execution, semantic repair, atomic multi-artifact durable publication, public-schema lineage separation, or plural artifact UI rendering. Those remain in later phases.
+Phase 3 enforces structural schema fidelity and passthrough safety. It does not implement deterministic rule execution, semantic repair, atomic multi-artifact durable publication, or plural artifact UI rendering. Those remain in later phases.

@@ -5298,6 +5298,7 @@ def _maybe_create_workflow_generated_file_output(
                 source_candidate={
                     'filename': generated_file_name,
                     'selected_sheet': '',
+                    'passthrough_reason_code': export_payload.get('passthrough_reason_code'),
                     'source_authorization': {
                         'source': 'chat',
                     },
