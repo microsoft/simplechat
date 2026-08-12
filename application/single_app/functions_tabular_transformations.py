@@ -140,6 +140,13 @@ def _normalize_value_type(value_type):
     return normalized_type
 
 
+def _normalize_field_type(value_type):
+    normalized_type = str(value_type or "").strip().lower()
+    if normalized_type not in {"", "string", "number", "integer", "date", "boolean", "object", "array"}:
+        raise TabularTransformationSpecError("Tabular transformation field type is unsupported")
+    return normalized_type
+
+
 def _normalize_expression(expression, depth=0):
     if depth > TABULAR_TRANSFORMATION_MAX_EXPRESSION_DEPTH:
         raise TabularTransformationSpecError("Tabular transformation expression is too deep")
@@ -336,7 +343,7 @@ def _normalize_field_descriptor(field_descriptor):
     }
     if expression is not None:
         normalized_descriptor["expression"] = expression
-    field_type = _normalize_value_type(field_descriptor.get("type"))
+    field_type = _normalize_field_type(field_descriptor.get("type"))
     if field_type:
         normalized_descriptor["type"] = field_type
     if "nullable" in field_descriptor:
@@ -653,6 +660,10 @@ def _validate_evaluated_field_value(field_descriptor, field_value):
         field_value = _coerce_comparison_value(field_value, "boolean")
     elif field_type == "date":
         field_value = _parse_date_value(field_value).isoformat()
+    elif field_type == "object" and not isinstance(field_value, dict):
+        raise TabularTransformationEvaluationError("Deterministic object field evaluated to a non-object value")
+    elif field_type == "array" and not isinstance(field_value, list):
+        raise TabularTransformationEvaluationError("Deterministic array field evaluated to a non-array value")
     allowed_values = field_descriptor.get("allowed_values")
     if allowed_values is not None and field_value not in allowed_values:
         raise TabularTransformationEvaluationError("Deterministic field evaluated outside allowed values")

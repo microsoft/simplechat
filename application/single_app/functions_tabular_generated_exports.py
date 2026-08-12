@@ -42,12 +42,15 @@ from functions_analysis_deliverables import (
     ANALYSIS_ARTIFACT_ROLE_PRIMARY_ANALYSIS,
     ANALYSIS_ARTIFACT_ROLE_REQUESTED_OUTPUT,
     ANALYSIS_ARTIFACT_ROLE_SUPPORTING_OUTPUT,
+    build_analysis_deliverable_contract,
     is_analysis_internal_lineage_field,
     project_structured_deliverable_row,
     validate_analysis_artifact_set,
 )
 from functions_assistant_table_exports import build_safe_csv_headers, neutralize_csv_spreadsheet_formula
 from functions_tabular_transformations import (
+    TABULAR_TRANSFORMATION_FIELD_MODE_DETERMINISTIC,
+    TABULAR_TRANSFORMATION_SPEC_VERSION,
     evaluate_tabular_transformation_row,
     get_tabular_transformation_model_fields,
     is_tabular_transformation_deterministic_only,
@@ -67,6 +70,11 @@ from functions_model_endpoint_runtime import build_semantic_kernel_chat_service_
 from functions_public_workspaces import get_user_visible_public_workspace_ids_from_settings
 from functions_settings import get_settings
 from functions_simplechat_operations import upload_generated_analysis_artifact_stream_for_user
+from functions_tabular_semantic_validation import (
+    TABULAR_SEMANTIC_VALIDATION_CONTRACT_VERSION,
+    build_safe_semantic_validation_counts,
+    verify_and_repair_semantic_rows,
+)
 
 
 TABULAR_EXPORT_RUN_TYPE = 'tabular_generated_output_run'
@@ -81,8 +89,30 @@ TABULAR_RESPONSE_PROTOCOLS = {
 TABULAR_COMPACT_PLAN_HASH_PREFIX_LENGTH = 12
 TABULAR_EXECUTOR_MODE_FIXED_WINDOW = 'fixed-window-v1'
 TABULAR_EXECUTOR_MODE_ROLLING_POOL = 'rolling-pool-v1'
-TABULAR_GENERATION_PLAN_VERSION = 1
-TABULAR_GENERATION_PLAN_PROMPT_VERSION = 'tabular-generation-plan-v1'
+TABULAR_GENERATION_PLAN_VERSION = 2
+TABULAR_GENERATION_PLAN_LEGACY_VERSIONS = {1}
+TABULAR_GENERATION_PLAN_PROMPT_VERSION = 'tabular-generation-plan-v2'
+TABULAR_GENERATION_PLAN_LEGACY_PROMPT_VERSIONS = {
+    1: 'tabular-generation-plan-v1',
+}
+TABULAR_GENERATION_PLAN_REVIEW_VERSION = 1
+TABULAR_GENERATION_PLAN_REVIEW_STATUSES = {'passed', 'failed'}
+TABULAR_GENERATION_PLAN_REVIEW_REASON_CODES = {
+    'boundary_ambiguous',
+    'field_missing',
+    'precedence_mismatch',
+    'review_passed',
+    'rule_missing',
+    'unknown_source_field',
+    'unrequested_inference',
+    'unsupported_rule',
+}
+TABULAR_GENERATION_PLAN_MAX_REVIEW_REASON_CODES = 20
+TABULAR_SEMANTIC_VALIDATION_MODES = {'off', 'shadow', 'active'}
+TABULAR_SEMANTIC_DEFAULT_REPAIR_ATTEMPTS = 2
+TABULAR_SEMANTIC_DEFAULT_MAX_REPAIR_ROWS = 100
+TABULAR_SEMANTIC_MAX_PROMPT_CHARS = 180000
+TABULAR_SEMANTIC_CANDIDATE_CHECKPOINT_VERSION = 1
 TABULAR_GENERATION_PLAN_DEFAULT_RETRY_ATTEMPTS = 2
 TABULAR_GENERATION_PLAN_MAX_SAMPLE_ROWS = 5
 TABULAR_GENERATION_PLAN_MAX_COLUMNS = 200
@@ -338,9 +368,10 @@ class TabularExportLeaseLostError(RuntimeError):
 class TabularGenerationPlanError(RuntimeError):
     """Raised when the bounded planner exhausts its allowed attempts."""
 
-    def __init__(self, reason):
+    def __init__(self, reason, failed_run=None):
         super().__init__('Tabular generation planner did not produce a valid plan')
         self.reason = str(reason or 'provider_failure')
+        self.failed_run = failed_run if isinstance(failed_run, dict) else None
 
 
 def _now_utc():
@@ -520,11 +551,15 @@ def _build_tabular_generation_plan_input_contract(sample_rows):
     }
 
 
-def _validate_tabular_generation_plan_output_fields(output_fields):
+def _validate_tabular_generation_plan_output_fields(output_fields, allowed_sources=None):
     if not isinstance(output_fields, list) or not output_fields:
         raise ValueError('Planner response must include at least one output field')
     if len(output_fields) > TABULAR_GENERATION_PLAN_MAX_FIELDS:
         raise ValueError('Planner response contains too many output fields')
+
+    normalized_allowed_sources = set(allowed_sources or {'llm'})
+    if not normalized_allowed_sources or normalized_allowed_sources - {'llm', 'server'}:
+        raise ValueError('Planner output field sources are unsupported')
 
     normalized_fields = []
     seen_names = set()
@@ -563,7 +598,8 @@ def _validate_tabular_generation_plan_output_fields(output_fields):
         nullable = output_field.get('nullable')
         if not isinstance(nullable, bool):
             raise ValueError(f'Planner output field {field_index} must declare nullability')
-        if str(output_field.get('source') or '').strip().lower() != 'llm':
+        field_source = str(output_field.get('source') or '').strip().lower()
+        if field_source not in normalized_allowed_sources:
             raise ValueError(f'Planner output field {field_index} has an unsupported source')
 
         normalized_fields.append({
@@ -571,7 +607,7 @@ def _validate_tabular_generation_plan_output_fields(output_fields):
             'description': field_description,
             'type': value_type,
             'nullable': nullable,
-            'source': 'llm',
+            'source': field_source,
         })
     return normalized_fields
 
@@ -585,15 +621,59 @@ def _get_tabular_generation_plan_source(run):
     }
 
 
+def _validate_tabular_generation_plan_field_ownership(output_fields, transformation_spec):
+    fields_by_name = {
+        str(field.get('name') or '').strip(): field
+        for field in list((transformation_spec or {}).get('fields') or [])
+        if isinstance(field, dict)
+    }
+    for output_field in output_fields:
+        field_name = output_field['name']
+        transformation_field = fields_by_name.get(field_name)
+        if not transformation_field:
+            raise ValueError(f'Planner transformation ownership is missing field {field_name}')
+        expected_source = (
+            'server'
+            if transformation_field.get('mode') == TABULAR_TRANSFORMATION_FIELD_MODE_DETERMINISTIC
+            else 'llm'
+        )
+        if output_field.get('source') != expected_source:
+            raise ValueError(f'Planner output field {field_name} has inconsistent transformation ownership')
+        transformation_type = str(transformation_field.get('type') or '').strip()
+        if transformation_type and transformation_type != output_field.get('type'):
+            raise ValueError(f'Planner output field {field_name} has inconsistent transformation type')
+        if (
+            'nullable' in transformation_field
+            and bool(transformation_field.get('nullable')) != output_field.get('nullable')
+        ):
+            raise ValueError(f'Planner output field {field_name} has inconsistent nullability')
+
+
 def _build_tabular_generation_plan(run, planner_payload, input_contract, planner_model, created_at=None):
     if not isinstance(planner_payload, dict):
         raise ValueError('Planner response was not a JSON object')
-    if set(planner_payload) - {'output_fields', 'output_verbosity'}:
+    if set(planner_payload) - {'output_fields', 'output_verbosity', 'transformation_spec'}:
         raise ValueError('Planner response contains unsupported top-level properties')
 
-    llm_fields = _validate_tabular_generation_plan_output_fields(
-        planner_payload.get('output_fields')
+    planned_fields = _validate_tabular_generation_plan_output_fields(
+        planner_payload.get('output_fields'),
+        allowed_sources={'llm', 'server'},
     )
+    public_output_schema = [field['name'] for field in planned_fields]
+    source_schema = [
+        str(column.get('name') or '').strip()
+        for column in list(input_contract.get('columns') or [])
+        if isinstance(column, dict) and str(column.get('name') or '').strip()
+    ]
+    raw_transformation_spec = planner_payload.get('transformation_spec')
+    if not raw_transformation_spec:
+        raise ValueError('Planner response requires explicit transformation ownership for every field')
+    transformation_spec = normalize_tabular_transformation_spec(
+        raw_transformation_spec,
+        public_output_schema=public_output_schema,
+        source_schema=source_schema,
+    )
+    _validate_tabular_generation_plan_field_ownership(planned_fields, transformation_spec)
     output_verbosity = str(planner_payload.get('output_verbosity') or '').strip()
     if len(output_verbosity) > TABULAR_GENERATION_PLAN_MAX_GUIDANCE_CHARS:
         raise ValueError('Planner output verbosity guidance is too long')
@@ -647,8 +727,9 @@ def _build_tabular_generation_plan(run, planner_payload, input_contract, planner
                 'nullable': False,
                 'source': 'server',
             },
-            *llm_fields,
+            *planned_fields,
         ],
+        'transformation_spec': transformation_spec,
         'response_protocol': response_protocol,
         'prompt_version': TABULAR_GENERATION_PLAN_PROMPT_VERSION,
         'batch_budget': {
@@ -682,13 +763,19 @@ def _validate_tabular_generation_plan(plan, run, input_schema_hash=None):
         'batch_budget',
         'plan_hash',
     }
-    allowed_keys = required_keys | {'output_verbosity'}
+    plan_version = _safe_int(plan.get('version'))
+    legacy_plan = plan_version in TABULAR_GENERATION_PLAN_LEGACY_VERSIONS
+    if plan_version != TABULAR_GENERATION_PLAN_VERSION and not legacy_plan:
+        raise ValueError('Stored generation plan version is not supported')
+    if legacy_plan:
+        allowed_keys = required_keys | {'output_verbosity'}
+    else:
+        required_keys |= {'transformation_spec', 'review'}
+        allowed_keys = required_keys | {'output_verbosity'}
     if set(plan) - allowed_keys:
         raise ValueError('Stored generation plan contains unsupported properties')
     if not required_keys.issubset(plan):
         raise ValueError('Stored generation plan is missing required properties')
-    if _safe_int(plan.get('version')) != TABULAR_GENERATION_PLAN_VERSION:
-        raise ValueError('Stored generation plan version is not supported')
     if str(plan.get('run_id') or '').strip() != str((run or {}).get('id') or '').strip():
         raise ValueError('Stored generation plan run identity does not match')
     if not str(plan.get('created_at') or '').strip():
@@ -748,7 +835,12 @@ def _validate_tabular_generation_plan(plan, run, input_schema_hash=None):
         (run or {}).get('response_protocol_version') or TABULAR_RESPONSE_PROTOCOL_OBJECT_V1
     ):
         raise ValueError('Stored generation plan response protocol does not match')
-    if plan.get('prompt_version') != TABULAR_GENERATION_PLAN_PROMPT_VERSION:
+    expected_prompt_version = (
+        TABULAR_GENERATION_PLAN_LEGACY_PROMPT_VERSIONS.get(plan_version)
+        if legacy_plan
+        else TABULAR_GENERATION_PLAN_PROMPT_VERSION
+    )
+    if plan.get('prompt_version') != expected_prompt_version:
         raise ValueError('Stored generation plan prompt version does not match')
 
     stored_batch_budget = plan.get('batch_budget')
@@ -791,9 +883,30 @@ def _validate_tabular_generation_plan(plan, run, input_schema_hash=None):
         description = str(output_field.get('description') or '').strip()
         if not description or len(description) > TABULAR_GENERATION_PLAN_MAX_FIELD_DESCRIPTION_CHARS:
             raise ValueError('Stored generation plan server field description is invalid')
-    normalized_llm_fields = _validate_tabular_generation_plan_output_fields(output_fields[2:])
-    if normalized_llm_fields != output_fields[2:]:
+    normalized_public_fields = _validate_tabular_generation_plan_output_fields(
+        output_fields[2:],
+        allowed_sources={'llm'} if legacy_plan else {'llm', 'server'},
+    )
+    if normalized_public_fields != output_fields[2:]:
         raise ValueError('Stored generation plan output fields are not normalized')
+    if not legacy_plan:
+        public_output_schema = [field['name'] for field in normalized_public_fields]
+        normalized_transformation_spec = normalize_tabular_transformation_spec(
+            plan.get('transformation_spec'),
+            public_output_schema=public_output_schema,
+        )
+        if normalized_transformation_spec != plan.get('transformation_spec'):
+            raise ValueError('Stored generation plan transformation specification is not normalized')
+        _validate_tabular_generation_plan_field_ownership(
+            normalized_public_fields,
+            normalized_transformation_spec,
+        )
+        normalized_review = _normalize_tabular_generation_plan_review(
+            plan.get('review'),
+            public_output_schema,
+        )
+        if normalized_review != plan.get('review'):
+            raise ValueError('Stored generation plan review is not normalized')
     return plan
 
 
@@ -812,6 +925,93 @@ def _get_tabular_generation_plan_llm_fields(plan):
         if isinstance(output_field, dict)
         and str(output_field.get('source') or '').strip().lower() == 'llm'
     ]
+
+
+def _get_tabular_generation_plan_public_fields(plan):
+    return [
+        output_field
+        for output_field in (plan or {}).get('output_fields') or []
+        if isinstance(output_field, dict)
+        and str(output_field.get('name') or '').strip() not in {
+            TABULAR_EXPORT_OUTPUT_ROW_NUMBER_FIELD,
+            TABULAR_EXPORT_OUTPUT_ROW_IDENTITY_FIELD,
+        }
+    ]
+
+
+def _normalize_tabular_generation_plan_review(review_payload, expected_fields, reviewer_model=None):
+    if not isinstance(review_payload, dict):
+        raise ValueError('Generation plan review was not a JSON object')
+    payload_keys = {'status', 'represented_fields', 'reason_codes'}
+    stored_keys = payload_keys | {'version', 'model'}
+    if set(review_payload) not in {frozenset(payload_keys), frozenset(stored_keys)}:
+        raise ValueError('Generation plan review contains invalid properties')
+
+    status = str(review_payload.get('status') or '').strip().lower()
+    if status not in TABULAR_GENERATION_PLAN_REVIEW_STATUSES:
+        raise ValueError('Generation plan review status is unsupported')
+    represented_fields = [
+        str(field_name or '').strip()
+        for field_name in list(review_payload.get('represented_fields') or [])
+        if str(field_name or '').strip()
+    ]
+    if len(represented_fields) != len(set(represented_fields)):
+        raise ValueError('Generation plan review contains duplicate represented fields')
+    normalized_expected_fields = [str(field_name or '').strip() for field_name in expected_fields]
+    if represented_fields != normalized_expected_fields:
+        raise ValueError('Generation plan review does not cover every public output field in order')
+
+    reason_codes = [
+        str(reason_code or '').strip().lower()
+        for reason_code in list(review_payload.get('reason_codes') or [])
+        if str(reason_code or '').strip()
+    ]
+    if len(reason_codes) > TABULAR_GENERATION_PLAN_MAX_REVIEW_REASON_CODES:
+        raise ValueError('Generation plan review contains too many reason codes')
+    if len(reason_codes) != len(set(reason_codes)):
+        raise ValueError('Generation plan review contains duplicate reason codes')
+    if set(reason_codes) - TABULAR_GENERATION_PLAN_REVIEW_REASON_CODES:
+        raise ValueError('Generation plan review contains an unsupported reason code')
+    if status == 'passed' and reason_codes:
+        raise ValueError('Passed generation plan review cannot contain failure reasons')
+    if status == 'failed' and not reason_codes:
+        raise ValueError('Failed generation plan review requires a reason code')
+
+    model_payload = reviewer_model if reviewer_model is not None else review_payload.get('model')
+    normalized_model = {
+        field_name: str((model_payload or {}).get(field_name) or '').strip()
+        for field_name in ('endpoint_id', 'model_id', 'deployment')
+    }
+    if not any(normalized_model.values()) or any(len(value) > 500 for value in normalized_model.values()):
+        raise ValueError('Generation plan review model identity is invalid')
+    return {
+        'version': TABULAR_GENERATION_PLAN_REVIEW_VERSION,
+        'status': status,
+        'represented_fields': represented_fields,
+        'reason_codes': reason_codes,
+        'model': normalized_model,
+    }
+
+
+def _finalize_tabular_generation_plan_review(plan, review_payload, reviewer_model):
+    if _safe_int((plan or {}).get('version')) != TABULAR_GENERATION_PLAN_VERSION:
+        raise ValueError('Only current generation plans can receive a new review')
+    finalized_plan = dict(plan or {})
+    finalized_plan.pop('plan_hash', None)
+    public_fields = [
+        field['name']
+        for field in _get_tabular_generation_plan_public_fields(finalized_plan)
+    ]
+    review = _normalize_tabular_generation_plan_review(
+        review_payload,
+        public_fields,
+        reviewer_model=reviewer_model,
+    )
+    if review['status'] != 'passed':
+        raise ValueError('Generation plan review did not pass')
+    finalized_plan['review'] = review
+    finalized_plan['plan_hash'] = _hash_tabular_generation_plan(finalized_plan)
+    return finalized_plan
 
 
 def _get_compact_plan_hash_prefix(plan):
@@ -950,6 +1150,26 @@ def _normalize_tabular_generation_rollout_settings(settings):
             'shadow',
             TABULAR_ROLLOUT_PLANNER_MODES,
         ),
+        'tabular_semantic_validation_mode': _settings_mode(
+            settings,
+            'tabular_semantic_validation_mode',
+            'off',
+            TABULAR_SEMANTIC_VALIDATION_MODES,
+        ),
+        'tabular_semantic_repair_max_attempts': _settings_int(
+            settings,
+            'tabular_semantic_repair_max_attempts',
+            TABULAR_SEMANTIC_DEFAULT_REPAIR_ATTEMPTS,
+            minimum=0,
+            maximum=5,
+        ),
+        'tabular_semantic_repair_max_rows': _settings_int(
+            settings,
+            'tabular_semantic_repair_max_rows',
+            TABULAR_SEMANTIC_DEFAULT_MAX_REPAIR_ROWS,
+            minimum=1,
+            maximum=500,
+        ),
         'enable_tabular_generation_plan': _settings_bool(
             settings,
             'enable_tabular_generation_plan',
@@ -1035,6 +1255,7 @@ def _build_tabular_generation_rollout_assignment(settings, user_id, conversation
         rollout_settings.update({
             'tabular_background_handoff_mode': 'legacy',
             'tabular_generation_plan_mode': 'off',
+            'tabular_semantic_validation_mode': 'off',
             'enable_tabular_generation_plan': False,
             'enable_tabular_compact_response_protocol': False,
             'enable_tabular_completion_driven_checkpointing': False,
@@ -2120,8 +2341,16 @@ def _input_batches_blob_path(user_id, conversation_id, run_id):
     return f"{user_id}/{conversation_id}/generated/tabular_runs/{run_id}/input/input_batches.json"
 
 
-def _tabular_generation_plan_blob_path(user_id, conversation_id, run_id):
-    return f"{user_id}/{conversation_id}/generated/tabular_runs/{run_id}/plan/plan_v1.json"
+def _tabular_generation_plan_blob_path(user_id, conversation_id, run_id, plan_version=None):
+    normalized_version = _safe_int(
+        plan_version,
+        default=TABULAR_GENERATION_PLAN_VERSION,
+        minimum=1,
+    )
+    return (
+        f"{user_id}/{conversation_id}/generated/tabular_runs/{run_id}/plan/"
+        f"plan_v{normalized_version}.json"
+    )
 
 
 def _chunk_manifest_blob_prefix(user_id, conversation_id, run_id):
@@ -2142,6 +2371,13 @@ def _output_blob_prefix(user_id, conversation_id, run_id):
 
 def _output_summary_blob_path(user_id, conversation_id, run_id, batch_number):
     return f"{user_id}/{conversation_id}/generated/tabular_runs/{run_id}/summary/batch_{batch_number:06d}.json"
+
+
+def _semantic_candidate_blob_path(user_id, conversation_id, run_id, batch_number):
+    return (
+        f"{user_id}/{conversation_id}/generated/tabular_runs/{run_id}/semantic/candidates/"
+        f"batch_{batch_number:06d}.json"
+    )
 
 
 def _retry_blob_path(user_id, conversation_id, run_id, batch_number):
@@ -3969,14 +4205,86 @@ def _build_tabular_generation_plan_prompt(run, input_contract):
         f"Requested output format: {str((run or {}).get('output_format') or '').strip().lower()}\n"
         f"Source row count: {_safe_int((run or {}).get('row_count'), minimum=0)}\n"
         f'Bounded input schema and redacted value shapes:\n{_dump_generated_output_json(planner_input)}\n\n'
-        'Return ONLY one JSON object with output_fields and optional output_verbosity. '
+        'Return ONLY one JSON object with output_fields, transformation_spec, and optional output_verbosity. '
         'output_fields must be a non-empty array in exact output order. Each field object must contain '
-        'name, description, type, nullable, and source. source must be "llm". Supported types are '
+        'name, description, type, nullable, and source. source must be "server" only when the field is '
+        'fully represented by a deterministic transformation expression; otherwise source must be "llm". '
+        'Supported types are '
         'string, integer, number, boolean, object, and array. Do not include source_row_number, '
         'source_row_identity, or any __simplechat fields; the server adds source metadata. '
+        'transformation_spec must use version tabular-transform-v1 and contain exactly one field descriptor '
+        'for every output field. Deterministic expressions may use only copy, case, coalesce, comparisons, '
+        'boolean all/any/not, membership, null checks, and bounded arithmetic. Preserve ordered condition '
+        'precedence and explicit inclusive or exclusive boundaries. Mark genuinely interpretive fields semantic. '
         'Preserve every explicit output field requested by the user. Do not answer any source row, '
         'copy sample content, include markdown, or add other top-level properties.'
     )
+
+
+def _build_tabular_generation_plan_review_prompt(run, input_contract, plan):
+    user_question = str((run or {}).get('user_question') or '').strip()
+    if not user_question or len(user_question) > TABULAR_GENERATION_PLAN_MAX_QUESTION_CHARS:
+        raise ValueError('Reviewer user instructions are empty or exceed the bounded planning limit')
+    review_contract = {
+        'columns': input_contract.get('columns') or [],
+        'output_fields': _get_tabular_generation_plan_public_fields(plan),
+        'transformation_spec': (plan or {}).get('transformation_spec') or {},
+    }
+    return (
+        'Review this tabular generation plan against the user instructions.\n\n'
+        f'User instructions:\n{user_question}\n\n'
+        f'Normalized plan and source schema:\n{_dump_generated_output_json(review_contract)}\n\n'
+        'Return ONLY one JSON object with status, represented_fields, and reason_codes. '
+        'status must be passed or failed. represented_fields must list every requested public output field '
+        'exactly once in output order. Use reason codes only from: boundary_ambiguous, field_missing, '
+        'precedence_mismatch, rule_missing, unknown_source_field, unrequested_inference, unsupported_rule. '
+        'Fail when a requested field or rule is absent, precedence or date boundaries changed, a source field '
+        'is unknown, or the plan added an unrequested inference. Verify every deterministic field uses only '
+        'the supported expression graph and valid source or prior deterministic field references. Verify fields '
+        'marked semantic genuinely require interpretation rather than a direct copy or representable rule. '
+        'Do not answer rows or include explanations.'
+    )
+
+
+async def _generate_tabular_generation_plan_review(
+    chat_service,
+    run,
+    input_contract,
+    plan,
+    reviewer_model,
+    timeout_seconds,
+):
+    review_prompt = _build_tabular_generation_plan_review_prompt(run, input_contract, plan)
+    chat_history = SKChatHistory()
+    chat_history.add_system_message(
+        'You independently verify bounded tabular transformation plans. Return only the requested JSON review.'
+    )
+    chat_history.add_user_message(review_prompt)
+    execution_settings = AzureChatPromptExecutionSettings(
+        service_id='tabular-generated-output-plan-review'
+    )
+    review_started_at = time.monotonic()
+    result = await asyncio.wait_for(
+        chat_service.get_chat_message_contents(chat_history, execution_settings),
+        timeout=timeout_seconds,
+    )
+    review_latency_seconds = time.monotonic() - review_started_at
+    raw_response_content = result[0].content if result and result[0].content else ''
+    review_payload = _parse_generated_json_object(raw_response_content)
+    reviewed_plan = _finalize_tabular_generation_plan_review(
+        plan,
+        review_payload,
+        reviewer_model,
+    )
+    usage = _extract_tabular_response_usage(result)
+    return reviewed_plan, {
+        'latency_seconds': round(review_latency_seconds, 3),
+        'input_char_count': len(review_prompt),
+        'response_char_count': len(raw_response_content),
+        'input_token_count': usage.get('input_token_count'),
+        'output_token_count': usage.get('output_token_count'),
+        'total_token_count': usage.get('total_token_count'),
+    }
 
 
 async def _generate_tabular_generation_plan(
@@ -4024,6 +4332,14 @@ async def _generate_tabular_generation_plan(
                 input_contract,
                 planner_model,
             )
+            plan, review_metrics = await _generate_tabular_generation_plan_review(
+                chat_service,
+                run,
+                input_contract,
+                plan,
+                planner_model,
+                bounded_timeout_seconds,
+            )
             usage = _extract_tabular_response_usage(result)
             metrics = {
                 'attempt_count': attempt_number,
@@ -4034,6 +4350,12 @@ async def _generate_tabular_generation_plan(
                 'input_token_count': usage.get('input_token_count'),
                 'output_token_count': usage.get('output_token_count'),
                 'total_token_count': usage.get('total_token_count'),
+                'review_latency_seconds': review_metrics.get('latency_seconds'),
+                'review_input_char_count': review_metrics.get('input_char_count'),
+                'review_response_char_count': review_metrics.get('response_char_count'),
+                'review_input_token_count': review_metrics.get('input_token_count'),
+                'review_output_token_count': review_metrics.get('output_token_count'),
+                'review_total_token_count': review_metrics.get('total_token_count'),
             }
             return plan, metrics
         except asyncio.TimeoutError as exc:
@@ -4069,9 +4391,45 @@ def _apply_active_tabular_generation_plan(run, plan):
     run['lineage_schema'] = _get_tabular_run_lineage_schema(run)
     run['public_output_schema'] = [
         str(output_field.get('name') or '').strip()
-        for output_field in _get_tabular_generation_plan_llm_fields(plan)
+        for output_field in _get_tabular_generation_plan_public_fields(plan)
     ]
     run['internal_checkpoint_schema'] = planned_output_schema
+    run['transformation_spec'] = dict((plan or {}).get('transformation_spec') or {})
+    planner_metadata = (
+        (run or {}).get('tabular_planner_metadata')
+        if isinstance((run or {}).get('tabular_planner_metadata'), dict)
+        else {}
+    )
+    deliverable_contract = (
+        planner_metadata.get('deliverable_contract')
+        if isinstance(planner_metadata.get('deliverable_contract'), dict)
+        else {}
+    )
+    current_plan = _safe_int((plan or {}).get('version')) == TABULAR_GENERATION_PLAN_VERSION
+    if current_plan and not deliverable_contract:
+        raise ValueError('Active generation plan v2 requires an initialized deliverable contract')
+    if deliverable_contract and current_plan:
+        transformation_spec = dict(run.get('transformation_spec') or {})
+        mode_counts = dict(transformation_spec.get('field_mode_counts') or {})
+        deterministic_count = _safe_int(mode_counts.get('deterministic'), minimum=0)
+        semantic_count = _safe_int(mode_counts.get('semantic'), minimum=0)
+        hybrid_count = _safe_int(mode_counts.get('hybrid'), minimum=0)
+        if deterministic_count and not semantic_count and not hybrid_count:
+            transformation_mode = 'deterministic'
+        elif deterministic_count or hybrid_count:
+            transformation_mode = 'hybrid'
+        else:
+            transformation_mode = 'semantic'
+        deliverable_contract.update({
+            'public_output_schema': list(run.get('public_output_schema') or []),
+            'internal_checkpoint_schema': list(planned_output_schema),
+            'lineage_schema': _get_tabular_run_lineage_schema(run),
+            'transformation_mode': transformation_mode,
+            'transformation_spec': transformation_spec,
+            'validation_profile': 'exact_rows_schema_and_rules',
+        })
+        planner_metadata['deliverable_contract'] = deliverable_contract
+        run['tabular_planner_metadata'] = planner_metadata
 
 
 def _recover_tabular_generation_plan(run, input_contract, plan_blob_path, plan_mode):
@@ -4126,6 +4484,359 @@ def _mark_tabular_generation_plan_fallback(run, reason, attempt_count=0, latency
     return persisted_run
 
 
+def _fail_active_tabular_generation_plan(run, reason, attempt_count=0, latency_seconds=None):
+    now = _now_iso()
+    run.update({
+        'plan_status': 'failed',
+        'plan_failure_reason': str(reason or 'provider_failure'),
+        'planner_attempt_count': _safe_int(attempt_count, minimum=0),
+        'planner_latency_seconds': latency_seconds,
+        'planner_completed_at': now,
+        'updated_at': now,
+        'last_heartbeat_at': now,
+        'last_message': 'Reviewed generation planning failed; required output was not generated',
+    })
+    persisted_run = _replace_claimed_run(run)
+    raise TabularGenerationPlanError(
+        str(reason or 'provider_failure'),
+        failed_run=persisted_run,
+    )
+
+
+def _get_tabular_semantic_validation_options(run):
+    rollout_settings = _get_tabular_generation_rollout_settings_for_run(run, {})
+    return {
+        'mode': str(rollout_settings.get('tabular_semantic_validation_mode') or 'off').strip().lower(),
+        'max_repair_attempts': _safe_int(
+            rollout_settings.get('tabular_semantic_repair_max_attempts'),
+            default=TABULAR_SEMANTIC_DEFAULT_REPAIR_ATTEMPTS,
+            minimum=0,
+            maximum=5,
+        ),
+        'max_repair_rows': _safe_int(
+            rollout_settings.get('tabular_semantic_repair_max_rows'),
+            default=TABULAR_SEMANTIC_DEFAULT_MAX_REPAIR_ROWS,
+            minimum=1,
+            maximum=500,
+        ),
+    }
+
+
+def _get_tabular_semantic_checkpoint_contract_hash(run):
+    plan_hash = str((run or {}).get('plan_hash') or '').strip()
+    if plan_hash:
+        return plan_hash
+    planner_metadata = (
+        (run or {}).get('tabular_planner_metadata')
+        if isinstance((run or {}).get('tabular_planner_metadata'), dict)
+        else {}
+    )
+    deliverable_contract = (
+        planner_metadata.get('deliverable_contract')
+        if isinstance(planner_metadata.get('deliverable_contract'), dict)
+        else {}
+    )
+    transformation_spec = (run or {}).get('transformation_spec') or deliverable_contract.get('transformation_spec')
+    if not isinstance(transformation_spec, dict) or not transformation_spec:
+        return ''
+    fingerprint_payload = {
+        'transformation_spec': transformation_spec,
+        'public_output_schema': list(
+            (run or {}).get('public_output_schema')
+            or deliverable_contract.get('public_output_schema')
+            or []
+        ),
+        'request_fingerprint': str(deliverable_contract.get('request_fingerprint') or '').strip(),
+    }
+    return hashlib.sha256(
+        json.dumps(
+            fingerprint_payload,
+            ensure_ascii=False,
+            separators=(',', ':'),
+            sort_keys=True,
+        ).encode('utf-8')
+    ).hexdigest()
+
+
+def _build_tabular_semantic_checkpoint_context(run, batch_number):
+    return {
+        'user_id': str((run or {}).get('user_id') or '').strip(),
+        'conversation_id': str((run or {}).get('conversation_id') or '').strip(),
+        'run_id': str((run or {}).get('id') or '').strip(),
+        'batch_number': _safe_int(batch_number, minimum=1),
+        'plan_hash': _get_tabular_semantic_checkpoint_contract_hash(run),
+    }
+
+
+def _load_tabular_semantic_candidate_checkpoint(
+    checkpoint_context,
+    expected_output_schema,
+    expected_row_count,
+):
+    context = checkpoint_context if isinstance(checkpoint_context, dict) else {}
+    if not all(context.get(field_name) for field_name in ('user_id', 'conversation_id', 'run_id', 'plan_hash')):
+        return None
+    blob_path = _semantic_candidate_blob_path(
+        context['user_id'],
+        context['conversation_id'],
+        context['run_id'],
+        context['batch_number'],
+    )
+    if not _blob_exists(blob_path):
+        return None
+    payload = _download_json_blob(blob_path)
+    if not isinstance(payload, dict) or set(payload) != {
+        'version',
+        'plan_hash',
+        'output_schema',
+        'rows',
+        'validation_counts',
+        'repair_attempt_count',
+    }:
+        raise ValueError('Semantic candidate checkpoint shape is invalid')
+    if _safe_int(payload.get('version')) != TABULAR_SEMANTIC_CANDIDATE_CHECKPOINT_VERSION:
+        raise ValueError('Semantic candidate checkpoint version is unsupported')
+    if str(payload.get('plan_hash') or '').strip() != context['plan_hash']:
+        raise ValueError('Semantic candidate checkpoint plan hash does not match')
+    output_schema = list(payload.get('output_schema') or [])
+    if output_schema != list(expected_output_schema or []):
+        raise ValueError('Semantic candidate checkpoint schema does not match')
+    rows = payload.get('rows')
+    if not isinstance(rows, list) or len(rows) != _safe_int(expected_row_count, minimum=0):
+        raise ValueError('Semantic candidate checkpoint row count does not match')
+    if any(not isinstance(row, dict) or list(row) != output_schema for row in rows):
+        raise ValueError('Semantic candidate checkpoint row schema does not match')
+    validation_counts = payload.get('validation_counts')
+    if not isinstance(validation_counts, dict):
+        raise ValueError('Semantic candidate checkpoint validation counts are invalid')
+    return {
+        'rows': rows,
+        'validation_counts': validation_counts,
+        'repair_attempt_count': _safe_int(payload.get('repair_attempt_count'), minimum=0, maximum=5),
+        'blob_path': blob_path,
+    }
+
+
+def _persist_tabular_semantic_candidate_checkpoint(
+    checkpoint_context,
+    output_schema,
+    rows,
+    validation_counts=None,
+    repair_attempt_count=0,
+):
+    context = checkpoint_context if isinstance(checkpoint_context, dict) else {}
+    if not all(context.get(field_name) for field_name in ('user_id', 'conversation_id', 'run_id', 'plan_hash')):
+        return None
+    normalized_schema = list(output_schema or [])
+    normalized_rows = [dict(row) for row in list(rows or [])]
+    if any(list(row) != normalized_schema for row in normalized_rows):
+        raise ValueError('Semantic candidate checkpoint row schema is invalid')
+    blob_path = _semantic_candidate_blob_path(
+        context['user_id'],
+        context['conversation_id'],
+        context['run_id'],
+        context['batch_number'],
+    )
+    _upload_json_blob(
+        blob_path,
+        {
+            'version': TABULAR_SEMANTIC_CANDIDATE_CHECKPOINT_VERSION,
+            'plan_hash': context['plan_hash'],
+            'output_schema': normalized_schema,
+            'rows': normalized_rows,
+            'validation_counts': dict(validation_counts or {}),
+            'repair_attempt_count': _safe_int(repair_attempt_count, minimum=0, maximum=5),
+        },
+        metadata={
+            'run_id': context['run_id'],
+            'conversation_id': context['conversation_id'],
+            'batch_number': context['batch_number'],
+            'plan_hash': context['plan_hash'],
+            'semantic_candidate': 'true',
+        },
+        overwrite=True,
+    )
+    return blob_path
+
+
+def _build_tabular_semantic_field_guidance(generation_plan, transformation_spec):
+    descriptions = {
+        str(field.get('name') or '').strip(): str(field.get('description') or '').strip()
+        for field in _get_tabular_generation_plan_public_fields(generation_plan)
+    }
+    guidance = []
+    for field in list((transformation_spec or {}).get('fields') or []):
+        if not isinstance(field, dict) or str(field.get('mode') or '').strip().lower() == 'deterministic':
+            continue
+        field_name = str(field.get('name') or '').strip()
+        guidance.append({
+            'name': field_name,
+            'description': descriptions.get(field_name, ''),
+            'type': str(field.get('type') or 'string').strip().lower(),
+            'nullable': bool(field.get('nullable', True)),
+            'allowed_values': list(field.get('allowed_values') or []),
+        })
+    return guidance
+
+
+def _build_tabular_semantic_verification_prompt(
+    user_question,
+    verification_request,
+    generation_plan,
+    transformation_spec,
+):
+    payload = {
+        'objective': str(user_question or '').strip()[:TABULAR_GENERATION_PLAN_MAX_QUESTION_CHARS],
+        'fields': _build_tabular_semantic_field_guidance(generation_plan, transformation_spec),
+        'rows': verification_request.get('rows') or [],
+    }
+    serialized_payload = _dump_generated_output_json(payload)
+    if len(serialized_payload) > TABULAR_SEMANTIC_MAX_PROMPT_CHARS:
+        raise ValueError('Semantic verification prompt exceeds the bounded limit')
+    return (
+        'Verify every semantic field against the bounded source evidence and objective below. '
+        'Return ONLY one JSON object with version and rows. Use version '
+        f'{TABULAR_SEMANTIC_VALIDATION_CONTRACT_VERSION}. Each row must preserve row_key and contain '
+        'every semantic field exactly once with name, status, reason_code, and evidence_fields. '
+        'status must be pass, fail, uncertain, or unsupported. evidence_fields may contain only source '
+        'field names present in that row. Do not include reasoning, repaired values, markdown, or extra fields.\n\n'
+        f'{serialized_payload}'
+    )
+
+
+def _build_tabular_semantic_repair_prompt(
+    user_question,
+    verification_request,
+    repair_targets,
+    attempt_number,
+    generation_plan,
+    transformation_spec,
+):
+    target_keys = {
+        (str(target.get('row_key') or ''), str(target.get('field_name') or ''))
+        for target in list(repair_targets or [])
+    }
+    target_row_keys = {row_key for row_key, _ in target_keys}
+    payload = {
+        'objective': str(user_question or '').strip()[:TABULAR_GENERATION_PLAN_MAX_QUESTION_CHARS],
+        'attempt': _safe_int(attempt_number, minimum=1, maximum=5),
+        'fields': [
+            field
+            for field in _build_tabular_semantic_field_guidance(generation_plan, transformation_spec)
+            if any(field['name'] == field_name for _, field_name in target_keys)
+        ],
+        'targets': list(repair_targets or []),
+        'rows': [
+            row
+            for row in list(verification_request.get('rows') or [])
+            if row.get('row_key') in target_row_keys
+        ],
+    }
+    serialized_payload = _dump_generated_output_json(payload)
+    if len(serialized_payload) > TABULAR_SEMANTIC_MAX_PROMPT_CHARS:
+        raise ValueError('Semantic repair prompt exceeds the bounded limit')
+    return (
+        'Repair only the requested semantic row-field targets using the bounded source evidence and objective. '
+        'Return ONLY one JSON object with version and rows. Use version '
+        f'{TABULAR_SEMANTIC_VALIDATION_CONTRACT_VERSION}. Each row must contain row_key and values, and '
+        'values must contain only targeted fields. Preserve declared types and allowed values. Do not return '
+        'untargeted fields, reasoning, markdown, or extra rows.\n\n'
+        f'{serialized_payload}'
+    )
+
+
+async def _invoke_tabular_semantic_model(chat_service, system_message, prompt, service_id, timeout_seconds):
+    chat_history = SKChatHistory()
+    chat_history.add_system_message(system_message)
+    chat_history.add_user_message(prompt)
+    execution_settings = AzureChatPromptExecutionSettings(service_id=service_id)
+    result = await asyncio.wait_for(
+        chat_service.get_chat_message_contents(chat_history, execution_settings),
+        timeout=max(0.001, _safe_float(timeout_seconds, default=TABULAR_EXPORT_DEFAULT_BATCH_TIMEOUT_SECONDS)),
+    )
+    raw_response_content = result[0].content if result and result[0].content else ''
+    if not raw_response_content:
+        raise ValueError('Semantic validation model returned an empty response')
+    return _parse_generated_json_object(raw_response_content)
+
+
+async def _verify_and_repair_tabular_batch_entries(
+    chat_service,
+    user_question,
+    source_rows,
+    output_rows,
+    transformation_spec,
+    generation_plan,
+    semantic_validation_options,
+    timeout_seconds,
+    semantic_checkpoint_context=None,
+):
+    options = semantic_validation_options or {}
+    mode = str(options.get('mode') or 'off').strip().lower()
+    public_source_rows = [
+        {
+            str(field_name): field_value
+            for field_name, field_value in source_row.items()
+            if not is_analysis_internal_lineage_field(field_name)
+        }
+        for source_row in list(source_rows or [])
+    ]
+
+    async def invoke_verifier(verification_request):
+        return await _invoke_tabular_semantic_model(
+            chat_service,
+            'You are an independent structured-data field verifier. Return only the requested JSON contract.',
+            _build_tabular_semantic_verification_prompt(
+                user_question,
+                verification_request,
+                generation_plan,
+                transformation_spec,
+            ),
+            'tabular-generated-output-semantic-verifier',
+            timeout_seconds,
+        )
+
+    async def invoke_repair(verification_request, repair_targets, attempt_number):
+        return await _invoke_tabular_semantic_model(
+            chat_service,
+            'You repair only explicitly failed structured-data fields. Return only the requested JSON contract.',
+            _build_tabular_semantic_repair_prompt(
+                user_question,
+                verification_request,
+                repair_targets,
+                attempt_number,
+                generation_plan,
+                transformation_spec,
+            ),
+            'tabular-generated-output-semantic-repair',
+            timeout_seconds,
+        )
+
+    async def checkpoint_candidate(rows, validation_counts, attempt_number):
+        if not rows:
+            return
+        await asyncio.to_thread(
+            _persist_tabular_semantic_candidate_checkpoint,
+            semantic_checkpoint_context,
+            list(rows[0]),
+            rows,
+            validation_counts,
+            attempt_number,
+        )
+
+    return await verify_and_repair_semantic_rows(
+        public_source_rows,
+        output_rows,
+        transformation_spec,
+        mode,
+        invoke_verifier,
+        invoke_repair,
+        max_repair_attempts=options.get('max_repair_attempts'),
+        max_repair_rows=options.get('max_repair_rows'),
+        checkpoint_candidate=checkpoint_candidate,
+    )
+
+
 def _ensure_tabular_generation_plan(
     run,
     chat_service,
@@ -4138,7 +4849,10 @@ def _ensure_tabular_generation_plan(
     if (
         task_type not in {TABULAR_RUN_TASK_STRUCTURED_EXPORT, TABULAR_RUN_TASK_COMBINED}
         or (run or {}).get('passthrough_input_rows')
-        or bool(_get_tabular_run_transformation_spec(run))
+        or (
+            bool(_get_tabular_run_transformation_spec(run))
+            and not ((run or {}).get('plan_blob_path') or (run or {}).get('plan_hash'))
+        )
         or chat_service is None
     ):
         if (run or {}).get('plan_status') not in {'ready', 'fallback', 'not_applicable'}:
@@ -4179,14 +4893,27 @@ def _ensure_tabular_generation_plan(
 
     sample_rows = _load_tabular_generation_plan_sample_rows(run, input_batches)
     input_contract = _build_tabular_generation_plan_input_contract(sample_rows)
-    plan_blob_path = _tabular_generation_plan_blob_path(
+    stored_plan_blob_path = str((run or {}).get('plan_blob_path') or '').strip()
+    current_plan_blob_path = _tabular_generation_plan_blob_path(
         (run or {}).get('user_id'),
         (run or {}).get('conversation_id'),
         (run or {}).get('id'),
     )
-    stored_plan_blob_path = str((run or {}).get('plan_blob_path') or '').strip()
-    if stored_plan_blob_path and stored_plan_blob_path != plan_blob_path:
+    legacy_plan_blob_paths = {
+        _tabular_generation_plan_blob_path(
+            (run or {}).get('user_id'),
+            (run or {}).get('conversation_id'),
+            (run or {}).get('id'),
+            plan_version=legacy_version,
+        )
+        for legacy_version in TABULAR_GENERATION_PLAN_LEGACY_VERSIONS
+    }
+    if stored_plan_blob_path and stored_plan_blob_path not in {
+        current_plan_blob_path,
+        *legacy_plan_blob_paths,
+    }:
         raise ValueError('Stored generation plan path does not match the run identity')
+    plan_blob_path = stored_plan_blob_path or current_plan_blob_path
     if _blob_exists(plan_blob_path):
         recovered_run, _ = _recover_tabular_generation_plan(
             run,
@@ -4200,6 +4927,8 @@ def _ensure_tabular_generation_plan(
     if (run or {}).get('plan_status') == 'fallback':
         return run
     if (run or {}).get('plan_status') == 'planning':
+        if plan_mode == 'active':
+            return _fail_active_tabular_generation_plan(run, 'interrupted_before_persistence')
         return _mark_tabular_generation_plan_fallback(run, 'interrupted_before_persistence')
 
     planner_model = _resolve_tabular_generation_planner_model(run, settings)
@@ -4223,12 +4952,20 @@ def _ensure_tabular_generation_plan(
             batch_timeout_seconds,
         ))
     except TabularGenerationPlanError as exc:
+        if plan_mode == 'active':
+            return _fail_active_tabular_generation_plan(
+                run,
+                exc.reason,
+                attempt_count=TABULAR_GENERATION_PLAN_DEFAULT_RETRY_ATTEMPTS,
+            )
         return _mark_tabular_generation_plan_fallback(
             run,
             exc.reason,
             attempt_count=TABULAR_GENERATION_PLAN_DEFAULT_RETRY_ATTEMPTS,
         )
     except ValueError:
+        if plan_mode == 'active':
+            return _fail_active_tabular_generation_plan(run, 'invalid_input')
         return _mark_tabular_generation_plan_fallback(run, 'invalid_input')
 
     try:
@@ -4264,11 +5001,17 @@ def _ensure_tabular_generation_plan(
         'planner_attempt_count': metrics.get('attempt_count'),
         'planner_latency_seconds': metrics.get('latency_seconds'),
         'planner_model_latency_seconds': metrics.get('model_latency_seconds'),
+        'planner_review_latency_seconds': metrics.get('review_latency_seconds'),
         'planner_input_char_count': metrics.get('input_char_count'),
         'planner_response_char_count': metrics.get('response_char_count'),
         'planner_input_token_count': metrics.get('input_token_count'),
         'planner_output_token_count': metrics.get('output_token_count'),
         'planner_total_token_count': metrics.get('total_token_count'),
+        'planner_review_input_char_count': metrics.get('review_input_char_count'),
+        'planner_review_response_char_count': metrics.get('review_response_char_count'),
+        'planner_review_input_token_count': metrics.get('review_input_token_count'),
+        'planner_review_output_token_count': metrics.get('review_output_token_count'),
+        'planner_review_total_token_count': metrics.get('review_total_token_count'),
         'planner_completed_at': plan.get('created_at'),
         'updated_at': _now_iso(),
         'last_heartbeat_at': _now_iso(),
@@ -4287,6 +5030,10 @@ def _ensure_tabular_generation_plan(
             'planner_input_token_count': persisted_run.get('planner_input_token_count'),
             'planner_output_token_count': persisted_run.get('planner_output_token_count'),
             'planner_total_token_count': persisted_run.get('planner_total_token_count'),
+            'planner_review_latency_seconds': persisted_run.get('planner_review_latency_seconds'),
+            'planner_review_input_token_count': persisted_run.get('planner_review_input_token_count'),
+            'planner_review_output_token_count': persisted_run.get('planner_review_output_token_count'),
+            'planner_review_total_token_count': persisted_run.get('planner_review_total_token_count'),
         },
         level=logging.INFO,
     )
@@ -4308,6 +5055,8 @@ async def _generate_batch_entries(
     response_protocol=TABULAR_RESPONSE_PROTOCOL_OBJECT_V1,
     generation_plan=None,
     transformation_spec=None,
+    semantic_validation_options=None,
+    semantic_checkpoint_context=None,
 ):
     batch_number = batch_index + 1
     normalized_response_protocol = str(response_protocol or TABULAR_RESPONSE_PROTOCOL_OBJECT_V1).strip()
@@ -4316,6 +5065,43 @@ async def _generate_batch_entries(
         expected_output_schema,
         transformation_spec=transformation_spec,
     )
+    semantic_mode = str((semantic_validation_options or {}).get('mode') or 'off').strip().lower()
+    candidate_checkpoint = None
+    if transformation_spec and semantic_mode in {'shadow', 'active'} and expected_output_schema:
+        candidate_checkpoint = _load_tabular_semantic_candidate_checkpoint(
+            semantic_checkpoint_context,
+            expected_output_schema,
+            len(batch_rows),
+        )
+    if candidate_checkpoint:
+        resumed_entries = list(candidate_checkpoint['rows'])
+        (
+            resumed_entries,
+            semantic_validation_counts,
+            semantic_validation_attempts,
+        ) = await _verify_and_repair_tabular_batch_entries(
+            chat_service,
+            user_question,
+            batch_rows,
+            resumed_entries,
+            transformation_spec,
+            generation_plan,
+            semantic_validation_options,
+            batch_timeout_seconds,
+            semantic_checkpoint_context=semantic_checkpoint_context,
+        )
+        return resumed_entries, 0, list(expected_output_schema), {
+            'input_char_count': 0,
+            'response_char_count': 0,
+            'model_latency_seconds': 0,
+            'validation_seconds': None,
+            'input_token_count': 0,
+            'output_token_count': 0,
+            'total_token_count': 0,
+            'semantic_validation_counts': semantic_validation_counts,
+            'semantic_validation_attempts': semantic_validation_attempts,
+            'semantic_candidate_reused': True,
+        }
     batch_prompt = _build_batch_prompt(
         user_question,
         batch_rows,
@@ -4429,10 +5215,39 @@ async def _generate_batch_entries(
                     expected_output_schema or output_schema,
                     transformation_spec=transformation_spec,
                 )
+                semantic_validation_counts = {}
+                semantic_validation_attempts = []
+                if transformation_spec:
+                    if semantic_mode in {'shadow', 'active'}:
+                        await asyncio.to_thread(
+                            _persist_tabular_semantic_candidate_checkpoint,
+                            semantic_checkpoint_context,
+                            output_schema,
+                            normalized_entries,
+                            {},
+                            0,
+                        )
+                    (
+                        normalized_entries,
+                        semantic_validation_counts,
+                        semantic_validation_attempts,
+                    ) = await _verify_and_repair_tabular_batch_entries(
+                        chat_service,
+                        user_question,
+                        batch_rows,
+                        normalized_entries,
+                        transformation_spec,
+                        generation_plan,
+                        semantic_validation_options,
+                        timeout_seconds,
+                        semantic_checkpoint_context=semantic_checkpoint_context,
+                    )
                 last_attempt_metrics['validation_seconds'] = round(
                     time.monotonic() - validation_started_at,
                     3,
                 )
+                last_attempt_metrics['semantic_validation_counts'] = semantic_validation_counts
+                last_attempt_metrics['semantic_validation_attempts'] = semantic_validation_attempts
                 return normalized_entries, mismatch_count, output_schema, last_attempt_metrics
             except ValueError as exc:
                 last_validation_error = str(exc)
@@ -4485,6 +5300,8 @@ async def _generate_batch_entries_for_window(
     response_protocol,
     generation_plan,
     transformation_spec,
+    semantic_validation_options,
+    semantic_checkpoint_context,
 ):
     queued_at = time.monotonic()
     async with semaphore:
@@ -4505,8 +5322,12 @@ async def _generate_batch_entries_for_window(
             response_protocol=response_protocol,
             generation_plan=generation_plan,
             transformation_spec=transformation_spec,
+            semantic_validation_options=semantic_validation_options,
+            semantic_checkpoint_context=semantic_checkpoint_context,
         )
         elapsed_seconds = time.monotonic() - batch_started_at
+        semantic_validation_counts = dict(attempt_metrics.get('semantic_validation_counts') or {})
+        semantic_validation_attempts = list(attempt_metrics.get('semantic_validation_attempts') or [])[:5]
         log_event(
             '[TABULAR_GENERATED_OUTPUT] Background export batch model completed',
             {
@@ -4525,13 +5346,25 @@ async def _generate_batch_entries_for_window(
                 'output_token_count': attempt_metrics.get('output_token_count'),
                 'total_token_count': attempt_metrics.get('total_token_count'),
                 'mismatch_count': mismatch_count,
+                'semantic_pass_count': _safe_int(semantic_validation_counts.get('pass_count')),
+                'semantic_fail_count': _safe_int(semantic_validation_counts.get('fail_count')),
+                'semantic_uncertain_count': _safe_int(semantic_validation_counts.get('uncertain_count')),
+                'semantic_unsupported_count': _safe_int(semantic_validation_counts.get('unsupported_count')),
+                'semantic_repair_target_count': _safe_int(semantic_validation_counts.get('repair_target_count')),
+                'semantic_repair_attempt_count': _safe_int(semantic_validation_counts.get('repair_attempt_count')),
             },
             debug_only=True,
         )
+        batch_summary = _build_generated_batch_summary(batch_entries)
+        if semantic_validation_counts:
+            batch_summary['semantic_validation'] = {
+                'final': semantic_validation_counts,
+                'attempts': semantic_validation_attempts,
+            }
         return {
             'batch_number': batch_request['batch_number'],
             'batch_entries': batch_entries,
-            'batch_summary': _build_generated_batch_summary(batch_entries),
+            'batch_summary': batch_summary,
             'batch_row_count': len(batch_entries),
             'elapsed_seconds': elapsed_seconds,
             'queue_wait_seconds': queue_wait_seconds,
@@ -4544,6 +5377,7 @@ async def _generate_batch_entries_for_window(
             'total_token_count': attempt_metrics.get('total_token_count'),
             'mismatch_count': mismatch_count,
             'output_schema': output_schema,
+            'semantic_validation_counts': semantic_validation_counts,
         }
 
 
@@ -4562,6 +5396,8 @@ async def _generate_batch_window_entries(
     response_protocol=TABULAR_RESPONSE_PROTOCOL_OBJECT_V1,
     generation_plan=None,
     transformation_spec=None,
+    semantic_validation_options=None,
+    semantic_checkpoint_run=None,
 ):
     semaphore = asyncio.Semaphore(max(1, batch_concurrency))
     tasks = [
@@ -4580,6 +5416,11 @@ async def _generate_batch_window_entries(
             response_protocol,
             generation_plan,
             transformation_spec,
+            semantic_validation_options,
+            _build_tabular_semantic_checkpoint_context(
+                semantic_checkpoint_run,
+                batch_request['batch_number'],
+            ),
         )
         for batch_request in batch_requests
     ]
@@ -4657,6 +5498,7 @@ async def _generate_and_checkpoint_batch_window_entries(
     response_protocol=TABULAR_RESPONSE_PROTOCOL_OBJECT_V1,
     generation_plan=None,
     transformation_spec=None,
+    semantic_validation_options=None,
 ):
     semaphore = asyncio.Semaphore(max(1, batch_concurrency))
     writer_semaphore = asyncio.Semaphore(max(1, checkpoint_writer_concurrency))
@@ -4677,6 +5519,11 @@ async def _generate_and_checkpoint_batch_window_entries(
                 response_protocol,
                 generation_plan,
                 transformation_spec,
+                semantic_validation_options,
+                _build_tabular_semantic_checkpoint_context(
+                    run,
+                    batch_request['batch_number'],
+                ),
             )
         )
         for batch_request in batch_requests
@@ -4769,6 +5616,7 @@ async def _generate_and_checkpoint_rolling_pool_entries(
     response_protocol=TABULAR_RESPONSE_PROTOCOL_OBJECT_V1,
     generation_plan=None,
     transformation_spec=None,
+    semantic_validation_options=None,
 ):
     model_semaphore = asyncio.Semaphore(max(1, batch_concurrency))
     writer_semaphore = asyncio.Semaphore(max(1, checkpoint_writer_concurrency))
@@ -4983,6 +5831,8 @@ async def _generate_and_checkpoint_rolling_pool_entries(
                 response_protocol,
                 generation_plan,
                 transformation_spec,
+                semantic_validation_options,
+                _build_tabular_semantic_checkpoint_context(run, batch_number),
             )
         )
         active_batch_requests[model_task] = batch_request
@@ -5287,9 +6137,13 @@ async def _generate_combined_chunk_result(
     batch_timeout_seconds,
     expected_output_schema=None,
     transformation_spec=None,
+    generation_plan=None,
+    semantic_validation_options=None,
 ):
     batch_number = batch_request['batch_number']
     batch_rows = batch_request['rows']
+    semantic_checkpoint_context = _build_tabular_semantic_checkpoint_context(run, batch_number)
+    semantic_mode = str((semantic_validation_options or {}).get('mode') or 'off').strip().lower()
     model_expected_output_schema = _build_model_expected_output_schema(
         expected_output_schema,
         transformation_spec=transformation_spec,
@@ -5354,7 +6208,50 @@ async def _generate_combined_chunk_result(
                     expected_output_schema or output_schema,
                     transformation_spec=transformation_spec,
                 )
-                return normalized_entries, output_schema, analysis_summary, mismatch_count
+                candidate_checkpoint = None
+                if transformation_spec and semantic_mode in {'shadow', 'active'}:
+                    candidate_checkpoint = _load_tabular_semantic_candidate_checkpoint(
+                        semantic_checkpoint_context,
+                        output_schema,
+                        len(batch_rows),
+                    )
+                if candidate_checkpoint:
+                    normalized_entries = list(candidate_checkpoint['rows'])
+                elif transformation_spec and semantic_mode in {'shadow', 'active'}:
+                    await asyncio.to_thread(
+                        _persist_tabular_semantic_candidate_checkpoint,
+                        semantic_checkpoint_context,
+                        output_schema,
+                        normalized_entries,
+                        {},
+                        0,
+                    )
+                semantic_validation_counts = {}
+                semantic_validation_attempts = []
+                if transformation_spec:
+                    (
+                        normalized_entries,
+                        semantic_validation_counts,
+                        semantic_validation_attempts,
+                    ) = await _verify_and_repair_tabular_batch_entries(
+                        chat_service,
+                        run.get('user_question'),
+                        batch_rows,
+                        normalized_entries,
+                        transformation_spec,
+                        generation_plan,
+                        semantic_validation_options,
+                        timeout_seconds,
+                        semantic_checkpoint_context=semantic_checkpoint_context,
+                    )
+                return (
+                    normalized_entries,
+                    output_schema,
+                    analysis_summary,
+                    mismatch_count,
+                    semantic_validation_counts,
+                    semantic_validation_attempts,
+                )
             except ValueError as exc:
                 last_validation_error = str(exc)
 
@@ -5390,10 +6287,19 @@ async def _generate_combined_chunk_result_for_window(
     batch_timeout_seconds,
     expected_output_schema,
     transformation_spec,
+    generation_plan,
+    semantic_validation_options,
 ):
     async with semaphore:
         batch_started_at = time.monotonic()
-        batch_entries, output_schema, analysis_summary, mismatch_count = await _generate_combined_chunk_result(
+        (
+            batch_entries,
+            output_schema,
+            analysis_summary,
+            mismatch_count,
+            semantic_validation_counts,
+            semantic_validation_attempts,
+        ) = await _generate_combined_chunk_result(
             chat_service,
             run,
             batch_request,
@@ -5402,16 +6308,25 @@ async def _generate_combined_chunk_result_for_window(
             batch_timeout_seconds,
             expected_output_schema=expected_output_schema,
             transformation_spec=transformation_spec,
+            generation_plan=generation_plan,
+            semantic_validation_options=semantic_validation_options,
         )
+        batch_summary = _build_generated_batch_summary(batch_entries)
+        if semantic_validation_counts:
+            batch_summary['semantic_validation'] = {
+                'final': semantic_validation_counts,
+                'attempts': semantic_validation_attempts[:5],
+            }
         return {
             'batch_number': batch_request['batch_number'],
             'batch_entries': batch_entries,
-            'batch_summary': _build_generated_batch_summary(batch_entries),
+            'batch_summary': batch_summary,
             'analysis_summary': analysis_summary,
             'batch_row_count': len(batch_entries),
             'elapsed_seconds': time.monotonic() - batch_started_at,
             'mismatch_count': mismatch_count,
             'output_schema': output_schema,
+            'semantic_validation_counts': semantic_validation_counts,
         }
 
 
@@ -5425,6 +6340,8 @@ async def _generate_combined_chunk_result_window(
     batch_timeout_seconds,
     expected_output_schema=None,
     transformation_spec=None,
+    generation_plan=None,
+    semantic_validation_options=None,
 ):
     semaphore = asyncio.Semaphore(max(1, batch_concurrency))
     tasks = [
@@ -5438,6 +6355,8 @@ async def _generate_combined_chunk_result_window(
             batch_timeout_seconds,
             expected_output_schema,
             transformation_spec,
+            generation_plan,
+            semantic_validation_options,
         )
         for batch_request in batch_requests
     ]
@@ -5941,6 +6860,46 @@ def _normalize_tabular_run_planner_metadata(planner_metadata):
                 deliverable_contract.get('transformation_spec'),
                 public_output_schema=normalized_metadata['deliverable_contract']['public_output_schema'],
             )
+    return normalized_metadata
+
+
+def _ensure_active_tabular_run_deliverable_contract(
+    planner_metadata,
+    requested_plan_mode,
+    task_type,
+    output_format,
+    user_question,
+):
+    """Add a server-owned contract for new active runs from legacy direct preflight."""
+    normalized_metadata = dict(planner_metadata or {})
+    if (
+        str(requested_plan_mode or '').strip().lower() != 'active'
+        or isinstance(normalized_metadata.get('deliverable_contract'), dict)
+    ):
+        return normalized_metadata
+    normalized_task_type = _normalize_tabular_run_task_type(task_type)
+    fallback_action_mode = (
+        'analyze'
+        if normalized_task_type == TABULAR_RUN_TASK_COMBINED
+        else 'search'
+    )
+    fallback_contract = build_analysis_deliverable_contract(
+        action_mode=fallback_action_mode,
+        requested_output_format=output_format,
+        row_cardinality='one_per_source_row',
+        ordering='source_order',
+        transformation_mode='semantic',
+        validation_profile='exact_rows_schema',
+        request_fingerprint=hashlib.sha256(
+            str(user_question or '').encode('utf-8')
+        ).hexdigest(),
+    )
+    normalized_metadata.update({
+        'execution_contract': normalized_task_type,
+        'durable_task_type': normalized_task_type,
+        'reason_code': 'legacy_direct_preflight',
+        'deliverable_contract': fallback_contract.to_dict(),
+    })
     return normalized_metadata
 
 
@@ -8488,15 +9447,22 @@ def _record_shadow_tabular_generation_plan_comparison(run, actual_output_schema)
 def _load_active_compact_generation_plan(run):
     if not _is_compact_row_array_protocol((run or {}).get('response_protocol_version')):
         return None
-    if _get_tabular_generation_plan_mode(run) != 'active' or (run or {}).get('plan_status') != 'ready':
+    plan = _load_ready_active_tabular_generation_plan(run)
+    if plan is None:
         raise ValueError('Compact row protocol requires a ready active generation plan')
+    return plan
+
+
+def _load_ready_active_tabular_generation_plan(run):
+    if _get_tabular_generation_plan_mode(run) != 'active' or (run or {}).get('plan_status') != 'ready':
+        return None
     plan_blob_path = str((run or {}).get('plan_blob_path') or '').strip()
     if not plan_blob_path:
-        raise ValueError('Compact row protocol plan path is missing')
+        raise ValueError('Active generation plan path is missing')
     plan = _download_json_blob(plan_blob_path)
     _validate_tabular_generation_plan(plan, run)
     if plan.get('plan_hash') != (run or {}).get('plan_hash'):
-        raise ValueError('Compact row protocol plan hash does not match the run record')
+        raise ValueError('Active generation plan hash does not match the run record')
     return plan
 
 
@@ -9145,6 +10111,8 @@ def _process_combined_run(
                     batch_timeout_seconds,
                     expected_output_schema=run.get('output_schema'),
                     transformation_spec=_get_tabular_run_transformation_spec(run),
+                    generation_plan=_load_ready_active_tabular_generation_plan(run),
+                    semantic_validation_options=_get_tabular_semantic_validation_options(run),
                 )
             )
             _raise_if_tabular_export_canceled(run)
@@ -9232,6 +10200,7 @@ def _process_structured_export_rolling_pool(
             response_protocol=run.get('response_protocol_version'),
             generation_plan=generation_plan,
             transformation_spec=_get_tabular_run_transformation_spec(run),
+            semantic_validation_options=_get_tabular_semantic_validation_options(run),
         )
     )
     del last_logged_at
@@ -9333,7 +10302,7 @@ def process_tabular_generated_output_run(run_id, user_id):
             settings,
             batch_timeout_seconds,
         )
-        generation_plan = _load_active_compact_generation_plan(run)
+        generation_plan = _load_ready_active_tabular_generation_plan(run)
         if str(run.get('executor_mode') or '').strip() == TABULAR_EXECUTOR_MODE_ROLLING_POOL:
             if not _is_rolling_executor_ready(run):
                 if str(run.get('plan_status') or '').strip().lower() in {'fallback', 'disabled', 'not_applicable'}:
@@ -9452,6 +10421,8 @@ def process_tabular_generated_output_run(run_id, user_id):
                             response_protocol=run.get('response_protocol_version'),
                             generation_plan=generation_plan,
                             transformation_spec=_get_tabular_run_transformation_spec(run),
+                            semantic_validation_options=_get_tabular_semantic_validation_options(run),
+                            semantic_checkpoint_run=run,
                         )
                     )
                     batch_results.update(generated_batch_results)
@@ -9474,6 +10445,7 @@ def process_tabular_generated_output_run(run_id, user_id):
                             response_protocol=run.get('response_protocol_version'),
                             generation_plan=generation_plan,
                             transformation_spec=_get_tabular_run_transformation_spec(run),
+                            semantic_validation_options=_get_tabular_semantic_validation_options(run),
                         )
                     )
                 _raise_if_tabular_export_canceled(run)
@@ -9503,6 +10475,9 @@ def process_tabular_generated_output_run(run_id, user_id):
         return _read_run(normalized_user_id, normalized_run_id)
     except TabularExportLeaseLostError:
         return _read_run(normalized_user_id, normalized_run_id)
+    except TabularGenerationPlanError as exc:
+        failed_run = exc.failed_run if isinstance(exc.failed_run, dict) else run
+        return _mark_run_failed(failed_run, exc)
     except Exception as exc:
         if _is_retryable_export_error(exc):
             return _mark_run_retryable(run, exc, settings, retry_category='transient')
@@ -9625,6 +10600,13 @@ def queue_tabular_generated_output_run(
         or bool(contract_transformation_spec)
     ):
         requested_plan_mode = 'off'
+    tabular_planner_metadata = _ensure_active_tabular_run_deliverable_contract(
+        tabular_planner_metadata,
+        requested_plan_mode,
+        normalized_task_type,
+        normalized_output_format,
+        user_question,
+    )
     response_protocol_version = _select_tabular_response_protocol(
         rollout_settings,
         requested_plan_mode,
