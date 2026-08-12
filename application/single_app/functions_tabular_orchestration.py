@@ -6,6 +6,19 @@ import json
 import os
 from typing import Mapping
 
+from functions_analysis_deliverables import (
+    ANALYSIS_DELIVERABLE_EVENT_FINALIZED,
+    ANALYSIS_DELIVERABLE_EVENT_PLANNED,
+    ANALYSIS_ORDERING_NOT_APPLICABLE,
+    ANALYSIS_ORDERING_SOURCE_ORDER,
+    ANALYSIS_ROW_CARDINALITY_NOT_APPLICABLE,
+    ANALYSIS_ROW_CARDINALITY_ONE_PER_SOURCE_ROW,
+    ANALYSIS_TRANSFORMATION_MODE_SEMANTIC,
+    ANALYSIS_VALIDATION_PROFILE_ARTIFACT_SET,
+    ANALYSIS_VALIDATION_PROFILE_EXACT_ROWS_SCHEMA,
+    build_analysis_deliverable_contract,
+    emit_analysis_deliverable_contract_event,
+)
 from functions_assistant_table_exports import assistant_table_export_requested
 from functions_generated_file_exports import get_requested_structured_artifact_format
 
@@ -472,6 +485,15 @@ def _build_request_fingerprint(
     return hashlib.sha256(serialized_payload.encode("utf-8")).hexdigest()
 
 
+def _build_source_coverage_fingerprint(source_coverage):
+    fingerprint_payload = {
+        "planner_contract_version": TABULAR_ORCHESTRATION_PLANNER_CONTRACT_VERSION,
+        "source_coverage": list(source_coverage or []),
+    }
+    serialized_payload = json.dumps(fingerprint_payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(serialized_payload.encode("utf-8")).hexdigest()
+
+
 def _callback_requested_cancellation(cancel_requested=None):
     if cancel_requested is None:
         return False
@@ -494,6 +516,7 @@ def plan_tabular_request(
         for file_context in _dedupe_tabular_file_contexts(file_contexts)
         if _is_supported_tabular_context(file_context)
     ]
+    output_hints = dict(requested_output_hints or {}) if isinstance(requested_output_hints, Mapping) else {}
     generated_output_requested = question_requests_tabular_generated_output(user_question)
     hierarchical_analysis_requested = question_requests_tabular_hierarchical_analysis(user_question)
     durable_task_type = get_tabular_generated_output_task_type(
@@ -556,9 +579,37 @@ def plan_tabular_request(
         request_key=request_fingerprint,
         mode=action_mode,
     )
+    deliverable_contract = build_analysis_deliverable_contract(
+        action_mode=action_mode,
+        requested_output_format=output_format if generated_output_requested else None,
+        public_output_schema=(
+            output_hints.get("public_output_schema")
+            or output_hints.get("output_schema")
+            or []
+        ),
+        row_cardinality=(
+            ANALYSIS_ROW_CARDINALITY_ONE_PER_SOURCE_ROW
+            if generated_output_requested
+            else ANALYSIS_ROW_CARDINALITY_NOT_APPLICABLE
+        ),
+        ordering=(
+            ANALYSIS_ORDERING_SOURCE_ORDER
+            if generated_output_requested
+            else ANALYSIS_ORDERING_NOT_APPLICABLE
+        ),
+        transformation_mode=ANALYSIS_TRANSFORMATION_MODE_SEMANTIC,
+        validation_profile=(
+            ANALYSIS_VALIDATION_PROFILE_EXACT_ROWS_SCHEMA
+            if generated_output_requested
+            else ANALYSIS_VALIDATION_PROFILE_ARTIFACT_SET
+        ),
+        source_fingerprint=_build_source_coverage_fingerprint(source_coverage),
+        request_fingerprint=request_fingerprint,
+    )
 
-    return {
+    result = {
         "planner_contract_version": TABULAR_ORCHESTRATION_PLANNER_CONTRACT_VERSION,
+        "deliverable_contract": deliverable_contract.to_dict(),
         "execution_contract": execution_contract,
         "execution_state": execution_state,
         "durable_task_type": durable_task_type,
@@ -578,9 +629,7 @@ def plan_tabular_request(
             fallback_source="planner",
         ),
         "reason_code": reason_code,
-        "requested_output_hints": dict(requested_output_hints or {})
-        if isinstance(requested_output_hints, Mapping)
-        else {},
+        "requested_output_hints": output_hints,
         "token_usage": None,
         "citations": [],
         "generated_output_metadata": None,
@@ -588,6 +637,17 @@ def plan_tabular_request(
         "deferred_composition": None,
         "safe_failure_details": safe_failure_details,
     }
+    emit_analysis_deliverable_contract_event(
+        settings,
+        ANALYSIS_DELIVERABLE_EVENT_PLANNED,
+        contract=deliverable_contract,
+        dimensions={
+            "selected_execution_task_type": durable_task_type or execution_contract,
+            "passthrough_selected": False,
+            "planner_reason_code": reason_code,
+        },
+    )
+    return result
 
 
 def execute_tabular_plan(
@@ -771,5 +831,20 @@ def orchestrate_tabular_request(
         settings=settings,
         planner_result=result,
         fallback_source="shared_preflight",
+    )
+    emit_analysis_deliverable_contract_event(
+        settings,
+        ANALYSIS_DELIVERABLE_EVENT_FINALIZED,
+        contract=result.get("deliverable_contract"),
+        dimensions={
+            "selected_execution_task_type": result.get("durable_task_type") or result.get("execution_contract"),
+            "execution_state": result.get("execution_state"),
+            "planner_reason_code": result.get("reason_code"),
+        },
+        metrics={
+            "required_artifact_completion_count": 1
+            if isinstance(result.get("generated_output_metadata"), Mapping)
+            else 0,
+        },
     )
     return result
