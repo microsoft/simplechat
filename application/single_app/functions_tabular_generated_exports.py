@@ -17,6 +17,7 @@ import tempfile
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
+from xml.sax.saxutils import escape as escape_xml_text
 
 from azure.core import MatchConditions
 from azure.core.exceptions import ResourceExistsError
@@ -37,6 +38,10 @@ from config import (
     storage_account_user_documents_container_name,
 )
 from functions_appinsights import log_event
+from functions_analysis_deliverables import (
+    is_analysis_internal_lineage_field,
+    project_structured_deliverable_row,
+)
 from functions_assistant_table_exports import build_safe_csv_headers, neutralize_csv_spreadsheet_formula
 from functions_tabular_csv_query import (
     iter_tabular_csv_query_rows,
@@ -1109,10 +1114,84 @@ def _sync_tabular_generation_contract_fields(run):
     run.setdefault('systemic_failure_category', None)
     run.setdefault('systemic_failure_signature', None)
     run.setdefault('systemic_failure_opened_at', None)
+    run['lineage_schema'] = _get_tabular_run_lineage_schema(run)
+    run['public_output_schema'] = _get_tabular_run_public_output_schema(run)
+    run['internal_checkpoint_schema'] = _get_tabular_run_internal_checkpoint_schema(run)
     run['checkpointed_row_count'] = checkpointed_row_count
     run.setdefault('generation_started_at', run.get('started_at'))
     run.setdefault('generation_completed_at', None)
     return run
+
+
+def _get_tabular_run_lineage_schema(run):
+    raw_schema = list((run or {}).get('lineage_schema') or [
+        TABULAR_EXPORT_OUTPUT_ROW_NUMBER_FIELD,
+        TABULAR_EXPORT_OUTPUT_ROW_IDENTITY_FIELD,
+    ])
+    normalized_schema = []
+    seen_fields = set()
+    for field_name in raw_schema:
+        normalized_field = str(field_name or '').strip()
+        if not normalized_field or normalized_field in seen_fields:
+            continue
+        if not is_analysis_internal_lineage_field(normalized_field):
+            continue
+        seen_fields.add(normalized_field)
+        normalized_schema.append(normalized_field)
+    return normalized_schema or [
+        TABULAR_EXPORT_OUTPUT_ROW_NUMBER_FIELD,
+        TABULAR_EXPORT_OUTPUT_ROW_IDENTITY_FIELD,
+    ]
+
+
+def _get_tabular_run_public_output_schema(run):
+    raw_public_schema = list((run or {}).get('public_output_schema') or [])
+    if not raw_public_schema:
+        deliverable_contract = (
+            ((run or {}).get('tabular_planner_metadata') or {}).get('deliverable_contract')
+            if isinstance((run or {}).get('tabular_planner_metadata'), dict)
+            else {}
+        )
+        raw_public_schema = list((deliverable_contract or {}).get('public_output_schema') or [])
+    if not raw_public_schema:
+        raw_public_schema = [
+            field_name
+            for field_name in list((run or {}).get('output_schema') or [])
+            if not is_analysis_internal_lineage_field(field_name)
+        ]
+
+    normalized_schema = []
+    seen_fields = set()
+    for field_name in raw_public_schema:
+        normalized_field = str(field_name or '').strip()
+        if not normalized_field or normalized_field in seen_fields:
+            continue
+        if is_analysis_internal_lineage_field(normalized_field):
+            continue
+        seen_fields.add(normalized_field)
+        normalized_schema.append(normalized_field)
+    return normalized_schema
+
+
+def _get_tabular_run_internal_checkpoint_schema(run):
+    raw_internal_schema = list((run or {}).get('internal_checkpoint_schema') or [])
+    if raw_internal_schema:
+        return [str(field_name or '').strip() for field_name in raw_internal_schema if str(field_name or '').strip()]
+    output_schema = list((run or {}).get('output_schema') or [])
+    if output_schema:
+        return [str(field_name or '').strip() for field_name in output_schema if str(field_name or '').strip()]
+    return _get_tabular_run_lineage_schema(run) + _get_tabular_run_public_output_schema(run)
+
+
+def _get_tabular_run_serialized_public_schema(run):
+    public_schema = _get_tabular_run_public_output_schema(run)
+    if public_schema:
+        return public_schema
+    return [
+        field_name
+        for field_name in list((run or {}).get('output_schema') or [])
+        if not is_analysis_internal_lineage_field(field_name)
+    ]
 
 
 def _build_generation_progress_contract_fields(run, completed_batches, processed_rows):
@@ -1438,6 +1517,24 @@ def _serialize_generated_output_value(value):
         except TypeError:
             pass
     return neutralize_csv_spreadsheet_formula(value)
+
+
+def _sanitize_generated_xml_tag_name(value, fallback_value='Field'):
+    normalized_name = re.sub(r'[^A-Za-z0-9_.-]+', '_', str(value or '').strip()).strip('._-')
+    if not normalized_name:
+        normalized_name = fallback_value
+    if not re.match(r'^[A-Za-z_]', normalized_name):
+        normalized_name = f'{fallback_value}_{normalized_name}'
+    return normalized_name
+
+
+def _write_generated_xml_row(output_stream, row):
+    output_stream.write('  <Row>\n')
+    for field_name, field_value in (row or {}).items():
+        tag_name = _sanitize_generated_xml_tag_name(field_name)
+        serialized_value = _serialize_generated_output_value(field_value)
+        output_stream.write(f'    <{tag_name}>{escape_xml_text(serialized_value)}</{tag_name}>\n')
+    output_stream.write('  </Row>\n')
 
 
 def _normalize_source_identity_label(value):
@@ -3820,6 +3917,12 @@ def _apply_active_tabular_generation_plan(run, plan):
     if current_output_schema and current_output_schema != planned_output_schema:
         raise ValueError('Active generation plan schema does not match the persisted run schema')
     run['output_schema'] = planned_output_schema
+    run['lineage_schema'] = _get_tabular_run_lineage_schema(run)
+    run['public_output_schema'] = [
+        str(output_field.get('name') or '').strip()
+        for output_field in _get_tabular_generation_plan_llm_fields(plan)
+    ]
+    run['internal_checkpoint_schema'] = planned_output_schema
 
 
 def _recover_tabular_generation_plan(run, input_contract, plan_blob_path, plan_mode):
@@ -5601,7 +5704,7 @@ def _normalize_tabular_run_planner_metadata(planner_metadata):
     if not planner_metadata:
         return {}
 
-    return {
+    normalized_metadata = {
         'planner_contract_version': str(planner_metadata.get('planner_contract_version') or '').strip()[:80],
         'execution_contract': str(planner_metadata.get('execution_contract') or '').strip().lower()[:80],
         'execution_state': str(planner_metadata.get('execution_state') or '').strip().lower()[:40],
@@ -5615,6 +5718,39 @@ def _normalize_tabular_run_planner_metadata(planner_metadata):
             planner_metadata.get('rollout_assignment'),
         ),
     }
+    deliverable_contract = planner_metadata.get('deliverable_contract')
+    if isinstance(deliverable_contract, dict):
+        normalized_metadata['deliverable_contract'] = {
+            'contract_version': str(deliverable_contract.get('contract_version') or '').strip()[:80],
+            'action_mode': str(deliverable_contract.get('action_mode') or '').strip().lower()[:40],
+            'analysis_required': bool(deliverable_contract.get('analysis_required')),
+            'primary_artifact_role': str(deliverable_contract.get('primary_artifact_role') or '').strip().lower()[:80],
+            'public_output_schema': [
+                str(field_name or '').strip()
+                for field_name in list(deliverable_contract.get('public_output_schema') or [])[:TABULAR_GENERATION_PLAN_MAX_FIELDS]
+                if str(field_name or '').strip()
+                and not is_analysis_internal_lineage_field(field_name)
+            ],
+            'internal_checkpoint_schema': [
+                str(field_name or '').strip()
+                for field_name in list(deliverable_contract.get('internal_checkpoint_schema') or [])[
+                    :TABULAR_GENERATION_PLAN_MAX_FIELDS + 2
+                ]
+                if str(field_name or '').strip()
+            ],
+            'lineage_schema': [
+                str(field_name or '').strip()
+                for field_name in list(deliverable_contract.get('lineage_schema') or [])[:8]
+                if str(field_name or '').strip()
+                and is_analysis_internal_lineage_field(field_name)
+            ],
+            'row_cardinality': str(deliverable_contract.get('row_cardinality') or '').strip().lower()[:80],
+            'ordering': str(deliverable_contract.get('ordering') or '').strip().lower()[:80],
+            'transformation_mode': str(deliverable_contract.get('transformation_mode') or '').strip().lower()[:80],
+            'validation_profile': str(deliverable_contract.get('validation_profile') or '').strip().lower()[:80],
+            'publication_policy': str(deliverable_contract.get('publication_policy') or '').strip().lower()[:80],
+        }
+    return normalized_metadata
 
 
 def _normalize_tabular_run_source_format(run):
@@ -6856,17 +6992,22 @@ def _write_ordered_output_stream(run, output_stream):
     expected_row_count = _safe_int(run.get('row_count'))
     output_format = str(run.get('output_format') or 'json').strip().lower() or 'json'
     output_schema = list(run.get('output_schema') or [])
+    public_output_schema = _get_tabular_run_serialized_public_schema(run)
     if not output_schema:
         raise ValueError('Generated output schema is missing')
+    if not public_output_schema:
+        raise ValueError('Generated public output schema is missing')
     if TABULAR_EXPORT_OUTPUT_ROW_NUMBER_FIELD not in output_schema:
         raise ValueError('Generated output schema is missing source row order')
 
     csv_writer = None
     safe_output_schema = None
     if output_format == 'csv':
-        safe_output_schema = build_safe_csv_headers(output_schema)
+        safe_output_schema = build_safe_csv_headers(public_output_schema)
         csv_writer = csv.DictWriter(output_stream, fieldnames=safe_output_schema, lineterminator='\n')
         csv_writer.writeheader()
+    elif output_format == 'xml':
+        output_stream.write('<?xml version="1.0" encoding="UTF-8"?>\n<GeneratedOutput>\n')
     else:
         output_stream.write('[\n')
 
@@ -6899,20 +7040,29 @@ def _write_ordered_output_stream(run, output_stream):
                 field_name: entry.get(field_name)
                 for field_name in output_schema
             }
+            public_entry = project_structured_deliverable_row(
+                ordered_entry,
+                public_output_schema,
+                require_all_fields=True,
+            )
             if csv_writer:
                 csv_writer.writerow({
-                    safe_field_name: _serialize_generated_output_value(ordered_entry.get(field_name))
-                    for field_name, safe_field_name in zip(output_schema, safe_output_schema)
+                    safe_field_name: _serialize_generated_output_value(public_entry.get(field_name))
+                    for field_name, safe_field_name in zip(public_output_schema, safe_output_schema)
                 })
+            elif output_format == 'xml':
+                _write_generated_xml_row(output_stream, public_entry)
             else:
                 if written_row_count:
                     output_stream.write(',\n')
-                output_stream.write(json.dumps(ordered_entry, default=str, ensure_ascii=False))
+                output_stream.write(json.dumps(public_entry, default=str, ensure_ascii=False))
 
             written_row_count += 1
             expected_source_row_number += 1
 
-    if output_format != 'csv':
+    if output_format == 'xml':
+        output_stream.write('</GeneratedOutput>\n')
+    elif output_format != 'csv':
         output_stream.write('\n]\n')
     if written_row_count != expected_row_count:
         raise ValueError(
@@ -6923,14 +7073,17 @@ def _write_ordered_output_stream(run, output_stream):
 
 def _build_structured_export_preview_rows(run):
     output_schema = list((run or {}).get('output_schema') or [])
+    public_output_schema = _get_tabular_run_serialized_public_schema(run)
     if not output_schema:
+        return []
+    if not public_output_schema:
         return []
 
     output_format = str((run or {}).get('output_format') or 'json').strip().lower() or 'json'
     preview_schema = (
-        build_safe_csv_headers(output_schema)
+        build_safe_csv_headers(public_output_schema)
         if output_format == 'csv'
-        else output_schema
+        else public_output_schema
     )
     preview_rows = []
     preview_char_count = 0
@@ -6961,8 +7114,13 @@ def _build_structured_export_preview_rows(run):
                 )
 
             preview_row = {}
-            for field_name, preview_field_name in zip(output_schema, preview_schema):
-                rendered_value = _serialize_generated_output_value(entry.get(field_name))
+            public_entry = project_structured_deliverable_row(
+                entry,
+                public_output_schema,
+                require_all_fields=True,
+            )
+            for field_name, preview_field_name in zip(public_output_schema, preview_schema):
+                rendered_value = _serialize_generated_output_value(public_entry.get(field_name))
                 if len(rendered_value) > TABULAR_EXPORT_ARTIFACT_PREVIEW_CELL_MAX_CHARS:
                     rendered_value = (
                         f'{rendered_value[:TABULAR_EXPORT_ARTIFACT_PREVIEW_CELL_MAX_CHARS - 3]}...'
@@ -7699,6 +7857,8 @@ def _checkpoint_generated_batch_results(run, generated_results):
     run_contract_changed = False
     if list(run.get('output_schema') or []) != expected_output_schema:
         run['output_schema'] = expected_output_schema
+        run['public_output_schema'] = _get_tabular_run_public_output_schema(run)
+        run['internal_checkpoint_schema'] = _get_tabular_run_internal_checkpoint_schema(run)
         run_contract_changed = True
     if _record_shadow_tabular_generation_plan_comparison(run, expected_output_schema):
         run_contract_changed = True
@@ -8885,6 +9045,11 @@ def queue_tabular_generated_output_run(
         'chunk_gpt_model': str(chunk_gpt_model or '').strip(),
         'chunk_model_context': chunk_model_context if isinstance(chunk_model_context, dict) else {},
         'passthrough_input_rows': bool(passthrough_input_rows),
+        'passthrough_reason_code': (
+            str(source_candidate.get('passthrough_reason_code') or '').strip()[:80]
+            if passthrough_input_rows
+            else None
+        ),
         'generated_file_name': generated_file_name,
         'analysis_generated_file_name': analysis_generated_file_name,
         'row_count': staged_row_count,
@@ -8919,6 +9084,12 @@ def queue_tabular_generated_output_run(
         'planner_completed_at': None,
         'processed_rows': 0,
         'output_schema': None,
+        'public_output_schema': [],
+        'internal_checkpoint_schema': [],
+        'lineage_schema': [
+            TABULAR_EXPORT_OUTPUT_ROW_NUMBER_FIELD,
+            TABULAR_EXPORT_OUTPUT_ROW_IDENTITY_FIELD,
+        ],
         'source_descriptor': source_descriptor or None,
         'batch_budget': model_batch_budget,
         'source_authorization': source_authorization or None,

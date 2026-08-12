@@ -175,6 +175,23 @@ MARKDOWN_OUTPUT_REQUEST_PATTERNS = (
     re.compile(r'\b(?:in|as)\s+(?:a\s+)?(?:markdown|md)(?:\s+(?:document|file|report))?\b'),
 )
 
+PASSTHROUGH_DERIVED_OUTPUT_PATTERNS = (
+    re.compile(r'\b(?:derive|derived|classify|classification|categorize|category|calculate|computed?|map|mapping)\b'),
+    re.compile(r'\b(?:score|rank|judge|evaluate|determine|flag|label|extract|populate|fill)\b'),
+    re.compile(r'\b(?:analy[sz]e|analysis|summari[sz]e|summary|sentiment|risk|attention|status)\b'),
+    re.compile(r'\b(?:exactly|only)\s+(?:these\s+)?(?:fields|columns)\b'),
+    re.compile(r'\b(?:output|requested|derived)\s+(?:fields|columns|schema)\b'),
+    re.compile(r'\bone\s+output\s+row\s+(?:for|per)\s+(?:each|every|source)\s+row\b'),
+)
+PASSTHROUGH_COPY_PATTERNS = (
+    re.compile(r'\b(?:unchanged|as-is|as\s+is|verbatim|raw|original|source)\s+(?:copy|rows?|data|table|result|results)\b'),
+    re.compile(r'\b(?:copy|export|download|save)\b[\w\s,.:;\-/]{0,100}\b(?:unchanged|as-is|as\s+is|verbatim|raw|original|source)\b'),
+)
+PASSTHROUGH_SERIALIZE_PATTERNS = (
+    re.compile(r'\b(?:build|create|download|export|format|generate|make|prepare|save|serialize|convert)\b[\w\s,.:;\-/]{0,100}\b(?:csv|json|xml|docx|pdf|spreadsheet)\b'),
+    re.compile(r'\b(?:csv|json|xml|docx|pdf|spreadsheet)\b[\w\s,.:;\-/]{0,100}\b(?:export|download|file|format|copy)\b'),
+)
+
 
 def _normalize_question_for_artifact_detection(user_question: str) -> str:
     return re.sub(r'\s+', ' ', str(user_question or '').strip().casefold())
@@ -352,6 +369,57 @@ def generated_file_export_requested(user_question: str) -> bool:
     return get_requested_generated_file_format(user_question) is not None
 
 
+def _question_requires_derived_output(normalized_question: str) -> bool:
+    return any(pattern.search(normalized_question) for pattern in PASSTHROUGH_DERIVED_OUTPUT_PATTERNS)
+
+
+def _question_requests_unchanged_copy(normalized_question: str) -> bool:
+    return any(pattern.search(normalized_question) for pattern in PASSTHROUGH_COPY_PATTERNS)
+
+
+def _question_requests_serialization(normalized_question: str) -> bool:
+    return any(pattern.search(normalized_question) for pattern in PASSTHROUGH_SERIALIZE_PATTERNS)
+
+
+def _collect_row_schema(rows: Sequence[Dict[str, Any]]) -> List[str]:
+    for row in rows or []:
+        if isinstance(row, dict):
+            return [str(field_name or '').strip() for field_name in row if str(field_name or '').strip()]
+    return []
+
+
+def evaluate_generated_file_passthrough_eligibility(
+    user_question: str,
+    rows: Optional[Sequence[Dict[str, Any]]] = None,
+    public_output_schema: Optional[Sequence[str]] = None,
+) -> Dict[str, Any]:
+    """Return whether raw rows can satisfy a requested generated file contract."""
+    normalized_question = _normalize_question_for_artifact_detection(user_question)
+    normalized_rows = [row for row in list(rows or []) if isinstance(row, dict)]
+    if not normalized_rows:
+        return {'allowed': False, 'reason_code': 'source_result_incomplete'}
+    if _question_requires_derived_output(normalized_question):
+        return {'allowed': False, 'reason_code': 'derived_output_requires_transform'}
+
+    normalized_public_schema = [
+        str(field_name or '').strip()
+        for field_name in list(public_output_schema or [])
+        if str(field_name or '').strip()
+    ]
+    if normalized_public_schema:
+        expected_schema = set(normalized_public_schema)
+        if _collect_row_schema(normalized_rows) != normalized_public_schema:
+            return {'allowed': False, 'reason_code': 'schema_not_satisfied'}
+        if any(set(row.keys()) != expected_schema for row in normalized_rows):
+            return {'allowed': False, 'reason_code': 'schema_not_satisfied'}
+
+    if _question_requests_unchanged_copy(normalized_question):
+        return {'allowed': True, 'reason_code': 'explicit_unchanged_copy'}
+    if _question_requests_serialization(normalized_question):
+        return {'allowed': True, 'reason_code': 'explicit_format_conversion'}
+    return {'allowed': False, 'reason_code': 'no_explicit_passthrough_contract'}
+
+
 def build_generated_file_output_guidance(
     user_question: str,
     requested_format: Optional[str] = None,
@@ -415,9 +483,13 @@ def build_generated_file_export(
     assistant_text = str(assistant_content or '').strip()
     assistant_rows = extract_assistant_table_entries(assistant_text)
     function_rows = extract_authorized_function_result_rows(function_results)
+    function_passthrough = evaluate_generated_file_passthrough_eligibility(
+        user_question,
+        rows=function_rows,
+    ) if function_rows else {'allowed': False, 'reason_code': 'source_result_incomplete'}
 
     if output_format == GENERATED_FILE_FORMAT_CSV:
-        rows = assistant_rows or function_rows
+        rows = assistant_rows or (function_rows if function_passthrough.get('allowed') else [])
         if not rows:
             return None
         row_source = 'assistant response' if assistant_rows else 'structured function result'
@@ -427,12 +499,15 @@ def build_generated_file_export(
             rows=rows,
             row_source=row_source,
             assistant_content=assistant_text,
+            passthrough_reason_code=(None if assistant_rows else function_passthrough.get('reason_code')),
         )
 
     if not assistant_text and not assistant_rows and not function_rows:
         return None
-    rows = function_rows or assistant_rows
-    row_source = 'structured function result' if function_rows else 'assistant response'
+    rows = function_rows if function_rows and function_passthrough.get('allowed') else assistant_rows
+    if not assistant_text and not rows:
+        return None
+    row_source = 'structured function result' if rows and rows is function_rows else 'assistant response'
     title = _build_generated_file_title(output_format)
     if output_format == GENERATED_FILE_FORMAT_DOCX:
         file_content = _render_docx_file_export(title, assistant_text, rows, row_source)
@@ -445,6 +520,7 @@ def build_generated_file_export(
         row_source=row_source,
         assistant_content=assistant_text,
         title=title,
+        passthrough_reason_code=(function_passthrough.get('reason_code') if row_source == 'structured function result' else None),
     )
 
 
@@ -545,11 +621,12 @@ def _build_generated_file_payload(
     row_source: str,
     assistant_content: str,
     title: str = '',
+    passthrough_reason_code: Optional[str] = None,
 ) -> Dict[str, Any]:
     normalized_output_format = str(output_format or '').strip().lower()
     row_count = len(rows or [])
     normalized_title = str(title or _build_generated_file_title(normalized_output_format)).strip()
-    return {
+    payload = {
         'capability': 'file_export',
         'file_name': _build_generated_file_name(normalized_output_format),
         'file_content': file_content,
@@ -566,6 +643,9 @@ def _build_generated_file_payload(
             normalized_title,
         ),
     }
+    if passthrough_reason_code:
+        payload['passthrough_reason_code'] = str(passthrough_reason_code or '').strip()[:80]
+    return payload
 
 
 def _build_generated_file_name(output_format: str) -> str:

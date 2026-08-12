@@ -18,7 +18,10 @@ def log_event(*args, **kwargs):
     return _log_event_impl(*args, **kwargs)
 
 
-ANALYSIS_DELIVERABLE_CONTRACT_VERSION = "analysis-deliverables-v1"
+ANALYSIS_DELIVERABLE_CONTRACT_VERSION = "analysis-deliverables-v2"
+ANALYSIS_DELIVERABLE_LEGACY_CONTRACT_VERSIONS = frozenset({
+    "analysis-deliverables-v1",
+})
 
 ANALYSIS_DELIVERABLE_ACTION_ANALYZE = "analyze"
 ANALYSIS_DELIVERABLE_ACTION_SEARCH = "search"
@@ -112,6 +115,10 @@ ANALYSIS_INTERNAL_LINEAGE_FIELD_NAMES = frozenset({
     "source_row_number",
     "source_row_identity",
 })
+ANALYSIS_DEFAULT_LINEAGE_SCHEMA = (
+    "source_row_number",
+    "source_row_identity",
+)
 ANALYSIS_INTERNAL_LINEAGE_FIELD_PREFIX = "__simplechat"
 
 ANALYSIS_DELIVERABLE_MAX_ARTIFACTS = 12
@@ -145,6 +152,8 @@ class AnalysisDeliverableContract:
     primary_artifact_role: str = ""
     requested_artifacts: tuple = field(default_factory=tuple)
     public_output_schema: tuple = field(default_factory=tuple)
+    internal_checkpoint_schema: tuple = field(default_factory=tuple)
+    lineage_schema: tuple = field(default_factory=tuple)
     row_cardinality: str = ANALYSIS_ROW_CARDINALITY_NOT_APPLICABLE
     ordering: str = ANALYSIS_ORDERING_NOT_APPLICABLE
     transformation_mode: str = ANALYSIS_TRANSFORMATION_MODE_SEMANTIC
@@ -160,6 +169,8 @@ class AnalysisDeliverableContract:
             for artifact in self.requested_artifacts
         ]
         payload["public_output_schema"] = list(self.public_output_schema)
+        payload["internal_checkpoint_schema"] = list(self.internal_checkpoint_schema)
+        payload["lineage_schema"] = list(self.lineage_schema)
         return payload
 
 
@@ -261,12 +272,62 @@ def _normalize_public_output_schema(public_output_schema=None):
             raise ValueError("Analysis public output schema contains an empty field name")
         if len(normalized_field) > ANALYSIS_DELIVERABLE_MAX_FIELD_NAME_LENGTH:
             raise ValueError("Analysis public output schema field exceeds the bounded metadata limit")
+        if _is_internal_lineage_field(normalized_field):
+            raise ValueError("Analysis public output schema cannot include reserved internal fields")
         if normalized_field in seen_fields:
             raise ValueError("Analysis public output schema contains duplicate fields")
         seen_fields.add(normalized_field)
         normalized_schema.append(normalized_field)
     if len(normalized_schema) > ANALYSIS_DELIVERABLE_MAX_SCHEMA_FIELDS:
         raise ValueError("Analysis public output schema exceeds the bounded metadata limit")
+    return tuple(normalized_schema)
+
+
+def _normalize_lineage_schema(lineage_schema=None):
+    normalized_schema = []
+    seen_fields = set()
+    raw_schema = list(lineage_schema or ANALYSIS_DEFAULT_LINEAGE_SCHEMA)
+    for field_name in raw_schema:
+        normalized_field = str(field_name or "").strip()
+        if not normalized_field:
+            raise ValueError("Analysis lineage schema contains an empty field name")
+        if len(normalized_field) > ANALYSIS_DELIVERABLE_MAX_FIELD_NAME_LENGTH:
+            raise ValueError("Analysis lineage schema field exceeds the bounded metadata limit")
+        if not _is_internal_lineage_field(normalized_field):
+            raise ValueError("Analysis lineage schema can only include reserved internal fields")
+        if normalized_field in seen_fields:
+            raise ValueError("Analysis lineage schema contains duplicate fields")
+        seen_fields.add(normalized_field)
+        normalized_schema.append(normalized_field)
+    return tuple(normalized_schema)
+
+
+def _normalize_internal_checkpoint_schema(
+    public_output_schema=None,
+    internal_checkpoint_schema=None,
+    lineage_schema=None,
+):
+    normalized_public_schema = tuple(public_output_schema or [])
+    normalized_lineage_schema = _normalize_lineage_schema(lineage_schema)
+    if internal_checkpoint_schema is None:
+        return tuple(list(normalized_lineage_schema) + list(normalized_public_schema))
+
+    normalized_schema = []
+    seen_fields = set()
+    for field_name in list(internal_checkpoint_schema or []):
+        normalized_field = str(field_name or "").strip()
+        if not normalized_field:
+            raise ValueError("Analysis internal checkpoint schema contains an empty field name")
+        if len(normalized_field) > ANALYSIS_DELIVERABLE_MAX_FIELD_NAME_LENGTH:
+            raise ValueError("Analysis internal checkpoint schema field exceeds the bounded metadata limit")
+        if normalized_field in seen_fields:
+            raise ValueError("Analysis internal checkpoint schema contains duplicate fields")
+        seen_fields.add(normalized_field)
+        normalized_schema.append(normalized_field)
+
+    expected_schema = tuple(list(normalized_lineage_schema) + list(normalized_public_schema))
+    if tuple(normalized_schema) != expected_schema:
+        raise ValueError("Analysis internal checkpoint schema must be lineage fields followed by public fields")
     return tuple(normalized_schema)
 
 
@@ -329,6 +390,8 @@ def build_analysis_deliverable_contract(
     requested_output_formats=None,
     requested_artifacts=None,
     public_output_schema=None,
+    internal_checkpoint_schema=None,
+    lineage_schema=None,
     row_cardinality=None,
     ordering=None,
     transformation_mode=None,
@@ -347,6 +410,12 @@ def build_analysis_deliverable_contract(
         else analysis_required
     )
     normalized_schema = _normalize_public_output_schema(public_output_schema)
+    normalized_lineage_schema = _normalize_lineage_schema(lineage_schema)
+    normalized_internal_checkpoint_schema = _normalize_internal_checkpoint_schema(
+        public_output_schema=normalized_schema,
+        internal_checkpoint_schema=internal_checkpoint_schema,
+        lineage_schema=normalized_lineage_schema,
+    )
 
     if requested_artifacts is None:
         artifact_descriptors = []
@@ -432,6 +501,8 @@ def build_analysis_deliverable_contract(
         primary_artifact_role=normalized_primary_role,
         requested_artifacts=normalized_artifacts,
         public_output_schema=normalized_schema,
+        internal_checkpoint_schema=normalized_internal_checkpoint_schema,
+        lineage_schema=normalized_lineage_schema,
         row_cardinality=normalized_row_cardinality,
         ordering=normalized_ordering,
         transformation_mode=normalized_transformation_mode,
@@ -451,12 +522,19 @@ def coerce_analysis_deliverable_contract(contract):
     if isinstance(contract, AnalysisDeliverableContract):
         return contract
     payload = dict(contract or {}) if isinstance(contract, Mapping) else {}
-    if payload.get("contract_version") not in {None, "", ANALYSIS_DELIVERABLE_CONTRACT_VERSION}:
+    if payload.get("contract_version") not in {
+        None,
+        "",
+        ANALYSIS_DELIVERABLE_CONTRACT_VERSION,
+        *ANALYSIS_DELIVERABLE_LEGACY_CONTRACT_VERSIONS,
+    }:
         raise ValueError("Unsupported analysis deliverable contract version")
     return build_analysis_deliverable_contract(
         action_mode=payload.get("action_mode"),
         requested_artifacts=payload.get("requested_artifacts") or [],
         public_output_schema=payload.get("public_output_schema") or [],
+        internal_checkpoint_schema=payload.get("internal_checkpoint_schema"),
+        lineage_schema=payload.get("lineage_schema"),
         row_cardinality=payload.get("row_cardinality"),
         ordering=payload.get("ordering"),
         transformation_mode=payload.get("transformation_mode"),
@@ -572,6 +650,37 @@ def _is_internal_lineage_field(field_name):
         normalized_field in ANALYSIS_INTERNAL_LINEAGE_FIELD_NAMES
         or normalized_field.startswith(ANALYSIS_INTERNAL_LINEAGE_FIELD_PREFIX)
     )
+
+
+def is_analysis_internal_lineage_field(field_name):
+    """Return whether a field name is reserved for server lineage metadata."""
+    return _is_internal_lineage_field(field_name)
+
+
+def project_structured_deliverable_row(row, public_output_schema, require_all_fields=True):
+    """Project one internal generated row to the persisted public schema."""
+    if not isinstance(row, Mapping):
+        raise ValueError("Structured deliverable row must be an object")
+    normalized_schema = _normalize_public_output_schema(public_output_schema)
+    if not normalized_schema:
+        raise ValueError("Structured deliverable projection requires a public output schema")
+    if require_all_fields:
+        missing_fields = [field_name for field_name in normalized_schema if field_name not in row]
+        if missing_fields:
+            raise ValueError("Structured deliverable row is missing required public fields")
+    return {field_name: row.get(field_name) for field_name in normalized_schema}
+
+
+def project_structured_deliverable_rows(rows, public_output_schema, require_all_fields=True):
+    """Project internal generated rows to the exact user-facing schema and order."""
+    return [
+        project_structured_deliverable_row(
+            row,
+            public_output_schema,
+            require_all_fields=require_all_fields,
+        )
+        for row in list(rows or [])
+    ]
 
 
 def _row_identity(row, identity_field):
