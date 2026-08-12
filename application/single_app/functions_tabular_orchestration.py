@@ -35,6 +35,7 @@ TABULAR_PLANNER_MODES = {
 }
 TABULAR_PARITY_ROLLOUT_CONTRACT_VERSION = "tabular-parity-rollout-v1"
 TABULAR_LEGACY_POST_TOOL_FALLBACK_MODES = {"enabled", "observe", "disabled"}
+TABULAR_LEGACY_POST_TOOL_FALLBACK_DECISION_VERSION = "tabular-legacy-fallback-retirement-v1"
 
 
 def settings_flag_enabled(settings, key, default=False):
@@ -73,6 +74,55 @@ def normalize_tabular_legacy_post_tool_fallback_mode(settings=None, mode=None):
     if normalized_mode in TABULAR_LEGACY_POST_TOOL_FALLBACK_MODES:
         return normalized_mode
     return "enabled"
+
+
+def build_tabular_legacy_post_tool_fallback_decision(
+    settings=None,
+    mode=None,
+    planner_result=None,
+    generated_output=None,
+    fallback_source="post_tool_generated_output",
+):
+    """Return the Phase 9 decision for the legacy post-tool fallback path."""
+    normalized_mode = normalize_tabular_legacy_post_tool_fallback_mode(settings, mode=mode)
+    normalized_source = str(fallback_source or "post_tool_generated_output").strip().lower()
+    if normalized_source not in {"post_tool_generated_output", "shared_preflight", "planner"}:
+        normalized_source = "post_tool_generated_output"
+
+    result = planner_result if isinstance(planner_result, Mapping) else {}
+    generated_metadata = generated_output if isinstance(generated_output, Mapping) else None
+    if generated_metadata is None and isinstance(result.get("generated_output_metadata"), Mapping):
+        generated_metadata = result.get("generated_output_metadata")
+
+    if generated_metadata:
+        action = "suppress"
+        should_invoke = False
+        reason_code = "shared_durable_metadata_present"
+    elif normalized_mode == "observe":
+        action = "observe"
+        should_invoke = False
+        reason_code = "observe_only"
+    elif normalized_mode == "disabled":
+        action = "suppress"
+        should_invoke = False
+        reason_code = "mode_disabled"
+    else:
+        action = "invoke"
+        should_invoke = True
+        reason_code = "mode_enabled"
+
+    return {
+        "contract_version": TABULAR_LEGACY_POST_TOOL_FALLBACK_DECISION_VERSION,
+        "fallback_source": normalized_source,
+        "mode": normalized_mode,
+        "action": action,
+        "should_invoke": should_invoke,
+        "reason_code": reason_code,
+        "planner_contract_version": str(result.get("planner_contract_version") or "").strip(),
+        "execution_contract": str(result.get("execution_contract") or "").strip().lower(),
+        "execution_state": str(result.get("execution_state") or "").strip().lower(),
+        "generated_metadata_present": bool(generated_metadata),
+    }
 
 
 def build_tabular_parity_rollout_assignment(settings=None, request_key=None, mode=None):
@@ -496,6 +546,12 @@ def plan_tabular_request(
         else:
             reason_code = "multi_context_durable_not_enabled"
 
+    rollout_assignment = build_tabular_parity_rollout_assignment(
+        settings,
+        request_key=request_fingerprint,
+        mode=action_mode,
+    )
+
     return {
         "planner_contract_version": TABULAR_ORCHESTRATION_PLANNER_CONTRACT_VERSION,
         "execution_contract": execution_contract,
@@ -511,10 +567,10 @@ def plan_tabular_request(
         "execution_group_id": execution_group_id,
         "execution_units": execution_units,
         "request_fingerprint": request_fingerprint,
-        "rollout_assignment": build_tabular_parity_rollout_assignment(
-            settings,
-            request_key=request_fingerprint,
-            mode=action_mode,
+        "rollout_assignment": rollout_assignment,
+        "legacy_post_tool_fallback_decision": build_tabular_legacy_post_tool_fallback_decision(
+            mode=rollout_assignment.get("legacy_post_tool_fallback_mode"),
+            fallback_source="planner",
         ),
         "reason_code": reason_code,
         "requested_output_hints": dict(requested_output_hints or {})
@@ -648,6 +704,10 @@ def orchestrate_tabular_request(
             "generated_output_metadata": None,
             "reason_code": "planner_off",
             "shadow_side_effects": False,
+            "legacy_post_tool_fallback_decision": build_tabular_legacy_post_tool_fallback_decision(
+                settings=settings,
+                fallback_source="planner",
+            ),
             "safe_failure_details": None,
         }
 
@@ -661,6 +721,11 @@ def orchestrate_tabular_request(
     )
     plan["planner_mode"] = normalized_mode
     plan["shadow_side_effects"] = False
+    plan["legacy_post_tool_fallback_decision"] = build_tabular_legacy_post_tool_fallback_decision(
+        settings=settings,
+        planner_result=plan,
+        fallback_source="planner",
+    )
     if normalized_mode == TABULAR_PLANNER_MODE_SHADOW:
         return plan
 
@@ -668,14 +733,20 @@ def orchestrate_tabular_request(
     active_execution_context.setdefault("user_question", user_question)
     active_execution_context.setdefault("file_contexts", file_contexts)
     active_execution_context.setdefault("settings", settings)
-    return {
-        **execute_tabular_plan(
-            plan,
-            durable_execution_callback=durable_execution_callback,
-            cancel_requested=cancel_requested,
-            idempotency_cache=idempotency_cache,
-            **active_execution_context,
-        ),
+    result = execute_tabular_plan(
+        plan,
+        durable_execution_callback=durable_execution_callback,
+        cancel_requested=cancel_requested,
+        idempotency_cache=idempotency_cache,
+        **active_execution_context,
+    )
+    result.update({
         "planner_mode": normalized_mode,
         "shadow_side_effects": False,
-    }
+    })
+    result["legacy_post_tool_fallback_decision"] = build_tabular_legacy_post_tool_fallback_decision(
+        settings=settings,
+        planner_result=result,
+        fallback_source="shared_preflight",
+    )
+    return result

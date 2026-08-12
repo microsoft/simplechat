@@ -2551,6 +2551,26 @@ def _emit_analyze_shared_preflight_event(
                     rollout_assignment.get('legacy_post_tool_fallback_mode') or 'enabled'
                 ).strip().lower()[:40],
             })
+        fallback_decision = (
+            result.get('legacy_post_tool_fallback_decision')
+            if isinstance(result.get('legacy_post_tool_fallback_decision'), dict)
+            else {}
+        )
+        if fallback_decision:
+            safe_dimensions.update({
+                'legacy_post_tool_fallback_contract_version': str(
+                    fallback_decision.get('contract_version') or ''
+                ).strip()[:80],
+                'legacy_post_tool_fallback_action': str(
+                    fallback_decision.get('action') or ''
+                ).strip().lower()[:40],
+                'legacy_post_tool_fallback_reason': str(
+                    fallback_decision.get('reason_code') or ''
+                ).strip().lower()[:80],
+                'legacy_post_tool_fallback_should_invoke': str(
+                    bool(fallback_decision.get('should_invoke'))
+                ).lower(),
+            })
     if isinstance(generated_output, dict):
         safe_dimensions.update({
             'output_status': str(generated_output.get('status') or '').strip().lower()[:40],
