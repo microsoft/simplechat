@@ -2,8 +2,8 @@
 # test_analyze_deliverable_contract.py
 """
 Functional test for Analyze deliverable contract baselines.
-Version: 0.250.172
-Implemented in: 0.250.171
+Version: 0.250.180
+Implemented in: 0.250.171; multi-format durable admission updated in 0.250.180
 
 This test ensures Phase 1 defines a versioned Analyze deliverable contract,
 keeps Analyze Markdown distinct from requested structured siblings, and uses
@@ -264,14 +264,17 @@ def test_phase2_planner_normalizes_ordered_artifact_intent():
         action_mode="analyze",
         settings={"enable_tabular_hierarchical_analysis": True},
     )
+    assert_app_version_at_least("0.250.180")
     assert multi_plan["requested_output_formats"] == ["json", "xml"]
     assert [artifact["format"] for artifact in multi_plan["deliverable_contract"]["requested_artifacts"]] == [
         "md",
         "json",
         "xml",
     ]
+    assert multi_plan["durable_task_type"] == "combined"
+    assert multi_plan["execution_contract"] == "combined"
     assert multi_plan["execution_state"] == "declined"
-    assert multi_plan["reason_code"] == "unsupported_multi_artifact_request"
+    assert multi_plan["reason_code"] == "durable_intent"
 
     disabled_plan = plan_tabular_request(
         "Analyze every row and create a CSV artifact.",

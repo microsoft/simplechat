@@ -16,6 +16,8 @@ Phase 7A stabilization updated in version: **0.250.178**
 
 Phase 7B correctness updated in version: **0.250.179**
 
+Phase 7C publication updated in version: **0.250.180**
+
 ## Overview
 
 The Analyze deliverable contract defines a server-owned, versioned plan for analysis artifacts before production routing changes are made. It records whether an action requires a primary Markdown analysis artifact, which sibling artifacts were explicitly requested, the public structured schema, row cardinality, ordering, transformation mode, validation profile, and publication policy.
@@ -33,6 +35,8 @@ Phase 7 adds an explicit rollout state for new shared tabular parity assignments
 Phase 7A restores explicit Word/DOCX serialization of authorized current-turn non-tabular function-result rows. The passthrough guard still rejects derived requests before serialization, keeps tabular tool rows on their coverage-aware durable path, and omits sensitive fields. It also restores the cumulative lifecycle and scale harnesses to the current schema, planner, and artifact-set contracts.
 
 Phase 7B makes the production durable runner own rule-faithful structured output planning. Generation plan version 2 carries one normalized allowlisted transformation specification, deterministic or semantic field ownership, and an independent bounded review result. Active plans update the persisted deliverable contract before row generation. Deterministic fields execute server-side, semantic fields receive isolated field-level verification, and only failed or uncertain row-field pairs enter bounded targeted repair before canonical checkpoints are written.
+
+Phase 7C makes artifact-set publication the visibility boundary for new generated tabular artifacts. Uploaded artifact messages are staged with server-owned run, set, member, and publication-generation metadata. Direct download and workspace promotion reauthorize the caller against the committed run manifest before serving the blob. Completed manifests commit every required member in one publication generation, while staged, rolled-back, stale-generation, or incomplete members remain inaccessible through direct artifact routes. The same validated checkpoint set can now publish multiple requested durable structured siblings, such as JSON and XML, in request order.
 
 ## Dependencies
 
@@ -229,7 +233,7 @@ The committed 200-row fixture builder in `functional_tests/test_support/analyze_
 - Analyze requires Markdown while Search does not receive automatic Markdown.
 - The requested structured contract is shared across Search and Analyze.
 - Analyze plus CSV maps to Markdown plus CSV and selects `combined` when hierarchical analysis is enabled.
-- Analyze plus JSON and XML preserves both requested siblings in order and fails before unsupported multi-artifact durable execution.
+- Analyze plus JSON and XML preserves both requested siblings in order and selects durable combined execution when hierarchical analysis is enabled.
 - Analyze plus structured output does not silently downgrade to `structured_export` when the hierarchical capability is disabled.
 - Bounded document Analyze publishes Markdown, and explicit JSON is a sibling rather than a replacement.
 - JSON serialization round trips and unknown additive fields are ignored for forward compatibility.
@@ -272,4 +276,4 @@ pre-checkpoint ownership, and safe count-only batch summaries.
 
 ## Known Limitations
 
-Phase 7B does not yet expand durable execution to every requested format or add full cleanup sweepers and direct-route lifecycle authorization for abandoned staged members. Those publication concerns remain Phase 7C work.
+Phase 7C does not yet add long-running cleanup sweepers for abandoned staged members. Broader lifecycle race, authenticated UI, and canary validation remain Phase 7D work.
