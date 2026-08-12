@@ -2772,7 +2772,7 @@ def _maybe_execute_pure_tabular_analyze_preflight(
             'planner_contract_version': result.get('planner_contract_version'),
             'planner_reason_code': result.get('reason_code'),
             'durable_task_type': generated_output.get('task_type') or result.get('durable_task_type'),
-            'terminal': False,
+            'terminal': execution_failed,
         }
         evidence_envelope = build_evidence_envelope(
             document_id=source.get('document_id'),
