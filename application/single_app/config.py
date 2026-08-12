@@ -630,9 +630,20 @@ cosmos_tabular_export_runs_container = cosmos_database.create_container_if_not_e
 )
 
 cosmos_data_management_jobs_container_name = "data_management_jobs"
+DATA_MANAGEMENT_HISTORY_INDEXING_POLICY = {
+    "indexingMode": "consistent",
+    "automatic": True,
+    "includedPaths": [{"path": "/*"}],
+    "excludedPaths": [{"path": "/\"_etag\"/?"}],
+    "compositeIndexes": [[
+        {"path": "/created_at", "order": "descending"},
+        {"path": "/id", "order": "descending"},
+    ]],
+}
 cosmos_data_management_jobs_container = cosmos_database.create_container_if_not_exists(
     id=cosmos_data_management_jobs_container_name,
-    partition_key=PartitionKey(path="/id")
+    partition_key=PartitionKey(path="/id"),
+    indexing_policy=DATA_MANAGEMENT_HISTORY_INDEXING_POLICY
 )
 
 cosmos_data_management_job_items_container_name = "data_management_job_items"

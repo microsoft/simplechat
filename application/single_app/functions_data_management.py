@@ -33,7 +33,7 @@ from azure.core.exceptions import (
 )
 import azure.cosmos as azure_cosmos
 from azure.cosmos import PartitionKey
-from azure.cosmos.exceptions import CosmosResourceNotFoundError
+from azure.cosmos.exceptions import CosmosHttpResponseError, CosmosResourceNotFoundError
 from azure.identity import DefaultAzureCredential
 from azure.search.documents import SearchClient
 from azure.search.documents.indexes import SearchIndexClient
@@ -189,6 +189,13 @@ DATA_MANAGEMENT_HISTORY_TOKEN_TTL_SECONDS = 3600
 DATA_MANAGEMENT_HISTORY_TOKEN_VERSION = 1
 DATA_MANAGEMENT_HISTORY_MAX_DATE_RANGE_DAYS = 366
 DATA_MANAGEMENT_HISTORY_SORT = "created_at_desc_id_desc"
+DATA_MANAGEMENT_HISTORY_INDEX_MAINTENANCE_MESSAGE = (
+    "Data Management history requires an updated Cosmos DB index. Run App Maintenance "
+    "with Apply Cosmos indexing policies enabled, wait for indexing to finish, then refresh this page."
+)
+DATA_MANAGEMENT_HISTORY_UNAVAILABLE_MESSAGE = (
+    "Data Management history could not be loaded. Please try again later or review application logs."
+)
 DATA_MANAGEMENT_DEFAULT_RECOVERY_JOB_LIMIT = 25
 DATA_MANAGEMENT_RECOVERY_QUEUE_DELAY_SECONDS = 60
 DATA_MANAGEMENT_RECOVERY_RESUBMIT_DELAY_SECONDS = 120
@@ -357,6 +364,23 @@ class DataManagementCosmosEditorError(ValueError):
 
 class DataManagementHistoryPaginationError(ValueError):
     """Raised when Data Management history pagination input is invalid."""
+
+
+class DataManagementHistoryUnavailableError(RuntimeError):
+    """Raised when the Data Management history store cannot serve a safe page."""
+
+    def __init__(
+        self,
+        safe_message=DATA_MANAGEMENT_HISTORY_UNAVAILABLE_MESSAGE,
+        reason="history_provider_unavailable",
+        status_code=503,
+        maintenance_required=False,
+    ):
+        super().__init__(safe_message)
+        self.safe_message = safe_message
+        self.reason = reason
+        self.status_code = status_code
+        self.maintenance_required = bool(maintenance_required)
 
 
 class DataManagementMigrationLeaseLostError(RuntimeError):
@@ -9041,6 +9065,49 @@ def _build_data_management_history_query(list_kind, filters, page_limit, cursor=
     return query, parameters
 
 
+def _get_data_management_provider_status_code(exc):
+    status_code = getattr(exc, "status_code", None)
+    if status_code is None:
+        status_code = getattr(getattr(exc, "response", None), "status_code", None)
+    return status_code
+
+
+def _is_data_management_history_index_error(exc):
+    if _get_data_management_provider_status_code(exc) != 400:
+        return False
+    error_text = _safe_text(exc).lower()
+    return (
+        "composite index" in error_text
+        or "compositeindexes" in error_text
+        or ("order by" in error_text and "index" in error_text)
+    )
+
+
+def _raise_data_management_history_unavailable(exc):
+    if _is_data_management_history_index_error(exc):
+        raise DataManagementHistoryUnavailableError(
+            safe_message=DATA_MANAGEMENT_HISTORY_INDEX_MAINTENANCE_MESSAGE,
+            reason="missing_history_index",
+            status_code=503,
+            maintenance_required=True,
+        ) from exc
+    raise DataManagementHistoryUnavailableError() from exc
+
+
+def _query_data_management_history_items(query, parameters, max_item_count=None):
+    query_kwargs = {
+        "query": query,
+        "parameters": parameters,
+        "enable_cross_partition_query": True,
+    }
+    if max_item_count is not None:
+        query_kwargs["max_item_count"] = max_item_count
+    try:
+        return list(cosmos_data_management_jobs_container.query_items(**query_kwargs))
+    except (CosmosHttpResponseError, ServiceRequestError, ServiceResponseError) as exc:
+        _raise_data_management_history_unavailable(exc)
+
+
 def _query_data_management_history_page(
     list_kind,
     page_size,
@@ -9067,13 +9134,11 @@ def _query_data_management_history_page(
         safe_page_size + 1,
         cursor=cursor,
     )
-    query_iterable = cosmos_data_management_jobs_container.query_items(
+    results = _query_data_management_history_items(
         query=query,
         parameters=parameters,
-        enable_cross_partition_query=True,
         max_item_count=safe_page_size + 1,
     )
-    results = list(query_iterable)
     has_more = len(results) > safe_page_size
     items = results[:safe_page_size]
     next_cursor = None
@@ -10405,11 +10470,10 @@ def _get_data_management_backup_global_summary():
         {"name": "@type", "value": DATA_MANAGEMENT_JOB_TYPE},
         {"name": "@operation", "value": DATA_MANAGEMENT_OPERATION_BACKUP},
     ]
-    aggregate_rows = list(cosmos_data_management_jobs_container.query_items(
+    aggregate_rows = _query_data_management_history_items(
         query=aggregate_query,
         parameters=parameters,
-        enable_cross_partition_query=True,
-    ))
+    )
     for row in aggregate_rows:
         if not isinstance(row, dict):
             continue
@@ -10449,12 +10513,11 @@ def _get_data_management_backup_global_summary():
                 "value": DATA_MANAGEMENT_STATUS_COMPLETED_WITH_WARNINGS,
             },
         ]
-        latest_jobs = list(cosmos_data_management_jobs_container.query_items(
+        latest_jobs = _query_data_management_history_items(
             query=latest_query,
             parameters=latest_parameters,
-            enable_cross_partition_query=True,
             max_item_count=1,
-        ))
+        )
         if latest_jobs:
             summary[summary_field] = sanitize_data_management_backup_for_admin(
                 latest_jobs[0]

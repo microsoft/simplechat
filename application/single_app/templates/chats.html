@@ -292,6 +292,17 @@
                             >
                                <i class="bi bi-list-nested" aria-hidden="true"></i>
                             </button>
+                            <button
+                               id="conversation-documents-toggle"
+                               type="button"
+                               class="btn btn-sm chat-shell-icon-button d-none"
+                               title="Open used documents"
+                               aria-label="Open used documents"
+                               aria-controls="conversation-contents-drawer"
+                               aria-expanded="false"
+                            >
+                               <i class="bi bi-file-earmark-text" aria-hidden="true"></i>
+                            </button>
                             {% endif %}
                         </div>
                     </div>
@@ -836,7 +847,7 @@
                     <div class="offcanvas-header border-bottom">
                         <div>
                             <h5 class="offcanvas-title mb-0" id="conversation-contents-title">Conversation contents</h5>
-                            <p class="small text-muted mb-0">Jump to a user message</p>
+                            <p class="small text-muted mb-0" id="conversation-contents-subtitle">Jump to a user message</p>
                         </div>
                         <button
                             id="conversation-contents-close"
@@ -845,12 +856,42 @@
                             aria-label="Close conversation contents"
                         ></button>
                     </div>
-                    <nav class="offcanvas-body p-2" aria-label="User messages in this conversation">
-                        <ol id="conversation-contents-list" class="conversation-contents-list list-unstyled mb-0"></ol>
-                        <p id="conversation-contents-empty" class="small text-muted text-center px-3 py-4 mb-0">
-                            No user messages are available yet.
-                        </p>
-                    </nav>
+                    <div class="px-2 pt-2">
+                        <div class="btn-group w-100 conversation-contents-mode-switch" role="group" aria-label="Conversation side pane mode">
+                            <button
+                                type="button"
+                                class="btn btn-outline-secondary btn-sm active"
+                                id="conversation-contents-mode-contents"
+                                aria-pressed="true"
+                            >
+                                <i class="bi bi-list-nested me-1" aria-hidden="true"></i>Contents
+                            </button>
+                            <button
+                                type="button"
+                                class="btn btn-outline-secondary btn-sm"
+                                id="conversation-contents-mode-documents"
+                                aria-pressed="false"
+                            >
+                                <i class="bi bi-file-earmark-text me-1" aria-hidden="true"></i>Documents
+                                <span id="conversation-documents-count" class="badge rounded-pill text-bg-secondary ms-1 d-none">0</span>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="offcanvas-body p-2">
+                        <nav id="conversation-contents-panel" aria-label="User messages in this conversation">
+                            <ol id="conversation-contents-list" class="conversation-contents-list list-unstyled mb-0"></ol>
+                            <p id="conversation-contents-empty" class="small text-muted text-center px-3 py-4 mb-0">
+                                No user messages are available yet.
+                            </p>
+                        </nav>
+                        <section id="conversation-documents-panel" class="d-none" aria-label="Used documents in this conversation">
+                            <div id="conversation-documents-status" class="small text-muted text-center px-3 py-4 mb-0 d-none" role="status" aria-live="polite"></div>
+                            <ol id="conversation-documents-list" class="conversation-documents-list list-unstyled mb-0"></ol>
+                            <p id="conversation-documents-empty" class="small text-muted text-center px-3 py-4 mb-0">
+                                No cited documents have been used in this conversation yet.
+                            </p>
+                        </section>
+                    </div>
                 </aside>
                 {% endif %}
             </div>

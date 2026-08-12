@@ -12,6 +12,24 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Added backend-only shadow and canary controls, privacy-safe telemetry and status metadata, and evidence-backed legacy fallback retirement while reusing existing authorization, source-version, rollback, and artifact-card contracts.
     *   (Ref: #1031, #1055, #1058, `functions_tabular_orchestration.py`, `functions_workflow_runner.py`, `route_backend_chats.py`)
 
+### **(v0.250.160)**
+
+#### Bug Fixes
+
+*   **getAToken Missing Authorization Code Redirect**
+    *   Redirects direct `/getAToken` browser visits without an OAuth authorization code back to the home sign-in page instead of showing a technical callback error.
+    *   Preserves the normal Microsoft Entra authorization-code callback flow and keeps `/getATokenApi` explicit error behavior unchanged for API token callbacks.
+    *   (Ref: `/getAToken` OAuth callback, `route_frontend_authentication.py`, `test_getatoken_missing_code_redirect.py`)
+
+### **(v0.250.159)**
+
+#### New Features
+
+*   **Chat Used Documents Pane**
+    *   Added a Used Documents mode to the existing chat conversation side pane so users can review documents that were actually cited in the conversation without opening the full details modal.
+    *   Reuses the same conversation metadata document tags as the details modal, excludes selected-but-unused documents, and auto-opens once when cited documents first appear.
+    *   (Ref: #1209, conversation contents drawer, cited document metadata, `chat-conversation-contents.js`, `chat-conversation-details.js`)
+
 ### **(v0.250.157)**
 
 #### Bug Fixes
