@@ -83,12 +83,14 @@ EVIDENCE_STATUS_PENDING = "pending"
 EVIDENCE_STATUS_PARTIAL = "partial"
 EVIDENCE_STATUS_FAILED = "failed"
 EVIDENCE_STATUS_SKIPPED = "skipped"
+EVIDENCE_STATUS_CANCELED = "canceled"
 EVIDENCE_STATUSES = frozenset({
     EVIDENCE_STATUS_COMPLETED,
     EVIDENCE_STATUS_PENDING,
     EVIDENCE_STATUS_PARTIAL,
     EVIDENCE_STATUS_FAILED,
     EVIDENCE_STATUS_SKIPPED,
+    EVIDENCE_STATUS_CANCELED,
 })
 
 EVIDENCE_ENVELOPE_MAX_BYTES = 65536
@@ -118,6 +120,7 @@ MIXED_SOURCE_TELEMETRY_METRICS = frozenset({
     "authorization_failure_count",
     "background_export_count",
     "cancellation_count",
+    "canceled_source_count",
     "citation_count",
     "completed_source_count",
     "duplicate_evidence_count",
@@ -279,16 +282,19 @@ def emit_mixed_source_coverage_telemetry(
         if source_kind in source_kind_counts:
             source_kind_counts[source_kind] += 1
 
-    outcome_status = (
-        EVIDENCE_STATUS_PARTIAL
-        if coverage.get("partial_coverage")
-        else EVIDENCE_STATUS_COMPLETED
-    )
-    if coverage.get("successful_source_count", 0) == 0 and coverage.get(
-        "requested_source_count",
-        0,
-    ):
+    requested_source_count = coverage.get("requested_source_count", 0)
+    successful_source_count = coverage.get("successful_source_count", 0)
+    pending_source_count = coverage.get("pending_source_count", 0)
+    canceled_source_count = coverage.get("canceled_source_count", 0)
+    outcome_status = EVIDENCE_STATUS_COMPLETED
+    if pending_source_count:
+        outcome_status = EVIDENCE_STATUS_PENDING
+    elif canceled_source_count and canceled_source_count == requested_source_count:
+        outcome_status = EVIDENCE_STATUS_CANCELED
+    elif successful_source_count == 0 and requested_source_count:
         outcome_status = EVIDENCE_STATUS_FAILED
+    elif coverage.get("partial_coverage"):
+        outcome_status = EVIDENCE_STATUS_PARTIAL
     return emit_mixed_source_telemetry(
         settings,
         "terminal_coverage",
@@ -297,9 +303,11 @@ def emit_mixed_source_coverage_telemetry(
         metrics={
             "total_source_count": coverage.get("requested_source_count", 0),
             "completed_source_count": coverage.get("completed_source_count", 0),
+            "pending_source_count": coverage.get("pending_source_count", 0),
             "partial_source_count": coverage.get("partial_source_count", 0),
             "failed_source_count": coverage.get("failed_source_count", 0),
             "skipped_source_count": coverage.get("skipped_source_count", 0),
+            "canceled_source_count": coverage.get("canceled_source_count", 0),
             "successful_source_count": coverage.get("successful_source_count", 0),
             "tabular_source_count": source_kind_counts[SOURCE_KIND_TABULAR],
             "narrative_source_count": source_kind_counts[SOURCE_KIND_NARRATIVE],
@@ -1484,6 +1492,8 @@ def _get_terminal_reason(status, source, envelope=None):
         return "bounded_policy_skip"
     if status == EVIDENCE_STATUS_PENDING:
         return "pending_durable_evidence"
+    if status == EVIDENCE_STATUS_CANCELED:
+        return "durable_work_canceled"
     if status == EVIDENCE_STATUS_PARTIAL:
         return "incomplete_native_coverage"
     if status == EVIDENCE_STATUS_FAILED:
@@ -1563,6 +1573,36 @@ def build_terminal_coverage_ledger(
 
         status_counts[status] += 1
         handoff_included = False
+        coverage = (
+            envelope.get("coverage")
+            if isinstance(envelope, dict) and isinstance(envelope.get("coverage"), dict)
+            else {}
+        )
+        generated_artifacts = (
+            list(envelope.get("generated_artifacts") or [])
+            if isinstance(envelope, dict)
+            else []
+        )
+        generated_reference_present = any(
+            isinstance(artifact, dict)
+            and str(
+                artifact.get("run_id")
+                or artifact.get("export_run_id")
+                or artifact.get("artifact_id")
+                or artifact.get("id")
+                or ""
+            ).strip()
+            for artifact in generated_artifacts
+        )
+        required_for_composition = coverage.get(
+            "required_for_composition",
+            source.get("required_for_composition"),
+        )
+        if required_for_composition is None:
+            required_for_composition = bool(
+                source.get("authorization_status") == AUTHORIZATION_STATUS_AUTHORIZED
+                and source_kind in {SOURCE_KIND_TABULAR, SOURCE_KIND_NARRATIVE}
+            )
         if envelope is not None:
             if len(aligned_envelopes) < max(0, int(max_handoff_envelopes)):
                 aligned_envelopes.append(envelope)
@@ -1586,6 +1626,11 @@ def build_terminal_coverage_ledger(
             "request_order": request_order,
             "status": status,
             "reason": reason,
+            "terminal": status != EVIDENCE_STATUS_PENDING,
+            "required_for_composition": bool(required_for_composition),
+            "native_engine": envelope.get("engine") if isinstance(envelope, dict) else None,
+            "execution_contract": coverage.get("execution_contract") or source.get("execution_contract"),
+            "generated_reference_present": generated_reference_present,
             "handoff_included": handoff_included,
         }
         ledger_entries.append(ledger_entry)
@@ -1593,6 +1638,7 @@ def build_terminal_coverage_ledger(
     partial_coverage = bool(
         status_counts[EVIDENCE_STATUS_PARTIAL]
         or status_counts[EVIDENCE_STATUS_PENDING]
+        or status_counts[EVIDENCE_STATUS_CANCELED]
         or status_counts[EVIDENCE_STATUS_FAILED]
         or status_counts[EVIDENCE_STATUS_SKIPPED]
         or missing_coverage_violation_count
@@ -1609,6 +1655,7 @@ def build_terminal_coverage_ledger(
         "partial_source_count": status_counts[EVIDENCE_STATUS_PARTIAL],
         "failed_source_count": status_counts[EVIDENCE_STATUS_FAILED],
         "skipped_source_count": status_counts[EVIDENCE_STATUS_SKIPPED],
+        "canceled_source_count": status_counts[EVIDENCE_STATUS_CANCELED],
         "successful_source_count": (
             status_counts[EVIDENCE_STATUS_COMPLETED]
             + status_counts[EVIDENCE_STATUS_PARTIAL]
@@ -1640,6 +1687,10 @@ def evaluate_mixed_source_mode_outcome(mode, coverage_ledger):
     )
     pending_source_count = sum(
         str(entry.get("status") or "").strip().lower() == EVIDENCE_STATUS_PENDING
+        for entry in entries
+    )
+    canceled_source_count = sum(
+        str(entry.get("status") or "").strip().lower() == EVIDENCE_STATUS_CANCELED
         for entry in entries
     )
     partial_coverage = bool(coverage_ledger.get("partial_coverage"))
@@ -1675,11 +1726,19 @@ def evaluate_mixed_source_mode_outcome(mode, coverage_ledger):
         should_reduce = False
         reason = "pending_required_evidence"
 
+    all_sources_canceled = bool(canceled_source_count and canceled_source_count == len(entries))
+
     if not should_reduce:
         status = EVIDENCE_STATUS_FAILED
-        reason = reason or "no_successful_source"
+        reason = reason or (
+            "required_evidence_canceled"
+            if all_sources_canceled
+            else "no_successful_source"
+        )
         if pending_source_count:
             status = EVIDENCE_STATUS_PENDING
+        elif all_sources_canceled:
+            status = EVIDENCE_STATUS_CANCELED
     elif partial_coverage:
         status = EVIDENCE_STATUS_PARTIAL
     else:
@@ -1691,6 +1750,7 @@ def evaluate_mixed_source_mode_outcome(mode, coverage_ledger):
         "should_reduce": should_reduce,
         "successful_source_count": successful_source_count,
         "pending_source_count": pending_source_count,
+        "canceled_source_count": canceled_source_count,
         "partial_coverage": partial_coverage,
         "reason": reason,
     }

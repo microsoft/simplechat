@@ -5501,6 +5501,50 @@ def _build_checkpoint_summary(completed_batches, batch_count, processed_rows, ro
     return '; '.join(checkpoint_parts)
 
 
+def _build_tabular_run_lifecycle_public_fields(run, status_detail=None, can_resume=False):
+    """Return normalized lifecycle fields for generated-output status metadata."""
+    run = run if isinstance(run, dict) else {}
+    status_detail = status_detail if isinstance(status_detail, dict) else {}
+    status = str(run.get('status') or TABULAR_EXPORT_STATUS_QUEUED).strip().lower()
+    lifecycle_state = status or TABULAR_EXPORT_STATUS_QUEUED
+    safe_reason_code = lifecycle_state
+
+    if status == TABULAR_EXPORT_STATUS_RUNNING and run.get('publishing_started_at'):
+        lifecycle_state = 'finalizing'
+        safe_reason_code = 'finalizing_publication'
+    elif status == TABULAR_EXPORT_STATUS_QUEUED and status_detail.get('waiting_for_retry'):
+        lifecycle_state = 'retrying'
+        safe_reason_code = 'retry_scheduled'
+    elif status == TABULAR_EXPORT_STATUS_FAILED and can_resume:
+        lifecycle_state = 'intervention_required'
+        safe_reason_code = 'continue_required'
+    elif status == TABULAR_EXPORT_STATUS_COMPLETED:
+        safe_reason_code = 'completed'
+    elif status == TABULAR_EXPORT_STATUS_CANCELED:
+        safe_reason_code = 'durable_work_canceled'
+    elif status == TABULAR_EXPORT_STATUS_FAILED:
+        safe_reason_code = 'failed'
+
+    terminal = status in TABULAR_EXPORT_TERMINAL_STATUSES
+    if status == TABULAR_EXPORT_STATUS_COMPLETED:
+        evidence_status = 'completed'
+    elif status == TABULAR_EXPORT_STATUS_CANCELED:
+        evidence_status = 'canceled'
+    elif status == TABULAR_EXPORT_STATUS_FAILED:
+        evidence_status = 'failed'
+    else:
+        evidence_status = 'pending'
+
+    return {
+        'lifecycle_state': lifecycle_state,
+        'execution_state': lifecycle_state,
+        'evidence_status': evidence_status,
+        'terminal': terminal,
+        'required_for_composition': True,
+        'safe_reason_code': safe_reason_code,
+    }
+
+
 def _build_run_status_detail(run, settings, retryable_failure, can_resume):
     status = str((run or {}).get('status') or '').strip().lower()
     task_type = _normalize_tabular_run_task_type((run or {}).get('task_type'))
@@ -5762,6 +5806,11 @@ def _build_run_public_status(run, settings=None):
     retryable_failure = _is_retryable_failed_run(run)
     can_resume = _can_resume_run(run, settings)
     status_detail = _build_run_status_detail(run, settings, retryable_failure, can_resume)
+    lifecycle_fields = _build_tabular_run_lifecycle_public_fields(
+        run,
+        status_detail=status_detail,
+        can_resume=can_resume,
+    )
     checkpoint_summary = _build_checkpoint_summary(completed_batches, batch_count, processed_rows, row_count)
     generated_artifacts = []
 
@@ -5820,6 +5869,7 @@ def _build_run_public_status(run, settings=None):
         'conversation_id': run.get('conversation_id'),
         'task_type': task_type,
         'status': run.get('status'),
+        **lifecycle_fields,
         'source_file_name': run.get('source_file_name'),
         'selected_sheet': run.get('selected_sheet'),
         'output_format': run.get('output_format'),

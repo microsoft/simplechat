@@ -23,6 +23,8 @@ TABULAR_EXECUTION_STATE_FOREGROUND = "foreground"
 TABULAR_EXECUTION_STATE_DECLINED = "declined"
 TABULAR_EXECUTION_STATE_QUEUED = "queued"
 TABULAR_EXECUTION_STATE_CANCELED = "canceled"
+TABULAR_LIFECYCLE_STATE_PLANNED = "planned"
+TABULAR_LIFECYCLE_EVIDENCE_PENDING = "pending"
 TABULAR_PLANNER_MODE_OFF = "off"
 TABULAR_PLANNER_MODE_SHADOW = "shadow"
 TABULAR_PLANNER_MODE_ACTIVE = "active"
@@ -201,7 +203,13 @@ def _build_source_coverage(file_contexts):
             "source_format": source_format,
             "source_hint": str(file_context.get("source_hint") or "workspace").strip().lower(),
             "document_id": str(file_context.get("document_id") or "").strip(),
-            "coverage_state": "planned",
+            "coverage_state": TABULAR_LIFECYCLE_STATE_PLANNED,
+            "execution_state": TABULAR_LIFECYCLE_STATE_PLANNED,
+            "evidence_status": TABULAR_LIFECYCLE_EVIDENCE_PENDING,
+            "terminal": False,
+            "required_for_composition": True,
+            "safe_reason_code": "planned",
+            "generated_reference_present": False,
         })
     return coverage_entries
 
