@@ -51,7 +51,7 @@ resolved every waiting send path.
 - `python -m pytest ui_tests/test_chat_background_generated_export_status.py -q -k large_tabular_run_confirmation_prompt`
 - `node --check application/single_app/static/js/chat/chat-messages.js`
 - `python -m py_compile ui_tests/test_chat_background_generated_export_status.py`
-- `python scripts/check_xss_sinks.py application/single_app/static/js/chat/chat-messages.js`
+- `python scripts/check_xss_sinks.py --base-sha origin/Development --head-sha HEAD application/single_app/static/js/chat/chat-messages.js`
 
 ## Before and After
 
