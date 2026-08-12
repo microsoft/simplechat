@@ -5545,6 +5545,182 @@ def _build_tabular_run_lifecycle_public_fields(run, status_detail=None, can_resu
     }
 
 
+def _normalize_tabular_run_rollout_assignment(raw_assignment):
+    """Return a low-cardinality rollout assignment safe for status metadata."""
+    raw_assignment = raw_assignment if isinstance(raw_assignment, dict) else {}
+    if not raw_assignment:
+        return {}
+
+    return {
+        'contract_version': str(raw_assignment.get('contract_version') or '').strip()[:80],
+        'mode': str(raw_assignment.get('mode') or '').strip().lower()[:40],
+        'planner_mode': str(raw_assignment.get('planner_mode') or '').strip().lower()[:40],
+        'assigned': bool(raw_assignment.get('assigned')),
+        'cohort_bucket': _safe_int(raw_assignment.get('cohort_bucket'), minimum=0, maximum=99),
+        'rollout_percent': _safe_int(raw_assignment.get('rollout_percent'), minimum=0, maximum=100),
+        'search_shared_preflight_enabled': bool(raw_assignment.get('search_shared_preflight_enabled')),
+        'analyze_durable_preflight_enabled': bool(raw_assignment.get('analyze_durable_preflight_enabled')),
+        'mixed_deferred_composition_enabled': bool(raw_assignment.get('mixed_deferred_composition_enabled')),
+        'multifile_durable_preflight_enabled': bool(raw_assignment.get('multifile_durable_preflight_enabled')),
+        'legacy_post_tool_fallback_mode': str(
+            raw_assignment.get('legacy_post_tool_fallback_mode') or 'enabled'
+        ).strip().lower()[:40],
+    }
+
+
+def _build_planner_source_coverage_summary(source_coverage):
+    """Summarize planner source coverage without exposing source identifiers."""
+    format_counts = Counter()
+    source_count = 0
+    for source in list(source_coverage or []):
+        if not isinstance(source, dict):
+            continue
+        source_count += 1
+        source_format = str(source.get('source_format') or 'unknown').strip().lower()
+        if source_format not in {'csv', 'xlsx', 'xls', 'xlsm'}:
+            source_format = 'unknown'
+        format_counts[source_format] += 1
+
+    return {
+        'source_count': source_count,
+        'format_class_counts': dict(sorted(format_counts.items())),
+        'terminal_source_count': 0,
+        'pending_source_count': source_count,
+        'completed_source_count': 0,
+        'partial_source_count': 0,
+    }
+
+
+def _normalize_tabular_run_planner_metadata(planner_metadata):
+    """Normalize shared planner metadata before storing it on a durable run."""
+    planner_metadata = planner_metadata if isinstance(planner_metadata, dict) else {}
+    if not planner_metadata:
+        return {}
+
+    return {
+        'planner_contract_version': str(planner_metadata.get('planner_contract_version') or '').strip()[:80],
+        'execution_contract': str(planner_metadata.get('execution_contract') or '').strip().lower()[:80],
+        'execution_state': str(planner_metadata.get('execution_state') or '').strip().lower()[:40],
+        'durable_task_type': _normalize_tabular_run_task_type(planner_metadata.get('durable_task_type')),
+        'reason_code': str(planner_metadata.get('reason_code') or '').strip().lower()[:80],
+        'execution_group_id': str(planner_metadata.get('execution_group_id') or '').strip()[:128],
+        'source_coverage_summary': _build_planner_source_coverage_summary(
+            planner_metadata.get('source_coverage'),
+        ),
+        'rollout_assignment': _normalize_tabular_run_rollout_assignment(
+            planner_metadata.get('rollout_assignment'),
+        ),
+    }
+
+
+def _normalize_tabular_run_source_format(run):
+    source_descriptor = (run or {}).get('source_descriptor') if isinstance((run or {}).get('source_descriptor'), dict) else {}
+    source_format = str(source_descriptor.get('source_format') or '').strip().lower()
+    if not source_format:
+        source_file_name = str((run or {}).get('source_file_name') or '').strip()
+        source_format = os.path.splitext(source_file_name)[1].lower().lstrip('.')
+    if source_format not in {'csv', 'xlsx', 'xls', 'xlsm'}:
+        return 'unknown'
+    return source_format
+
+
+def _build_tabular_run_source_coverage_summary(run, lifecycle_fields):
+    """Summarize durable run coverage for UI state without exposing source locators."""
+    run = run if isinstance(run, dict) else {}
+    lifecycle_fields = lifecycle_fields if isinstance(lifecycle_fields, dict) else {}
+    planner_metadata = run.get('tabular_planner_metadata') if isinstance(run.get('tabular_planner_metadata'), dict) else {}
+    planner_summary = planner_metadata.get('source_coverage_summary') if isinstance(planner_metadata.get('source_coverage_summary'), dict) else {}
+    source_count = _safe_int(planner_summary.get('source_count'), minimum=0)
+    if source_count <= 0:
+        source_count = 1 if (run.get('source_file_name') or run.get('source_descriptor') or run.get('source_authorization')) else 0
+
+    format_counts = planner_summary.get('format_class_counts') if isinstance(planner_summary.get('format_class_counts'), dict) else {}
+    if not format_counts and source_count:
+        format_counts = {_normalize_tabular_run_source_format(run): source_count}
+
+    evidence_status = str(lifecycle_fields.get('evidence_status') or 'pending').strip().lower()
+    terminal = bool(lifecycle_fields.get('terminal'))
+    return {
+        'source_count': source_count,
+        'format_class_counts': {
+            str(key or 'unknown').strip().lower()[:20]: _safe_int(value, minimum=0)
+            for key, value in dict(format_counts or {}).items()
+        },
+        'terminal_source_count': source_count if terminal else 0,
+        'pending_source_count': 0 if terminal else source_count,
+        'completed_source_count': source_count if evidence_status == 'completed' else 0,
+        'partial_source_count': source_count if evidence_status in {'failed', 'canceled'} else 0,
+        'failed_source_count': source_count if evidence_status == 'failed' else 0,
+        'canceled_source_count': source_count if evidence_status == 'canceled' else 0,
+        'required_for_composition': bool(lifecycle_fields.get('required_for_composition')),
+        'source_backed': bool(run.get('source_descriptor')),
+    }
+
+
+def _build_tabular_run_deferred_composition_reference(run):
+    """Return safe deferred-composition state linked to this run, when present."""
+    descriptor = (run or {}).get('deferred_composition')
+    if not isinstance(descriptor, dict):
+        return {}
+
+    required_runs = [
+        run_reference
+        for run_reference in list(descriptor.get('required_tabular_runs') or [])
+        if isinstance(run_reference, dict)
+    ]
+    return {
+        'composition_id': str(descriptor.get('composition_id') or '').strip()[:128],
+        'contract_version': str(descriptor.get('contract_version') or '').strip()[:80],
+        'status': str(descriptor.get('status') or '').strip().lower()[:40],
+        'enabled': bool(descriptor.get('enabled')),
+        'pending_source_count': _safe_int(descriptor.get('pending_source_count'), minimum=0),
+        'required_source_count': _safe_int(descriptor.get('required_source_count'), minimum=0),
+        'required_tabular_run_count': len(required_runs),
+    }
+
+
+def _build_tabular_run_rollout_assignment_public_fields(run):
+    """Return the persisted Phase 8 rollout assignment, or generation rollout fallback."""
+    run = run if isinstance(run, dict) else {}
+    planner_metadata = run.get('tabular_planner_metadata') if isinstance(run.get('tabular_planner_metadata'), dict) else {}
+    planner_assignment = _normalize_tabular_run_rollout_assignment(
+        planner_metadata.get('rollout_assignment'),
+    )
+    if planner_assignment:
+        return planner_assignment
+
+    generation_rollout_settings = run.get('generation_rollout_settings') if isinstance(run.get('generation_rollout_settings'), dict) else {}
+    if not generation_rollout_settings:
+        return {}
+    generation_rollout_bucket = _safe_int(
+        generation_rollout_settings.get('tabular_generation_rollout_bucket'),
+        default=1,
+        minimum=1,
+        maximum=100,
+    ) - 1
+    generation_rollout_cohort = str(
+        generation_rollout_settings.get('tabular_generation_rollout_cohort') or ''
+    ).strip().lower()
+    return {
+        'contract_version': 'tabular-generation-rollout-v1',
+        'mode': 'generation',
+        'planner_mode': str(run.get('plan_mode') or '').strip().lower()[:40],
+        'assigned': generation_rollout_cohort != 'control',
+        'cohort_bucket': generation_rollout_bucket,
+        'rollout_percent': _safe_int(
+            generation_rollout_settings.get('tabular_generation_rollout_percentage'),
+            default=100,
+            minimum=0,
+            maximum=100,
+        ),
+        'search_shared_preflight_enabled': False,
+        'analyze_durable_preflight_enabled': False,
+        'mixed_deferred_composition_enabled': False,
+        'multifile_durable_preflight_enabled': False,
+        'legacy_post_tool_fallback_mode': 'enabled',
+    }
+
+
 def _build_run_status_detail(run, settings, retryable_failure, can_resume):
     status = str((run or {}).get('status') or '').strip().lower()
     task_type = _normalize_tabular_run_task_type((run or {}).get('task_type'))
@@ -5811,6 +5987,10 @@ def _build_run_public_status(run, settings=None):
         status_detail=status_detail,
         can_resume=can_resume,
     )
+    planner_metadata = run.get('tabular_planner_metadata') if isinstance(run.get('tabular_planner_metadata'), dict) else {}
+    source_coverage_summary = _build_tabular_run_source_coverage_summary(run, lifecycle_fields)
+    deferred_composition = _build_tabular_run_deferred_composition_reference(run)
+    rollout_assignment = _build_tabular_run_rollout_assignment_public_fields(run)
     checkpoint_summary = _build_checkpoint_summary(completed_batches, batch_count, processed_rows, row_count)
     generated_artifacts = []
 
@@ -5869,6 +6049,14 @@ def _build_run_public_status(run, settings=None):
         'conversation_id': run.get('conversation_id'),
         'task_type': task_type,
         'status': run.get('status'),
+        'metadata_contract_version': 'phase8.v1',
+        'planner_contract_version': planner_metadata.get('planner_contract_version'),
+        'execution_contract': planner_metadata.get('execution_contract') or task_type,
+        'execution_group_id': planner_metadata.get('execution_group_id'),
+        'planner_reason_code': planner_metadata.get('reason_code'),
+        'source_coverage_summary': source_coverage_summary,
+        'deferred_composition': deferred_composition,
+        'rollout_assignment': rollout_assignment,
         **lifecycle_fields,
         'source_file_name': run.get('source_file_name'),
         'selected_sheet': run.get('selected_sheet'),
@@ -8472,6 +8660,7 @@ def queue_tabular_generated_output_run(
     passthrough_input_rows=False,
     task_type=TABULAR_RUN_TASK_STRUCTURED_EXPORT,
     analysis_objective=None,
+    planner_metadata=None,
 ):
     """Stage batch input blobs, create a run record, and submit background processing."""
     normalized_user_id = str(user_id or '').strip()
@@ -8504,6 +8693,7 @@ def queue_tabular_generated_output_run(
     )
     settings = settings or {}
     source_descriptor = dict(source_descriptor or {})
+    tabular_planner_metadata = _normalize_tabular_run_planner_metadata(planner_metadata)
     source_authorization = dict(source_candidate.get('source_authorization') or {})
     staged_row_count = 0
     staged_char_count = 0
@@ -8669,6 +8859,7 @@ def queue_tabular_generated_output_run(
         'executor_mode': executor_mode,
         'retry_mode': retry_mode,
         'generation_rollout_settings': rollout_settings,
+        'tabular_planner_metadata': tabular_planner_metadata,
         'task_type': normalized_task_type,
         'analysis_objective': normalized_analysis_objective,
         'user_id': normalized_user_id,
