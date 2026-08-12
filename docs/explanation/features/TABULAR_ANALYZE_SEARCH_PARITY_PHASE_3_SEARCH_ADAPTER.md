@@ -14,7 +14,7 @@ The behavior remains default-off. With the gate disabled, or with planner mode s
 - Lazy adapter surface in `application/single_app/functions_tabular_analysis.py`
 - Existing Search direct durable preflight in `application/single_app/route_backend_chats.py`
 - Existing durable generated-output runner in `application/single_app/functions_tabular_generated_exports.py`
-- Current application version from `application/single_app/config.py`: **0.250.159**
+- Current application version from `application/single_app/config.py`: **0.250.166**
 
 ## Technical Specifications
 
