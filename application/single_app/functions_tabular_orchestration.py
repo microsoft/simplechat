@@ -20,7 +20,9 @@ from functions_analysis_deliverables import (
     emit_analysis_deliverable_contract_event,
 )
 from functions_assistant_table_exports import assistant_table_export_requested
+from functions_generated_file_exports import get_requested_artifact_formats
 from functions_generated_file_exports import get_requested_structured_artifact_format
+from functions_generated_file_exports import get_requested_structured_artifact_formats
 
 
 TABULAR_ORCHESTRATION_PLANNER_CONTRACT_VERSION = "tabular-orchestration-v1"
@@ -194,7 +196,13 @@ def build_tabular_parity_rollout_assignment(settings=None, request_key=None, mod
 
 def get_tabular_generated_output_format(user_question):
     """Return the requested generated-output file format when the user asked for one."""
-    return get_requested_structured_artifact_format(user_question)
+    requested_formats = get_tabular_generated_output_formats(user_question)
+    return requested_formats[0] if requested_formats else None
+
+
+def get_tabular_generated_output_formats(user_question):
+    """Return requested durable tabular artifact formats in user-request order."""
+    return get_requested_structured_artifact_formats(user_question)
 
 
 def question_requests_tabular_generated_output(user_question):
@@ -279,6 +287,7 @@ def get_tabular_generated_output_task_type(
     generated_output_requested,
     hierarchical_analysis_requested,
     settings,
+    action_mode=None,
 ):
     """Map request intent to the existing durable generated-output task type."""
     hierarchical_analysis_enabled = settings_flag_enabled(
@@ -286,8 +295,11 @@ def get_tabular_generated_output_task_type(
         "enable_tabular_hierarchical_analysis",
         False,
     )
-    if generated_output_requested and hierarchical_analysis_requested and hierarchical_analysis_enabled:
+    analysis_required = str(action_mode or "").strip().lower() == "analyze"
+    if generated_output_requested and (hierarchical_analysis_requested or analysis_required) and hierarchical_analysis_enabled:
         return TABULAR_RUN_TASK_COMBINED
+    if generated_output_requested and analysis_required:
+        return None
     if generated_output_requested:
         return TABULAR_RUN_TASK_STRUCTURED_EXPORT
     if hierarchical_analysis_requested and hierarchical_analysis_enabled:
@@ -517,14 +529,27 @@ def plan_tabular_request(
         if _is_supported_tabular_context(file_context)
     ]
     output_hints = dict(requested_output_hints or {}) if isinstance(requested_output_hints, Mapping) else {}
+    normalized_action_mode = str(action_mode or "").strip().lower()
+    analysis_required = normalized_action_mode == "analyze"
+    requested_output_formats = get_requested_artifact_formats(user_question)
+    structured_output_formats = get_tabular_generated_output_formats(user_question)
     generated_output_requested = question_requests_tabular_generated_output(user_question)
     hierarchical_analysis_requested = question_requests_tabular_hierarchical_analysis(user_question)
     durable_task_type = get_tabular_generated_output_task_type(
         generated_output_requested,
         hierarchical_analysis_requested,
         settings,
+        action_mode=normalized_action_mode,
     )
-    output_format = get_tabular_generated_output_format(user_question)
+    output_format = structured_output_formats[0] if structured_output_formats else None
+    unsupported_multi_artifact_request = len(structured_output_formats) > 1
+    analysis_durable_capability_disabled = bool(
+        analysis_required
+        and generated_output_requested
+        and not settings_flag_enabled(settings, "enable_tabular_hierarchical_analysis", False)
+    )
+    if unsupported_multi_artifact_request or analysis_durable_capability_disabled:
+        durable_task_type = None
     execution_contract = durable_task_type or TABULAR_EXECUTION_CONTRACT_FOREGROUND_AGGREGATE
     source_coverage = _build_source_coverage(normalized_contexts)
     execution_group_id = _build_execution_group_id(
@@ -558,6 +583,14 @@ def plan_tabular_request(
     if durable_task_type:
         execution_state = TABULAR_EXECUTION_STATE_DECLINED
         reason_code = "durable_intent"
+    elif unsupported_multi_artifact_request:
+        execution_state = TABULAR_EXECUTION_STATE_DECLINED
+        reason_code = "unsupported_multi_artifact_request"
+        safe_failure_details = "Multiple durable tabular artifact formats are not yet supported for one request."
+    elif analysis_durable_capability_disabled:
+        execution_state = TABULAR_EXECUTION_STATE_DECLINED
+        reason_code = "analysis_required_durable_capability_disabled"
+        safe_failure_details = "Analyze with a requested tabular artifact requires the hierarchical analysis capability."
     elif hierarchical_analysis_requested and not durable_task_type:
         reason_code = "hierarchical_analysis_disabled"
 
@@ -581,7 +614,7 @@ def plan_tabular_request(
     )
     deliverable_contract = build_analysis_deliverable_contract(
         action_mode=action_mode,
-        requested_output_format=output_format if generated_output_requested else None,
+        requested_output_formats=requested_output_formats,
         public_output_schema=(
             output_hints.get("public_output_schema")
             or output_hints.get("output_schema")
@@ -615,8 +648,9 @@ def plan_tabular_request(
         "durable_task_type": durable_task_type,
         "generated_output_requested": generated_output_requested,
         "hierarchical_analysis_requested": hierarchical_analysis_requested,
+        "requested_output_formats": requested_output_formats,
         "output_format": output_format,
-        "action_mode": str(action_mode or "").strip().lower(),
+        "action_mode": normalized_action_mode,
         "caller": str(caller or "").strip().lower(),
         "source_count": len(normalized_contexts),
         "source_coverage": source_coverage,

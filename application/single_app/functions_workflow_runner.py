@@ -733,6 +733,14 @@ def _get_primary_tabular_generated_outputs(primary_generated_outputs):
     return normalized_outputs
 
 
+def _primary_tabular_generated_outputs_are_pending(primary_tabular_outputs):
+    for output in primary_tabular_outputs or []:
+        status = str(output.get('status') or output.get('run_status') or '').strip().lower()
+        if output.get('background_export') or status in {'pending', 'queued', 'running', 'in_progress'}:
+            return True
+    return False
+
+
 def _prompt_explicitly_requests_markdown_artifact(analysis_prompt):
     prompt_text = str(analysis_prompt or '').strip().lower()
     if not prompt_text:
@@ -1339,13 +1347,16 @@ def _maybe_create_document_analysis_generated_artifacts(
     create_lossless_artifacts = bool(
         artifact_intent.get('exhaustive')
         or artifact_intent.get('table_output_requested')
+        or json_artifact_requested
         or xml_artifact_requested
         or primary_tabular_outputs
+        or analysis_reply
     )
     deferred_composition = analysis_result.get('deferred_composition') if isinstance(analysis_result.get('deferred_composition'), dict) else {}
     if deferred_composition.get('status') in {'pending', 'gate_disabled', 'continuation_unavailable'}:
         return {'artifacts': [], 'assistant_reply': None}
 
+    primary_tabular_outputs_pending = _primary_tabular_generated_outputs_are_pending(primary_tabular_outputs)
     if create_lossless_artifacts:
         artifacts = []
         structured_rows = _build_document_analysis_structured_rows(analysis_result)
@@ -1372,15 +1383,8 @@ def _maybe_create_document_analysis_generated_artifacts(
 
             markdown_output = _build_document_analysis_markdown_artifact(analysis_result)
             should_create_markdown_artifact = bool(
-                (
-                    artifact_intent.get('markdown_analysis_artifact_recommended')
-                    or (json_payload is not None and not json_artifact_requested)
-                )
-                and markdown_output
-                and (
-                    not primary_tabular_outputs
-                    or _prompt_explicitly_requests_markdown_artifact(analysis_prompt)
-                )
+                markdown_output
+                and not primary_tabular_outputs_pending
             )
             if should_create_markdown_artifact:
                 markdown_file_name = _build_document_analysis_artifact_file_name(analysis_result, 'md')
@@ -1446,14 +1450,26 @@ def _maybe_create_document_analysis_generated_artifacts(
             raise
 
         if artifacts or primary_tabular_outputs:
-            assistant_reply = _build_document_analysis_multi_artifact_reply(
-                document_count,
-                artifacts,
-                len(structured_rows),
-                len(raw_analysis_items),
-                analysis_reply,
-                structured_rows=structured_rows,
+            markdown_only_artifacts = bool(
+                artifacts
+                and not primary_tabular_outputs
+                and all(str(artifact.get('output_format') or '').strip().lower() == 'md' for artifact in artifacts)
             )
+            if markdown_only_artifacts:
+                assistant_reply = _build_document_analysis_artifact_reply(
+                    document_count,
+                    'md',
+                    analysis_reply=analysis_reply,
+                )
+            else:
+                assistant_reply = _build_document_analysis_multi_artifact_reply(
+                    document_count,
+                    artifacts,
+                    len(structured_rows),
+                    len(raw_analysis_items),
+                    analysis_reply,
+                    structured_rows=structured_rows,
+                )
             if primary_tabular_outputs:
                 assistant_reply = _build_document_analysis_primary_output_reply(
                     document_count,

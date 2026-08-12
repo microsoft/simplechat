@@ -2,7 +2,7 @@
 # test_analyze_deliverable_contract.py
 """
 Functional test for Analyze deliverable contract baselines.
-Version: 0.250.171
+Version: 0.250.172
 Implemented in: 0.250.171
 
 This test ensures Phase 1 defines a versioned Analyze deliverable contract,
@@ -50,7 +50,7 @@ from functions_analysis_deliverables import (  # noqa: E402
     validate_analysis_artifact_set,
     validate_structured_deliverable_rows,
 )
-from functions_tabular_orchestration import plan_tabular_request  # noqa: E402
+from functions_tabular_orchestration import get_tabular_generated_output_task_type, plan_tabular_request  # noqa: E402
 
 
 IMPLEMENTED_VERSION = "0.250.171"
@@ -237,8 +237,74 @@ def test_planner_attaches_shadow_deliverable_contract():
     assert deliverable_contract["analysis_required"] is True
     assert deliverable_contract["public_output_schema"] == FINANCIAL_REVIEW_OUTPUT_COLUMNS
     assert [artifact["format"] for artifact in deliverable_contract["requested_artifacts"]] == ["md", "csv"]
-    assert plan["durable_task_type"] == "structured_export"
-    assert plan["execution_contract"] == "structured_export"
+    assert plan["durable_task_type"] == "combined"
+    assert plan["execution_contract"] == "combined"
+
+
+def test_phase2_planner_normalizes_ordered_artifact_intent():
+    print("Testing Phase 2 normalized Analyze artifact intent...")
+    assert_app_version_at_least("0.250.172")
+
+    csv_plan = plan_tabular_request(
+        "Analyze every row and create a CSV artifact.",
+        [{"file_name": "financial_review.csv", "document_id": "doc-1", "source_version": "v1"}],
+        action_mode="analyze",
+        settings={"enable_tabular_hierarchical_analysis": True},
+    )
+    assert csv_plan["requested_output_formats"] == ["csv"]
+    assert csv_plan["durable_task_type"] == "combined"
+    assert [artifact["format"] for artifact in csv_plan["deliverable_contract"]["requested_artifacts"]] == [
+        "md",
+        "csv",
+    ]
+
+    multi_plan = plan_tabular_request(
+        "Analyze every row and export as JSON, then create XML too. Do not create CSV.",
+        [{"file_name": "financial_review.csv", "document_id": "doc-1", "source_version": "v1"}],
+        action_mode="analyze",
+        settings={"enable_tabular_hierarchical_analysis": True},
+    )
+    assert multi_plan["requested_output_formats"] == ["json", "xml"]
+    assert [artifact["format"] for artifact in multi_plan["deliverable_contract"]["requested_artifacts"]] == [
+        "md",
+        "json",
+        "xml",
+    ]
+    assert multi_plan["execution_state"] == "declined"
+    assert multi_plan["reason_code"] == "unsupported_multi_artifact_request"
+
+    disabled_plan = plan_tabular_request(
+        "Analyze every row and create a CSV artifact.",
+        [{"file_name": "financial_review.csv", "document_id": "doc-1", "source_version": "v1"}],
+        action_mode="analyze",
+        settings={"enable_tabular_hierarchical_analysis": False},
+    )
+    assert disabled_plan["durable_task_type"] is None
+    assert disabled_plan["execution_state"] == "declined"
+    assert disabled_plan["reason_code"] == "analysis_required_durable_capability_disabled"
+    assert get_tabular_generated_output_task_type(
+        True,
+        False,
+        {"enable_tabular_hierarchical_analysis": False},
+        action_mode="analyze",
+    ) is None
+    assert get_tabular_generated_output_task_type(
+        True,
+        False,
+        {"enable_tabular_hierarchical_analysis": False},
+        action_mode="search",
+    ) == "structured_export"
+
+    search_markdown_plan = plan_tabular_request(
+        "Search every row and write a Markdown report.",
+        [{"file_name": "financial_review.csv", "document_id": "doc-1", "source_version": "v1"}],
+        action_mode="search",
+        settings={"enable_tabular_hierarchical_analysis": True},
+    )
+    assert search_markdown_plan["generated_output_requested"] is False
+    assert [artifact["format"] for artifact in search_markdown_plan["deliverable_contract"]["requested_artifacts"]] == [
+        "md",
+    ]
 
 
 def test_safe_deliverable_telemetry_excludes_prompt_and_row_values():
@@ -293,6 +359,7 @@ if __name__ == "__main__":
         test_artifact_set_requires_markdown_and_requested_sibling,
         test_financial_review_fixture_rejects_observed_failure_shapes,
         test_planner_attaches_shadow_deliverable_contract,
+        test_phase2_planner_normalizes_ordered_artifact_intent,
         test_safe_deliverable_telemetry_excludes_prompt_and_row_values,
     ]
     results = []
