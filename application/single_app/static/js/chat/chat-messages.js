@@ -3394,6 +3394,274 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     return getGeneratedAnalysisArtifacts(fullMessageObject).filter(output => output.capability === 'tabular');
   }
 
+  function getGeneratedArtifactSetDedupeKey(outputMetadata) {
+    const artifactMessageId = String(outputMetadata?.artifact_message_id || '').trim();
+    if (artifactMessageId) {
+      return `message:${artifactMessageId}`;
+    }
+
+    const stableArtifactId = String(
+      outputMetadata?.artifact_id
+      || outputMetadata?.member_id
+      || outputMetadata?.id
+      || outputMetadata?.document_id
+      || ''
+    ).trim();
+    if (stableArtifactId) {
+      return `artifact:${stableArtifactId}`;
+    }
+
+    const fileName = String(outputMetadata?.file_name || '').trim();
+    const outputFormat = String(outputMetadata?.output_format || '').trim().toLowerCase();
+    return `${fileName}:${outputFormat}`;
+  }
+
+  function isGeneratedArtifactSetComplete(statusMetadata = {}) {
+    const normalizedRunStatus = String(statusMetadata?.status || '').trim().toLowerCase();
+    if (normalizedRunStatus !== 'completed') {
+      return false;
+    }
+
+    const artifactSet = statusMetadata?.artifact_set && typeof statusMetadata.artifact_set === 'object'
+      ? statusMetadata.artifact_set
+      : null;
+    if (!artifactSet) {
+      return true;
+    }
+
+    const lifecycleState = String(artifactSet.lifecycle_state || '').trim().toLowerCase();
+    if (lifecycleState && lifecycleState !== 'completed') {
+      return false;
+    }
+
+    const validationState = String(artifactSet.validation_state || '').trim().toLowerCase();
+    return !['failed', 'invalid', 'rollback_required', 'rolled_back'].includes(validationState);
+  }
+
+  function normalizeGeneratedArtifactSetMember(rawMember, statusMetadata = {}, fallbackMetadata = {}) {
+    if (!rawMember || typeof rawMember !== 'object') {
+      return null;
+    }
+
+    const runId = String(statusMetadata?.run_id || fallbackMetadata?.run_id || fallbackMetadata?.export_run_id || '').trim();
+    const defaultCapability = String(
+      rawMember.capability
+      || fallbackMetadata?.capability
+      || statusMetadata?.capability
+      || 'tabular'
+    ).trim().toLowerCase() || 'tabular';
+    return normalizeGeneratedAnalysisArtifact({
+      ...fallbackMetadata,
+      ...statusMetadata,
+      ...rawMember,
+      capability: defaultCapability,
+      status: 'completed',
+      export_run_id: runId,
+      run_id: runId,
+      background_export: false,
+      suppress_assistant_table_export: Boolean(
+        rawMember.suppress_assistant_table_export
+        || fallbackMetadata?.suppress_assistant_table_export
+        || statusMetadata?.suppress_assistant_table_export
+      ),
+    }, defaultCapability);
+  }
+
+  function sortGeneratedArtifactSetMembers(members, primaryArtifactId) {
+    const normalizedPrimaryArtifactId = String(primaryArtifactId || '').trim();
+    const primaryAnalysisIndex = members.findIndex(member => {
+      const role = String(member?.role || member?.artifact_role || '').trim().toLowerCase();
+      if (role === 'primary_analysis') {
+        return true;
+      }
+      return Boolean(
+        normalizedPrimaryArtifactId
+        && String(member?.artifact_id || member?.member_id || member?.id || '').trim() === normalizedPrimaryArtifactId
+        && isGeneratedMarkdownArtifact(member, member?.output_format)
+      );
+    });
+
+    if (primaryAnalysisIndex <= 0) {
+      return members;
+    }
+
+    const sortedMembers = members.slice();
+    const primaryMember = sortedMembers.splice(primaryAnalysisIndex, 1)[0];
+    sortedMembers.unshift(primaryMember);
+    return sortedMembers;
+  }
+
+  function normalizeGeneratedArtifactSet(statusMetadata = {}, fallbackMetadata = {}) {
+    const artifactSet = statusMetadata?.artifact_set && typeof statusMetadata.artifact_set === 'object'
+      ? statusMetadata.artifact_set
+      : {};
+    const pluralMembers = Array.isArray(statusMetadata?.generated_artifacts)
+      ? statusMetadata.generated_artifacts
+      : [];
+    const singularMember = statusMetadata?.generated_artifact && typeof statusMetadata.generated_artifact === 'object'
+      ? statusMetadata.generated_artifact
+      : null;
+    const legacyAnalysisMembers = Array.isArray(statusMetadata?.generated_analysis_artifacts)
+      ? statusMetadata.generated_analysis_artifacts
+      : [];
+    const legacyTabularMembers = Array.isArray(statusMetadata?.generated_tabular_outputs)
+      ? statusMetadata.generated_tabular_outputs
+      : [];
+    const rawMembers = pluralMembers.length
+      ? pluralMembers
+      : (singularMember ? [singularMember] : [...legacyAnalysisMembers, ...legacyTabularMembers]);
+    const seenMemberKeys = new Set();
+    const members = [];
+    let duplicateSuppressedCount = 0;
+
+    rawMembers.forEach(rawMember => {
+      const normalizedMember = normalizeGeneratedArtifactSetMember(rawMember, statusMetadata, fallbackMetadata);
+      if (!normalizedMember) {
+        return;
+      }
+      const dedupeKey = getGeneratedArtifactSetDedupeKey(normalizedMember);
+      if (dedupeKey && seenMemberKeys.has(dedupeKey)) {
+        duplicateSuppressedCount += 1;
+        return;
+      }
+      if (dedupeKey) {
+        seenMemberKeys.add(dedupeKey);
+      }
+      members.push(normalizedMember);
+    });
+
+    const orderedMembers = sortGeneratedArtifactSetMembers(members, artifactSet.primary_artifact_id);
+    return {
+      contractVersion: String(artifactSet.contract_version || statusMetadata?.contract_version || '').trim(),
+      setId: String(artifactSet.set_id || statusMetadata?.artifact_set_id || '').trim(),
+      status: String(statusMetadata?.status || '').trim().toLowerCase(),
+      lifecycleState: String(artifactSet.lifecycle_state || '').trim().toLowerCase(),
+      validationState: String(artifactSet.validation_state || '').trim().toLowerCase(),
+      primaryArtifactId: String(artifactSet.primary_artifact_id || '').trim(),
+      publicationGeneration: Number.parseInt(artifactSet.publication_generation, 10) || 0,
+      isComplete: isGeneratedArtifactSetComplete(statusMetadata),
+      legacyFallbackUsed: !pluralMembers.length && Boolean(singularMember),
+      duplicateSuppressedCount,
+      members: orderedMembers,
+    };
+  }
+
+  function recordGeneratedArtifactSetUiEvent(eventType, details = {}) {
+    const boundedFormats = Array.isArray(details.formats)
+      ? details.formats.map(format => String(format || '').trim().toLowerCase()).filter(Boolean).slice(0, 8)
+      : [];
+    const eventDetail = {
+      eventType: String(eventType || '').trim().toLowerCase().slice(0, 80),
+      runId: String(details.runId || '').trim().slice(0, 96),
+      status: String(details.status || '').trim().toLowerCase().slice(0, 40),
+      lifecycleState: String(details.lifecycleState || '').trim().toLowerCase().slice(0, 40),
+      memberCount: Number.isFinite(Number.parseInt(details.memberCount, 10))
+        ? Math.max(0, Number.parseInt(details.memberCount, 10))
+        : 0,
+      formats: boundedFormats,
+      primaryRendered: Boolean(details.primaryRendered),
+      legacyFallbackUsed: Boolean(details.legacyFallbackUsed),
+      duplicateSuppressedCount: Number.isFinite(Number.parseInt(details.duplicateSuppressedCount, 10))
+        ? Math.max(0, Number.parseInt(details.duplicateSuppressedCount, 10))
+        : 0,
+    };
+
+    document.dispatchEvent(new CustomEvent('simplechat:generated-artifact-set', { detail: eventDetail }));
+  }
+
+  function createGeneratedArtifactSetGroup(artifactSet, runId = '') {
+    const group = document.createElement('div');
+    group.className = 'generated-artifact-set-group d-grid gap-3 mt-3';
+    group.dataset.generatedArtifactSet = 'true';
+    if (artifactSet.setId) {
+      group.dataset.generatedArtifactSetId = artifactSet.setId;
+    }
+    if (runId) {
+      group.dataset.generatedArtifactRunId = runId;
+    }
+    group.setAttribute('role', 'group');
+    group.setAttribute('aria-label', artifactSet.members.length === 1 ? 'Generated artifact' : 'Generated artifacts');
+
+    if (artifactSet.members.length > 1) {
+      const heading = document.createElement('div');
+      heading.className = 'small fw-semibold';
+      heading.textContent = `${artifactSet.members.length.toLocaleString()} generated artifacts`;
+      group.appendChild(heading);
+    }
+
+    artifactSet.members.forEach(memberMetadata => {
+      group.appendChild(createGeneratedAnalysisArtifactCard(memberMetadata));
+    });
+
+    return group;
+  }
+
+  function replaceBackgroundGeneratedOutputCardWithArtifacts(outputMetadata, card, artifactSet) {
+    if (!(card instanceof HTMLElement) || !document.body.contains(card) || !artifactSet?.isComplete || !artifactSet.members.length) {
+      return false;
+    }
+
+    const runId = String(outputMetadata?.export_run_id || outputMetadata?.run_id || artifactSet.members[0]?.run_id || '').trim();
+    const primaryMember = artifactSet.members.find(member => {
+      const role = String(member?.role || member?.artifact_role || '').trim().toLowerCase();
+      return role === 'primary_analysis';
+    }) || artifactSet.members[0];
+    const group = createGeneratedArtifactSetGroup(artifactSet, runId);
+    const formats = artifactSet.members.map(member => member?.output_format || '');
+    const primaryRendered = Boolean(primaryMember);
+
+    card.dataset.generatedArtifactSetCompleted = 'true';
+    card.replaceWith(group);
+    hideCompletedGeneratedArtifactHandoff(group, primaryMember || outputMetadata);
+
+    recordGeneratedArtifactSetUiEvent('set_card_hydrated', {
+      runId,
+      status: artifactSet.status,
+      lifecycleState: artifactSet.lifecycleState,
+      memberCount: artifactSet.members.length,
+      formats,
+      primaryRendered,
+      legacyFallbackUsed: artifactSet.legacyFallbackUsed,
+      duplicateSuppressedCount: artifactSet.duplicateSuppressedCount,
+    });
+    recordGeneratedArtifactSetUiEvent('plural_completion_rendered', {
+      runId,
+      status: artifactSet.status,
+      lifecycleState: artifactSet.lifecycleState,
+      memberCount: artifactSet.members.length,
+      formats,
+      primaryRendered,
+      legacyFallbackUsed: artifactSet.legacyFallbackUsed,
+      duplicateSuppressedCount: artifactSet.duplicateSuppressedCount,
+    });
+
+    if (artifactSet.legacyFallbackUsed) {
+      recordGeneratedArtifactSetUiEvent('legacy_singular_fallback_used', {
+        runId,
+        status: artifactSet.status,
+        lifecycleState: artifactSet.lifecycleState,
+        memberCount: artifactSet.members.length,
+        formats,
+        primaryRendered,
+        legacyFallbackUsed: true,
+      });
+    }
+
+    if (artifactSet.duplicateSuppressedCount > 0) {
+      recordGeneratedArtifactSetUiEvent('duplicate_member_suppressed', {
+        runId,
+        status: artifactSet.status,
+        lifecycleState: artifactSet.lifecycleState,
+        memberCount: artifactSet.members.length,
+        formats,
+        primaryRendered,
+        duplicateSuppressedCount: artifactSet.duplicateSuppressedCount,
+      });
+    }
+
+    return true;
+  }
+
   function getGeneratedTabularStorageNote(outputMetadata) {
     if (outputMetadata?.background_export) {
       return 'Continuing in the background. Progress is checkpointed and the download will appear here when complete.';
@@ -4804,24 +5072,27 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
         throw new Error(responseData?.error || `Server responded with status ${response.status}`);
       }
 
+      if (!document.body.contains(card)) {
+        return;
+      }
+
       const runStatus = responseData?.run || {};
-      const generatedArtifact = runStatus?.generated_artifact || null;
+      const artifactSet = normalizeGeneratedArtifactSet(runStatus, outputMetadata);
+      const hasCompletedArtifactSet = Boolean(artifactSet.isComplete && artifactSet.members.length);
       Object.assign(outputMetadata, runStatus, {
         export_run_id: runStatus.run_id || runId,
         run_id: runStatus.run_id || runId,
-        background_export: String(runStatus.status || '').toLowerCase() !== 'completed' || !generatedArtifact,
+        background_export: !hasCompletedArtifactSet,
       });
 
-      if (String(runStatus.status || '').toLowerCase() === 'completed' && generatedArtifact) {
-        Object.assign(outputMetadata, generatedArtifact, {
+      if (hasCompletedArtifactSet) {
+        Object.assign(outputMetadata, artifactSet.members[0], {
           background_export: false,
           status: 'completed',
           export_run_id: runStatus.run_id || runId,
           run_id: runStatus.run_id || runId,
         });
-        const refreshedCard = createGeneratedAnalysisArtifactCard(outputMetadata);
-        hideCompletedGeneratedArtifactHandoff(card, outputMetadata);
-        card.replaceWith(refreshedCard);
+        replaceBackgroundGeneratedOutputCardWithArtifacts(outputMetadata, card, artifactSet);
         return;
       }
 
@@ -4862,23 +5133,22 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
       }
 
       const runStatus = responseData?.run || {};
-      const generatedArtifact = runStatus?.generated_artifact || null;
+      const artifactSet = normalizeGeneratedArtifactSet(runStatus, outputMetadata);
+      const hasCompletedArtifactSet = Boolean(artifactSet.isComplete && artifactSet.members.length);
       Object.assign(outputMetadata, runStatus, {
         export_run_id: runStatus.run_id || runId,
         run_id: runStatus.run_id || runId,
-        background_export: String(runStatus.status || '').toLowerCase() !== 'completed' || !generatedArtifact,
+        background_export: !hasCompletedArtifactSet,
       });
 
-      if (String(runStatus.status || '').toLowerCase() === 'completed' && generatedArtifact) {
-        Object.assign(outputMetadata, generatedArtifact, {
+      if (hasCompletedArtifactSet) {
+        Object.assign(outputMetadata, artifactSet.members[0], {
           background_export: false,
           status: 'completed',
           export_run_id: runStatus.run_id || runId,
           run_id: runStatus.run_id || runId,
         });
-        const refreshedCard = createGeneratedAnalysisArtifactCard(outputMetadata);
-        hideCompletedGeneratedArtifactHandoff(card, outputMetadata);
-        card.replaceWith(refreshedCard);
+        replaceBackgroundGeneratedOutputCardWithArtifacts(outputMetadata, card, artifactSet);
         showToast(responseData?.message || 'Background export is already complete.', 'success');
         return;
       }
@@ -5176,7 +5446,14 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     downloadButton.type = 'button';
     downloadButton.className = 'btn btn-sm btn-outline-primary generated-tabular-download-btn';
     downloadButton.textContent = `Download ${outputFormat.toUpperCase()}`;
+    downloadButton.setAttribute('aria-label', `Download ${fileName}`);
     downloadButton.addEventListener('click', () => {
+      recordGeneratedArtifactSetUiEvent('member_download_action', {
+        runId: outputMetadata?.run_id || outputMetadata?.export_run_id,
+        status: outputMetadata?.status,
+        memberCount: 1,
+        formats: [outputFormat],
+      });
       triggerGeneratedTabularOutputDownload(outputMetadata);
     });
     actions.appendChild(downloadButton);
@@ -5186,8 +5463,14 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
       viewButton.type = 'button';
       viewButton.className = 'btn btn-sm btn-outline-secondary generated-artifact-view-btn';
       viewButton.textContent = `View ${outputFormat.toUpperCase()}`;
-      viewButton.setAttribute('aria-label', `View generated ${outputFormat.toUpperCase()} preview`);
+      viewButton.setAttribute('aria-label', `View ${fileName}`);
       viewButton.addEventListener('click', () => {
+        recordGeneratedArtifactSetUiEvent('member_view_action', {
+          runId: outputMetadata?.run_id || outputMetadata?.export_run_id,
+          status: outputMetadata?.status,
+          memberCount: 1,
+          formats: [outputFormat],
+        });
         showGeneratedArtifactPreviewModal(outputMetadata, outputFormat);
       });
       actions.appendChild(viewButton);
@@ -5201,9 +5484,16 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
         exportPowerPointButton.type = 'button';
         exportPowerPointButton.className = 'btn btn-sm btn-outline-primary generated-artifact-export-ppt-btn';
         exportPowerPointButton.textContent = 'Create PowerPoint';
+        exportPowerPointButton.setAttribute('aria-label', `Create PowerPoint from ${fileName}`);
         exportPowerPointButton.dataset.artifactMessageId = normalizedArtifactMessageId;
         exportPowerPointButton.dataset.conversationId = normalizedConversationId;
         exportPowerPointButton.addEventListener('click', () => {
+          recordGeneratedArtifactSetUiEvent('member_powerpoint_action', {
+            runId: outputMetadata?.run_id || outputMetadata?.export_run_id,
+            status: outputMetadata?.status,
+            memberCount: 1,
+            formats: [outputFormat],
+          });
           exportGeneratedMarkdownArtifactAsPowerPoint(outputMetadata, exportPowerPointButton);
         });
         actions.appendChild(exportPowerPointButton);
@@ -5213,7 +5503,14 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
       viewButton.type = 'button';
       viewButton.className = 'btn btn-sm btn-outline-secondary generated-artifact-view-md-btn';
       viewButton.textContent = 'View MD';
+      viewButton.setAttribute('aria-label', `View ${fileName}`);
       viewButton.addEventListener('click', () => {
+        recordGeneratedArtifactSetUiEvent('member_view_action', {
+          runId: outputMetadata?.run_id || outputMetadata?.export_run_id,
+          status: outputMetadata?.status,
+          memberCount: 1,
+          formats: [outputFormat],
+        });
         viewGeneratedMarkdownArtifact(outputMetadata, viewButton);
       });
       actions.appendChild(viewButton);
@@ -5226,7 +5523,14 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
       promoteButton.type = 'button';
       promoteButton.className = 'btn btn-sm btn-outline-secondary generated-artifact-promote-btn';
       promoteButton.textContent = 'Add to Workspace';
+      promoteButton.setAttribute('aria-label', `Add ${fileName} to workspace`);
       promoteButton.addEventListener('click', () => {
+        recordGeneratedArtifactSetUiEvent('member_promotion_action', {
+          runId: outputMetadata?.run_id || outputMetadata?.export_run_id,
+          status: outputMetadata?.status,
+          memberCount: 1,
+          formats: [outputFormat],
+        });
         promoteGeneratedArtifactToWorkspace(outputMetadata, promoteButton);
       });
       actions.appendChild(promoteButton);
