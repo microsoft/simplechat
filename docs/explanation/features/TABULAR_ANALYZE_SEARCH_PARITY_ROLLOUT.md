@@ -3,7 +3,7 @@
 Implemented in version: **0.250.164**
 
 Related version update:
-- `application/single_app/config.py` reports version `0.250.164`.
+- `application/single_app/config.py` reports version `0.250.166`.
 
 ## Overview
 
