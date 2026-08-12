@@ -43,6 +43,12 @@ from functions_analysis_deliverables import (
     project_structured_deliverable_row,
 )
 from functions_assistant_table_exports import build_safe_csv_headers, neutralize_csv_spreadsheet_formula
+from functions_tabular_transformations import (
+    evaluate_tabular_transformation_row,
+    get_tabular_transformation_model_fields,
+    is_tabular_transformation_deterministic_only,
+    normalize_tabular_transformation_spec,
+)
 from functions_tabular_csv_query import (
     iter_tabular_csv_query_rows,
     validate_tabular_csv_query_expression,
@@ -1181,6 +1187,99 @@ def _get_tabular_run_internal_checkpoint_schema(run):
     if output_schema:
         return [str(field_name or '').strip() for field_name in output_schema if str(field_name or '').strip()]
     return _get_tabular_run_lineage_schema(run) + _get_tabular_run_public_output_schema(run)
+
+
+def _get_tabular_run_transformation_spec(run, public_output_schema=None):
+    raw_spec = (run or {}).get('transformation_spec')
+    if not raw_spec:
+        deliverable_contract = (
+            ((run or {}).get('tabular_planner_metadata') or {}).get('deliverable_contract')
+            if isinstance((run or {}).get('tabular_planner_metadata'), dict)
+            else {}
+        )
+        raw_spec = (deliverable_contract or {}).get('transformation_spec')
+    if not raw_spec:
+        return {}
+    return normalize_tabular_transformation_spec(
+        raw_spec,
+        public_output_schema=public_output_schema or _get_tabular_run_public_output_schema(run),
+    )
+
+
+def _get_public_fields_from_output_schema(output_schema):
+    return [
+        str(field_name or '').strip()
+        for field_name in list(output_schema or [])
+        if str(field_name or '').strip()
+        and not is_analysis_internal_lineage_field(field_name)
+    ]
+
+
+def _get_lineage_fields_from_output_schema(output_schema):
+    lineage_fields = [
+        str(field_name or '').strip()
+        for field_name in list(output_schema or [])
+        if str(field_name or '').strip()
+        and is_analysis_internal_lineage_field(field_name)
+    ]
+    return lineage_fields or [
+        TABULAR_EXPORT_OUTPUT_ROW_NUMBER_FIELD,
+        TABULAR_EXPORT_OUTPUT_ROW_IDENTITY_FIELD,
+    ]
+
+
+def _build_model_expected_output_schema(expected_output_schema, transformation_spec=None):
+    if not transformation_spec:
+        return list(expected_output_schema or [])
+    public_schema = _get_public_fields_from_output_schema(expected_output_schema)
+    if not public_schema:
+        return list(expected_output_schema or [])
+    model_fields = get_tabular_transformation_model_fields(
+        transformation_spec,
+        public_output_schema=public_schema,
+    )
+    return _get_lineage_fields_from_output_schema(expected_output_schema) + model_fields
+
+
+def _merge_deterministic_transformation_entries(
+    source_rows,
+    generated_entries,
+    expected_output_schema,
+    transformation_spec=None,
+):
+    if not transformation_spec:
+        return generated_entries, list(expected_output_schema or [])
+    final_output_schema = list(expected_output_schema or [])
+    public_schema = _get_public_fields_from_output_schema(final_output_schema)
+    if not public_schema:
+        return generated_entries, final_output_schema
+    normalized_spec = normalize_tabular_transformation_spec(
+        transformation_spec,
+        public_output_schema=public_schema,
+    )
+    if not normalized_spec:
+        return generated_entries, final_output_schema
+
+    merged_entries = []
+    for row_index, (source_row, generated_entry) in enumerate(
+        zip(source_rows or [], generated_entries or []),
+        start=1,
+    ):
+        deterministic_values = evaluate_tabular_transformation_row(normalized_spec, source_row)
+        merged_entry = {}
+        for field_name in final_output_schema:
+            if field_name in deterministic_values:
+                merged_entry[field_name] = deterministic_values.get(field_name)
+            elif field_name in generated_entry:
+                merged_entry[field_name] = generated_entry.get(field_name)
+            elif is_analysis_internal_lineage_field(field_name):
+                merged_entry[field_name] = generated_entry.get(field_name)
+            else:
+                raise ValueError(
+                    f'Deterministic transformation merge missing field {field_name} at row {row_index}'
+                )
+        merged_entries.append(merged_entry)
+    return merged_entries, final_output_schema
 
 
 def _get_tabular_run_serialized_public_schema(run):
@@ -3989,6 +4088,7 @@ def _ensure_tabular_generation_plan(
     if (
         task_type not in {TABULAR_RUN_TASK_STRUCTURED_EXPORT, TABULAR_RUN_TASK_COMBINED}
         or (run or {}).get('passthrough_input_rows')
+        or bool(_get_tabular_run_transformation_spec(run))
         or chat_service is None
     ):
         if (run or {}).get('plan_status') not in {'ready', 'fallback', 'not_applicable'}:
@@ -4157,10 +4257,15 @@ async def _generate_batch_entries(
     batch_timeout_seconds=TABULAR_EXPORT_DEFAULT_BATCH_TIMEOUT_SECONDS,
     response_protocol=TABULAR_RESPONSE_PROTOCOL_OBJECT_V1,
     generation_plan=None,
+    transformation_spec=None,
 ):
     batch_number = batch_index + 1
     normalized_response_protocol = str(response_protocol or TABULAR_RESPONSE_PROTOCOL_OBJECT_V1).strip()
     compact_protocol = _is_compact_row_array_protocol(normalized_response_protocol)
+    model_expected_output_schema = _build_model_expected_output_schema(
+        expected_output_schema,
+        transformation_spec=transformation_spec,
+    )
     batch_prompt = _build_batch_prompt(
         user_question,
         batch_rows,
@@ -4168,7 +4273,7 @@ async def _generate_batch_entries(
         total_batches,
         source_file_name,
         selected_sheet=selected_sheet,
-        output_schema=expected_output_schema,
+        output_schema=model_expected_output_schema,
         response_protocol=normalized_response_protocol,
         generation_plan=generation_plan,
     )
@@ -4263,10 +4368,16 @@ async def _generate_batch_entries(
                 normalized_entries, output_schema = _normalize_model_generated_batch_entries(
                     batch_rows,
                     parsed_entries,
-                    expected_output_schema=expected_output_schema,
+                    expected_output_schema=model_expected_output_schema,
                     allow_source_token_recovery=not compact_protocol,
                     run_id=run_id,
                     batch_number=batch_number,
+                )
+                normalized_entries, output_schema = _merge_deterministic_transformation_entries(
+                    batch_rows,
+                    normalized_entries,
+                    expected_output_schema or output_schema,
+                    transformation_spec=transformation_spec,
                 )
                 last_attempt_metrics['validation_seconds'] = round(
                     time.monotonic() - validation_started_at,
@@ -4323,6 +4434,7 @@ async def _generate_batch_entries_for_window(
     batch_timeout_seconds,
     response_protocol,
     generation_plan,
+    transformation_spec,
 ):
     queued_at = time.monotonic()
     async with semaphore:
@@ -4342,6 +4454,7 @@ async def _generate_batch_entries_for_window(
             batch_timeout_seconds=batch_timeout_seconds,
             response_protocol=response_protocol,
             generation_plan=generation_plan,
+            transformation_spec=transformation_spec,
         )
         elapsed_seconds = time.monotonic() - batch_started_at
         log_event(
@@ -4398,6 +4511,7 @@ async def _generate_batch_window_entries(
     batch_timeout_seconds=TABULAR_EXPORT_DEFAULT_BATCH_TIMEOUT_SECONDS,
     response_protocol=TABULAR_RESPONSE_PROTOCOL_OBJECT_V1,
     generation_plan=None,
+    transformation_spec=None,
 ):
     semaphore = asyncio.Semaphore(max(1, batch_concurrency))
     tasks = [
@@ -4415,6 +4529,7 @@ async def _generate_batch_window_entries(
             batch_timeout_seconds,
             response_protocol,
             generation_plan,
+            transformation_spec,
         )
         for batch_request in batch_requests
     ]
@@ -4491,6 +4606,7 @@ async def _generate_and_checkpoint_batch_window_entries(
     batch_timeout_seconds=TABULAR_EXPORT_DEFAULT_BATCH_TIMEOUT_SECONDS,
     response_protocol=TABULAR_RESPONSE_PROTOCOL_OBJECT_V1,
     generation_plan=None,
+    transformation_spec=None,
 ):
     semaphore = asyncio.Semaphore(max(1, batch_concurrency))
     writer_semaphore = asyncio.Semaphore(max(1, checkpoint_writer_concurrency))
@@ -4510,6 +4626,7 @@ async def _generate_and_checkpoint_batch_window_entries(
                 batch_timeout_seconds,
                 response_protocol,
                 generation_plan,
+                transformation_spec,
             )
         )
         for batch_request in batch_requests
@@ -4601,6 +4718,7 @@ async def _generate_and_checkpoint_rolling_pool_entries(
     batch_timeout_seconds=TABULAR_EXPORT_DEFAULT_BATCH_TIMEOUT_SECONDS,
     response_protocol=TABULAR_RESPONSE_PROTOCOL_OBJECT_V1,
     generation_plan=None,
+    transformation_spec=None,
 ):
     model_semaphore = asyncio.Semaphore(max(1, batch_concurrency))
     writer_semaphore = asyncio.Semaphore(max(1, checkpoint_writer_concurrency))
@@ -4814,6 +4932,7 @@ async def _generate_and_checkpoint_rolling_pool_entries(
                 batch_timeout_seconds,
                 response_protocol,
                 generation_plan,
+                transformation_spec,
             )
         )
         active_batch_requests[model_task] = batch_request
@@ -5117,9 +5236,14 @@ async def _generate_combined_chunk_result(
     retry_attempts,
     batch_timeout_seconds,
     expected_output_schema=None,
+    transformation_spec=None,
 ):
     batch_number = batch_request['batch_number']
     batch_rows = batch_request['rows']
+    model_expected_output_schema = _build_model_expected_output_schema(
+        expected_output_schema,
+        transformation_spec=transformation_spec,
+    )
     timeout_seconds = max(
         _safe_float(
             batch_timeout_seconds,
@@ -5148,7 +5272,7 @@ async def _generate_combined_chunk_result(
                 batch_rows,
                 batch_number,
                 total_batches,
-                output_schema=expected_output_schema,
+                output_schema=model_expected_output_schema,
             )
         )
 
@@ -5172,7 +5296,13 @@ async def _generate_combined_chunk_result(
                     parsed_payload,
                     batch_rows,
                     batch_number,
-                    expected_output_schema=expected_output_schema,
+                    expected_output_schema=model_expected_output_schema,
+                )
+                normalized_entries, output_schema = _merge_deterministic_transformation_entries(
+                    batch_rows,
+                    normalized_entries,
+                    expected_output_schema or output_schema,
+                    transformation_spec=transformation_spec,
                 )
                 return normalized_entries, output_schema, analysis_summary, mismatch_count
             except ValueError as exc:
@@ -5209,6 +5339,7 @@ async def _generate_combined_chunk_result_for_window(
     retry_attempts,
     batch_timeout_seconds,
     expected_output_schema,
+    transformation_spec,
 ):
     async with semaphore:
         batch_started_at = time.monotonic()
@@ -5220,6 +5351,7 @@ async def _generate_combined_chunk_result_for_window(
             retry_attempts,
             batch_timeout_seconds,
             expected_output_schema=expected_output_schema,
+            transformation_spec=transformation_spec,
         )
         return {
             'batch_number': batch_request['batch_number'],
@@ -5242,6 +5374,7 @@ async def _generate_combined_chunk_result_window(
     batch_concurrency,
     batch_timeout_seconds,
     expected_output_schema=None,
+    transformation_spec=None,
 ):
     semaphore = asyncio.Semaphore(max(1, batch_concurrency))
     tasks = [
@@ -5254,6 +5387,7 @@ async def _generate_combined_chunk_result_window(
             retry_attempts,
             batch_timeout_seconds,
             expected_output_schema,
+            transformation_spec,
         )
         for batch_request in batch_requests
     ]
@@ -5750,6 +5884,11 @@ def _normalize_tabular_run_planner_metadata(planner_metadata):
             'validation_profile': str(deliverable_contract.get('validation_profile') or '').strip().lower()[:80],
             'publication_policy': str(deliverable_contract.get('publication_policy') or '').strip().lower()[:80],
         }
+        if isinstance(deliverable_contract.get('transformation_spec'), dict):
+            normalized_metadata['deliverable_contract']['transformation_spec'] = normalize_tabular_transformation_spec(
+                deliverable_contract.get('transformation_spec'),
+                public_output_schema=normalized_metadata['deliverable_contract']['public_output_schema'],
+            )
     return normalized_metadata
 
 
@@ -8077,6 +8216,49 @@ def _build_passthrough_batch_results(run, batch_requests):
     return generated_results
 
 
+def _build_deterministic_transformation_batch_results(run, batch_requests):
+    """Create checkpoint entries directly from a deterministic transformation spec."""
+    expected_output_schema = list(run.get('output_schema') or _get_tabular_run_internal_checkpoint_schema(run))
+    public_output_schema = _get_public_fields_from_output_schema(expected_output_schema)
+    transformation_spec = _get_tabular_run_transformation_spec(
+        run,
+        public_output_schema=public_output_schema,
+    )
+    if not is_tabular_transformation_deterministic_only(
+        transformation_spec,
+        public_output_schema=public_output_schema,
+    ):
+        raise ValueError('Deterministic transformation checkpoints require a deterministic-only spec')
+
+    generated_results = []
+    for batch_request in batch_requests:
+        batch_started_at = time.monotonic()
+        batch_entries = []
+        for source_row in batch_request['rows']:
+            deterministic_values = evaluate_tabular_transformation_row(transformation_spec, source_row)
+            checkpoint_entry = {}
+            for field_name in expected_output_schema:
+                if field_name == TABULAR_EXPORT_OUTPUT_ROW_NUMBER_FIELD:
+                    checkpoint_entry[field_name] = source_row.get(TABULAR_EXPORT_INPUT_ROW_NUMBER_FIELD)
+                elif field_name == TABULAR_EXPORT_OUTPUT_ROW_IDENTITY_FIELD:
+                    checkpoint_entry[field_name] = str(source_row.get(TABULAR_EXPORT_INPUT_ROW_IDENTITY_FIELD) or '')
+                elif field_name in deterministic_values:
+                    checkpoint_entry[field_name] = deterministic_values.get(field_name)
+                else:
+                    raise ValueError(f'Deterministic transformation did not produce field {field_name}')
+            batch_entries.append(checkpoint_entry)
+        generated_results.append({
+            'batch_number': batch_request['batch_number'],
+            'batch_entries': batch_entries,
+            'batch_summary': _build_generated_batch_summary(batch_entries),
+            'batch_row_count': len(batch_entries),
+            'elapsed_seconds': time.monotonic() - batch_started_at,
+            'mismatch_count': 0,
+            'output_schema': expected_output_schema,
+        })
+    return generated_results
+
+
 def _advance_run_progress_for_window(run, batch_results, completed_batches, processed_rows, window_start, window_end):
     window_results = []
     window_rows = 0
@@ -8439,6 +8621,7 @@ def _process_combined_run(
                     batch_concurrency,
                     batch_timeout_seconds,
                     expected_output_schema=run.get('output_schema'),
+                    transformation_spec=_get_tabular_run_transformation_spec(run),
                 )
             )
             _raise_if_tabular_export_canceled(run)
@@ -8525,6 +8708,7 @@ def _process_structured_export_rolling_pool(
             batch_timeout_seconds=batch_timeout_seconds,
             response_protocol=run.get('response_protocol_version'),
             generation_plan=generation_plan,
+            transformation_spec=_get_tabular_run_transformation_spec(run),
         )
     )
     del last_logged_at
@@ -8586,8 +8770,17 @@ def process_tabular_generated_output_run(run_id, user_id):
             ),
             max(30, stale_seconds - 30),
         )
+        normalized_task_type = _normalize_tabular_run_task_type(run.get('task_type'))
+        transformation_spec = _get_tabular_run_transformation_spec(run)
+        deterministic_only_structured_export = (
+            normalized_task_type == TABULAR_RUN_TASK_STRUCTURED_EXPORT
+            and is_tabular_transformation_deterministic_only(
+                transformation_spec,
+                public_output_schema=_get_tabular_run_public_output_schema(run),
+            )
+        )
         chat_service = None
-        if not run.get('passthrough_input_rows'):
+        if not run.get('passthrough_input_rows') and not deterministic_only_structured_export:
             has_snapshotted_chunk_model = bool(str(run.get('chunk_gpt_model') or '').strip())
             chat_service = _build_chat_service(
                 run.get('chunk_gpt_model') if has_snapshotted_chunk_model else run.get('gpt_model'),
@@ -8644,7 +8837,6 @@ def process_tabular_generated_output_run(run_id, user_id):
             level=logging.INFO,
         )
 
-        normalized_task_type = _normalize_tabular_run_task_type(run.get('task_type'))
         if normalized_task_type == TABULAR_RUN_TASK_COMBINED:
             return _process_combined_run(
                 run,
@@ -8716,6 +8908,8 @@ def process_tabular_generated_output_run(run_id, user_id):
                 )
                 if run.get('passthrough_input_rows'):
                     generated_results = _build_passthrough_batch_results(run, batch_requests)
+                elif deterministic_only_structured_export:
+                    generated_results = _build_deterministic_transformation_batch_results(run, batch_requests)
                 elif _is_completion_driven_checkpointing_enabled(settings, run):
                     generated_batch_results, generation_error = asyncio.run(
                         _generate_and_checkpoint_batch_window_entries(
@@ -8734,6 +8928,7 @@ def process_tabular_generated_output_run(run_id, user_id):
                             batch_timeout_seconds=batch_timeout_seconds,
                             response_protocol=run.get('response_protocol_version'),
                             generation_plan=generation_plan,
+                            transformation_spec=_get_tabular_run_transformation_spec(run),
                         )
                     )
                     batch_results.update(generated_batch_results)
@@ -8755,6 +8950,7 @@ def process_tabular_generated_output_run(run_id, user_id):
                             batch_timeout_seconds=batch_timeout_seconds,
                             response_protocol=run.get('response_protocol_version'),
                             generation_plan=generation_plan,
+                            transformation_spec=_get_tabular_run_transformation_spec(run),
                         )
                     )
                 _raise_if_tabular_export_canceled(run)
@@ -8860,6 +9056,17 @@ def queue_tabular_generated_output_run(
     settings = settings or {}
     source_descriptor = dict(source_descriptor or {})
     tabular_planner_metadata = _normalize_tabular_run_planner_metadata(planner_metadata)
+    deliverable_contract = tabular_planner_metadata.get('deliverable_contract') or {}
+    contract_public_output_schema = list(deliverable_contract.get('public_output_schema') or [])
+    contract_internal_checkpoint_schema = list(deliverable_contract.get('internal_checkpoint_schema') or [])
+    contract_transformation_spec = dict(deliverable_contract.get('transformation_spec') or {})
+    deterministic_only_structured_export = (
+        normalized_task_type == TABULAR_RUN_TASK_STRUCTURED_EXPORT
+        and is_tabular_transformation_deterministic_only(
+            contract_transformation_spec,
+            public_output_schema=contract_public_output_schema,
+        )
+    )
     source_authorization = dict(source_candidate.get('source_authorization') or {})
     staged_row_count = 0
     staged_char_count = 0
@@ -8888,7 +9095,12 @@ def queue_tabular_generated_output_run(
         if rollout_settings.get('enable_tabular_generation_plan')
         else 'off'
     )
-    if normalized_task_type == TABULAR_RUN_TASK_HIERARCHICAL_ANALYSIS or passthrough_input_rows:
+    if (
+        normalized_task_type == TABULAR_RUN_TASK_HIERARCHICAL_ANALYSIS
+        or passthrough_input_rows
+        or deterministic_only_structured_export
+        or bool(contract_transformation_spec)
+    ):
         requested_plan_mode = 'off'
     response_protocol_version = _select_tabular_response_protocol(
         rollout_settings,
@@ -9083,13 +9295,14 @@ def queue_tabular_generated_output_run(
         'planner_started_at': None,
         'planner_completed_at': None,
         'processed_rows': 0,
-        'output_schema': None,
-        'public_output_schema': [],
-        'internal_checkpoint_schema': [],
+        'output_schema': contract_internal_checkpoint_schema or None,
+        'public_output_schema': contract_public_output_schema,
+        'internal_checkpoint_schema': contract_internal_checkpoint_schema,
         'lineage_schema': [
             TABULAR_EXPORT_OUTPUT_ROW_NUMBER_FIELD,
             TABULAR_EXPORT_OUTPUT_ROW_IDENTITY_FIELD,
         ],
+        'transformation_spec': contract_transformation_spec,
         'source_descriptor': source_descriptor or None,
         'batch_budget': model_batch_budget,
         'source_authorization': source_authorization or None,

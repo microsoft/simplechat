@@ -8,6 +8,8 @@ import re
 from dataclasses import asdict, dataclass, field
 from typing import Mapping
 
+from functions_tabular_transformations import normalize_tabular_transformation_spec
+
 
 def log_event(*args, **kwargs):
     """Lazily resolve telemetry logging so functional tests do not require Azure packages."""
@@ -18,9 +20,10 @@ def log_event(*args, **kwargs):
     return _log_event_impl(*args, **kwargs)
 
 
-ANALYSIS_DELIVERABLE_CONTRACT_VERSION = "analysis-deliverables-v2"
+ANALYSIS_DELIVERABLE_CONTRACT_VERSION = "analysis-deliverables-v3"
 ANALYSIS_DELIVERABLE_LEGACY_CONTRACT_VERSIONS = frozenset({
     "analysis-deliverables-v1",
+    "analysis-deliverables-v2",
 })
 
 ANALYSIS_DELIVERABLE_ACTION_ANALYZE = "analyze"
@@ -157,6 +160,7 @@ class AnalysisDeliverableContract:
     row_cardinality: str = ANALYSIS_ROW_CARDINALITY_NOT_APPLICABLE
     ordering: str = ANALYSIS_ORDERING_NOT_APPLICABLE
     transformation_mode: str = ANALYSIS_TRANSFORMATION_MODE_SEMANTIC
+    transformation_spec: dict = field(default_factory=dict)
     validation_profile: str = ANALYSIS_VALIDATION_PROFILE_ARTIFACT_SET
     publication_policy: str = ANALYSIS_PUBLICATION_POLICY_NO_REQUIRED_ARTIFACTS
     source_fingerprint: str = ""
@@ -171,6 +175,7 @@ class AnalysisDeliverableContract:
         payload["public_output_schema"] = list(self.public_output_schema)
         payload["internal_checkpoint_schema"] = list(self.internal_checkpoint_schema)
         payload["lineage_schema"] = list(self.lineage_schema)
+        payload["transformation_spec"] = dict(self.transformation_spec or {})
         return payload
 
 
@@ -395,6 +400,7 @@ def build_analysis_deliverable_contract(
     row_cardinality=None,
     ordering=None,
     transformation_mode=None,
+    transformation_spec=None,
     validation_profile=None,
     publication_policy=None,
     analysis_required=None,
@@ -478,6 +484,10 @@ def build_analysis_deliverable_contract(
         ANALYSIS_TRANSFORMATION_MODE_SEMANTIC,
         "transformation mode",
     )
+    normalized_transformation_spec = normalize_tabular_transformation_spec(
+        transformation_spec,
+        public_output_schema=normalized_schema,
+    )
     normalized_validation_profile = _normalize_bounded_mode(
         validation_profile,
         ANALYSIS_VALIDATION_PROFILES,
@@ -506,6 +516,7 @@ def build_analysis_deliverable_contract(
         row_cardinality=normalized_row_cardinality,
         ordering=normalized_ordering,
         transformation_mode=normalized_transformation_mode,
+        transformation_spec=normalized_transformation_spec,
         validation_profile=normalized_validation_profile,
         publication_policy=normalized_publication_policy,
         source_fingerprint=str(source_fingerprint or "").strip()[:64],
@@ -538,6 +549,7 @@ def coerce_analysis_deliverable_contract(contract):
         row_cardinality=payload.get("row_cardinality"),
         ordering=payload.get("ordering"),
         transformation_mode=payload.get("transformation_mode"),
+        transformation_spec=payload.get("transformation_spec"),
         validation_profile=payload.get("validation_profile"),
         publication_policy=payload.get("publication_policy"),
         analysis_required=payload.get("analysis_required", False),

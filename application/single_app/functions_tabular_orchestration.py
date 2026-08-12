@@ -13,9 +13,11 @@ from functions_analysis_deliverables import (
     ANALYSIS_ORDERING_SOURCE_ORDER,
     ANALYSIS_ROW_CARDINALITY_NOT_APPLICABLE,
     ANALYSIS_ROW_CARDINALITY_ONE_PER_SOURCE_ROW,
+    ANALYSIS_TRANSFORMATION_MODE_DETERMINISTIC,
     ANALYSIS_TRANSFORMATION_MODE_SEMANTIC,
     ANALYSIS_VALIDATION_PROFILE_ARTIFACT_SET,
     ANALYSIS_VALIDATION_PROFILE_EXACT_ROWS_SCHEMA,
+    ANALYSIS_VALIDATION_PROFILE_EXACT_ROWS_SCHEMA_AND_RULES,
     build_analysis_deliverable_contract,
     emit_analysis_deliverable_contract_event,
 )
@@ -612,6 +614,19 @@ def plan_tabular_request(
         request_key=request_fingerprint,
         mode=action_mode,
     )
+    transformation_spec = output_hints.get("transformation_spec")
+    transformation_mode = output_hints.get("transformation_mode") or (
+        ANALYSIS_TRANSFORMATION_MODE_DETERMINISTIC
+        if transformation_spec
+        else ANALYSIS_TRANSFORMATION_MODE_SEMANTIC
+    )
+    validation_profile = (
+        ANALYSIS_VALIDATION_PROFILE_EXACT_ROWS_SCHEMA_AND_RULES
+        if generated_output_requested and transformation_spec
+        else ANALYSIS_VALIDATION_PROFILE_EXACT_ROWS_SCHEMA
+        if generated_output_requested
+        else ANALYSIS_VALIDATION_PROFILE_ARTIFACT_SET
+    )
     deliverable_contract = build_analysis_deliverable_contract(
         action_mode=action_mode,
         requested_output_formats=requested_output_formats,
@@ -630,12 +645,9 @@ def plan_tabular_request(
             if generated_output_requested
             else ANALYSIS_ORDERING_NOT_APPLICABLE
         ),
-        transformation_mode=ANALYSIS_TRANSFORMATION_MODE_SEMANTIC,
-        validation_profile=(
-            ANALYSIS_VALIDATION_PROFILE_EXACT_ROWS_SCHEMA
-            if generated_output_requested
-            else ANALYSIS_VALIDATION_PROFILE_ARTIFACT_SET
-        ),
+        transformation_mode=transformation_mode,
+        transformation_spec=transformation_spec,
+        validation_profile=validation_profile,
         source_fingerprint=_build_source_coverage_fingerprint(source_coverage),
         request_fingerprint=request_fingerprint,
     )
