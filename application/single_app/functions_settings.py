@@ -87,8 +87,13 @@ ADMIN_SETTINGS_NESTED_SECRET_FIELDS = (
     "web_search_agent.other_settings.azure_ai_foundry.client_secret",
 )
 TABULAR_GENERATION_BACKEND_SETTING_KEYS = {
+    'enable_tabular_hierarchical_analysis',
     'enable_tabular_parity_contract_telemetry',
     'tabular_parity_contract_mode',
+    'tabular_hierarchical_analysis_reduce_fan_in',
+    'tabular_generated_output_chunk_model_mode',
+    'tabular_generated_output_chunk_model_deployment',
+    'tabular_generated_output_model_validation_auto_retries',
     'tabular_generation_rollout_percentage',
     'tabular_analyze_parity_rollout_percent',
     'tabular_background_handoff_mode',
