@@ -1,8 +1,8 @@
 # test_chat_background_generated_export_status.py
 """
 UI test for chat background generated export status cards.
-Version: 0.250.169
-Implemented in: 0.241.046; cancellation in 0.250.060; automatic-only refresh in 0.250.061; combined progress and large-run confirmation in 0.250.131; throughput and concurrency status in 0.250.136; truthful background handoff in 0.250.138; collapsed operational details in 0.250.150; confirmation deduplication in 0.250.169
+Version: 0.250.176
+Implemented in: 0.241.046; cancellation in 0.250.060; automatic-only refresh in 0.250.061; combined progress and large-run confirmation in 0.250.131; throughput and concurrency status in 0.250.136; truthful background handoff in 0.250.138; collapsed operational details in 0.250.150; confirmation deduplication in 0.250.169; plural artifact-set completion rendering in 0.250.176
 
 This test ensures queued tabular generated exports render progress in chat and
 turn into a downloadable artifact when complete or a visible canceled state.
@@ -27,6 +27,34 @@ BASE_URL = os.getenv("SIMPLECHAT_UI_BASE_URL", "").rstrip("/")
 STORAGE_STATE = os.getenv("SIMPLECHAT_UI_STORAGE_STATE", "")
 REPO_ROOT = Path(__file__).resolve().parents[1]
 HARNESS_PATH = "ui_tests/fixtures/chat_thought_progress_harness.html"
+
+
+def _install_minimal_chat_dom(page) -> None:
+    """Install the minimum chat DOM and globals needed by chat-messages.js."""
+    page.evaluate(
+        """
+        () => {
+            window.appSettings = {
+                enable_text_to_speech: false,
+                enable_thoughts: false,
+                documentActionCapabilities: {},
+            };
+            window.enable_document_classification = false;
+            window.currentConversationId = 'conversation-ui-test';
+            window.marked = { parse: value => String(value || '') };
+            window.DOMPurify = { sanitize: value => String(value || '') };
+            window.Prism = { highlightElement: () => {} };
+            window.scrollChatToBottom = () => {};
+            window.showToast = () => {};
+
+            const root = document.getElementById('test-root');
+            root.replaceChildren();
+            const chatbox = document.createElement('div');
+            chatbox.id = 'chatbox';
+            root.appendChild(chatbox);
+        }
+        """
+    )
 
 
 def _get_free_local_port() -> int:
@@ -174,6 +202,334 @@ def test_chat_background_generated_export_status_card_auto_refreshes_to_download
 
         expect(message.get_by_role("button", name="Download JSON")).to_be_visible(timeout=15000)
         expect(message.get_by_text("Saved to this chat for download in this conversation.")).to_be_visible()
+    finally:
+        context.close()
+        browser.close()
+
+
+@pytest.mark.ui
+def test_chat_combined_completion_renders_plural_artifact_set(playwright) -> None:
+    """Validate completed combined runs render every artifact with Analyze Markdown first."""
+    browser = playwright.chromium.launch()
+    context = browser.new_context(viewport={"width": 1440, "height": 900})
+    page = context.new_page()
+    page_errors = []
+    page.on("pageerror", lambda error: page_errors.append(str(error)))
+
+    try:
+        with _start_static_test_server() as server_base_url:
+            page.route(
+                "**/api/tabular/generated-output/runs/run-plural-artifacts",
+                lambda route: route.fulfill(
+                    status=200,
+                    content_type="application/json",
+                    json={
+                        "success": True,
+                        "run": {
+                            "run_id": "run-plural-artifacts",
+                            "conversation_id": "conversation-ui-test",
+                            "task_type": "combined",
+                            "status": "completed",
+                            "row_count": 200,
+                            "processed_rows": 200,
+                            "batch_count": 4,
+                            "completed_batches": 4,
+                            "progress_percent": 100,
+                            "artifact_set": {
+                                "contract_version": "tabular-artifact-set-v1",
+                                "set_id": "artifact-set-ui-test",
+                                "lifecycle_state": "completed",
+                                "validation_state": "validated",
+                                "primary_artifact_id": "analysis-md",
+                                "member_count": 2,
+                                "published_member_count": 2,
+                                "publication_generation": 1,
+                            },
+                            "generated_artifacts": [
+                                {
+                                    "artifact_id": "requested-csv",
+                                    "role": "requested_output",
+                                    "capability": "tabular",
+                                    "artifact_message_id": "artifact-csv-ui-test",
+                                    "conversation_id": "conversation-ui-test",
+                                    "file_name": "financial_review.csv",
+                                    "output_format": "csv",
+                                    "row_count": 200,
+                                    "storage_scope": "chat",
+                                    "preview_rows": [
+                                        {"Item_ID": "FRI-001", "Overall_Attention": "Monitor"}
+                                    ],
+                                },
+                                {
+                                    "artifact_id": "analysis-md",
+                                    "role": "primary_analysis",
+                                    "capability": "analyze",
+                                    "artifact_message_id": "artifact-md-ui-test",
+                                    "conversation_id": "conversation-ui-test",
+                                    "file_name": "financial_review_analysis.md",
+                                    "output_format": "md",
+                                    "storage_scope": "chat",
+                                    "preview_lines": ["# Financial review", "All rows were analyzed."],
+                                },
+                            ],
+                            "generated_artifact": {
+                                "artifact_id": "requested-csv",
+                                "role": "requested_output",
+                                "capability": "tabular",
+                                "artifact_message_id": "artifact-csv-ui-test",
+                                "conversation_id": "conversation-ui-test",
+                                "file_name": "financial_review.csv",
+                                "output_format": "csv",
+                                "row_count": 200,
+                                "storage_scope": "chat",
+                            },
+                        },
+                    },
+                ),
+            )
+            response = page.goto(
+                f"{server_base_url}/{HARNESS_PATH}",
+                wait_until="domcontentloaded",
+            )
+            assert response is not None and response.ok
+            _install_minimal_chat_dom(page)
+            page.evaluate(
+                """
+                async () => {
+                    window.generatedArtifactSetEvents = [];
+                    document.addEventListener('simplechat:generated-artifact-set', event => {
+                        window.generatedArtifactSetEvents.push(event.detail);
+                    });
+
+                    const module = await import('/application/single_app/static/js/chat/chat-messages.js');
+                    module.appendMessage(
+                        'AI',
+                        'The combined Analyze run is continuing in the background.',
+                        null,
+                        'message-plural-artifacts',
+                        false,
+                        [],
+                        [],
+                        [],
+                        null,
+                        null,
+                        {
+                            metadata: {
+                                generated_tabular_outputs: [
+                                    {
+                                        capability: 'tabular',
+                                        background_export: true,
+                                        export_run_id: 'run-plural-artifacts',
+                                        run_id: 'run-plural-artifacts',
+                                        task_type: 'combined',
+                                        status: 'running',
+                                        file_name: 'financial_review.csv',
+                                        output_format: 'csv',
+                                        row_count: 200,
+                                        processed_rows: 40,
+                                        batch_count: 4,
+                                        completed_batches: 1,
+                                        source_file_name: 'financial_review.xlsx',
+                                        suppress_assistant_text: true,
+                                    }
+                                ]
+                            }
+                        },
+                        false
+                    );
+                }
+                """
+            )
+
+            message = page.locator('[data-message-id="message-plural-artifacts"]')
+            expect(message.get_by_text("Background analysis + export")).to_be_visible()
+            expect(message.get_by_role("button", name="Download financial_review_analysis.md")).to_be_visible(timeout=15000)
+            expect(message.get_by_role("button", name="Download financial_review.csv")).to_be_visible()
+            expect(message.locator('[data-generated-artifact-set="true"]')).to_have_count(1)
+            expect(message.get_by_text("2 generated artifacts", exact=True)).to_be_visible()
+
+            cards = message.locator('.generated-tabular-output-card')
+            expect(cards).to_have_count(2)
+            expect(cards.nth(0).get_by_text("Analyze MD artifact", exact=True)).to_be_visible()
+            expect(cards.nth(1).get_by_text("Generated CSV export", exact=True)).to_be_visible()
+            expect(message.get_by_role("button", name="View financial_review_analysis.md")).to_be_visible()
+            expect(message.get_by_role("button", name="View financial_review.csv")).to_be_visible()
+            expect(message.get_by_role("button", name="Cancel background export")).to_have_count(0)
+            expect(message.get_by_role("button", name="Continue")).to_have_count(0)
+
+            events = page.evaluate("() => window.generatedArtifactSetEvents")
+            completion_events = [
+                event for event in events if event.get("eventType") == "plural_completion_rendered"
+            ]
+            assert completion_events
+            assert completion_events[-1]["memberCount"] == 2
+            assert completion_events[-1]["formats"] == ["md", "csv"]
+            assert completion_events[-1]["primaryRendered"] is True
+            assert page_errors == []
+    finally:
+        context.close()
+        browser.close()
+
+
+@pytest.mark.ui
+def test_chat_continue_completion_renders_plural_artifact_set(playwright) -> None:
+    """Validate Continue uses the same plural artifact-set replacement path."""
+    browser = playwright.chromium.launch()
+    context = browser.new_context(viewport={"width": 1440, "height": 900})
+    page = context.new_page()
+    page_errors = []
+    page.on("pageerror", lambda error: page_errors.append(str(error)))
+
+    try:
+        with _start_static_test_server() as server_base_url:
+            page.route(
+                "**/api/tabular/generated-output/runs/run-plural-continue/resume",
+                lambda route: route.fulfill(
+                    status=200,
+                    content_type="application/json",
+                    json={
+                        "success": True,
+                        "message": "Background export is already complete.",
+                        "run": {
+                            "run_id": "run-plural-continue",
+                            "conversation_id": "conversation-ui-test",
+                            "task_type": "combined",
+                            "status": "completed",
+                            "row_count": 12,
+                            "processed_rows": 12,
+                            "batch_count": 2,
+                            "completed_batches": 2,
+                            "progress_percent": 100,
+                            "artifact_set": {
+                                "contract_version": "tabular-artifact-set-v1",
+                                "set_id": "artifact-set-continue-test",
+                                "lifecycle_state": "completed",
+                                "validation_state": "validated",
+                                "primary_artifact_id": "analysis-md",
+                                "member_count": 2,
+                                "published_member_count": 2,
+                                "publication_generation": 1,
+                            },
+                            "generated_artifacts": [
+                                {
+                                    "artifact_id": "analysis-md",
+                                    "role": "primary_analysis",
+                                    "capability": "analyze",
+                                    "artifact_message_id": "artifact-md-continue-test",
+                                    "conversation_id": "conversation-ui-test",
+                                    "file_name": "continue_analysis.md",
+                                    "output_format": "md",
+                                    "storage_scope": "chat",
+                                    "preview_lines": ["# Continue analysis"],
+                                },
+                                {
+                                    "artifact_id": "requested-json",
+                                    "role": "requested_output",
+                                    "capability": "tabular",
+                                    "artifact_message_id": "artifact-json-continue-test",
+                                    "conversation_id": "conversation-ui-test",
+                                    "file_name": "continue_output.json",
+                                    "output_format": "json",
+                                    "row_count": 12,
+                                    "storage_scope": "chat",
+                                    "preview_rows": [{"id": "row-1", "status": "ready"}],
+                                },
+                            ],
+                            "generated_artifact": {
+                                "artifact_id": "analysis-md",
+                                "role": "primary_analysis",
+                                "capability": "analyze",
+                                "artifact_message_id": "artifact-md-continue-test",
+                                "conversation_id": "conversation-ui-test",
+                                "file_name": "continue_analysis.md",
+                                "output_format": "md",
+                                "storage_scope": "chat",
+                            },
+                        },
+                    },
+                ),
+            )
+            response = page.goto(
+                f"{server_base_url}/{HARNESS_PATH}",
+                wait_until="domcontentloaded",
+            )
+            assert response is not None and response.ok
+            _install_minimal_chat_dom(page)
+            page.evaluate(
+                """
+                async () => {
+                    window.generatedArtifactSetEvents = [];
+                    document.addEventListener('simplechat:generated-artifact-set', event => {
+                        window.generatedArtifactSetEvents.push(event.detail);
+                    });
+
+                    const module = await import('/application/single_app/static/js/chat/chat-messages.js');
+                    module.appendMessage(
+                        'AI',
+                        'The combined run needs a manual continue.',
+                        null,
+                        'message-plural-continue',
+                        false,
+                        [],
+                        [],
+                        [],
+                        null,
+                        null,
+                        {
+                            metadata: {
+                                generated_tabular_outputs: [
+                                    {
+                                        capability: 'tabular',
+                                        background_export: true,
+                                        export_run_id: 'run-plural-continue',
+                                        run_id: 'run-plural-continue',
+                                        task_type: 'combined',
+                                        status: 'failed',
+                                        status_label: 'Retry waiting',
+                                        status_tone: 'warning',
+                                        status_detail: 'A retryable batch needs a manual continue.',
+                                        retryable_failure: true,
+                                        can_resume: true,
+                                        can_cancel: false,
+                                        waiting_for_retry: true,
+                                        file_name: 'continue_output.json',
+                                        output_format: 'json',
+                                        row_count: 12,
+                                        processed_rows: 6,
+                                        batch_count: 2,
+                                        completed_batches: 1,
+                                    }
+                                ]
+                            }
+                        },
+                        false
+                    );
+                }
+                """
+            )
+
+            message = page.locator('[data-message-id="message-plural-continue"]')
+            continue_button = message.get_by_role("button", name="Continue Now")
+            expect(continue_button).to_be_visible()
+            continue_button.click()
+
+            expect(message.get_by_role("button", name="Download continue_analysis.md")).to_be_visible(timeout=15000)
+            expect(message.get_by_role("button", name="Download continue_output.json")).to_be_visible()
+            cards = message.locator('.generated-tabular-output-card')
+            expect(cards).to_have_count(2)
+            expect(cards.nth(0).get_by_text("Analyze MD artifact", exact=True)).to_be_visible()
+            expect(cards.nth(1).get_by_text("Generated JSON export", exact=True)).to_be_visible()
+            expect(message.get_by_role("button", name="Continue Now")).to_have_count(0)
+            expect(message.get_by_role("button", name="Cancel background export")).to_have_count(0)
+
+            events = page.evaluate("() => window.generatedArtifactSetEvents")
+            completion_events = [
+                event for event in events if event.get("eventType") == "plural_completion_rendered"
+            ]
+            assert completion_events
+            assert completion_events[-1]["memberCount"] == 2
+            assert completion_events[-1]["formats"] == ["md", "json"]
+            assert page_errors == []
     finally:
         context.close()
         browser.close()

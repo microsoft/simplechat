@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Functional test for durable tabular generated-output background exports.
-Version: 0.250.152
-Implemented in: 0.241.060; throughput and timeout hardening in: 0.250.070; unified durable run contract in: 0.250.128; Phase 6 rolling worker pool compatibility in: 0.250.142; safe retry reason status text in: 0.250.147; collapsed operational details in: 0.250.150; simplified completed artifact cards in: 0.250.151; balanced batches and foreground JSON/XML cards in: 0.250.152
+Version: 0.250.176
+Implemented in: 0.241.060; throughput and timeout hardening in: 0.250.070; unified durable run contract in: 0.250.128; Phase 6 rolling worker pool compatibility in: 0.250.142; safe retry reason status text in: 0.250.147; collapsed operational details in: 0.250.150; simplified completed artifact cards in: 0.250.151; balanced batches and foreground JSON/XML cards in: 0.250.152; plural artifact-set completion rendering in: 0.250.176
 
 This test ensures that large tabular structured exports are wired through the
 durable background queue, status API, queued retry recovery, and chat progress
@@ -181,6 +181,9 @@ def test_background_batch_timeout_prevents_indefinite_model_wait():
         'time': __import__('time'),
         '_safe_float': lambda value, default=0.0: float(value) if value is not None else default,
         '_is_compact_row_array_protocol': lambda _response_protocol: False,
+        '_build_model_expected_output_schema': (
+            lambda expected_output_schema, transformation_spec=None: list(expected_output_schema or [])
+        ),
         '_build_batch_prompt': lambda *args, **kwargs: 'test prompt',
     }
     extracted_module = ast.Module(body=[helper_node], type_ignores=[])
@@ -294,6 +297,12 @@ def test_chat_ui_renders_and_polls_background_exports():
     assert_contains(source_text, 'generated-artifact-view-btn', 'completed artifact View action')
     assert_contains(source_text, 'generated-artifact-preview-modal', 'bounded artifact preview modal')
     assert_contains(source_text, 'hideCompletedGeneratedArtifactHandoff', 'stale completion handoff suppression')
+    assert_contains(source_text, 'normalizeGeneratedArtifactSet', 'plural artifact-set normalizer')
+    assert_contains(source_text, 'replaceBackgroundGeneratedOutputCardWithArtifacts', 'plural completion replacement path')
+    assert_contains(source_text, "role === 'primary_analysis'", 'Analyze Markdown primary ordering')
+    assert_contains(source_text, 'generated_artifacts', 'authoritative plural status field')
+    assert_contains(source_text, 'simplechat:generated-artifact-set', 'safe artifact-set UI event')
+    assert_contains(source_text, 'Download ${fileName}', 'unique download accessible name')
     if 'details.open = true' in source_text:
         raise AssertionError('Background export operational details must remain collapsed until the user expands them')
     if 'generated-tabular-refresh-status-btn' in source_text or 'Refresh Status' in source_text:
@@ -332,11 +341,24 @@ def test_completed_artifact_preview_is_bounded_and_ordered():
         'TABULAR_EXPORT_ARTIFACT_PREVIEW_CELL_MAX_CHARS': 12,
         'TABULAR_EXPORT_OUTPUT_ROW_NUMBER_FIELD': 'source_row_number',
         '_safe_int': lambda value: int(value or 0),
+        '_get_tabular_run_serialized_public_schema': (
+            lambda run: [
+                field_name
+                for field_name in list((run or {}).get('output_schema') or [])
+                if field_name not in {'source_row_number', 'source_row_identity'}
+            ]
+        ),
         '_output_blob_path': lambda user_id, conversation_id, run_id, batch_number: f'output-{batch_number}',
         '_validate_tabular_output_checkpoint_metadata': (
             lambda run, path, batch_number: validated_batches.append((path, batch_number))
         ),
         '_download_json_blob': lambda path: batches[path],
+        'project_structured_deliverable_row': (
+            lambda entry, public_schema, require_all_fields=True: {
+                field_name: entry[field_name]
+                for field_name in public_schema
+            }
+        ),
         '_serialize_generated_output_value': lambda value: '' if value is None else str(value),
         'build_safe_csv_headers': lambda values: list(values),
         'json': __import__('json'),
@@ -364,11 +386,12 @@ def test_completed_artifact_preview_is_bounded_and_ordered():
         suppress_assistant_text=True,
     )
 
-    assert [row['source_row_number'] for row in preview_rows] == ['1', '2', '3']
-    assert preview_rows[1]['answer'] == 'xxxxxxxxx...'
+    assert [row['answer'] for row in preview_rows] == ['first', 'xxxxxxxxx...', 'third']
+    assert 'source_row_number' not in preview_rows[0]
+    assert 'source_row_identity' not in preview_rows[0]
     assert validated_batches == [('output-1', 1), ('output-2', 2)]
     assert artifact['preview_rows'] == preview_rows
-    assert artifact['preview_columns'] == ['source_row_number', 'source_row_identity', 'answer']
+    assert artifact['preview_columns'] == ['answer']
     assert len(artifact['preview_text']) == 24000
     assert artifact['suppress_assistant_text'] is True
 

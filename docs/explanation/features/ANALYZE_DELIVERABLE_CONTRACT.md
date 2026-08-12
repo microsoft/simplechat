@@ -8,6 +8,8 @@ Phase 3 updated in version: **0.250.173**
 
 Phase 5 updated in version: **0.250.175**
 
+Phase 6 updated in version: **0.250.176**
+
 ## Overview
 
 The Analyze deliverable contract defines a server-owned, versioned plan for analysis artifacts before production routing changes are made. It records whether an action requires a primary Markdown analysis artifact, which sibling artifacts were explicitly requested, the public structured schema, row cardinality, ordering, transformation mode, validation profile, and publication policy.
@@ -17,6 +19,8 @@ Phase 2 keeps the contract additive, but begins enforcing intent admission for s
 Phase 3 separates public structured schemas from internal checkpoint lineage. Durable tabular checkpoints still retain source row number and identity for validation, retries, audit, and restart, but final CSV, JSON, XML, preview rows, and preview columns are projected through the persisted public schema. Raw source or function rows are no longer accepted as a derived generated-output artifact unless the request is an explicit unchanged copy, serialization, or format conversion and the rows satisfy the public schema contract.
 
 Phase 5 adds a versioned durable artifact-set manifest for tabular generated-output runs. Combined Analyze runs can stage a requested structured sibling while hierarchical reduction continues, but public status withholds generated artifacts until every required member is validated and the set lifecycle reaches `completed`. New completed combined runs project Markdown as the primary artifact and requested structured files as ordered siblings.
+
+Phase 6 updates the chat browser completion path to consume the plural artifact-set projection. When polling or Continue receives a completed set, the progress card is replaced by one unframed generated-artifact group that renders every published member. Analyze Markdown is shown first, requested siblings retain their server order, and old singular `generated_artifact` responses still render as one compatible card.
 
 ## Dependencies
 
@@ -28,8 +32,9 @@ Phase 5 adds a versioned durable artifact-set manifest for tabular generated-out
 - `functional_tests/test_analyze_deliverable_contract.py` for the executable regression oracle.
 - `functional_tests/test_tabular_phase3_public_schema_projection.py` for public schema projection and passthrough guard coverage.
 - `functional_tests/test_tabular_phase5_artifact_set_lifecycle.py` for durable artifact-set lifecycle and public projection coverage.
+- `ui_tests/test_chat_background_generated_export_status.py` for plural completion rendering, ordering, actions, and safe UI event coverage.
 - `functional_tests/test_document_analysis_lossless_artifacts.py` for document-analysis artifact finalizer behavior.
-- `application/single_app/config.py` version `0.250.175`.
+- `application/single_app/config.py` version `0.250.176`.
 
 ## Technical Specifications
 
@@ -119,11 +124,25 @@ Public generated-output status treats `generated_artifacts` as the authoritative
 
 If a required member remains missing or unpublished, the set validation state becomes `invalid`, the lifecycle becomes `rollback_required`, and no generated artifact is projected as a completed request.
 
+### Browser Artifact-Set Rendering
+
+The chat UI treats `generated_artifacts` as the authoritative completed set when present. It falls back to the legacy singular `generated_artifact` only for old status payloads. The client deduplicates members by artifact message id first, then stable artifact id, and only renders completed artifacts when the run status is `completed` and any supplied artifact-set lifecycle is also `completed`.
+
+Completed Analyze sets render as one grouped region:
+
+1. Primary Markdown analysis artifact.
+2. Explicitly requested siblings in server order.
+3. Optional supporting outputs when supplied by the backend.
+
+Each member keeps its own Download, View, PowerPoint, and workspace-promotion actions when the backing metadata supports those actions. Download, view, and promotion controls use filename-specific accessible names, but filenames are not included in the bounded UI event payloads emitted for rendering and member actions.
+
 ## Usage
 
 Shared tabular planning attaches a `deliverable_contract` field to planner results. When `enable_analysis_deliverable_contract_telemetry` is true and `analysis_deliverable_contract_mode` is `observe` or `shadow`, the planner emits debug-only `[ANALYSIS_DELIVERABLE_CONTRACT]` events with safe dimensions.
 
 The planner preserves explicit requested artifact order and direct negation. For example, Analyze with CSV plans Markdown first and CSV second. Analyze with JSON and XML preserves both requested siblings in order, but declines durable tabular execution until multi-artifact publication is available. Search can request Markdown as a normal requested output, but Search does not receive automatic primary Markdown.
+
+After Phase 6, a completed combined Analyze plus CSV run visibly presents both artifacts after live polling, after Continue, and when compatible completed metadata is hydrated. The progress card remains visible for queued, running, retry-waiting, failed, canceled, rollback, or otherwise nonterminal sets and does not expose staged or rolled-back downloads.
 
 When Analyze requests a structured tabular artifact, the shared planner selects `combined` only when hierarchical analysis is enabled. If the required analysis capability is disabled, the request is declined before durable execution rather than being reinterpreted as `structured_export`.
 
@@ -165,6 +184,13 @@ The committed 200-row fixture builder in `functional_tests/test_support/analyze_
 - A completed combined set publishes Markdown first and the requested structured sibling second.
 - An invalid required set fails closed with `rollback_required` and no public generated artifacts.
 
+`ui_tests/test_chat_background_generated_export_status.py` verifies:
+
+- Completed combined status replaces one progress card with a plural generated-artifact group.
+- Analyze Markdown is rendered before a requested CSV sibling even when the status response lists the CSV first.
+- Each member retains unique Download and View actions.
+- The client emits bounded artifact-set UI events without filenames or storage details.
+
 ## Known Limitations
 
-Phase 5 introduces manifest-backed atomic visibility for the existing durable tabular publication path. It does not yet add full cleanup sweepers for abandoned staged members, expand durable execution to every requested format, or render every plural artifact in the browser completion card; those remain later-phase work.
+Phase 6 introduces plural rendering for the existing chat completion paths. It does not yet expand durable execution to every requested format or add full cleanup sweepers for abandoned staged members; those remain later-phase work.
