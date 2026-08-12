@@ -1,15 +1,20 @@
 # test_chat_background_generated_export_status.py
 """
 UI test for chat background generated export status cards.
-Version: 0.250.150
-Implemented in: 0.241.046; cancellation in 0.250.060; automatic-only refresh in 0.250.061; combined progress and large-run confirmation in 0.250.131; throughput and concurrency status in 0.250.136; truthful background handoff in 0.250.138; collapsed operational details in 0.250.150
+Version: 0.250.169
+Implemented in: 0.241.046; cancellation in 0.250.060; automatic-only refresh in 0.250.061; combined progress and large-run confirmation in 0.250.131; throughput and concurrency status in 0.250.136; truthful background handoff in 0.250.138; collapsed operational details in 0.250.150; confirmation deduplication in 0.250.169
 
 This test ensures queued tabular generated exports render progress in chat and
 turn into a downloadable artifact when complete or a visible canceled state.
 """
 
 import os
+from contextlib import contextmanager
+from functools import partial
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+import socket
+from threading import Thread
 
 import pytest
 
@@ -20,6 +25,33 @@ expect = playwright_sync_api.expect
 
 BASE_URL = os.getenv("SIMPLECHAT_UI_BASE_URL", "").rstrip("/")
 STORAGE_STATE = os.getenv("SIMPLECHAT_UI_STORAGE_STATE", "")
+REPO_ROOT = Path(__file__).resolve().parents[1]
+HARNESS_PATH = "ui_tests/fixtures/chat_thought_progress_harness.html"
+
+
+def _get_free_local_port() -> int:
+    """Reserve an available local port for a static test server."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
+
+
+@contextmanager
+def _start_static_test_server():
+    """Serve repository browser assets for self-contained UI tests."""
+    port = _get_free_local_port()
+    handler = partial(SimpleHTTPRequestHandler, directory=str(REPO_ROOT))
+    server = ThreadingHTTPServer(("127.0.0.1", port), handler)
+    server.daemon_threads = True
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    try:
+        yield f"http://127.0.0.1:{port}"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
 
 
 def _require_ui_env() -> None:
@@ -394,62 +426,167 @@ def test_chat_combined_background_status_shows_reduce_progress(playwright) -> No
 
 @pytest.mark.ui
 def test_chat_large_tabular_run_confirmation_prompt(playwright) -> None:
-    """Validate large explicit row-level prompts require confirmation before send."""
-    _require_ui_env()
-
+    """Validate repeated large-run sends share one guarded confirmation window."""
     browser = playwright.chromium.launch()
-    context = browser.new_context(
-        storage_state=STORAGE_STATE,
-        viewport={"width": 1440, "height": 900},
-    )
+    context = browser.new_context(viewport={"width": 1440, "height": 900})
     page = context.new_page()
 
     try:
-        page.goto(f"{BASE_URL}/", wait_until="domcontentloaded")
-        small_prompt_estimate = page.evaluate(
-            """
-            async () => {
-                const module = await import('/static/js/chat/chat-messages.js');
-                return module.estimateLargeTabularRunForPrompt(
-                    'For each row in 30 rows, generate a CSV.',
-                    {
-                        enable_tabular_durable_run_confirmation: true,
-                        tabular_durable_run_confirmation_threshold_rows: 500,
-                        tabular_durable_run_confirmation_threshold_batches: 75,
-                        tabular_generated_output_max_batch_rows: 50
+        with _start_static_test_server() as server_base_url:
+            response = page.goto(
+                f"{server_base_url}/{HARNESS_PATH}",
+                wait_until="domcontentloaded",
+            )
+            assert response is not None and response.ok
+
+            result = page.evaluate(
+                r"""
+                async () => {
+                window.appSettings = {
+                    enable_tabular_durable_run_confirmation: true,
+                    tabular_durable_run_confirmation_threshold_rows: 500,
+                    tabular_durable_run_confirmation_threshold_batches: 75,
+                    tabular_generated_output_max_batch_rows: 50,
+                    enable_text_to_speech: false,
+                    enable_thoughts: false,
+                    documentActionCapabilities: {},
+                };
+                window.enable_document_classification = false;
+                window.currentConversationId = 'large-tabular-confirmation-ui-test';
+                window.marked = { parse: value => String(value || '') };
+                window.DOMPurify = { sanitize: value => String(value || '') };
+                window.scrollChatToBottom = () => {};
+
+                const root = document.getElementById('test-root');
+                root.innerHTML = `
+                    <div id="chatbox"></div>
+                    <textarea id="user-input"></textarea>
+                    <button id="send-btn" type="button"></button>
+                    <select id="prompt-select"></select>
+                    <div id="prompt-selection-container"></div>
+                    <select id="model-select"><option value="gpt-4o">gpt-4o</option></select>
+                `;
+
+                const modalInstances = new WeakMap();
+                class TestModal {
+                    constructor(element) {
+                        this.element = element;
                     }
+
+                    show() {
+                        this.element.classList.add('show');
+                    }
+
+                    hide() {
+                        this.element.classList.remove('show');
+                        this.element.dispatchEvent(new Event('hidden.bs.modal'));
+                    }
+
+                    static getOrCreateInstance(element) {
+                        if (!modalInstances.has(element)) {
+                            modalInstances.set(element, new TestModal(element));
+                        }
+                        return modalInstances.get(element);
+                    }
+                }
+                window.bootstrap = { Modal: TestModal };
+
+                const calls = [];
+                const encoder = new TextEncoder();
+                window.fetch = (url, options = {}) => {
+                    const requestUrl = String(url);
+                    calls.push({
+                        url: requestUrl,
+                        method: options.method || 'GET',
+                        body: options.body || null,
+                    });
+                    if (requestUrl === '/api/chat/stream') {
+                        const body = new ReadableStream({
+                            start(controller) {
+                                controller.enqueue(encoder.encode(
+                                    'data: {"done":true,"conversation_id":"large-tabular-confirmation-ui-test","message_id":"assistant-ui-test","content":""}\n\n'
+                                ));
+                                controller.close();
+                            },
+                        });
+                        return Promise.resolve(new Response(body, {
+                            status: 200,
+                            headers: { 'Content-Type': 'text/event-stream' },
+                        }));
+                    }
+                    return Promise.resolve(new Response(JSON.stringify({ success: true }), {
+                        status: 200,
+                        headers: { 'Content-Type': 'application/json' },
+                    }));
+                };
+
+                const module = await import('/application/single_app/static/js/chat/chat-messages.js');
+                const prompt = 'For each row in 3,000 rows, answer each question and generate a CSV.';
+                const input = document.getElementById('user-input');
+                const smallEstimate = module.estimateLargeTabularRunForPrompt(
+                    'For each row in 30 rows, generate a CSV.'
                 );
-            }
-            """
-        )
-        assert small_prompt_estimate["shouldConfirm"] is False
 
-        page.evaluate(
-            """
-            async () => {
-                const module = await import('/static/js/chat/chat-messages.js');
-                window.__largeTabularRunDecision = null;
-                module.confirmLargeTabularRunForPrompt(
-                    'For each row in 3,000 rows, answer each question and generate a CSV.',
-                    {
-                        enable_tabular_durable_run_confirmation: true,
-                        tabular_durable_run_confirmation_threshold_rows: 500,
-                        tabular_durable_run_confirmation_threshold_batches: 75,
-                        tabular_generated_output_max_batch_rows: 50
-                    }
-                ).then(value => {
-                    window.__largeTabularRunDecision = value;
+                input.value = prompt;
+                const firstSend = module.sendMessage();
+                let repeatedSettled = false;
+                await module.sendMessage().then(() => {
+                    repeatedSettled = true;
                 });
-            }
-            """
-        )
 
-        dialog = page.get_by_role("dialog", name="Large tabular run")
-        expect(dialog).to_be_visible()
-        expect(dialog.get_by_text("3,000 rows")).to_be_visible()
-        expect(dialog.get_by_text("60 batches")).to_be_visible()
-        dialog.get_by_role("button", name="Narrow scope").click()
-        page.wait_for_function("window.__largeTabularRunDecision === false")
+                const modal = document.getElementById('large-tabular-run-confirmation-modal');
+                const summary = modal.querySelector('[data-large-tabular-run-summary="true"]');
+                const continueButton = modal.querySelector('[data-large-tabular-run-continue="true"]');
+                const firstModal = {
+                    visible: modal.classList.contains('show'),
+                    summary: summary.textContent,
+                };
+
+                continueButton.click();
+                await firstSend;
+                await new Promise(resolve => setTimeout(resolve, 100));
+
+                const streamCallsAfterContinue = calls.filter(
+                    call => call.url === '/api/chat/stream'
+                ).length;
+                const matchingUserMessages = Array.from(
+                    document.querySelectorAll('.user-message .message-text')
+                ).filter(element => element.textContent.includes(prompt)).length;
+
+                input.value = prompt;
+                const canceledSend = module.sendMessage();
+                const secondModalVisible = modal.classList.contains('show');
+                modal.querySelector('[data-large-tabular-run-cancel="true"]').click();
+                await canceledSend;
+
+                return {
+                    smallShouldConfirm: smallEstimate.shouldConfirm,
+                    repeatedSettled,
+                    firstModal,
+                    streamCallsAfterContinue,
+                    matchingUserMessages,
+                    secondModalVisible,
+                    inputAfterCancel: input.value,
+                    finalStreamCalls: calls.filter(
+                        call => call.url === '/api/chat/stream'
+                    ).length,
+                };
+                }
+                """
+            )
+
+        assert result["smallShouldConfirm"] is False
+        assert result["repeatedSettled"] is True
+        assert result["firstModal"]["visible"] is True
+        assert "3,000 rows" in result["firstModal"]["summary"]
+        assert "60 batches" in result["firstModal"]["summary"]
+        assert result["streamCallsAfterContinue"] == 1
+        assert result["matchingUserMessages"] == 1
+        assert result["secondModalVisible"] is True
+        assert result["inputAfterCancel"] == (
+            "For each row in 3,000 rows, answer each question and generate a CSV."
+        )
+        assert result["finalStreamCalls"] == 1
     finally:
         context.close()
         browser.close()

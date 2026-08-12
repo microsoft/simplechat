@@ -1,8 +1,8 @@
-# Admin Tabular Run Controls UI Coverage Fix (0.250.168)
+# Admin Tabular Run Controls UI Coverage Fix (0.250.170)
 
-Fixed in version: **0.250.168**
+Fixed in version: **0.250.170**
 
-Related version update: `application/single_app/config.py` reports `0.250.168`.
+Related version update: `application/single_app/config.py` reports `0.250.170`.
 
 Related issue: [#1201](https://github.com/microsoft/simplechat/issues/1201)
 

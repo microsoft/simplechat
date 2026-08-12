@@ -1,8 +1,8 @@
 # test_admin_tabular_run_controls.py
 """
 Rendered UI regression for Admin Settings tabular run controls.
-Version: 0.250.168
-Implemented in: 0.250.168
+Version: 0.250.170
+Implemented in: 0.250.170
 
 This test ensures admins can render, change, save, reload, and restore the
 large tabular run confirmation and chunk-processing model settings.
