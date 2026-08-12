@@ -5015,11 +5015,12 @@ def _settings_flag_enabled(settings, key, default=False):
     return _shared_settings_flag_enabled(settings, key, default=default)
 
 
-def _get_tabular_generated_output_task_type(generated_output_requested, hierarchical_analysis_requested, settings):
+def _get_tabular_generated_output_task_type(generated_output_requested, hierarchical_analysis_requested, settings, action_mode=None):
     return _shared_get_tabular_generated_output_task_type(
         generated_output_requested,
         hierarchical_analysis_requested,
         settings,
+        action_mode=action_mode,
     )
 
 
@@ -5741,7 +5742,7 @@ def _build_tabular_generated_output_query_descriptor(
     return descriptor
 
 
-def _build_direct_tabular_generated_output_source(user_question, file_contexts, user_id, conversation_id, settings):
+def _build_direct_tabular_generated_output_source(user_question, file_contexts, user_id, conversation_id, settings, action_mode=None):
     """Build a replayable full-tabular source descriptor without requiring a prior tool page."""
     generated_output_requested = question_requests_tabular_generated_output(user_question)
     hierarchical_analysis_requested = question_requests_tabular_hierarchical_analysis(user_question)
@@ -5749,9 +5750,12 @@ def _build_direct_tabular_generated_output_source(user_question, file_contexts, 
         generated_output_requested,
         hierarchical_analysis_requested,
         settings,
+        action_mode=action_mode,
     )
     analysis_only_requested = durable_task_type == TABULAR_RUN_TASK_HIERARCHICAL_ANALYSIS
     combined_requested = durable_task_type == TABULAR_RUN_TASK_COMBINED
+    if generated_output_requested and str(action_mode or '').strip().lower() == 'analyze' and not durable_task_type:
+        return None
     if not generated_output_requested and not analysis_only_requested:
         return None
     if hierarchical_analysis_requested and not generated_output_requested and not analysis_only_requested:
@@ -5991,6 +5995,7 @@ def maybe_queue_direct_tabular_generated_output(
             user_id,
             conversation_id,
             settings,
+            action_mode=planner_action_mode,
         )
         if not direct_source:
             emit_direct_parity_event(
@@ -6864,9 +6869,12 @@ async def maybe_create_tabular_generated_output(
         generated_output_requested,
         hierarchical_analysis_requested,
         settings,
+        action_mode=mode,
     )
     analysis_only_requested = durable_task_type == TABULAR_RUN_TASK_HIERARCHICAL_ANALYSIS
     combined_requested = durable_task_type == TABULAR_RUN_TASK_COMBINED
+    if generated_output_requested and str(mode or '').strip().lower() == 'analyze' and not durable_task_type:
+        return None
     if hierarchical_analysis_requested and not generated_output_requested and not analysis_only_requested:
         return None
     if not generated_output_requested and not hierarchical_analysis_requested:

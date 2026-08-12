@@ -326,6 +326,7 @@ def _fingerprint_payload(payload):
 def build_analysis_deliverable_contract(
     action_mode=None,
     requested_output_format=None,
+    requested_output_formats=None,
     requested_artifacts=None,
     public_output_schema=None,
     row_cardinality=None,
@@ -350,6 +351,9 @@ def build_analysis_deliverable_contract(
     if requested_artifacts is None:
         artifact_descriptors = []
         request_order = 0
+        output_formats = list(requested_output_formats or [])
+        if requested_output_format and not output_formats:
+            output_formats = [requested_output_format]
         if normalized_analysis_required:
             artifact_descriptors.append(build_analysis_deliverable_artifact(
                 "analysis",
@@ -359,8 +363,14 @@ def build_analysis_deliverable_contract(
                 request_order=request_order,
             ))
             request_order += 1
-        if requested_output_format:
-            normalized_output_format = _normalize_artifact_format(requested_output_format)
+        seen_output_formats = set()
+        for output_format in output_formats:
+            normalized_output_format = _normalize_artifact_format(output_format)
+            if normalized_analysis_required and normalized_output_format == "md":
+                continue
+            if normalized_output_format in seen_output_formats:
+                continue
+            seen_output_formats.add(normalized_output_format)
             artifact_descriptors.append(build_analysis_deliverable_artifact(
                 f"requested-{normalized_output_format}",
                 ANALYSIS_ARTIFACT_ROLE_REQUESTED_OUTPUT,
@@ -368,6 +378,7 @@ def build_analysis_deliverable_contract(
                 required=True,
                 request_order=request_order,
             ))
+            request_order += 1
     else:
         artifact_descriptors = list(requested_artifacts or [])
 

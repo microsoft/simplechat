@@ -2,18 +2,23 @@
 
 Implemented in version: **0.250.171**
 
+Phase 2 updated in version: **0.250.172**
+
 ## Overview
 
 The Analyze deliverable contract defines a server-owned, versioned plan for analysis artifacts before production routing changes are made. It records whether an action requires a primary Markdown analysis artifact, which sibling artifacts were explicitly requested, the public structured schema, row cardinality, ordering, transformation mode, validation profile, and publication policy.
 
-The Phase 1 contract is additive and observation-focused. It does not switch Analyze execution behavior or repair generated values.
+Phase 2 keeps the contract additive, but begins enforcing intent admission for shared tabular planning and bounded document Analyze finalization. Successful bounded Analyze results now publish a primary Markdown artifact. Explicit JSON, XML, or CSV requests are represented as ordered sibling artifacts, and Analyze plus structured output can no longer silently downgrade to structured-only export work when analysis is required.
 
 ## Dependencies
 
 - `application/single_app/functions_analysis_deliverables.py` for contract construction, artifact-set validation, structured-row validation, and gated shadow telemetry.
-- `application/single_app/functions_tabular_orchestration.py` for attaching the contract to shared tabular planner results.
+- `application/single_app/functions_generated_file_exports.py` for ordered, negation-aware requested artifact format detection.
+- `application/single_app/functions_tabular_orchestration.py` for attaching the contract to shared tabular planner results and selecting Analyze-safe execution contracts.
+- `application/single_app/functions_workflow_runner.py` for bounded Analyze Markdown artifact finalization.
 - `functional_tests/test_analyze_deliverable_contract.py` for the executable regression oracle.
-- `application/single_app/config.py` version `0.250.171`.
+- `functional_tests/test_document_analysis_lossless_artifacts.py` for document-analysis artifact finalizer behavior.
+- `application/single_app/config.py` version `0.250.172`.
 
 ## Technical Specifications
 
@@ -56,6 +61,10 @@ Validation reports intentionally omit prompts, row values, storage paths, creden
 
 Shared tabular planning attaches a `deliverable_contract` field to planner results. When `enable_analysis_deliverable_contract_telemetry` is true and `analysis_deliverable_contract_mode` is `observe` or `shadow`, the planner emits debug-only `[ANALYSIS_DELIVERABLE_CONTRACT]` events with safe dimensions.
 
+The planner preserves explicit requested artifact order and direct negation. For example, Analyze with CSV plans Markdown first and CSV second. Analyze with JSON and XML preserves both requested siblings in order, but declines durable tabular execution until multi-artifact publication is available. Search can request Markdown as a normal requested output, but Search does not receive automatic primary Markdown.
+
+When Analyze requests a structured tabular artifact, the shared planner selects `combined` only when hierarchical analysis is enabled. If the required analysis capability is disabled, the request is declined before durable execution rather than being reinterpreted as `structured_export`.
+
 The default settings keep telemetry off:
 
 ```python
@@ -71,6 +80,10 @@ The committed 200-row fixture builder in `functional_tests/test_support/analyze_
 
 - Analyze requires Markdown while Search does not receive automatic Markdown.
 - The requested structured contract is shared across Search and Analyze.
+- Analyze plus CSV maps to Markdown plus CSV and selects `combined` when hierarchical analysis is enabled.
+- Analyze plus JSON and XML preserves both requested siblings in order and fails before unsupported multi-artifact durable execution.
+- Analyze plus structured output does not silently downgrade to `structured_export` when the hierarchical capability is disabled.
+- Bounded document Analyze publishes Markdown, and explicit JSON is a sibling rather than a replacement.
 - JSON serialization round trips and unknown additive fields are ignored for forward compatibility.
 - The source-shaped Analyze failure is rejected.
 - The Search-shaped output with `source_row_number`, `source_row_identity`, and five known rule mismatches is rejected.
@@ -78,4 +91,4 @@ The committed 200-row fixture builder in `functional_tests/test_support/analyze_
 
 ## Known Limitations
 
-Phase 1 defines and observes the contract only. Later phases make Analyze Markdown admission mandatory, separate public schema from lineage, add deterministic and semantic repair, publish atomic artifact sets, and update the plural artifact UI.
+Phase 2 decides and preserves the required artifact set, but it does not implement deterministic rule execution, semantic repair, atomic multi-artifact durable publication, public-schema lineage separation, or plural artifact UI rendering. Those remain in later phases.

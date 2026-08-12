@@ -2,8 +2,8 @@
 # test_generated_json_xml_exports.py
 """
 Functional test for generated JSON/XML export artifacts.
-Version: 0.250.156
-Implemented in: 0.250.114; completed file-export cards and View actions in 0.250.152; truthful private payload streaming in 0.250.153; shared structured-format intent terminology in 0.250.154; source-only intent guardrails in 0.250.156
+Version: 0.250.172
+Implemented in: 0.250.114; completed file-export cards and View actions in 0.250.152; truthful private payload streaming in 0.250.153; shared structured-format intent terminology in 0.250.154; source-only intent guardrails in 0.250.156; ordered artifact intent in 0.250.172
 
 This test ensures JSON/XML generation requests are recognized as downloadable
 artifact workflows, reuse shared serialization helpers, avoid duplicate XML
@@ -133,7 +133,7 @@ def test_chat_route_json_xml_artifact_hooks():
     assert_contains(chat_source, "return _shared_get_tabular_generated_output_format(user_question)", "Chat format delegation")
     assert_contains(
         orchestration_source,
-        "return get_requested_structured_artifact_format(user_question)",
+        "return get_requested_structured_artifact_formats(user_question)",
         "Shared planner format delegation",
     )
     assert_contains(chat_source, "_build_assistant_file_output_handoff", "no-inline assistant handoff builder")
@@ -184,6 +184,7 @@ def test_structured_artifact_intent_is_shared_across_execution_paths():
         assert len(selected_nodes) == len(function_names)
         namespace = {
             'get_requested_structured_artifact_format': module.get_requested_structured_artifact_format,
+            '_shared_get_tabular_generated_output_format': module.get_requested_structured_artifact_format,
         }
         exec(compile(ast.Module(body=selected_nodes, type_ignores=[]), str(source_file), 'exec'), namespace)
         return namespace
