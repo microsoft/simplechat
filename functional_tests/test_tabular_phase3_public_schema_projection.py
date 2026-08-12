@@ -2,8 +2,8 @@
 # test_tabular_phase3_public_schema_projection.py
 """
 Functional test for Phase 3 public schema projection and passthrough safety.
-Version: 0.250.175
-Implemented in: 0.250.173
+Version: 0.250.182
+Implemented in: 0.250.173; request-order and unchanged-copy guard compatibility updated in 0.250.182
 
 This test ensures generated tabular artifacts expose only the persisted public
 schema while retaining internal checkpoint lineage, and that raw row passthrough
@@ -39,6 +39,7 @@ from functions_assistant_table_exports import (  # noqa: E402
 from functions_generated_file_exports import (  # noqa: E402
     build_generated_file_export,
     evaluate_generated_file_passthrough_eligibility,
+    get_requested_artifact_formats,
 )
 
 
@@ -199,7 +200,11 @@ def test_public_projection_drives_csv_json_xml_and_preview():
 
 def test_passthrough_eligibility_and_generic_finalizer_guard():
     print("Testing passthrough eligibility and generic finalizer guard...")
+    assert_app_version_at_least("0.250.182")
     rows = [{"Case": "A", "Amount": 100}]
+    ordered_formats = get_requested_artifact_formats("Create XML and JSON files from these rows.")
+    assert_equal(ordered_formats, ["xml", "json"], "format token request order")
+
     allowed = evaluate_generated_file_passthrough_eligibility(
         "Export these results as CSV.",
         rows=rows,
@@ -213,6 +218,13 @@ def test_passthrough_eligibility_and_generic_finalizer_guard():
     )
     assert_true(unchanged["allowed"], "explicit unchanged copy passthrough")
     assert_equal(unchanged["reason_code"], "explicit_unchanged_copy", "unchanged reason")
+
+    unchanged_risk_status = evaluate_generated_file_passthrough_eligibility(
+        "Download an unchanged copy of the risk status rows as CSV.",
+        rows=rows,
+    )
+    assert_true(unchanged_risk_status["allowed"], "descriptive risk/status unchanged copy passthrough")
+    assert_equal(unchanged_risk_status["reason_code"], "explicit_unchanged_copy", "risk/status unchanged reason")
 
     derived = evaluate_generated_file_passthrough_eligibility(
         "Create a CSV with exactly one output row for each source row and classify risk.",

@@ -3495,9 +3495,8 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     const artifactSet = statusMetadata?.artifact_set && typeof statusMetadata.artifact_set === 'object'
       ? statusMetadata.artifact_set
       : {};
-    const pluralMembers = Array.isArray(statusMetadata?.generated_artifacts)
-      ? statusMetadata.generated_artifacts
-      : [];
+    const pluralMembersProvided = Array.isArray(statusMetadata?.generated_artifacts);
+    const pluralMembers = pluralMembersProvided ? statusMetadata.generated_artifacts : [];
     const singularMember = statusMetadata?.generated_artifact && typeof statusMetadata.generated_artifact === 'object'
       ? statusMetadata.generated_artifact
       : null;
@@ -3507,7 +3506,7 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     const legacyTabularMembers = Array.isArray(statusMetadata?.generated_tabular_outputs)
       ? statusMetadata.generated_tabular_outputs
       : [];
-    const rawMembers = pluralMembers.length
+    const rawMembers = pluralMembersProvided
       ? pluralMembers
       : (singularMember ? [singularMember] : [...legacyAnalysisMembers, ...legacyTabularMembers]);
     const seenMemberKeys = new Set();

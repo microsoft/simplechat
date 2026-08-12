@@ -178,13 +178,13 @@ MARKDOWN_OUTPUT_REQUEST_PATTERNS = (
 PASSTHROUGH_DERIVED_OUTPUT_PATTERNS = (
     re.compile(r'\b(?:derive|derived|classify|classification|categorize|category|calculate|computed?|map|mapping)\b'),
     re.compile(r'\b(?:score|rank|judge|evaluate|determine|flag|label|extract|populate|fill)\b'),
-    re.compile(r'\b(?:analy[sz]e|analysis|summari[sz]e|summary|sentiment|risk|attention|status)\b'),
+    re.compile(r'\b(?:analy[sz]e|summari[sz]e)\b'),
     re.compile(r'\b(?:exactly|only)\s+(?:these\s+)?(?:fields|columns)\b'),
     re.compile(r'\b(?:output|requested|derived)\s+(?:fields|columns|schema)\b'),
     re.compile(r'\bone\s+output\s+row\s+(?:for|per)\s+(?:each|every|source)\s+row\b'),
 )
 PASSTHROUGH_COPY_PATTERNS = (
-    re.compile(r'\b(?:unchanged|as-is|as\s+is|verbatim|raw|original|source)\s+(?:copy|rows?|data|table|result|results)\b'),
+    re.compile(r'\b(?:unchanged|as-is|as\s+is|verbatim|raw|original)\s+(?:copy|rows?|data|table|result|results)\b'),
     re.compile(r'\b(?:copy|export|download|save)\b[\w\s,.:;\-/]{0,100}\b(?:unchanged|as-is|as\s+is|verbatim|raw|original|source)\b'),
 )
 PASSTHROUGH_SERIALIZE_PATTERNS = (
@@ -253,7 +253,8 @@ def _collect_structured_artifact_format_matches(normalized_question: str) -> Lis
                 clause,
             )
             if destination_match:
-                matches.append((clause_offset + destination_match.start(), output_format))
+                format_position = clause.find(output_format, destination_match.start())
+                matches.append((clause_offset + (format_position if format_position >= 0 else destination_match.start()), output_format))
                 destination_formats_by_clause_offset.setdefault(clause_offset, set()).add(output_format)
 
     for clause, clause_offset in _iter_request_clauses(normalized_question):
@@ -277,7 +278,8 @@ def _collect_structured_artifact_format_matches(normalized_question: str) -> Lis
                 clause,
             )
             if generic_match:
-                matches.append((clause_offset + generic_match.start(), output_format))
+                format_position = clause.find(output_format, generic_match.start())
+                matches.append((clause_offset + (format_position if format_position >= 0 else generic_match.start()), output_format))
     return matches
 
 
@@ -398,8 +400,6 @@ def evaluate_generated_file_passthrough_eligibility(
     normalized_rows = [row for row in list(rows or []) if isinstance(row, dict)]
     if not normalized_rows:
         return {'allowed': False, 'reason_code': 'source_result_incomplete'}
-    if _question_requires_derived_output(normalized_question):
-        return {'allowed': False, 'reason_code': 'derived_output_requires_transform'}
 
     normalized_public_schema = [
         str(field_name or '').strip()
@@ -415,6 +415,8 @@ def evaluate_generated_file_passthrough_eligibility(
 
     if _question_requests_unchanged_copy(normalized_question):
         return {'allowed': True, 'reason_code': 'explicit_unchanged_copy'}
+    if _question_requires_derived_output(normalized_question):
+        return {'allowed': False, 'reason_code': 'derived_output_requires_transform'}
     if _question_requests_serialization(normalized_question):
         return {'allowed': True, 'reason_code': 'explicit_format_conversion'}
     return {'allowed': False, 'reason_code': 'no_explicit_passthrough_contract'}

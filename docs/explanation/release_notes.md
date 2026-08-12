@@ -2,6 +2,16 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.182)**
+
+#### Bug Fixes
+
+*   **Analyze Artifact Copilot Review Cleanup**
+    *   Preserved explicit request order for combined JSON/XML artifact requests when both formats share the same action phrase.
+    *   Kept explicit unchanged-copy requests eligible even when source field names include descriptive terms such as risk or status.
+    *   Made semantic validation shadow mode fail open on verifier errors and prevented the chat UI from falling back to withheld legacy artifacts when `generated_artifacts` is explicitly empty.
+    *   (Ref: PR #1238, Copilot review comments, generated artifact ordering, semantic validation shadow mode, plural artifact UI)
+
 ### **(v0.250.181)**
 
 #### Bug Fixes

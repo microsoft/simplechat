@@ -2,8 +2,8 @@
 #!/usr/bin/env python3
 """
 Functional test for Phase 7B semantic field verification and targeted repair.
-Version: 0.250.179
-Implemented in: 0.250.179
+Version: 0.250.182
+Implemented in: 0.250.179; shadow verifier fail-open compatibility updated in 0.250.182
 
 This test ensures verifier output is exact and bounded, repairs only failed or
 uncertain row fields, and persists only safe aggregate counts.
@@ -39,7 +39,7 @@ from functions_analysis_deliverables import is_analysis_internal_lineage_field  
 from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
 
-IMPLEMENTED_VERSION = "0.250.179"
+IMPLEMENTED_VERSION = "0.250.182"
 EXPORT_MODULE = APP_ROOT / "functions_tabular_generated_exports.py"
 
 
@@ -444,6 +444,37 @@ def test_shadow_semantic_validation_observes_without_repairing():
     assert counts["repair_target_count"] == 1
 
 
+def test_shadow_semantic_validation_fails_open_on_verifier_errors():
+    assert_app_version_at_least("0.250.182")
+
+    async def invoke_verifier(request):
+        del request
+        raise TimeoutError("verifier timed out")
+
+    async def invoke_repair(*args):
+        raise AssertionError("Shadow validation must not repair rows after verifier failure")
+
+    rows = [{"Item_ID": "A", "Risk": "Low"}]
+    observed_rows, counts, attempts = asyncio.run(verify_and_repair_semantic_rows(
+        [{"Item_ID": "A", "Narrative": "Ambiguous evidence"}],
+        rows,
+        _transformation_spec(),
+        "shadow",
+        invoke_verifier,
+        invoke_repair,
+    ))
+    assert observed_rows == rows
+    assert attempts == []
+    assert counts == {
+        "pass_count": 0,
+        "fail_count": 0,
+        "uncertain_count": 0,
+        "unsupported_count": 0,
+        "repair_target_count": 0,
+        "repair_attempt_count": 0,
+    }
+
+
 def test_active_semantic_repair_exhaustion_fails_closed():
     assert_app_version_at_least(IMPLEMENTED_VERSION)
     repair_values = iter(["High", "Medium"])
@@ -614,6 +645,7 @@ if __name__ == "__main__":
         test_active_semantic_validation_repairs_then_reverifies,
         test_runner_invokes_verifier_and_repair_before_checkpoint_boundary,
         test_shadow_semantic_validation_observes_without_repairing,
+        test_shadow_semantic_validation_fails_open_on_verifier_errors,
         test_active_semantic_repair_exhaustion_fails_closed,
         test_batch_wrapper_persists_only_safe_semantic_counts,
         test_semantic_candidate_checkpoint_is_restart_safe_and_plan_fenced,

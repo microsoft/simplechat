@@ -310,13 +310,18 @@ async def verify_and_repair_semantic_rows(
     if normalized_mode == "off" or not verification_request["fields"]:
         return rows, build_safe_semantic_validation_counts({}, [], 0), []
 
-    verification_payload = await invoke_verifier(verification_request)
-    verification_report = normalize_semantic_verification_response(
-        verification_payload,
-        verification_request,
-    )
-    repair_targets = collect_semantic_repair_targets(verification_report)
     attempt_summaries = []
+    try:
+        verification_payload = await invoke_verifier(verification_request)
+        verification_report = normalize_semantic_verification_response(
+            verification_payload,
+            verification_request,
+        )
+    except Exception:
+        if normalized_mode == "shadow":
+            return rows, build_safe_semantic_validation_counts({}, [], 0), attempt_summaries
+        raise
+    repair_targets = collect_semantic_repair_targets(verification_report)
     if normalized_mode == "shadow":
         return (
             rows,

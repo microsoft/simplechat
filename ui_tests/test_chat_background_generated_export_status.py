@@ -1,8 +1,8 @@
 # test_chat_background_generated_export_status.py
 """
 UI test for chat background generated export status cards.
-Version: 0.250.176
-Implemented in: 0.241.046; cancellation in 0.250.060; automatic-only refresh in 0.250.061; combined progress and large-run confirmation in 0.250.131; throughput and concurrency status in 0.250.136; truthful background handoff in 0.250.138; collapsed operational details in 0.250.150; confirmation deduplication in 0.250.169; plural artifact-set completion rendering in 0.250.176
+Version: 0.250.182
+Implemented in: 0.241.046; cancellation in 0.250.060; automatic-only refresh in 0.250.061; combined progress and large-run confirmation in 0.250.131; throughput and concurrency status in 0.250.136; truthful background handoff in 0.250.138; collapsed operational details in 0.250.150; confirmation deduplication in 0.250.169; plural artifact-set completion rendering in 0.250.176; empty plural artifact-set fallback suppression in 0.250.182
 
 This test ensures queued tabular generated exports render progress in chat and
 turn into a downloadable artifact when complete or a visible canceled state.
@@ -207,6 +207,7 @@ def test_chat_background_generated_export_status_card_auto_refreshes_to_download
         browser.close()
 
 
+
 @pytest.mark.ui
 def test_chat_combined_completion_renders_plural_artifact_set(playwright) -> None:
     """Validate completed combined runs render every artifact with Analyze Markdown first."""
@@ -226,6 +227,7 @@ def test_chat_combined_completion_renders_plural_artifact_set(playwright) -> Non
                     json={
                         "success": True,
                         "run": {
+
                             "run_id": "run-plural-artifacts",
                             "conversation_id": "conversation-ui-test",
                             "task_type": "combined",
@@ -365,6 +367,112 @@ def test_chat_combined_completion_renders_plural_artifact_set(playwright) -> Non
             assert completion_events[-1]["memberCount"] == 2
             assert completion_events[-1]["formats"] == ["md", "csv"]
             assert completion_events[-1]["primaryRendered"] is True
+            assert page_errors == []
+    finally:
+        context.close()
+        browser.close()
+
+
+@pytest.mark.ui
+def test_chat_empty_plural_artifact_set_does_not_render_legacy_fallback(playwright) -> None:
+    """Validate an explicit empty generated_artifacts array suppresses legacy singular fallback."""
+    browser = playwright.chromium.launch()
+    context = browser.new_context(viewport={"width": 1440, "height": 900})
+    page = context.new_page()
+    page_errors = []
+    page.on("pageerror", lambda error: page_errors.append(str(error)))
+
+    try:
+        with _start_static_test_server() as server_base_url:
+            page.route(
+                "**/api/tabular/generated-output/runs/run-empty-plural-artifacts",
+                lambda route: route.fulfill(
+                    status=200,
+                    content_type="application/json",
+                    json={
+                        "success": True,
+                        "run": {
+                            "run_id": "run-empty-plural-artifacts",
+                            "conversation_id": "conversation-ui-test",
+                            "task_type": "combined",
+                            "status": "completed",
+                            "artifact_set": {
+                                "contract_version": "tabular-artifact-set-v1",
+                                "set_id": "artifact-set-empty-ui-test",
+                                "lifecycle_state": "completed",
+                                "validation_state": "invalid",
+                                "primary_artifact_id": "analysis-md",
+                                "member_count": 2,
+                                "published_member_count": 0,
+                                "publication_generation": 1,
+                            },
+                            "generated_artifacts": [],
+                            "generated_artifact": {
+                                "artifact_id": "legacy-csv",
+                                "role": "requested_output",
+                                "capability": "tabular",
+                                "artifact_message_id": "legacy-artifact-csv",
+                                "conversation_id": "conversation-ui-test",
+                                "file_name": "legacy.csv",
+                                "output_format": "csv",
+                                "storage_scope": "chat",
+                            },
+                        },
+                    },
+                ),
+            )
+            response = page.goto(
+                f"{server_base_url}/{HARNESS_PATH}",
+                wait_until="domcontentloaded",
+            )
+            assert response is not None and response.ok
+            _install_minimal_chat_dom(page)
+            page.evaluate(
+                """
+                async () => {
+                    const module = await import('/application/single_app/static/js/chat/chat-messages.js');
+                    module.appendMessage(
+                        'AI',
+                        'The combined Analyze run is continuing in the background.',
+                        null,
+                        'message-empty-plural-artifacts',
+                        false,
+                        [],
+                        [],
+                        [],
+                        null,
+                        null,
+                        {
+                            metadata: {
+                                generated_tabular_outputs: [
+                                    {
+                                        capability: 'tabular',
+                                        background_export: true,
+                                        export_run_id: 'run-empty-plural-artifacts',
+                                        run_id: 'run-empty-plural-artifacts',
+                                        task_type: 'combined',
+                                        status: 'running',
+                                        file_name: 'legacy.csv',
+                                        output_format: 'csv',
+                                        row_count: 200,
+                                        processed_rows: 40,
+                                        batch_count: 4,
+                                        completed_batches: 1,
+                                        suppress_assistant_text: true,
+                                    }
+                                ]
+                            }
+                        },
+                        false
+                    );
+                }
+                """
+            )
+
+            message = page.locator('[data-message-id="message-empty-plural-artifacts"]')
+            expect(message.get_by_role("button", name="Download legacy.csv")).to_have_count(0, timeout=15000)
+            expect(message.locator('[data-generated-artifact-set="true"]')).to_have_count(0)
+            expect(message.locator('.generated-tabular-output-card')).to_have_count(1)
             assert page_errors == []
     finally:
         context.close()
@@ -644,6 +752,7 @@ def test_chat_background_generated_export_can_be_canceled(playwright) -> None:
     finally:
         context.close()
         browser.close()
+
 
 
 @pytest.mark.ui
