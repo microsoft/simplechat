@@ -654,7 +654,10 @@ def _validate_evaluated_field_value(field_descriptor, field_value):
     if field_type == "string" and not isinstance(field_value, str):
         field_value = str(field_value)
     elif field_type == "integer":
-        field_value = int(_parse_decimal_value(field_value))
+        parsed_value = _parse_decimal_value(field_value)
+        if parsed_value != parsed_value.to_integral_value():
+            raise TabularTransformationEvaluationError("Deterministic integer field evaluated to a fractional value")
+        field_value = int(parsed_value)
     elif field_type == "number":
         field_value = _decimal_to_json_value(_parse_decimal_value(field_value))
     elif field_type == "boolean" and not isinstance(field_value, bool):
