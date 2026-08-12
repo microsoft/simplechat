@@ -1,8 +1,8 @@
 # Conversation Contents Sidebar Overflow Fix
 
-Fixed/Implemented in version: **0.250.169**
+Fixed/Implemented in version: **0.250.171**
 
-Related configuration update: `VERSION = "0.250.169"` in `application/single_app/config.py`.
+Related configuration update: `VERSION = "0.250.171"` in `application/single_app/config.py`.
 
 ## Issue Description
 

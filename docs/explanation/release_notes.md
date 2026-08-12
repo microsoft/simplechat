@@ -2,6 +2,24 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.170)**
+
+#### Bug Fixes
+
+*   **Rendered Admin Tabular Run Controls Coverage**
+    *   Replaced source-only coverage with an authenticated browser regression that verifies the Admin Settings controls render, submit, survive reload, and restore their original values.
+    *   Guarded shared settings mutation behind an explicit isolated-environment opt-in and limited configured-model testing to routable legacy direct or APIM deployments.
+    *   (Ref: #1201, `ui_tests/test_admin_tabular_run_controls.py`, Admin Settings tabular run controls)
+
+### **(v0.250.169)**
+
+#### Bug Fixes
+
+*   **Large Tabular Run Confirmation Deduplication**
+    *   Prevented repeated Send clicks or Enter presses from opening concurrent confirmation waiters and starting the same expensive tabular run more than once.
+    *   Restored normal sending after the user continues, narrows scope, dismisses the dialog, or an unexpected confirmation error occurs.
+    *   (Ref: Fixes #1200, `chat-messages.js`, `test_chat_background_generated_export_status.py`)
+
 ### **(v0.250.168)**
 
 #### Bug Fixes

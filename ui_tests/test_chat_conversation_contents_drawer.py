@@ -1,10 +1,10 @@
 # test_chat_conversation_contents_drawer.py
 """
 UI test for the conversation contents drawer.
-Version: 0.250.169
+Version: 0.250.171
 Implemented in: 0.250.074
 Documents mode added in: 0.250.159
-Compact overflow-safe layout added in: 0.250.169
+Compact overflow-safe layout added in: 0.250.171
 
 This test validates user-message filtering, cited-document mode, safe labels,
 navigation, live updates, conversation replacement, keyboard closing, and

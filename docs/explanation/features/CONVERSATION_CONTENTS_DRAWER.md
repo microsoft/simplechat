@@ -6,7 +6,7 @@ The conversation contents drawer provides a compact index of persisted user mess
 
 Implemented in version: **0.250.074**
 Used documents mode added in version: **0.250.159**
-Compact overflow-safe layout added in version: **0.250.169**
+Compact overflow-safe layout added in version: **0.250.171**
 
 ### Dependencies
 
