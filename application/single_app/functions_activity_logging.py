@@ -181,7 +181,7 @@ def get_user_login_activity_summary(user_id: Any) -> Dict[str, Any]:
         summary['total_logins'] = int(total_logins[0] or 0) if total_logins else 0
         summary['total_logins_lookup_succeeded'] = True
     except Exception as ex:
-        debug_print(f"[ActivityLogging] Could not query login count for user {normalized_user_id}: {ex}")
+        debug_print(f"[ACTIVITY_LOGGING] Could not query login count for user {normalized_user_id}: {ex}")
         log_event(
             message=f"[ActivityLogging] Error querying user login count: {ex}",
             extra={'user_id': normalized_user_id, 'error': str(ex)},
@@ -208,7 +208,7 @@ def get_user_login_activity_summary(user_id: Any) -> Dict[str, Any]:
         summary['last_login'] = _select_latest_activity_timestamp(latest_login_records)
         summary['last_login_lookup_succeeded'] = True
     except Exception as ex:
-        debug_print(f"[ActivityLogging] Could not query latest login for user {normalized_user_id}: {ex}")
+        debug_print(f"[ACTIVITY_LOGGING] Could not query latest login for user {normalized_user_id}: {ex}")
         log_event(
             message=f"[ActivityLogging] Error querying latest user login: {ex}",
             extra={'user_id': normalized_user_id, 'error': str(ex)},
@@ -449,7 +449,7 @@ def log_admin_feedback_email_submission(
             },
             level=logging.INFO
         )
-        debug_print(f"[Admin Feedback] Logged feedback email submission for user {user_id}")
+        debug_print(f"[ADMIN_FEEDBACK] Logged feedback email submission for user {user_id}")
 
     except Exception:
         log_event(
@@ -465,7 +465,7 @@ def log_admin_feedback_email_submission(
             level=logging.ERROR,
             exceptionTraceback=True
         )
-        debug_print(f"[Admin Feedback] Failed to log feedback email submission for user {user_id}")
+        debug_print(f"[ADMIN_FEEDBACK] Failed to log feedback email submission for user {user_id}")
 
 
 def log_user_support_feedback_email_submission(
@@ -515,7 +515,7 @@ def log_user_support_feedback_email_submission(
             },
             level=logging.INFO
         )
-        debug_print(f"[Support Feedback] Logged support feedback email submission for user {user_id}")
+        debug_print(f"[SUPPORT_FEEDBACK] Logged support feedback email submission for user {user_id}")
 
     except Exception:
         log_event(
@@ -532,7 +532,7 @@ def log_user_support_feedback_email_submission(
             level=logging.ERROR,
             exceptionTraceback=True
         )
-        debug_print(f"[Support Feedback] Failed to log support feedback email submission for user {user_id}")
+        debug_print(f"[SUPPORT_FEEDBACK] Failed to log support feedback email submission for user {user_id}")
 
 
 def log_admin_release_notifications_registration(
@@ -587,7 +587,7 @@ def log_admin_release_notifications_registration(
             },
             level=logging.INFO
         )
-        debug_print(f"[Admin Release Notifications] Logged registration for user {user_id}")
+        debug_print(f"[ADMIN_RELEASE_NOTIFICATIONS] Logged registration for user {user_id}")
 
     except Exception:
         log_event(
@@ -602,7 +602,7 @@ def log_admin_release_notifications_registration(
             level=logging.ERROR,
             exceptionTraceback=True
         )
-        debug_print(f"[Admin Release Notifications] Failed to log registration for user {user_id}")
+        debug_print(f"[ADMIN_RELEASE_NOTIFICATIONS] Failed to log registration for user {user_id}")
 
 
 def log_web_search_consent_acceptance(
@@ -1752,6 +1752,96 @@ def log_user_agreement_accepted(
         debug_print(f"⚠️  Warning: Failed to log user agreement acceptance: {str(e)}")
 
 
+def log_terms_of_use_accepted(
+    user_id: str,
+    terms_hash: str,
+    frequency: str,
+    source: str,
+    accepted_date: str,
+    auth_state: Optional[str] = None,
+) -> None:
+    """Log when a user accepts the terms of use."""
+    try:
+        acceptance_record = {
+            'id': str(uuid.uuid4()),
+            'user_id': user_id,
+            'activity_type': 'terms_of_use_accepted',
+            'timestamp': datetime.utcnow().isoformat(),
+            'created_at': datetime.utcnow().isoformat(),
+            'accepted_date': accepted_date,
+            'terms_hash': terms_hash,
+            'frequency': frequency,
+            'source': source,
+            'auth_state': auth_state or 'authenticated',
+        }
+
+        cosmos_activity_logs_container.create_item(body=acceptance_record)
+        log_event(
+            message=f"Terms of Use accepted: user {user_id}",
+            extra=acceptance_record,
+            level=logging.INFO,
+        )
+    except Exception as e:
+        log_event(
+            message=f"Error logging terms of use acceptance: {str(e)}",
+            extra={
+                'user_id': user_id,
+                'terms_hash': terms_hash,
+                'frequency': frequency,
+                'source': source,
+                'error': str(e),
+            },
+            level=logging.ERROR,
+        )
+        debug_print(f"⚠️  Warning: Failed to log terms of use acceptance: {str(e)}")
+
+
+def log_terms_of_use_declined(
+    user_id: str,
+    terms_hash: str,
+    frequency: str,
+    source: str,
+    redirect_url: str,
+    auth_state: Optional[str] = None,
+) -> None:
+    """Log when a signed-in user declines the terms of use."""
+    try:
+        decline_record = {
+            'id': str(uuid.uuid4()),
+            'user_id': user_id,
+            'activity_type': 'terms_of_use_declined',
+            'timestamp': datetime.utcnow().isoformat(),
+            'created_at': datetime.utcnow().isoformat(),
+            'declined_date': datetime.utcnow().strftime('%Y-%m-%d'),
+            'terms_hash': terms_hash,
+            'frequency': frequency,
+            'source': source,
+            'redirect_url': redirect_url,
+            'auth_state': auth_state or 'authenticated',
+        }
+
+        cosmos_activity_logs_container.create_item(body=decline_record)
+        log_event(
+            message=f"Terms of Use declined: user {user_id}",
+            extra=decline_record,
+            level=logging.INFO,
+        )
+    except Exception as e:
+        log_event(
+            message=f"Error logging terms of use decline: {str(e)}",
+            extra={
+                'user_id': user_id,
+                'terms_hash': terms_hash,
+                'frequency': frequency,
+                'source': source,
+                'redirect_url': redirect_url,
+                'error': str(e),
+            },
+            level=logging.ERROR,
+        )
+        debug_print(f"⚠️  Warning: Failed to log terms of use decline: {str(e)}")
+
+
 def has_user_accepted_agreement_today(
     user_id: str,
     workspace_type: str,
@@ -1899,7 +1989,7 @@ def log_general_admin_action(
     action: str,
     description: Optional[str] = None,
     additional_context: Optional[dict] = None
-) -> None:
+) -> bool:
     """
     Log a general admin action to the activity_logs container.
 
@@ -1911,6 +2001,7 @@ def log_general_admin_action(
         additional_context (dict, optional): Additional context to store
     """
 
+    normalized_admin_user_id = str(admin_user_id or 'unknown')
     try:
         normalized_admin_user_id = coerce_activity_log_user_id(admin_user_id)
         activity_record = {
@@ -1942,6 +2033,7 @@ def log_general_admin_action(
             level=logging.INFO
         )
         debug_print(f"✅ Admin action logged: {action} by {admin_email}")
+        return True
 
     except Exception as e:
         log_event(
@@ -1955,6 +2047,7 @@ def log_general_admin_action(
             level=logging.ERROR
         )
         debug_print(f"⚠️  Warning: Failed to log admin action: {str(e)}")
+        return False
 
 
 def log_file_sync_activity(

@@ -7,6 +7,7 @@ from semantic_kernel.connectors.ai.open_ai import AzureChatCompletion, OpenAICha
 
 from config import cognitive_services_scope
 from foundry_agent_runtime import resolve_authority
+from functions_settings import resolve_model_endpoint_foundry_scope
 from model_endpoint_clients import (
     MODEL_ENDPOINT_PROTOCOL_ANTHROPIC,
     MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI,
@@ -88,28 +89,7 @@ def build_model_endpoint_context(
 
 def resolve_foundry_scope_for_endpoint_auth(auth_settings, endpoint=None):
     """Resolve the correct scope for Foundry-backed inference authentication."""
-    auth_settings = auth_settings or {}
-    custom_scope = str(auth_settings.get('foundry_scope') or '').strip()
-    if custom_scope:
-        return custom_scope
-
-    management_cloud = str(auth_settings.get('management_cloud') or 'public').lower()
-    if management_cloud in ('government', 'usgovernment', 'usgov'):
-        return 'https://ai.azure.us/.default'
-    if management_cloud == 'china':
-        return 'https://ai.azure.cn/.default'
-    if management_cloud == 'germany':
-        return 'https://ai.azure.de/.default'
-
-    endpoint_value = str(endpoint or '').lower()
-    if 'azure.us' in endpoint_value:
-        return 'https://ai.azure.us/.default'
-    if 'azure.cn' in endpoint_value:
-        return 'https://ai.azure.cn/.default'
-    if 'azure.de' in endpoint_value:
-        return 'https://ai.azure.de/.default'
-
-    return 'https://ai.azure.com/.default'
+    return resolve_model_endpoint_foundry_scope(auth_settings, endpoint=endpoint)
 
 
 def resolve_credential_for_model_endpoint_auth(auth_settings):

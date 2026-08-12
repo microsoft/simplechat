@@ -1,8 +1,8 @@
 # test_keyvault_plugin_secret_scope_enforcement.py
 """
 Functional test for Key Vault plugin secret scope enforcement.
-Version: 0.241.022
-Implemented in: 0.241.011; 0.241.022
+Version: 0.250.121
+Implemented in: 0.241.011; 0.241.022; 0.250.121
 
 This test ensures plugin Key Vault references are validated against the
 expected scope and source before they are preserved, resolved, or deleted.
@@ -168,10 +168,17 @@ def test_runtime_plugin_loader_blanks_secret_fields_on_scope_mismatch():
 
     namespace, _ = load_functions(
         SK_LOADER_FILE,
-        {"_get_plugin_secret_context", "_is_sql_sensitive_plugin_field", "resolve_key_vault_secrets_in_plugins"},
+        {
+            "_get_plugin_secret_context",
+            "_is_sql_sensitive_plugin_field",
+            "_is_sensitive_plugin_additional_field",
+            "resolve_key_vault_secrets_in_plugins",
+        },
         {
             "SQL_PLUGIN_SENSITIVE_AUTH_FIELDS": {"client_secret"},
             "SQL_PLUGIN_SENSITIVE_ADDITIONAL_FIELDS": {"connection_string", "password"},
+            "SNOWFLAKE_PLUGIN_TYPE": "snowflake",
+            "SNOWFLAKE_SENSITIVE_ADDITIONAL_FIELDS": {"password", "private_key", "private_key_passphrase"},
             "validate_secret_name_dynamic": lambda value: isinstance(value, str) and value.startswith("ref-"),
             "resolve_secret_reference_for_context": lambda *args, **kwargs: (_ for _ in ()).throw(ValueError("scope mismatch")),
             "log_event": lambda *args, **kwargs: None,

@@ -32,6 +32,14 @@ from functions_conversation_feed import (
 )
 from functions_conversation_metadata import get_conversation_metadata, update_conversation_with_metadata
 from functions_conversation_unread import clear_conversation_unread, normalize_conversation_unread_state
+from functions_conversation_cache import (
+    build_conversation_cache_key,
+    bump_conversation_cache_version,
+    get_cached_conversation_payload,
+    get_conversation_cache_settings,
+    invalidate_conversation_cache_for_item,
+    set_cached_conversation_payload,
+)
 from functions_image_messages import decode_image_content, get_complete_image_content, hydrate_image_messages, is_blob_backed_image_message, is_external_image_url
 from functions_notifications import mark_chat_response_notifications_read_for_conversation
 from flask import Response, request, stream_with_context
@@ -40,15 +48,18 @@ from functions_documents import (
     delete_chat_upload_workspace_documents_for_conversation,
     serialize_chat_upload_workspace_documents_for_conversation,
 )
+from functions_group import get_user_groups
 from functions_message_artifacts import (
     build_message_artifact_payload_map,
     filter_assistant_artifact_items,
     hydrate_agent_citations_from_artifacts,
 )
 from functions_simplechat_operations import (
+    ConversationForkConflictError,
     create_personal_conversation_for_current_user,
     delete_blob_backed_chat_message_files,
     derive_conversation_title_from_message,
+    fork_personal_conversation_for_user,
 )
 from swagger_wrapper import swagger_route, get_auth_security
 from functions_activity_logging import log_conversation_creation, log_conversation_deletion, log_conversation_archival
@@ -107,6 +118,43 @@ SEARCH_CHAT_TYPE_ALIASES = {
 }
 
 
+def _build_conversation_cache_access_parameters(user_id):
+    """Return current group-access inputs that affect collaboration feed/search visibility."""
+    try:
+        group_docs = get_user_groups(user_id)
+    except Exception as exc:
+        log_event(
+            f"[CONVERSATION_CACHE] Failed to build group access cache fingerprint for {user_id}: {exc}",
+            level=logging.WARNING,
+            exceptionTraceback=True,
+            debug_only=True,
+        )
+        return None
+
+    groups = []
+    for group_doc in group_docs or []:
+        if not isinstance(group_doc, dict):
+            continue
+        group_id = str(group_doc.get('id') or '').strip()
+        if not group_id:
+            continue
+        groups.append({
+            'id': group_id,
+            'status': str(group_doc.get('status') or 'active'),
+            'updated_at': str(
+                group_doc.get('updated_at')
+                or group_doc.get('last_updated')
+                or group_doc.get('_ts')
+                or ''
+            ),
+        })
+
+    groups.sort(key=lambda group_item: group_item['id'])
+    return {
+        'groups': groups,
+    }
+
+
 def _normalize_workspace_document_delete_ids(raw_document_ids):
     if raw_document_ids is None:
         return []
@@ -123,6 +171,67 @@ def _normalize_workspace_document_delete_ids(raw_document_ids):
         normalized_document_ids.append(document_id)
 
     return normalized_document_ids
+
+
+def _build_replayed_document_context(original_metadata):
+    """Rebuild document-context intent from stored metadata for retry and edit."""
+    metadata = original_metadata if isinstance(original_metadata, dict) else {}
+    workspace_search = metadata.get('workspace_search')
+    if not isinstance(workspace_search, dict):
+        workspace_search = metadata.get('document_search')
+    workspace_search = workspace_search if isinstance(workspace_search, dict) else {}
+
+    selected_document_ids = (
+        workspace_search.get('requested_document_ids')
+        or workspace_search.get('selected_document_ids')
+        or []
+    )
+    if not isinstance(selected_document_ids, list):
+        selected_document_ids = [selected_document_ids]
+    selected_document_ids = [
+        str(document_id or '').strip()
+        for document_id in selected_document_ids
+        if str(document_id or '').strip()
+    ]
+    selected_document_id = str(
+        workspace_search.get('selected_document_id')
+        or workspace_search.get('document_id')
+        or ''
+    ).strip()
+    if selected_document_id and selected_document_id not in selected_document_ids:
+        selected_document_ids.insert(0, selected_document_id)
+
+    selection_mode = str(workspace_search.get('selection_mode') or '').strip().lower()
+    if selection_mode not in {'selected', 'all', 'history', 'relevance'}:
+        selection_mode = 'selected' if selected_document_ids else 'relevance'
+    document_context_requested = workspace_search.get('document_context_requested')
+    if not isinstance(document_context_requested, bool):
+        document_context_requested = bool(
+            workspace_search.get('search_enabled')
+            or workspace_search.get('enabled')
+            or selected_document_ids
+        )
+
+    return {
+        'hybrid_search': bool(
+            workspace_search.get('hybrid_search_preference')
+            if 'hybrid_search_preference' in workspace_search
+            else workspace_search.get('enabled')
+            or workspace_search.get('search_enabled')
+        ),
+        'selection_mode': selection_mode,
+        'document_context_requested': document_context_requested,
+        'selected_document_id': selected_document_ids[0] if selected_document_ids else None,
+        'selected_document_ids': selected_document_ids,
+        'doc_scope': workspace_search.get('document_scope') or workspace_search.get('scope'),
+        'top_n': workspace_search.get('top_n'),
+        'classifications': (
+            workspace_search.get('classification')
+            or workspace_search.get('classifications')
+        ),
+        'active_group_ids': workspace_search.get('active_group_ids') or [],
+        'active_public_workspace_ids': workspace_search.get('active_public_workspace_ids') or [],
+    }
 
 
 def _get_requested_workspace_document_delete_ids_for_conversation(payload, conversation_id):
@@ -527,7 +636,7 @@ def _load_collaboration_conversations_for_feed(user_id):
         unread_by_conversation = _load_unread_collaboration_notification_map(user_id)
     except Exception as exc:
         log_event(
-            f'[ConversationFeed] Failed to load collaboration unread state: {exc}',
+            f'[CONVERSATION_FEED] Failed to load collaboration unread state: {exc}',
             level=logging.WARNING,
             exceptionTraceback=True,
         )
@@ -578,7 +687,7 @@ def _build_conversation_feed(user_id, page_size, source_offsets, include_priorit
         collaboration_conversations = _load_collaboration_conversations_for_feed(user_id)
     except Exception as exc:
         log_event(
-            f'[ConversationFeed] Failed to load collaborative conversations: {exc}',
+            f'[CONVERSATION_FEED] Failed to load collaborative conversations: {exc}',
             level=logging.WARNING,
             exceptionTraceback=True,
         )
@@ -713,6 +822,23 @@ def _authorize_personal_conversation_read(user_id, conversation_id):
     return conversation_item
 
 
+def _invalidate_conversation_cache_after_message_mutation(conversation_id, user_id, reason):
+    """Invalidate conversation caches after message-level changes without failing the caller."""
+    try:
+        conversation_item = _authorize_personal_conversation_read(user_id, conversation_id)
+    except Exception as exc:
+        log_event(
+            f"[CONVERSATION_CACHE] Failed to load conversation {conversation_id} for message mutation invalidation: {exc}",
+            level=logging.WARNING,
+            exceptionTraceback=True,
+            debug_only=True,
+        )
+        bump_conversation_cache_version(user_id, reason=reason)
+        return
+
+    invalidate_conversation_cache_for_item(conversation_item, reason=reason)
+
+
 def _authorize_image_conversation_read(user_id, conversation_id):
     """Authorize image reads for either personal or collaborative conversations."""
     try:
@@ -810,9 +936,9 @@ def _persist_scope_lock_update(conversation_item, conversation_kind, user_id, ne
     return conversation_item
 
 
-def register_route_backend_conversations(app):
+def register_route_backend_conversations(bp):
 
-    @app.route('/api/get_messages', methods=['GET'])
+    @bp.route('/api/get_messages', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -838,6 +964,11 @@ def register_route_backend_conversations(app):
             all_items = list(cosmos_messages_container.query_items(
                 query=message_query,
                 partition_key=conversation_id
+            ))
+            all_items.sort(key=lambda item: (
+                str(item.get('timestamp') or ''),
+                int(item.get('fork_sequence')) if str(item.get('fork_sequence') or '').isdigit() else 0,
+                str(item.get('id') or ''),
             ))
             artifact_payload_map = build_message_artifact_payload_map(all_items)
             all_items = filter_assistant_artifact_items(all_items)
@@ -882,7 +1013,7 @@ def register_route_backend_conversations(app):
             print(f"ERROR: Failed to get messages: {str(e)}")
             return jsonify({'error': 'Conversation not found'}), 404
 
-    @app.route('/api/image/<image_id>', methods=['GET'])
+    @bp.route('/api/image/<image_id>', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -940,7 +1071,7 @@ def register_route_backend_conversations(app):
             traceback.print_exc()
             return jsonify({'error': 'Failed to retrieve image'}), 500
         
-    @app.route('/api/get_conversations', methods=['GET'])
+    @bp.route('/api/get_conversations', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -948,15 +1079,37 @@ def register_route_backend_conversations(app):
         user_id = get_current_user_id()
         if not user_id:
             return jsonify({'error': 'User not authenticated'}), 401
-        query = f"SELECT * FROM c WHERE c.user_id = '{user_id}' ORDER BY c.last_updated DESC"
-        items = list(cosmos_conversations_container.query_items(query=query, enable_cross_partition_query=True))
+        settings = get_settings()
+        cache_settings = get_conversation_cache_settings(settings)
+        cache_key = None
+        if cache_settings.get('enabled'):
+            cache_key = build_conversation_cache_key(user_id, "list", parameters={"include_hidden": True})
+            if cache_key:
+                cached_payload = get_cached_conversation_payload(cache_key, settings=settings)
+                if isinstance(cached_payload, dict) and isinstance(cached_payload.get('conversations'), list):
+                    return jsonify(cached_payload), 200
+
+        query = "SELECT * FROM c WHERE c.user_id = @user_id ORDER BY c.last_updated DESC"
+        items = list(cosmos_conversations_container.query_items(
+            query=query,
+            parameters=[{'name': '@user_id', 'value': user_id}],
+            enable_cross_partition_query=True,
+        ))
         normalized_items = [normalize_conversation_unread_state(item) for item in items]
-        return jsonify({
+        payload = {
             'conversations': normalized_items
-        }), 200
+        }
+        if cache_key:
+            set_cached_conversation_payload(
+                cache_key,
+                payload,
+                ttl_seconds=cache_settings.get('ttl_seconds'),
+                settings=settings,
+            )
+        return jsonify(payload), 200
 
 
-    @app.route('/api/conversations/feed', methods=['GET'])
+    @bp.route('/api/conversations/feed', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -978,6 +1131,29 @@ def register_route_backend_conversations(app):
             source_offsets = get_conversation_feed_source_offsets(cursor_data) if cursor_is_compatible else {}
             include_priority = not cursor_is_compatible
 
+            settings = get_settings()
+            cache_settings = get_conversation_cache_settings(settings)
+            access_parameters = _build_conversation_cache_access_parameters(user_id)
+            feed_cache_parameters = {
+                "search_term": search_term,
+                "include_hidden": include_hidden,
+                "page_size": page_size,
+                "cursor": request.args.get('cursor') or "",
+                "include_priority": include_priority,
+                "access": access_parameters,
+            }
+            feed_cache_key = None
+            if cache_settings.get('enabled') and access_parameters is not None:
+                feed_cache_key = build_conversation_cache_key(
+                    user_id,
+                    "feed",
+                    parameters=feed_cache_parameters,
+                )
+                if feed_cache_key:
+                    cached_feed_payload = get_cached_conversation_payload(feed_cache_key, settings=settings)
+                    if isinstance(cached_feed_payload, dict) and isinstance(cached_feed_payload.get('conversations'), list):
+                        return jsonify(cached_feed_payload), 200
+
             feed_payload = _build_conversation_feed(
                 user_id=user_id,
                 page_size=page_size,
@@ -988,17 +1164,24 @@ def register_route_backend_conversations(app):
             )
             feed_payload['search_term'] = search_term
             feed_payload['include_hidden'] = include_hidden
+            if feed_cache_key:
+                set_cached_conversation_payload(
+                    feed_cache_key,
+                    feed_payload,
+                    ttl_seconds=cache_settings.get('ttl_seconds'),
+                    settings=settings,
+                )
             return jsonify(feed_payload), 200
         except Exception as exc:
             log_event(
-                f'[ConversationFeed] Failed to load feed: {exc}',
+                f'[CONVERSATION_FEED] Failed to load feed: {exc}',
                 level=logging.ERROR,
                 exceptionTraceback=True,
             )
             return jsonify({'error': 'Failed to load conversations'}), 500
 
 
-    @app.route('/api/create_conversation', methods=['POST'])
+    @bp.route('/api/create_conversation', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -1012,13 +1195,98 @@ def register_route_backend_conversations(app):
             data.get('initial_message') or data.get('message') or data.get('title') or ''
         )
         conversation_item = create_personal_conversation_for_current_user(title=initial_title)
+        bump_conversation_cache_version(user_id, reason="conversation_created")
 
         return jsonify({
             'conversation_id': conversation_item.get('id'),
             'title': conversation_item.get('title', 'New Conversation')
         }), 200
-    
-    @app.route('/api/conversations/<conversation_id>', methods=['PUT'])
+
+
+    @bp.route('/api/conversations/<conversation_id>/fork', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def fork_conversation(conversation_id):
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+
+        request_payload = request.get_json(silent=True) or {}
+        selected_message_id = str(request_payload.get('message_id') or '').strip()
+        if not selected_message_id:
+            return jsonify({'error': 'A persisted assistant message is required'}), 400
+
+        try:
+            source_conversation = _authorize_personal_conversation_read(user_id, conversation_id)
+        except PermissionError:
+            return jsonify({'error': 'Forbidden'}), 403
+        except LookupError:
+            return jsonify({'error': 'The source conversation was not found'}), 404
+
+        try:
+            fork_result = fork_personal_conversation_for_user(
+                source_conversation=source_conversation,
+                selected_message_id=selected_message_id,
+                user_id=user_id,
+            )
+            fork_conversation = fork_result['conversation']
+            try:
+                bump_conversation_cache_version(user_id, reason="conversation_forked")
+            except Exception as cache_error:
+                log_event(
+                    f'[CONVERSATION_FORK] Fork created but cache invalidation failed: {cache_error}',
+                    level=logging.WARNING,
+                    extra={
+                        'fork_conversation_id': fork_conversation['id'],
+                        'user_id': user_id,
+                    },
+                )
+            return jsonify({
+                'conversation_id': fork_conversation['id'],
+                'title': fork_conversation['title'],
+                'message_count': fork_result['message_count'],
+            }), 201
+        except LookupError:
+            return jsonify({'error': 'The selected assistant message was not found'}), 404
+        except ValueError as validation_error:
+            log_event(
+                f'[CONVERSATION_FORK] Validation failed while creating conversation fork: {validation_error}',
+                level=logging.WARNING,
+                exceptionTraceback=True,
+                extra={
+                    'source_conversation_id': conversation_id,
+                    'selected_message_id': selected_message_id,
+                    'user_id': user_id,
+                },
+            )
+            return jsonify({'error': 'Invalid request'}), 400
+        except ConversationForkConflictError as conflict_error:
+            log_event(
+                f'[CONVERSATION_FORK] Conflict while creating conversation fork: {conflict_error}',
+                level=logging.WARNING,
+                extra={
+                    'source_conversation_id': conversation_id,
+                    'selected_message_id': selected_message_id,
+                    'user_id': user_id,
+                },
+            )
+            return jsonify({'error': 'Conversation fork conflict'}), 409
+        except Exception as error:
+            log_event(
+                f'[CONVERSATION_FORK] Failed to create conversation fork: {error}',
+                level=logging.ERROR,
+                exceptionTraceback=True,
+                extra={
+                    'source_conversation_id': conversation_id,
+                    'selected_message_id': selected_message_id,
+                    'user_id': user_id,
+                },
+            )
+            return jsonify({'error': 'Failed to fork conversation'}), 500
+
+
+    @bp.route('/api/conversations/<conversation_id>', methods=['PUT'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -1053,6 +1321,7 @@ def register_route_backend_conversations(app):
 
             # Write back to Cosmos DB
             cosmos_conversations_container.upsert_item(conversation_item)
+            bump_conversation_cache_version(user_id, reason="conversation_title_updated")
 
             return jsonify({
                 'message': 'Conversation updated', 
@@ -1065,7 +1334,7 @@ def register_route_backend_conversations(app):
             print(e)
             return jsonify({'error': 'Failed to update conversation'}), 500
         
-    @app.route('/api/conversations/<conversation_id>', methods=['DELETE'])
+    @bp.route('/api/conversations/<conversation_id>', methods=['DELETE'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -1134,13 +1403,13 @@ def register_route_backend_conversations(app):
                     invalidate_personal_search_cache(conversation_item.get('user_id'))
                 if workspace_delete_result.get('failed_documents'):
                     log_event(
-                        f"[ConversationDelete] Failed to delete some selected linked workspace documents for {conversation_id}",
+                        f"[CONVERSATION_DELETE] Failed to delete some selected linked workspace documents for {conversation_id}",
                         workspace_delete_result,
                         level=logging.WARNING,
                     )
             except Exception as workspace_delete_error:
                 log_event(
-                    f"[ConversationDelete] Failed to delete selected linked workspace documents for {conversation_id}: {workspace_delete_error}",
+                    f"[CONVERSATION_DELETE] Failed to delete selected linked workspace documents for {conversation_id}: {workspace_delete_error}",
                     level=logging.WARNING,
                     exceptionTraceback=True,
                 )
@@ -1183,6 +1452,7 @@ def register_route_backend_conversations(app):
                 item=conversation_id,
                 partition_key=conversation_id
             )
+            bump_conversation_cache_version(user_id, reason="conversation_deleted")
             # TODO: Delete any facts that were stored with this conversation.
         except Exception as e:
             return jsonify({
@@ -1193,7 +1463,7 @@ def register_route_backend_conversations(app):
             "success": True
         }), 200
         
-    @app.route('/api/delete_multiple_conversations', methods=['POST'])
+    @bp.route('/api/delete_multiple_conversations', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -1289,14 +1559,17 @@ def register_route_backend_conversations(app):
             except Exception as e:
                 print(f"Error deleting conversation {conversation_id}: {str(e)}")
                 failed_ids.append(conversation_id)
-        
+
+        if success_count:
+            bump_conversation_cache_version(user_id, reason="conversations_bulk_deleted")
+
         return jsonify({
             "success": True,
             "deleted_count": success_count,
             "failed_ids": failed_ids
         }), 200
 
-    @app.route('/api/conversations/<conversation_id>/pin', methods=['POST'])
+    @bp.route('/api/conversations/<conversation_id>/pin', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -1326,6 +1599,7 @@ def register_route_backend_conversations(app):
             
             # Update in Cosmos DB
             cosmos_conversations_container.upsert_item(conversation_item)
+            bump_conversation_cache_version(user_id, reason="conversation_pin_toggled")
             
             return jsonify({
                 'success': True,
@@ -1338,7 +1612,7 @@ def register_route_backend_conversations(app):
             print(f"Error toggling conversation pin: {e}")
             return jsonify({'error': 'Failed to toggle pin status'}), 500
     
-    @app.route('/api/conversations/<conversation_id>/hide', methods=['POST'])
+    @bp.route('/api/conversations/<conversation_id>/hide', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -1368,6 +1642,7 @@ def register_route_backend_conversations(app):
             
             # Update in Cosmos DB
             cosmos_conversations_container.upsert_item(conversation_item)
+            bump_conversation_cache_version(user_id, reason="conversation_hide_toggled")
             
             return jsonify({
                 'success': True,
@@ -1380,7 +1655,7 @@ def register_route_backend_conversations(app):
             print(f"Error toggling conversation hide: {e}")
             return jsonify({'error': 'Failed to toggle hide status'}), 500
 
-    @app.route('/api/conversations/bulk-pin', methods=['POST'])
+    @bp.route('/api/conversations/bulk-pin', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -1430,7 +1705,10 @@ def register_route_backend_conversations(app):
             except Exception as e:
                 print(f"Error updating conversation {conversation_id}: {str(e)}")
                 failed_ids.append(conversation_id)
-        
+
+        if success_count:
+            bump_conversation_cache_version(user_id, reason="conversations_bulk_pin_updated")
+
         return jsonify({
             "success": True,
             "updated_count": success_count,
@@ -1438,7 +1716,7 @@ def register_route_backend_conversations(app):
             "action": pin_action
         }), 200
 
-    @app.route('/api/conversations/bulk-hide', methods=['POST'])
+    @bp.route('/api/conversations/bulk-hide', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -1488,7 +1766,10 @@ def register_route_backend_conversations(app):
             except Exception as e:
                 print(f"Error updating conversation {conversation_id}: {str(e)}")
                 failed_ids.append(conversation_id)
-        
+
+        if success_count:
+            bump_conversation_cache_version(user_id, reason="conversations_bulk_hide_updated")
+
         return jsonify({
             "success": True,
             "updated_count": success_count,
@@ -1496,7 +1777,7 @@ def register_route_backend_conversations(app):
             "action": hide_action
         }), 200
 
-    @app.route('/api/conversations/<conversation_id>/metadata', methods=['GET'])
+    @bp.route('/api/conversations/<conversation_id>/metadata', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -1523,6 +1804,7 @@ def register_route_backend_conversations(app):
             _, updated = normalize_chat_type(conversation_item)
             if updated:
                 cosmos_conversations_container.upsert_item(conversation_item)
+                invalidate_conversation_cache_for_item(conversation_item, reason="conversation_chat_type_normalized")
 
             linked_workspace_documents = []
             try:
@@ -1532,7 +1814,7 @@ def register_route_backend_conversations(app):
                 )
             except Exception as linked_documents_error:
                 log_event(
-                    f"[ConversationMetadata] Failed to list linked workspace documents for {conversation_id}: {linked_documents_error}",
+                    f"[CONVERSATION_METADATA] Failed to list linked workspace documents for {conversation_id}: {linked_documents_error}",
                     level=logging.WARNING,
                     exceptionTraceback=True,
                 )
@@ -1566,7 +1848,7 @@ def register_route_backend_conversations(app):
             print(f"Error retrieving conversation metadata: {e}")
             return jsonify({'error': 'Failed to retrieve conversation metadata'}), 500
 
-    @app.route('/api/conversations/<conversation_id>/mark-read', methods=['POST'])
+    @bp.route('/api/conversations/<conversation_id>/mark-read', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -1586,8 +1868,15 @@ def register_route_backend_conversations(app):
             if conversation_item.get('user_id') != user_id:
                 return jsonify({'error': 'Forbidden'}), 403
 
-            conversation_item = clear_conversation_unread(conversation_item)
-            cosmos_conversations_container.upsert_item(conversation_item)
+            conversation_state_changed = (
+                conversation_item.get('has_unread_assistant_response') is True
+                or conversation_item.get('last_unread_assistant_message_id') is not None
+                or conversation_item.get('last_unread_assistant_at') is not None
+            )
+            if conversation_state_changed:
+                conversation_item = clear_conversation_unread(conversation_item)
+                cosmos_conversations_container.upsert_item(conversation_item)
+                bump_conversation_cache_version(user_id, reason="conversation_marked_read")
 
             notifications_marked_read = mark_chat_response_notifications_read_for_conversation(
                 user_id,
@@ -1599,6 +1888,7 @@ def register_route_backend_conversations(app):
                 'conversation_id': conversation_id,
                 'has_unread_assistant_response': False,
                 'notifications_marked_read': notifications_marked_read,
+                'conversation_state_changed': conversation_state_changed,
             }), 200
         except CosmosResourceNotFoundError:
             return jsonify({'error': 'Conversation not found'}), 404
@@ -1606,7 +1896,7 @@ def register_route_backend_conversations(app):
             debug_print(f"Error marking conversation {conversation_id} as read: {e}")
             return jsonify({'error': 'Failed to mark conversation as read'}), 500
 
-    @app.route('/api/conversations/<conversation_id>/summary', methods=['POST'])
+    @bp.route('/api/conversations/<conversation_id>/summary', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -1723,7 +2013,7 @@ def register_route_backend_conversations(app):
             debug_print(f"Summary generation API error: {exc}")
             return jsonify({'error': 'Summary generation failed'}), 500
 
-    @app.route('/api/conversations/<conversation_id>/scope_lock', methods=['PATCH'])
+    @bp.route('/api/conversations/<conversation_id>/scope_lock', methods=['PATCH'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -1758,6 +2048,7 @@ def register_route_backend_conversations(app):
                 user_id,
                 new_value,
             )
+            invalidate_conversation_cache_for_item(conversation_item, reason="conversation_scope_lock_updated")
 
             return jsonify({
                 "success": True,
@@ -1772,7 +2063,7 @@ def register_route_backend_conversations(app):
             debug_print(f"Error updating scope lock: {e}")
             return jsonify({'error': 'Failed to update scope lock'}), 500
 
-    @app.route('/api/conversations/classifications', methods=['GET'])
+    @bp.route('/api/conversations/classifications', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -1813,7 +2104,7 @@ def register_route_backend_conversations(app):
             print(f"Error fetching classifications: {e}")
             return jsonify({'error': 'Failed to fetch classifications'}), 500
     
-    @app.route('/api/search_conversations', methods=['POST'])
+    @bp.route('/api/search_conversations', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -1844,6 +2135,34 @@ def register_route_backend_conversations(app):
                     'success': False,
                     'error': 'Search term must be at least 3 characters'
                 }), 400
+
+            settings = get_settings()
+            cache_settings = get_conversation_cache_settings(settings)
+            access_parameters = _build_conversation_cache_access_parameters(user_id)
+            search_cache_parameters = {
+                'search_term': search_term,
+                'match_mode': match_mode,
+                'date_from': date_from,
+                'date_to': date_to,
+                'chat_types': sorted([str(item) for item in chat_types or []]),
+                'classifications': sorted([str(item) for item in classifications or []]),
+                'has_files': bool(has_files),
+                'has_images': bool(has_images),
+                'page': page,
+                'per_page': per_page,
+                'access': access_parameters,
+            }
+            search_cache_key = None
+            if cache_settings.get('enabled') and access_parameters is not None:
+                search_cache_key = build_conversation_cache_key(
+                    user_id,
+                    "search",
+                    parameters=search_cache_parameters,
+                )
+                if search_cache_key:
+                    cached_search_payload = get_cached_conversation_payload(search_cache_key, settings=settings)
+                    if isinstance(cached_search_payload, dict) and cached_search_payload.get('success') is True:
+                        return jsonify(cached_search_payload), 200
             
             selected_chat_types = _expand_search_chat_type_filters(chat_types)
 
@@ -2000,24 +2319,32 @@ def register_route_backend_conversations(app):
             end_idx = start_idx + per_page
             paginated_results = results[start_idx:end_idx]
             
-            return jsonify({
+            payload = {
                 'success': True,
                 'total_results': total_results,
                 'page': page,
                 'total_pages': total_pages,
                 'per_page': per_page,
                 'results': paginated_results
-            }), 200
+            }
+            if search_cache_key:
+                set_cached_conversation_payload(
+                    search_cache_key,
+                    payload,
+                    ttl_seconds=cache_settings.get('ttl_seconds'),
+                    settings=settings,
+                )
+            return jsonify(payload), 200
             
         except Exception as e:
             log_event(
-                f'[ConversationSearch] Failed to search conversations: {e}',
+                f'[CONVERSATION_SEARCH] Failed to search conversations: {e}',
                 level=logging.ERROR,
                 exceptionTraceback=True,
             )
             return jsonify({'error': 'Failed to search conversations'}), 500
     
-    @app.route('/api/user-settings/search-history', methods=['GET'])
+    @bp.route('/api/user-settings/search-history', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -2037,7 +2364,7 @@ def register_route_backend_conversations(app):
             print(f"Error retrieving search history: {e}")
             return jsonify({'error': 'Failed to retrieve search history'}), 500
     
-    @app.route('/api/user-settings/search-history', methods=['POST'])
+    @bp.route('/api/user-settings/search-history', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -2063,7 +2390,7 @@ def register_route_backend_conversations(app):
             print(f"Error saving search to history: {e}")
             return jsonify({'error': 'Failed to save search to history'}), 500
     
-    @app.route('/api/user-settings/search-history', methods=['DELETE'])
+    @bp.route('/api/user-settings/search-history', methods=['DELETE'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -2086,7 +2413,7 @@ def register_route_backend_conversations(app):
             print(f"Error clearing search history: {e}")
             return jsonify({'error': 'Failed to clear search history'}), 500
     
-    @app.route('/api/message/<message_id>', methods=['DELETE'])
+    @bp.route('/api/message/<message_id>', methods=['DELETE'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -2281,7 +2608,12 @@ def register_route_backend_conversations(app):
                     cosmos_messages_container.delete_item(msg_id, partition_key=conversation_id)
                 
                 deleted_message_ids.append(msg_id)
-            
+
+            _invalidate_conversation_cache_after_message_mutation(
+                conversation_id,
+                user_id,
+                "message_deleted",
+            )
             return jsonify({
                 'success': True,
                 'deleted_message_ids': deleted_message_ids,
@@ -2293,7 +2625,7 @@ def register_route_backend_conversations(app):
             import traceback
             traceback.print_exc()
             return jsonify({'error': 'Failed to delete message'}), 500
-    @app.route('/api/message/<message_id>/retry', methods=['POST'])
+    @bp.route('/api/message/<message_id>/retry', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -2454,18 +2786,20 @@ def register_route_backend_conversations(app):
                 'metadata': new_metadata
             }
             cosmos_messages_container.upsert_item(new_user_message)
-            
+
+            _invalidate_conversation_cache_after_message_mutation(
+                conversation_id,
+                user_id,
+                "message_retry_created",
+            )
             # Build chat request parameters from original message metadata
+            replayed_document_context = _build_replayed_document_context(original_metadata)
             chat_request = {
                 'message': user_content,
                 'conversation_id': conversation_id,
                 'model_deployment': selected_model or original_metadata.get('model_selection', {}).get('selected_model'),
                 'reasoning_effort': reasoning_effort or original_metadata.get('reasoning_effort'),
-                'hybrid_search': original_metadata.get('document_search', {}).get('enabled', False),
-                'selected_document_id': original_metadata.get('document_search', {}).get('document_id'),
-                'doc_scope': original_metadata.get('document_search', {}).get('scope'),
-                'top_n': original_metadata.get('document_search', {}).get('top_n'),
-                'classifications': original_metadata.get('document_search', {}).get('classifications'),
+                **replayed_document_context,
                 'image_generation': original_metadata.get('image_generation', {}).get('enabled', False),
                 'active_group_id': original_metadata.get('chat_context', {}).get('group_id'),
                 'active_public_workspace_id': original_metadata.get('chat_context', {}).get('public_workspace_id'),
@@ -2507,7 +2841,7 @@ def register_route_backend_conversations(app):
             traceback.print_exc()
             return jsonify({'error': 'Failed to retry message'}), 500
 
-    @app.route('/api/message/<message_id>/edit', methods=['POST'])
+    @bp.route('/api/message/<message_id>/edit', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -2671,19 +3005,21 @@ def register_route_backend_conversations(app):
                 'metadata': new_metadata
             }
             cosmos_messages_container.upsert_item(new_user_message)
-            
+
+            _invalidate_conversation_cache_after_message_mutation(
+                conversation_id,
+                user_id,
+                "message_edit_created",
+            )
             # Build chat request parameters from original message metadata
             # Keep all original settings (model, reasoning, doc search, etc.)
+            replayed_document_context = _build_replayed_document_context(original_metadata)
             chat_request = {
                 'message': edited_content,  # Use edited content
                 'conversation_id': conversation_id,
                 'model_deployment': original_metadata.get('model_selection', {}).get('selected_model'),
                 'reasoning_effort': original_metadata.get('reasoning_effort'),
-                'hybrid_search': original_metadata.get('document_search', {}).get('enabled', False),
-                'selected_document_id': original_metadata.get('document_search', {}).get('document_id'),
-                'doc_scope': original_metadata.get('document_search', {}).get('scope'),
-                'top_n': original_metadata.get('document_search', {}).get('top_n'),
-                'classifications': original_metadata.get('document_search', {}).get('classifications'),
+                **replayed_document_context,
                 'image_generation': original_metadata.get('image_generation', {}).get('enabled', False),
                 'active_group_id': original_metadata.get('chat_context', {}).get('group_id'),
                 'active_public_workspace_id': original_metadata.get('chat_context', {}).get('public_workspace_id'),
@@ -2726,7 +3062,7 @@ def register_route_backend_conversations(app):
             traceback.print_exc()
             return jsonify({'error': 'Failed to edit message'}), 500
 
-    @app.route('/api/message/<message_id>/switch-attempt', methods=['POST'])
+    @bp.route('/api/message/<message_id>/switch-attempt', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -2833,7 +3169,12 @@ def register_route_backend_conversations(app):
                 msg_attempt = msg['metadata']['thread_info'].get('thread_attempt', 0)
                 msg['metadata']['thread_info']['active_thread'] = (msg_attempt == target_attempt)
                 cosmos_messages_container.upsert_item(msg)
-            
+
+            _invalidate_conversation_cache_after_message_mutation(
+                conversation_id,
+                user_id,
+                "message_attempt_switched",
+            )
             return jsonify({
                 'success': True,
                 'target_attempt': target_attempt,

@@ -8,6 +8,7 @@ import { beginStreamingThoughtSession, clearStreamingThoughtSession, handleStrea
 import { destroyInlineCharts, hydrateInlineCharts } from './chat-inline-charts.js';
 import { hydrateInlineImageProposals } from './chat-inline-image-proposals.js';
 import { escapeHtml } from './chat-utils.js';
+import { requestDesktopNotificationPermissionIfNeeded, showDesktopConversationNotification } from './chat-desktop-notifications.js';
 
 let currentStreamController = null;
 let currentStreamContext = null;
@@ -72,6 +73,34 @@ function getStreamingMessageElement(messageId) {
     }
 
     return document.querySelector(`[data-message-id="${messageId}"]`);
+}
+
+function isConversationCurrentlyActive(conversationId) {
+    const normalizedConversationId = String(conversationId || '').trim();
+    return Boolean(normalizedConversationId) && window.currentConversationId === normalizedConversationId;
+}
+
+function markStreamingConversationReadIfActive(conversationId, contextLabel) {
+    if (!isConversationCurrentlyActive(conversationId)) {
+        return;
+    }
+
+    markConversationRead(conversationId, { force: true, suppressErrorToast: true }).catch(error => {
+        console.warn(`Failed to clear unread state after ${contextLabel}:`, error);
+    });
+}
+
+function notifySuccessfulStreamingCompletion(finalData) {
+    if (!window.simpleChatCompletionAudio?.handleCompletion) {
+        return;
+    }
+
+    window.simpleChatCompletionAudio.handleCompletion({
+        conversationId: finalData?.conversation_id,
+        messageId: finalData?.message_id,
+    }, {
+        refreshAdminGate: true,
+    });
 }
 
 function buildDefaultCancelEndpoint(conversationId) {
@@ -320,6 +349,20 @@ function updateStreamContextConversation(streamContext, conversationId) {
         streamContext.cancelEndpoint = buildDefaultCancelEndpoint(conversationId);
     }
     setStreamingStopButtonState(streamContext.tempAiMessageId, streamContext.cancelEndpoint ? 'ready' : 'waiting_for_conversation');
+}
+
+function notifyConversationDocumentsMayHaveChanged(conversationId, autoOpen = false) {
+    const normalizedConversationId = String(conversationId || '').trim();
+    if (!normalizedConversationId) {
+        return;
+    }
+
+    window.dispatchEvent(new CustomEvent('chat:conversation-documents-refresh', {
+        detail: {
+            conversationId: normalizedConversationId,
+            autoOpen,
+        },
+    }));
 }
 
 async function requestStreamCancellation(streamContext = currentStreamContext) {
@@ -652,6 +695,7 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
                     data,
                     fallbackAgentInfo
                 );
+                showDesktopConversationNotification(data);
 
                 if (typeof onDone === 'function') {
                     onDone(data);
@@ -898,6 +942,7 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
 
 export function sendMessageWithStreaming(messageData, tempUserMessageId, currentConversationId, options = {}) {
     const { endpoint = '/api/chat/stream' } = options;
+    void requestDesktopNotificationPermissionIfNeeded();
     const tempAiMessageId = createStreamingPlaceholder();
     const recoveryConversationId = currentConversationId || messageData?.conversation_id || window.currentConversationId || null;
 
@@ -1148,11 +1193,7 @@ function finalizeCancelledStreamingMessage(messageId, userMessageId, finalData, 
         renderStoppedContent(messageElement, partialContent);
     }
 
-    if (finalData.conversation_id) {
-        markConversationRead(finalData.conversation_id, { force: true, suppressErrorToast: true }).catch(error => {
-            console.warn('Failed to clear unread state after stream cancellation:', error);
-        });
-    }
+    markStreamingConversationReadIfActive(finalData.conversation_id, 'stream cancellation');
 }
 
 function normalizeFallbackAgentIcon(iconPayload) {
@@ -1230,6 +1271,7 @@ function handleStreamError(messageId, partialContent, errorMessage, errorDetails
 
 function finalizeStreamingMessage(messageId, userMessageId, finalData, fallbackAgentInfo = null) {
     finalData = applyFallbackAgentIcon(finalData, fallbackAgentInfo);
+    notifySuccessfulStreamingCompletion(finalData);
     const messageElement = document.querySelector(`[data-message-id="${messageId}"]`);
     if (!messageElement) return;
 
@@ -1252,11 +1294,8 @@ function finalizeStreamingMessage(messageId, userMessageId, finalData, fallbackA
     }
 
     if (existingFinalMessage) {
-        if (finalData.conversation_id) {
-            markConversationRead(finalData.conversation_id, { force: true, suppressErrorToast: true }).catch(error => {
-                console.warn('Failed to clear unread state after live streaming completion:', error);
-            });
-        }
+        markStreamingConversationReadIfActive(finalData.conversation_id, 'live streaming completion');
+        notifyConversationDocumentsMayHaveChanged(finalData.conversation_id, Boolean(finalData.augmented));
         return;
     }
 
@@ -1285,6 +1324,7 @@ function finalizeStreamingMessage(messageId, userMessageId, finalData, fallbackA
         if (finalData.reload_messages && finalData.conversation_id && typeof window.chatMessages?.loadMessages === 'function') {
             window.chatMessages.loadMessages(finalData.conversation_id);
         }
+        notifyConversationDocumentsMayHaveChanged(finalData.conversation_id, Boolean(finalData.augmented));
         return;
     }
 
@@ -1307,7 +1347,7 @@ function finalizeStreamingMessage(messageId, userMessageId, finalData, fallbackA
     );
     
     // Update conversation if needed
-    if (finalData.conversation_id && window.currentConversationId !== finalData.conversation_id) {
+    if (finalData.conversation_id && !window.currentConversationId) {
         window.currentConversationId = finalData.conversation_id;
     }
     
@@ -1348,11 +1388,8 @@ function finalizeStreamingMessage(messageId, userMessageId, finalData, fallbackA
         window.chatMessages.loadMessages(finalData.conversation_id);
     }
 
-    if (finalData.conversation_id) {
-        markConversationRead(finalData.conversation_id, { force: true, suppressErrorToast: true }).catch(error => {
-            console.warn('Failed to clear unread state after live streaming completion:', error);
-        });
-    }
+    notifyConversationDocumentsMayHaveChanged(finalData.conversation_id, Boolean(finalData.augmented));
+    markStreamingConversationReadIfActive(finalData.conversation_id, 'live streaming completion');
 }
 
 export function cancelStreaming() {

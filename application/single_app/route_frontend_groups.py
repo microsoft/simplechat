@@ -5,8 +5,8 @@ from functions_authentication import *
 from functions_settings import *
 from swagger_wrapper import swagger_route, get_auth_security
 
-def register_route_frontend_groups(app):
-    @app.route("/my_groups", methods=["GET"])
+def register_route_frontend_groups(bp):
+    @bp.route("/my_groups", methods=["GET"])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -15,9 +15,9 @@ def register_route_frontend_groups(app):
         """
         Redirects the legacy My Groups page to the profile Groups tab.
         """
-        return redirect(url_for('profile', tab='groups'))
+        return redirect(url_for('frontend_profile.profile', tab='groups'))
 
-    @app.route("/groups/<group_id>", methods=["GET"])
+    @bp.route("/groups/<group_id>", methods=["GET"])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required

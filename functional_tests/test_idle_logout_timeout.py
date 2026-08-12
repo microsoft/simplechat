@@ -2,7 +2,7 @@
 # test_idle_logout_timeout.py
 """
 Functional test for idle session auto-logout.
-Version: v0.240.002
+Version: v0.250.004
 Implemented in: v0.240.002
 
 This test ensures that server-side idle timeout enforcement and
@@ -240,7 +240,7 @@ def test_server_idle_timeout_wiring():
             and node.args[0].func.id == "url_for"
             and len(node.args[0].args) == 1
             and isinstance(node.args[0].args[0], ast.Constant)
-            and node.args[0].args[0].value == "local_logout"
+            and node.args[0].args[0].value == "frontend_authentication.local_logout"
         ):
             has_local_logout_redirect = True
 
@@ -282,7 +282,7 @@ def test_server_idle_timeout_wiring():
             break
 
     assert has_is_idle_timeout_enabled_guard, "Missing 'if not is_idle_timeout_enabled(request_settings)' guard"
-    assert has_local_logout_redirect, "Missing redirect(url_for('local_logout')) in enforce_idle_session_timeout"
+    assert has_local_logout_redirect, "Missing redirect(url_for('frontend_authentication.local_logout')) in enforce_idle_session_timeout"
     assert has_api_activity_seed_assignment, "Missing API-path last_activity_epoch seeding in enforce_idle_session_timeout"
 
     session_heartbeat_def = _find_top_level_function(app_tree, "session_heartbeat")
@@ -301,7 +301,7 @@ def test_server_idle_timeout_wiring():
     assert has_heartbeat_refresh_call, "Missing get_idle_timeout_settings(get_request_settings()) in session_heartbeat"
 
     required_config_markers = [
-        "VERSION = \"0.240.002\""
+        "VERSION = \"0.250.004\""
     ]
 
     missing_config_markers = [marker for marker in required_config_markers if marker not in config_content]
@@ -364,7 +364,7 @@ def test_server_idle_timeout_wiring():
             and node.func.id == "url_for"
             and len(node.args) == 1
             and isinstance(node.args[0], ast.Constant)
-            and node.args[0].value == "index"
+            and node.args[0].value == "public_app.index"
         ):
             if len(node.keywords) == 0:
                 has_relative_index_url_for = True
@@ -379,8 +379,8 @@ def test_server_idle_timeout_wiring():
             if has_external_keyword:
                 has_external_index_url_for = True
 
-    assert has_relative_index_url_for, "Missing relative url_for('index') fallback in local_logout"
-    assert not has_external_index_url_for, "Unexpected url_for('index', _external=True) in local_logout"
+    assert has_relative_index_url_for, "Missing relative url_for('public_app.index') fallback in local_logout"
+    assert not has_external_index_url_for, "Unexpected url_for('public_app.index', _external=True) in local_logout"
 
     print("✅ Server-side idle-timeout wiring is present")
 
@@ -403,7 +403,7 @@ def test_base_template_warning_modal_wiring():
         "localLogoutUrl",
         "fullSsoLogoutUrl",
         "'enabled': idle_timeout_enabled | default(false)",
-        "| tojson | safe",
+        "} | tojson }}",
         "session_heartbeat"
     ]
 

@@ -91,8 +91,8 @@ def _normalize_access_test_scopes(raw_scopes):
     return normalized_scopes, invalid_scopes
 
 
-def register_route_backend_msgraph_pending_actions(app):
-    @app.route('/api/msgraph/test-access', methods=['POST'])
+def register_route_backend_msgraph_pending_actions(bp):
+    @bp.route('/api/msgraph/test-access', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -132,7 +132,7 @@ def register_route_backend_msgraph_pending_actions(app):
         )
         return _error_response(error_payload, default_status=401)
 
-    @app.route('/api/msgraph/pending-actions', methods=['GET'])
+    @bp.route('/api/msgraph/pending-actions', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -154,7 +154,7 @@ def register_route_backend_msgraph_pending_actions(app):
         })
 
 
-    @app.route('/api/msgraph/pending-actions/<action_id>', methods=['GET'])
+    @bp.route('/api/msgraph/pending-actions/<action_id>', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -166,7 +166,7 @@ def register_route_backend_msgraph_pending_actions(app):
         return jsonify(build_pending_action_response(action))
 
 
-    @app.route('/api/msgraph/pending-actions/<action_id>/approve', methods=['POST'])
+    @bp.route('/api/msgraph/pending-actions/<action_id>/approve', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -176,7 +176,7 @@ def register_route_backend_msgraph_pending_actions(app):
             action, error = approve_msgraph_pending_action(user_id, action_id)
         except Exception as exc:
             log_event(
-                f'[MSGraphPendingActionRoutes] Failed to approve pending action: {exc}',
+                f'[MS_GRAPH_PENDING_ACTION_ROUTES] Failed to approve pending action: {exc}',
                 extra={'user_id': user_id, 'action_id': action_id},
                 level=logging.ERROR,
                 exceptionTraceback=True,
@@ -188,7 +188,7 @@ def register_route_backend_msgraph_pending_actions(app):
         return jsonify(build_pending_action_response(action))
 
 
-    @app.route('/api/msgraph/pending-actions/<action_id>/send-now', methods=['POST'])
+    @bp.route('/api/msgraph/pending-actions/<action_id>/send-now', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -198,7 +198,7 @@ def register_route_backend_msgraph_pending_actions(app):
             action, error = approve_msgraph_pending_action(user_id, action_id)
         except Exception as exc:
             log_event(
-                f'[MSGraphPendingActionRoutes] Failed to send pending action now: {exc}',
+                f'[MS_GRAPH_PENDING_ACTION_ROUTES] Failed to send pending action now: {exc}',
                 extra={'user_id': user_id, 'action_id': action_id},
                 level=logging.ERROR,
                 exceptionTraceback=True,
@@ -210,7 +210,7 @@ def register_route_backend_msgraph_pending_actions(app):
         return jsonify(build_pending_action_response(action))
 
 
-    @app.route('/api/msgraph/pending-actions/<action_id>/cancel', methods=['POST'])
+    @bp.route('/api/msgraph/pending-actions/<action_id>/cancel', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -220,7 +220,7 @@ def register_route_backend_msgraph_pending_actions(app):
             action, error = cancel_msgraph_pending_action(user_id, action_id)
         except Exception as exc:
             log_event(
-                f'[MSGraphPendingActionRoutes] Failed to cancel pending action: {exc}',
+                f'[MS_GRAPH_PENDING_ACTION_ROUTES] Failed to cancel pending action: {exc}',
                 extra={'user_id': user_id, 'action_id': action_id},
                 level=logging.ERROR,
                 exceptionTraceback=True,

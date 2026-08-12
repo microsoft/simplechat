@@ -12,8 +12,8 @@ from functions_file_sync import is_file_sync_enabled_for_user
 from functions_source_review import is_url_access_enabled_for_user
 from swagger_wrapper import swagger_route, get_auth_security
 
-def register_route_frontend_workspace(app):
-    @app.route('/workspace', methods=['GET'])
+def register_route_frontend_workspace(bp):
+    @bp.route('/workspace', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -41,7 +41,7 @@ def register_route_frontend_workspace(app):
         file_sync_enabled = is_file_sync_enabled_for_user(settings, user_id, user_info.get('email'), user_info=user_info) if user_id else False
         if not user_id:
             print("User not authenticated.")
-            return redirect(url_for('login'))
+            return redirect(url_for('frontend_authentication.login'))
         
         query = """
             SELECT VALUE COUNT(1)
@@ -62,12 +62,12 @@ def register_route_frontend_workspace(app):
         )
         legacy_count = legacy_docs_from_cosmos[0] if legacy_docs_from_cosmos else 0
         
-        # Get allowed extensions from central function and build allowed extensions string
-        allowed_extensions = sorted(get_allowed_extensions(
-            enable_video=enable_video_file_support in [True, 'True', 'true'],
-            enable_audio=enable_audio_file_support in [True, 'True', 'true']
-        ))
-        allowed_extensions_str = "Allowed: " + ", ".join(allowed_extensions)
+        enable_video_uploads = enable_video_file_support in [True, 'True', 'true']
+        enable_audio_uploads = enable_audio_file_support in [True, 'True', 'true']
+        allowed_extension_categories = get_allowed_extension_categories(
+            enable_video=enable_video_uploads,
+            enable_audio=enable_audio_uploads
+        )
         
         workspace_governance = {
             "user_agents": is_governance_access_allowed("governance_user_agents", user_id),
@@ -95,7 +95,7 @@ def register_route_frontend_workspace(app):
             ]
         except Exception as exc:
             log_event(
-                f'[WorkspaceRoute] Failed to load workflow group picker options: {exc}',
+                f'[WORKSPACE_ROUTE] Failed to load workflow group picker options: {exc}',
                 extra={'user_id': user_id},
                 level=logging.WARNING,
                 exceptionTraceback=True,
@@ -113,7 +113,7 @@ def register_route_frontend_workspace(app):
             ]
         except Exception as exc:
             log_event(
-                f'[WorkspaceRoute] Failed to load workflow public picker options: {exc}',
+                f'[WORKSPACE_ROUTE] Failed to load workflow public picker options: {exc}',
                 extra={'user_id': user_id},
                 level=logging.WARNING,
                 exceptionTraceback=True,
@@ -128,7 +128,7 @@ def register_route_frontend_workspace(app):
             enable_audio_file_support=enable_audio_file_support,
             enable_file_sharing=enable_file_sharing,
             legacy_docs_count=legacy_count,
-            allowed_extensions=allowed_extensions_str,
+            allowed_extension_categories=allowed_extension_categories,
             personal_model_endpoints=personal_model_endpoints,
             global_model_endpoints=global_model_endpoints,
             file_sync_enabled=file_sync_enabled,
@@ -137,4 +137,4 @@ def register_route_frontend_workspace(app):
             workspace_governance=workspace_governance
         )
 
-    
+

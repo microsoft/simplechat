@@ -15,6 +15,7 @@ import sys
 import traceback
 import uuid
 from pathlib import Path
+from test_support.versioning import assert_app_version_at_least
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -181,7 +182,7 @@ def test_settings_and_admin_ui_wiring():
     for marker in required_admin_js_markers:
         assert marker in admin_js_source, f"Missing admin UI cleanup marker: {marker}"
 
-    assert 'VERSION = "0.241.201"' in config_source, "Expected config.py version 0.241.201"
+    assert_app_version_at_least("0.241.201")
 
     print("Group workflow assignment cleanup wiring verified.")
 

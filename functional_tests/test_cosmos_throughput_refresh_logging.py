@@ -1,13 +1,15 @@
-#!/usr/bin/env python3
 # test_cosmos_throughput_refresh_logging.py
+#!/usr/bin/env python3
 """
 Functional test for Cosmos throughput refresh logging.
-Version: 0.241.149
+Version: 0.250.037
 Implemented in: 0.241.149
+Read-only status refresh fixed in: 0.250.037
 
 This test ensures that Admin Settings Cosmos throughput refreshes emit
 route-level and helper-level backend logs with a refresh correlation ID and
-phase timing markers.
+phase timing markers, while status refresh and no-op autoscale checks do not
+persist runtime status into app settings.
 """
 
 import os
@@ -60,10 +62,35 @@ def test_refresh_helper_logs_backend_phases():
         assert marker in source, f"Missing helper logging marker: {marker}"
 
 
+def test_status_refresh_does_not_persist_runtime_settings():
+    """The admin Cosmos throughput status GET should be read-only."""
+    source = _read_file(ROUTE_FILE)
+    route_marker = "@bp.route('/api/admin/settings/cosmos-throughput/status', methods=['GET'])"
+    next_route_marker = "@bp.route('/api/admin/settings/cosmos-throughput/validate-access'"
+    route_start = source.index(route_marker)
+    route_end = source.index(next_route_marker, route_start)
+    route_source = source[route_start:route_end]
+
+    assert "get_cosmos_throughput_status(" in route_source
+    assert "update_settings(" not in route_source
+    assert "build_runtime_update(" not in route_source
+
+
+def test_noop_autoscale_checks_do_not_build_settings_update():
+    """Background autoscale should only return settings_update after an actual scale action."""
+    source = _read_file(HELPER_FILE)
+
+    assert "settings_update = None" in source
+    assert "if scale_result:" in source
+    assert "settings_update = build_runtime_update(status, decision, scale_result, settings=settings)" in source
+
+
 if __name__ == "__main__":
     tests = [
         test_refresh_route_logs_request_lifecycle,
         test_refresh_helper_logs_backend_phases,
+        test_status_refresh_does_not_persist_runtime_settings,
+        test_noop_autoscale_checks_do_not_build_settings_update,
     ]
     results = []
     for test in tests:

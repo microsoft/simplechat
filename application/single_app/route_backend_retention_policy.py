@@ -9,9 +9,9 @@ from swagger_wrapper import swagger_route, get_auth_security
 from functions_debug import debug_print
 
 
-def register_route_backend_retention_policy(app):
+def register_route_backend_retention_policy(bp):
     
-    @app.route('/api/admin/retention-policy/settings', methods=['GET'])
+    @bp.route('/api/admin/retention-policy/settings', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @admin_required
@@ -47,7 +47,7 @@ def register_route_backend_retention_policy(app):
             }), 500
     
     
-    @app.route('/api/admin/retention-policy/settings', methods=['POST'])
+    @bp.route('/api/admin/retention-policy/settings', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @admin_required
@@ -107,7 +107,7 @@ def register_route_backend_retention_policy(app):
             }), 500
     
     
-    @app.route('/api/retention-policy/defaults/<workspace_type>', methods=['GET'])
+    @bp.route('/api/retention-policy/defaults/<workspace_type>', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -176,7 +176,7 @@ def register_route_backend_retention_policy(app):
             }), 500
     
     
-    @app.route('/api/admin/retention-policy/execute', methods=['POST'])
+    @bp.route('/api/admin/retention-policy/execute', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @admin_required
@@ -225,7 +225,7 @@ def register_route_backend_retention_policy(app):
             }), 500
     
     
-    @app.route('/api/admin/retention-policy/force-push', methods=['POST'])
+    @bp.route('/api/admin/retention-policy/force-push', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @admin_required
@@ -385,7 +385,7 @@ def register_route_backend_retention_policy(app):
             }), 500
     
     
-    @app.route('/api/retention-policy/user', methods=['POST'])
+    @bp.route('/api/retention-policy/user', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -476,7 +476,7 @@ def register_route_backend_retention_policy(app):
             }), 500
     
     
-    @app.route('/api/retention-policy/group/<group_id>', methods=['POST'])
+    @bp.route('/api/retention-policy/group/<group_id>', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -586,7 +586,7 @@ def register_route_backend_retention_policy(app):
             }), 500
     
     
-    @app.route('/api/retention-policy/public/<public_workspace_id>', methods=['POST'])
+    @bp.route('/api/retention-policy/public/<public_workspace_id>', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required

@@ -11,6 +11,7 @@ thought tracker.
 """
 
 import os
+from test_support.versioning import assert_app_version_at_least
 
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -77,7 +78,7 @@ def test_version_and_fix_documentation_alignment():
 
     fix_doc_content = read_file_text(FIX_DOC)
 
-    assert read_config_version() == '0.241.004'
+    assert_app_version_at_least("0.241.004")
     assert 'Fixed/Implemented in version: **0.241.004**' in fix_doc_content
     assert 'Related config.py update: `VERSION = "0.241.004"`' in fix_doc_content
     assert 'thought_tracker' in fix_doc_content

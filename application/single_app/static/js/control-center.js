@@ -4769,27 +4769,50 @@ async function loadRefreshStatus() {
     
     try {
         const response = await fetch('/api/admin/control-center/refresh-status');
-        if (response.ok) {
-            const result = await response.json();
-            const lastRefreshElement = document.getElementById('lastRefreshTime');
-            
-            if (lastRefreshElement) {
-                if (result.last_refresh_formatted) {
-                    lastRefreshElement.textContent = result.last_refresh_formatted;
-                    if (lastRefreshElement.parentElement) {
-                        lastRefreshElement.parentElement.style.display = '';
-                    }
-                } else {
-                    lastRefreshElement.textContent = 'Never';
-                    if (lastRefreshElement.parentElement) {
-                        lastRefreshElement.parentElement.style.display = '';
+        if (!response.ok) {
+            console.error('Failed to load refresh status:', response.status);
+            return;
+        }
+
+        const result = await response.json();
+        const resolvedViewerTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        const viewerTimezone = resolvedViewerTimezone || 'local time';
+        const timestampFormatOptions = {
+            dateStyle: 'medium',
+            timeStyle: 'short',
+        };
+        if (resolvedViewerTimezone) {
+            timestampFormatOptions.timeZone = resolvedViewerTimezone;
+        }
+        const lastRefreshElement = document.getElementById('lastRefreshTime');
+        const autoRefreshInfoElement = document.getElementById('autoRefreshInfo');
+        const autoRefreshStatusElement = document.getElementById('autoRefreshStatus');
+
+        if (lastRefreshElement) {
+            if (result.last_refresh) {
+                const lastRefresh = new Date(result.last_refresh);
+                lastRefreshElement.textContent = Number.isNaN(lastRefresh.getTime())
+                    ? 'Unavailable'
+                    : `${lastRefresh.toLocaleString([], timestampFormatOptions)} (${viewerTimezone})`;
+            } else {
+                lastRefreshElement.textContent = 'Never';
+            }
+        }
+
+        if (autoRefreshInfoElement && autoRefreshStatusElement) {
+            if (result.auto_refresh_enabled) {
+                let statusText = `Auto-refresh: daily at ${result.auto_refresh_time} ${result.auto_refresh_timezone}`;
+                if (result.auto_refresh_next_run_utc) {
+                    const nextRun = new Date(result.auto_refresh_next_run_utc);
+                    if (!Number.isNaN(nextRun.getTime())) {
+                        statusText += ` (next: ${nextRun.toLocaleString([], timestampFormatOptions)} ${viewerTimezone})`;
                     }
                 }
+                autoRefreshStatusElement.textContent = statusText;
+                autoRefreshInfoElement.classList.remove('d-none');
             } else {
-                console.warn('lastRefreshTime element not found');
+                autoRefreshInfoElement.classList.add('d-none');
             }
-        } else {
-            console.error('Failed to load refresh status:', response.status);
         }
     } catch (error) {
         console.error('Error loading refresh status:', error);
@@ -4797,32 +4820,6 @@ async function loadRefreshStatus() {
         if (lastRefreshElement) {
             lastRefreshElement.textContent = 'Error loading';
         }
-    }
-    
-    // Load and display auto-refresh schedule info
-    try {
-        const response = await fetch('/api/admin/control-center/refresh-status');
-        if (response.ok) {
-            const result = await response.json();
-            const autoRefreshInfoElement = document.getElementById('autoRefreshInfo');
-            const autoRefreshStatusElement = document.getElementById('autoRefreshStatus');
-            
-            if (autoRefreshInfoElement && autoRefreshStatusElement) {
-                if (result.auto_refresh_enabled) {
-                    // Build status text
-                    let statusText = `Auto-refresh: daily at ${result.auto_refresh_hour_formatted || result.auto_refresh_hour + ':00 UTC'}`;
-                    if (result.auto_refresh_next_run_formatted) {
-                        statusText += ` (next: ${result.auto_refresh_next_run_formatted})`;
-                    }
-                    autoRefreshStatusElement.textContent = statusText;
-                    autoRefreshInfoElement.classList.remove('d-none');
-                } else {
-                    autoRefreshInfoElement.classList.add('d-none');
-                }
-            }
-        }
-    } catch (autoRefreshError) {
-        console.error('Error loading auto-refresh status:', autoRefreshError);
     }
 }
 

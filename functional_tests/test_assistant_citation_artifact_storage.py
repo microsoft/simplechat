@@ -13,6 +13,7 @@ import os
 import sys
 from copy import deepcopy
 from pathlib import Path
+from test_support.versioning import assert_app_version_at_least
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -143,7 +144,7 @@ def test_config_and_route_reference_phase_one_storage_fix():
     config_content = CONFIG_FILE.read_text(encoding='utf-8')
     route_content = ROUTE_FILE.read_text(encoding='utf-8')
 
-    assert 'VERSION = "0.240.013"' in config_content, 'Expected config.py version 0.240.013'
+    assert_app_version_at_least("0.240.013")
     assert 'persist_agent_citation_artifacts(' in route_content, 'Expected chat routes to persist citation artifacts.'
     assert 'filter_assistant_artifact_items(all_messages)' in route_content, 'Expected chat history assembly to exclude assistant artifact docs.'
 

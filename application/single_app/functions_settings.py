@@ -6,9 +6,14 @@ from flask import g, has_request_context, jsonify, request, session
 
 from config import *
 from functions_appinsights import log_event
+from functions_content_safety import (
+    CONTENT_SAFETY_VIOLATION_MESSAGE_DEFAULT,
+)
 from functions_cosmos_throughput import get_default_cosmos_throughput_settings
 from functions_document_actions import get_default_document_action_capabilities
 from functions_icon_utils import normalize_icon_payload
+from functions_latest_features_nav import LATEST_FEATURES_HIDDEN_VERSION_SETTING
+from functions_mcp_server_config import INBOUND_MCP_SETTINGS_DEFAULTS, normalize_inbound_mcp_settings
 from functions_service_health import get_default_service_health
 import app_settings_cache
 import inspect
@@ -23,16 +28,39 @@ from support_menu_config import (
 
 
 USER_SETTINGS_REQUEST_CACHE_ATTR = "simplechat_user_settings_request_cache"
+FONT_SIZE_PREFERENCES = ("xs", "s", "m", "l", "xl")
+DEFAULT_FONT_SIZE_PREFERENCE = "m"
+CHAT_COMPLETION_AUDIO_SOUND_IDS = (
+    "aurora",
+    "bell",
+    "bloom",
+    "chime",
+    "crystal",
+    "glimmer",
+    "marimba",
+    "pulse",
+    "spark",
+    "summit",
+)
+DEFAULT_CHAT_COMPLETION_AUDIO_SOUND = CHAT_COMPLETION_AUDIO_SOUND_IDS[0]
+DEFAULT_CHAT_COMPLETION_AUDIO_VOLUME = 5
 USER_UI_SETTINGS_KEYS = (
     "profileImage",
     "navLayout",
     "darkModeEnabled",
     "showTutorialButtons",
+    "desktopNotificationsEnabled",
     "chatLayout",
     "streamingEnabled",
     "notifications_per_page",
     "sidebarToggleStyle",
     "sidebarMenuState",
+    LATEST_FEATURES_HIDDEN_VERSION_SETTING,
+    "fontSizePreference",
+    "chatCompletionAudioEnabled",
+    "chatCompletionAudioMuted",
+    "chatCompletionAudioSound",
+    "chatCompletionAudioVolume",
 )
 ADMIN_SETTINGS_SECRET_REDACTED_VALUE = "***REDACTED***"
 ADMIN_SETTINGS_FORM_SECRET_FIELDS = (
@@ -58,6 +86,30 @@ ADMIN_SETTINGS_FORM_SECRET_FIELDS = (
 ADMIN_SETTINGS_NESTED_SECRET_FIELDS = (
     "web_search_agent.other_settings.azure_ai_foundry.client_secret",
 )
+TABULAR_GENERATION_BACKEND_SETTING_KEYS = {
+    'enable_tabular_parity_contract_telemetry',
+    'tabular_parity_contract_mode',
+    'tabular_generation_rollout_percentage',
+    'tabular_background_handoff_mode',
+    'tabular_request_planner_mode',
+    'enable_tabular_search_shared_preflight',
+    'enable_tabular_analyze_durable_preflight',
+    'enable_tabular_generation_plan',
+    'tabular_generation_plan_mode',
+    'enable_tabular_compact_response_protocol',
+    'enable_tabular_completion_driven_checkpointing',
+    'enable_tabular_rolling_worker_pool',
+    'enable_tabular_independent_batch_retries',
+    'enable_tabular_generation_balanced_batches',
+    'tabular_generation_checkpoint_writer_concurrency',
+    'tabular_generation_schema_probe_rows',
+    'tabular_generation_heartbeat_seconds',
+    'tabular_generation_stale_seconds',
+    'tabular_generation_systemic_failure_threshold',
+}
+PUBLIC_WORKSPACE_DISPLAY_NAME_DEFAULT = "Public Workspace"
+PUBLIC_WORKSPACE_DISPLAY_NAME_PLURAL_DEFAULT = "Public Workspaces"
+PUBLIC_WORKSPACE_DISPLAY_NAME_MAX_LENGTH = 32
 
 
 def is_admin_settings_redacted_secret(value):
@@ -90,6 +142,153 @@ def resolve_admin_settings_secret_value(field_name, submitted_value, existing_se
     return str(_get_nested_setting_value(existing_settings, field_name) or '').strip()
 
 
+def normalize_public_workspace_display_name(value):
+    """Return the end-user Public Workspace display name setting."""
+    display_name = " ".join(str(value or "").replace("\r", " ").replace("\n", " ").split())
+    return display_name[:PUBLIC_WORKSPACE_DISPLAY_NAME_MAX_LENGTH]
+
+
+def get_public_workspace_label_context(settings=None):
+    """Return safe labels for end-user Public Workspace UI copy."""
+    source_settings = settings if isinstance(settings, dict) else {}
+    custom_display_name = normalize_public_workspace_display_name(
+        source_settings.get("public_workspace_display_name")
+    )
+    is_custom = bool(custom_display_name)
+    singular = custom_display_name or PUBLIC_WORKSPACE_DISPLAY_NAME_DEFAULT
+    plural = custom_display_name or PUBLIC_WORKSPACE_DISPLAY_NAME_PLURAL_DEFAULT
+    lower_singular = singular if is_custom else "public workspace"
+    lower_plural = plural if is_custom else "public workspaces"
+    return {
+        "singular": singular,
+        "plural": plural,
+        "lower_singular": lower_singular,
+        "lower_plural": lower_plural,
+        "short": singular if is_custom else "Public",
+        "is_custom": is_custom,
+        "max_length": PUBLIC_WORKSPACE_DISPLAY_NAME_MAX_LENGTH,
+    }
+
+
+def normalize_public_workspace_display_settings(settings):
+    """Normalize stored Public Workspace display-name settings in-place."""
+    if not isinstance(settings, dict):
+        return False
+
+    changed = False
+    if "public_workspace_labels" in settings:
+        settings.pop("public_workspace_labels", None)
+        changed = True
+
+    normalized_display_name = normalize_public_workspace_display_name(
+        settings.get("public_workspace_display_name")
+    )
+    changed = changed or settings.get("public_workspace_display_name", "") != normalized_display_name
+    settings["public_workspace_display_name"] = normalized_display_name
+    return changed
+
+
+def attach_public_workspace_label_context(settings):
+    """Attach derived end-user Public Workspace label values to a settings dict."""
+    if isinstance(settings, dict):
+        settings["public_workspace_labels"] = get_public_workspace_label_context(settings)
+    return settings
+
+
+def normalize_document_access_index_required_settings(settings):
+    """Force DAI operational settings that are required for the default read path."""
+    if not isinstance(settings, dict):
+        return False
+
+    changed = False
+    required_flags = {
+        'enable_document_access_index_container': True,
+        'enable_document_access_index_write_through': True,
+        'enable_document_access_index_reads': True,
+        'enable_startup_document_access_index_backfill': True,
+    }
+    for key, required_value in required_flags.items():
+        if settings.get(key) != required_value:
+            settings[key] = required_value
+            changed = True
+    return changed
+
+
+def _normalize_key_vault_admin_roles(value):
+    if isinstance(value, list):
+        raw_roles = value
+    elif isinstance(value, str):
+        raw_roles = value.replace(";", ",").split(",")
+    else:
+        raw_roles = []
+
+    roles = []
+    for role in raw_roles:
+        normalized_role = str(role or "").strip()[:80]
+        if normalized_role and normalized_role not in roles:
+            roles.append(normalized_role)
+    return roles or ["Admin"]
+
+
+def _normalize_key_vault_reminder_int(value, default_value, minimum, maximum):
+    try:
+        parsed_value = int(value)
+    except (TypeError, ValueError):
+        parsed_value = default_value
+    return min(max(parsed_value, minimum), maximum)
+
+
+def _normalize_key_vault_reminder_bool(value):
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def normalize_key_vault_reminder_settings(settings):
+    """Normalize stored Key Vault expiration reminder settings in-place."""
+    if not isinstance(settings, dict):
+        return False
+
+    normalized_values = {
+        "enable_key_vault_secret_expiration_reminders": _normalize_key_vault_reminder_bool(
+            settings.get("enable_key_vault_secret_expiration_reminders", False)
+        ),
+        "key_vault_secret_expiration_default_lead_days": _normalize_key_vault_reminder_int(
+            settings.get("key_vault_secret_expiration_default_lead_days"),
+            30,
+            1,
+            3650,
+        ),
+        "key_vault_secret_expiration_default_contact_email": str(
+            settings.get("key_vault_secret_expiration_default_contact_email") or ""
+        ).strip()[:254],
+        "key_vault_secret_expiration_require_expiration": _normalize_key_vault_reminder_bool(
+            settings.get("key_vault_secret_expiration_require_expiration", False)
+        ),
+        "key_vault_secret_expiration_emit_contact_email_in_telemetry": _normalize_key_vault_reminder_bool(
+            settings.get("key_vault_secret_expiration_emit_contact_email_in_telemetry", False)
+        ),
+        "key_vault_secret_expiration_admin_roles": _normalize_key_vault_admin_roles(
+            settings.get("key_vault_secret_expiration_admin_roles")
+        ),
+        "key_vault_secret_expiration_scan_interval_seconds": _normalize_key_vault_reminder_int(
+            settings.get("key_vault_secret_expiration_scan_interval_seconds"),
+            21600,
+            900,
+            86400,
+        ),
+    }
+
+    changed = False
+    for key, normalized_value in normalized_values.items():
+        if settings.get(key) != normalized_value:
+            settings[key] = normalized_value
+            changed = True
+    return changed
+
+
 def redact_admin_settings_secrets_for_form(settings):
     redacted_settings = copy.deepcopy(settings or {})
     for field_name in ADMIN_SETTINGS_FORM_SECRET_FIELDS:
@@ -103,6 +302,38 @@ def redact_admin_settings_secrets_for_form(settings):
 
 def _clone_user_settings_doc(doc):
     return copy.deepcopy(doc or {})
+
+
+def normalize_font_size_preference(value):
+    normalized_value = str(value or "").strip().lower()
+    if normalized_value in FONT_SIZE_PREFERENCES:
+        return normalized_value
+    return DEFAULT_FONT_SIZE_PREFERENCE
+
+
+def normalize_chat_completion_audio_preferences(settings):
+    """Return validated completion-audio preferences with opt-in defaults."""
+    source = settings if isinstance(settings, dict) else {}
+    selected_sound = str(
+        source.get("chatCompletionAudioSound") or DEFAULT_CHAT_COMPLETION_AUDIO_SOUND
+    ).strip().lower()
+    if selected_sound not in CHAT_COMPLETION_AUDIO_SOUND_IDS:
+        selected_sound = DEFAULT_CHAT_COMPLETION_AUDIO_SOUND
+
+    try:
+        volume = int(source.get(
+            "chatCompletionAudioVolume",
+            DEFAULT_CHAT_COMPLETION_AUDIO_VOLUME,
+        ))
+    except (TypeError, ValueError):
+        volume = DEFAULT_CHAT_COMPLETION_AUDIO_VOLUME
+
+    return {
+        "chatCompletionAudioEnabled": source.get("chatCompletionAudioEnabled") is True,
+        "chatCompletionAudioMuted": source.get("chatCompletionAudioMuted") is True,
+        "chatCompletionAudioSound": selected_sound,
+        "chatCompletionAudioVolume": min(10, max(1, volume)),
+    }
 
 
 def _get_user_settings_request_cache():
@@ -139,11 +370,16 @@ def _extract_user_ui_settings(doc):
     settings = (doc or {}).get('settings', {})
     if not isinstance(settings, dict):
         settings = {}
-    return {
+    ui_settings = {
         key: copy.deepcopy(settings[key])
         for key in USER_UI_SETTINGS_KEYS
         if key in settings
     }
+    ui_settings["fontSizePreference"] = normalize_font_size_preference(
+        settings.get("fontSizePreference")
+    )
+    ui_settings.update(normalize_chat_completion_audio_preferences(settings))
+    return ui_settings
 
 
 def _delete_user_ui_settings_cache(user_id):
@@ -153,7 +389,7 @@ def _delete_user_ui_settings_cache(user_id):
             cache_deleter(user_id)
         except Exception as cache_error:
             log_event(
-                "[UserSettingsCache] Failed to delete user UI settings cache.",
+                "[USER_SETTINGS_CACHE] Failed to delete user UI settings cache.",
                 extra={
                     "user_id": user_id,
                     "error": str(cache_error)
@@ -169,7 +405,7 @@ def _set_user_ui_settings_cache(user_id, doc):
             cache_setter(user_id, _extract_user_ui_settings(doc))
         except Exception as cache_error:
             log_event(
-                "[UserSettingsCache] Failed to set user UI settings cache.",
+                "[USER_SETTINGS_CACHE] Failed to set user UI settings cache.",
                 extra={
                     "user_id": user_id,
                     "error": str(cache_error)
@@ -187,6 +423,50 @@ def invalidate_user_settings_caches(user_id):
 def is_tabular_processing_enabled(settings):
     """Tabular processing is available whenever enhanced citations is enabled."""
     return bool((settings or {}).get('enable_enhanced_citations', False))
+
+
+def is_mixed_source_manifest_enabled(settings):
+    """Return whether Phase 1 mixed-source manifest diagnostics are enabled."""
+    return bool((settings or {}).get('enable_mixed_source_manifest', False))
+
+
+def is_mixed_source_development_telemetry_enabled(settings):
+    """Return whether aggregate-only mixed-source development telemetry is enabled."""
+    return bool((settings or {}).get('enable_mixed_source_development_telemetry', False))
+
+
+def is_mixed_source_chat_search_enabled(settings):
+    """Return whether Phase 2 mixed-source Chat and Search behavior is enabled."""
+    return bool((settings or {}).get('enable_mixed_source_chat_search', False))
+
+
+def is_mixed_source_conversation_continuity_enabled(settings):
+    """Return whether Phase 5 reauthorized source-continuity metadata is enabled."""
+    return bool(
+        (settings or {}).get('enable_mixed_source_chat_search', False)
+        and (settings or {}).get('enable_mixed_source_conversation_continuity', False)
+    )
+
+
+def is_cross_format_compare_enabled(settings):
+    """Return whether Phase 4 native mixed-source Compare behavior is enabled."""
+    return bool((settings or {}).get('enable_cross_format_compare', False))
+
+
+def is_cross_format_compare_one_to_many_enabled(settings):
+    """Return whether the separately staged one-to-many mixed-target rollout is enabled."""
+    return bool(
+        (settings or {}).get('enable_cross_format_compare', False)
+        and (settings or {}).get('enable_cross_format_compare_one_to_many', False)
+    )
+
+
+def is_mixed_source_relevance_candidates_enabled(settings):
+    """Return whether Phase 2 relevance-mode table candidates are enabled."""
+    return bool(
+        (settings or {}).get('enable_mixed_source_chat_search', False)
+        and (settings or {}).get('enable_mixed_source_relevance_candidates', False)
+    )
 
 
 CHAT_FILE_UPLOAD_APP_ROLE = "ChatFileUploadUser"
@@ -654,7 +934,7 @@ def _authorize_user_settings_access(user_id, operation, allow_cross_user=False):
     actor_user_id = str(get_current_user_id() or '').strip()
     if actor_user_id and normalized_user_id and actor_user_id != normalized_user_id:
         log_event(
-            f"[UserSettings] Denied cross-user {operation}",
+            f"[USER_SETTINGS] Denied cross-user {operation}",
             {
                 "actor_user_id": actor_user_id,
                 "target_user_id": normalized_user_id,
@@ -715,44 +995,6 @@ def _refresh_app_settings_cache_after_write(settings_payload, context="app_setti
     _update_cache("after_version_bump")
 
 
-def _refresh_app_settings_cache_after_write(settings_payload, context="app_settings_write"):
-    """Update shared/local settings cache around a version bump."""
-    cache_updater = getattr(app_settings_cache, "update_settings_cache", None)
-    version_bumper = getattr(app_settings_cache, "bump_app_settings_cache_version", None)
-
-    def _update_cache(stage):
-        if not callable(cache_updater):
-            return
-        try:
-            cache_updater(copy.deepcopy(settings_payload))
-        except Exception as cache_error:
-            log_event(
-                "App settings cache update failed after settings write.",
-                extra={
-                    "context": context,
-                    "stage": stage,
-                    "error": str(cache_error)
-                },
-                level=logging.WARNING
-            )
-
-    _update_cache("before_version_bump")
-
-    if callable(version_bumper):
-        try:
-            version_bumper()
-        except Exception as version_error:
-            log_event(
-                "App settings cache version bump failed after settings write.",
-                extra={
-                    "context": context,
-                    "error": str(version_error)
-                },
-                level=logging.WARNING
-            )
-
-    _update_cache("after_version_bump")
-
 def get_settings(use_cosmos=False, include_source=False):
     import secrets
     default_settings = {
@@ -775,7 +1017,41 @@ def get_settings(use_cosmos=False, include_source=False):
         'enable_default_embedding_model_plugin': False,
         'enable_fact_memory_plugin': True,
         'enable_tabular_processing_plugin': False,
+        'enable_tabular_hierarchical_analysis': False,
+        'enable_tabular_parity_contract_telemetry': False,
+        'tabular_parity_contract_mode': 'off',
+        'tabular_hierarchical_analysis_reduce_fan_in': 25,
+        'enable_tabular_durable_run_confirmation': True,
+        'tabular_durable_run_confirmation_threshold_rows': 500,
+        'tabular_durable_run_confirmation_threshold_batches': 75,
+        'tabular_generated_output_chunk_model_mode': 'current',
+        'tabular_generated_output_chunk_model_deployment': '',
+        'tabular_generated_output_model_validation_auto_retries': 3,
+        'tabular_generation_rollout_percentage': 100,
+        'tabular_background_handoff_mode': 'legacy',
+        'tabular_request_planner_mode': 'off',
+        'enable_tabular_search_shared_preflight': False,
+        'enable_tabular_analyze_durable_preflight': False,
+        'enable_tabular_generation_plan': True,
+        'tabular_generation_plan_mode': 'shadow',
+        'enable_tabular_compact_response_protocol': False,
+        'enable_tabular_completion_driven_checkpointing': True,
+        'enable_tabular_rolling_worker_pool': False,
+        'enable_tabular_independent_batch_retries': False,
+        'enable_tabular_generation_balanced_batches': True,
+        'tabular_generation_checkpoint_writer_concurrency': 1,
+        'tabular_generation_schema_probe_rows': 5,
+        'tabular_generation_heartbeat_seconds': 30,
+        'tabular_generation_stale_seconds': 120,
+        'tabular_generation_systemic_failure_threshold': 0.5,
         'enable_multi_agent_orchestration': False,
+        'enable_mixed_source_development_telemetry': False,
+        'enable_mixed_source_manifest': False,
+        'enable_mixed_source_chat_search': False,
+        'enable_mixed_source_relevance_candidates': False,
+        'enable_mixed_source_conversation_continuity': False,
+        'enable_cross_format_compare': False,
+        'enable_cross_format_compare_one_to_many': False,
         'max_rounds_per_agent': 1,
         'workflow_max_auto_invoke_attempts': 60,
         'enable_semantic_kernel': False,
@@ -792,6 +1068,7 @@ def get_settings(use_cosmos=False, include_source=False):
         'allow_user_plugins': False,
         'allow_user_workflows': False,
         'require_member_of_workflow_user': False,
+        'workflow_max_tasks': 50,
         'allow_group_workflows': False,
         'require_group_assignment_for_group_workflows': False,
         'group_workflow_allowed_group_ids': [],
@@ -807,6 +1084,9 @@ def get_settings(use_cosmos=False, include_source=False):
         'governance_user_actions': False,
         'governance_group_actions': False,
         'governance_global_actions_usage': False,
+        'enable_mcp_destination_governance': False,
+        'mcp_block_unsafe_destinations': False,
+        **INBOUND_MCP_SETTINGS_DEFAULTS,
         'allow_ai_foundry_agents': False,
         'allow_group_ai_foundry_agents': False,
         'allow_personal_ai_foundry_agents': False,
@@ -833,9 +1113,10 @@ def get_settings(use_cosmos=False, include_source=False):
         # Control Center settings
         'control_center_last_refresh': None,  # Timestamp of last data refresh
         'control_center_auto_refresh_enabled': True,
-        'control_center_auto_refresh_time': '06:00',
-        'control_center_auto_refresh_hour': 6,
+        'control_center_auto_refresh_time': '02:00',
+        'control_center_auto_refresh_hour': 2,
         'control_center_auto_refresh_minute': 0,
+        'control_center_auto_refresh_timezone': 'America/New_York',
         'control_center_auto_refresh_next_run': None,
         # -- Your entire default dictionary here --
         'app_title': 'Simple Chat',
@@ -851,6 +1132,16 @@ def get_settings(use_cosmos=False, include_source=False):
         'logo_dark_version': 1,
         'custom_favicon_base64': '',
         'favicon_version': 1,
+        'enable_terms_of_use': False,
+        'terms_of_use_title': 'Terms of Use',
+        'terms_of_use_message': '',
+        'terms_of_use_frequency': 'once',
+        'terms_of_use_decline_redirect_url': '/',
+        'terms_of_use_accept_button_text': 'Accept and continue',
+        'terms_of_use_decline_button_text': 'Cancel',
+        'enable_ai_notice': False,
+        'ai_notice_message': '',
+        'ai_notice_frequency': 'non_dismissible',
         'enable_dark_mode_default': False,
         'enable_left_nav_default': True,
         'release_notifications_registered': False,
@@ -931,6 +1222,28 @@ def get_settings(use_cosmos=False, include_source=False):
         'redis_key': '',
         'redis_auth_type': '',
 
+        # App Maintenance Settings
+        'enable_app_maintenance': True,
+        'enable_startup_app_maintenance': True,
+        'app_maintenance_check_interval_seconds': 3600,
+        'app_maintenance_job_lease_seconds': 300,
+        'app_maintenance_apply_cosmos_indexing_policies': False,
+        'enable_document_access_index_container': True,
+        'enable_document_access_index_write_through': True,
+        'enable_document_access_index_reads': True,
+        'enable_dai_debug': False,
+        'enable_document_access_index_shadow_validation': False,
+        'enable_startup_document_access_index_backfill': True,
+        'document_access_index_backfill_batch_size': 200,
+        'document_access_index_repair_batch_size': 100,
+        'document_access_index_active_maintenance_interval_seconds': 30,
+        'enable_document_access_index_cache': True,
+        'document_access_index_cache_ttl_seconds': 900,
+        'custom_pages_nav_cache_ttl_seconds': 60,
+        'chat_bootstrap_cache_ttl_seconds': 300,
+        'enable_conversation_cache': True,
+        'conversation_cache_ttl_seconds': 120,
+
         # Cosmos DB Throughput Scale Settings
         **get_default_cosmos_throughput_settings(),
 
@@ -942,6 +1255,7 @@ def get_settings(use_cosmos=False, include_source=False):
         'require_member_of_create_group': False,
         'require_owner_for_group_agent_management': False,
         'enable_public_workspaces': False,
+        'public_workspace_display_name': '',
         'require_member_of_create_public_workspace': False,
         'enable_file_sharing': False,
         'allow_personal_workspace_file_downloads': False,
@@ -952,6 +1266,7 @@ def get_settings(use_cosmos=False, include_source=False):
         'require_public_workspace_assignment_for_file_downloads': False,
         'file_download_allowed_public_workspace_ids': [],
         'enable_chat_file_uploads': True,
+        'enable_conversation_contents_drawer': True,
         'require_member_of_chat_file_upload_user': False,
         'enforce_workspace_scope_lock': True,
 
@@ -981,6 +1296,8 @@ def get_settings(use_cosmos=False, include_source=False):
         # Multimedia
         'enable_video_file_support': False,
         'enable_audio_file_support': False,
+        'enable_chat_completion_audio_cues': False,
+        'chat_completion_audio_cues_updated_at': None,
 
         # Metadata Extraction
         'enable_extract_meta_data': False,
@@ -1051,6 +1368,8 @@ def get_settings(use_cosmos=False, include_source=False):
 
         # Safety (Content Safety) Settings
         'enable_content_safety': False,
+        'content_safety_violation_message': CONTENT_SAFETY_VIOLATION_MESSAGE_DEFAULT,
+        'content_safety_include_trigger_information': True,
         'require_member_of_safety_violation_admin': False,
         'require_member_of_control_center_admin': False,
         'require_member_of_control_center_dashboard_reader': False,
@@ -1063,6 +1382,7 @@ def get_settings(use_cosmos=False, include_source=False):
 
         # User Feedback / Conversation Archiving
         'enable_user_feedback': True,
+        'enable_desktop_notifications': False,
         'require_member_of_feedback_admin': False,
         'enable_conversation_archiving': False,
 
@@ -1239,6 +1559,13 @@ def get_settings(use_cosmos=False, include_source=False):
         'enable_key_vault_secret_storage': False,
         'key_vault_name': '',
         'key_vault_identity': '',
+        'enable_key_vault_secret_expiration_reminders': False,
+        'key_vault_secret_expiration_default_lead_days': 30,
+        'key_vault_secret_expiration_default_contact_email': '',
+        'key_vault_secret_expiration_require_expiration': False,
+        'key_vault_secret_expiration_emit_contact_email_in_telemetry': False,
+        'key_vault_secret_expiration_admin_roles': ['Admin'],
+        'key_vault_secret_expiration_scan_interval_seconds': 21600,
         
         # Retention Policy Settings
         'enable_retention_policy_personal': False,
@@ -1337,17 +1664,55 @@ def get_settings(use_cosmos=False, include_source=False):
                         level=logging.WARNING
                     )
 
+        legacy_control_center_schedule = (
+            'control_center_auto_refresh_timezone' not in settings_item
+        )
+        legacy_control_center_time = settings_item.get('control_center_auto_refresh_time')
+        if not isinstance(legacy_control_center_time, str):
+            legacy_hour = settings_item.get('control_center_auto_refresh_hour', 6)
+            legacy_minute = settings_item.get('control_center_auto_refresh_minute', 0)
+            if not isinstance(legacy_hour, int):
+                legacy_hour = 6
+            if not isinstance(legacy_minute, int):
+                legacy_minute = 0
+            legacy_control_center_time = f"{legacy_hour:02d}:{legacy_minute:02d}"
+
         # Merge default_settings in, to fill in any missing or nested keys
         merge_changed = deep_merge_dicts(default_settings, settings_item)
         merged = settings_item
+        control_center_schedule_migration_updated = False
+        if legacy_control_center_schedule:
+            if legacy_control_center_time == '06:00':
+                merged['control_center_auto_refresh_time'] = '02:00'
+                merged['control_center_auto_refresh_hour'] = 2
+                merged['control_center_auto_refresh_minute'] = 0
+                merged['control_center_auto_refresh_timezone'] = 'America/New_York'
+            else:
+                merged['control_center_auto_refresh_timezone'] = 'UTC'
+            merged['control_center_auto_refresh_next_run'] = None
+            control_center_schedule_migration_updated = True
         migration_updated = apply_custom_endpoint_setting_migration(merged)
         assignment_settings_updated = normalize_group_workflow_assignment_settings(merged)
         promoted_popular_settings_updated = normalize_agents_page_promoted_popular_settings(merged)
+        document_access_index_settings_updated = normalize_document_access_index_required_settings(merged)
+        inbound_mcp_settings_updated = normalize_inbound_mcp_settings(merged)
+        public_workspace_display_settings_updated = normalize_public_workspace_display_settings(merged)
+        key_vault_reminder_settings_updated = normalize_key_vault_reminder_settings(merged)
 
         merged['enable_tabular_processing_plugin'] = is_tabular_processing_enabled(merged)
 
         # If merging added anything new, upsert back to Cosmos so future reads remain up to date
-        if merge_changed or migration_updated or assignment_settings_updated or promoted_popular_settings_updated:
+        if (
+            merge_changed
+            or control_center_schedule_migration_updated
+            or migration_updated
+            or assignment_settings_updated
+            or promoted_popular_settings_updated
+            or document_access_index_settings_updated
+            or inbound_mcp_settings_updated
+            or public_workspace_display_settings_updated
+            or key_vault_reminder_settings_updated
+        ):
             cosmos_settings_container.upsert_item(merged)
             _refresh_app_settings_cache_after_write(merged, context="merge_upsert")
 
@@ -1358,10 +1723,10 @@ def get_settings(use_cosmos=False, include_source=False):
                 },
                 level=logging.INFO
             )
-            return _format_result(merged, settings_source)
+            return _format_result(attach_public_workspace_label_context(merged), settings_source)
         else:
             # If merged is unchanged, no new keys needed
-            return _format_result(merged, settings_source)
+            return _format_result(attach_public_workspace_label_context(merged), settings_source)
 
     except CosmosResourceNotFoundError:
         cosmos_settings_container.create_item(body=default_settings)
@@ -1374,7 +1739,7 @@ def get_settings(use_cosmos=False, include_source=False):
             },
             level=logging.WARNING
         )
-        return _format_result(default_settings, "cosmos_default_created")
+        return _format_result(attach_public_workspace_label_context(default_settings), "cosmos_default_created")
 
     except Exception as e:
         log_event(
@@ -1396,6 +1761,10 @@ def update_settings(new_settings):
         settings_item.update(new_settings)
         normalize_group_workflow_assignment_settings(settings_item)
         normalize_agents_page_promoted_popular_settings(settings_item)
+        normalize_document_access_index_required_settings(settings_item)
+        normalize_inbound_mcp_settings(settings_item)
+        normalize_public_workspace_display_settings(settings_item)
+        normalize_key_vault_reminder_settings(settings_item)
         settings_item['enable_multi_model_endpoints'] = coerce_multi_model_endpoint_enablement(
             existing_multi_endpoint_enabled,
             settings_item.get('enable_multi_model_endpoints', False),
@@ -1704,6 +2073,152 @@ def apply_custom_endpoint_setting_migration(settings_item):
 
     return updated
 
+
+def normalize_model_endpoint_management_cloud(value):
+    """Return the canonical management cloud value for model endpoint auth."""
+    normalized_value = str(value or "").strip().lower()
+    if normalized_value in {"government", "usgovernment", "usgov", "gov", "gcc"}:
+        return "government"
+    if normalized_value == "custom":
+        return "custom"
+    return "public"
+
+
+def get_model_endpoint_management_cloud_for_environment(environment=None):
+    """Resolve the app environment into the model endpoint management cloud."""
+    environment_value = AZURE_ENVIRONMENT if environment is None else environment
+    return normalize_model_endpoint_management_cloud(environment_value)
+
+
+def is_model_endpoint_management_cloud_user_editable(endpoint_provider, endpoint_auth_type):
+    """Return True when the UI intentionally lets users choose endpoint cloud."""
+    provider = str(endpoint_provider or "").strip().lower()
+    auth_type = str(endpoint_auth_type or "").strip().lower()
+    return provider in {"aifoundry", "new_foundry"} and auth_type == "service_principal"
+
+
+def get_model_endpoint_default_custom_authority():
+    """Return the app-level authority used when model endpoints inherit custom cloud."""
+    if get_model_endpoint_management_cloud_for_environment() != "custom":
+        return ""
+    return str(authority or "").strip()
+
+
+def get_model_endpoint_default_foundry_scope():
+    """Return the app-level Foundry token scope for endpoint auth defaults."""
+    management_cloud = get_model_endpoint_management_cloud_for_environment()
+    if management_cloud == "government":
+        return "https://ai.azure.us/.default"
+    if management_cloud == "custom":
+        return str(cognitive_services_scope or "").strip()
+    return "https://ai.azure.com/.default"
+
+
+def resolve_model_endpoint_foundry_scope(auth_settings, endpoint=None):
+    """Resolve the Foundry token scope for a saved model endpoint auth payload."""
+    auth_settings = auth_settings or {}
+    custom_scope = str(auth_settings.get("foundry_scope") or "").strip()
+    if custom_scope:
+        return custom_scope
+
+    management_cloud = normalize_model_endpoint_management_cloud(auth_settings.get("management_cloud"))
+    if management_cloud == "government":
+        return "https://ai.azure.us/.default"
+    if management_cloud == "custom":
+        default_scope = get_model_endpoint_default_foundry_scope()
+        if default_scope:
+            return default_scope
+        raise ValueError("Foundry scope is required for custom cloud model endpoint authentication.")
+
+    endpoint_value = str(endpoint or "").lower()
+    if "azure.us" in endpoint_value:
+        return "https://ai.azure.us/.default"
+    if "azure.cn" in endpoint_value:
+        return "https://ai.azure.cn/.default"
+    if "azure.de" in endpoint_value:
+        return "https://ai.azure.de/.default"
+
+    return "https://ai.azure.com/.default"
+
+
+def normalize_model_endpoint_auth_for_environment(endpoint_copy):
+    """Normalize endpoint auth cloud fields that are owned by app environment."""
+    if not isinstance(endpoint_copy, dict):
+        return False
+
+    changed = False
+    auth = endpoint_copy.get("auth")
+    if not isinstance(auth, dict):
+        auth = {}
+        endpoint_copy["auth"] = auth
+        changed = True
+
+    provider = str(endpoint_copy.get("provider") or "").strip().lower()
+    auth_type = str(auth.get("type") or "").strip().lower()
+    current_cloud = normalize_model_endpoint_management_cloud(auth.get("management_cloud"))
+    default_cloud = get_model_endpoint_management_cloud_for_environment()
+    cloud_user_editable = is_model_endpoint_management_cloud_user_editable(provider, auth_type)
+
+    if not cloud_user_editable or not auth.get("management_cloud"):
+        if auth.get("management_cloud") != default_cloud:
+            auth["management_cloud"] = default_cloud
+            changed = True
+        current_cloud = default_cloud
+    elif auth.get("management_cloud") != current_cloud:
+        auth["management_cloud"] = current_cloud
+        changed = True
+
+    if current_cloud == "custom" and not cloud_user_editable:
+        custom_authority = get_model_endpoint_default_custom_authority()
+        if custom_authority and auth.get("custom_authority") != custom_authority:
+            auth["custom_authority"] = custom_authority
+            changed = True
+
+        if provider in {"aifoundry", "new_foundry", "anthropic", "claude"}:
+            foundry_scope = get_model_endpoint_default_foundry_scope()
+            if foundry_scope and auth.get("foundry_scope") != foundry_scope:
+                auth["foundry_scope"] = foundry_scope
+                changed = True
+
+    return changed
+
+
+MODEL_RESPONSE_LENGTH_FIELDS = (
+    "responseLength",
+    "response_length",
+    "maxTokens",
+    "max_tokens",
+    "maxCompletionTokens",
+    "max_completion_tokens",
+)
+
+
+def normalize_model_response_length(value):
+    """Return a positive integer response length, or None when unset/invalid."""
+    if value in (None, "") or isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value if value > 0 else None
+
+    value_text = str(value).strip()
+    if not value_text or not value_text.isdigit():
+        return None
+
+    response_length = int(value_text)
+    return response_length if response_length > 0 else None
+
+
+def normalize_model_response_length_from_model(model):
+    """Resolve the canonical response length from a model endpoint row."""
+    if not isinstance(model, dict):
+        return None
+
+    for field_name in MODEL_RESPONSE_LENGTH_FIELDS:
+        if field_name in model:
+            return normalize_model_response_length(model.get(field_name))
+    return None
+
+
 def normalize_model_endpoints(endpoints):
     """Normalize model endpoints with stable IDs and enabled flags."""
     if not isinstance(endpoints, list):
@@ -1730,6 +2245,9 @@ def normalize_model_endpoints(endpoints):
             endpoint_copy["enabled"] = True
             changed = True
 
+        if normalize_model_endpoint_auth_for_environment(endpoint_copy):
+            changed = True
+
         models = endpoint_copy.get("models") or []
         normalized_models = []
         for model in models:
@@ -1748,6 +2266,18 @@ def normalize_model_endpoints(endpoints):
                     changed = True
             if model_copy.get("enabled") is None:
                 model_copy["enabled"] = True
+                changed = True
+            response_length = normalize_model_response_length_from_model(model_copy)
+            for response_length_field in MODEL_RESPONSE_LENGTH_FIELDS:
+                if response_length_field != "responseLength" and response_length_field in model_copy:
+                    model_copy.pop(response_length_field, None)
+                    changed = True
+            if response_length is None:
+                if "responseLength" in model_copy:
+                    model_copy.pop("responseLength", None)
+                    changed = True
+            elif model_copy.get("responseLength") != response_length:
+                model_copy["responseLength"] = response_length
                 changed = True
             try:
                 normalized_icon = normalize_icon_payload(model_copy.get("icon"), field_name="model.icon")
@@ -1908,7 +2438,7 @@ def get_user_settings(user_id, allow_cross_user=False):
             previous_type = type(doc.get('settings')).__name__ if 'settings' in doc else 'missing'
             doc['settings'] = {}
             updated = True
-            log_event("[UserSettings] Malformed settings repaired", {
+            log_event("[USER_SETTINGS] Malformed settings repaired", {
                 "user_id": user_id,
                 "previous_type": previous_type,
             })
@@ -1917,6 +2447,9 @@ def get_user_settings(user_id, allow_cross_user=False):
             doc['settings']['personal_model_endpoints'] = []
         if 'showTutorialButtons' not in doc['settings']:
             doc['settings']['showTutorialButtons'] = True
+            updated = True
+        if 'desktopNotificationsEnabled' not in doc['settings']:
+            doc['settings']['desktopNotificationsEnabled'] = True
             updated = True
         
         if should_sync_session_profile:
@@ -1961,6 +2494,7 @@ def get_user_settings(user_id, allow_cross_user=False):
         doc = {"id": user_id, "settings": {}}
         doc["settings"]["personal_model_endpoints"] = []
         doc["settings"]["showTutorialButtons"] = True
+        doc["settings"]["desktopNotificationsEnabled"] = True
         if should_sync_session_profile:
             user = session.get("user", {})
             email = user.get("preferred_username") or user.get("email")
@@ -2025,7 +2559,7 @@ def get_user_ui_settings(user_id, allow_cross_user=False):
                 }
         except Exception as cache_error:
             log_event(
-                "[UserSettingsCache] Failed to read user UI settings cache.",
+                "[USER_SETTINGS_CACHE] Failed to read user UI settings cache.",
                 extra={
                     "user_id": user_id,
                     "error": str(cache_error)
@@ -2060,7 +2594,7 @@ def update_user_settings(user_id, settings_to_update, allow_cross_user=False):
     )
     sanitized_settings_to_update = sanitize_settings_for_logging(settings_to_update)
     log_event(
-        "[UserSettings] Update Attempt",
+        "[USER_SETTINGS] Update Attempt",
         {
             "user_id": user_id,
             "actor_user_id": actor_user_id,
@@ -2278,6 +2812,8 @@ def sanitize_settings_for_user(full_settings: dict) -> dict:
             continue
         if k == 'agents_page_promoted_popular_agents':
             continue
+        if k in TABULAR_GENERATION_BACKEND_SETTING_KEYS:
+            continue
         if any(term in k.lower() for term in sensitive_terms):
             continue
         if k in ('model_endpoints', 'personal_model_endpoints') and isinstance(v, list):
@@ -2316,6 +2852,8 @@ def sanitize_settings_for_user(full_settings: dict) -> dict:
             **sanitized['multi_endpoint_migration_notice'],
             'enabled': False,
         }
+
+    sanitized['public_workspace_labels'] = get_public_workspace_label_context(full_settings)
 
     return sanitized
 

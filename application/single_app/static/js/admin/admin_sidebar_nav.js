@@ -1,3 +1,4 @@
+// admin_sidebar_nav.js
 // Admin Sidebar Navigation
 document.addEventListener('DOMContentLoaded', function() {
     // Only initialize if we're on admin settings page with sidebar nav
@@ -201,6 +202,11 @@ function scrollToSection(sectionId) {
         'file-processing-logs-section': 'file-processing-logs-section',
         // Scale tab sections
         'redis-cache-section': 'redis-cache-section',
+        'redis-monitoring-section': 'redis-monitoring-section',
+        'document-access-index-section': 'document-access-index-section',
+        'cosmos-maintenance-section': 'cosmos-maintenance-section',
+        'cosmos-throughput-section': 'cosmos-throughput-section',
+        'cosmos-throughput-metrics-table-section': 'cosmos-throughput-metrics-table-section',
         'front-door-section': 'front-door-section',
         // Workspaces tab sections
         'personal-workspaces-section': 'personal-workspaces-section',
@@ -220,6 +226,7 @@ function scrollToSection(sectionId) {
         // Security tab sections
         'keyvault-section': 'keyvault-section',
         // Data Management tab sections
+        'data-management-readiness-section': 'data-management-readiness-section',
         'data-management-backup-section': 'data-management-backup-section',
         'data-management-schedule-section': 'data-management-schedule-section',
         'data-management-storage-section': 'data-management-storage-section',

@@ -2,7 +2,7 @@
 # test_latest_features_action_links.py
 """
 Functional test for latest-features action links.
-Version: 0.241.003
+Version: 0.250.098
 Implemented in: 0.241.003
 
 This test ensures the latest-features configuration exposes direct in-app
@@ -12,6 +12,7 @@ handlers that open the requested Chat, Workspace, and Profile workflows.
 
 from pathlib import Path
 import sys
+from test_support.versioning import assert_app_version_at_least
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -40,7 +41,7 @@ def assert_markers(file_path: Path, markers: list[str]) -> None:
 def test_latest_features_action_links() -> bool:
     print("Testing latest-features action links and launch intents...")
 
-    assert 'VERSION = "0.241.003"' in read_text(CONFIG_FILE), "Config version marker is not current."
+    assert_app_version_at_least("0.250.098")
 
     assert_markers(
         FUNCTIONS_SETTINGS_FILE,

@@ -13,6 +13,7 @@ missing.
 
 import os
 import sys
+from test_support.versioning import assert_app_version_at_least
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'application', 'single_app'))
 
@@ -204,7 +205,7 @@ def test_version_updated():
 
     try:
         config_content = read_repo_file('application', 'single_app', 'config.py')
-        assert 'VERSION = "0.241.018"' in config_content, 'config.py should contain VERSION = "0.241.018"'
+        assert_app_version_at_least("0.241.018")
 
         print("Version updated to 0.241.018.")
         return True

@@ -12,6 +12,7 @@ failed iframe request.
 
 import os
 import sys
+from test_support.versioning import assert_app_version_at_least
 
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
@@ -111,7 +112,7 @@ def test_fix_documentation_and_version_alignment():
     config_content = read_file_text(CONFIG_FILE)
     fix_doc_content = read_file_text(FIX_DOC)
 
-    assert 'VERSION = "0.241.010"' in config_content, 'Expected config.py version 0.241.010.'
+    assert_app_version_at_least("0.241.010")
     assert 'Fixed/Implemented in version: **0.241.009**' in fix_doc_content, (
         'Fix documentation should reference version 0.241.009.'
     )

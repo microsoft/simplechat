@@ -1,6 +1,7 @@
 # functions_simplechat_operations.py
 """Shared SimpleChat-native operations for routes and Semantic Kernel plugins."""
 
+import copy
 import logging
 import mimetypes
 import os
@@ -49,6 +50,7 @@ from functions_collaboration import (
     persist_collaboration_message,
 )
 from functions_documents import allowed_file, create_document, process_document_upload_background, update_document
+from functions_chat_bootstrap_cache import bump_chat_bootstrap_global_cache_version
 from functions_group import (
     assert_group_role,
     check_group_status_allows_operation,
@@ -59,12 +61,44 @@ from functions_group import (
 )
 from functions_notifications import create_notification
 from functions_personal_workflows import save_personal_workflow
+from functions_public_workspaces import (
+    check_public_workspace_status_allows_operation,
+    find_public_workspace_by_id,
+)
 from functions_settings import get_settings, is_user_workflows_enabled_for_user
 from utils_cache import invalidate_group_search_cache, invalidate_personal_search_cache
 
 
 SIMPLECHAT_PLUGIN_TYPE = "simplechat"
 SIMPLECHAT_DEFAULT_ENDPOINT = "simplechat://internal"
+FORKABLE_SINGLE_USER_CHAT_TYPES = {
+    "",
+    "new",
+    "personal",
+    "personal_single_user",
+    "group-single-user",
+    "public",
+}
+FORKABLE_PERSONAL_CONTEXT_SCOPES = {
+    "",
+    "personal",
+    "model",
+    "model_knowledge",
+}
+PERSONAL_FORK_CONVERSATION_FIELDS = (
+    "context",
+    "tags",
+    "strict",
+    "classification",
+    "scope_locked",
+    "locked_contexts",
+    "selected_agent_id",
+    "selected_agent_name",
+    "selected_agent_is_global",
+    "model_endpoint_id",
+    "model_id",
+)
+COSMOS_SYSTEM_FIELDS = {"_rid", "_self", "_etag", "_attachments", "_ts"}
 SIMPLECHAT_CAPABILITY_TO_FUNCTION = {
     "create_group": "create_group",
     "add_group_member": "add_user_to_group",
@@ -221,6 +255,586 @@ def derive_conversation_title_from_message(content: str) -> str:
     if not normalized_content:
         return "New Conversation"
     return f"{normalized_content[:30]}..." if len(normalized_content) > 30 else normalized_content
+
+
+class ConversationForkConflictError(RuntimeError):
+    """Raised when the source changes or cannot be forked safely."""
+
+
+def is_forkable_single_user_conversation(conversation_item: Dict[str, Any]) -> bool:
+    """Return whether a user-owned single-user conversation can be considered for forking."""
+    chat_type = str((conversation_item or {}).get("chat_type") or "").strip().lower()
+    return chat_type in FORKABLE_SINGLE_USER_CHAT_TYPES
+
+
+def _authorize_fork_conversation_context(
+    conversation_item: Dict[str, Any],
+    user_id: str,
+) -> str:
+    """Revalidate stored workspace context and return the destination chat type."""
+    if not is_forkable_single_user_conversation(conversation_item):
+        raise ConversationForkConflictError("Only supported single-user conversations can be forked")
+
+    authorized_scopes = set()
+    for context_item in conversation_item.get("context") or []:
+        if not isinstance(context_item, dict):
+            raise ConversationForkConflictError("The conversation context is invalid")
+
+        scope = str(context_item.get("scope") or "").strip().lower()
+        if scope in FORKABLE_PERSONAL_CONTEXT_SCOPES:
+            authorized_scopes.add("personal")
+            continue
+
+        context_id = str(context_item.get("id") or "").strip()
+        if not context_id:
+            raise ConversationForkConflictError("The conversation workspace context is incomplete")
+
+        if scope == "group":
+            group_doc = find_group_by_id(context_id)
+            if not group_doc:
+                raise ConversationForkConflictError("The conversation group is no longer available")
+            allowed, _ = check_group_status_allows_operation(group_doc, "chat")
+            if not allowed:
+                raise ConversationForkConflictError("The conversation group no longer allows chat")
+            try:
+                assert_group_role(
+                    user_id,
+                    context_id,
+                    allowed_roles=("Owner", "Admin", "DocumentManager", "User"),
+                )
+            except (LookupError, PermissionError) as access_error:
+                raise ConversationForkConflictError(
+                    "The conversation group is no longer available to this user"
+                ) from access_error
+            authorized_scopes.add(scope)
+            continue
+
+        if scope == "public":
+            workspace_doc = find_public_workspace_by_id(context_id)
+            if not workspace_doc:
+                raise ConversationForkConflictError("The public workspace is no longer available")
+            allowed, _ = check_public_workspace_status_allows_operation(workspace_doc, "chat")
+            if not allowed:
+                raise ConversationForkConflictError("The public workspace no longer allows chat")
+            authorized_scopes.add(scope)
+            continue
+
+        raise ConversationForkConflictError("The conversation has an unsupported workspace context")
+
+    if "group" in authorized_scopes and "public" in authorized_scopes:
+        raise ConversationForkConflictError("Mixed group and public workspace context cannot be forked")
+    if "group" in authorized_scopes:
+        return "group-single-user"
+    if "public" in authorized_scopes:
+        return "public"
+
+    source_chat_type = str(conversation_item.get("chat_type") or "").strip().lower()
+    if source_chat_type in {"group-single-user", "public"}:
+        raise ConversationForkConflictError("The conversation workspace context is incomplete")
+    return "personal_single_user"
+
+
+def _message_fork_sort_key(message_doc: Dict[str, Any]) -> Tuple[str, int, str]:
+    fork_sequence = message_doc.get("fork_sequence")
+    try:
+        normalized_sequence = int(fork_sequence)
+    except (TypeError, ValueError):
+        normalized_sequence = 0
+    return (
+        str(message_doc.get("timestamp") or ""),
+        normalized_sequence,
+        str(message_doc.get("id") or ""),
+    )
+
+
+def _is_active_fork_timeline_message(message_doc: Dict[str, Any]) -> bool:
+    metadata = message_doc.get("metadata") or {}
+    thread_info = metadata.get("thread_info") or {}
+    active_thread = thread_info.get("active_thread")
+    return active_thread is not False
+
+
+def _is_assistant_artifact_document(message_doc: Dict[str, Any]) -> bool:
+    metadata = message_doc.get("metadata") or {}
+    role = str(message_doc.get("role") or "").strip().lower()
+    return bool(metadata.get("is_generated_chat_artifact")) or role.startswith("assistant_artifact")
+
+
+def _collect_artifact_message_reference_ids(value: Any, key: str = "") -> set:
+    referenced_ids = set()
+    if isinstance(value, dict):
+        for child_key, child_value in value.items():
+            referenced_ids.update(_collect_artifact_message_reference_ids(child_value, child_key))
+    elif isinstance(value, list):
+        for child_value in value:
+            referenced_ids.update(_collect_artifact_message_reference_ids(child_value, key))
+    elif isinstance(value, str) and (key == "artifact_message_id" or key.endswith("_artifact_message_id")):
+        normalized_value = value.strip()
+        if normalized_value:
+            referenced_ids.add(normalized_value)
+    return referenced_ids
+
+
+def _collect_fork_documents(
+    all_documents: List[Dict[str, Any]],
+    selected_message_id: str,
+) -> List[Dict[str, Any]]:
+    ordered_documents = sorted(all_documents, key=_message_fork_sort_key)
+    timeline_documents = [
+        document
+        for document in ordered_documents
+        if not _is_assistant_artifact_document(document)
+        and _is_active_fork_timeline_message(document)
+    ]
+
+    selected_index = next(
+        (
+            index
+            for index, document in enumerate(timeline_documents)
+            if str(document.get("id") or "") == selected_message_id
+        ),
+        None,
+    )
+    if selected_index is None:
+        raise LookupError("Selected assistant message was not found on the active conversation timeline")
+
+    selected_document = timeline_documents[selected_index]
+    if str(selected_document.get("role") or "").strip().lower() != "assistant":
+        raise ValueError("Selected message must be a persisted assistant message")
+
+    included_documents = timeline_documents[:selected_index + 1]
+    included_ids = {
+        str(document.get("id") or "")
+        for document in included_documents
+        if document.get("id")
+    }
+    documents_by_id = {
+        str(document.get("id") or ""): document
+        for document in ordered_documents
+        if document.get("id")
+    }
+    referenced_artifact_ids = _collect_artifact_message_reference_ids(included_documents)
+    missing_artifact_ids = referenced_artifact_ids.difference(documents_by_id)
+    if missing_artifact_ids:
+        raise ConversationForkConflictError(
+            "A generated assistant artifact is no longer available to fork"
+        )
+
+    pending_artifacts = [
+        document
+        for document in ordered_documents
+        if _is_assistant_artifact_document(document)
+    ]
+    while pending_artifacts:
+        added_document = False
+        remaining_artifacts = []
+        for artifact_document in pending_artifacts:
+            artifact_id = str(artifact_document.get("id") or "")
+            parent_message_id = str(artifact_document.get("parent_message_id") or "")
+            if artifact_id in referenced_artifact_ids or (
+                parent_message_id and parent_message_id in included_ids
+            ):
+                included_documents.append(artifact_document)
+                if artifact_id:
+                    included_ids.add(artifact_id)
+                referenced_artifact_ids.update(
+                    _collect_artifact_message_reference_ids(artifact_document)
+                )
+                added_document = True
+            else:
+                remaining_artifacts.append(artifact_document)
+        if not added_document:
+            break
+        pending_artifacts = remaining_artifacts
+
+    return sorted(included_documents, key=_message_fork_sort_key)
+
+
+def _remap_fork_references(
+    value: Any,
+    key: str,
+    source_conversation_id: str,
+    fork_conversation_id: str,
+    message_id_map: Dict[str, str],
+    thread_id_map: Dict[str, str],
+) -> Any:
+    if isinstance(value, dict):
+        return {
+            child_key: _remap_fork_references(
+                child_value,
+                child_key,
+                source_conversation_id,
+                fork_conversation_id,
+                message_id_map,
+                thread_id_map,
+            )
+            for child_key, child_value in value.items()
+        }
+    if isinstance(value, list):
+        return [
+            _remap_fork_references(
+                child_value,
+                key,
+                source_conversation_id,
+                fork_conversation_id,
+                message_id_map,
+                thread_id_map,
+            )
+            for child_value in value
+        ]
+    if isinstance(value, str):
+        if (key == "conversation_id" or key.endswith("_conversation_id")) and value == source_conversation_id:
+            return fork_conversation_id
+        if key == "thread_id" or key.endswith("_thread_id"):
+            if value not in thread_id_map:
+                thread_id_map[value] = str(uuid.uuid4())
+            return thread_id_map[value]
+        if key == "message_id" or key.endswith("_message_id"):
+            return message_id_map.get(value, value)
+        if key == "artifact_id" or key.endswith("_artifact_id"):
+            return message_id_map.get(value, value)
+    return value
+
+
+def _build_fork_message_documents(
+    source_documents: List[Dict[str, Any]],
+    source_conversation_id: str,
+    fork_conversation_id: str,
+) -> List[Dict[str, Any]]:
+    message_id_map = {
+        str(document["id"]): f"{fork_conversation_id}_{index:06d}_{uuid.uuid4().hex}"
+        for index, document in enumerate(source_documents, start=1)
+    }
+    thread_id_map: Dict[str, str] = {}
+    fork_documents = []
+
+    for sequence, source_document in enumerate(source_documents, start=1):
+        source_message_id = str(source_document["id"])
+        fork_document = {
+            key: copy.deepcopy(value)
+            for key, value in source_document.items()
+            if key not in COSMOS_SYSTEM_FIELDS
+        }
+        fork_document["id"] = message_id_map[source_message_id]
+        fork_document["conversation_id"] = fork_conversation_id
+        fork_document["fork_sequence"] = sequence
+        fork_document = _remap_fork_references(
+            fork_document,
+            "",
+            source_conversation_id,
+            fork_conversation_id,
+            message_id_map,
+            thread_id_map,
+        )
+        fork_documents.append(fork_document)
+
+    return fork_documents
+
+
+def _build_fork_conversation_document(
+    source_conversation: Dict[str, Any],
+    selected_message_id: str,
+    fork_conversation_id: str,
+    user_id: str,
+    destination_chat_type: str,
+) -> Dict[str, Any]:
+    source_title = str(source_conversation.get("title") or "New Conversation").strip() or "New Conversation"
+    fork_title = f"Fork of {source_title}"
+    timestamp = datetime.now(timezone.utc).isoformat()
+    fork_conversation = {
+        "id": fork_conversation_id,
+        "user_id": user_id,
+        "last_updated": timestamp,
+        "title": fork_title,
+        "context": [],
+        "tags": [],
+        "strict": False,
+        "is_pinned": False,
+        "is_hidden": False,
+        "chat_type": destination_chat_type,
+        "has_unread_assistant_response": False,
+        "last_unread_assistant_message_id": None,
+        "last_unread_assistant_at": None,
+        "added_to_activity_log": True,
+        "forked_from": {
+            "conversation_id": str(source_conversation.get("id") or ""),
+            "message_id": selected_message_id,
+        },
+    }
+    for field_name in PERSONAL_FORK_CONVERSATION_FIELDS:
+        if field_name in source_conversation:
+            fork_conversation[field_name] = copy.deepcopy(source_conversation[field_name])
+    return fork_conversation
+
+
+def _source_record_changed(original_record: Dict[str, Any], current_record: Dict[str, Any]) -> bool:
+    original_etag = original_record.get("_etag")
+    current_etag = current_record.get("_etag")
+    if original_etag or current_etag:
+        return original_etag != current_etag
+    return original_record != current_record
+
+
+def _source_document_set_changed(
+    original_documents: List[Dict[str, Any]],
+    current_documents: List[Dict[str, Any]],
+) -> bool:
+    original_by_id = {
+        str(document.get("id") or ""): document
+        for document in original_documents
+    }
+    current_by_id = {
+        str(document.get("id") or ""): document
+        for document in current_documents
+    }
+    if original_by_id.keys() != current_by_id.keys():
+        return True
+    return any(
+        _source_record_changed(original_document, current_by_id[message_id])
+        for message_id, original_document in original_by_id.items()
+    )
+
+
+def _build_fork_blob_path(
+    source_blob_path: str,
+    source_conversation_id: str,
+    fork_conversation_id: str,
+    source_message_id: str,
+    fork_message_id: str,
+) -> str:
+    normalized_path = str(source_blob_path or "").strip().replace("\\", "/")
+    fork_blob_path = normalized_path.replace(source_message_id, fork_message_id, 1)
+    fork_blob_path = fork_blob_path.replace(source_conversation_id, fork_conversation_id, 1)
+    if fork_blob_path != normalized_path:
+        return fork_blob_path
+
+    parent_path, _, file_name = normalized_path.rpartition("/")
+    normalized_file_name = file_name or "artifact"
+    prefix = f"{parent_path}/" if parent_path else ""
+    return f"{prefix}forks/{fork_conversation_id}/{fork_message_id}/{normalized_file_name}"
+
+
+def _copy_fork_blob_files(
+    source_documents: List[Dict[str, Any]],
+    fork_documents: List[Dict[str, Any]],
+    source_conversation_id: str,
+    fork_conversation_id: str,
+    created_blob_targets: List[Tuple[str, str]],
+) -> None:
+    blob_service_client = CLIENTS.get("storage_account_office_docs_client")
+    for source_document, fork_document in zip(source_documents, fork_documents):
+        blob_container = str(source_document.get("blob_container") or "").strip()
+        source_blob_path = str(source_document.get("blob_path") or "").strip()
+        if not blob_container or not source_blob_path:
+            continue
+        if not blob_service_client:
+            raise RuntimeError("Blob storage client is required to fork attached files")
+
+        fork_blob_path = _build_fork_blob_path(
+            source_blob_path,
+            source_conversation_id,
+            fork_conversation_id,
+            str(source_document.get("id") or ""),
+            str(fork_document.get("id") or ""),
+        )
+        source_blob_client = blob_service_client.get_blob_client(
+            container=blob_container,
+            blob=source_blob_path,
+        )
+        source_blob_properties = source_blob_client.get_blob_properties()
+        source_blob_content = source_blob_client.download_blob().readall()
+        fork_blob_client = blob_service_client.get_blob_client(
+            container=blob_container,
+            blob=fork_blob_path,
+        )
+        source_metadata = dict(getattr(source_blob_properties, "metadata", None) or {})
+        if source_metadata.get("conversation_id") == source_conversation_id:
+            source_metadata["conversation_id"] = fork_conversation_id
+        upload_options = {
+            "overwrite": True,
+            "metadata": source_metadata,
+        }
+        content_settings = getattr(source_blob_properties, "content_settings", None)
+        if content_settings is not None:
+            upload_options["content_settings"] = content_settings
+        fork_blob_client.upload_blob(source_blob_content, **upload_options)
+        created_blob_targets.append((blob_container, fork_blob_path))
+        fork_document["blob_path"] = fork_blob_path
+
+
+def _cleanup_failed_fork(
+    fork_conversation_id: str,
+    written_message_ids: List[str],
+    created_blob_targets: List[Tuple[str, str]],
+) -> None:
+    for message_id in reversed(written_message_ids):
+        try:
+            cosmos_messages_container.delete_item(
+                item=message_id,
+                partition_key=fork_conversation_id,
+            )
+        except Exception as cleanup_error:
+            log_event(
+                f"[CONVERSATION_FORK] Failed to clean up fork message: {cleanup_error}",
+                level=logging.ERROR,
+                extra={
+                    "fork_conversation_id": fork_conversation_id,
+                    "message_id": message_id,
+                },
+            )
+    blob_service_client = CLIENTS.get("storage_account_office_docs_client")
+    for blob_container, blob_path in reversed(created_blob_targets):
+        try:
+            if not blob_service_client:
+                raise RuntimeError("Blob storage client is unavailable")
+            blob_service_client.get_blob_client(
+                container=blob_container,
+                blob=blob_path,
+            ).delete_blob()
+        except Exception as cleanup_error:
+            log_event(
+                f"[CONVERSATION_FORK] Failed to clean up fork blob: {cleanup_error}",
+                level=logging.ERROR,
+                extra={
+                    "fork_conversation_id": fork_conversation_id,
+                    "blob_container": blob_container,
+                    "blob_path": blob_path,
+                },
+            )
+    try:
+        cosmos_conversations_container.delete_item(
+            item=fork_conversation_id,
+            partition_key=fork_conversation_id,
+        )
+    except CosmosResourceNotFoundError:
+        log_event(
+            "[CONVERSATION_FORK] Fork conversation already absent during cleanup",
+            level=logging.INFO,
+            extra={"fork_conversation_id": fork_conversation_id},
+        )
+    except Exception as cleanup_error:
+        log_event(
+            f"[CONVERSATION_FORK] Failed to clean up fork conversation: {cleanup_error}",
+            level=logging.ERROR,
+            extra={"fork_conversation_id": fork_conversation_id},
+        )
+
+
+def fork_personal_conversation_for_user(
+    source_conversation: Dict[str, Any],
+    selected_message_id: str,
+    user_id: str,
+) -> Dict[str, Any]:
+    """Create an independent personal conversation through one assistant message."""
+    source_conversation_id = str(source_conversation.get("id") or "").strip()
+    normalized_message_id = str(selected_message_id or "").strip()
+    normalized_user_id = str(user_id or "").strip()
+    if not source_conversation_id or not normalized_message_id or not normalized_user_id:
+        raise ValueError("Source conversation, assistant message, and user are required")
+    if source_conversation.get("user_id") != normalized_user_id:
+        raise PermissionError("Forbidden")
+    destination_chat_type = _authorize_fork_conversation_context(
+        source_conversation,
+        normalized_user_id,
+    )
+
+    query = (
+        "SELECT * FROM c "
+        "WHERE c.conversation_id = @conversation_id"
+    )
+    all_documents = list(cosmos_messages_container.query_items(
+        query=query,
+        parameters=[{"name": "@conversation_id", "value": source_conversation_id}],
+        partition_key=source_conversation_id,
+    ))
+    source_documents = _collect_fork_documents(all_documents, normalized_message_id)
+    selected_document = next(
+        document
+        for document in source_documents
+        if str(document.get("id") or "") == normalized_message_id
+    )
+
+    try:
+        current_conversation = cosmos_conversations_container.read_item(
+            item=source_conversation_id,
+            partition_key=source_conversation_id,
+        )
+        current_selected_message = cosmos_messages_container.read_item(
+            item=normalized_message_id,
+            partition_key=source_conversation_id,
+        )
+        current_documents = list(cosmos_messages_container.query_items(
+            query=query,
+            parameters=[{"name": "@conversation_id", "value": source_conversation_id}],
+            partition_key=source_conversation_id,
+        ))
+    except CosmosResourceNotFoundError as exc:
+        raise ConversationForkConflictError("The source conversation changed before it could be forked") from exc
+
+    if _source_record_changed(source_conversation, current_conversation) or _source_record_changed(
+        selected_document,
+        current_selected_message,
+    ) or _source_document_set_changed(all_documents, current_documents):
+        raise ConversationForkConflictError("The source conversation changed before it could be forked")
+
+    fork_conversation_id = str(uuid.uuid4())
+    fork_documents = _build_fork_message_documents(
+        source_documents,
+        source_conversation_id,
+        fork_conversation_id,
+    )
+    fork_conversation = _build_fork_conversation_document(
+        source_conversation,
+        normalized_message_id,
+        fork_conversation_id,
+        normalized_user_id,
+        destination_chat_type,
+    )
+    written_message_ids = []
+    created_blob_targets: List[Tuple[str, str]] = []
+
+    try:
+        _copy_fork_blob_files(
+            source_documents,
+            fork_documents,
+            source_conversation_id,
+            fork_conversation_id,
+            created_blob_targets,
+        )
+        for fork_document in fork_documents:
+            cosmos_messages_container.upsert_item(fork_document)
+            written_message_ids.append(fork_document["id"])
+        cosmos_conversations_container.upsert_item(fork_conversation)
+    except Exception:
+        _cleanup_failed_fork(
+            fork_conversation_id,
+            written_message_ids,
+            created_blob_targets,
+        )
+        raise
+
+    try:
+        log_conversation_creation(
+            user_id=normalized_user_id,
+            conversation_id=fork_conversation_id,
+            title=fork_conversation["title"],
+            workspace_type="personal",
+        )
+    except Exception as log_error:
+        log_event(
+            f"[CONVERSATION_FORK] Fork created but activity logging failed: {log_error}",
+            level=logging.WARNING,
+            extra={"fork_conversation_id": fork_conversation_id},
+        )
+
+    return {
+        "conversation": fork_conversation,
+        "message_count": len([
+            document
+            for document in fork_documents
+            if not _is_assistant_artifact_document(document)
+        ]),
+    }
 
 
 def create_personal_conversation_for_current_user(
@@ -609,6 +1223,70 @@ def upload_generated_analysis_artifact_for_current_user(
     )
 
 
+def delete_generated_chat_artifact_for_current_user(
+    conversation_id: str,
+    artifact_message_id: str,
+) -> bool:
+    """Delete one generated artifact after reauthorizing its conversation and stored identity."""
+    current_user_info = _require_current_user_info()
+    current_user_id = str(current_user_info.get("userId") or "").strip()
+    return delete_generated_chat_artifact_for_user(
+        current_user_id,
+        conversation_id,
+        artifact_message_id,
+    )
+
+
+def delete_generated_chat_artifact_for_user(
+    current_user_id: str,
+    conversation_id: str,
+    artifact_message_id: str,
+) -> bool:
+    """Delete one generated artifact for a known user after object-level authorization."""
+    current_user_id = str(current_user_id or "").strip()
+    normalized_conversation_id = str(conversation_id or "").strip()
+    normalized_message_id = str(artifact_message_id or "").strip()
+    if not current_user_id or not normalized_conversation_id or not normalized_message_id:
+        return False
+
+    try:
+        conversation_item = cosmos_conversations_container.read_item(
+            item=normalized_conversation_id,
+            partition_key=normalized_conversation_id,
+        )
+        message_item = cosmos_messages_container.read_item(
+            item=normalized_message_id,
+            partition_key=normalized_conversation_id,
+        )
+    except CosmosResourceNotFoundError:
+        return False
+
+    if str(conversation_item.get("user_id") or "").strip() != current_user_id:
+        raise PermissionError("Forbidden")
+    message_metadata = message_item.get("metadata") if isinstance(message_item.get("metadata"), dict) else {}
+    if (
+        str(message_item.get("conversation_id") or "").strip() != normalized_conversation_id
+        or message_item.get("role") != "file"
+        or not message_metadata.get("is_generated_chat_artifact")
+    ):
+        raise PermissionError("Forbidden")
+
+    delete_blob_backed_chat_message_files([message_item])
+    cosmos_messages_container.delete_item(
+        item=normalized_message_id,
+        partition_key=normalized_conversation_id,
+    )
+    log_event(
+        "[SIMPLE_CHAT] Generated chat artifact rolled back after cancellation",
+        {
+            "artifact_count": 1,
+            "rollback_reason": "cancellation",
+        },
+        debug_only=True,
+    )
+    return True
+
+
 def upload_generated_analysis_artifact_for_user(
     current_user_id: str,
     conversation_id: str,
@@ -666,10 +1344,75 @@ def upload_generated_analysis_artifact_for_user(
     )
 
 
-def delete_blob_backed_chat_message_files(messages: Iterable[Dict[str, Any]]) -> int:
+def upload_generated_analysis_artifact_stream_for_user(
+    current_user_id: str,
+    conversation_id: str,
+    file_name: str,
+    file_stream: Any,
+    file_size: int,
+    capability: str = "analysis",
+    output_format: str = "",
+    summary: str = "",
+    artifact_idempotency_key: str = "",
+) -> Dict[str, Any]:
+    """Upload a bounded-memory generated artifact stream for an authorized user."""
+    normalized_user_id = str(current_user_id or "").strip()
+    normalized_conversation_id = str(conversation_id or "").strip()
+    normalized_file_name = _normalize_generated_document_file_name(file_name)
+    normalized_capability = str(capability or "analysis").strip().lower() or "analysis"
+    normalized_output_format = str(output_format or "").strip().lower() or os.path.splitext(normalized_file_name)[1].lower().lstrip(".")
+    normalized_summary = str(summary or "").strip()
+
+    if not normalized_user_id:
+        raise ValueError("current_user_id is required")
+    if not normalized_conversation_id:
+        raise ValueError("conversation_id is required")
+    if not hasattr(file_stream, "read") or not hasattr(file_stream, "seek"):
+        raise ValueError("file_stream must be seekable and readable")
+    if not allowed_file(normalized_file_name):
+        raise ValueError("Generated file type is not supported")
+
+    normalized_file_size = max(0, int(file_size or 0))
+    if normalized_file_size <= 0:
+        raise ValueError("Generated artifact is empty")
+
+    settings = get_settings()
+    max_artifact_size_mb = settings.get("max_generated_chat_artifact_size_mb", 500)
+    try:
+        max_artifact_size_mb = max(1, int(max_artifact_size_mb))
+    except (TypeError, ValueError):
+        max_artifact_size_mb = 500
+
+    max_artifact_size_bytes = max_artifact_size_mb * 1024 * 1024
+    if normalized_file_size > max_artifact_size_bytes:
+        raise ValueError(
+            f"Generated artifact exceeds the {max_artifact_size_mb} MB size limit"
+        )
+
+    file_stream.seek(0)
+    return _upload_generated_chat_artifact_for_current_user(
+        current_user_id=normalized_user_id,
+        conversation_id=normalized_conversation_id,
+        normalized_file_name=normalized_file_name,
+        file_content_bytes=file_stream,
+        artifact_metadata={
+            "capability": normalized_capability,
+            "output_format": normalized_output_format,
+            "summary": normalized_summary,
+        },
+        artifact_idempotency_key=artifact_idempotency_key,
+    )
+
+
+def delete_blob_backed_chat_message_files(
+    messages: Iterable[Dict[str, Any]],
+    raise_on_error: bool = False,
+) -> int:
     """Delete blob-backed chat files referenced by the provided message documents."""
     blob_service_client = CLIENTS.get("storage_account_office_docs_client")
     if not blob_service_client:
+        if raise_on_error:
+            raise RuntimeError("Blob storage client is unavailable for chat file cleanup")
         return 0
 
     deleted_count = 0
@@ -704,8 +1447,10 @@ def delete_blob_backed_chat_message_files(messages: Iterable[Dict[str, Any]]) ->
             deleted_targets.add(target)
             deleted_count += 1
         except Exception as exc:
+            if raise_on_error:
+                raise
             log_event(
-                "[SimpleChat] Failed to delete blob-backed chat file",
+                "[SIMPLE_CHAT] Failed to delete blob-backed chat file",
                 {
                     "blob_container": blob_container,
                     "blob_path": blob_path,
@@ -800,7 +1545,7 @@ def upload_chat_image_bytes_for_user(
     )
 
     log_event(
-        "[SimpleChat] Chat image saved to blob storage",
+        "[SIMPLE_CHAT] Chat image saved to blob storage",
         {
             "conversation_id": normalized_conversation_id,
             "message_id": normalized_message_id,
@@ -885,6 +1630,7 @@ def make_group_inactive_for_current_user(
         }
     )
     updated_group_doc = cosmos_groups_container.upsert_item(group_doc)
+    bump_chat_bootstrap_global_cache_version(reason="group_marked_inactive")
 
     log_group_status_change(
         group_id=resolved_group_id,
@@ -896,7 +1642,7 @@ def make_group_inactive_for_current_user(
         reason=normalized_reason or None,
     )
     log_event(
-        "[SimpleChat] Group marked inactive",
+        "[SIMPLE_CHAT] Group marked inactive",
         {
             "group_id": resolved_group_id,
             "group_name": group_doc.get("name"),
@@ -1106,6 +1852,7 @@ def add_group_member_for_current_user(
 
     group_doc["modifiedDate"] = datetime.utcnow().isoformat()
     updated_group_doc = cosmos_groups_container.upsert_item(group_doc)
+    bump_chat_bootstrap_global_cache_version(reason="group_member_added")
 
     _log_group_member_addition(
         actor_user=current_user,
@@ -1216,7 +1963,7 @@ def search_directory_users(query: str, limit: int = 10) -> List[Dict[str, str]]:
                 f"or startswith(mail, '{escaped_query}') "
                 f"or startswith(userPrincipalName, '{escaped_query}')"
             ),
-            "$top": max(1, min(int(limit or 10), 25)),
+            "$top": max(1, min(int(limit or 10), 50)),
             "$select": "id,displayName,mail,userPrincipalName",
         },
     )
@@ -1740,6 +2487,7 @@ def _upload_generated_chat_artifact_for_current_user(
     normalized_file_name: str,
     file_content_bytes: bytes,
     artifact_metadata: Optional[Dict[str, Any]] = None,
+    artifact_idempotency_key: str = "",
 ) -> Dict[str, Any]:
     try:
         conversation_item = cosmos_conversations_container.read_item(
@@ -1756,7 +2504,15 @@ def _upload_generated_chat_artifact_for_current_user(
     if not blob_service_client:
         raise RuntimeError("Blob storage client not available")
 
-    artifact_message_id = f"{conversation_id}_generated_file_{uuid.uuid4().hex}"
+    normalized_idempotency_key = str(artifact_idempotency_key or "").strip()
+    if normalized_idempotency_key:
+        artifact_suffix = uuid.uuid5(
+            uuid.NAMESPACE_URL,
+            f"simplechat-generated-artifact:{conversation_id}:{normalized_idempotency_key}",
+        ).hex
+    else:
+        artifact_suffix = uuid.uuid4().hex
+    artifact_message_id = f"{conversation_id}_generated_file_{artifact_suffix}"
     blob_path = (
         f"{current_user_id}/{conversation_id}/generated/"
         f"{artifact_message_id}/{normalized_file_name}"
@@ -1765,6 +2521,33 @@ def _upload_generated_chat_artifact_for_current_user(
         container=storage_account_personal_chat_container_name,
         blob=blob_path,
     )
+    if normalized_idempotency_key:
+        try:
+            existing_message = cosmos_messages_container.read_item(
+                item=artifact_message_id,
+                partition_key=conversation_id,
+            )
+        except CosmosResourceNotFoundError:
+            existing_message = None
+        if (
+            isinstance(existing_message, dict)
+            and existing_message.get("role") == "file"
+            and existing_message.get("filename") == normalized_file_name
+            and existing_message.get("blob_path") == blob_path
+            and blob_client.exists()
+        ):
+            existing_metadata = existing_message.get("metadata") or {}
+            return {
+                "message": {
+                    "id": artifact_message_id,
+                    "file_name": normalized_file_name,
+                    "blob_container": storage_account_personal_chat_container_name,
+                    "blob_path": blob_path,
+                    "capability": existing_metadata.get("generated_artifact_capability") or "analysis",
+                    "output_format": existing_metadata.get("generated_artifact_output_format") or "",
+                },
+                "conversation_id": conversation_id,
+            }
     blob_client.upload_blob(
         file_content_bytes,
         overwrite=True,
@@ -1772,6 +2555,7 @@ def _upload_generated_chat_artifact_for_current_user(
             "conversation_id": conversation_id,
             "user_id": current_user_id,
             "generated_artifact": "true",
+            "idempotent_artifact": str(bool(normalized_idempotency_key)).lower(),
         },
     )
 
@@ -1801,6 +2585,7 @@ def _upload_generated_chat_artifact_for_current_user(
             "generated_artifact_capability": artifact_capability,
             "generated_artifact_output_format": artifact_output_format,
             "generated_artifact_summary": artifact_summary,
+            "generated_artifact_idempotency_key": normalized_idempotency_key or None,
             "thread_info": {
                 "thread_id": current_thread_id,
                 "previous_thread_id": previous_thread_id,
@@ -1812,7 +2597,7 @@ def _upload_generated_chat_artifact_for_current_user(
     cosmos_messages_container.upsert_item(message_doc)
 
     log_event(
-        "[SimpleChat] Generated chat artifact saved",
+        "[SIMPLE_CHAT] Generated chat artifact saved",
         {
             "conversation_id": conversation_id,
             "message_id": artifact_message_id,
@@ -2074,7 +2859,7 @@ def _log_group_member_addition(
         cosmos_activity_logs_container.create_item(body=activity_record)
     except Exception as exc:
         log_event(
-            f"[SimpleChat] Failed to log group member addition: {exc}",
+            f"[SIMPLE_CHAT] Failed to log group member addition: {exc}",
             level=logging.WARNING,
             exceptionTraceback=True,
         )
@@ -2117,7 +2902,7 @@ def _notify_group_member_addition(
         )
     except Exception as exc:
         log_event(
-            f"[SimpleChat] Failed to notify group member addition: {exc}",
+            f"[SIMPLE_CHAT] Failed to notify group member addition: {exc}",
             level=logging.WARNING,
             exceptionTraceback=True,
         )
@@ -2152,7 +2937,7 @@ def _notify_group_member_addition(
         )
     except Exception as exc:
         log_event(
-            f"[SimpleChat] Failed to notify actor about group member addition: {exc}",
+            f"[SIMPLE_CHAT] Failed to notify actor about group member addition: {exc}",
             level=logging.WARNING,
             exceptionTraceback=True,
         )
@@ -2183,7 +2968,7 @@ def _create_personal_notification(
         )
     except Exception as exc:
         log_event(
-            f"[SimpleChat] Failed to create notification '{notification_type}': {exc}",
+            f"[SIMPLE_CHAT] Failed to create notification '{notification_type}': {exc}",
             level=logging.WARNING,
             exceptionTraceback=True,
         )

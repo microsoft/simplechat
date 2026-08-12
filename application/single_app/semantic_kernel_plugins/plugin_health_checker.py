@@ -43,13 +43,19 @@ from functions_tableau_operations import (
     normalize_tableau_server_url,
 )
 from functions_mcp_operations import (
+    MCP_CUSTOM_HEADERS_FIELD,
+    MCP_MAX_RETRY_BACKOFF_SECONDS,
+    MCP_MAX_RETRY_COUNT,
     MCP_MAX_TIMEOUT_SECONDS,
     MCP_PLUGIN_TYPE,
     MCP_REMOTE_TRANSPORTS,
     MCP_SUPPORTED_AUTH_METHODS,
     MCP_SUPPORTED_TRANSPORTS,
+    get_mcp_custom_header_validation_errors,
+    is_valid_mcp_header_name,
     normalize_mcp_additional_fields,
     normalize_mcp_auth_method,
+    validate_mcp_endpoint_for_transport,
 )
 from functions_simplechat_operations import SIMPLECHAT_DEFAULT_ENDPOINT
 
@@ -301,13 +307,7 @@ class PluginHealthChecker:
                 errors.append("MCP plugin requires additionalFields.transport to be streamable_http, sse, websocket, or stdio")
 
             if transport in MCP_REMOTE_TRANSPORTS:
-                if not endpoint:
-                    errors.append("MCP plugin requires an endpoint for remote transports")
-                else:
-                    parsed_endpoint = urlparse(endpoint)
-                    allowed_schemes = {'ws', 'wss'} if transport == 'websocket' else {'http', 'https'}
-                    if parsed_endpoint.scheme not in allowed_schemes or not parsed_endpoint.netloc:
-                        errors.append(f"MCP {transport} transport requires a valid {'/'.join(sorted(allowed_schemes))} endpoint")
+                errors.extend(validate_mcp_endpoint_for_transport(endpoint, transport))
             elif transport == 'stdio':
                 command = str(additional_fields.get('command') or '').strip()
                 if not command:
@@ -321,15 +321,32 @@ class PluginHealthChecker:
                 errors.append("MCP bearer, api_key, and basic auth methods require auth.type='key'")
             if auth_method in {'bearer', 'api_key', 'basic'} and not auth.get('key'):
                 errors.append("MCP credential-based auth methods require auth.key")
-            if auth_method == 'api_key' and not str(additional_fields.get('api_key_header_name') or '').strip():
-                errors.append("MCP api_key auth requires additionalFields.api_key_header_name")
+            if auth_method == 'api_key':
+                api_key_header_name = str(additional_fields.get('api_key_header_name') or '').strip()
+                if not api_key_header_name:
+                    errors.append("MCP api_key auth requires additionalFields.api_key_header_name")
+                elif not is_valid_mcp_header_name(api_key_header_name):
+                    errors.append("MCP api_key auth requires a valid additionalFields.api_key_header_name")
             if auth_method == 'basic' and not auth.get('identity'):
                 errors.append("MCP basic auth requires auth.identity for the username")
+
+            custom_headers = additional_fields.get(MCP_CUSTOM_HEADERS_FIELD)
+            errors.extend(get_mcp_custom_header_validation_errors(custom_headers))
+            if transport == 'websocket' and (auth_method != 'none' or custom_headers):
+                errors.append("MCP websocket transport does not support custom or authentication headers")
 
             for timeout_field in ('request_timeout', 'connect_timeout', 'sse_read_timeout'):
                 timeout_value = additional_fields.get(timeout_field)
                 if not isinstance(timeout_value, int) or timeout_value < 1 or timeout_value > MCP_MAX_TIMEOUT_SECONDS:
                     errors.append(f"MCP {timeout_field} must be between 1 and {MCP_MAX_TIMEOUT_SECONDS} seconds")
+
+            retry_count = additional_fields.get('retry_count')
+            if not isinstance(retry_count, int) or retry_count < 0 or retry_count > MCP_MAX_RETRY_COUNT:
+                errors.append(f"MCP retry_count must be between 0 and {MCP_MAX_RETRY_COUNT}")
+
+            retry_backoff = additional_fields.get('retry_backoff_seconds')
+            if not isinstance(retry_backoff, int) or retry_backoff < 1 or retry_backoff > MCP_MAX_RETRY_BACKOFF_SECONDS:
+                errors.append(f"MCP retry_backoff_seconds must be between 1 and {MCP_MAX_RETRY_BACKOFF_SECONDS} seconds")
 
             allowed_tool_names = additional_fields.get('allowed_tool_names')
             if not isinstance(allowed_tool_names, list):
@@ -444,13 +461,13 @@ class PluginHealthChecker:
         
         if health_report['is_healthy']:
             log_event(
-                f"[Plugin Health] Plugin {plugin_name} is healthy",
+                f"[PLUGIN_HEALTH] Plugin {plugin_name} is healthy",
                 extra=health_report,
                 level=logging.INFO
             )
         else:
             log_event(
-                f"[Plugin Health] Plugin {plugin_name} has health issues",
+                f"[PLUGIN_HEALTH] Plugin {plugin_name} has health issues",
                 extra=health_report,
                 level=logging.WARNING
             )
@@ -458,7 +475,7 @@ class PluginHealthChecker:
         # Log individual errors
         for error in health_report.get('errors', []):
             log_event(
-                f"[Plugin Health] Error in {plugin_name}: {error}",
+                f"[PLUGIN_HEALTH] Error in {plugin_name}: {error}",
                 extra={'plugin_name': plugin_name, 'error': error},
                 level=logging.ERROR
             )
@@ -483,21 +500,21 @@ class PluginHealthChecker:
             # Try manifest-based instantiation first
             try:
                 plugin_instance = plugin_class(manifest)
-                log_event(f"[Plugin Creation] Successfully created {plugin_name} with manifest", 
+                log_event(f"[PLUGIN_CREATION] Successfully created {plugin_name} with manifest",
                          level=logging.DEBUG)
             except (TypeError, ValueError, KeyError) as e:
                 errors.append(f"Manifest instantiation failed: {str(e)}")
                 # Try empty dict
                 try:
                     plugin_instance = plugin_class({})
-                    log_event(f"[Plugin Creation] Created {plugin_name} with empty manifest", 
+                    log_event(f"[PLUGIN_CREATION] Created {plugin_name} with empty manifest",
                              level=logging.INFO)
                 except (TypeError, ValueError) as e2:
                     errors.append(f"Empty dict instantiation failed: {str(e2)}")
                     # Try no parameters
                     try:
                         plugin_instance = plugin_class()
-                        log_event(f"[Plugin Creation] Created {plugin_name} with no parameters", 
+                        log_event(f"[PLUGIN_CREATION] Created {plugin_name} with no parameters",
                                  level=logging.INFO)
                     except Exception as e3:
                         errors.append(f"No-parameter instantiation failed: {str(e3)}")
@@ -506,7 +523,7 @@ class PluginHealthChecker:
         
         except Exception as e:
             errors.append(f"Critical error in plugin creation: {str(e)}")
-            log_event(f"[Plugin Creation] Critical error creating {plugin_name}: {str(e)}", 
+            log_event(f"[PLUGIN_CREATION] Critical error creating {plugin_name}: {str(e)}",
                      level=logging.ERROR, exceptionTraceback=True)
         
         # If we got a plugin instance, run health check
@@ -561,7 +578,7 @@ class PluginErrorRecovery:
             return FallbackPlugin()
         
         except Exception as e:
-            log_event(f"[Plugin Recovery] Failed to create fallback plugin for {plugin_name}: {str(e)}", 
+            log_event(f"[PLUGIN_RECOVERY] Failed to create fallback plugin for {plugin_name}: {str(e)}",
                      level=logging.ERROR)
             return None
     
@@ -598,6 +615,6 @@ class PluginErrorRecovery:
                     was_repaired = True
         
         except Exception as e:
-            log_event(f"[Plugin Repair] Failed to repair plugin: {str(e)}", level=logging.WARNING)
+            log_event(f"[PLUGIN_REPAIR] Failed to repair plugin: {str(e)}", level=logging.WARNING)
         
         return plugin_instance, was_repaired

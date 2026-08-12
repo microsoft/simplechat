@@ -110,10 +110,10 @@ INLINE_IMAGE_PROPOSAL_EXPORT_REGEX = re.compile(
 )
 
 
-def register_route_backend_conversation_export(app):
+def register_route_backend_conversation_export(bp):
     """Register conversation export API routes."""
 
-    @app.route('/api/conversations/export', methods=['POST'])
+    @bp.route('/api/conversations/export', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -229,7 +229,7 @@ def register_route_backend_conversation_export(app):
             log_event(f"Conversation export failed: {exc}", level="WARNING")
             return jsonify({'error': f'Export failed: {str(exc)}'}), 500
 
-    @app.route('/api/message/export-word', methods=['POST'])
+    @bp.route('/api/message/export-word', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -287,7 +287,7 @@ def register_route_backend_conversation_export(app):
             log_event(f"Message export failed: {exc}", level="WARNING")
             return jsonify({'error': 'Export failed due to a server error. Please try again later.'}), 500
 
-    @app.route('/api/message/export-powerpoint', methods=['POST'])
+    @bp.route('/api/message/export-powerpoint', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -360,7 +360,7 @@ def register_route_backend_conversation_export(app):
             log_event(f"Message PowerPoint export failed: {exc}", level="WARNING")
             return jsonify({'error': 'PowerPoint export failed due to a server error. Please try again later.'}), 500
 
-    @app.route('/api/message/export-email-draft', methods=['POST'])
+    @bp.route('/api/message/export-email-draft', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -1098,14 +1098,14 @@ def _get_summary_model_endpoint_candidates(settings: Dict[str, Any], user_id: st
                 'user',
             )
         except Exception as exc:
-            debug_print(f"[Summary][Model Resolution] Failed to load personal endpoints: {exc}")
+            debug_print(f"[SUMMARY][Model Resolution] Failed to load personal endpoints: {exc}")
 
     if settings.get('enable_group_workspaces', False) and settings.get('allow_group_custom_endpoints', False):
         try:
             user_groups = get_user_groups(user_id)
         except Exception as exc:
             user_groups = []
-            debug_print(f"[Summary][Model Resolution] Failed to load user groups: {exc}")
+            debug_print(f"[SUMMARY][Model Resolution] Failed to load user groups: {exc}")
 
         for group_doc in user_groups:
             group_id = _normalize_summary_model_value(group_doc.get('id') if isinstance(group_doc, dict) else '')
@@ -1119,7 +1119,7 @@ def _get_summary_model_endpoint_candidates(settings: Dict[str, Any], user_id: st
                 )
             except Exception as exc:
                 debug_print(
-                    f"[Summary][Model Resolution] Failed to load group endpoints for group_id={group_id}: {exc}"
+                    f"[SUMMARY][Model Resolution] Failed to load group endpoints for group_id={group_id}: {exc}"
                 )
 
     return candidates
@@ -1320,7 +1320,7 @@ def _resolve_summary_multi_endpoint_client(
             deployment,
         )
         debug_print(
-            f"[Summary][Model Resolution] Resolved {selection_source} multi-endpoint model | "
+            f"[SUMMARY][Model Resolution] Resolved {selection_source} multi-endpoint model | "
             f"provider={provider} | endpoint_id={endpoint_id} | model_id={model_cfg.get('id')} | "
             f"deployment={deployment} | api_version={api_version} | protocol={runtime_protocol}"
         )

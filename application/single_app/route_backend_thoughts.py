@@ -15,9 +15,9 @@ from swagger_wrapper import swagger_route, get_auth_security
 from functions_appinsights import log_event
 
 
-def register_route_backend_thoughts(app):
+def register_route_backend_thoughts(bp):
 
-    @app.route('/api/conversations/<conversation_id>/messages/<message_id>/thoughts', methods=['GET'])
+    @bp.route('/api/conversations/<conversation_id>/messages/<message_id>/thoughts', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -72,7 +72,7 @@ def register_route_backend_thoughts(app):
             log_event(f"api_get_message_thoughts error: {e}", level="WARNING")
             return jsonify({'error': 'Failed to retrieve thoughts'}), 500
 
-    @app.route('/api/conversations/<conversation_id>/thoughts/pending', methods=['GET'])
+    @bp.route('/api/conversations/<conversation_id>/thoughts/pending', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required

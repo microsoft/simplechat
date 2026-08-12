@@ -52,7 +52,7 @@ WORKSPACE_IDENTITY_USAGE_ALIASES = {
     "general": "action",
 }
 WORKSPACE_IDENTITY_USAGE_SOURCE_TYPES = {
-    "file_sync": ["smb", "azure_files", "onedrive", "google_drive", "google_shared_drive"],
+    "file_sync": ["smb", "azure_files", "azure_blob", "onedrive", "google_drive", "google_shared_drive"],
     "action": ["action"],
 }
 WORKSPACE_IDENTITY_USAGE_AUTH_TYPES = {
@@ -695,7 +695,7 @@ def identity_supports_usage(
 
 def log_workspace_identity_reference_block(scope_type: str, scope_id: str, identity_id: str, reference_count: int) -> None:
     log_event(
-        "[WorkspaceIdentity] Delete blocked because identity is still referenced.",
+        "[WORKSPACE_IDENTITY] Delete blocked because identity is still referenced.",
         extra={
             "scope_type": scope_type,
             "scope_id": scope_id,

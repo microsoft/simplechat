@@ -1,12 +1,28 @@
 # route_frontend_admin_settings.py
 
+import os
 import re
 
 from config import *
 from functions_documents import *
 from functions_authentication import *
+from flask import current_app, jsonify, request
+
 from functions_keyvault import keyvault_model_endpoint_cleanup_helper, keyvault_model_endpoint_delete_helper, keyvault_model_endpoint_save_helper, redact_model_endpoint_secret_values
 from functions_settings import *
+from functions_content_safety import normalize_content_safety_violation_message
+from functions_mcp_server_config import (
+    check_inbound_mcp_easy_auth_exclusions,
+    INBOUND_MCP_SETTINGS_DEFAULTS,
+    ensure_inbound_mcp_default_tenant_entry,
+    inbound_mcp_entry_values,
+    is_mcp_ui_enabled,
+    normalize_inbound_mcp_list,
+    normalize_inbound_mcp_settings,
+    normalize_inbound_mcp_single_value,
+    normalize_inbound_mcp_value_entries,
+)
+from functions_mcp_server_registry import get_inbound_mcp_tool_registry
 from functions_file_sync import FILE_SYNC_DEFAULTS, get_file_sync_config
 from functions_source_review import SOURCE_REVIEW_DEFAULTS, get_source_review_config, get_source_review_runtime_capabilities, normalize_source_review_js_rendering_enabled, parse_source_review_list
 from functions_control_center import (
@@ -24,9 +40,28 @@ from functions_activity_logging import log_web_search_consent_acceptance, log_ge
 from functions_notifications import broadcast_system_notification
 from functions_logging import *
 from functions_document_actions import normalize_document_action_capabilities
+from functions_model_capabilities import is_vision_capable_model
+from functions_ai_notice import (
+    normalize_ai_notice_frequency,
+    normalize_ai_notice_message,
+)
+from functions_terms_of_use import (
+    TERMS_OF_USE_DEFAULT_REDIRECT,
+    TERMS_OF_USE_MAX_BUTTON_TEXT_LENGTH,
+    TERMS_OF_USE_MAX_MESSAGE_LENGTH,
+    TERMS_OF_USE_MAX_TITLE_LENGTH,
+    normalize_terms_of_use_frequency,
+    normalize_terms_of_use_redirect_url,
+    normalize_terms_of_use_text,
+)
 from swagger_wrapper import swagger_route, get_auth_security
 from datetime import datetime, timedelta, timezone
 from admin_settings_int_utils import safe_int_with_source
+from functions_personal_workflows import (
+    WORKFLOW_TASK_LIMIT_DEFAULT,
+    WORKFLOW_TASK_LIMIT_MAX,
+    WORKFLOW_TASK_LIMIT_MIN,
+)
 from support_menu_config import (
     get_admin_latest_feature_release_groups_for_settings,
     get_support_latest_feature_catalog,
@@ -52,6 +87,19 @@ AGENTS_PAGE_DEFAULTS = {
     'agents_page_promoted_popular_tag_label': AGENTS_PAGE_PROMOTED_POPULAR_TAG_LABEL_DEFAULT,
 }
 HEX_COLOR_PATTERN = re.compile(r'^#[0-9a-fA-F]{6}$')
+AZURE_SUBSCRIPTION_ID_PATTERN = re.compile(
+    r'[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}'
+)
+AZURE_CLI_CLOUD_NAMES_BY_ENVIRONMENT = {
+    'public': 'AzureCloud',
+    'usgovernment': 'AzureUSGovernment',
+}
+
+
+def _is_update_version_newer(latest_version, current_version):
+    """Return True only when the discovered release version is newer than the running version."""
+    return compare_versions(latest_version, current_version) == 1
+
 
 def allowed_file(filename, allowed_extensions):
     return '.' in filename and \
@@ -109,8 +157,375 @@ def normalize_agents_page_text(value, fallback, max_length):
         candidate = fallback
     return candidate[:max_length]
 
-def register_route_frontend_admin_settings(app):
-    @app.route('/admin/settings', methods=['GET', 'POST'])
+def escape_powershell_single_quoted_value(value):
+    """Return a PowerShell single-quoted string literal for non-secret deployment hints."""
+    return f"'{str(value or '').replace(chr(39), chr(39) + chr(39))}'"
+
+
+def escape_powershell_array(values):
+    """Return a PowerShell array literal for non-secret deployment hints."""
+    normalized_values = normalize_inbound_mcp_list(values)
+    if not normalized_values:
+        return '@()'
+    return '@(' + ', '.join(escape_powershell_single_quoted_value(value) for value in normalized_values) + ')'
+
+
+def get_app_service_subscription_hint():
+    """Best-effort subscription id derived from App Service environment metadata."""
+    for env_name in ('WEBSITE_OWNER_NAME', 'AZURE_SUBSCRIPTION_ID', 'SUBSCRIPTION_ID'):
+        candidate = str(os.getenv(env_name) or '')
+        match = AZURE_SUBSCRIPTION_ID_PATTERN.search(candidate)
+        if match:
+            return match.group(0)
+    return ''
+
+
+def get_inbound_mcp_easy_auth_script_context(settings=None):
+    """Build non-secret deployment hints for the inbound MCP Easy Auth script."""
+    settings = settings if isinstance(settings, dict) else {}
+    normalized_azure_environment = str(AZURE_ENVIRONMENT or 'public').strip().lower() or 'public'
+    resource_manager_endpoint = str(resource_manager or CUSTOM_RESOURCE_MANAGER_URL_VALUE or '').strip().rstrip('/')
+    app_name = str(os.getenv('WEBSITE_SITE_NAME') or '').strip()
+    resource_group = str(os.getenv('WEBSITE_RESOURCE_GROUP') or '').strip()
+    tenant_id = str(TENANT_ID or '').strip()
+    subscription_id = get_app_service_subscription_hint()
+    simplechat_api_client_id = str(CLIENT_ID or '').strip()
+    required_delegated_scope = str(
+        settings.get('inbound_mcp_required_scope')
+        or INBOUND_MCP_SETTINGS_DEFAULTS['inbound_mcp_required_scope']
+    ).strip()
+    required_user_role = normalize_inbound_mcp_single_value(
+        settings.get('inbound_mcp_required_user_role') or settings.get('inbound_mcp_required_user_roles'),
+        default_value=INBOUND_MCP_SETTINGS_DEFAULTS['inbound_mcp_required_user_role'],
+        max_length=128,
+    )
+    required_app_role = normalize_inbound_mcp_single_value(
+        settings.get('inbound_mcp_required_app_role') or settings.get('inbound_mcp_required_app_roles'),
+        default_value=INBOUND_MCP_SETTINGS_DEFAULTS['inbound_mcp_required_app_role'],
+        max_length=128,
+    )
+    required_user_roles = [required_user_role] if required_user_role else []
+    required_app_roles = [required_app_role] if required_app_role else []
+    scope_check_missing_values = []
+
+    missing_values = []
+    if not tenant_id:
+        missing_values.append('Tenant ID')
+    if not resource_manager_endpoint:
+        missing_values.append('Resource Manager endpoint')
+    if not resource_group:
+        missing_values.append('Resource group')
+    if not app_name:
+        missing_values.append('App Service name')
+    if not simplechat_api_client_id:
+        scope_check_missing_values.append('SimpleChat API client ID')
+    if not required_delegated_scope:
+        scope_check_missing_values.append('required delegated scope')
+    if not required_user_roles:
+        scope_check_missing_values.append('required delegated user role')
+    if not required_app_roles:
+        scope_check_missing_values.append('required app-only role')
+
+    return {
+        'tenant_id': tenant_id or '<tenant-id>',
+        'azure_environment': normalized_azure_environment,
+        'resource_manager_endpoint': resource_manager_endpoint or '<resource-manager-endpoint>',
+        'preferred_cloud_name': AZURE_CLI_CLOUD_NAMES_BY_ENVIRONMENT.get(normalized_azure_environment, ''),
+        'resource_group': resource_group or '<resource-group-name>',
+        'app_name': app_name or '<app-service-name>',
+        'subscription_id': subscription_id,
+        'simplechat_api_client_id': simplechat_api_client_id or '<simplechat-api-client-id>',
+        'required_delegated_scope': required_delegated_scope or '<required-delegated-scope>',
+        'required_user_role': required_user_role or '<required-user-role>',
+        'required_app_role': required_app_role or '<required-app-role>',
+        'required_user_roles': required_user_roles,
+        'required_app_roles': required_app_roles,
+        'missing_values': missing_values,
+        'scope_check_missing_values': scope_check_missing_values,
+        'uses_custom_cloud_match': normalized_azure_environment not in AZURE_CLI_CLOUD_NAMES_BY_ENVIRONMENT,
+    }
+
+
+def build_inbound_mcp_easy_auth_script(script_context):
+    """Return the cloud-aware PowerShell script shown in the inbound MCP modal."""
+    tenant_id = escape_powershell_single_quoted_value(script_context.get('tenant_id'))
+    resource_group = escape_powershell_single_quoted_value(script_context.get('resource_group'))
+    app_name = escape_powershell_single_quoted_value(script_context.get('app_name'))
+    subscription_id = escape_powershell_single_quoted_value(script_context.get('subscription_id'))
+    resource_manager_endpoint = escape_powershell_single_quoted_value(script_context.get('resource_manager_endpoint'))
+    preferred_cloud_name = escape_powershell_single_quoted_value(script_context.get('preferred_cloud_name'))
+    simplechat_api_client_id = escape_powershell_single_quoted_value(script_context.get('simplechat_api_client_id'))
+    required_delegated_scope = escape_powershell_single_quoted_value(script_context.get('required_delegated_scope'))
+    required_user_roles = escape_powershell_array(script_context.get('required_user_roles'))
+    required_app_roles = escape_powershell_array(script_context.get('required_app_roles'))
+
+    return f"""$tenantId = {tenant_id}
+$resourceGroup = {resource_group}
+$appName = {app_name}
+$subscriptionId = {subscription_id}
+$resourceManagerEndpoint = {resource_manager_endpoint}
+$preferredCloudName = {preferred_cloud_name}
+$simpleChatApiClientId = {simplechat_api_client_id}
+$requiredDelegatedScope = {required_delegated_scope}
+$requiredUserRoles = {required_user_roles}
+$requiredAppRoles = {required_app_roles}
+$requiredPaths = @(
+    "/.well-known/oauth-protected-resource",
+    "/.well-known/oauth-protected-resource/api/mcp",
+    "/.well-known/oauth-protected-resource/mcp",
+    "/.well-known/oauth-authorization-server",
+    "/api/mcp",
+    "/api/mcp/health"
+)
+
+$placeholderValues = @(
+    "<tenant-id>",
+    "<resource-group-name>",
+    "<app-service-name>",
+    "<resource-manager-endpoint>",
+    "<simplechat-api-client-id>",
+    "<required-delegated-scope>",
+    "<required-user-role>",
+    "<required-app-role>"
+)
+
+foreach ($requiredValue in @($tenantId, $resourceGroup, $appName, $resourceManagerEndpoint)) {{
+    if ([string]::IsNullOrWhiteSpace($requiredValue) -or $placeholderValues -contains $requiredValue) {{
+        throw "Update the generated script placeholders before running it."
+    }}
+}}
+
+function Normalize-Endpoint([string] $value) {{
+    if ($null -eq $value) {{
+        return ""
+    }}
+    return $value.Trim().TrimEnd("/")
+}}
+
+$resourceManagerEndpoint = Normalize-Endpoint $resourceManagerEndpoint
+$cloudNameToSet = $preferredCloudName
+
+if ([string]::IsNullOrWhiteSpace($cloudNameToSet)) {{
+    $registeredClouds = az cloud list -o json | ConvertFrom-Json
+    $matchingClouds = @($registeredClouds | Where-Object {{
+        (Normalize-Endpoint $_.endpoints.resourceManager) -ieq $resourceManagerEndpoint
+    }})
+
+    if ($matchingClouds.Count -eq 1) {{
+        $cloudNameToSet = $matchingClouds[0].name
+    }} elseif ($matchingClouds.Count -gt 1) {{
+        $matchingNames = ($matchingClouds | ForEach-Object {{ $_.name }}) -join ", "
+        throw "Multiple Azure CLI clouds match Resource Manager endpoint '$resourceManagerEndpoint': $matchingNames. Set `$preferredCloudName to the intended registered cloud name."
+    }} else {{
+        throw "No registered Azure CLI cloud matches Resource Manager endpoint '$resourceManagerEndpoint'. Register the custom cloud first, then rerun this script."
+    }}
+}}
+
+$activeCloudName = az cloud show --query name -o tsv 2>$null
+if ($LASTEXITCODE -ne 0 -or $activeCloudName -ne $cloudNameToSet) {{
+    az cloud set --name $cloudNameToSet
+    if ($LASTEXITCODE -ne 0) {{
+        throw "Failed to set Azure CLI cloud '$cloudNameToSet'."
+    }}
+}}
+
+$activeResourceManagerEndpoint = Normalize-Endpoint (az cloud show --query endpoints.resourceManager -o tsv)
+if ($activeResourceManagerEndpoint -ine $resourceManagerEndpoint) {{
+    throw "The active Azure CLI cloud Resource Manager endpoint '$activeResourceManagerEndpoint' does not match SimpleChat's endpoint '$resourceManagerEndpoint'."
+}}
+
+$currentTenantId = az account show --query tenantId -o tsv 2>$null
+if ($LASTEXITCODE -ne 0 -or $currentTenantId -ne $tenantId) {{
+    az login --tenant $tenantId
+    if ($LASTEXITCODE -ne 0) {{
+        throw "Azure CLI login failed for tenant '$tenantId'."
+    }}
+}}
+
+if (-not [string]::IsNullOrWhiteSpace($subscriptionId)) {{
+    az account set --subscription $subscriptionId
+    if ($LASTEXITCODE -ne 0) {{
+        throw "Failed to select subscription '$subscriptionId'."
+    }}
+}}
+
+$hasSimpleChatApiClientId = -not [string]::IsNullOrWhiteSpace($simpleChatApiClientId) -and $placeholderValues -notcontains $simpleChatApiClientId
+$hasRequiredDelegatedScope = -not [string]::IsNullOrWhiteSpace($requiredDelegatedScope) -and $placeholderValues -notcontains $requiredDelegatedScope
+$requiredUserRolesToCheck = @($requiredUserRoles | Where-Object {{ -not [string]::IsNullOrWhiteSpace($_) -and $placeholderValues -notcontains $_ }})
+$requiredAppRolesToCheck = @($requiredAppRoles | Where-Object {{ -not [string]::IsNullOrWhiteSpace($_) -and $placeholderValues -notcontains $_ }})
+if ($hasSimpleChatApiClientId -and ($hasRequiredDelegatedScope -or $requiredUserRolesToCheck.Count -gt 0 -or $requiredAppRolesToCheck.Count -gt 0)) {{
+    Write-Host "Checking that the SimpleChat API app registration exposes inbound MCP scope and role requirements..."
+    $apiApplicationJson = az ad app show --id $simpleChatApiClientId -o json 2>$null
+    if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($apiApplicationJson)) {{
+        $apiApplication = $apiApplicationJson | ConvertFrom-Json
+        if ($hasRequiredDelegatedScope) {{
+            $matchingScopes = @($apiApplication.api.oauth2PermissionScopes | Where-Object {{
+                $_.value -eq $requiredDelegatedScope -and ($_.isEnabled -eq $true -or $_.isEnabled -eq "true")
+            }})
+            if ($matchingScopes.Count -eq 0) {{
+                throw "The SimpleChat API app registration '$simpleChatApiClientId' does not expose enabled delegated scope '$requiredDelegatedScope'. Add the scope under Expose an API or update the Inbound MCP required delegated scope setting."
+            }}
+        }}
+        foreach ($requiredUserRole in $requiredUserRolesToCheck) {{
+            $matchingUserRoles = @($apiApplication.appRoles | Where-Object {{
+                $_.value -eq $requiredUserRole -and ($_.isEnabled -eq $true -or $_.isEnabled -eq "true") -and @($_.allowedMemberTypes) -contains "User"
+            }})
+            if ($matchingUserRoles.Count -eq 0) {{
+                throw "The SimpleChat API app registration '$simpleChatApiClientId' does not expose enabled user-assignable app role '$requiredUserRole'. Add the role under App roles or update the Inbound MCP required delegated user roles setting."
+            }}
+        }}
+        foreach ($requiredAppRole in $requiredAppRolesToCheck) {{
+            $matchingAppRoles = @($apiApplication.appRoles | Where-Object {{
+                $_.value -eq $requiredAppRole -and ($_.isEnabled -eq $true -or $_.isEnabled -eq "true") -and @($_.allowedMemberTypes) -contains "Application"
+            }})
+            if ($matchingAppRoles.Count -eq 0) {{
+                throw "The SimpleChat API app registration '$simpleChatApiClientId' does not expose enabled application app role '$requiredAppRole'. Add the role under App roles or update the Inbound MCP required app-only roles setting."
+            }}
+        }}
+    }} else {{
+        Write-Warning "Could not inspect the SimpleChat API app registration for inbound MCP scope and roles. Continue only if you already confirmed they exist and are enabled."
+    }}
+}}
+
+$siteId = az webapp show --resource-group $resourceGroup --name $appName --query id -o tsv
+if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($siteId)) {{
+    throw "Could not resolve App Service '$appName' in resource group '$resourceGroup'."
+}}
+
+$authSettingsUrl = "$resourceManagerEndpoint$siteId/config/authsettingsV2?api-version=2023-12-01"
+$rawCurrent = az rest --method get --url $authSettingsUrl
+if ($LASTEXITCODE -ne 0) {{
+    throw "Failed to read authsettingsV2."
+}}
+
+$current = $rawCurrent | ConvertFrom-Json
+
+$timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
+$backupPath = Join-Path (Get-Location) "simplechat-authsettingsV2-backup-$timestamp.json"
+$current | ConvertTo-Json -Depth 100 | Set-Content -Path $backupPath -Encoding utf8
+Write-Host "Backed up current authsettingsV2 to $backupPath"
+
+if (-not $current.properties.globalValidation) {{
+    $current.properties | Add-Member -NotePropertyName globalValidation -NotePropertyValue ([pscustomobject]@{{}})
+}}
+
+if (-not ($current.properties.globalValidation.PSObject.Properties.Name -contains "excludedPaths")) {{
+    $current.properties.globalValidation | Add-Member -NotePropertyName excludedPaths -NotePropertyValue @()
+}}
+
+$excludedPaths = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+foreach ($path in @($current.properties.globalValidation.excludedPaths)) {{
+    if (-not [string]::IsNullOrWhiteSpace($path)) {{
+        [void]$excludedPaths.Add($path)
+    }}
+}}
+foreach ($path in $requiredPaths) {{
+    [void]$excludedPaths.Add($path)
+}}
+
+$current.properties.globalValidation.excludedPaths = @($excludedPaths)
+$bodyPath = Join-Path ([System.IO.Path]::GetTempPath()) "simplechat-authsettingsV2-$timestamp.json"
+$current | ConvertTo-Json -Depth 100 | Set-Content -Path $bodyPath -Encoding utf8
+az rest --method put --url $authSettingsUrl --headers "Content-Type=application/json" --body "@$bodyPath"
+if ($LASTEXITCODE -ne 0) {{
+    throw "Failed to update authsettingsV2. Backup remains at $backupPath."
+}}
+
+Write-Host "Updated authsettingsV2 excludedPaths for inbound MCP. Backup remains at $backupPath."
+Write-Host ""
+Write-Host "**********************************************************************" -ForegroundColor Green
+Write-Host "IMPORTANT: Restart your web app now so App Service Authentication reloads the excluded paths." -ForegroundColor Green
+Write-Host "**********************************************************************" -ForegroundColor Green
+"""
+
+
+def get_inbound_mcp_easy_auth_check_base_url():
+    """Return the public app base URL to probe for Easy Auth exclusion checks."""
+    website_hostname = str(os.getenv('WEBSITE_HOSTNAME') or '').strip().strip('/')
+    if website_hostname:
+        return f"https://{website_hostname}/"
+    return request.host_url
+
+
+def register_route_frontend_admin_settings(bp):
+    @bp.route('/api/admin/settings/inbound-mcp/easy-auth-check', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def inbound_mcp_easy_auth_check():
+        """Validate that App Service Authentication exclusions allow inbound MCP endpoints."""
+        result = check_inbound_mcp_easy_auth_exclusions(get_inbound_mcp_easy_auth_check_base_url())
+        status_code = 200 if result.get('success') else 409
+        return jsonify(result), status_code
+
+    @bp.route('/api/admin/settings/file-processing-logs/cleanup', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def cleanup_file_processing_logs():
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict):
+            return jsonify({
+                'success': False,
+                'error': 'A JSON request body is required.',
+            }), 400
+        if payload.get('confirmed') is not True:
+            return jsonify({
+                'success': False,
+                'error': 'Explicit confirmation is required.',
+            }), 400
+
+        delete_all = payload.get('delete_all', False)
+        age = payload.get('age')
+        unit = payload.get('unit')
+
+        try:
+            result = delete_file_processing_logs(
+                delete_all=delete_all,
+                age=age,
+                unit=unit,
+            )
+        except ValueError as exc:
+            current_app.logger.warning(
+                'Invalid file processing log cleanup request.',
+                exc_info=True,
+            )
+            return jsonify({
+                'success': False,
+                'error': 'Invalid file processing log cleanup request.',
+            }), 400
+        except FileProcessingLogDeletionError as exc:
+            return jsonify({
+                'success': False,
+                'error': 'File processing log cleanup did not complete.',
+                'deleted_count': exc.deleted_count,
+            }), 500
+
+        admin_user = session.get('user', {})
+        admin_email = admin_user.get(
+            'preferred_username',
+            admin_user.get('email', 'unknown'),
+        )
+        log_general_admin_action(
+            admin_user_id=get_current_user_id(),
+            admin_email=admin_email,
+            action='file_processing_logs_deleted',
+            description='Deleted file processing logs.',
+            additional_context={
+                'delete_all': result['delete_all'],
+                'deleted_count': result['deleted_count'],
+                'cutoff': result['cutoff'],
+                'age': age,
+                'unit': unit,
+            },
+        )
+
+        return jsonify({
+            'success': True,
+            **result,
+        })
+
+    @bp.route('/admin/settings', methods=['GET', 'POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @admin_required
@@ -165,6 +580,10 @@ def register_route_frontend_admin_settings(app):
             settings['require_member_of_create_public_workspace'] = False
         if 'enable_chat_file_uploads' not in settings:
             settings['enable_chat_file_uploads'] = True
+        if 'enable_desktop_notifications' not in settings:
+            settings['enable_desktop_notifications'] = False
+        if 'enable_conversation_contents_drawer' not in settings:
+            settings['enable_conversation_contents_drawer'] = True
         if 'require_member_of_chat_file_upload_user' not in settings:
             settings['require_member_of_chat_file_upload_user'] = False
         if 'require_member_of_safety_violation_admin' not in settings:
@@ -179,6 +598,14 @@ def register_route_frontend_admin_settings(app):
         settings['control_center_auto_refresh_time'] = control_center_auto_refresh_schedule['time']
         settings['control_center_auto_refresh_hour'] = control_center_auto_refresh_schedule['hour']
         settings['control_center_auto_refresh_minute'] = control_center_auto_refresh_schedule['minute']
+        settings['control_center_auto_refresh_timezone'] = control_center_auto_refresh_schedule['timezone']
+        if (
+            settings['control_center_auto_refresh_enabled']
+            and not settings.get('control_center_auto_refresh_next_run')
+        ):
+            settings['control_center_auto_refresh_next_run'] = (
+                calculate_next_control_center_auto_refresh_run(settings).isoformat()
+            )
         settings.update(normalize_cosmos_throughput_settings(settings))
         cosmos_resource_config = get_cosmos_resource_config(settings)
         settings['cosmos_throughput_resolved_subscription_id'] = cosmos_resource_config.get('subscription_id', '')
@@ -416,7 +843,31 @@ def register_route_frontend_admin_settings(app):
             settings['classification_banner_color'] = '#ffc107'  # Bootstrap warning color
         if 'classification_banner_text_color' not in settings:
             settings['classification_banner_text_color'] = '#ffffff'  # White text by default
-        
+
+        # --- Add defaults for terms of use ---
+        if 'enable_terms_of_use' not in settings:
+            settings['enable_terms_of_use'] = False
+        if 'terms_of_use_title' not in settings:
+            settings['terms_of_use_title'] = 'Terms of Use'
+        if 'terms_of_use_message' not in settings:
+            settings['terms_of_use_message'] = ''
+        settings['terms_of_use_frequency'] = normalize_terms_of_use_frequency(
+            settings.get('terms_of_use_frequency')
+        )
+        if 'terms_of_use_decline_redirect_url' not in settings:
+            settings['terms_of_use_decline_redirect_url'] = TERMS_OF_USE_DEFAULT_REDIRECT
+        if 'terms_of_use_accept_button_text' not in settings:
+            settings['terms_of_use_accept_button_text'] = 'Accept and continue'
+        if 'terms_of_use_decline_button_text' not in settings:
+            settings['terms_of_use_decline_button_text'] = 'Cancel'
+        if 'enable_ai_notice' not in settings:
+            settings['enable_ai_notice'] = False
+        settings['ai_notice_message'] = normalize_ai_notice_message(
+            settings.get('ai_notice_message')
+        )
+        settings['ai_notice_frequency'] = normalize_ai_notice_frequency(
+            settings.get('ai_notice_frequency')
+        )
         # --- Add defaults for user agreement ---
         if 'enable_user_agreement' not in settings:
             settings['enable_user_agreement'] = False
@@ -434,6 +885,7 @@ def register_route_frontend_admin_settings(app):
             settings['key_vault_name'] = ''
         if 'key_vault_identity' not in settings:
             settings['key_vault_identity'] = ''
+        normalize_key_vault_reminder_settings(settings)
 
             # --- Add defaults for left nav ---
         if 'enable_left_nav_default' not in settings:
@@ -476,7 +928,7 @@ def register_route_frontend_admin_settings(app):
                  log_event(f"Error retrieving GPT deployments: {e}", level=logging.ERROR)
 
             # Check for application updates
-            current_version = app.config['VERSION']
+            current_version = current_app.config['VERSION']
             update_available = False
             latest_version = None
             download_url = "https://github.com/microsoft/simplechat/releases"
@@ -506,7 +958,7 @@ def register_route_frontend_admin_settings(app):
                         }
                         
                         # Compare with current version
-                        if latest_version and compare_versions(latest_version, current_version) == 1:
+                        if _is_update_version_newer(latest_version, current_version):
                             new_settings['update_available'] = True
                         else:
                             new_settings['update_available'] = False
@@ -519,20 +971,30 @@ def register_route_frontend_admin_settings(app):
                     log_event(f"Error checking for updates: {e}", level=logging.ERROR)
             
             # Get the persisted values for template rendering
-            update_available = settings.get('update_available', False)
             latest_version = settings.get('latest_version_available')
+            update_available = _is_update_version_newer(latest_version, current_version)
+            if settings.get('update_available') != update_available:
+                try:
+                    update_settings({'update_available': update_available})
+                    settings['update_available'] = update_available
+                except Exception as e:
+                    log_event(f"Error normalizing cached update availability: {e}", level=logging.WARNING)
             
             # Get user settings for profile and navigation
             user_id = get_current_user_id()
             user_settings = get_user_settings(user_id)
             settings_for_template = dict(settings)
+            normalize_inbound_mcp_settings(settings_for_template)
             settings_for_template['model_endpoints'] = frontend_model_endpoints
+            audio_runtime_capabilities = get_audio_runtime_capabilities()
             source_review_runtime_capabilities = get_source_review_runtime_capabilities()
             settings_for_template['source_review_allow_js_rendering'] = normalize_source_review_js_rendering_enabled(
                 settings_for_template.get('source_review_allow_js_rendering'),
                 source_review_runtime_capabilities,
             )
             settings_for_template = redact_admin_settings_secrets_for_form(settings_for_template)
+            settings_for_template['enhanced_citations_storage_status'] = get_enhanced_citations_storage_status()
+            inbound_mcp_easy_auth_script_context = get_inbound_mcp_easy_auth_script_context(settings_for_template)
 
             return render_template(
                 'admin_settings.html',
@@ -553,7 +1015,15 @@ def register_route_frontend_admin_settings(app):
                 chunk_size_settings=settings.get('chunk_size', {}),
                 chunk_size_cap=get_chunk_size_cap(settings),
                 chunk_size_effective=get_chunk_size_config(settings),
-                source_review_runtime_capabilities=source_review_runtime_capabilities
+                audio_runtime_capabilities=audio_runtime_capabilities,
+                source_review_runtime_capabilities=source_review_runtime_capabilities,
+                mcp_ui_enabled=is_mcp_ui_enabled(),
+                inbound_mcp_resource_path=INBOUND_MCP_RESOURCE_PATH,
+                inbound_mcp_prm_path=INBOUND_MCP_PRM_PATH,
+                inbound_mcp_easy_auth_script_context=inbound_mcp_easy_auth_script_context,
+                inbound_mcp_easy_auth_script=build_inbound_mcp_easy_auth_script(inbound_mcp_easy_auth_script_context),
+                is_vision_capable_model=is_vision_capable_model,
+                inbound_mcp_tools=get_inbound_mcp_tool_registry(),
                 # You don't need to pass deployments separately if they are added to settings['..._model']['all']
                 # gpt_deployments=gpt_deployments,
                 # embedding_deployments=embedding_deployments,
@@ -641,6 +1111,14 @@ def register_route_frontend_admin_settings(app):
             # ... (fetch all other fields using form_data.get) ...
             enable_video_file_support = form_data.get('enable_video_file_support') == 'on'
             enable_audio_file_support = form_data.get('enable_audio_file_support') == 'on'
+            enable_chat_completion_audio_cues = form_data.get('enable_chat_completion_audio_cues') == 'on'
+            chat_completion_audio_cues_updated_at = settings.get(
+                'chat_completion_audio_cues_updated_at'
+            )
+            if enable_chat_completion_audio_cues != bool(
+                settings.get('enable_chat_completion_audio_cues', False)
+            ):
+                chat_completion_audio_cues_updated_at = datetime.now(timezone.utc).isoformat()
             enable_extract_meta_data = form_data.get('enable_extract_meta_data') == 'on'
             
             # Vision settings
@@ -649,6 +1127,9 @@ def register_route_frontend_admin_settings(app):
 
             require_member_of_create_group = form_data.get('require_member_of_create_group') == 'on'
             require_owner_for_group_agent_management = form_data.get('require_owner_for_group_agent_management') == 'on'
+            public_workspace_display_name = normalize_public_workspace_display_name(
+                form_data.get('public_workspace_display_name')
+            )
             require_member_of_create_public_workspace = form_data.get('require_member_of_create_public_workspace') == 'on'
             require_member_of_chat_file_upload_user = form_data.get('require_member_of_chat_file_upload_user') == 'on'
             require_member_of_workflow_user = form_data.get('require_member_of_workflow_user') == 'on'
@@ -667,6 +1148,18 @@ def register_route_frontend_admin_settings(app):
                     )
                 )
             )
+            workflow_max_tasks = min(
+                WORKFLOW_TASK_LIMIT_MAX,
+                max(
+                    WORKFLOW_TASK_LIMIT_MIN,
+                    parse_admin_int(
+                        form_data.get('workflow_max_tasks'),
+                        settings.get('workflow_max_tasks', WORKFLOW_TASK_LIMIT_DEFAULT),
+                        'workflow_max_tasks',
+                        WORKFLOW_TASK_LIMIT_DEFAULT
+                    )
+                )
+            )
             file_sync_allowed_group_ids = normalize_file_sync_allowed_group_ids(
                 form_data.get('file_sync_allowed_group_ids', '')
             )
@@ -679,6 +1172,12 @@ def register_route_frontend_admin_settings(app):
             file_download_allowed_public_workspace_ids = normalize_file_download_allowed_public_workspace_ids(
                 form_data.get('file_download_allowed_public_workspace_ids', '')
             )
+            content_safety_violation_message = normalize_content_safety_violation_message(
+                form_data.get('content_safety_violation_message')
+            )
+            content_safety_include_trigger_information = form_data.get(
+                'content_safety_include_trigger_information'
+            ) == 'on'
             require_member_of_safety_violation_admin = form_data.get('require_member_of_safety_violation_admin') == 'on'
             require_member_of_control_center_admin = form_data.get('require_member_of_control_center_admin') == 'on'
             require_member_of_control_center_dashboard_reader = form_data.get('require_member_of_control_center_dashboard_reader') == 'on'
@@ -687,19 +1186,25 @@ def register_route_frontend_admin_settings(app):
             control_center_auto_refresh_enabled = form_data.get('control_center_auto_refresh_enabled') == 'on'
             incoming_control_center_auto_refresh_time = form_data.get(
                 'control_center_auto_refresh_time',
-                settings.get('control_center_auto_refresh_time', '06:00')
+                settings.get('control_center_auto_refresh_time', '02:00')
+            )
+            incoming_control_center_auto_refresh_timezone = form_data.get(
+                'control_center_auto_refresh_timezone',
+                settings.get('control_center_auto_refresh_timezone', 'America/New_York'),
             )
             control_center_auto_refresh_schedule = get_control_center_auto_refresh_schedule({
                 'control_center_auto_refresh_time': incoming_control_center_auto_refresh_time,
-                'control_center_auto_refresh_hour': settings.get('control_center_auto_refresh_hour', 6),
+                'control_center_auto_refresh_hour': settings.get('control_center_auto_refresh_hour', 2),
                 'control_center_auto_refresh_minute': settings.get('control_center_auto_refresh_minute', 0),
+                'control_center_auto_refresh_timezone': incoming_control_center_auto_refresh_timezone,
             })
             existing_control_center_auto_refresh_schedule = get_control_center_auto_refresh_schedule(settings)
             existing_control_center_auto_refresh_enabled = settings.get('control_center_auto_refresh_enabled', True)
             existing_control_center_auto_refresh_next_run = settings.get('control_center_auto_refresh_next_run')
             control_center_auto_refresh_schedule_changed = (
                 control_center_auto_refresh_enabled != existing_control_center_auto_refresh_enabled or
-                control_center_auto_refresh_schedule['time'] != existing_control_center_auto_refresh_schedule['time']
+                control_center_auto_refresh_schedule['time'] != existing_control_center_auto_refresh_schedule['time'] or
+                control_center_auto_refresh_schedule['timezone'] != existing_control_center_auto_refresh_schedule['timezone']
             )
             if control_center_auto_refresh_enabled:
                 if control_center_auto_refresh_schedule_changed or not existing_control_center_auto_refresh_next_run:
@@ -708,6 +1213,7 @@ def register_route_frontend_admin_settings(app):
                             'control_center_auto_refresh_time': control_center_auto_refresh_schedule['time'],
                             'control_center_auto_refresh_hour': control_center_auto_refresh_schedule['hour'],
                             'control_center_auto_refresh_minute': control_center_auto_refresh_schedule['minute'],
+                            'control_center_auto_refresh_timezone': control_center_auto_refresh_schedule['timezone'],
                         },
                         current_time=datetime.now(timezone.utc),
                     ).isoformat()
@@ -1589,6 +2095,59 @@ def register_route_frontend_admin_settings(app):
                 if word_count > 200:
                     flash('User Agreement text exceeds 200 word limit. Please shorten the text.', 'warning')
 
+            # --- Terms of Use Settings ---
+            enable_terms_of_use = form_data.get('enable_terms_of_use') == 'on'
+            terms_of_use_title = normalize_terms_of_use_text(
+                form_data.get('terms_of_use_title'),
+                fallback='Terms of Use',
+                max_length=TERMS_OF_USE_MAX_TITLE_LENGTH,
+            )
+            terms_of_use_message = normalize_terms_of_use_text(
+                form_data.get('terms_of_use_message'),
+                max_length=TERMS_OF_USE_MAX_MESSAGE_LENGTH,
+            )
+            terms_of_use_frequency = normalize_terms_of_use_frequency(
+                form_data.get('terms_of_use_frequency')
+            )
+            terms_of_use_accept_button_text = normalize_terms_of_use_text(
+                form_data.get('terms_of_use_accept_button_text'),
+                fallback='Accept and continue',
+                max_length=TERMS_OF_USE_MAX_BUTTON_TEXT_LENGTH,
+            )
+            terms_of_use_decline_button_text = normalize_terms_of_use_text(
+                form_data.get('terms_of_use_decline_button_text'),
+                fallback='Cancel',
+                max_length=TERMS_OF_USE_MAX_BUTTON_TEXT_LENGTH,
+            )
+            raw_terms_of_use_decline_redirect_url = form_data.get(
+                'terms_of_use_decline_redirect_url',
+                TERMS_OF_USE_DEFAULT_REDIRECT,
+            )
+            terms_of_use_decline_redirect_url = normalize_terms_of_use_redirect_url(
+                raw_terms_of_use_decline_redirect_url
+            )
+            if (
+                raw_terms_of_use_decline_redirect_url.strip()
+                and terms_of_use_decline_redirect_url != raw_terms_of_use_decline_redirect_url.strip()
+            ):
+                flash('Terms of Use cancel redirect was invalid and has been reset to the default.', 'warning')
+
+            if enable_terms_of_use and not terms_of_use_message:
+                flash('Terms of Use message is required when the feature is enabled.', 'danger')
+                return redirect(url_for('frontend_admin_settings.admin_settings'))
+
+            # --- AI Notice Settings ---
+            enable_ai_notice = form_data.get('enable_ai_notice') == 'on'
+            ai_notice_message = normalize_ai_notice_message(
+                form_data.get('ai_notice_message')
+            )
+            ai_notice_frequency = normalize_ai_notice_frequency(
+                form_data.get('ai_notice_frequency')
+            )
+            if enable_ai_notice and not ai_notice_message:
+                flash('AI notice message is required when the feature is enabled.', 'danger')
+                return redirect(url_for('frontend_admin_settings.admin_settings'))
+
             # --- Authentication & Redirect Settings ---
             enable_front_door = form_data.get('enable_front_door') == 'on'
             front_door_url = form_data.get('front_door_url', '').strip()
@@ -1651,9 +2210,66 @@ def register_route_frontend_admin_settings(app):
             if cosmos_throughput_validation_errors:
                 for validation_error in cosmos_throughput_validation_errors:
                     flash(validation_error, 'danger')
-                return redirect(url_for('admin_settings'))
+                return redirect(url_for('frontend_admin_settings.admin_settings'))
 
             cosmos_throughput_settings = normalize_cosmos_throughput_settings(cosmos_throughput_candidate_settings)
+
+            document_access_index_backfill_batch_size = min(
+                1000,
+                max(
+                    1,
+                    parse_admin_int(
+                        form_data.get('document_access_index_backfill_batch_size'),
+                        settings.get('document_access_index_backfill_batch_size', 200),
+                        'document_access_index_backfill_batch_size',
+                        200,
+                    ),
+                ),
+            )
+            document_access_index_repair_batch_size = min(
+                500,
+                max(
+                    1,
+                    parse_admin_int(
+                        form_data.get('document_access_index_repair_batch_size'),
+                        settings.get('document_access_index_repair_batch_size', 100),
+                        'document_access_index_repair_batch_size',
+                        100,
+                    ),
+                ),
+            )
+            document_access_index_cache_ttl_seconds = min(
+                900,
+                max(
+                    60,
+                    parse_admin_int(
+                        form_data.get('document_access_index_cache_ttl_seconds'),
+                        settings.get('document_access_index_cache_ttl_seconds', 900),
+                        'document_access_index_cache_ttl_seconds',
+                        900,
+                    ),
+                ),
+            )
+            conversation_cache_ttl_seconds = max(
+                0,
+                parse_admin_int(
+                    form_data.get('conversation_cache_ttl_seconds'),
+                    settings.get('conversation_cache_ttl_seconds', 120),
+                    'conversation_cache_ttl_seconds',
+                    120,
+                ),
+            )
+            dai_debug_enabled = bool(settings.get('enable_dai_debug', False))
+            document_access_index_shadow_validation_enabled = (
+                form_data.get('enable_document_access_index_shadow_validation') == 'on'
+                if dai_debug_enabled
+                else bool(settings.get('enable_document_access_index_shadow_validation', False))
+            )
+            document_access_index_cache_enabled = (
+                form_data.get('enable_document_access_index_cache') == 'on'
+                if dai_debug_enabled
+                else bool(settings.get('enable_document_access_index_cache', True))
+            )
 
             # --- Chunk Size Overrides ---
             chunk_size_defaults = get_chunk_size_defaults()
@@ -1759,6 +2375,8 @@ def register_route_frontend_admin_settings(app):
                 'governance_user_actions': form_data.get('governance_user_actions') == 'on' and form_data.get('allow_user_plugins') == 'on',
                 'governance_group_actions': form_data.get('governance_group_actions') == 'on' and form_data.get('allow_group_plugins') == 'on',
                 'governance_global_actions_usage': form_data.get('governance_global_actions_usage') == 'on' and form_data.get('enable_semantic_kernel') == 'on',
+                'enable_mcp_destination_governance': form_data.get('enable_mcp_destination_governance') == 'on',
+                'mcp_block_unsafe_destinations': form_data.get('mcp_block_unsafe_destinations') == 'on',
 
                 # GPT (Direct & APIM)
                 'enable_gpt_apim': form_data.get('enable_gpt_apim') == 'on',
@@ -1813,6 +2431,24 @@ def register_route_frontend_admin_settings(app):
                 'redis_url': form_data.get('redis_url', '').strip(),
                 'redis_key': admin_secret('redis_key'),
                 'redis_auth_type': form_data.get('redis_auth_type', '').strip(),
+                'enable_conversation_cache': form_data.get('enable_conversation_cache') == 'on',
+                'conversation_cache_ttl_seconds': conversation_cache_ttl_seconds,
+
+                # Document Access Index
+                'enable_document_access_index_container': True,
+                'enable_document_access_index_write_through': True,
+                'enable_document_access_index_reads': True,
+                'enable_dai_debug': dai_debug_enabled,
+                'enable_document_access_index_shadow_validation': document_access_index_shadow_validation_enabled,
+                'enable_startup_document_access_index_backfill': True,
+                'document_access_index_backfill_batch_size': document_access_index_backfill_batch_size,
+                'document_access_index_repair_batch_size': document_access_index_repair_batch_size,
+                'document_access_index_active_maintenance_interval_seconds': settings.get(
+                    'document_access_index_active_maintenance_interval_seconds',
+                    30,
+                ),
+                'enable_document_access_index_cache': document_access_index_cache_enabled,
+                'document_access_index_cache_ttl_seconds': document_access_index_cache_ttl_seconds,
 
                 # Workspaces
                 'enable_user_workspace': form_data.get('enable_user_workspace') == 'on',
@@ -1820,8 +2456,10 @@ def register_route_frontend_admin_settings(app):
                 # disable_group_creation is inverted: when checked (on), enable_group_creation = False
                 'enable_group_creation': form_data.get('disable_group_creation') != 'on',
                 'enable_public_workspaces': form_data.get('enable_public_workspaces') == 'on',
+                'public_workspace_display_name': public_workspace_display_name,
                 'enable_file_sharing': form_data.get('enable_file_sharing') == 'on',
                 'enable_chat_file_uploads': form_data.get('enable_chat_file_uploads') == 'on',
+                'enable_conversation_contents_drawer': form_data.get('enable_conversation_contents_drawer') == 'on',
                 'require_member_of_chat_file_upload_user': require_member_of_chat_file_upload_user,
                 'allow_user_workflows': form_data.get('allow_user_workflows') == 'on',
                 'require_member_of_workflow_user': require_member_of_workflow_user,
@@ -1829,6 +2467,7 @@ def register_route_frontend_admin_settings(app):
                 'require_group_assignment_for_group_workflows': form_data.get('require_group_assignment_for_group_workflows') == 'on',
                 'group_workflow_allowed_group_ids': group_workflow_allowed_group_ids,
                 'workflow_max_auto_invoke_attempts': workflow_max_auto_invoke_attempts,
+                'workflow_max_tasks': workflow_max_tasks,
                 'allow_personal_workspace_file_downloads': form_data.get('allow_personal_workspace_file_downloads') == 'on',
                 'allow_group_workspace_file_downloads': form_data.get('allow_group_workspace_file_downloads') == 'on',
                 'require_group_assignment_for_file_downloads': form_data.get('require_group_assignment_for_file_downloads') == 'on',
@@ -1885,6 +2524,20 @@ def register_route_frontend_admin_settings(app):
                 'user_agreement_apply_to': user_agreement_apply_to,
                 'enable_user_agreement_daily': enable_user_agreement_daily,
 
+                # Terms of Use
+                'enable_terms_of_use': enable_terms_of_use,
+                'terms_of_use_title': terms_of_use_title,
+                'terms_of_use_message': terms_of_use_message,
+                'terms_of_use_frequency': terms_of_use_frequency,
+                'terms_of_use_decline_redirect_url': terms_of_use_decline_redirect_url,
+                'terms_of_use_accept_button_text': terms_of_use_accept_button_text,
+                'terms_of_use_decline_button_text': terms_of_use_decline_button_text,
+
+                # AI Notice
+                'enable_ai_notice': enable_ai_notice,
+                'ai_notice_message': ai_notice_message,
+                'ai_notice_frequency': ai_notice_frequency,
+
                 # Multimedia & Metadata
                 'enable_video_file_support': enable_video_file_support,
                 'enable_audio_file_support': enable_audio_file_support,
@@ -1926,6 +2579,27 @@ def register_route_frontend_admin_settings(app):
                 'enable_enhanced_citations_mount': form_data.get('enable_enhanced_citations_mount') == 'on' and enable_enhanced_citations,
                 'enhanced_citations_mount': form_data.get('enhanced_citations_mount', '/view_documents').strip(),
                 'tabular_preview_max_blob_size_mb': int(form_data.get('tabular_preview_max_blob_size_mb', 200)),
+                'enable_tabular_durable_run_confirmation': form_data.get('enable_tabular_durable_run_confirmation') == 'on',
+                'tabular_durable_run_confirmation_threshold_rows': max(1, parse_admin_int(
+                    form_data.get('tabular_durable_run_confirmation_threshold_rows'),
+                    settings.get('tabular_durable_run_confirmation_threshold_rows', 500),
+                    'tabular_durable_run_confirmation_threshold_rows',
+                    500,
+                )),
+                'tabular_durable_run_confirmation_threshold_batches': max(1, parse_admin_int(
+                    form_data.get('tabular_durable_run_confirmation_threshold_batches'),
+                    settings.get('tabular_durable_run_confirmation_threshold_batches', 75),
+                    'tabular_durable_run_confirmation_threshold_batches',
+                    75,
+                )),
+                'tabular_generated_output_chunk_model_mode': form_data.get(
+                    'tabular_generated_output_chunk_model_mode',
+                    settings.get('tabular_generated_output_chunk_model_mode', 'current'),
+                ).strip() if form_data.get('tabular_generated_output_chunk_model_mode') in {'current', 'configured'} else 'current',
+                'tabular_generated_output_chunk_model_deployment': form_data.get(
+                    'tabular_generated_output_chunk_model_deployment',
+                    settings.get('tabular_generated_output_chunk_model_deployment', ''),
+                ).strip(),
                 'office_docs_storage_account_blob_endpoint': admin_secret('office_docs_storage_account_blob_endpoint'),
                 'office_docs_storage_account_url': admin_secret('office_docs_storage_account_url'),
                 'office_docs_authentication_type': form_data.get('office_docs_authentication_type', 'key'),
@@ -1939,6 +2613,8 @@ def register_route_frontend_admin_settings(app):
 
                 # Safety (Content Safety Direct & APIM)
                 'enable_content_safety': form_data.get('enable_content_safety') == 'on',
+                'content_safety_violation_message': content_safety_violation_message,
+                'content_safety_include_trigger_information': content_safety_include_trigger_information,
                 'content_safety_endpoint': form_data.get('content_safety_endpoint', '').strip(),
                 'content_safety_key': admin_secret('content_safety_key'),
                 'content_safety_authentication_type': form_data.get('content_safety_authentication_type', 'key'),
@@ -1950,6 +2626,7 @@ def register_route_frontend_admin_settings(app):
 
                 # Feedback, Archiving & Thoughts
                 'enable_user_feedback': form_data.get('enable_user_feedback') == 'on',
+                'enable_desktop_notifications': form_data.get('enable_desktop_notifications') == 'on',
                 'enable_conversation_archiving': form_data.get('enable_conversation_archiving') == 'on',
                 'enable_thoughts': form_data.get('enable_thoughts') == 'on',
 
@@ -2039,6 +2716,13 @@ def register_route_frontend_admin_settings(app):
                 'enable_key_vault_secret_storage': form_data.get('enable_key_vault_secret_storage') == 'on',
                 'key_vault_name': form_data.get('key_vault_name', '').strip(),
                 'key_vault_identity': form_data.get('key_vault_identity', ''),
+                'enable_key_vault_secret_expiration_reminders': form_data.get('enable_key_vault_secret_expiration_reminders') == 'on',
+                'key_vault_secret_expiration_default_lead_days': form_data.get('key_vault_secret_expiration_default_lead_days', '30'),
+                'key_vault_secret_expiration_default_contact_email': form_data.get('key_vault_secret_expiration_default_contact_email', '').strip(),
+                'key_vault_secret_expiration_require_expiration': form_data.get('key_vault_secret_expiration_require_expiration') == 'on',
+                'key_vault_secret_expiration_emit_contact_email_in_telemetry': form_data.get('key_vault_secret_expiration_emit_contact_email_in_telemetry') == 'on',
+                'key_vault_secret_expiration_admin_roles': form_data.get('key_vault_secret_expiration_admin_roles', 'Admin'),
+                'key_vault_secret_expiration_scan_interval_seconds': form_data.get('key_vault_secret_expiration_scan_interval_seconds', '21600'),
 
                 # Authentication & Redirect Settings
                 'enable_front_door': enable_front_door,
@@ -2065,6 +2749,8 @@ def register_route_frontend_admin_settings(app):
                 'video_index_timeout': int(form_data.get('video_index_timeout', 600)),
 
                 # Audio file settings with Azure speech service
+                'enable_chat_completion_audio_cues': enable_chat_completion_audio_cues,
+                'chat_completion_audio_cues_updated_at': chat_completion_audio_cues_updated_at,
                 'speech_service_endpoint': form_data.get('speech_service_endpoint', '').strip(),
                 'speech_service_location': form_data.get('speech_service_location', '').strip(),
                 'speech_service_subscription_id': form_data.get('speech_service_subscription_id', '').strip(),
@@ -2100,9 +2786,109 @@ def register_route_frontend_admin_settings(app):
                 'control_center_auto_refresh_time': control_center_auto_refresh_schedule['time'],
                 'control_center_auto_refresh_hour': control_center_auto_refresh_schedule['hour'],
                 'control_center_auto_refresh_minute': control_center_auto_refresh_schedule['minute'],
+                'control_center_auto_refresh_timezone': control_center_auto_refresh_schedule['timezone'],
                 'control_center_auto_refresh_next_run': control_center_auto_refresh_next_run,
             }
             
+            # --- Optional Inbound MCP Settings ---
+            if is_mcp_ui_enabled():
+                inbound_mcp_required_user_role = normalize_inbound_mcp_single_value(
+                    form_data.get('inbound_mcp_required_user_role') or form_data.get('inbound_mcp_required_user_roles'),
+                    default_value=INBOUND_MCP_SETTINGS_DEFAULTS['inbound_mcp_required_user_role'],
+                    max_length=128,
+                )
+                inbound_mcp_required_app_role = normalize_inbound_mcp_single_value(
+                    form_data.get('inbound_mcp_required_app_role') or form_data.get('inbound_mcp_required_app_roles'),
+                    default_value=INBOUND_MCP_SETTINGS_DEFAULTS['inbound_mcp_required_app_role'],
+                    max_length=128,
+                )
+                inbound_mcp_client_app_entries = normalize_inbound_mcp_value_entries(
+                    form_data.get('inbound_mcp_allowed_client_app_entries_json')
+                    or form_data.get('inbound_mcp_allowed_client_app_ids', ''),
+                    lowercase=True,
+                )
+                inbound_mcp_allow_external_tenants = form_data.get('inbound_mcp_allow_external_tenants') == 'on'
+                inbound_mcp_tenant_entries = normalize_inbound_mcp_value_entries(
+                    form_data.get('inbound_mcp_allowed_tenant_entries_json')
+                    or form_data.get('inbound_mcp_allowed_tenant_ids', ''),
+                    lowercase=True,
+                )
+                if inbound_mcp_allow_external_tenants:
+                    inbound_mcp_tenant_entries = ensure_inbound_mcp_default_tenant_entry(inbound_mcp_tenant_entries)
+                    inbound_mcp_allowed_tenant_ids = inbound_mcp_entry_values(inbound_mcp_tenant_entries, lowercase=True)
+                else:
+                    inbound_mcp_allowed_tenant_ids = [str(TENANT_ID or '').strip().lower()] if str(TENANT_ID or '').strip() else []
+
+                inbound_mcp_allow_all_source_ids = form_data.get('inbound_mcp_allow_all_source_ids') == 'on'
+                inbound_mcp_source_entries = normalize_inbound_mcp_value_entries(
+                    form_data.get('inbound_mcp_allowed_source_entries_json')
+                    or form_data.get('inbound_mcp_allowed_source_ids', ''),
+                    default=INBOUND_MCP_SETTINGS_DEFAULTS['inbound_mcp_allowed_source_entries'] if inbound_mcp_allow_all_source_ids else None,
+                )
+                if not inbound_mcp_allow_all_source_ids:
+                    inbound_mcp_source_entries = [
+                        entry for entry in inbound_mcp_source_entries
+                        if entry.get('value') != '*'
+                    ]
+                inbound_mcp_allowed_source_ids = ['*'] if inbound_mcp_allow_all_source_ids else inbound_mcp_entry_values(inbound_mcp_source_entries)
+
+                new_settings.update({
+                    'enable_inbound_mcp_server': form_data.get('enable_inbound_mcp_server') == 'on',
+                    'inbound_mcp_required_user_role': inbound_mcp_required_user_role,
+                    'inbound_mcp_required_app_role': inbound_mcp_required_app_role,
+                    'inbound_mcp_required_user_roles': [inbound_mcp_required_user_role] if inbound_mcp_required_user_role else [],
+                    'inbound_mcp_required_app_roles': [inbound_mcp_required_app_role] if inbound_mcp_required_app_role else [],
+                    'inbound_mcp_required_scope': form_data.get('inbound_mcp_required_scope', '').strip(),
+                    'inbound_mcp_allowed_client_app_entries': inbound_mcp_client_app_entries,
+                    'inbound_mcp_allowed_client_app_ids': inbound_mcp_entry_values(inbound_mcp_client_app_entries, lowercase=True),
+                    'inbound_mcp_allow_external_tenants': inbound_mcp_allow_external_tenants,
+                    'inbound_mcp_allowed_tenant_entries': inbound_mcp_tenant_entries,
+                    'inbound_mcp_allowed_tenant_ids': inbound_mcp_allowed_tenant_ids,
+                    'inbound_mcp_allow_all_source_ids': inbound_mcp_allow_all_source_ids,
+                    'inbound_mcp_allowed_source_entries': inbound_mcp_source_entries,
+                    'inbound_mcp_allowed_source_ids': inbound_mcp_allowed_source_ids,
+                    'inbound_mcp_source_header': form_data.get('inbound_mcp_source_header', '').strip(),
+                    'enable_inbound_mcp_rate_limits': form_data.get('enable_inbound_mcp_rate_limits') == 'on',
+                    'inbound_mcp_rate_limit_window_seconds': form_data.get(
+                        'inbound_mcp_rate_limit_window_seconds',
+                        INBOUND_MCP_SETTINGS_DEFAULTS['inbound_mcp_rate_limit_window_seconds'],
+                    ),
+                    'inbound_mcp_rate_limit_read_per_window': form_data.get(
+                        'inbound_mcp_rate_limit_read_per_window',
+                        INBOUND_MCP_SETTINGS_DEFAULTS['inbound_mcp_rate_limit_read_per_window'],
+                    ),
+                    'inbound_mcp_rate_limit_search_per_window': form_data.get(
+                        'inbound_mcp_rate_limit_search_per_window',
+                        INBOUND_MCP_SETTINGS_DEFAULTS['inbound_mcp_rate_limit_search_per_window'],
+                    ),
+                    'inbound_mcp_rate_limit_write_per_window': form_data.get(
+                        'inbound_mcp_rate_limit_write_per_window',
+                        INBOUND_MCP_SETTINGS_DEFAULTS['inbound_mcp_rate_limit_write_per_window'],
+                    ),
+                    'inbound_mcp_max_request_bytes': form_data.get(
+                        'inbound_mcp_max_request_bytes',
+                        INBOUND_MCP_SETTINGS_DEFAULTS['inbound_mcp_max_request_bytes'],
+                    ),
+                })
+                if (
+                    new_settings.get('enable_inbound_mcp_server')
+                    and not bool(settings.get('enable_inbound_mcp_server', False))
+                ):
+                    easy_auth_check = check_inbound_mcp_easy_auth_exclusions(get_inbound_mcp_easy_auth_check_base_url())
+                    if not easy_auth_check.get('success'):
+                        log_event(
+                            "[INBOUND_MCP] Prevented enabling inbound MCP because Easy Auth exclusions failed.",
+                            extra={
+                                "endpoints": easy_auth_check.get('endpoints', []),
+                            },
+                            level=logging.WARNING,
+                        )
+                        flash(
+                            "Inbound MCP was not enabled. App Service Authentication is still intercepting one or more MCP endpoints. Add the required excluded paths, then try enabling it again.",
+                            "danger",
+                        )
+                        return redirect(url_for('frontend_admin_settings.admin_settings'))
+
             # --- Prevent Legacy Fields from Being Created/Updated ---
             # Remove semantic_kernel_agents and semantic_kernel_plugins if they somehow got added
             if 'semantic_kernel_agents' in new_settings:
@@ -2286,6 +3072,8 @@ def register_route_frontend_admin_settings(app):
                 'governance_user_actions',
                 'governance_group_actions',
                 'governance_global_actions_usage',
+                'enable_mcp_destination_governance',
+                'mcp_block_unsafe_destinations',
             ]
             governance_toggle_changes = {}
             for toggle_key in governance_toggle_keys:
@@ -2323,8 +3111,8 @@ def register_route_frontend_admin_settings(app):
                 # Pass the *just saved* data (or fetch fresh) to ensure consistency
                 updated_settings_for_file = get_settings() # Fetch fresh to be safe
                 if updated_settings_for_file:
-                    ensure_custom_logo_file_exists(app, updated_settings_for_file)
-                    ensure_custom_favicon_file_exists(app, updated_settings_for_file)
+                    ensure_custom_logo_file_exists(current_app, updated_settings_for_file)
+                    ensure_custom_favicon_file_exists(current_app, updated_settings_for_file)
                     initialize_clients(updated_settings_for_file) # Important - reinitialize clients with new settings
                 else:
                     print("ERROR: Could not fetch settings after update to ensure logo/favicon files.")
@@ -2388,7 +3176,7 @@ def register_route_frontend_admin_settings(app):
 
 
             # Redirect back to settings page
-            return redirect(url_for('admin_settings'))
+            return redirect(url_for('frontend_admin_settings.admin_settings'))
 
         # Fallback if not GET or POST (shouldn't happen with standard routing)
-        return redirect(url_for('admin_settings'))
+        return redirect(url_for('frontend_admin_settings.admin_settings'))

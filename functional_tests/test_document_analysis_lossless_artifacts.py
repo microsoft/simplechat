@@ -2,10 +2,13 @@
 # test_document_analysis_lossless_artifacts.py
 """
 Functional test for document analysis lossless artifacts.
-Version: 0.241.197
+Version: 0.250.154
 Implemented in: 0.241.040
 Updated in: 0.241.065
 Updated in: 0.241.197
+Updated in: 0.250.065
+Updated in: 0.250.112
+Updated in: 0.250.154
 
 This test ensures exhaustive/table-style document analysis preserves raw window
 outputs and can build both structured CSV rows and Markdown raw-note artifacts
@@ -21,6 +24,7 @@ import json
 import logging
 import os
 import re
+import sys
 import traceback
 from contextlib import contextmanager
 from typing import Any, Callable, Dict, List, Optional
@@ -40,6 +44,19 @@ WORKFLOW_RUNNER_PATH = os.path.join(
     'functions_workflow_runner.py',
 )
 CONFIG_PATH = os.path.join(REPO_ROOT, 'application', 'single_app', 'config.py')
+APP_ROOT = os.path.join(REPO_ROOT, 'application', 'single_app')
+sys.path.append(APP_ROOT)
+
+from functions_assistant_table_exports import (  # noqa: E402
+    build_safe_csv_headers,
+    neutralize_csv_spreadsheet_formula,
+)
+from functions_generated_file_exports import (  # noqa: E402
+    get_requested_structured_artifact_format,
+    normalize_xml_artifact_payload,
+    serialize_generated_json,
+)
+from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
 
 def assert_equal(actual, expected, label):
@@ -67,6 +84,7 @@ def load_module_functions(file_path, extra_globals=None):
     namespace = {
         '__builtins__': __builtins__,
         'Any': Any,
+        'build_safe_csv_headers': build_safe_csv_headers,
         'Callable': Callable,
         'Dict': Dict,
         'List': List,
@@ -76,8 +94,13 @@ def load_module_functions(file_path, extra_globals=None):
         'io': io,
         'json': json,
         'logging': logging,
+        'neutralize_csv_spreadsheet_formula': neutralize_csv_spreadsheet_formula,
+        'get_requested_structured_artifact_format': get_requested_structured_artifact_format,
+        'normalize_xml_artifact_payload': normalize_xml_artifact_payload,
+        'serialize_generated_json': serialize_generated_json,
         'os': os,
         're': re,
+        'WORKFLOW_TASK_CONTEXT_MAX_CHARS': 12000,
     }
     if extra_globals:
         namespace.update(extra_globals)
@@ -183,6 +206,7 @@ def build_analysis_result():
             'debug_print': lambda *args, **kwargs: None,
             'normalize_search_id_list': lambda value: list(value or []),
             'normalize_search_scope': lambda value: str(value or 'all').strip() or 'all',
+            'raise_if_mixed_source_cancelled': lambda *args, **kwargs: None,
         },
     )
     namespace['_get_search_service_helpers'] = lambda: (
@@ -297,6 +321,7 @@ def test_primary_tabular_output_demotes_secondary_artifacts():
             'DOCUMENT_ANALYSIS_ARTIFACT_PREVIEW_LINE_LENGTH': 220,
             'debug_print': lambda *args, **kwargs: None,
             'has_request_context': lambda: True,
+            'raise_if_mixed_source_cancelled': lambda *args, **kwargs: None,
             'upload_generated_analysis_artifact_for_current_user': fake_upload_generated_artifact,
         },
     )
@@ -391,6 +416,7 @@ def test_json_artifact_requires_explicit_json_request():
             'DOCUMENT_ANALYSIS_ARTIFACT_PREVIEW_LINE_LENGTH': 220,
             'debug_print': lambda *args, **kwargs: None,
             'has_request_context': lambda: True,
+            'raise_if_mixed_source_cancelled': lambda *args, **kwargs: None,
             'upload_generated_analysis_artifact_for_current_user': fake_upload_generated_artifact,
         },
     )
@@ -447,9 +473,30 @@ def test_json_artifact_requires_explicit_json_request():
     print('JSON artifact opt-in behavior verified.')
 
 
+def test_workflow_markdown_fence_parser_is_linear_and_compatible():
+    print('Testing workflow Markdown fence parser compatibility...')
+
+    namespace = load_module_functions(WORKFLOW_RUNNER_PATH)
+    strip_fence = namespace['_strip_markdown_code_fence']
+    parse_json = namespace['_parse_json_artifact_payload']
+
+    assert_equal(parse_json('```json\n{"rows": [1]}\n```'), {'rows': [1]}, 'fenced JSON payload')
+    assert_equal(parse_json('```\n{"rows": [2]}\n```'), {'rows': [2]}, 'unlabeled fenced JSON payload')
+    assert_equal(parse_json('```json{"rows": [3]}```'), {'rows': [3]}, 'same-line fenced JSON payload')
+    assert_equal(parse_json('{"rows": [4]}'), {'rows': [4]}, 'unfenced JSON payload')
+    assert_equal(strip_fence('```foo bar\nbody\n```'), 'bar\nbody', 'label token with body text')
+
+    unterminated_text = '```json\n{"rows": [5]}'
+    assert_equal(strip_fence(unterminated_text), unterminated_text, 'unterminated fence remains unchanged')
+
+    adversarial_text = f'```json{" \t" * 1000}{{"rows": [6]}}{" \t" * 1000}```'
+    assert_equal(parse_json(adversarial_text), {'rows': [6]}, 'adversarial whitespace fenced JSON payload')
+    print('Workflow Markdown fence parser compatibility verified.')
+
+
 def test_version_alignment():
     print('Testing version alignment...')
-    assert_equal(read_config_version(), '0.241.197', 'config version')
+    assert_app_version_at_least('0.250.154')
     print('Version alignment verified.')
 
 
@@ -459,6 +506,7 @@ def run_tests():
         test_lossless_artifact_helpers_build_csv_and_markdown,
         test_primary_tabular_output_demotes_secondary_artifacts,
         test_json_artifact_requires_explicit_json_request,
+        test_workflow_markdown_fence_parser_is_linear_and_compatible,
         test_version_alignment,
     ]
     results = []

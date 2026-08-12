@@ -10,6 +10,7 @@ so the default chat path keeps the legacy tabular-analysis request shape.
 """
 
 from pathlib import Path
+from test_support.versioning import assert_app_version_at_least
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -27,9 +28,7 @@ def test_standard_chat_omits_disabled_document_action_payloads():
     chat_messages_content = read_text("application/single_app/static/js/chat/chat-messages.js")
     feature_doc_content = read_text("docs/explanation/features/v0.241.072/DOCUMENT_ACTIONS_AND_COMPARISON.md")
 
-    assert 'VERSION = "0.241.095"' in config_content, (
-        "Expected config.py version 0.241.095 for the search-documents label update."
-    )
+    assert_app_version_at_least("0.241.095")
     assert '`Search Documents` keeps the normal prompt flow while searching the selected documents for relevant context.' in feature_doc_content, (
         "Expected the document actions feature doc to describe the renamed default search behavior."
     )

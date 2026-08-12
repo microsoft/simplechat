@@ -11,6 +11,8 @@ $(document).ready(function () {
   const allVisibleBtn = $("#allVisibleBtn");
   const allHiddenBtn = $("#allHiddenBtn");
   const viewModal = new bootstrap.Modal(document.getElementById('viewWorkspaceModal'));
+  const publicWorkspaceSingular = window.getPublicWorkspaceLabel ? window.getPublicWorkspaceLabel('singular') : 'Public Workspace';
+  const publicWorkspaceLowerPlural = window.getPublicWorkspaceLabel ? window.getPublicWorkspaceLabel('lower_plural') : 'public workspaces';
 
   // State
   let currentPage = 1;
@@ -18,6 +20,32 @@ $(document).ready(function () {
   let currentSearchQuery = "";
   let allWorkspaces = [];
   let userSettings = {};
+
+  function setDirectoryTableTextMessage(message, className = "text-center p-4 text-muted") {
+    const row = document.createElement("tr");
+    const cell = document.createElement("td");
+    cell.colSpan = 4;
+    cell.className = className;
+    cell.textContent = message;
+    row.appendChild(cell);
+    tableBody.empty().append(row);
+  }
+
+  function setDirectoryLoadingMessage(message) {
+    const row = document.createElement("tr");
+    row.className = "table-loading-row";
+    const cell = document.createElement("td");
+    cell.colSpan = 4;
+    cell.className = "text-center p-4 text-muted";
+
+    const spinner = document.createElement("div");
+    spinner.className = "spinner-border spinner-border-sm me-2";
+    spinner.setAttribute("role", "status");
+
+    cell.append(spinner, document.createTextNode(message));
+    row.appendChild(cell);
+    tableBody.empty().append(row);
+  }
 
 // --- Curated List Helpers ---
 let currentLoadedList = null;
@@ -171,14 +199,7 @@ function updateCuratedListStatus() {
   // Fetch all public workspaces
   function fetchWorkspaces() {
     // Show loading placeholder
-    tableBody.html(`
-      <tr class="table-loading-row">
-        <td colspan="4" class="text-center p-4 text-muted">
-          <div class="spinner-border spinner-border-sm me-2" role="status"></div>
-          Loading public workspaces...
-        </td>
-      </tr>
-    `);
+    setDirectoryLoadingMessage(`Loading ${publicWorkspaceLowerPlural}...`);
     paginationContainer.empty();
 
     currentSearchQuery = searchInput.val().trim();
@@ -194,11 +215,7 @@ function updateCuratedListStatus() {
       })
       .fail(function (jqXHR) {
         const err = jqXHR.responseJSON?.error || jqXHR.statusText;
-        tableBody.html(`
-          <tr><td colspan="4" class="text-center text-danger p-4">
-            Error loading workspaces: ${escapeHtml(err)}
-          </td></tr>
-        `);
+        setDirectoryTableTextMessage(`Error loading workspaces: ${err}`, "text-center text-danger p-4");
         renderPaginationControls(1, pageSize, 0);
       });
   }
@@ -209,17 +226,9 @@ function updateCuratedListStatus() {
     
     if (!allWorkspaces.length) {
       if (currentSearchQuery) {
-        tableBody.html(`
-          <tr><td colspan="4" class="text-center p-4 text-muted">
-            No workspaces found matching "${escapeHtml(currentSearchQuery)}".
-          </td></tr>
-        `);
+        setDirectoryTableTextMessage(`No workspaces found matching "${currentSearchQuery}".`);
       } else {
-        tableBody.html(`
-          <tr><td colspan="4" class="text-center p-4 text-muted">
-            No public workspaces available.
-          </td></tr>
-        `);
+        setDirectoryTableTextMessage(`No ${publicWorkspaceLowerPlural} available.`);
       }
       renderPaginationControls(1, pageSize, 0);
       return;
@@ -312,7 +321,7 @@ function updateCuratedListStatus() {
             </div>
             <div class="mt-2">
               <button class="btn btn-primary btn-sm view-workspace-btn" data-id="${ws.id}">
-                Goto Public Workspace
+                Go to ${escapeHtml(publicWorkspaceSingular)}
               </button>
             </div>
           </div>
@@ -603,13 +612,13 @@ function updateCuratedListStatus() {
   $("#saveVisibleListBtn").on("click", function() {
     const listName = $("#saveListName").val().trim();
     if (!listName) {
-      alert("Please enter a name for your list.");
+      showToast("Please enter a name for your list.", 'warning');
       return;
     }
     saveCurrentVisibleList(listName);
     refreshVisibleListDropdown();
     $("#saveListName").val("");
-    alert("List saved!");
+    showToast("List saved!", 'success');
     updateCuratedListStatus();
   });
 
@@ -617,7 +626,7 @@ function updateCuratedListStatus() {
   $("#loadVisibleListBtn").on("click", function() {
     const listName = $("#loadVisibleListSelect").val();
     if (!listName) {
-      alert("Please select a list to load.");
+      showToast("Please select a list to load.", 'warning');
       return;
     }
     applyVisibleList(listName);
@@ -646,13 +655,13 @@ function updateCuratedListStatus() {
   $("#deleteVisibleListBtn").on("click", function() {
     const listName = $("#loadVisibleListSelect").val();
     if (!listName) {
-      alert("Please select a list to delete.");
+      showToast("Please select a list to delete.", 'warning');
       return;
     }
     if (confirm(`Delete list "${listName}"? This cannot be undone.`)) {
       deleteVisibleList(listName);
       refreshVisibleListDropdown();
-      alert("List deleted.");
+      showToast("List deleted.", 'success');
       updateCuratedListStatus();
     }
   });

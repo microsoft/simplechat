@@ -629,12 +629,12 @@ def build_collaboration_message_doc_from_legacy(
         }
     elif legacy_role == 'file':
         filename = _clean_string(legacy_message.get('filename')) or 'file'
-        content = f'[File shared] {filename}'
+        content = f'[FILE_SHARED] {filename}'
     elif legacy_role == 'image':
         is_user_upload = bool(legacy_metadata.get('is_user_upload'))
         if is_user_upload:
             filename = _clean_string(legacy_message.get('filename')) or 'image'
-            content = f'[Uploaded image] {filename}'
+            content = f'[UPLOADED_IMAGE] {filename}'
         else:
             message_kind = MESSAGE_KIND_ASSISTANT
             sender_user = {
@@ -642,7 +642,7 @@ def build_collaboration_message_doc_from_legacy(
                 'display_name': _clean_string(legacy_message.get('agent_display_name')) or 'AI',
                 'email': '',
             }
-            content = '[Generated image]'
+            content = '[GENERATED_IMAGE]'
     elif legacy_role not in ('user', '') and not content.strip():
         return None
 

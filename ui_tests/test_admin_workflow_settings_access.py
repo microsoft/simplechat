@@ -1,17 +1,18 @@
 # test_admin_workflow_settings_access.py
 """
 UI test for admin workflow access settings.
-Version: 0.241.194
+Version: 0.250.129
 Implemented in: 0.241.106
 Updated in: 0.241.110
 Updated in: 0.241.179
 Updated in: 0.241.193
 Updated in: 0.241.194
+Updated in: 0.250.129
 
 This test ensures admins can see the dedicated Workspace settings sections with
 consistent app-role labels for workflow, group workflow assignment, group creation,
-public workspace creation, chat file uploads, and workflow action limits.
-It also verifies capacity guidance for higher workflow action limits.
+public workspace creation, chat file uploads, workflow action limits, and workflow
+task limits. It also verifies capacity guidance for higher workflow action limits.
 """
 
 import os
@@ -68,6 +69,8 @@ def test_admin_workflow_settings_section():
         expect(workflow_section).to_contain_text("Workflow Agent Action Limit")
         expect(workflow_section).to_contain_text("Values above 100 are capacity-sensitive")
         expect(workflow_section).to_contain_text("Enable Cosmos DB Throughput automation in SimpleChat")
+        expect(workflow_section).to_contain_text("Workflow Task Limit")
+        expect(workflow_section).to_contain_text("Default is 50; supported range is 1-100")
         expect(workflow_section).to_contain_text("Enable Group Workflows")
         expect(workflow_section).to_contain_text("Require Group Assignment to Use Workflow")
         expect(workflow_section).to_contain_text("Group Workflow Assignments")
@@ -79,6 +82,11 @@ def test_admin_workflow_settings_section():
         expect(workflow_action_limit).to_have_attribute("type", "number")
         expect(workflow_action_limit).to_have_attribute("min", "1")
         expect(workflow_action_limit).to_have_attribute("max", "500")
+        workflow_task_limit = page.locator("#workflow_max_tasks")
+        expect(workflow_task_limit).to_have_count(1)
+        expect(workflow_task_limit).to_have_attribute("type", "number")
+        expect(workflow_task_limit).to_have_attribute("min", "1")
+        expect(workflow_task_limit).to_have_attribute("max", "100")
         expect(page.locator("#allow_group_workflows")).to_have_count(1)
         expect(page.locator("#require_group_assignment_for_group_workflows")).to_have_count(1)
         expect(page.locator("#manage-group-workflow-groups-btn")).to_have_count(1)

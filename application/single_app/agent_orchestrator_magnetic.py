@@ -87,7 +87,7 @@ class OrchestratorAgent(MagenticOrchestration):
         """
         if self.agent_router:
             agent_name = self.agent_router(context)
-            self._logger.debug(f"[OrchestratorAgentEvent] Custom agent_router selected: {agent_name}")
+            self._logger.debug(f"[ORCHESTRATOR_AGENT_EVENT] Custom agent_router selected: {agent_name}")
             return agent_name
         # Default: round-robin or manager logic
         return list(context.participant_descriptions.keys())[context.round_count % len(context.participant_descriptions)]
@@ -112,18 +112,18 @@ class OrchestratorAgent(MagenticOrchestration):
             summary = str(context)
         self.scratchpad['reflection_summary'] = summary
         self._logger.info(
-            f"[OrchestratorAgentEvent] Reflection summary updated "
+            f"[ORCHESTRATOR_AGENT_EVENT] Reflection summary updated "
             f"content_length={len(str(summary or ''))}"
         )
 
     def log_agent_event(self, event: str, **kwargs):
         """Log orchestration-level events."""
-        self._logger.info(f"[OrchestratorEvent] {event} | {kwargs}")
+        self._logger.info(f"[ORCHESTRATOR_EVENT] {event} | {kwargs}")
 
     def agent_response_callback(self, message: ChatMessageContent) -> None:
         """Observer function to print the messages from the agents."""
         log_event(
-            "[MagenticAgentResponseCallback] Agent response received",
+            "[MAGENTIC_AGENT_RESPONSE_CALLBACK] Agent response received",
             extra=self._build_message_log_metadata(message),
             level=logging.INFO,
         )
@@ -134,7 +134,7 @@ class OrchestratorAgent(MagenticOrchestration):
         Observer function to handle streaming responses from agents.
         """
         log_event(
-            "[MagenticStreamingAgentResponseCallback] Agent stream response received",
+            "[MAGENTIC_STREAMING_AGENT_RESPONSE_CALLBACK] Agent stream response received",
             extra={
                 **self._build_message_log_metadata(message),
                 "is_final": bool(is_final),

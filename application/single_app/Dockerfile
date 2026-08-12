@@ -2,12 +2,14 @@
 ARG UID=65532
 ARG GID=65532
 ARG INSTALL_PLAYWRIGHT_CHROMIUM=true
+ARG INSTALL_AUDIO_FFMPEG=true
 
 FROM mcr.microsoft.com/azurelinux/base/python:3.12 AS builder
 
 ARG UID
 ARG GID
 ARG INSTALL_PLAYWRIGHT_CHROMIUM
+ARG INSTALL_AUDIO_FFMPEG
 
 # Copy pip.conf into the image for pip configuration
 COPY docker-customization/pip.conf /etc/pip.conf
@@ -143,6 +145,17 @@ COPY --chown=${UID}:${GID} application/single_app/requirements.txt .
 RUN python3 -m pip install --no-cache-dir -r requirements.txt
 
 RUN set -eux; \
+    mkdir -p /audio-runtime/usr/bin; \
+    case "$(printf '%s' "${INSTALL_AUDIO_FFMPEG}" | tr '[:upper:]' '[:lower:]')" in \
+        true|1|yes|on) \
+            python3 -c "import pathlib, shutil, ffmpeg_binaries as ffmpeg_bin; ffmpeg_bin.init(); target_dir = pathlib.Path('/audio-runtime/usr/bin'); shutil.copy2(ffmpeg_bin.FFMPEG_PATH, target_dir / 'ffmpeg'); shutil.copy2(ffmpeg_bin.FFPROBE_PATH, target_dir / 'ffprobe'); (target_dir / 'ffmpeg').chmod(0o755); (target_dir / 'ffprobe').chmod(0o755)"; \
+            ;; \
+        *) \
+            echo "Skipping FFmpeg runtime package installation because INSTALL_AUDIO_FFMPEG=${INSTALL_AUDIO_FFMPEG}"; \
+            ;; \
+    esac
+
+RUN set -eux; \
     mkdir -p /playwright-runtime; \
     case "$(printf '%s' "${INSTALL_PLAYWRIGHT_CHROMIUM}" | tr '[:upper:]' '[:lower:]')" in \
         true|1|yes|on) \
@@ -173,6 +186,7 @@ COPY --from=builder /etc/group /etc/group
 COPY --from=builder /usr/lib/python3.12 /usr/lib/python3.12
 COPY --from=builder /odbc-runtime/ /
 COPY --from=builder /playwright-runtime/ /
+COPY --from=builder /audio-runtime/ /
 
 USER ${UID}:${GID}
 
@@ -181,7 +195,7 @@ COPY --from=builder --chown=${UID}:${GID} /sc-temp-files /sc-temp-files
 
 ENV HOME=/home/nonroot \
     LD_LIBRARY_PATH="/usr/lib64:/opt/microsoft/msodbcsql18/lib64" \
-    PATH="/home/nonroot/.local/bin:$PATH" \
+    PATH="/usr/bin:/home/nonroot/.local/bin:$PATH" \
     PYTHONIOENCODING=utf-8 \
     LANG=C.UTF-8 \
     LC_ALL=C.UTF-8 \

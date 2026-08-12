@@ -11,6 +11,7 @@ instead of browser-native title tooltips so it matches the rest of the chat UI.
 
 from pathlib import Path
 import sys
+from test_support.versioning import assert_app_version_at_least
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -76,7 +77,7 @@ def test_config_version_bumped_for_reasoning_tooltip_fix() -> bool:
 
     try:
         content = CONFIG_FILE.read_text(encoding="utf-8")
-        assert 'VERSION = "0.239.192"' in content, 'Expected config.py version 0.239.192'
+        assert_app_version_at_least("0.239.192")
 
         print("✅ Config version bump passed")
         return True

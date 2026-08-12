@@ -1,0 +1,6 @@
+SimpleChat Completion Cue Assets
+
+The ten WAV files in this directory were generated specifically for the
+SimpleChat project from synthesized sine waves and contain no third-party
+recordings or samples. They are distributed under the same license as the
+SimpleChat repository.

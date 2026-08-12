@@ -9,6 +9,7 @@ path with structured document targets and coverage metadata.
 """
 
 from pathlib import Path
+from test_support.versioning import assert_app_version_at_least
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -31,9 +32,7 @@ def test_document_analysis_feature_wiring():
     feature_index_content = read_text("docs/explanation/features/index.md")
     feature_doc_content = read_text("docs/explanation/features/v0.241.069/DOCUMENT_ANALYSIS.md")
 
-    assert 'VERSION = "0.241.023"' in config_content, (
-        "Expected config.py version 0.241.023 for document analysis wiring checks."
-    )
+    assert_app_version_at_least("0.241.023")
     assert 'def normalize_document_analysis_targets(' in analysis_service_content, (
         "Expected functions_document_analysis.py to normalize structured analysis targets."
     )

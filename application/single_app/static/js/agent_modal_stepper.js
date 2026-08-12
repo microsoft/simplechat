@@ -6,6 +6,8 @@ import { getModelSupportedLevels } from "./chat/chat-reasoning.js";
 
 const ACTION_CAPABILITIES_KEY = 'action_capabilities';
 const ASSIGNED_KNOWLEDGE_KEY = 'assigned_knowledge';
+const publicWorkspaceLowerSingular = window.getPublicWorkspaceLabel ? window.getPublicWorkspaceLabel('lower_singular') : 'public workspace';
+const publicWorkspaceLowerPlural = window.getPublicWorkspaceLabel ? window.getPublicWorkspaceLabel('lower_plural') : 'public workspaces';
 const ASSIGNED_KNOWLEDGE_USER_ACTIONS = Object.freeze(['search', 'analyze', 'compare']);
 const ASSIGNED_KNOWLEDGE_WEB_SOURCE_MODES = Object.freeze(['url_review', 'deep_research']);
 const EMPTY_ASSIGNED_KNOWLEDGE = Object.freeze({
@@ -343,6 +345,9 @@ export class AgentModalStepper {
     
     // Set up display name to generated name conversion
     this.setupNameGeneration();
+
+    // Set up shared agent icon picker and image upload controls
+    agentsCommon.initializeIconControls(document);
     
     // Set up model change listener for reasoning effort
     this.setupModelChangeListener();
@@ -2050,6 +2055,11 @@ export class AgentModalStepper {
     if (additionalSettings) additionalSettings.value = '{}';
     if (instructionBrief) instructionBrief.value = '';
     if (draftStatus) draftStatus.textContent = '';
+    const iconImageData = document.getElementById('agent-icon-image-data');
+    const iconImageFile = document.getElementById('agent-icon-image-file');
+    if (iconImageData) iconImageData.value = '';
+    if (iconImageFile) iconImageFile.value = '';
+    agentsCommon.setIconPayload(document, { kind: 'bootstrap', value: 'bi-robot' });
     this.resetAssignedKnowledgeControls();
     
     // Clear any selected actions
@@ -3086,7 +3096,9 @@ export class AgentModalStepper {
       summaryItems.push(`${scopes.group_ids.length} group source${scopes.group_ids.length === 1 ? '' : 's'}`);
     }
     if (scopes.public_workspace_ids?.length) {
-      summaryItems.push(`${scopes.public_workspace_ids.length} public workspace${scopes.public_workspace_ids.length === 1 ? '' : 's'}`);
+      const publicWorkspaceCount = scopes.public_workspace_ids.length;
+      const publicWorkspaceLabel = publicWorkspaceCount === 1 ? publicWorkspaceLowerSingular : publicWorkspaceLowerPlural;
+      summaryItems.push(`${publicWorkspaceCount} ${publicWorkspaceLabel}`);
     }
     if (assignedKnowledge.document_ids?.length) {
       summaryItems.push(`${assignedKnowledge.document_ids.length} specific document${assignedKnowledge.document_ids.length === 1 ? '' : 's'}`);

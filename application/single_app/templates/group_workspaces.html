@@ -1,5 +1,7 @@
 <!-- templates/group_workspaces.html -->
-{% extends "base.html" %} {% block title %} Group Workspace - {{
+{% extends "base.html" %}
+{% from "_supported_file_types_modal.html" import supported_file_types_modal %}
+{% block title %} Group Workspace - {{
 app_settings.app_title }} {% endblock %} {% block head %}
  <link
   rel="stylesheet"
@@ -497,7 +499,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
         {% endif %}
         <option value="prompts-tab-btn">Group Prompts</option>
         {% if settings.allow_group_workflows %}
-          <option value="workflows-tab-btn">Group Workflows</option>
+          <option value="workflows-tab-btn">Workflows</option>
         {% endif %}
         {% if settings.per_user_semantic_kernel and settings.enable_semantic_kernel %}
           {% if settings.allow_group_agents %}
@@ -522,6 +524,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
         id="documents-tab-btn"
         data-bs-toggle="tab"
         data-bs-target="#documents-tab"
+        title="Manage shared group files with role-aware upload, metadata filters, tags, bulk actions, extraction changes, and chat grounding."
         type="button"
         role="tab"
         aria-controls="documents-tab"
@@ -537,6 +540,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
         id="sync-tab-btn"
         data-bs-toggle="tab"
         data-bs-target="#sync-tab"
+        title="Configure group-scoped file sources that bring approved files into this workspace and run them through the document processing pipeline."
         type="button"
         role="tab"
         aria-controls="sync-tab"
@@ -553,6 +557,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
         id="identities-tab-btn"
         data-bs-toggle="tab"
         data-bs-target="#identities-tab"
+        title="Manage reusable group authentication profiles for File Sync and Actions so credentials stay scoped and resolved server-side."
         type="button"
         role="tab"
         aria-controls="identities-tab"
@@ -568,6 +573,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
         id="prompts-tab-btn"
         data-bs-toggle="tab"
         data-bs-target="#prompts-tab"
+        title="Create and manage reusable prompts shared within the active group, with role-based editing."
         type="button"
         role="tab"
         aria-controls="prompts-tab"
@@ -583,12 +589,13 @@ app_settings.app_title }} {% endblock %} {% block head %}
         id="workflows-tab-btn"
         data-bs-toggle="tab"
         data-bs-target="#workflows-tab"
+        title="Create repeatable group tasks that run manually, on a schedule, or after File Sync changes using group agents, documents, or models."
         type="button"
         role="tab"
         aria-controls="workflows-tab"
         aria-selected="false"
       >
-        Group Workflows
+        Workflows
       </button>
     </li>
     {% endif %}
@@ -600,6 +607,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
             id="group-agents-tab-btn"
             data-bs-toggle="tab"
             data-bs-target="#group-agents-tab"
+            title="Reusable, specialized AI assistants that combine instructions, approved knowledge, and optional actions. Actions are tasks an agent is allowed to perform."
             type="button"
             role="tab"
             aria-controls="group-agents-tab"
@@ -616,6 +624,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
               id="group-plugins-tab-btn"
               data-bs-toggle="tab"
               data-bs-target="#group-plugins-tab"
+              title="Configure governed group tools that agents can call, such as APIs, databases, or other connected systems."
               type="button"
               role="tab"
               aria-controls="group-plugins-tab"
@@ -633,6 +642,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
             id="group-endpoints-tab-btn"
             data-bs-toggle="tab"
             data-bs-target="#group-endpoints-tab"
+            title="Manage model endpoints available to group agents and workflows alongside admin-managed global endpoints."
             type="button"
             role="tab"
             aria-controls="group-endpoints-tab"
@@ -659,12 +669,14 @@ app_settings.app_title }} {% endblock %} {% block head %}
         <div id="group-legacy-update-prompt-placeholder"></div>
         <!-- Document Upload (visibility controlled by JS based on role) -->
         <div class="mb-3" id="upload-section" style="display: none">
-          <div id="upload-area" class="upload-area text-center p-4 border border-2 border-dashed rounded bg-light" style="cursor:pointer; transition: border-color 0.2s;">
+          <div id="upload-area" class="upload-area workspace-upload-area text-center py-2 px-3 border border-2 border-dashed rounded bg-light" style="cursor:pointer; transition: border-color 0.2s;">
             <input type="file" id="file-input" multiple style="display:none;" />
             <div class="upload-area-content">
-              <i class="bi bi-cloud-arrow-up display-4 text-primary mb-2"></i>
+              <i class="bi bi-cloud-arrow-up text-primary mb-1"></i>
               <div class="fw-bold">Drag & drop files here or <span class="text-primary text-decoration-underline">click to browse</span></div>
-              <div class="small text-muted mt-1">{{ allowed_extensions }}</div>
+              <button type="button" class="btn btn-link btn-sm p-0 mt-1 workspace-upload-supported-types-trigger" data-bs-toggle="modal" data-bs-target="#groupSupportedFileTypesModal">
+                View all supported file types
+              </button>
             </div>
           </div>
           <span id="upload-status" class="ms-2 text-muted small" style="display:none;"></span>
@@ -861,6 +873,9 @@ app_settings.app_title }} {% endblock %} {% block head %}
                   <li><button type="button" class="dropdown-item" title="Extract selected PDFs again with Enhanced extraction. Enhanced preserves tables, page structure, forms, and checkbox states." onclick="reprocessGroupSelectedDocumentExtraction('layout')">Extract Again as Enhanced</button></li>
                 </ul>
               </div>
+              <button type="button" class="btn btn-sm btn-warning me-2 d-none" id="group-extract-selected-metadata-btn">
+                <i class="bi bi-magic me-1"></i>Extract Metadata
+              </button>
               <button type="button" class="btn btn-sm btn-info me-2" id="group-bulk-tag-btn"
                       data-bs-toggle="modal" data-bs-target="#groupBulkTagModal">
                 <i class="bi bi-tags me-1"></i>Tag Selected
@@ -1485,6 +1500,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
 {% if settings.enable_semantic_kernel and settings.allow_group_custom_endpoints and settings.enable_multi_model_endpoints and workspace_governance.group_endpoints %}
 {% include '_multiendpoint_modal.html' %}
 {% endif %}
+{{ supported_file_types_modal('groupSupportedFileTypesModal', 'Supported file types', allowed_extension_categories) }}
 <!-- Item View Modal (shared by agents & actions grid/list view buttons) -->
 <div class="modal fade" id="item-view-modal" tabindex="-1" aria-labelledby="item-view-modal-title" aria-hidden="true">
   <div class="modal-dialog modal-lg modal-dialog-scrollable">
@@ -2024,32 +2040,88 @@ app_settings.app_title }} {% endblock %} {% block head %}
 
 {% if settings.allow_group_workflows %}
 <div class="modal fade" id="workflowModal" tabindex="-1" aria-labelledby="workflowModalLabel" aria-hidden="true">
-  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable">
     <form class="modal-content" id="workflow-form" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true">
       <div class="modal-header">
-        <h5 class="modal-title" id="workflowModalLabel">Create Group Workflow</h5>
+        <div>
+          <h5 class="modal-title" id="workflowModalLabel">Create Group Workflow</h5>
+          <div class="text-muted small mt-1" id="workflow-step-description">Name the workflow and choose its default runner.</div>
+        </div>
         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
       </div>
-      <div class="modal-body">
+      <div class="modal-body workflow-builder-body">
         <input type="hidden" id="workflow-id" />
-        <div class="row g-3 mb-3">
+        <nav class="workflow-step-nav" aria-label="Workflow setup steps">
+          <button type="button" class="workflow-step-nav__item is-active" data-workflow-step-target="general" aria-current="step"><span>1</span>General</button>
+          <button type="button" class="workflow-step-nav__item" data-workflow-step-target="trigger"><span>2</span>Trigger</button>
+          <button type="button" class="workflow-step-nav__item" data-workflow-step-target="tasks"><span>3</span>Tasks</button>
+          <button type="button" class="workflow-step-nav__item" data-workflow-step-target="reliability"><span>4</span>Reliability</button>
+          <button type="button" class="workflow-step-nav__item" data-workflow-step-target="review"><span>5</span>Review</button>
+        </nav>
+        <div class="row g-3 mb-3 workflow-step-block" data-workflow-step="general">
           <div class="col-md-7">
             <label for="workflow-name" class="form-label">Workflow Name</label>
             <input type="text" class="form-control" id="workflow-name" maxlength="120" required />
           </div>
           <div class="col-md-5">
-            <label for="workflow-runner-type" class="form-label">Runner</label>
+            <label for="workflow-runner-type" class="form-label">Default Runner</label>
             <select class="form-select" id="workflow-runner-type">
               <option value="model">Direct Model</option>
               <option value="agent">Agent</option>
             </select>
           </div>
         </div>
-        <div class="mb-3">
+        <div class="mb-3 workflow-step-block" data-workflow-step="general">
           <label for="workflow-description" class="form-label">Description</label>
           <input type="text" class="form-control" id="workflow-description" maxlength="240" placeholder="Optional summary for the workflow list." />
         </div>
-        <div class="mb-3">
+        <div class="workflow-step-block" data-workflow-step="tasks">
+          <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
+            <div>
+              <h6 class="mb-1">Task sequence</h6>
+              <div class="form-text mt-0">Tasks run from top to bottom with the workflow default or a task override.</div>
+            </div>
+            <button type="button" class="btn btn-outline-primary btn-sm" id="workflow-add-task-btn">
+              <i class="bi bi-plus-circle me-1" aria-hidden="true"></i>Add Task
+            </button>
+          </div>
+          <div id="workflow-task-list" class="workflow-task-list mb-3" aria-live="polite"></div>
+          <div class="workflow-task-editor border rounded-2 p-3 mb-3" id="workflow-task-editor">
+            <label for="workflow-task-name" class="form-label">Task Name</label>
+            <input type="text" class="form-control" id="workflow-task-name" maxlength="120" placeholder="e.g., Summarize findings" />
+            <div class="mt-3">
+              <label for="workflow-task-runner-type" class="form-label">Runner</label>
+              <select class="form-select" id="workflow-task-runner-type">
+                <option value="inherit">Workflow default</option>
+                <option value="model">Direct Model</option>
+                <option value="agent">Agent</option>
+              </select>
+            </div>
+            <div class="row g-3 mt-1 d-none" id="workflow-task-model-fields">
+              <div class="col-12 col-md-4">
+                <label for="workflow-task-model-source" class="form-label">Model Source</label>
+                <select class="form-select" id="workflow-task-model-source">
+                  <option value="global">Global endpoints</option>
+                  <option value="workspace">Group endpoints</option>
+                </select>
+              </div>
+              <div class="col-12 col-md-4">
+                <label for="workflow-task-model-endpoint" class="form-label">Endpoint</label>
+                <select class="form-select" id="workflow-task-model-endpoint"></select>
+              </div>
+              <div class="col-12 col-md-4">
+                <label for="workflow-task-model" class="form-label">Model</label>
+                <select class="form-select" id="workflow-task-model"></select>
+              </div>
+            </div>
+            <div class="mt-3 d-none" id="workflow-task-agent-fields">
+              <label for="workflow-task-agent" class="form-label">Agent</label>
+              <select class="form-select" id="workflow-task-agent"></select>
+              <div class="form-text" id="workflow-task-agent-help">Choose an authorized group or merged global agent.</div>
+            </div>
+          </div>
+        </div>
+        <div class="mb-3 workflow-step-block" data-workflow-step="tasks">
           <label for="workflow-task-brief" class="form-label">Task Brief</label>
           <textarea class="form-control" id="workflow-task-brief" rows="3" placeholder="Briefly describe what this workflow should accomplish."></textarea>
           <div class="d-flex align-items-center gap-2 mt-2">
@@ -2059,24 +2131,27 @@ app_settings.app_title }} {% endblock %} {% block head %}
             <span class="text-muted small" id="workflow-draft-instructions-status" aria-live="polite"></span>
           </div>
         </div>
-        <div class="mb-3">
-          <label for="workflow-task-prompt" class="form-label">Workflow Instructions</label>
-          <textarea class="form-control" id="workflow-task-prompt" rows="7" placeholder="Describe exactly what this workflow should do each time it runs." required></textarea>
-          <div class="form-text">This instruction will be used to guide the workflow's behavior in each run.</div>
+        <div class="mb-3 workflow-step-block" data-workflow-step="tasks">
+          <label for="workflow-task-prompt" class="form-label">Task Instructions</label>
+          <textarea class="form-control" id="workflow-task-prompt" rows="7" placeholder="Describe exactly what this task should do each time it runs."></textarea>
+          <div class="form-text">The next task receives this task's response as bounded context.</div>
         </div>
         {% if settings.enable_url_access %}
-        <div class="form-check form-switch mb-3" id="workflow-url-access-group">
+        <div class="form-check form-switch mb-3 workflow-step-block" id="workflow-url-access-group" data-workflow-step="trigger">
           <input class="form-check-input" type="checkbox" id="workflow-url-access-enabled" />
           <label class="form-check-label ms-2" for="workflow-url-access-enabled">Allow URL Access for this workflow</label>
           <div class="form-text">Workflow runs can review up to {{ settings.url_access_max_workflow_urls_per_run|default(50, true) }} HTTP(S) URLs from the task prompt using the shared admin domain policy.</div>
         </div>
         {% endif %}
 
-        <div class="card p-3 mb-3">
+        <div class="card p-3 mb-3 workflow-step-block" data-workflow-step="tasks">
+          <h6 class="mb-1">Workspace documents</h6>
+          <div class="form-text mb-3">Optional. Use a document action only when this workflow needs workspace document context.</div>
           <div class="row g-3 mb-2">
             <div class="col-md-6">
-              <label for="workflow-document-action-type" class="form-label">Action Type</label>
-              <select class="form-select" id="workflow-document-action-type" title="Search selected or recent documents and use matching excerpts as workflow context.">
+              <label for="workflow-document-action-type" class="form-label">Document action</label>
+              <select class="form-select" id="workflow-document-action-type" title="Run the workflow instructions without workspace document context.">
+                <option value="none" data-action-description="Run the workflow instructions without workspace document context." title="Run the workflow instructions without workspace document context.">No document action</option>
                 <option value="search" data-action-description="Search selected or recent documents and use matching excerpts as workflow context." title="Search selected or recent documents and use matching excerpts as workflow context.">Search</option>
                 {% if settings.document_action_capabilities.analyze.enabled %}
                 <option value="analyze" data-action-description="Perform an in-depth analysis across all selected documents based on your request." title="Perform an in-depth analysis across all selected documents based on your request.">Analyze</option>
@@ -2086,12 +2161,12 @@ app_settings.app_title }} {% endblock %} {% block head %}
                 {% endif %}
               </select>
             </div>
-            <div class="col-md-6">
+            <div class="col-md-6 d-none" id="workflow-analysis-retries-group">
               <label for="workflow-analysis-retries" class="form-label">Retries Per Window</label>
               <input type="number" class="form-control" id="workflow-analysis-retries" min="0" max="5" value="1" />
             </div>
           </div>
-          <div class="form-text mt-2" id="workflow-document-action-help">Search selected or recent documents and use matching excerpts as workflow context.</div>
+          <div class="form-text mt-2" id="workflow-document-action-help">Run the workflow instructions without workspace document context.</div>
 
           <div id="workflow-document-targets-fields" class="mt-3 d-none">
             <input type="hidden" id="workflow-analysis-doc-scope" value="group" />
@@ -2132,6 +2207,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
               </div>
               <div id="workflow-document-picker-error" class="alert alert-warning py-2 d-none" role="alert"></div>
               <select class="d-none" id="document-action-select" aria-label="Workflow document action">
+                <option value="none">No document action</option>
                 <option value="search">Search</option>
                 {% if settings.document_action_capabilities.analyze.enabled %}
                 <option value="analyze">Analyze</option>
@@ -2234,7 +2310,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
           </div>
         </div>
 
-        <div class="card p-3 mb-3" id="workflow-file-sync-card">
+        <div class="card p-3 mb-3 workflow-step-block" id="workflow-file-sync-card" data-workflow-step="trigger">
           <div class="d-flex flex-wrap gap-2 justify-content-between align-items-start mb-3">
             <div>
               <label class="form-label mb-0" for="workflow-file-sync-enabled">File Sync Before Run</label>
@@ -2273,7 +2349,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
           </div>
         </div>
 
-        <div id="workflow-agent-fields" class="card p-3 mb-3 d-none">
+        <div id="workflow-agent-fields" class="card p-3 mb-3 d-none workflow-step-block" data-workflow-step="general">
           <div class="mb-0">
             <label for="workflow-agent-select" class="form-label">Selected Agent</label>
             <select class="form-select" id="workflow-agent-select"></select>
@@ -2281,7 +2357,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
           </div>
         </div>
 
-        <div id="workflow-model-fields" class="card p-3 mb-3">
+        <div id="workflow-model-fields" class="card p-3 mb-3 workflow-step-block" data-workflow-step="general">
           <div class="row g-3">
             <div class="col-md-4">
               <label for="workflow-model-source" class="form-label">Model Source</label>
@@ -2302,7 +2378,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
           <div class="form-text mt-2" id="workflow-model-help">The default app model follows your admin-configured default selection or legacy GPT settings.</div>
         </div>
 
-        <div class="card p-3 mb-3">
+        <div class="card p-3 mb-3 workflow-step-block" data-workflow-step="review">
           <div class="row g-3 align-items-end">
             <div class="col-md-5">
               <label for="workflow-alert-priority" class="form-label">Pop-up Alert Priority</label>
@@ -2319,7 +2395,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
           </div>
         </div>
 
-        <div class="card p-3">
+        <div class="card p-3 workflow-step-block" id="workflow-trigger-settings-card" data-workflow-step="trigger">
           <div class="row g-3 align-items-end">
             <div class="col-md-4">
               <label for="workflow-trigger-type" class="form-label">Trigger</label>
@@ -2348,10 +2424,33 @@ app_settings.app_title }} {% endblock %} {% block head %}
           </div>
           <div class="form-text mt-2" id="workflow-trigger-help">Manual workflows run only when you trigger them from the group workspace.</div>
         </div>
+        <div class="workflow-step-block" data-workflow-step="reliability">
+          <div class="card p-3">
+            <h6 class="mb-3">Error strategy</h6>
+            <div class="form-check mb-2">
+              <input class="form-check-input" type="radio" name="workflow-error-strategy" id="workflow-error-strategy-halt" value="halt" checked />
+              <label class="form-check-label" for="workflow-error-strategy-halt">Stop when a task still fails after retries</label>
+            </div>
+            <div class="form-check mb-3">
+              <input class="form-check-input" type="radio" name="workflow-error-strategy" id="workflow-error-strategy-continue" value="continue" />
+              <label class="form-check-label" for="workflow-error-strategy-continue">Record the failure and continue to the next task</label>
+            </div>
+            <div class="border-top pt-3">
+              <label for="workflow-task-retry-count" class="form-label">Task Retry Count</label>
+              <input type="number" class="form-control workflow-retry-input" id="workflow-task-retry-count" min="0" max="5" value="0" />
+              <div class="form-text">Retries apply to each task before the selected error strategy.</div>
+            </div>
+          </div>
+        </div>
+        <div class="workflow-step-block" id="workflow-review-summary-block" data-workflow-step="review">
+          <div class="workflow-review-summary" id="workflow-review-summary" aria-live="polite"></div>
+        </div>
       </div>
       <div class="modal-footer">
         <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
-        <button type="submit" class="btn btn-primary" id="workflow-save-btn">Save Workflow</button>
+        <button type="button" class="btn btn-outline-secondary d-none" id="workflow-step-back-btn"><i class="bi bi-arrow-left me-1" aria-hidden="true"></i>Back</button>
+        <button type="button" class="btn btn-primary" id="workflow-step-next-btn">Next<i class="bi bi-arrow-right ms-1" aria-hidden="true"></i></button>
+        <button type="submit" class="btn btn-primary d-none" id="workflow-save-btn">Save Workflow</button>
       </div>
     </form>
   </div>
@@ -3255,7 +3354,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
    */
   async function uploadGroupFiles(files) {
     if (!files || files.length === 0) {
-      alert("Please select file(s) to upload.");
+      showToast("Please select file(s) to upload.", 'warning');
       return;
     }
 
@@ -3266,7 +3365,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
     for (const file of files) {
         if (file.size > maxFileSizeBytes) {
             const fileSizeMB = (file.size / (1024 * 1024)).toFixed(1);
-            alert(`File "${file.name}" (${fileSizeMB} MB) exceeds the maximum allowed size of ${maxFileSizeMB} MB. Please select a smaller file.`);
+            showToast(`File "${file.name}" (${fileSizeMB} MB) exceeds the maximum allowed size of ${maxFileSizeMB} MB. Please select a smaller file.`, 'warning');
             return;
         }
     }
@@ -3406,7 +3505,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
 
     // Click on area triggers file input
     uploadArea.addEventListener("click", (e) => {
-      if (e.target !== groupFileInput) {
+      if (e.target !== groupFileInput && !e.target.closest(".workspace-upload-supported-types-trigger")) {
         groupFileInput.click();
       }
     });
@@ -3702,6 +3801,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
     const sourceTypeMap = {
       smb: { label: 'SMB', className: 'bg-primary text-white', title: 'Managed by File Sync from an SMB source.' },
       azure_files: { label: 'Azure Files', className: 'bg-info text-dark', title: 'Managed by File Sync from Azure Files.' },
+      azure_blob: { label: 'Azure Blob', className: 'bg-info text-dark', title: 'Managed by File Sync from Azure Blob Storage.' },
       m365sp: { label: 'M365SP', className: 'bg-info text-dark', title: 'Managed by File Sync from Microsoft 365 SharePoint.' },
       m365_sp: { label: 'M365SP', className: 'bg-info text-dark', title: 'Managed by File Sync from Microsoft 365 SharePoint.' },
       m365_sharepoint: { label: 'M365SP', className: 'bg-info text-dark', title: 'Managed by File Sync from Microsoft 365 SharePoint.' },
@@ -4307,6 +4407,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
     const removeBtn = document.getElementById("group-remove-selected-btn");
     const downloadBtn = document.getElementById("group-download-selected-btn");
     const reprocessDropdown = document.getElementById("group-reprocess-selected-dropdown");
+    const extractMetadataBtn = document.getElementById("group-extract-selected-metadata-btn");
 
     if (groupSelectedDocuments.size > 0) {
       // Show bulk actions bar with count
@@ -4322,6 +4423,8 @@ app_settings.app_title }} {% endblock %} {% block head %}
 
       // Check if user can manage documents (delete permission)
       const canManage = ["Owner", "Admin", "DocumentManager"].includes(userRoleInActiveGroup);
+      const canModify = canManage && (window.currentGroupStatus || "active") === "active";
+      const metadataEnabled = window.enable_extract_meta_data === true || window.enable_extract_meta_data === "true";
 
       // Show/hide delete and remove buttons based on permissions
       if (deleteBtn) {
@@ -4330,6 +4433,10 @@ app_settings.app_title }} {% endblock %} {% block head %}
 
       if (reprocessDropdown) {
         reprocessDropdown.classList.toggle("d-none", !canManage);
+      }
+
+      if (extractMetadataBtn) {
+        extractMetadataBtn.classList.toggle("d-none", !(canModify && metadataEnabled));
       }
 
       // Remove button is available for group documents
@@ -4343,6 +4450,9 @@ app_settings.app_title }} {% endblock %} {% block head %}
       }
       if (downloadBtn) {
         downloadBtn.classList.add("d-none");
+      }
+      if (extractMetadataBtn) {
+        extractMetadataBtn.classList.add("d-none");
       }
     }
   }
@@ -4363,6 +4473,61 @@ app_settings.app_title }} {% endblock %} {% block head %}
     groupSelectedDocuments.clear();
     groupLastCardSelectionAnchorId = null;
     refreshGroupSelectionState();
+  }
+
+  async function requestGroupSelectedMetadataExtraction(documentIds) {
+    const response = await fetch("/api/group_documents/extract_metadata", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ document_ids: documentIds }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok && !(Array.isArray(data.queued) && data.queued.length > 0)) {
+      throw new Error(data.error || data.message || "Unable to queue metadata extraction.");
+    }
+    return data;
+  }
+
+  function showGroupSelectedMetadataExtractionResult(data) {
+    const queuedCount = Array.isArray(data.queued) ? data.queued.length : 0;
+    const errorCount = Array.isArray(data.errors) ? data.errors.length : 0;
+    const message = errorCount > 0
+      ? `Queued metadata extraction for ${queuedCount} document(s); ${errorCount} item(s) were skipped.`
+      : (data.message || `Queued metadata extraction for ${queuedCount} document(s).`);
+
+    showToast(message, errorCount > 0 ? "warning" : "success");
+  }
+
+  async function extractGroupSelectedMetadata() {
+    const documentIds = Array.from(groupSelectedDocuments);
+    if (documentIds.length === 0) {
+      return;
+    }
+    if (!(window.enable_extract_meta_data === true || window.enable_extract_meta_data === "true")) {
+      showToast("Metadata extraction is not enabled.", "info");
+      return;
+    }
+
+    const extractMetadataBtn = document.getElementById("group-extract-selected-metadata-btn");
+    if (extractMetadataBtn) {
+      extractMetadataBtn.disabled = true;
+      extractMetadataBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>Extracting...';
+    }
+
+    try {
+      const data = await requestGroupSelectedMetadataExtraction(documentIds);
+      showGroupSelectedMetadataExtractionResult(data);
+      groupSelectedDocuments.clear();
+      refreshGroupSelectionState();
+      fetchGroupDocuments();
+    } catch (error) {
+      showToast(error.message, "danger");
+    } finally {
+      if (extractMetadataBtn) {
+        extractMetadataBtn.disabled = false;
+        extractMetadataBtn.innerHTML = '<i class="bi bi-magic me-1"></i>Extract Metadata';
+      }
+    }
   }
 
   function deleteGroupSelectedDocuments() {
@@ -4448,7 +4613,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
           // Update status when all operations complete
           if (completed + failed === documentIds.length) {
             if (failed > 0) {
-              alert(`Removed ${completed} document(s) from group, but failed to remove ${failed} document(s).`);
+              showToast(`Removed ${completed} document(s) from group, but failed to remove ${failed} document(s).`, 'danger');
             } else {
               console.log(`Successfully removed ${completed} document(s) from group`);
             }
@@ -4466,7 +4631,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
 
           // Update status when all operations complete
           if (completed + failed === documentIds.length) {
-            alert(`Removed ${completed} document(s) from group, but failed to remove ${failed} document(s).`);
+            showToast(`Removed ${completed} document(s) from group, but failed to remove ${failed} document(s).`, 'danger');
 
             // Refresh the documents list
             fetchGroupDocuments();
@@ -4493,6 +4658,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
   window.toggleGroupSelectionMode = toggleGroupSelectionMode;
   window.deleteGroupSelectedDocuments = deleteGroupSelectedDocuments;
   window.removeGroupSelectedDocuments = removeGroupSelectedDocuments;
+  window.extractGroupSelectedMetadata = extractGroupSelectedMetadata;
 
   // --- Initialization ---
   document.addEventListener("DOMContentLoaded", () => {
@@ -4524,6 +4690,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
     const groupDeleteSelectedBtn = document.getElementById("group-delete-selected-btn");
     const groupDownloadSelectedBtn = document.getElementById("group-download-selected-btn");
     const groupRemoveSelectedBtn = document.getElementById("group-remove-selected-btn");
+    const groupExtractSelectedMetadataBtn = document.getElementById("group-extract-selected-metadata-btn");
     const groupClearSelectionBtn = document.getElementById("group-clear-selection-btn");
 
     if (groupDeleteSelectedBtn) {
@@ -4534,6 +4701,9 @@ app_settings.app_title }} {% endblock %} {% block head %}
     }
     if (groupRemoveSelectedBtn) {
       groupRemoveSelectedBtn.addEventListener("click", removeGroupSelectedDocuments);
+    }
+    if (groupExtractSelectedMetadataBtn) {
+      groupExtractSelectedMetadataBtn.addEventListener("click", extractGroupSelectedMetadata);
     }
     if (groupClearSelectionBtn) {
       groupClearSelectionBtn.addEventListener("click", clearGroupSelection);
@@ -4557,7 +4727,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
       .getElementById("btn-my-groups")
       .addEventListener(
         "click",
-        () => (window.location.href = "{{ url_for('profile', tab='groups') }}")
+        () => (window.location.href = "{{ url_for('frontend_profile.profile', tab='groups') }}")
       );
     // --- Event Listeners (Group Documents Tab) ---
     if (groupUploadBtn)
@@ -4966,9 +5136,10 @@ app_settings.app_title }} {% endblock %} {% block head %}
       })
       .catch((err) => {
         console.error("Error fetching groups", err);
-        alert(
+        showToast(
           "Could not fetch your groups: " +
-            (err.error || err.message || "Unknown error")
+            (err.error || err.message || "Unknown error"),
+          'danger'
         );
         activeGroupId = null;
         userRoleInActiveGroup = null;
@@ -4999,7 +5170,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
       .then((r) => r.json())
       .then((data) => {
         if (data.error) {
-          alert("Error setting active group: " + data.error);
+          showToast("Error setting active group: " + data.error, 'danger');
           throw new Error(data.error);
         }
         console.log("Active group set successfully");
@@ -5034,7 +5205,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
         } else {
           // This case might happen if setActiveGroup failed but didn't throw an error network-wise
           console.error("Failed to confirm active group change.");
-          alert("Could not change active group. Please try again.");
+          showToast("Could not change active group. Please try again.", 'danger');
         }
       })
       .catch((err) => {
@@ -6418,7 +6589,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
       })
       .catch((err) => {
         console.error("Error retrieving group document for edit:", err);
-        alert("Error: " + (err.error || err.message));
+        showToast("Error: " + (err.error || err.message), 'danger');
       });
   }
   window.onEditGroupDocument = onEditGroupDocument; // Expose globally
@@ -6489,7 +6660,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
         loadGroupWorkspaceTags(); // Refresh tag counts
       })
       .catch((err) => {
-        alert("Error updating document: " + (err.error || err.message));
+        showToast("Error updating document: " + (err.error || err.message), 'danger');
       })
       .finally(() => {
         docSaveBtn.disabled = false;
@@ -6524,7 +6695,6 @@ app_settings.app_title }} {% endblock %} {% block head %}
         r.ok ? r.json() : r.json().then((err) => Promise.reject(err))
       )
       .then((data) => {
-        //alert(data.message || "Metadata extraction process initiated.");
         // Refresh after delay
         setTimeout(fetchGroupDocuments, 1500);
         const detailsRow = document.getElementById(
@@ -6534,7 +6704,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
           toggleGroupDetails(docId);
       })
       .catch((err) => {
-        alert("Error extracting metadata: " + (err.error || err.message));
+        showToast("Error extracting metadata: " + (err.error || err.message), 'danger');
       })
       .finally(() => {
         if (extractBtn && document.body.contains(extractBtn)) {
@@ -6552,7 +6722,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
     if (
       !["Owner", "Admin", "DocumentManager"].includes(userRoleInActiveGroup)
     ) {
-      alert("You do not have permission to delete documents in this group.");
+      showToast("You do not have permission to delete documents in this group.", 'warning');
       return;
     }
 
@@ -6583,7 +6753,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
         fetchGroupDocuments();
       })
       .catch((error) => {
-        alert("Error deleting document: " + (error.error || error.message));
+        showToast("Error deleting document: " + (error.error || error.message), 'danger');
         if (deleteBtn && document.body.contains(deleteBtn)) {
           deleteBtn.classList.remove("disabled");
           deleteBtn.removeAttribute("aria-disabled");
@@ -6598,7 +6768,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
     // --- File selection and validation ---
     const files = groupFileInput.files;
     if (!files || files.length === 0) {
-      alert("Please select file(s) to upload.");
+      showToast("Please select file(s) to upload.", 'warning');
       return;
     }
 
@@ -6609,7 +6779,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
     for (const file of files) {
         if (file.size > maxFileSizeBytes) {
             const fileSizeMB = (file.size / (1024 * 1024)).toFixed(1);
-            alert(`File "${file.name}" (${fileSizeMB} MB) exceeds the maximum allowed size of ${maxFileSizeMB} MB. Please select a smaller file.`);
+            showToast(`File "${file.name}" (${fileSizeMB} MB) exceeds the maximum allowed size of ${maxFileSizeMB} MB. Please select a smaller file.`, 'warning');
             return;
         }
     }
@@ -6793,12 +6963,12 @@ app_settings.app_title }} {% endblock %} {% block head %}
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || res.statusText);
 
-      alert(json.message || "Group documents upgraded.");
+      showToast(json.message || "Group documents upgraded.", 'info');
       document.getElementById("group-legacy-update-alert")?.remove();
       fetchGroupDocuments();
     } catch (err) {
       console.error("Legacy upgrade failed", err);
-      alert("Failed to upgrade group documents: " + err.message);
+      showToast("Failed to upgrade group documents: " + err.message, 'danger');
       btn.disabled = false;
       btn.textContent = "Update Now";
     }
@@ -6844,11 +7014,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
       ? `Queued ${queuedCount} PDF(s) to extract again with ${modeLabel}; ${errorCount} item(s) were skipped.`
       : (data.message || `Queued ${queuedCount} PDF(s) to extract again with ${modeLabel}.`);
 
-    if (window.showToast) {
-      window.showToast(message, errorCount > 0 ? 'warning' : 'success');
-    } else {
-      alert(message);
-    }
+    showToast(message, errorCount > 0 ? 'warning' : 'success');
   }
 
   async function reprocessGroupDocumentExtraction(documentId, extractionMode, event) {
@@ -6865,11 +7031,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
       showGroupDocumentReprocessResult(data, extractionMode);
       fetchGroupDocuments();
     } catch (error) {
-      if (window.showToast) {
-        window.showToast(error.message, 'danger');
-      } else {
-        alert(error.message);
-      }
+      showToast(error.message, 'danger');
     }
   }
   window.reprocessGroupDocumentExtraction = reprocessGroupDocumentExtraction;
@@ -6891,11 +7053,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
       refreshGroupSelectionState();
       fetchGroupDocuments();
     } catch (error) {
-      if (window.showToast) {
-        window.showToast(error.message, 'danger');
-      } else {
-        alert(error.message);
-      }
+      showToast(error.message, 'danger');
     }
   }
   window.reprocessGroupSelectedDocumentExtraction = reprocessGroupSelectedDocumentExtraction;
@@ -7338,7 +7496,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
     const content = (
       groupSimplemde ? groupSimplemde.value() : groupPromptContentEl.value
     ).trim();
-    if (!name || !content) return alert("Name & content are required.");
+    if (!name || !content) return showToast("Name & content are required.", 'warning');
 
     const btn = document.getElementById("group-prompt-save-btn");
     btn.disabled = true;
@@ -7358,7 +7516,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
       })
       .catch((err) => {
         console.error("Error saving group prompt:", err);
-        alert(err.error || err.message || "Unknown error");
+        showToast(err.error || err.message || "Unknown error", 'danger');
       })
       .finally(() => {
         btn.disabled = false;
@@ -7470,7 +7628,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
       })
       .catch((err) => {
         console.error("Error loading prompt:", err);
-        alert(err.error || err.message || "Unable to load prompt");
+        showToast(err.error || err.message || "Unable to load prompt", 'danger');
       });
   };
 
@@ -7505,7 +7663,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
       })
       .catch((err) => {
         console.error("Error loading prompt:", err);
-        alert(err.error || err.message || "Unable to load prompt");
+        showToast(err.error || err.message || "Unable to load prompt", 'danger');
       });
   };
 
@@ -7522,7 +7680,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
       )
       .catch((err) => {
         console.error("Error deleting prompt:", err);
-        alert(err.error || err.message || "Could not delete");
+        showToast(err.error || err.message || "Could not delete", 'danger');
       });
   };
 
@@ -8154,9 +8312,9 @@ app_settings.app_title }} {% endblock %} {% block head %}
       body: JSON.stringify({ new_name: newName.trim() })
     }).then(r => r.json().then(d => ({ ok: r.ok, data: d })))
       .then(({ ok, data }) => {
-        if (ok) { alert(data.message); loadGroupWorkspaceTags(); if (groupCurrentView === 'grid') renderGroupGridView(); else fetchGroupDocuments(); }
-        else alert('Error: ' + (data.error || 'Failed to rename'));
-      }).catch(e => { console.error(e); alert('Error renaming tag'); });
+        if (ok) { showToast(data.message, 'info'); loadGroupWorkspaceTags(); if (groupCurrentView === 'grid') renderGroupGridView(); else fetchGroupDocuments(); }
+        else showToast('Error: ' + (data.error || 'Failed to rename'), 'danger');
+      }).catch(e => { console.error(e); showToast('Error renaming tag', 'danger'); });
   }
   window.renameGroupTag = renameGroupTag;
 
@@ -8168,9 +8326,9 @@ app_settings.app_title }} {% endblock %} {% block head %}
       body: JSON.stringify({ color: newColor.trim() })
     }).then(r => r.json().then(d => ({ ok: r.ok, data: d })))
       .then(({ ok, data }) => {
-        if (ok) { alert(data.message); loadGroupWorkspaceTags(); if (groupCurrentView === 'grid') renderGroupGridView(); }
-        else alert('Error: ' + (data.error || 'Failed to change color'));
-      }).catch(e => { console.error(e); alert('Error changing tag color'); });
+        if (ok) { showToast(data.message, 'info'); loadGroupWorkspaceTags(); if (groupCurrentView === 'grid') renderGroupGridView(); }
+        else showToast('Error: ' + (data.error || 'Failed to change color'), 'danger');
+      }).catch(e => { console.error(e); showToast('Error changing tag color', 'danger'); });
   }
   window.changeGroupTagColor = changeGroupTagColor;
 
@@ -8179,9 +8337,9 @@ app_settings.app_title }} {% endblock %} {% block head %}
     fetch(`/api/group_documents/tags/${encodeURIComponent(tagName)}`, { method: 'DELETE' })
       .then(r => r.json().then(d => ({ ok: r.ok, data: d })))
       .then(({ ok, data }) => {
-        if (ok) { alert(data.message); loadGroupWorkspaceTags(); if (groupCurrentView === 'grid') renderGroupGridView(); else fetchGroupDocuments(); }
-        else alert('Error: ' + (data.error || 'Failed to delete'));
-      }).catch(e => { console.error(e); alert('Error deleting tag'); });
+        if (ok) { showToast(data.message, 'info'); loadGroupWorkspaceTags(); if (groupCurrentView === 'grid') renderGroupGridView(); else fetchGroupDocuments(); }
+        else showToast('Error: ' + (data.error || 'Failed to delete'), 'danger');
+      }).catch(e => { console.error(e); showToast('Error deleting tag', 'danger'); });
   }
   window.deleteGroupTag = deleteGroupTag;
 
@@ -8283,8 +8441,8 @@ app_settings.app_title }} {% endblock %} {% block head %}
     const action = document.getElementById('group-bulk-tag-action').value;
     const selectedTags = Array.from(groupBulkSelectedTags);
     const documentIds = Array.from(groupSelectedDocuments);
-    if (documentIds.length === 0) { alert('No documents selected'); return; }
-    if (selectedTags.length === 0) { alert('Please select at least one tag'); return; }
+    if (documentIds.length === 0) { showToast('No documents selected', 'warning'); return; }
+    if (selectedTags.length === 0) { showToast('Please select at least one tag', 'warning'); return; }
 
     const applyBtn = document.getElementById('group-bulk-tag-apply-btn');
     const totalDocuments = documentIds.length;
@@ -8314,7 +8472,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
       const ec = results.errors.length;
       let msg = `Tags updated for ${sc} document(s)`;
       if (ec > 0) msg += `\n${ec} document(s) had errors`;
-      alert(msg);
+      showToast(msg, 'info');
       await loadGroupWorkspaceTags();
       fetchGroupDocuments();
       groupSelectedDocuments.clear();
@@ -8338,7 +8496,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
         errorMessage += `\n${e.message}`;
       }
 
-      alert(errorMessage);
+      showToast(errorMessage, 'danger');
     } finally {
       setGroupBulkTagButtonLoadingState(applyBtn, false);
     }
@@ -8416,8 +8574,8 @@ app_settings.app_title }} {% endblock %} {% block head %}
           });
           const data = await resp.json();
           if (resp.ok) { await loadGroupWorkspaceTags(); updateGroupBulkTagsList(); }
-          else alert('Error: ' + (data.error || 'Failed to create tag'));
-        } catch (e) { console.error(e); alert('Error creating tag'); }
+          else showToast('Error: ' + (data.error || 'Failed to create tag'), 'danger');
+        } catch (e) { console.error(e); showToast('Error creating tag', 'danger'); }
       });
     }
   })();
@@ -8529,9 +8687,9 @@ app_settings.app_title }} {% endblock %} {% block head %}
         await loadGroupWorkspaceTags();
         refreshGroupTagManagementTable();
       } else {
-        alert('Error: ' + (data.error || 'Failed to delete tag'));
+        showToast('Error: ' + (data.error || 'Failed to delete tag'), 'danger');
       }
-    } catch (e) { console.error(e); alert('Error deleting tag'); }
+    } catch (e) { console.error(e); showToast('Error deleting tag', 'danger'); }
   };
 
   async function handleGroupAddOrSaveTag() {
@@ -8541,8 +8699,8 @@ app_settings.app_title }} {% endblock %} {% block head %}
     const tagName = nameInput.value.trim().toLowerCase();
     const tagColor = colorInput.value;
 
-    if (!tagName) { alert('Please enter a tag name'); return; }
-    if (!/^[a-z0-9_-]+$/.test(tagName)) { alert('Tag name must contain only lowercase letters, numbers, hyphens, and underscores'); return; }
+    if (!tagName) { showToast('Please enter a tag name', 'warning'); return; }
+    if (!/^[a-z0-9_-]+$/.test(tagName)) { showToast('Tag name must contain only lowercase letters, numbers, hyphens, and underscores', 'warning'); return; }
 
     if (groupEditingTag) {
       // Edit mode - save changes
@@ -8550,7 +8708,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
       const colorChanged = tagColor !== groupEditingTag.originalColor;
       if (!nameChanged && !colorChanged) { groupCancelEditMode(); return; }
       if (nameChanged && groupWorkspaceTags.some(t => t.name === tagName && t.name !== groupEditingTag.originalName)) {
-        alert('A tag with this name already exists'); return;
+        showToast('A tag with this name already exists', 'warning'); return;
       }
       try {
         const body = {};
@@ -8565,11 +8723,11 @@ app_settings.app_title }} {% endblock %} {% block head %}
           await loadGroupWorkspaceTags();
           refreshGroupTagManagementTable();
           if (groupCurrentView === 'grid') renderGroupGridView();
-        } else { alert('Error: ' + (data.error || 'Failed to update tag')); }
-      } catch (e) { console.error(e); alert('Error updating tag'); }
+        } else { showToast('Error: ' + (data.error || 'Failed to update tag'), 'danger'); }
+      } catch (e) { console.error(e); showToast('Error updating tag', 'danger'); }
     } else {
       // Add mode
-      if (groupWorkspaceTags.some(t => t.name === tagName)) { alert('A tag with this name already exists'); return; }
+      if (groupWorkspaceTags.some(t => t.name === tagName)) { showToast('A tag with this name already exists', 'warning'); return; }
       try {
         const resp = await fetch('/api/group_documents/tags', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -8582,8 +8740,8 @@ app_settings.app_title }} {% endblock %} {% block head %}
           await loadGroupWorkspaceTags();
           refreshGroupTagManagementTable();
           if (groupCurrentView === 'grid') renderGroupGridView();
-        } else { alert('Error: ' + (data.error || 'Failed to create tag')); }
-      } catch (e) { console.error(e); alert('Error creating tag'); }
+        } else { showToast('Error: ' + (data.error || 'Failed to create tag'), 'danger'); }
+      } catch (e) { console.error(e); showToast('Error creating tag', 'danger'); }
     }
   }
 
@@ -8735,6 +8893,9 @@ app_settings.app_title }} {% endblock %} {% block head %}
     enable_url_access: {{ settings.enable_url_access|default(false, true)|tojson }},
     url_access_max_workflow_urls_per_run: {{ settings.url_access_max_workflow_urls_per_run|default(50, true)|tojson }}
   };
+  window.workflowSettings = {
+    workflow_max_tasks: {{ settings.workflow_max_tasks|default(50, true)|tojson }}
+  };
   window.workflowWorkspaceConfig = {
     scope: 'group',
     apiBase: '/api/group/workflows',
@@ -8769,6 +8930,3 @@ app_settings.app_title }} {% endblock %} {% block head %}
 <script type="module" src="/static/js/workspace/group_plugins.js"></script>
 {% endif %}
 {% endblock %}
-
-
-

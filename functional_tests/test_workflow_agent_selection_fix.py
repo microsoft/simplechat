@@ -10,6 +10,7 @@ choices each time the modal opens.
 """
 
 from pathlib import Path
+from test_support.versioning import assert_app_version_at_least
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -25,9 +26,7 @@ def test_workflow_agent_selection_fix_contracts():
     workflow_ui_test_content = read_text("ui_tests/test_workspace_workflows_tab.py")
     fix_doc_content = read_text("docs/explanation/fixes/WORKFLOW_AGENT_SELECTION_FIX.md")
 
-    assert 'VERSION = "0.241.036"' in config_content, (
-        "Expected config.py version 0.241.036 for the workflow agent selection fix."
-    )
+    assert_app_version_at_least("0.241.036")
     assert "Array.isArray(data)" in workflow_js_content, (
         "Expected workflow agent loading to accept a direct array response from /api/user/agents."
     )

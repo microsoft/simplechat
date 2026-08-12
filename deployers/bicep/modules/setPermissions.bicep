@@ -2,6 +2,13 @@ targetScope = 'resourceGroup'
 
 param webAppName string
 param authenticationType string
+
+@allowed([
+  'key'
+  'managed_identity'
+])
+param redisAuthenticationType string = authenticationType
+
 param keyVaultName string
 param enterpriseAppServicePrincipalId string
 param cosmosDBName string
@@ -100,7 +107,7 @@ resource cosmosContributorRole 'Microsoft.Authorization/roleAssignments@2022-04-
 resource cosmosThroughputOperatorRoleDefinition 'Microsoft.Authorization/roleDefinitions@2022-04-01' = {
   name: guid(resourceGroup().id, 'simplechat-cosmos-throughput-operator')
   properties: {
-    roleName: 'SimpleChat Cosmos Throughput Operator'
+    roleName: 'SimpleChat Cosmos Throughput Operator ${resourceGroup().name}'
     description: 'Allows SimpleChat to read metrics and adjust Cosmos DB SQL database/container throughput settings without granting data-plane access.'
     type: 'CustomRole'
     permissions: [
@@ -355,7 +362,7 @@ resource videoIndexerStorageCogServicesUserRole 'Microsoft.Authorization/roleAss
 }
 
 // grant the managed identity access to redis cache as a Redis Cache Contributor
-resource redisCacheContributorRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (redisCacheName != '') {
+resource redisCacheContributorRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (redisCacheName != '' && redisAuthenticationType == 'managed_identity') {
   name: guid(redisCache.id, webApp.id, 'redis-cache-contributor')
   scope: redisCache
   properties: {
@@ -365,5 +372,15 @@ resource redisCacheContributorRole 'Microsoft.Authorization/roleAssignments@2022
     )
     principalId: webApp.identity.principalId
     principalType: 'ServicePrincipal'
+  }
+}
+
+resource redisCacheDataContributorAccessPolicy 'Microsoft.Cache/Redis/accessPolicyAssignments@2024-11-01' = if (redisCacheName != '' && redisAuthenticationType == 'managed_identity') {
+  parent: redisCache
+  name: 'webapp-mi-data-contributor'
+  properties: {
+    accessPolicyName: 'Data Contributor'
+    objectId: webApp.identity.principalId
+    objectIdAlias: webApp.identity.principalId
   }
 }

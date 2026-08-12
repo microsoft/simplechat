@@ -280,7 +280,7 @@ class SnowflakePlugin(BasePlugin):
         except ImportError as exc:
             raise ImportError("Snowflake Connector for Python is not installed.") from exc
         debug_print(
-            f"[SnowflakePlugin] Opening Snowflake connection account={self.account} user_present={bool(self.user)} "
+            f"[SNOWFLAKE_PLUGIN] Opening Snowflake connection account={self.account} user_present={bool(self.user)} "
             f"warehouse={self.warehouse} database={self.database or '<default>'} schema={self.schema or '<default>'} "
             f"role={self.role or '<default>'} auth_method={self.auth_method} "
             f"login_timeout={self.login_timeout} network_timeout={self.timeout}"
@@ -382,27 +382,27 @@ class SnowflakePlugin(BasePlugin):
         cursor = None
         try:
             debug_print(
-                f"[SnowflakePlugin] Executing Snowflake statement first_word={self._first_word(statement)} "
+                f"[SNOWFLAKE_PLUGIN] Executing Snowflake statement first_word={self._first_word(statement)} "
                 f"statement_length={len(statement)} max_rows={self.max_rows} timeout={self.timeout}"
             )
             connection = self._connect()
-            debug_print("[SnowflakePlugin] Snowflake connection opened; creating cursor.")
+            debug_print("[SNOWFLAKE_PLUGIN] Snowflake connection opened; creating cursor.")
             cursor = connection.cursor()
             cursor.execute(statement, timeout=self.timeout)
             result = self._normalize_cursor_results(cursor, statement)
             debug_print(
-                f"[SnowflakePlugin] Snowflake statement succeeded query_id={result.get('query_id')} "
+                f"[SNOWFLAKE_PLUGIN] Snowflake statement succeeded query_id={result.get('query_id')} "
                 f"row_count={result.get('row_count')} truncated={result.get('truncated')}"
             )
             return result
         except Exception as exc:
             debug_print(
-                f"[SnowflakePlugin] Snowflake statement failed account={self.account} warehouse={self.warehouse} "
+                f"[SNOWFLAKE_PLUGIN] Snowflake statement failed account={self.account} warehouse={self.warehouse} "
                 f"query_id={getattr(cursor, 'sfqid', None) if cursor else None} "
                 f"exception_type={type(exc).__name__} message={self._safe_error_message(exc, 'Snowflake query failed.')}"
             )
             log_event(
-                f"[SnowflakePlugin] Snowflake query failed: {exc}",
+                f"[SNOWFLAKE_PLUGIN] Snowflake query failed: {exc}",
                 extra={
                     "account": self.account,
                     "warehouse": self.warehouse,
@@ -422,13 +422,13 @@ class SnowflakePlugin(BasePlugin):
             if cursor is not None:
                 try:
                     cursor.close()
-                    debug_print("[SnowflakePlugin] Snowflake cursor closed.")
+                    debug_print("[SNOWFLAKE_PLUGIN] Snowflake cursor closed.")
                 except Exception:
                     pass
             if connection is not None:
                 try:
                     connection.close()
-                    debug_print("[SnowflakePlugin] Snowflake connection closed.")
+                    debug_print("[SNOWFLAKE_PLUGIN] Snowflake connection closed.")
                 except Exception:
                     pass
 

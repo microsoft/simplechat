@@ -24,6 +24,8 @@ import { initializeReasoningToggle } from "./chat-reasoning.js";
 import { initializeSpeechInput } from "./chat-speech-input.js";
 import { initChatTutorial } from "./chat-tutorial.js";
 
+const publicWorkspaceLowerSingular = window.getPublicWorkspaceLabel ? window.getPublicWorkspaceLabel("lower_singular") : "public workspace";
+
 
 function clearFeatureActionParam() {
     const url = new URL(window.location.href);
@@ -228,17 +230,17 @@ window.addEventListener('DOMContentLoaded', async () => {
                   // Trigger change to update UI
                   handleDocumentSelectChange();
                   
-                  showToast('Public workspace activated for chat', 'success');
+                  showToast(`${publicWorkspaceLowerSingular} activated for chat`, 'success');
               } else {
                   console.error('Failed to set active public workspace:', data.error || data.message);
-                  showToast('Failed to activate public workspace', 'error');
+                  showToast(`Failed to activate ${publicWorkspaceLowerSingular}`, 'error');
                   // Fall back to normal document handling
                   populateDocumentSelectScope();
               }
           })
           .catch(error => {
               console.error('Error setting active public workspace:', error);
-              showToast('Error activating public workspace', 'error');
+              showToast(`Error activating ${publicWorkspaceLowerSingular}`, 'error');
               // Fall back to normal document handling
               populateDocumentSelectScope();
           });

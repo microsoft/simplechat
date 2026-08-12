@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """
 Simple debug script for message counting issue.
-Version: To be checked against config.py
+Version: 0.250.047
 Implemented in: 0.230.022
+CosmosClient module import cleanup updated in: 0.250.047
 
 This script debugs why message counts show 0 for users with conversations.
 """
 import os
 import sys
-from azure.cosmos import CosmosClient
+import azure.cosmos as azure_cosmos
 
 # Set up environment
 os.environ['ENVIRONMENT'] = 'development'
@@ -21,7 +22,7 @@ def debug_message_count():
     endpoint = os.getenv('AZURE_COSMOS_ENDPOINT', '')
     key = os.getenv('AZURE_COSMOS_KEY', '')
 
-    client = CosmosClient(endpoint, key, consistency_level="Session")
+    client = azure_cosmos.CosmosClient(endpoint, key, consistency_level="Session")
     
     database = client.get_database_client("SimpleChat")
     conversations_container = database.get_container_client("conversations")

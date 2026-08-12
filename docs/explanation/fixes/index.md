@@ -6,7 +6,14 @@ order: 120
 category: Version History
 ---
 
+- [Data Management Restore Route Endpoint Collision Fix](DATA_MANAGEMENT_RESTORE_ROUTE_ENDPOINT_COLLISION_FIX.md)
+- [Font Size and 200 Percent Zoom Fix](FONT_SIZE_AND_200_PERCENT_ZOOM_FIX.md)
+- [Public Workspace Prompt Migration Fix](PUBLIC_WORKSPACE_PROMPT_MIGRATION_FIX.md)
 - [Azure OpenAI Model Discovery Identity Fix](v0.250.001/AZURE_OPENAI_MODEL_DISCOVERY_IDENTITY_FIX.md)
+- [CosmosClient Import Binding CodeQL Fix](COSMOSCLIENT_IMPORT_BINDING_CODEQL_FIX.md)
+- [Conversation Cache Invalidation Authorization Fix](CONVERSATION_CACHE_INVALIDATION_AUTHORIZATION_FIX.md)
+- [Chat Completion Background Unread Guard Fix](CHAT_COMPLETION_BACKGROUND_UNREAD_GUARD_FIX.md)
+- [Settings Container RU Write Suppression Fix](SETTINGS_CONTAINER_RU_WRITE_SUPPRESSION_FIX.md)
 - [Tabular SK Python 3.13 Kernel Parameter Fix](v0.242.068/TABULAR_SK_PY313_KERNEL_PARAMETER_FIX.md)
 - [Chat Model Icon Avatar Fix](v0.242.071/CHAT_MODEL_ICON_AVATAR_FIX.md)
 - [Python 3.12 CI and XSS Guardrail Fix](PYTHON_312_CI_AND_XSS_GUARDRAIL_FIX.md)

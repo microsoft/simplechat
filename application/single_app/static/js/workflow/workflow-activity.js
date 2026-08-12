@@ -21,6 +21,7 @@ const captionEl = document.getElementById("workflow-activity-caption");
 const conversationLinkEl = document.getElementById("workflow-activity-conversation-link");
 const responseToggleBtn = document.getElementById("workflow-activity-response-toggle");
 const responseToggleLabelEl = document.getElementById("workflow-activity-response-toggle-label");
+const cancelRunBtn = document.getElementById("workflow-activity-cancel-btn");
 const refreshBtn = document.getElementById("workflow-activity-refresh-btn");
 const responseEl = document.getElementById("workflow-activity-response");
 const emptyEl = document.getElementById("workflow-activity-empty");
@@ -381,6 +382,11 @@ function buildActivityApiPath(suffix = "") {
     return `${basePath}${suffix}`;
 }
 
+function buildWorkflowRunCancellationPath(workflowId, runId) {
+    const basePath = getActivityScope() === "group" ? "/api/group/workflows" : "/api/user/workflows";
+    return `${basePath}/${encodeURIComponent(workflowId)}/runs/${encodeURIComponent(runId)}/cancel`;
+}
+
 function buildApiUrl(path) {
     const url = new URL(path, window.location.origin);
     const conversationId = getQueryParam("conversationId");
@@ -496,6 +502,8 @@ function applyStatusBadge(element, status) {
     const normalizedStatus = normalizeText(status).toLowerCase() || "idle";
     const className = normalizedStatus === "running"
         ? "text-bg-primary"
+        : normalizedStatus === "cancelling"
+            ? "text-bg-warning"
         : normalizedStatus === "failed"
             ? "text-bg-danger"
             : normalizedStatus === "completed"
@@ -503,6 +511,10 @@ function applyStatusBadge(element, status) {
                 : "text-bg-secondary";
     const label = normalizedStatus === "running"
         ? "Running"
+        : normalizedStatus === "cancelling"
+            ? "Cancelling"
+            : normalizedStatus === "cancelled" || normalizedStatus === "canceled"
+                ? "Cancelled"
         : normalizedStatus === "failed"
             ? "Failed"
             : normalizedStatus === "completed"
@@ -511,6 +523,25 @@ function applyStatusBadge(element, status) {
 
     element.className = `badge ${className}`;
     element.textContent = label;
+}
+
+function updateWorkflowCancelButton(workflow, run) {
+    if (!cancelRunBtn) {
+        return;
+    }
+
+    const workflowId = normalizeText(workflow?.id || getQueryParam("workflowId"));
+    const runId = normalizeText(run?.id || getQueryParam("runId"));
+    const runStatus = normalizeText(run?.status).toLowerCase();
+    const isActive = ["running", "cancelling"].includes(runStatus);
+    const isCancelling = runStatus === "cancelling";
+    const labelEl = cancelRunBtn.querySelector("span");
+
+    cancelRunBtn.classList.toggle("d-none", !(workflowId && runId && isActive));
+    cancelRunBtn.disabled = isCancelling;
+    if (labelEl) {
+        labelEl.textContent = isCancelling ? "Cancelling" : "Cancel run";
+    }
 }
 
 function updateResponseBlock(run) {
@@ -565,6 +596,7 @@ function renderHeader(snapshot) {
         conversationLinkEl.classList.toggle("d-none", !conversationUrl);
         conversationLinkEl.href = conversationUrl || "#";
     }
+    updateWorkflowCancelButton(workflow, run);
 
     if (statRunEl) {
         statRunEl.textContent = run ? normalizeText(run.id).slice(0, 8) || "Captured" : "Pending";
@@ -831,7 +863,7 @@ function shouldListenForUpdates(snapshot) {
         return true;
     }
 
-    return Boolean(snapshot?.live) || normalizeText(run.status).toLowerCase() === "running";
+    return Boolean(snapshot?.live) || ["running", "cancelling"].includes(normalizeText(run.status).toLowerCase());
 }
 
 function stopEventStream() {
@@ -861,7 +893,7 @@ function startEventStream() {
     };
     eventSource.onerror = () => {
         const runStatus = normalizeText(pageState.snapshot?.run?.status).toLowerCase();
-        if (runStatus && runStatus !== "running") {
+        if (runStatus && !["running", "cancelling"].includes(runStatus)) {
             stopEventStream();
         }
     };
@@ -926,6 +958,42 @@ if (refreshBtn) {
         initializePage().catch(error => {
             console.warn("Workflow activity refresh failed", error);
         });
+    });
+}
+
+if (cancelRunBtn) {
+    cancelRunBtn.addEventListener("click", async () => {
+        const workflow = pageState.snapshot?.workflow || {};
+        const run = pageState.snapshot?.run || {};
+        const workflowId = normalizeText(workflow.id || getQueryParam("workflowId"));
+        const runId = normalizeText(run.id || getQueryParam("runId"));
+        if (!workflowId || !runId) {
+            return;
+        }
+
+        cancelRunBtn.disabled = true;
+        try {
+            const response = await fetch(buildApiUrl(buildWorkflowRunCancellationPath(workflowId, runId)), {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                },
+                credentials: "same-origin",
+                body: JSON.stringify({}),
+            });
+            const payload = await response.json().catch(() => ({}));
+            if (!response.ok || payload.success === false) {
+                throw new Error(payload.error || "Unable to cancel the workflow run.");
+            }
+            await loadSnapshot();
+        } catch (error) {
+            console.warn("Failed to cancel workflow run", error);
+            if (captionEl) {
+                captionEl.textContent = error.message || "Unable to cancel the workflow run.";
+            }
+        } finally {
+            updateWorkflowCancelButton(pageState.snapshot?.workflow || {}, pageState.snapshot?.run || {});
+        }
     });
 }
 

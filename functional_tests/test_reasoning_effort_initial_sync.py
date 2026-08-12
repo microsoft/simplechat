@@ -13,6 +13,7 @@ a manual change.
 
 import os
 import sys
+from test_support.versioning import assert_app_version_at_least
 
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -163,7 +164,7 @@ def test_config_version_bumped_for_reasoning_sync_fix():
 
     try:
         content = read_file(CONFIG_FILE)
-        assert 'VERSION = "0.240.010"' in content, 'Expected config.py version 0.240.010'
+        assert_app_version_at_least("0.240.010")
 
         print('✅ Config version bump passed')
         return True

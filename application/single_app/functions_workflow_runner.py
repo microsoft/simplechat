@@ -10,6 +10,7 @@ import json
 import logging
 import os
 import re
+import time
 import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -24,6 +25,9 @@ from azure.identity import (
 from flask import Flask, g, has_request_context, session
 from openai import AzureOpenAI
 from semantic_kernel import Kernel
+from semantic_kernel.connectors.ai.function_choice_behavior import FunctionChoiceBehavior
+from semantic_kernel.connectors.ai.prompt_execution_settings import PromptExecutionSettings
+from semantic_kernel.contents.chat_history import ChatHistory
 from semantic_kernel.contents.chat_message_content import ChatMessageContent
 
 from collaboration_models import (
@@ -34,24 +38,51 @@ from collaboration_models import (
 )
 from config import (
     SECRET_KEY,
+    VERSION,
     cognitive_services_scope,
     cosmos_conversations_container,
     cosmos_group_documents_container,
     cosmos_messages_container,
     cosmos_public_documents_container,
     cosmos_user_documents_container,
+    storage_account_personal_chat_container_name,
+)
+from functions_conversation_context import (
+    build_conversation_context_data_message,
+    build_conversation_context_snapshot,
+    build_conversation_context_system_message,
+    serialize_conversation_context_snapshot,
 )
 from functions_activity_logging import log_conversation_creation, log_token_usage, log_workflow_run
 from functions_appinsights import log_event
+from functions_assistant_table_exports import (
+    build_safe_csv_headers,
+    has_generated_tabular_csv_output,
+    neutralize_csv_spreadsheet_formula,
+)
+from functions_generated_file_exports import (
+    build_generated_file_artifact_metadata,
+    build_generated_file_export,
+    build_generated_file_output_guidance,
+    get_generated_file_export_content,
+    get_requested_generated_file_format,
+    get_requested_structured_artifact_format,
+    has_generated_file_output,
+)
 from functions_chart_operations import append_proactive_chart_guidance
 from functions_collaboration import (
     create_collaboration_message_notifications,
     get_collaboration_conversation,
     mirror_source_message_to_collaboration,
 )
+from functions_generated_file_exports import (
+    normalize_xml_artifact_payload,
+    serialize_generated_json,
+)
 from functions_document_actions import (
     DOCUMENT_ACTION_ANALYSIS_MODE_PER_DOCUMENT,
     DOCUMENT_ACTION_CONTEXT_WORKFLOW,
+    DOCUMENT_ACTION_TARGET_MODE_ALL,
     DOCUMENT_ACTION_TARGET_MODE_RECENT,
     DOCUMENT_ACTION_TYPE_COMPARISON,
     DOCUMENT_ACTION_TYPE_ANALYZE,
@@ -66,29 +97,103 @@ from functions_document_actions import (
     normalize_document_action_analysis_mode,
 )
 from functions_documents import select_current_documents, sort_documents
-from functions_document_comparison import run_document_comparison
+from functions_document_access_index import (
+    DOCUMENT_ACCESS_SCOPE_GROUP,
+    DOCUMENT_ACCESS_SCOPE_PERSONAL,
+    DOCUMENT_ACCESS_SCOPE_PUBLIC,
+    enumerate_bounded_document_access_index_ids,
+)
+from functions_document_comparison import run_document_comparison, run_evidence_document_comparison
 from functions_debug import debug_print
 from functions_document_analysis import run_document_analysis
 from functions_file_sync import get_authorized_sync_source, queue_file_sync_source_run
 from functions_group import assert_group_role, get_group_model_endpoints, get_user_groups
-from functions_group_workflows import save_group_workflow_run, save_group_workflow_run_item
+from functions_group_workflows import (
+    get_group_workflow,
+    get_group_workflow_run,
+    list_group_workflow_run_items,
+    normalize_group_workflow_task_runner,
+    save_group_workflow_run,
+    save_group_workflow_run_item,
+)
 from functions_keyvault import SecretReturnType, keyvault_model_endpoint_get_helper
 from functions_message_artifacts import (
     build_agent_citation_tool_label,
     build_agent_citation_artifact_documents,
     make_json_serializable,
 )
+from functions_mixed_source_orchestration import (
+    EVIDENCE_ENGINE_DOCUMENT_ANALYSIS,
+    EVIDENCE_ENGINE_TABULAR_TOOLS,
+    EVIDENCE_STATUS_COMPLETED,
+    EVIDENCE_STATUS_FAILED,
+    MixedSourceCancellationError,
+    MixedSourceFinalizationError,
+    SELECTION_MODE_SELECTED,
+    build_evidence_envelope,
+    build_failed_narrative_evidence_envelopes,
+    build_mixed_source_evidence_handoff,
+    compare_reauthorized_source_manifests,
+    evaluate_mixed_source_mode_outcome,
+    build_narrative_evidence_envelopes,
+    deduplicate_mixed_source_references,
+    emit_mixed_source_telemetry,
+    partition_source_manifest,
+    normalize_mixed_source_correlation_id,
+    resolve_authorized_source_manifest,
+    raise_if_mixed_source_cancelled,
+)
 from model_endpoint_clients import (
     MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI,
 )
-from functions_model_endpoint_runtime import build_model_endpoint_sync_chat_client
+from functions_model_endpoint_runtime import (
+    build_model_endpoint_sync_chat_client,
+    build_semantic_kernel_chat_service_for_model,
+)
 from functions_notifications import create_workflow_priority_notification
-from functions_personal_workflows import save_personal_workflow_run, save_personal_workflow_run_item
+from functions_personal_workflows import (
+    get_personal_workflow,
+    get_personal_workflow_run,
+    list_personal_workflow_run_items,
+    normalize_personal_workflow_task_runner,
+    save_personal_workflow_run,
+    save_personal_workflow_run_item,
+)
 from functions_public_workspaces import get_user_visible_public_workspace_ids_from_settings
-from functions_search_service import resolve_document_context, search_documents
+from functions_search_service import (
+    resolve_document_context,
+    search_documents,
+    search_relevant_tabular_candidates,
+)
 from functions_search import normalize_search_id_list, normalize_search_scope, normalize_search_top_n
-from functions_simplechat_operations import upload_generated_analysis_artifact_for_current_user
-from functions_settings import get_settings, get_user_settings, is_tabular_processing_enabled, normalize_model_endpoints
+from functions_simplechat_operations import (
+    delete_generated_chat_artifact_for_current_user,
+    delete_generated_chat_artifact_for_user,
+    upload_generated_analysis_artifact_for_current_user,
+    upload_generated_analysis_artifact_for_user,
+)
+from functions_settings import (
+    get_settings,
+    get_user_settings,
+    is_mixed_source_chat_search_enabled,
+    is_mixed_source_manifest_enabled,
+    is_cross_format_compare_enabled,
+    is_cross_format_compare_one_to_many_enabled,
+    is_tabular_processing_enabled,
+    normalize_model_endpoints,
+    resolve_model_endpoint_foundry_scope,
+)
+from functions_tabular_parity_contract import (
+    TABULAR_PARITY_EVENT_FIRST_FOREGROUND_TABULAR_INVOCATION,
+    classify_tabular_parity_request,
+    emit_tabular_parity_event,
+)
+from functions_tabular_generated_exports import (
+    build_background_tabular_generated_output_metadata,
+    build_tabular_generated_output_row_batches,
+    queue_tabular_generated_output_run,
+    should_queue_tabular_generated_output_background,
+)
 from functions_source_review import (
     URL_ACCESS_CONTEXT_WORKFLOW,
     compact_source_review_result_for_metadata,
@@ -96,7 +201,12 @@ from functions_source_review import (
     validate_url_access_request,
 )
 from functions_thoughts import ThoughtTracker
-from semantic_kernel_loader import load_user_semantic_kernel
+from functions_tabular_generated_exports import cancel_tabular_generated_output_run
+from semantic_kernel_loader import (
+    get_max_auto_invoke_attempts,
+    load_core_plugins_only,
+    load_user_semantic_kernel,
+)
 from semantic_kernel_plugins.plugin_invocation_logger import get_plugin_logger, sanitize_plugin_invocation_value
 from semantic_kernel_plugins.plugin_invocation_thoughts import register_plugin_invocation_thought_callback
 
@@ -109,6 +219,12 @@ DOCUMENT_ANALYSIS_ARTIFACT_PREVIEW_LINE_COUNT = 5
 DOCUMENT_ANALYSIS_ARTIFACT_PREVIEW_LINE_LENGTH = 220
 TABULAR_DOCUMENT_EXTENSIONS = {'.csv', '.xls', '.xlsx', '.xlsm'}
 WORKFLOW_CONVERSATION_ACCESS_ERROR = 'Workflow conversation not found or access denied.'
+WORKFLOW_RUN_CANCELLED_MESSAGE = 'Workflow cancellation was requested.'
+WORKFLOW_TASK_CONTEXT_MAX_CHARS = 12000
+
+
+class WorkflowRunCancelledError(BaseException):
+    """Raised when a persisted workflow cancellation request is observed."""
 
 
 def get_workflow_kernel_settings(settings):
@@ -142,6 +258,7 @@ def _is_authorized_workflow_conversation(conversation, workflow):
 
 
 def _save_workflow_run_record(workflow, run_record):
+    run_record = _preserve_workflow_run_cancellation_request(workflow, run_record)
     if _get_workflow_scope(workflow) == 'group':
         return save_group_workflow_run(_get_workflow_group_id(workflow), run_record)
     return save_personal_workflow_run(str((workflow or {}).get('user_id') or '').strip(), run_record)
@@ -151,6 +268,113 @@ def _save_workflow_run_item_record(workflow, item_record):
     if _get_workflow_scope(workflow) == 'group':
         return save_group_workflow_run_item(_get_workflow_group_id(workflow), item_record)
     return save_personal_workflow_run_item(str((workflow or {}).get('user_id') or '').strip(), item_record)
+
+
+def _get_workflow_run_record(workflow, run_id):
+    normalized_run_id = str(run_id or '').strip()
+    if not normalized_run_id:
+        return None
+    if _get_workflow_scope(workflow) == 'group':
+        return get_group_workflow_run(_get_workflow_group_id(workflow), normalized_run_id)
+    return get_personal_workflow_run(str((workflow or {}).get('user_id') or '').strip(), normalized_run_id)
+
+
+def _get_current_workflow_runtime(workflow):
+    workflow_id = str((workflow or {}).get('id') or '').strip()
+    if not workflow_id:
+        return None
+    if _get_workflow_scope(workflow) == 'group':
+        return get_group_workflow(_get_workflow_group_id(workflow), workflow_id)
+    return get_personal_workflow(str((workflow or {}).get('user_id') or '').strip(), workflow_id)
+
+
+def _list_workflow_run_items(workflow, run_id):
+    normalized_run_id = str(run_id or '').strip()
+    if not normalized_run_id:
+        return []
+    if _get_workflow_scope(workflow) == 'group':
+        return list_group_workflow_run_items(normalized_run_id, limit=1000)
+    return list_personal_workflow_run_items(normalized_run_id, limit=1000)
+
+
+def _has_workflow_run_cancellation_request(run_record):
+    run_record = run_record if isinstance(run_record, dict) else {}
+    return bool(
+        run_record.get('cancellation_requested_at')
+        or str(run_record.get('status') or '').strip().lower() in {'cancelling', 'cancelled', 'canceled'}
+    )
+
+
+def _is_workflow_run_cancellation_requested(workflow, run_id):
+    normalized_run_id = str(run_id or '').strip()
+    if not normalized_run_id:
+        return False
+
+    run_record = _get_workflow_run_record(workflow, normalized_run_id)
+    if _has_workflow_run_cancellation_request(run_record):
+        return True
+
+    runtime_workflow = _get_current_workflow_runtime(workflow)
+    if not isinstance(runtime_workflow, dict):
+        return False
+
+    return (
+        str(runtime_workflow.get('active_run_id') or '').strip() == normalized_run_id
+        and bool(
+            runtime_workflow.get('cancellation_requested_at')
+            or str(runtime_workflow.get('status') or '').strip().lower() == 'cancelling'
+        )
+    )
+
+
+def _raise_if_workflow_run_cancelled(workflow, run_id):
+    if _is_workflow_run_cancellation_requested(workflow, run_id):
+        raise WorkflowRunCancelledError(WORKFLOW_RUN_CANCELLED_MESSAGE)
+
+
+def _execute_cancelable_workflow_step(workflow, run_id, operation):
+    _raise_if_workflow_run_cancelled(workflow, run_id)
+    result = operation()
+    _raise_if_workflow_run_cancelled(workflow, run_id)
+    return result
+
+
+def _preserve_workflow_run_cancellation_request(workflow, run_record):
+    run_record = dict(run_record or {})
+    existing_run = _get_workflow_run_record(workflow, run_record.get('id'))
+    if not _has_workflow_run_cancellation_request(existing_run):
+        return run_record
+
+    for field in ('cancellation_requested_at', 'cancellation_requested_by'):
+        if existing_run.get(field):
+            run_record[field] = existing_run.get(field)
+
+    if str(existing_run.get('status') or '').strip().lower() in {'cancelled', 'canceled'}:
+        run_record['status'] = 'cancelled'
+    elif str(run_record.get('status') or '').strip().lower() != 'cancelled':
+        run_record['status'] = 'cancelling'
+    return run_record
+
+
+def _mark_unfinished_workflow_run_items_cancelled(workflow, run_id):
+    completed_at = _utc_now_iso()
+    for item in _list_workflow_run_items(workflow, run_id):
+        status = str(item.get('status') or '').strip().lower()
+        if status in {'succeeded', 'failed', 'skipped', 'cancelled', 'canceled'}:
+            continue
+        cancelled_item = dict(item)
+        cancelled_item.update({
+            'status': 'cancelled',
+            'completed_at': completed_at,
+            'updated_at': completed_at,
+            'error': cancelled_item.get('error') or WORKFLOW_RUN_CANCELLED_MESSAGE,
+        })
+        _save_workflow_run_item_record(workflow, cancelled_item)
+
+
+def create_workflow_run_id():
+    """Create a server-side identifier for a new workflow run."""
+    return str(uuid.uuid4())
 
 
 def _utc_now():
@@ -166,11 +390,24 @@ def _strip_markdown_code_fence(text):
     if not normalized_text.startswith('```'):
         return normalized_text
 
-    code_fence_match = re.fullmatch(r'```(?:[a-zA-Z0-9_-]+)?\s*(.*?)\s*```', normalized_text, re.DOTALL)
-    if not code_fence_match:
+    if not normalized_text.endswith('```'):
         return normalized_text
 
-    return str(code_fence_match.group(1) or '').strip()
+    fenced_body = normalized_text[3:-3]
+    label_end = 0
+    while label_end < len(fenced_body) and (
+        ('a' <= fenced_body[label_end] <= 'z')
+        or ('A' <= fenced_body[label_end] <= 'Z')
+        or ('0' <= fenced_body[label_end] <= '9')
+        or fenced_body[label_end] in ('_', '-')
+    ):
+        label_end += 1
+
+    body_start = label_end
+    while body_start < len(fenced_body) and fenced_body[body_start].isspace():
+        body_start += 1
+
+    return fenced_body[body_start:].strip()
 
 
 def _parse_json_artifact_payload(text):
@@ -197,6 +434,7 @@ def _prompt_explicitly_requests_artifact(analysis_prompt):
         'save it as',
         'save to file',
         'json file',
+        'xml file',
         'csv file',
         'markdown file',
     )
@@ -204,50 +442,11 @@ def _prompt_explicitly_requests_artifact(analysis_prompt):
 
 
 def _prompt_explicitly_requests_json_artifact(analysis_prompt):
-    prompt_text = str(analysis_prompt or '').strip().lower()
-    if not prompt_text:
-        return False
+    return get_requested_structured_artifact_format(analysis_prompt) == 'json'
 
-    json_markers = (
-        'json artifact',
-        'json export',
-        'json output',
-        'json array',
-        'json object',
-        'json format',
-        'valid json',
-        'return json',
-        'return only json',
-        'return only valid json',
-        'respond with json',
-        'format as json',
-        'output as json',
-        'save as json',
-        'save it as json',
-        'export as json',
-        'download as json',
-        'create json',
-        'create a json',
-        'make json',
-        'make a json',
-        'generate json',
-        'generate a json',
-        'produce json',
-        'produce a json',
-        'save to .json',
-        'export to .json',
-        'download .json',
-        'create .json',
-        'make .json',
-        'generate .json',
-    )
-    if any(marker in prompt_text for marker in json_markers):
-        return True
 
-    return bool(re.search(
-        r'\b(create|make|build|generate|produce|return|respond|format|output|save|export|download)\b[\w\s.,:;\-/]{0,60}\bjson\b',
-        prompt_text,
-    ))
+def _prompt_explicitly_requests_xml_artifact(analysis_prompt):
+    return get_requested_structured_artifact_format(analysis_prompt) == 'xml'
 
 
 def _normalize_generated_artifact_file_stem(value, fallback_value='analysis-artifact'):
@@ -663,6 +862,8 @@ def _prompt_requests_table_analysis_output(analysis_prompt):
 def _get_document_analysis_artifact_intent(analysis_result, analysis_prompt):
     analysis_result = analysis_result if isinstance(analysis_result, dict) else {}
     analysis_intent = analysis_result.get('analysis_intent') if isinstance(analysis_result.get('analysis_intent'), dict) else {}
+    json_artifact_requested = _prompt_explicitly_requests_json_artifact(analysis_prompt)
+    xml_artifact_requested = _prompt_explicitly_requests_xml_artifact(analysis_prompt)
     table_output_requested = bool(
         analysis_intent.get('table_output_requested')
         or _prompt_requests_table_analysis_output(analysis_prompt)
@@ -676,14 +877,16 @@ def _get_document_analysis_artifact_intent(analysis_result, analysis_prompt):
     return {
         'exhaustive': exhaustive_output_requested,
         'table_output_requested': table_output_requested,
+        'json_artifact_requested': json_artifact_requested,
+        'xml_artifact_requested': xml_artifact_requested,
         'csv_artifact_recommended': bool(
             analysis_intent.get('csv_artifact_recommended')
             or table_output_requested
-            or exhaustive_output_requested
+            or (exhaustive_output_requested and not json_artifact_requested and not xml_artifact_requested)
         ),
         'markdown_analysis_artifact_recommended': bool(
             analysis_intent.get('markdown_analysis_artifact_recommended')
-            or exhaustive_output_requested
+            or (exhaustive_output_requested and not json_artifact_requested and not xml_artifact_requested)
         ),
     }
 
@@ -785,13 +988,13 @@ def _serialize_document_analysis_csv_value(value):
     if value is None:
         return ''
     if isinstance(value, (dict, list)):
-        return json.dumps(value, ensure_ascii=False, default=str)
+        return neutralize_csv_spreadsheet_formula(json.dumps(value, ensure_ascii=False, default=str))
     if hasattr(value, 'isoformat') and not isinstance(value, str):
         try:
-            return value.isoformat()
+            return neutralize_csv_spreadsheet_formula(value.isoformat())
         except TypeError:
             pass
-    return str(value)
+    return neutralize_csv_spreadsheet_formula(value)
 
 
 def _add_document_analysis_source_context(row, source_context):
@@ -888,13 +1091,14 @@ def _build_document_analysis_rows_csv(rows):
         for column_name in row.keys():
             add_column(column_name)
 
+    safe_ordered_columns = build_safe_csv_headers(ordered_columns)
     output_buffer = io.StringIO()
-    writer = csv.DictWriter(output_buffer, fieldnames=ordered_columns, lineterminator='\n')
+    writer = csv.DictWriter(output_buffer, fieldnames=safe_ordered_columns, lineterminator='\n')
     writer.writeheader()
     for row in rows:
         writer.writerow({
-            column_name: _serialize_document_analysis_csv_value(row.get(column_name))
-            for column_name in ordered_columns
+            safe_column_name: _serialize_document_analysis_csv_value(row.get(column_name))
+            for column_name, safe_column_name in zip(ordered_columns, safe_ordered_columns)
         })
     return output_buffer.getvalue()
 
@@ -995,6 +1199,8 @@ def _upload_document_analysis_generated_artifact(
     preview_rows=None,
     preview_items=None,
     preview_lines=None,
+    cancel_requested=None,
+    request_correlation_id=None,
 ):
     try:
         upload_result = upload_generated_analysis_artifact_for_current_user(
@@ -1005,9 +1211,23 @@ def _upload_document_analysis_generated_artifact(
             output_format=output_format,
             summary=summary,
         )
+        try:
+            raise_if_mixed_source_cancelled(
+                cancel_requested,
+                'artifact_publication',
+                request_correlation_id=request_correlation_id,
+            )
+        except MixedSourceCancellationError:
+            delete_generated_chat_artifact_for_current_user(
+                normalized_conversation_id,
+                (upload_result.get('message') or {}).get('id'),
+            )
+            raise
+    except MixedSourceCancellationError:
+        raise
     except Exception as exc:
         debug_print(
-            '[WorkflowDocumentAnalysis] Generated artifact upload skipped | '
+            '[WORKFLOW_DOCUMENT_ANALYSIS] Generated artifact upload skipped | '
             f'conversation_id={normalized_conversation_id} | file={file_name} | error={exc}'
         )
         return None
@@ -1083,7 +1303,14 @@ def _maybe_create_document_analysis_generated_artifacts(
     analysis_prompt,
     conversation_id='',
     primary_generated_outputs=None,
+    cancel_requested=None,
+    request_correlation_id=None,
 ):
+    raise_if_mixed_source_cancelled(
+        cancel_requested,
+        'artifact_publication',
+        request_correlation_id=request_correlation_id,
+    )
     normalized_conversation_id = str(conversation_id or '').strip()
     if not normalized_conversation_id or not has_request_context():
         return {'artifacts': [], 'assistant_reply': None}
@@ -1100,81 +1327,113 @@ def _maybe_create_document_analysis_generated_artifacts(
     raw_analysis_items = analysis_result.get('raw_analysis_items') if isinstance(analysis_result.get('raw_analysis_items'), list) else []
     json_payload = _parse_json_artifact_payload(analysis_reply)
     json_artifact_requested = _prompt_explicitly_requests_json_artifact(analysis_prompt)
+    xml_payload = normalize_xml_artifact_payload(analysis_reply)
+    xml_artifact_requested = bool(artifact_intent.get('xml_artifact_requested'))
     create_lossless_artifacts = bool(
         artifact_intent.get('exhaustive')
         or artifact_intent.get('table_output_requested')
+        or xml_artifact_requested
         or primary_tabular_outputs
     )
 
     if create_lossless_artifacts:
         artifacts = []
         structured_rows = _build_document_analysis_structured_rows(analysis_result)
+        try:
+            if artifact_intent.get('csv_artifact_recommended') and structured_rows:
+                csv_output = _build_document_analysis_rows_csv(structured_rows)
+                csv_file_name = _build_document_analysis_artifact_file_name(analysis_result, 'csv')
+                csv_summary = (
+                    f'Saved {len(structured_rows)} extracted analysis row(s) for {document_count} '
+                    'source document(s) as a downloadable CSV artifact.'
+                )
+                csv_artifact = _upload_document_analysis_generated_artifact(
+                    normalized_conversation_id,
+                    csv_file_name,
+                    csv_output,
+                    'csv',
+                    csv_summary,
+                    preview_rows=structured_rows[:DOCUMENT_ANALYSIS_ARTIFACT_PREVIEW_ROW_COUNT],
+                    cancel_requested=cancel_requested,
+                    request_correlation_id=request_correlation_id,
+                )
+                if csv_artifact:
+                    artifacts.append(csv_artifact)
 
-        if artifact_intent.get('csv_artifact_recommended') and structured_rows:
-            csv_output = _build_document_analysis_rows_csv(structured_rows)
-            csv_file_name = _build_document_analysis_artifact_file_name(analysis_result, 'csv')
-            csv_summary = (
-                f'Saved {len(structured_rows)} extracted analysis row(s) for {document_count} '
-                'source document(s) as a downloadable CSV artifact.'
+            markdown_output = _build_document_analysis_markdown_artifact(analysis_result)
+            should_create_markdown_artifact = bool(
+                (
+                    artifact_intent.get('markdown_analysis_artifact_recommended')
+                    or (json_payload is not None and not json_artifact_requested)
+                )
+                and markdown_output
+                and (
+                    not primary_tabular_outputs
+                    or _prompt_explicitly_requests_markdown_artifact(analysis_prompt)
+                )
             )
-            csv_artifact = _upload_document_analysis_generated_artifact(
-                normalized_conversation_id,
-                csv_file_name,
-                csv_output,
-                'csv',
-                csv_summary,
-                preview_rows=structured_rows[:DOCUMENT_ANALYSIS_ARTIFACT_PREVIEW_ROW_COUNT],
-            )
-            if csv_artifact:
-                artifacts.append(csv_artifact)
+            if should_create_markdown_artifact:
+                markdown_file_name = _build_document_analysis_artifact_file_name(analysis_result, 'md')
+                markdown_summary = (
+                    f'Saved the final analysis plus retained raw analysis notes for {document_count} '
+                    'source document(s) as a downloadable Markdown artifact.'
+                )
+                markdown_artifact = _upload_document_analysis_generated_artifact(
+                    normalized_conversation_id,
+                    markdown_file_name,
+                    markdown_output,
+                    'md',
+                    markdown_summary,
+                    preview_lines=_build_document_analysis_preview_lines(analysis_reply),
+                    cancel_requested=cancel_requested,
+                    request_correlation_id=request_correlation_id,
+                )
+                if markdown_artifact:
+                    artifacts.append(markdown_artifact)
 
-        markdown_output = _build_document_analysis_markdown_artifact(analysis_result)
-        should_create_markdown_artifact = bool(
-            (
-                artifact_intent.get('markdown_analysis_artifact_recommended')
-                or (json_payload is not None and not json_artifact_requested)
-            )
-            and markdown_output
-            and (
-                not primary_tabular_outputs
-                or _prompt_explicitly_requests_markdown_artifact(analysis_prompt)
-            )
-        )
-        if should_create_markdown_artifact:
-            markdown_file_name = _build_document_analysis_artifact_file_name(analysis_result, 'md')
-            markdown_summary = (
-                f'Saved the final analysis plus retained raw analysis notes for {document_count} '
-                'source document(s) as a downloadable Markdown artifact.'
-            )
-            markdown_artifact = _upload_document_analysis_generated_artifact(
-                normalized_conversation_id,
-                markdown_file_name,
-                markdown_output,
-                'md',
-                markdown_summary,
-                preview_lines=_build_document_analysis_preview_lines(analysis_reply),
-            )
-            if markdown_artifact:
-                artifacts.append(markdown_artifact)
+            if xml_payload and xml_artifact_requested and not primary_tabular_outputs:
+                xml_file_name = _build_document_analysis_artifact_file_name(analysis_result, 'xml')
+                xml_summary = _build_document_analysis_artifact_summary(document_count, 'xml')
+                xml_artifact = _upload_document_analysis_generated_artifact(
+                    normalized_conversation_id,
+                    xml_file_name,
+                    xml_payload,
+                    'xml',
+                    xml_summary,
+                    preview_lines=_build_document_analysis_preview_lines(xml_payload),
+                    cancel_requested=cancel_requested,
+                    request_correlation_id=request_correlation_id,
+                )
+                if xml_artifact:
+                    artifacts.append(xml_artifact)
 
-        if json_payload is not None and json_artifact_requested and not primary_tabular_outputs:
-            json_file_name = _build_document_analysis_artifact_file_name(analysis_result, 'json')
-            json_summary = _build_document_analysis_artifact_summary(document_count, 'json')
-            json_preview_items = []
-            if isinstance(json_payload, list):
-                json_preview_items = json_payload[:DOCUMENT_ANALYSIS_ARTIFACT_PREVIEW_ITEM_COUNT]
-            elif isinstance(json_payload, dict):
-                json_preview_items = [json_payload]
-            json_artifact = _upload_document_analysis_generated_artifact(
-                normalized_conversation_id,
-                json_file_name,
-                json.dumps(json_payload, indent=2, ensure_ascii=False),
-                'json',
-                json_summary,
-                preview_items=json_preview_items,
-            )
-            if json_artifact:
-                artifacts.append(json_artifact)
+            if json_payload is not None and json_artifact_requested and not primary_tabular_outputs:
+                json_file_name = _build_document_analysis_artifact_file_name(analysis_result, 'json')
+                json_summary = _build_document_analysis_artifact_summary(document_count, 'json')
+                json_preview_items = []
+                if isinstance(json_payload, list):
+                    json_preview_items = json_payload[:DOCUMENT_ANALYSIS_ARTIFACT_PREVIEW_ITEM_COUNT]
+                elif isinstance(json_payload, dict):
+                    json_preview_items = [json_payload]
+                json_artifact = _upload_document_analysis_generated_artifact(
+                    normalized_conversation_id,
+                    json_file_name,
+                    serialize_generated_json(json_payload),
+                    'json',
+                    json_summary,
+                    preview_items=json_preview_items,
+                    cancel_requested=cancel_requested,
+                    request_correlation_id=request_correlation_id,
+                )
+                if json_artifact:
+                    artifacts.append(json_artifact)
+        except MixedSourceCancellationError:
+            for artifact in reversed(artifacts):
+                delete_generated_chat_artifact_for_current_user(
+                    normalized_conversation_id,
+                    artifact.get('artifact_message_id'),
+                )
+            raise
 
         if artifacts or primary_tabular_outputs:
             assistant_reply = _build_document_analysis_multi_artifact_reply(
@@ -1214,17 +1473,21 @@ def _maybe_create_document_analysis_generated_artifacts(
     should_generate_artifact = (
         explicit_artifact_request
         or json_payload is not None
+        or bool(xml_payload)
         or len(analysis_reply) >= DOCUMENT_ANALYSIS_ARTIFACT_REPLY_CHAR_THRESHOLD
     )
     if not should_generate_artifact:
         return {'artifacts': [], 'assistant_reply': None}
 
-    output_format = 'json' if json_payload is not None and json_artifact_requested else 'md'
+    output_format = 'xml' if xml_payload and xml_artifact_requested else 'json' if json_payload is not None and json_artifact_requested else 'md'
     preview_items = []
     preview_lines = []
 
-    if output_format == 'json':
-        serialized_output = json.dumps(json_payload, indent=2, ensure_ascii=False)
+    if output_format == 'xml':
+        serialized_output = xml_payload
+        preview_lines = _build_document_analysis_preview_lines(xml_payload)
+    elif output_format == 'json':
+        serialized_output = serialize_generated_json(json_payload)
         if isinstance(json_payload, list):
             preview_items = json_payload[:DOCUMENT_ANALYSIS_ARTIFACT_PREVIEW_ITEM_COUNT]
         elif isinstance(json_payload, dict):
@@ -1247,6 +1510,13 @@ def _maybe_create_document_analysis_generated_artifacts(
         summary,
         preview_items=preview_items,
         preview_lines=preview_lines,
+        cancel_requested=cancel_requested,
+        request_correlation_id=request_correlation_id,
+    )
+    raise_if_mixed_source_cancelled(
+        cancel_requested,
+        'artifact_publication',
+        request_correlation_id=request_correlation_id,
     )
     if not artifact_payload:
         return {'artifacts': [], 'assistant_reply': None}
@@ -1289,7 +1559,18 @@ def _build_comparison_artifact_reply(left_document_name, right_count, output_for
     )
 
 
-def _maybe_create_comparison_generated_artifacts(comparison_result, comparison_prompt, conversation_id=''):
+def _maybe_create_comparison_generated_artifacts(
+    comparison_result,
+    comparison_prompt,
+    conversation_id='',
+    cancel_requested=None,
+    request_correlation_id=None,
+):
+    raise_if_mixed_source_cancelled(
+        cancel_requested,
+        'artifact_publication',
+        request_correlation_id=request_correlation_id,
+    )
     normalized_conversation_id = str(conversation_id or '').strip()
     if not normalized_conversation_id or not has_request_context():
         return {'artifacts': [], 'assistant_reply': None}
@@ -1335,6 +1616,11 @@ def _maybe_create_comparison_generated_artifacts(comparison_result, comparison_p
     summary = _build_comparison_artifact_summary(left_document_name, len(right_documents), output_format)
 
     try:
+        raise_if_mixed_source_cancelled(
+            cancel_requested,
+            'artifact_publication',
+            request_correlation_id=request_correlation_id,
+        )
         upload_result = upload_generated_analysis_artifact_for_current_user(
             conversation_id=normalized_conversation_id,
             file_name=file_name,
@@ -1343,9 +1629,23 @@ def _maybe_create_comparison_generated_artifacts(comparison_result, comparison_p
             output_format=output_format,
             summary=summary,
         )
+        try:
+            raise_if_mixed_source_cancelled(
+                cancel_requested,
+                'artifact_publication',
+                request_correlation_id=request_correlation_id,
+            )
+        except MixedSourceCancellationError:
+            delete_generated_chat_artifact_for_current_user(
+                normalized_conversation_id,
+                (upload_result.get('message') or {}).get('id'),
+            )
+            raise
+    except MixedSourceCancellationError:
+        raise
     except Exception as exc:
         debug_print(
-            '[WorkflowDocumentComparison] Generated artifact upload skipped | '
+            '[WORKFLOW_DOCUMENT_COMPARISON] Generated artifact upload skipped | '
             f'conversation_id={normalized_conversation_id} | error={exc}'
         )
         return {'artifacts': [], 'assistant_reply': None}
@@ -1447,6 +1747,191 @@ def _finalize_token_usage(aggregate):
     return token_usage
 
 
+def _accumulate_token_usage_summary(aggregate, token_usage):
+    """Merge an already-normalized token summary into the existing aggregate."""
+    if not isinstance(aggregate, dict) or not isinstance(token_usage, dict):
+        return
+    for key in ('prompt_tokens', 'completion_tokens', 'total_tokens'):
+        value = _coerce_token_count(token_usage.get(key))
+        if value is not None:
+            aggregate[key] = int(aggregate.get(key, 0) or 0) + value
+    request_count = _coerce_token_count(token_usage.get('request_count'))
+    if request_count is None and any(
+        token_usage.get(key) not in (None, 0, '')
+        for key in ('prompt_tokens', 'completion_tokens', 'total_tokens')
+    ):
+        request_count = 1
+    if request_count:
+        aggregate['request_count'] = int(aggregate.get('request_count', 0) or 0) + request_count
+
+
+def _emit_mixed_source_token_telemetry(
+    settings,
+    mode,
+    token_usage,
+    request_correlation_id=None,
+):
+    """Link existing aggregate token accounting to mixed-source request telemetry."""
+    token_usage = token_usage if isinstance(token_usage, dict) else {}
+    return emit_mixed_source_telemetry(
+        settings,
+        'native_execution',
+        mode,
+        request_correlation_id=request_correlation_id,
+        metrics={
+            'prompt_tokens': token_usage.get('prompt_tokens', 0),
+            'completion_tokens': token_usage.get('completion_tokens', 0),
+            'total_tokens': token_usage.get('total_tokens', 0),
+            'token_request_count': token_usage.get('request_count', 0),
+            'request_count': token_usage.get('request_count', 0),
+        },
+    )
+
+
+def _rollback_mixed_source_generated_outputs(
+    user_id,
+    conversation_id,
+    generated_outputs,
+    reason='finalization',
+):
+    """Cancel queued exports and delete exact generated artifacts by stored identity."""
+    normalized_user_id = str(user_id or '').strip()
+    normalized_conversation_id = str(conversation_id or '').strip()
+    if not normalized_user_id or not normalized_conversation_id:
+        return {'canceled_export_count': 0, 'deleted_artifact_count': 0}
+
+    export_run_ids = []
+    artifact_message_ids = []
+    for output in list(generated_outputs or []):
+        if not isinstance(output, dict):
+            continue
+        export_run_id = str(output.get('export_run_id') or '').strip()
+        artifact_message_id = str(output.get('artifact_message_id') or '').strip()
+        if export_run_id and export_run_id not in export_run_ids:
+            export_run_ids.append(export_run_id)
+        if artifact_message_id and artifact_message_id not in artifact_message_ids:
+            artifact_message_ids.append(artifact_message_id)
+
+    canceled_export_count = 0
+    deleted_artifact_count = 0
+    rollback_failure_count = 0
+    for export_run_id in export_run_ids:
+        try:
+            cancel_result = cancel_tabular_generated_output_run(
+                normalized_user_id,
+                export_run_id,
+            )
+            if isinstance(cancel_result, dict) and cancel_result.get('canceled'):
+                canceled_export_count += 1
+        except Exception:
+            rollback_failure_count += 1
+    for artifact_message_id in artifact_message_ids:
+        try:
+            if delete_generated_chat_artifact_for_user(
+                normalized_user_id,
+                normalized_conversation_id,
+                artifact_message_id,
+            ):
+                deleted_artifact_count += 1
+        except Exception:
+            rollback_failure_count += 1
+
+    log_event(
+        '[MIXED_SOURCE_LIFECYCLE] Generated output rollback completed.',
+        extra={
+            'canceled_export_count': canceled_export_count,
+            'deleted_artifact_count': deleted_artifact_count,
+            'rollback_failure_count': rollback_failure_count,
+            'rollback_reason': str(reason or 'finalization')[:64],
+        },
+        level=logging.INFO if not rollback_failure_count else logging.WARNING,
+    )
+    return {
+        'canceled_export_count': canceled_export_count,
+        'deleted_artifact_count': deleted_artifact_count,
+        'rollback_failure_count': rollback_failure_count,
+    }
+
+
+def _reauthorize_mixed_source_workflow_result(
+    workflow,
+    action_config,
+    result,
+    settings,
+    conversation_id,
+    cancel_requested=None,
+    request_correlation_id=None,
+    additional_generated_outputs=None,
+):
+    """Reauthorize a mixed result and roll back outputs before propagating failure."""
+    result = result if isinstance(result, dict) else {}
+    execution_manifest = result.get('mixed_source_manifest')
+    if not isinstance(execution_manifest, list):
+        return
+
+    user_id = str((workflow or {}).get('user_id') or '').strip()
+    requested_ids = [
+        str(source.get('document_id') or '').strip()
+        for source in execution_manifest
+        if isinstance(source, dict) and str(source.get('document_id') or '').strip()
+    ]
+    selection_mode = str(
+        (action_config or {}).get('target_mode') or SELECTION_MODE_SELECTED
+    ).strip().lower()
+    if selection_mode not in {'selected', 'all', 'history', 'relevance'}:
+        selection_mode = SELECTION_MODE_SELECTED
+
+    generated_outputs = list(result.get('generated_tabular_outputs') or [])
+    generated_outputs.extend(list(additional_generated_outputs or []))
+    try:
+        raise_if_mixed_source_cancelled(
+            cancel_requested,
+            'finalization',
+            request_correlation_id=request_correlation_id,
+        )
+        fresh_manifest = resolve_authorized_source_manifest(
+            requested_ids,
+            user_id=user_id,
+            selection_mode=selection_mode,
+            conversation_id=conversation_id,
+            active_group_ids=(action_config or {}).get('active_group_ids'),
+            active_public_workspace_ids=(action_config or {}).get('active_public_workspace_id'),
+            doc_scope=(action_config or {}).get('doc_scope', 'all'),
+            cancel_requested=cancel_requested,
+            request_correlation_id=request_correlation_id,
+        )
+        finalization_result = compare_reauthorized_source_manifests(
+            execution_manifest,
+            fresh_manifest,
+        )
+        if finalization_result['authorization_failure_count']:
+            emit_mixed_source_telemetry(
+                settings,
+                'authorization_failure',
+                (
+                    'compare'
+                    if (action_config or {}).get('type') == DOCUMENT_ACTION_TYPE_COMPARISON
+                    else 'analyze'
+                ),
+                request_correlation_id=request_correlation_id,
+                metrics={
+                    'authorization_failure_count': finalization_result['authorization_failure_count'],
+                },
+                dimensions={'outcome_status': 'failed'},
+            )
+            raise MixedSourceFinalizationError('authorization_lost')
+        if finalization_result['source_version_changed_count']:
+            raise MixedSourceFinalizationError('source_version_changed')
+    except (MixedSourceCancellationError, MixedSourceFinalizationError):
+        _rollback_mixed_source_generated_outputs(
+            user_id,
+            conversation_id,
+            generated_outputs,
+            reason='finalization',
+        )
+        raise
+
+
 def _strip_agent_citation_artifact_refs(agent_citations):
     compact_citations = []
     for citation in agent_citations or []:
@@ -1486,7 +1971,7 @@ def _persist_agent_citation_artifacts(
         return compact_citations
     except Exception as exc:
         log_event(
-            f'[WorkflowRunner] Failed to persist workflow assistant artifacts: {exc}',
+            f'[WORKFLOW_RUNNER] Failed to persist workflow assistant artifacts: {exc}',
             extra={
                 'conversation_id': conversation_id,
                 'assistant_message_id': assistant_message_id,
@@ -1562,7 +2047,7 @@ def _normalize_tabular_source_hint(scope):
     return 'workspace'
 
 
-def _resolve_tabular_document_action_documents(action_config, user_id, conversation_id=''):
+def _get_document_action_source_ids(action_config):
     action_config = action_config if isinstance(action_config, dict) else {}
     action_type = str(action_config.get('type') or '').strip().lower()
 
@@ -1588,6 +2073,16 @@ def _resolve_tabular_document_action_documents(action_config, user_id, conversat
             document_ids.append(document_id)
             role_by_document_id[document_id] = 'right'
 
+    return document_ids, role_by_document_id
+
+
+def _resolve_tabular_document_action_documents(
+    action_config,
+    user_id,
+    conversation_id='',
+):
+    action_config = action_config if isinstance(action_config, dict) else {}
+    document_ids, role_by_document_id = _get_document_action_source_ids(action_config)
     if not document_ids:
         return []
 
@@ -1776,6 +2271,501 @@ def _build_tabular_comparison_action_prompt(comparison_prompt, left_document, ri
     )
 
 
+def _build_mixed_source_analyze_reduction_prompt(analysis_prompt, handoff):
+    """Build the one bounded collective reduction prompt for combined Analyze."""
+    return (
+        'Answer the exact Analyze request using only the bounded evidence handoff below. '
+        'Treat computed tabular facts as tool-backed calculations and narrative facts as document excerpts. '
+        'Identify cross-source relationships only where the evidence supports them. Keep facts source-separated when needed. '
+        'Explicitly state missing, failed, unsupported, unresolved, or unprocessed evidence and never claim coverage for it.\n\n'
+        f'Analyze request:\n{str(analysis_prompt or "").strip()}\n\n'
+        f'Bounded evidence handoff:\n{json.dumps(handoff, ensure_ascii=False, separators=(",", ":"))}'
+    )
+
+
+def _build_mixed_source_analysis_coverage(handoff):
+    """Expose terminal coverage for every manifest entry with engine/status totals."""
+    coverage = dict((handoff or {}).get('mixed_source_coverage') or {})
+    engine_status_totals = {}
+    for envelope in list((handoff or {}).get('evidence_envelopes') or []):
+        engine = str(envelope.get('engine') or 'unknown')
+        status = str(envelope.get('status') or 'failed')
+        engine_status_totals.setdefault(engine, {})[status] = (
+            engine_status_totals.setdefault(engine, {}).get(status, 0) + 1
+        )
+    coverage['engine_status_totals'] = engine_status_totals
+    coverage['document_count'] = coverage.get('requested_source_count', 0)
+    coverage['progress_meta'] = {
+        'phase': 'complete',
+        'phase_label': 'Complete' if not coverage.get('partial_coverage') else 'Partial',
+        'phase_detail': 'Mixed-source Analyze completed with terminal source coverage',
+        'status': 'partial' if coverage.get('partial_coverage') else 'completed',
+        'percent_override': 100,
+    }
+    return coverage
+
+
+def _execute_mixed_source_analyze_workflow(
+    workflow,
+    analysis_config,
+    settings,
+    invoke_prompt,
+    conversation_id='',
+    activity_callback=None,
+    thought_tracker=None,
+    live_thought_callback=None,
+    max_documents=None,
+    cancel_requested=None,
+    request_correlation_id=None,
+    token_usage_callback=None,
+):
+    """Run combined Analyze cohorts natively, then reduce bounded evidence once."""
+    started_at = time.perf_counter()
+    request_correlation_id = normalize_mixed_source_correlation_id(
+        request_correlation_id
+    )
+    user_id = str(workflow.get('user_id') or '').strip()
+    requested_ids, _ = _get_document_action_source_ids(analysis_config)
+    requested_selection_mode = str(
+        analysis_config.get('selection_mode')
+        or analysis_config.get('target_mode')
+        or SELECTION_MODE_SELECTED
+    ).strip().lower()
+    if requested_selection_mode == 'all':
+        if not bool(settings.get('enable_mixed_source_analyze_all', False)):
+            raise ValueError(
+                'Analyze All Documents is temporarily unavailable while its rollout flag is disabled.'
+            )
+        if max_documents is None:
+            raise ValueError('Analyze All Documents requires a configured document limit.')
+        all_targets = _resolve_analyze_all_document_ids(
+            workflow,
+            analysis_config,
+            settings,
+            int(max_documents),
+        )
+        analysis_config = {**analysis_config, **all_targets}
+        requested_ids = list(all_targets['document_ids'])
+    if max_documents is not None and len(requested_ids) > int(max_documents):
+        raise ValueError(
+            f'Analyze supports up to {int(max_documents)} authorized documents at a time.'
+        )
+    if callable(activity_callback):
+        activity_callback({'type': 'mixed_source_progress', 'phase': 'resolving_sources', 'label': 'Resolving sources'})
+    manifest = resolve_authorized_source_manifest(
+        requested_ids,
+        user_id=user_id,
+        selection_mode=requested_selection_mode,
+        conversation_id=conversation_id,
+        active_group_ids=analysis_config.get('active_group_ids'),
+        active_public_workspace_ids=analysis_config.get('active_public_workspace_id'),
+        doc_scope=analysis_config.get('doc_scope', 'all'),
+        cancel_requested=cancel_requested,
+        request_correlation_id=request_correlation_id,
+    )
+    partitions = partition_source_manifest(manifest)
+    evidence_envelopes = []
+    generated_tabular_outputs = []
+    tabular_agent_citations = []
+
+    narrative_sources = partitions['narrative_sources']
+    if narrative_sources:
+        if callable(activity_callback):
+            activity_callback({'type': 'mixed_source_progress', 'phase': 'analyzing_narrative', 'label': 'Analyzing narrative documents'})
+        try:
+            narrative_result = run_document_analysis(
+                user_id=user_id,
+                analysis_prompt=workflow.get('task_prompt', ''),
+                document_ids=[source.get('document_id') for source in narrative_sources],
+                invoke_prompt=invoke_prompt,
+                doc_scope=analysis_config.get('doc_scope'),
+                active_group_ids=analysis_config.get('active_group_ids'),
+                active_public_workspace_id=analysis_config.get('active_public_workspace_id'),
+                conversation_id=conversation_id,
+                window_unit=analysis_config.get('window_unit'),
+                window_size=analysis_config.get('window_size'),
+                window_percent=analysis_config.get('window_percent'),
+                max_retries_per_window=analysis_config.get('max_retries_per_window'),
+                activity_callback=activity_callback,
+                max_documents=max_documents,
+                include_coverage_summary=False,
+                cancel_requested=cancel_requested,
+                request_correlation_id=request_correlation_id,
+            )
+            documents_by_id = {
+                str(document.get('document_id') or ''): document
+                for document in list((narrative_result.get('coverage') or {}).get('documents') or [])
+            }
+            narrative_items_by_id = {
+                str(item.get('document_id') or ''): item
+                for item in list(narrative_result.get('document_analysis_items') or [])
+                if str(item.get('document_id') or '').strip()
+            }
+            for source in narrative_sources:
+                document_id = source.get('document_id')
+                document_coverage = documents_by_id.get(str(document_id), {})
+                narrative_item = narrative_items_by_id.get(str(document_id), {})
+                failed_windows = int(document_coverage.get('failed_windows') or 0)
+                total_windows = int(document_coverage.get('total_windows') or 0)
+                processed_windows = int(document_coverage.get('processed_windows') or 0)
+                status = (
+                    EVIDENCE_STATUS_COMPLETED
+                    if total_windows and processed_windows == total_windows and not failed_windows
+                    else ('partial' if processed_windows else EVIDENCE_STATUS_FAILED)
+                )
+                evidence_envelopes.append(build_evidence_envelope(
+                    document_id=document_id,
+                    source_kind='narrative',
+                    engine=EVIDENCE_ENGINE_DOCUMENT_ANALYSIS,
+                    status=status,
+                    summary=str(narrative_item.get('text') or ''),
+                    citations=[],
+                    generated_artifacts=[],
+                    coverage={'terminal': True, 'processed_windows': processed_windows, 'total_windows': total_windows, 'failed_windows': failed_windows},
+                    error='Narrative analysis could not be completed.' if status == EVIDENCE_STATUS_FAILED else None,
+                ))
+        except MixedSourceCancellationError:
+            raise
+        except Exception:
+            for source in narrative_sources:
+                evidence_envelopes.append(build_evidence_envelope(
+                    document_id=source.get('document_id'), source_kind='narrative',
+                    engine=EVIDENCE_ENGINE_DOCUMENT_ANALYSIS, status=EVIDENCE_STATUS_FAILED,
+                    summary='Narrative evidence could not be completed for this source.',
+                    coverage={'terminal': True}, error='Narrative analysis could not be completed.',
+                ))
+
+    tabular_sources = partitions['tabular_sources']
+    if tabular_sources:
+        if callable(activity_callback):
+            activity_callback({'type': 'mixed_source_progress', 'phase': 'analyzing_tabular', 'label': 'Analyzing tabular documents'})
+        for source in tabular_sources:
+            tabular_config = dict(analysis_config)
+            tabular_config['document_ids'] = [source.get('document_id')]
+            tabular_payload = _maybe_execute_tabular_document_action(
+                DOCUMENT_ACTION_TYPE_ANALYZE, workflow, tabular_config, settings,
+                conversation_id=conversation_id, invoke_prompt=invoke_prompt,
+                thought_tracker=thought_tracker, live_thought_callback=live_thought_callback,
+                cancel_requested=cancel_requested,
+                request_correlation_id=request_correlation_id,
+                token_usage_callback=token_usage_callback,
+            )
+            if not tabular_payload:
+                evidence_envelopes.append(build_evidence_envelope(
+                    document_id=source.get('document_id'), source_kind='tabular',
+                    engine=EVIDENCE_ENGINE_TABULAR_TOOLS, status=EVIDENCE_STATUS_FAILED,
+                    summary='Tabular evidence could not be completed for this source.',
+                    coverage={'terminal': True}, error='Tabular analysis could not be completed.',
+                ))
+                continue
+            tabular_result = tabular_payload.get('result') or {}
+            evidence_envelopes.append(build_evidence_envelope(
+                document_id=source.get('document_id'), source_kind='tabular',
+                engine=EVIDENCE_ENGINE_TABULAR_TOOLS, status=EVIDENCE_STATUS_COMPLETED,
+                summary=str(tabular_result.get('analysis_reply') or tabular_result.get('reply') or ''),
+                citations=list(tabular_payload.get('agent_citations') or []),
+                generated_artifacts=list(tabular_payload.get('generated_tabular_outputs') or []),
+                coverage={'terminal': True, 'tool_call_count': 1},
+            ))
+            generated_tabular_outputs.extend(tabular_payload.get('generated_tabular_outputs') or [])
+            tabular_agent_citations.extend(tabular_payload.get('agent_citations') or [])
+
+    handoff = build_mixed_source_evidence_handoff(
+        manifest,
+        evidence_envelopes,
+        requested_selection_mode,
+        mode='analyze',
+        telemetry_settings=settings,
+        request_correlation_id=request_correlation_id,
+    )
+    mode_outcome = evaluate_mixed_source_mode_outcome(
+        'analyze',
+        {
+            'entries': (handoff.get('mixed_source_coverage') or {}).get('terminal_ledger') or [],
+            'partial_coverage': bool((handoff.get('mixed_source_coverage') or {}).get('partial_coverage')),
+        },
+    )
+    if not mode_outcome['should_reduce']:
+        raise RuntimeError(
+            'Mixed-source Analyze could not prepare evidence from any selected source.'
+        )
+    raise_if_mixed_source_cancelled(
+        cancel_requested,
+        'reduction',
+        request_correlation_id=request_correlation_id,
+    )
+    if callable(activity_callback):
+        activity_callback({'type': 'mixed_source_progress', 'phase': 'combining_findings', 'label': 'Combining findings'})
+    collective_reply = str(invoke_prompt(
+        _build_mixed_source_analyze_reduction_prompt(workflow.get('task_prompt', ''), handoff),
+        stage='mixed_source_reduction', metadata={'requested_source_count': len(manifest)},
+    ) or '').strip()
+    raise_if_mixed_source_cancelled(
+        cancel_requested,
+        'reduction',
+        request_correlation_id=request_correlation_id,
+    )
+    if not collective_reply:
+        collective_reply = 'The selected sources could not be combined into a final analysis.'
+    emit_mixed_source_telemetry(
+        settings,
+        'reduction',
+        'analyze',
+        request_correlation_id=request_correlation_id,
+        metrics={
+            'engine_call_count': len(evidence_envelopes),
+            'model_request_count': 1,
+            'latency_ms': round((time.perf_counter() - started_at) * 1000, 3),
+        },
+        dimensions={
+            'selection_mode': requested_selection_mode,
+            'outcome_status': mode_outcome['status'],
+        },
+    )
+    coverage = _build_mixed_source_analysis_coverage(handoff)
+    if callable(activity_callback):
+        activity_callback({
+            'type': 'mixed_source_progress',
+            'phase': 'complete',
+            'label': coverage['progress_meta']['phase_label'],
+            'status': coverage['progress_meta']['status'],
+        })
+    return {
+        'reply': collective_reply,
+        'analysis_reply': collective_reply,
+        'coverage': coverage,
+        'documents': list(coverage.get('sources') or []),
+        'document_ids': [source.get('document_id') for source in manifest],
+        'mixed_source_manifest': manifest,
+        'mixed_source_evidence': handoff.get('evidence_envelopes') or [],
+        'generated_tabular_outputs': generated_tabular_outputs,
+        'agent_citations': tabular_agent_citations,
+    }
+
+def _resolve_cross_format_comparison_manifest(
+    comparison_config,
+    user_id,
+    conversation_id,
+    cancel_requested=None,
+    request_correlation_id=None,
+):
+    """Resolve the Source and ordered Targets once for the mixed Compare decision."""
+    requested_ids, role_by_document_id = _get_document_action_source_ids(comparison_config)
+    manifest = resolve_authorized_source_manifest(
+        requested_ids,
+        user_id=user_id,
+        selection_mode=SELECTION_MODE_SELECTED,
+        conversation_id=conversation_id,
+        active_group_ids=comparison_config.get('active_group_ids'),
+        active_public_workspace_ids=comparison_config.get('active_public_workspace_id'),
+        doc_scope=comparison_config.get('doc_scope', 'all'),
+        cancel_requested=cancel_requested,
+        request_correlation_id=request_correlation_id,
+    )
+    for source in manifest:
+        source['comparison_role'] = role_by_document_id.get(source.get('document_id'), 'target')
+    return manifest
+
+
+def _raise_legacy_cross_format_compare_limitation(comparison_config, user_id, conversation_id=''):
+    """Fail closed when rollback would otherwise route a table through chunk analysis."""
+    manifest = _resolve_cross_format_comparison_manifest(comparison_config, user_id, conversation_id)
+    partitions = partition_source_manifest(manifest)
+    if partitions['narrative_sources'] and partitions['tabular_sources']:
+        raise ValueError(
+            'Mixed narrative and tabular Compare is temporarily unavailable while cross-format Compare is disabled.'
+        )
+
+
+def _execute_cross_format_comparison_workflow(
+    workflow,
+    comparison_config,
+    settings,
+    invoke_prompt,
+    conversation_id='',
+    activity_callback=None,
+    thought_tracker=None,
+    live_thought_callback=None,
+    cancel_requested=None,
+    request_correlation_id=None,
+    token_usage_callback=None,
+):
+    """Prepare native envelopes for a mixed Source/Target Compare, then reuse pairwise reduction."""
+    started_at = time.perf_counter()
+    request_correlation_id = normalize_mixed_source_correlation_id(
+        request_correlation_id
+    )
+    user_id = str(workflow.get('user_id') or '').strip()
+    raise_if_mixed_source_cancelled(
+        cancel_requested,
+        'manifest',
+        request_correlation_id=request_correlation_id,
+    )
+    manifest = _resolve_cross_format_comparison_manifest(
+        comparison_config,
+        user_id,
+        conversation_id,
+        cancel_requested=cancel_requested,
+        request_correlation_id=request_correlation_id,
+    )
+    partitions = partition_source_manifest(manifest)
+    if not (partitions['narrative_sources'] and partitions['tabular_sources']):
+        return None
+    target_sources = [source for source in manifest if source.get('comparison_role') == 'right']
+    if len(target_sources) > 1 and not is_cross_format_compare_one_to_many_enabled(settings):
+        raise ValueError('Cross-format Compare currently supports one Target while one-to-many rollout is disabled.')
+    if callable(activity_callback):
+        activity_callback({'type': 'mixed_source_progress', 'phase': 'resolving_sources', 'label': 'Resolving Source and Targets'})
+
+    evidence_by_id = {}
+    generated_tabular_outputs = []
+    tabular_agent_citations = []
+    for source in partitions['narrative_sources']:
+        if callable(activity_callback):
+            activity_callback({'type': 'mixed_source_progress', 'phase': 'analyzing_narrative', 'label': 'Analyzing narrative source'})
+        try:
+            narrative_result = run_document_analysis(
+                user_id=user_id,
+                analysis_prompt=workflow.get('task_prompt', ''),
+                document_ids=[source.get('document_id')],
+                invoke_prompt=invoke_prompt,
+                doc_scope=comparison_config.get('doc_scope'),
+                active_group_ids=comparison_config.get('active_group_ids'),
+                active_public_workspace_id=comparison_config.get('active_public_workspace_id'),
+                conversation_id=conversation_id,
+                window_unit=comparison_config.get('window_unit'),
+                window_size=comparison_config.get('window_size'),
+                window_percent=comparison_config.get('window_percent'),
+                max_retries_per_window=comparison_config.get('max_retries_per_window'),
+                activity_callback=activity_callback,
+                max_documents=1,
+                include_coverage_summary=False,
+                cancel_requested=cancel_requested,
+                request_correlation_id=request_correlation_id,
+            )
+            document_coverage = list((narrative_result.get('coverage') or {}).get('documents') or [{}])[0]
+            status = EVIDENCE_STATUS_COMPLETED if not document_coverage.get('failed_windows') else 'partial'
+            evidence_by_id[source.get('document_id')] = build_evidence_envelope(
+                document_id=source.get('document_id'), source_kind='narrative',
+                engine=EVIDENCE_ENGINE_DOCUMENT_ANALYSIS, status=status,
+                summary=str(narrative_result.get('analysis_reply') or narrative_result.get('reply') or ''),
+                coverage={'terminal': True, 'source_version': source.get('source_version'), **document_coverage},
+            )
+        except MixedSourceCancellationError:
+            raise
+        except Exception:
+            evidence_by_id[source.get('document_id')] = build_evidence_envelope(
+                document_id=source.get('document_id'), source_kind='narrative',
+                engine=EVIDENCE_ENGINE_DOCUMENT_ANALYSIS, status=EVIDENCE_STATUS_FAILED,
+                summary='Narrative evidence could not be completed for this source.',
+                coverage={'terminal': True, 'source_version': source.get('source_version')},
+                error='Narrative analysis could not be completed.',
+            )
+
+    for source in partitions['tabular_sources']:
+        if callable(activity_callback):
+            activity_callback({'type': 'mixed_source_progress', 'phase': 'analyzing_tabular', 'label': 'Analyzing tabular source'})
+        tabular_config = dict(comparison_config)
+        tabular_payload = _maybe_execute_tabular_document_action(
+            DOCUMENT_ACTION_TYPE_ANALYZE, workflow, {
+                **tabular_config,
+                'type': DOCUMENT_ACTION_TYPE_ANALYZE,
+                'document_ids': [source.get('document_id')],
+            },
+            settings, conversation_id=conversation_id, invoke_prompt=invoke_prompt,
+            thought_tracker=thought_tracker, live_thought_callback=live_thought_callback,
+            cancel_requested=cancel_requested,
+            request_correlation_id=request_correlation_id,
+            token_usage_callback=token_usage_callback,
+        )
+        tabular_result = (tabular_payload or {}).get('result') or {}
+        if tabular_result.get('analysis_reply'):
+            evidence_by_id[source.get('document_id')] = build_evidence_envelope(
+                document_id=source.get('document_id'), source_kind='tabular',
+                engine=EVIDENCE_ENGINE_TABULAR_TOOLS, status=EVIDENCE_STATUS_COMPLETED,
+                summary=str(tabular_result.get('analysis_reply') or ''),
+                citations=list((tabular_payload or {}).get('agent_citations') or []),
+                generated_artifacts=list((tabular_payload or {}).get('generated_tabular_outputs') or []),
+                coverage={'terminal': True, 'source_version': source.get('source_version'), 'tool_call_count': 1},
+            )
+            generated_tabular_outputs.extend((tabular_payload or {}).get('generated_tabular_outputs') or [])
+            tabular_agent_citations.extend((tabular_payload or {}).get('agent_citations') or [])
+        else:
+            evidence_by_id[source.get('document_id')] = build_evidence_envelope(
+                document_id=source.get('document_id'), source_kind='tabular',
+                engine=EVIDENCE_ENGINE_TABULAR_TOOLS, status=EVIDENCE_STATUS_FAILED,
+                summary='Tabular evidence could not be completed for this source.',
+                coverage={'terminal': True, 'source_version': source.get('source_version')},
+                error='Tabular analysis could not be completed.',
+            )
+
+    handoff = build_mixed_source_evidence_handoff(
+        manifest,
+        list(evidence_by_id.values()),
+        SELECTION_MODE_SELECTED,
+        mode='compare',
+        telemetry_settings=settings,
+        request_correlation_id=request_correlation_id,
+    )
+    mode_outcome = evaluate_mixed_source_mode_outcome(
+        'compare',
+        {
+            'entries': (handoff.get('mixed_source_coverage') or {}).get('terminal_ledger') or [],
+            'partial_coverage': bool((handoff.get('mixed_source_coverage') or {}).get('partial_coverage')),
+        },
+    )
+    if not mode_outcome['should_reduce']:
+        if mode_outcome.get('reason') == 'source_preparation_failed':
+            raise RuntimeError('Cross-format Compare Source could not be prepared.')
+        raise RuntimeError('Cross-format Compare could not prepare any Target evidence.')
+    envelopes = {envelope.get('document_id'): envelope for envelope in handoff.get('evidence_envelopes') or []}
+    def source_payload(source):
+        envelope = dict(envelopes.get(source.get('document_id')) or {})
+        envelope['document_name'] = source.get('display_name') or ('Source' if source.get('comparison_role') == 'left' else 'Target')
+        role_label = 'Source' if source.get('comparison_role') == 'left' else 'Target'
+        evidence_type = 'computed tabular facts' if envelope.get('source_kind') == 'tabular' else 'narrative document analysis'
+        envelope['summary'] = (
+            f'Role: {role_label}. Evidence type: {evidence_type}.\n'
+            f"{str(envelope.get('summary') or '').strip()}"
+        )
+        return envelope
+    left_source = next((source for source in manifest if source.get('comparison_role') == 'left'), {})
+    comparison_result = run_evidence_document_comparison(
+        workflow.get('task_prompt', ''), source_payload(left_source),
+        [source_payload(source) for source in target_sources], invoke_prompt, activity_callback=activity_callback,
+        cancel_requested=cancel_requested,
+        request_correlation_id=request_correlation_id,
+    )
+    pairwise_coverage = dict(comparison_result.get('coverage') or {})
+    mixed_coverage = _build_mixed_source_analysis_coverage(handoff)
+    mixed_coverage['failed_targets'] = list(pairwise_coverage.get('failed_targets') or [])
+    mixed_coverage['partial_coverage'] = bool(
+        mixed_coverage.get('partial_coverage')
+        or pairwise_coverage.get('partial_coverage')
+    )
+    comparison_result['coverage'] = mixed_coverage
+    comparison_result['mixed_source_manifest'] = manifest
+    comparison_result['mixed_source_evidence'] = handoff.get('evidence_envelopes') or []
+    comparison_result['generated_tabular_outputs'] = generated_tabular_outputs
+    comparison_result['agent_citations'] = tabular_agent_citations
+    emit_mixed_source_telemetry(
+        settings,
+        'reduction',
+        'compare',
+        request_correlation_id=request_correlation_id,
+        metrics={
+            'engine_call_count': len(evidence_by_id),
+            'model_request_count': len(comparison_result.get('comparison_items') or []),
+            'latency_ms': round((time.perf_counter() - started_at) * 1000, 3),
+        },
+        dimensions={
+            'selection_mode': SELECTION_MODE_SELECTED,
+            'outcome_status': mode_outcome['status'],
+        },
+    )
+    return comparison_result
+
+
 def _build_workflow_generation_prompt(task_prompt):
     return append_proactive_chart_guidance(task_prompt)
 
@@ -1801,22 +2791,116 @@ def _get_workflow_url_access_system_content(url_access_context=None):
     return str(system_message or '').strip()
 
 
-def _build_workflow_chat_messages(prompt_text, url_access_context=None, apply_generation_guidance=False):
+def _build_workflow_chat_messages(
+    prompt_text,
+    url_access_context=None,
+    apply_generation_guidance=False,
+    conversation_context_system=None,
+    conversation_context_data=None,
+):
     user_content = _build_workflow_generation_prompt(prompt_text) if apply_generation_guidance else str(prompt_text or '').strip()
     messages = []
     source_review_content = _get_workflow_url_access_system_content(url_access_context)
     if source_review_content:
         messages.append({'role': 'system', 'content': source_review_content})
+    generated_file_output_guidance = build_generated_file_output_guidance(prompt_text)
+    if generated_file_output_guidance:
+        messages.append({'role': 'system', 'content': generated_file_output_guidance})
+    normalized_context_system = str(conversation_context_system or '').strip()
+    if normalized_context_system:
+        messages.append({'role': 'system', 'content': normalized_context_system})
+    normalized_context_data = str(conversation_context_data or '').strip()
+    if normalized_context_data:
+        messages.append({'role': 'user', 'content': normalized_context_data})
     messages.append({'role': 'user', 'content': user_content})
     return messages
 
 
-def _build_workflow_agent_messages(prompt_text, url_access_context=None, apply_generation_guidance=False):
+def _build_workflow_agent_messages(
+    prompt_text,
+    url_access_context=None,
+    apply_generation_guidance=False,
+    conversation_context_system=None,
+    conversation_context_data=None,
+):
     user_content = _build_workflow_generation_prompt(prompt_text) if apply_generation_guidance else str(prompt_text or '').strip()
     source_review_content = _get_workflow_url_access_system_content(url_access_context)
-    if source_review_content:
-        user_content = f'{source_review_content}\n\n[Workflow Task]\n{user_content}'
-    return [ChatMessageContent(role='user', content=user_content)]
+    generated_file_output_guidance = build_generated_file_output_guidance(prompt_text)
+    content_sections = [
+        content
+        for content in (generated_file_output_guidance, source_review_content)
+        if content
+    ]
+    content_sections.append(f'[Workflow Task]\n{user_content}')
+    messages = []
+    normalized_context_system = str(conversation_context_system or '').strip()
+    if normalized_context_system:
+        messages.append(ChatMessageContent(role='system', content=normalized_context_system))
+    normalized_context_data = str(conversation_context_data or '').strip()
+    if normalized_context_data:
+        messages.append(ChatMessageContent(role='user', content=normalized_context_data))
+    messages.append(ChatMessageContent(role='user', content='\n\n'.join(content_sections)))
+    return messages
+
+
+def _resolve_workflow_conversation_context(
+    workflow,
+    *,
+    model_name=None,
+    model_provider=None,
+    model_endpoint_id=None,
+    selected_agent=None,
+):
+    base_snapshot = (
+        workflow.get('conversation_context_snapshot')
+        if isinstance((workflow or {}).get('conversation_context_snapshot'), dict)
+        else {}
+    )
+    if not base_snapshot:
+        return None
+
+    base_runtime = (
+        base_snapshot.get('runtime')
+        if isinstance(base_snapshot.get('runtime'), dict)
+        else {}
+    )
+    if selected_agent:
+        agent_name = getattr(selected_agent, 'name', None)
+        agent_display_name = getattr(selected_agent, 'display_name', None)
+        agent_model = getattr(selected_agent, 'deployment_name', None)
+        agent_provider = (
+            getattr(selected_agent, 'model_provider', None)
+            or getattr(selected_agent, 'provider', None)
+        )
+    else:
+        agent_name = None
+        agent_display_name = None
+        agent_model = None
+        agent_provider = None
+
+    resolved_snapshot = build_conversation_context_snapshot(
+        base_snapshot.get('message_metadata') or {},
+        application_version=(
+            (base_snapshot.get('application') or {}).get('version')
+            or VERSION
+        ),
+        model_name=model_name or base_runtime.get('configured_model'),
+        model_provider=model_provider or base_runtime.get('model_provider'),
+        model_endpoint_id=model_endpoint_id or base_runtime.get('model_endpoint_id'),
+        agent_name=agent_name,
+        agent_display_name=agent_display_name,
+        agent_model=agent_model,
+        agent_provider=agent_provider,
+    )
+    context_json = serialize_conversation_context_snapshot(resolved_snapshot)
+    workflow['conversation_context_system_message'] = (
+        build_conversation_context_system_message(context_json)
+    )
+    workflow['conversation_context_data_message'] = (
+        build_conversation_context_data_message(context_json)
+    )
+    workflow['_resolved_conversation_context_json'] = context_json
+    return context_json
 
 
 def _format_workflow_url_access_error(validation_result):
@@ -1999,14 +3083,49 @@ def _maybe_execute_tabular_document_action(
     invoke_prompt=None,
     thought_tracker=None,
     live_thought_callback=None,
+    cancel_requested=None,
+    request_correlation_id=None,
+    token_usage_callback=None,
 ):
+    raise_if_mixed_source_cancelled(
+        cancel_requested,
+        'tabular',
+        request_correlation_id=request_correlation_id,
+    )
     if action_type not in {DOCUMENT_ACTION_TYPE_ANALYZE, DOCUMENT_ACTION_TYPE_COMPARISON}:
-        return None
-    if not callable(invoke_prompt) or not is_tabular_processing_enabled(settings):
         return None
 
     user_id = str(workflow.get('user_id') or '').strip()
     if not user_id:
+        return None
+
+    if is_mixed_source_manifest_enabled(settings):
+        requested_source_ids, _ = _get_document_action_source_ids(action_config)
+        if requested_source_ids:
+            try:
+                resolve_authorized_source_manifest(
+                    requested_source_ids,
+                    user_id=user_id,
+                    selection_mode='selected',
+                    conversation_id=conversation_id,
+                    active_group_ids=action_config.get('active_group_ids'),
+                    active_public_workspace_ids=action_config.get('active_public_workspace_id'),
+                    cancel_requested=cancel_requested,
+                    request_correlation_id=request_correlation_id,
+                )
+            except MixedSourceCancellationError:
+                raise
+            except Exception:
+                log_event(
+                    '[MIXED_SOURCE_MANIFEST] Workflow shadow resolution failed.',
+                    extra={
+                        'requested_source_count': len(requested_source_ids),
+                        'selection_mode': 'selected',
+                    },
+                    level=logging.WARNING,
+                )
+
+    if not callable(invoke_prompt) or not is_tabular_processing_enabled(settings):
         return None
 
     tabular_documents = _resolve_tabular_document_action_documents(
@@ -2045,12 +3164,28 @@ def _maybe_execute_tabular_document_action(
 
     try:
         for tabular_document in tabular_documents:
+            raise_if_mixed_source_cancelled(
+                cancel_requested,
+                'tabular',
+                request_correlation_id=request_correlation_id,
+            )
             document_baseline_invocation_count = 0
             if conversation_id:
                 document_baseline_invocation_count = len(
                     plugin_logger.get_invocations_for_conversation(user_id, conversation_id, limit=1000)
                 )
 
+            parity_result = classify_tabular_parity_request(task_prompt)
+            emit_tabular_parity_event(
+                settings,
+                TABULAR_PARITY_EVENT_FIRST_FOREGROUND_TABULAR_INVOCATION,
+                'analyze',
+                planner_result=parity_result,
+                metrics={
+                    'document_count': len(tabular_documents),
+                    'document_index': len(generated_tabular_outputs) + 1,
+                },
+            )
             tabular_analysis, _ = asyncio.run(
                 run_tabular_analysis_with_thought_tracking(
                     user_question=_build_tabular_analysis_request_prompt(
@@ -2075,7 +3210,13 @@ def _maybe_execute_tabular_document_action(
                     }],
                     thought_tracker=thought_tracker,
                     live_thought_callback=live_thought_callback,
+                    token_usage_callback=token_usage_callback,
                 )
+            )
+            raise_if_mixed_source_cancelled(
+                cancel_requested,
+                'tabular',
+                request_correlation_id=request_correlation_id,
             )
             if not str(tabular_analysis or '').strip():
                 raise ValueError(
@@ -2114,13 +3255,24 @@ def _maybe_execute_tabular_document_action(
                         conversation_id=conversation_id,
                         thought_callback=tabular_post_processing_thought_callback,
                         user_id=user_id,
+                        cancel_requested=cancel_requested,
+                        request_correlation_id=request_correlation_id,
+                        token_usage_callback=token_usage_callback,
+                        mode='analyze',
                     )
+                )
+                raise_if_mixed_source_cancelled(
+                    cancel_requested,
+                    'export',
+                    request_correlation_id=request_correlation_id,
                 )
                 if generated_tabular_output:
                     generated_tabular_outputs.append(generated_tabular_output)
+    except MixedSourceCancellationError:
+        raise
     except Exception as exc:
         log_event(
-            f'[WorkflowDocumentAction] Tabular document-action helper skipped: {exc}',
+            f'[WORKFLOW_DOCUMENT_ACTION] Tabular document-action helper skipped: {exc}',
             extra={
                 'conversation_id': conversation_id,
                 'workflow_id': str(workflow.get('id') or '').strip(),
@@ -2141,6 +3293,11 @@ def _maybe_execute_tabular_document_action(
     tabular_agent_citations = _build_agent_citations_from_plugin_invocations(tabular_invocations)
 
     if action_type == DOCUMENT_ACTION_TYPE_ANALYZE:
+        raise_if_mixed_source_cancelled(
+            cancel_requested,
+            'reduction',
+            request_correlation_id=request_correlation_id,
+        )
         analysis_result = {
             'reply': '',
             'analysis_reply': str(invoke_prompt(
@@ -2159,6 +3316,11 @@ def _maybe_execute_tabular_document_action(
             'window_size': None,
             'window_percent': None,
         }
+        raise_if_mixed_source_cancelled(
+            cancel_requested,
+            'reduction',
+            request_correlation_id=request_correlation_id,
+        )
         if not analysis_result['analysis_reply']:
             raise RuntimeError('Tabular analysis synthesis returned an empty response.')
         analysis_result['reply'] = analysis_result['analysis_reply']
@@ -2171,6 +3333,11 @@ def _maybe_execute_tabular_document_action(
 
     left_document = tabular_documents[0] if tabular_documents else {}
     right_documents = tabular_documents[1:]
+    raise_if_mixed_source_cancelled(
+        cancel_requested,
+        'comparison_reduction',
+        request_correlation_id=request_correlation_id,
+    )
     comparison_result = {
         'reply': '',
         'analysis_reply': str(invoke_prompt(
@@ -2201,6 +3368,11 @@ def _maybe_execute_tabular_document_action(
         ],
         'comparison_items': [],
     }
+    raise_if_mixed_source_cancelled(
+        cancel_requested,
+        'comparison_reduction',
+        request_correlation_id=request_correlation_id,
+    )
     if not comparison_result['analysis_reply']:
         raise RuntimeError('Tabular comparison synthesis returned an empty response.')
     comparison_result['reply'] = comparison_result['analysis_reply']
@@ -2526,7 +3698,7 @@ def _mirror_workflow_visualizations_to_created_conversations(workflow, source_as
                     mirrored_message_ids.append(mirrored_message_doc.get('id'))
         except Exception as exc:
             log_event(
-                f'[WorkflowRunner] Failed to mirror workflow visualizations into conversation {conversation_id}: {exc}',
+                f'[WORKFLOW_RUNNER] Failed to mirror workflow visualizations into conversation {conversation_id}: {exc}',
                 extra={
                     'workflow_id': str(workflow.get('id') or '').strip(),
                     'source_message_id': str(source_assistant_doc.get('id') or '').strip(),
@@ -3148,7 +4320,7 @@ def _create_workflow_priority_alert(workflow, run_record, conversation, executio
         )
     except Exception as exc:
         log_event(
-            f'[WorkflowRunner] Failed to create workflow alert: {exc}',
+            f'[WORKFLOW_RUNNER] Failed to create workflow alert: {exc}',
             extra={
                 'workflow_id': str(workflow.get('id') or '').strip(),
                 'user_id': str(workflow.get('user_id') or '').strip(),
@@ -3170,26 +4342,7 @@ def _resolve_authority(auth_settings):
 
 
 def _resolve_foundry_scope(auth_settings, endpoint=None):
-    custom_scope = (auth_settings.get('foundry_scope') or '').strip()
-    if custom_scope:
-        return custom_scope
-
-    management_cloud = (auth_settings.get('management_cloud') or 'public').lower()
-    if management_cloud in ('government', 'usgovernment', 'usgov'):
-        return 'https://ai.azure.us/.default'
-    if management_cloud == 'china':
-        return 'https://ai.azure.cn/.default'
-    if management_cloud == 'germany':
-        return 'https://ai.azure.de/.default'
-
-    endpoint_value = (endpoint or '').lower()
-    if 'azure.us' in endpoint_value:
-        return 'https://ai.azure.us/.default'
-    if 'azure.cn' in endpoint_value:
-        return 'https://ai.azure.cn/.default'
-    if 'azure.de' in endpoint_value:
-        return 'https://ai.azure.de/.default'
-    return 'https://ai.azure.com/.default'
+    return resolve_model_endpoint_foundry_scope(auth_settings, endpoint=endpoint)
 
 
 def _build_workflow_credential(auth_settings):
@@ -3453,6 +4606,137 @@ def _add_workflow_activity_thought(
     )
 
 
+def _maybe_create_workflow_generated_file_output(
+    workflow,
+    conversation_id,
+    user_question,
+    assistant_content,
+    function_results=None,
+    existing_outputs=None,
+):
+    """Persist a requested workflow CSV, DOCX, or PDF artifact."""
+    output_format = get_requested_generated_file_format(user_question)
+    if not output_format:
+        return None
+    if output_format == 'csv' and has_generated_tabular_csv_output(existing_outputs):
+        return None
+    if has_generated_file_output(existing_outputs, output_format):
+        return None
+
+    export_payload = build_generated_file_export(
+        user_question,
+        assistant_content,
+        function_results=function_results,
+    )
+    if not export_payload:
+        return None
+
+    normalized_workflow = workflow if isinstance(workflow, dict) else {}
+    user_id = str(normalized_workflow.get('user_id') or '').strip()
+    normalized_conversation_id = str(conversation_id or '').strip()
+    if not user_id or not normalized_conversation_id:
+        return None
+
+    generated_file_name = str(export_payload.get('file_name') or '').strip()
+    row_count = int(export_payload.get('row_count') or 0)
+    settings = get_settings()
+    structured_rows = export_payload.get('_structured_rows') or []
+    row_batches = []
+    if output_format == 'csv':
+        row_batches = build_tabular_generated_output_row_batches(structured_rows, settings=settings)
+    if not generated_file_name:
+        return None
+
+    if output_format == 'csv' and should_queue_tabular_generated_output_background(
+        row_count,
+        len(row_batches),
+        settings,
+    ):
+        try:
+            background_run = queue_tabular_generated_output_run(
+                user_id=user_id,
+                conversation_id=normalized_conversation_id,
+                user_question=user_question,
+                source_candidate={
+                    'filename': generated_file_name,
+                    'selected_sheet': '',
+                    'source_authorization': {
+                        'source': 'chat',
+                    },
+                },
+                output_format=output_format,
+                row_batches=row_batches,
+                gpt_model='',
+                settings=settings,
+                passthrough_input_rows=True,
+            )
+            return build_background_tabular_generated_output_metadata(background_run)
+        except Exception as exc:
+            log_event(
+                '[WORKFLOW_GENERATED_FILE_EXPORT] Failed to queue large CSV export',
+                {
+                    'workflow_id': normalized_workflow.get('id'),
+                    'conversation_id': normalized_conversation_id,
+                    'row_count': row_count,
+                    'output_format': output_format,
+                    'error': str(exc),
+                },
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return None
+
+    try:
+        upload_result = upload_generated_analysis_artifact_for_user(
+            current_user_id=user_id,
+            conversation_id=normalized_conversation_id,
+            file_name=generated_file_name,
+            file_content=export_payload.get('file_content'),
+            capability=export_payload.get('capability') or 'file_export',
+            output_format=output_format,
+            summary=export_payload.get('summary'),
+        )
+    except Exception as exc:
+        log_event(
+            '[WORKFLOW_GENERATED_FILE_EXPORT] Failed to save generated file artifact',
+            {
+                'workflow_id': normalized_workflow.get('id'),
+                'conversation_id': normalized_conversation_id,
+                'row_count': row_count,
+                'output_format': output_format,
+                'error': str(exc),
+            },
+            debug_only=True,
+        )
+        return None
+
+    artifact_metadata = build_generated_file_artifact_metadata(
+        export_payload,
+        upload_result,
+        normalized_conversation_id,
+    )
+    if not artifact_metadata:
+        return None
+
+    log_event(
+        '[WORKFLOW_GENERATED_FILE_EXPORT] Saved generated file artifact',
+        {
+            'workflow_id': normalized_workflow.get('id'),
+            'conversation_id': normalized_conversation_id,
+            'artifact_message_id': artifact_metadata.get('artifact_message_id'),
+            'row_count': row_count,
+            'output_format': output_format,
+        },
+        debug_only=True,
+    )
+    return artifact_metadata
+
+
+def _maybe_create_workflow_assistant_table_generated_output(*args, **kwargs):
+    """Backward-compatible wrapper for the generic workflow file-output finalizer."""
+    return _maybe_create_workflow_generated_file_output(*args, **kwargs)
+
+
 def _create_assistant_message(conversation, workflow, result, trigger_source, run_id, user_message_doc, assistant_message_id=None):
     assistant_message_id = assistant_message_id or str(uuid.uuid4())
     timestamp = _utc_now_iso()
@@ -3460,7 +4744,21 @@ def _create_assistant_message(conversation, workflow, result, trigger_source, ru
     document_action = _get_document_action_config(workflow)
     workspace_type = _get_workflow_scope(workflow)
     group_id = _get_workflow_group_id(workflow)
+    generated_analysis_artifacts = list(result.get('generated_analysis_artifacts') or [])
+    generated_tabular_outputs = list(result.get('generated_tabular_outputs') or [])
     raw_agent_citations = list(result.get('agent_citations') or [])
+    generated_file_output = _maybe_create_workflow_generated_file_output(
+        workflow=workflow,
+        conversation_id=conversation.get('id'),
+        user_question=workflow.get('task_prompt', ''),
+        assistant_content=get_generated_file_export_content(result),
+        function_results=raw_agent_citations,
+        existing_outputs=generated_analysis_artifacts + generated_tabular_outputs,
+    )
+    if generated_file_output:
+        generated_analysis_artifacts.append(generated_file_output)
+        if generated_file_output.get('output_format') == 'csv':
+            generated_tabular_outputs.append(generated_file_output)
     web_search_citations = list(result.get('web_search_citations') or [])
     source_review_metadata = result.get('source_review') if isinstance(result.get('source_review'), dict) else {}
     url_access_metadata = result.get('url_access') if isinstance(result.get('url_access'), dict) else {}
@@ -3493,6 +4791,8 @@ def _create_assistant_message(conversation, workflow, result, trigger_source, ru
             'workspace_type': workspace_type,
             'group_id': group_id or None,
             'token_usage': result.get('token_usage'),
+            'generated_analysis_artifacts': generated_analysis_artifacts,
+            'generated_tabular_outputs': generated_tabular_outputs,
             'source_review': source_review_metadata,
             'workflow': {
                 'workflow_id': workflow.get('id'),
@@ -3505,6 +4805,7 @@ def _create_assistant_message(conversation, workflow, result, trigger_source, ru
                 'model_binding_summary': workflow.get('model_binding_summary') or {},
                 'document_action': document_action,
                 'document_search': result.get('document_search') or {},
+                'mixed_source_coverage': result.get('mixed_source_coverage') or {},
                 'analyze': workflow.get('analyze') or {},
                 'analysis_coverage': result.get('analysis_coverage') or {},
             },
@@ -3540,7 +4841,7 @@ def _create_assistant_message(conversation, workflow, result, trigger_source, ru
                 },
             )
         except Exception as exc:
-            debug_print(f'[WorkflowRunner] Failed to log workflow token usage: {exc}')
+            debug_print(f'[WORKFLOW_RUNNER] Failed to log workflow token usage: {exc}')
 
     conversation['last_updated'] = timestamp
     conversation['workflow_id'] = workflow.get('id')
@@ -3709,7 +5010,7 @@ def _chain_activity_callbacks(*callbacks):
                 activity_callback(event)
             except Exception as exc:
                 log_event(
-                    f'[WorkflowRunner] Document analysis activity callback failed: {exc}',
+                    f'[WORKFLOW_RUNNER] Document analysis activity callback failed: {exc}',
                     level=logging.WARNING,
                     exceptionTraceback=True,
                 )
@@ -3815,7 +5116,7 @@ def _resolve_recent_authorized_group_ids(user_id, group_ids):
         user_group_ids = normalize_search_id_list([group.get('id') for group in get_user_groups(user_id) if group.get('id')])
     except Exception as exc:
         log_event(
-            f'[WorkflowRunner] Failed to resolve authorized group ids for recent workflow documents: {exc}',
+            f'[WORKFLOW_RUNNER] Failed to resolve authorized group ids for recent workflow documents: {exc}',
             extra={'user_id': user_id},
             level=logging.WARNING,
             exceptionTraceback=True,
@@ -3835,7 +5136,7 @@ def _resolve_recent_authorized_public_workspace_ids(user_id, workspace_ids):
         visible_workspace_ids = normalize_search_id_list(get_user_visible_public_workspace_ids_from_settings(user_id))
     except Exception as exc:
         log_event(
-            f'[WorkflowRunner] Failed to resolve visible public workspace ids for recent workflow documents: {exc}',
+            f'[WORKFLOW_RUNNER] Failed to resolve visible public workspace ids for recent workflow documents: {exc}',
             extra={'user_id': user_id},
             level=logging.WARNING,
             exceptionTraceback=True,
@@ -3862,6 +5163,80 @@ def _get_recent_workflow_document_limit(action_type, settings):
             settings=settings,
         )
     return _get_workflow_search_max_documents(settings)
+
+
+def _resolve_analyze_all_document_ids(workflow, action_config, settings, max_documents):
+    """Enumerate a bounded catalog before the manifest performs object authorization."""
+    user_id = str(workflow.get('user_id') or '').strip()
+    workflow_group_id = _get_workflow_group_id(workflow)
+    doc_scope = normalize_search_scope(action_config.get('doc_scope'))
+    active_group_ids = normalize_search_id_list(action_config.get('active_group_ids'))
+    if workflow_group_id:
+        assert_group_role(
+            user_id,
+            workflow_group_id,
+            allowed_roles=("Owner", "Admin", "DocumentManager", "User"),
+        )
+        active_group_ids = [workflow_group_id]
+        doc_scope = 'group'
+    else:
+        active_group_ids = _resolve_recent_authorized_group_ids(user_id, active_group_ids)
+
+    active_public_workspace_ids = normalize_search_id_list(
+        action_config.get('active_public_workspace_id')
+    )
+    if not workflow_group_id:
+        active_public_workspace_ids = _resolve_recent_authorized_public_workspace_ids(
+            user_id,
+            active_public_workspace_ids,
+        )
+
+    catalog_requests = []
+    if doc_scope in {'personal', 'all'} and not workflow_group_id:
+        catalog_requests.append((DOCUMENT_ACCESS_SCOPE_PERSONAL, {'user_id': user_id}))
+    if doc_scope in {'group', 'all'} and active_group_ids:
+        catalog_requests.append((DOCUMENT_ACCESS_SCOPE_GROUP, {'group_ids': active_group_ids}))
+    if doc_scope in {'public', 'all'} and active_public_workspace_ids and not workflow_group_id:
+        catalog_requests.append((
+            DOCUMENT_ACCESS_SCOPE_PUBLIC,
+            {'public_workspace_ids': active_public_workspace_ids},
+        ))
+    if not catalog_requests:
+        raise ValueError('Analyze All Documents has no authorized workspace scopes to enumerate.')
+
+    document_ids = []
+    for source_scope, scope_arguments in catalog_requests:
+        catalog_result = enumerate_bounded_document_access_index_ids(
+            source_scope,
+            max_documents,
+            settings=settings,
+            **scope_arguments,
+        )
+        if not catalog_result.get('success'):
+            if catalog_result.get('status') == 'document_limit_exceeded':
+                raise ValueError(
+                    f'Analyze All Documents exceeds the configured {max_documents}-document limit.'
+                )
+            raise RuntimeError(
+                'Analyze All Documents is temporarily unavailable until the authorized document catalog is ready.'
+            )
+        for document_id in catalog_result.get('document_ids') or []:
+            if document_id not in document_ids:
+                document_ids.append(document_id)
+        if len(document_ids) > max_documents:
+            raise ValueError(
+                f'Analyze All Documents exceeds the configured {max_documents}-document limit.'
+            )
+
+    if not document_ids:
+        raise ValueError('Analyze All Documents found no authorized documents in the selected scopes.')
+    return {
+        'document_ids': document_ids,
+        'doc_scope': doc_scope,
+        'active_group_ids': active_group_ids,
+        'active_public_workspace_id': active_public_workspace_ids,
+        'target_mode': DOCUMENT_ACTION_TARGET_MODE_ALL,
+    }
 
 
 def _collect_recent_workflow_documents(workflow, action_config, settings, max_documents):
@@ -4001,20 +5376,90 @@ def _format_workflow_search_results(results):
 def _build_workflow_search_prompt(task_prompt, search_context):
     task_prompt = str(task_prompt or '').strip()
     retrieved_content = str((search_context or {}).get('retrieved_content') or '').strip()
-    if not retrieved_content:
+    evidence_messages = [
+        str((message or {}).get('content') or '').strip()
+        for message in list((search_context or {}).get('evidence_messages') or [])
+        if str((message or {}).get('content') or '').strip()
+    ]
+    if not retrieved_content and not evidence_messages:
         return task_prompt
 
-    return (
+    prompt_sections = [
         '[Workflow document search context]\n'
-        'Use the retrieved document excerpts below as grounding for the workflow task. '
-        'When the excerpts are insufficient, say what is missing instead of guessing.\n\n'
-        f'{retrieved_content}\n\n'
-        '[Workflow task]\n'
-        f'{task_prompt}'
-    ).strip()
+        'Use the bounded native-engine evidence below as grounding for the workflow task. '
+        'When the evidence is insufficient or source coverage is partial, say what is missing instead of guessing.'
+    ]
+    if retrieved_content:
+        prompt_sections.append(
+            f'[Narrative excerpts]\n{retrieved_content}'
+        )
+    if evidence_messages:
+        prompt_sections.append(
+            '[Computed and coverage evidence]\n'
+            + '\n\n'.join(evidence_messages)
+        )
+    prompt_sections.append(f'[Workflow task]\n{task_prompt}')
+    return '\n\n'.join(prompt_sections).strip()
 
 
-def _prepare_workflow_search_context(workflow, action_config, settings, thought_tracker=None, run_id=None):
+@contextmanager
+def _workflow_mixed_source_execution_context(user_id, conversation_id, manifest):
+    """Bind tabular tools to scope IDs from a freshly authorized manifest."""
+    group_ids = []
+    public_workspace_ids = []
+    for source in list(manifest or []):
+        if source.get('authorization_status') != 'authorized':
+            continue
+        group_id = str(source.get('group_id') or '').strip()
+        public_workspace_id = str(source.get('public_workspace_id') or '').strip()
+        if group_id and group_id not in group_ids:
+            group_ids.append(group_id)
+        if public_workspace_id and public_workspace_id not in public_workspace_ids:
+            public_workspace_ids.append(public_workspace_id)
+
+    with _ensure_execution_context(user_id):
+        previous_conversation_id = getattr(g, 'conversation_id', None) if hasattr(g, 'conversation_id') else None
+        previous_authorized_chat_context = getattr(g, 'authorized_chat_context', None) if hasattr(g, 'authorized_chat_context') else None
+        g.conversation_id = conversation_id
+        g.authorized_chat_context = {
+            'user_id': user_id,
+            'conversation_id': conversation_id,
+            'active_group_ids': group_ids,
+            'active_group_id': group_ids[0] if len(group_ids) == 1 else None,
+            'active_public_workspace_ids': public_workspace_ids,
+            'active_public_workspace_id': (
+                public_workspace_ids[0]
+                if len(public_workspace_ids) == 1
+                else None
+            ),
+            'fact_memory_scope_id': group_ids[0] if len(group_ids) == 1 else user_id,
+            'fact_memory_scope_type': 'group' if len(group_ids) == 1 else 'user',
+        }
+        try:
+            yield
+        finally:
+            if previous_conversation_id is None and hasattr(g, 'conversation_id'):
+                delattr(g, 'conversation_id')
+            else:
+                g.conversation_id = previous_conversation_id
+            if previous_authorized_chat_context is None and hasattr(g, 'authorized_chat_context'):
+                delattr(g, 'authorized_chat_context')
+            else:
+                g.authorized_chat_context = previous_authorized_chat_context
+
+
+def _prepare_workflow_search_context(
+    workflow,
+    action_config,
+    settings,
+    conversation_id='',
+    thought_tracker=None,
+    run_id=None,
+    request_correlation_id=None,
+):
+    request_correlation_id = normalize_mixed_source_correlation_id(
+        request_correlation_id
+    )
     if not _is_document_search_workflow(action_config):
         return {'workflow': workflow, 'citations': [], 'result_count': 0, 'document_count': 0, 'query': None}
 
@@ -4027,20 +5472,186 @@ def _prepare_workflow_search_context(workflow, action_config, settings, thought_
     if not query:
         return {'workflow': workflow, 'citations': [], 'result_count': 0, 'document_count': 0, 'query': None}
 
-    search_top_n = normalize_search_top_n(max(12, len(document_ids) * 3 if document_ids else 12))
-    search_result = search_documents(
-        query=query,
-        user_id=str(workflow.get('user_id') or '').strip(),
-        top_n=search_top_n,
-        doc_scope=resolved_action.get('doc_scope') or 'all',
-        document_ids=document_ids,
-        active_group_ids=resolved_action.get('active_group_ids'),
-        active_public_workspace_id=resolved_action.get('active_public_workspace_id'),
+    user_id = str(workflow.get('user_id') or '').strip()
+    manifest_doc_scope = resolved_action.get('doc_scope') or 'all'
+    manifest_group_ids = list(resolved_action.get('active_group_ids') or [])
+    manifest_public_workspace_ids = list(
+        resolved_action.get('active_public_workspace_id') or []
     )
+    workflow_group_id = _get_workflow_group_id(workflow)
+    if workflow_group_id:
+        assert_group_role(
+            user_id,
+            workflow_group_id,
+            allowed_roles=("Owner", "Admin", "DocumentManager", "User"),
+        )
+        manifest_doc_scope = 'group'
+        manifest_group_ids = [workflow_group_id]
+        manifest_public_workspace_ids = []
+
+    scoped_action = dict(resolved_action)
+    scoped_action['doc_scope'] = manifest_doc_scope
+    scoped_action['active_group_ids'] = manifest_group_ids
+    scoped_action['active_public_workspace_id'] = manifest_public_workspace_ids
+
+    if not is_mixed_source_chat_search_enabled(settings):
+        search_top_n = normalize_search_top_n(max(50, len(document_ids) * 3 if document_ids else 50))
+        search_result = search_documents(
+            query=query,
+            user_id=user_id,
+            top_n=search_top_n,
+            doc_scope=manifest_doc_scope,
+            document_ids=document_ids,
+            active_group_ids=manifest_group_ids,
+            active_public_workspace_id=manifest_public_workspace_ids,
+        )
+        retrieved_content, citations = _format_workflow_search_results(search_result.get('results') or [])
+        prepared_workflow = _apply_runtime_document_action_config(workflow, scoped_action)
+        prepared_workflow['task_prompt'] = _build_workflow_search_prompt(workflow.get('task_prompt', ''), {
+            'retrieved_content': retrieved_content,
+        })
+
+        if thought_tracker and run_id:
+            _add_workflow_activity_thought(
+                thought_tracker,
+                prepared_workflow,
+                run_id,
+                step_type='document',
+                content='Searched selected workflow documents',
+                detail=(
+                    f"results={search_result.get('result_count', 0)} | "
+                    f"documents={search_result.get('document_count', 0)}"
+                ),
+                activity_key=f'search:{run_id}:documents',
+                kind='document_search',
+                title='Document search',
+                status='completed',
+            )
+
+        return {
+            'workflow': prepared_workflow,
+            'citations': citations,
+            'agent_citations': [],
+            'generated_tabular_outputs': [],
+            'coverage': {},
+            'result_count': search_result.get('result_count', 0),
+            'document_count': search_result.get('document_count', 0),
+            'query': search_result.get('query'),
+        }
+
+    manifest = resolve_authorized_source_manifest(
+        document_ids,
+        user_id=user_id,
+        selection_mode='selected',
+        conversation_id=conversation_id,
+        active_group_ids=manifest_group_ids,
+        active_public_workspace_ids=manifest_public_workspace_ids,
+        doc_scope=manifest_doc_scope,
+        request_correlation_id=request_correlation_id,
+    )
+    partitions = partition_source_manifest(manifest)
+    narrative_sources = list(partitions.get('narrative_sources') or [])
+    tabular_sources = list(partitions.get('tabular_sources') or [])
+    narrative_document_ids = [
+        str(source.get('document_id') or '').strip()
+        for source in narrative_sources
+        if str(source.get('document_id') or '').strip()
+    ]
+    authorized_document_ids = narrative_document_ids + [
+        str(source.get('document_id') or '').strip()
+        for source in tabular_sources
+        if str(source.get('document_id') or '').strip()
+    ]
+
+    manifest_group_ids = []
+    manifest_public_workspace_ids = []
+    for source in narrative_sources + tabular_sources:
+        group_id = str(source.get('group_id') or '').strip()
+        public_workspace_id = str(source.get('public_workspace_id') or '').strip()
+        if group_id and group_id not in manifest_group_ids:
+            manifest_group_ids.append(group_id)
+        if public_workspace_id and public_workspace_id not in manifest_public_workspace_ids:
+            manifest_public_workspace_ids.append(public_workspace_id)
+
+    search_top_n = normalize_search_top_n(
+        max(50, len(narrative_document_ids) * 3 if narrative_document_ids else 50)
+    )
+    search_result = {
+        'results': [],
+        'result_count': 0,
+        'document_count': 0,
+        'query': query,
+    }
+    narrative_retrieval_failed = False
+    if narrative_document_ids:
+        try:
+            search_result = search_documents(
+                query=query,
+                user_id=user_id,
+                top_n=search_top_n,
+                doc_scope=manifest_doc_scope,
+                document_ids=narrative_document_ids,
+                active_group_ids=manifest_group_ids,
+                active_public_workspace_id=manifest_public_workspace_ids,
+                include_all_public_workspaces=True,
+            )
+        except Exception:
+            if not tabular_sources:
+                raise
+            narrative_retrieval_failed = True
     retrieved_content, citations = _format_workflow_search_results(search_result.get('results') or [])
-    prepared_workflow = _apply_runtime_document_action_config(workflow, resolved_action)
+    evidence_envelopes = (
+        build_failed_narrative_evidence_envelopes(
+            narrative_sources,
+            'selected',
+        )
+        if narrative_retrieval_failed
+        else build_narrative_evidence_envelopes(
+            narrative_sources,
+            search_result.get('results') or [],
+            'selected',
+        )
+    )
+
+    from functions_tabular_analysis import execute_mixed_source_tabular_evidence
+
+    native_token_usage_aggregate = _create_token_usage_aggregate()
+    with _workflow_mixed_source_execution_context(user_id, conversation_id, manifest):
+        tabular_result = execute_mixed_source_tabular_evidence(
+            tabular_sources=tabular_sources,
+            selection_mode='selected',
+            has_narrative_sources=bool(narrative_sources),
+            user_question=query,
+            user_id=user_id,
+            conversation_id=conversation_id,
+            gpt_model=_resolve_tabular_document_action_model_name(workflow, settings),
+            settings=settings,
+            thought_tracker=thought_tracker,
+            request_correlation_id=request_correlation_id,
+        )
+    _accumulate_token_usage_summary(
+        native_token_usage_aggregate,
+        tabular_result.get('token_usage'),
+    )
+    evidence_envelopes.extend(tabular_result.get('evidence_envelopes') or [])
+    mixed_source_handoff = build_mixed_source_evidence_handoff(
+        manifest,
+        evidence_envelopes,
+        'selected',
+        mode='search',
+        telemetry_settings=settings,
+        request_correlation_id=request_correlation_id,
+    )
+
+    prepared_action = dict(resolved_action)
+    prepared_action['document_ids'] = authorized_document_ids
+    prepared_action['doc_scope'] = manifest_doc_scope
+    prepared_action['active_group_ids'] = manifest_group_ids
+    prepared_action['active_public_workspace_id'] = manifest_public_workspace_ids
+    prepared_workflow = _apply_runtime_document_action_config(workflow, prepared_action)
     prepared_workflow['task_prompt'] = _build_workflow_search_prompt(workflow.get('task_prompt', ''), {
-        'retrieved_content': retrieved_content,
+        'retrieved_content': '',
+        'evidence_messages': [mixed_source_handoff],
     })
 
     if thought_tracker and run_id:
@@ -4052,7 +5663,8 @@ def _prepare_workflow_search_context(workflow, action_config, settings, thought_
             content='Searched selected workflow documents',
             detail=(
                 f"results={search_result.get('result_count', 0)} | "
-                f"documents={search_result.get('document_count', 0)}"
+                f"narrative_documents={len(narrative_sources)} | "
+                f"tabular_documents={len(tabular_sources)}"
             ),
             activity_key=f'search:{run_id}:documents',
             kind='document_search',
@@ -4063,10 +5675,61 @@ def _prepare_workflow_search_context(workflow, action_config, settings, thought_
     return {
         'workflow': prepared_workflow,
         'citations': citations,
+        'agent_citations': list(tabular_result.get('agent_citations') or []),
+        'generated_tabular_outputs': list(tabular_result.get('generated_outputs') or []),
+        'coverage': mixed_source_handoff.get('mixed_source_coverage') or {},
+        'token_usage': _finalize_token_usage(native_token_usage_aggregate),
         'result_count': search_result.get('result_count', 0),
-        'document_count': search_result.get('document_count', 0),
+        'document_count': len(authorized_document_ids),
         'query': search_result.get('query'),
     }
+
+
+def _attach_workflow_search_context(execution_result, workflow_search_context):
+    """Merge mixed Search evidence into either a workflow model or agent result."""
+    execution_result = execution_result if isinstance(execution_result, dict) else {}
+    search_context = workflow_search_context if isinstance(workflow_search_context, dict) else {}
+    if not search_context:
+        return execution_result
+
+    existing_agent_citations = deduplicate_mixed_source_references(
+        list(execution_result.get('agent_citations') or [])
+        + list(search_context.get('agent_citations') or []),
+        reference_type='citation',
+    )
+    existing_outputs = deduplicate_mixed_source_references(
+        list(execution_result.get('generated_tabular_outputs') or [])
+        + list(search_context.get('generated_tabular_outputs') or []),
+        reference_type='artifact',
+    )
+    hybrid_citations = deduplicate_mixed_source_references(
+        list(search_context.get('citations') or []),
+        reference_type='citation',
+    )
+    coverage = search_context.get('coverage') if isinstance(search_context.get('coverage'), dict) else {}
+    merged_token_usage = _merge_token_usage_summaries([
+        execution_result,
+        {'token_usage': search_context.get('token_usage')},
+    ])
+    execution_result.update({
+        'hybrid_citations': hybrid_citations,
+        'agent_citations': existing_agent_citations,
+        'generated_tabular_outputs': existing_outputs,
+        'mixed_source_coverage': coverage,
+        'token_usage': merged_token_usage or execution_result.get('token_usage'),
+        'augmented': bool(
+            hybrid_citations
+            or existing_agent_citations
+            or coverage.get('requested_source_count')
+        ),
+        'document_search': {
+            'query': search_context.get('query'),
+            'result_count': search_context.get('result_count', 0),
+            'document_count': search_context.get('document_count', 0),
+            'partial_coverage': bool(coverage.get('partial_coverage')),
+        },
+    })
+    return execution_result
 
 
 def _apply_runtime_document_action_config(workflow, action_config):
@@ -4703,7 +6366,7 @@ def _combine_per_document_analysis_results(document_results):
     }
 
 
-def _execute_model_workflow(workflow, settings, run_id=None, thought_tracker=None, url_access_context=None):
+def _execute_raw_model_workflow(workflow, settings, run_id=None, thought_tracker=None, url_access_context=None):
     if thought_tracker and run_id:
         _add_workflow_activity_thought(
             thought_tracker,
@@ -4753,6 +6416,226 @@ def _execute_model_workflow(workflow, settings, run_id=None, thought_tracker=Non
     }
 
 
+def _workflow_model_chat_capabilities_enabled(workflow):
+    value = (workflow or {}).get('chat_capabilities_enabled', False)
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {'1', 'true', 'yes', 'on'}
+    return bool(value)
+
+
+def _build_workflow_model_context(workflow, deployment_name, provider):
+    workflow = workflow if isinstance(workflow, dict) else {}
+    binding_summary = workflow.get('model_binding_summary') if isinstance(workflow.get('model_binding_summary'), dict) else {}
+    endpoint_id = str(workflow.get('model_endpoint_id') or binding_summary.get('endpoint_id') or '').strip()
+    model_id = str(workflow.get('model_id') or binding_summary.get('model_id') or '').strip()
+    model_context = {
+        'user_id': str(workflow.get('user_id') or '').strip(),
+        'model_deployment': str(deployment_name or '').strip(),
+        'provider': str(provider or workflow.get('model_provider') or binding_summary.get('provider') or '').strip().lower(),
+    }
+    if endpoint_id:
+        model_context['endpoint_id'] = endpoint_id
+    if model_id:
+        model_context['model_id'] = model_id
+
+    group_id = _get_workflow_group_id(workflow)
+    if group_id:
+        model_context['active_group_ids'] = [group_id]
+
+    return model_context
+
+
+@contextmanager
+def _workflow_model_core_execution_context(workflow, conversation_id, run_id):
+    workflow = workflow if isinstance(workflow, dict) else {}
+    user_id = str(workflow.get('user_id') or '').strip()
+    group_id = _get_workflow_group_id(workflow)
+    context_values = {
+        'conversation_id': str(conversation_id or '').strip(),
+        'workflow_id': str(workflow.get('id') or '').strip(),
+        'workflow_run_id': str(run_id or '').strip(),
+        'conversation_group_id': group_id,
+        'authorized_chat_context': None,
+    }
+    if group_id:
+        context_values['authorized_chat_context'] = {
+            'user_id': user_id,
+            'conversation_id': str(conversation_id or '').strip(),
+            'active_group_ids': [group_id],
+            'active_group_id': group_id,
+            'active_public_workspace_ids': [],
+            'active_public_workspace_id': None,
+            'fact_memory_scope_id': group_id,
+            'fact_memory_scope_type': 'group',
+        }
+
+    with _ensure_execution_context(user_id):
+        previous_values = {
+            name: (hasattr(g, name), getattr(g, name, None))
+            for name in context_values
+        }
+        for name, value in context_values.items():
+            setattr(g, name, value)
+
+        try:
+            yield
+        finally:
+            for name, (was_defined, value) in previous_values.items():
+                if was_defined:
+                    setattr(g, name, value)
+                elif hasattr(g, name):
+                    delattr(g, name)
+
+
+def _execute_model_workflow_with_core_capabilities(
+    workflow,
+    settings,
+    conversation_id='',
+    run_id=None,
+    thought_tracker=None,
+    url_access_context=None,
+):
+    _raise_if_workflow_run_cancelled(workflow, run_id)
+    user_id = str(workflow.get('user_id') or '').strip()
+    if not user_id:
+        raise ValueError('Direct model workflows require an owning user.')
+
+    if thought_tracker and run_id:
+        _add_workflow_activity_thought(
+            thought_tracker,
+            workflow,
+            run_id,
+            step_type='generation',
+            content='Starting direct model execution with core capabilities',
+            detail=None,
+            activity_key=f'generation:{run_id}',
+            kind='model_execution',
+            title='Model execution',
+            status='running',
+        )
+
+    _, deployment_name, provider = _resolve_model_workflow_client(workflow, settings)
+    model_context = _build_workflow_model_context(workflow, deployment_name, provider)
+    workflow_kernel_settings = get_workflow_kernel_settings(settings)
+
+    with _workflow_model_core_execution_context(workflow, conversation_id, run_id):
+        plugin_logger = get_plugin_logger()
+        callback_key = None
+        if conversation_id:
+            plugin_logger.clear_invocations_for_conversation(user_id, conversation_id)
+        if thought_tracker and run_id and conversation_id:
+            callback_key = register_plugin_invocation_thought_callback(
+                plugin_logger,
+                thought_tracker,
+                user_id,
+                conversation_id,
+                actor_label='Workflow model',
+            )
+
+        try:
+            kernel = Kernel()
+            load_core_plugins_only(kernel, workflow_kernel_settings)
+            chat_service, _ = build_semantic_kernel_chat_service_for_model(
+                deployment_name,
+                settings,
+                service_id=f"workflow-model-{workflow.get('id') or 'default'}",
+                model_context=model_context,
+            )
+            kernel.add_service(chat_service)
+
+            _resolve_workflow_conversation_context(
+                workflow,
+                model_name=deployment_name,
+                model_provider=provider,
+                model_endpoint_id=workflow.get('model_endpoint_id'),
+            )
+            chat_history = ChatHistory()
+            for message in _build_workflow_chat_messages(
+                workflow.get('task_prompt', ''),
+                url_access_context=url_access_context,
+                apply_generation_guidance=True,
+                conversation_context_system=workflow.get('conversation_context_system_message'),
+                conversation_context_data=workflow.get('conversation_context_data_message'),
+            ):
+                chat_history.add_message(message)
+
+            execution_settings = PromptExecutionSettings()
+            execution_settings.function_choice_behavior = FunctionChoiceBehavior.Auto(
+                maximum_auto_invoke_attempts=get_max_auto_invoke_attempts(workflow_kernel_settings)
+            )
+            completion_messages = _execute_cancelable_workflow_step(
+                workflow,
+                run_id,
+                lambda: asyncio.run(
+                    chat_service.get_chat_message_contents(
+                        chat_history,
+                        execution_settings,
+                        kernel=kernel,
+                    )
+                ),
+            )
+            reply = _extract_message_text(
+                completion_messages[0].content if completion_messages else ''
+            )
+            agent_citations = _build_agent_citations_from_invocations(user_id, conversation_id)
+            alert_targets = _collect_agent_alert_targets(user_id, conversation_id)
+        finally:
+            if callback_key:
+                plugin_logger.deregister_callbacks(callback_key)
+
+    if thought_tracker and run_id:
+        _add_workflow_activity_thought(
+            thought_tracker,
+            workflow,
+            run_id,
+            step_type='generation',
+            content=f'Direct model execution completed with {deployment_name}',
+            detail=f'provider={provider}; core_capabilities=true',
+            activity_key=f'generation:{run_id}',
+            kind='model_execution',
+            title='Model execution',
+            status='completed',
+        )
+
+    return {
+        'reply': reply,
+        'model_deployment_name': deployment_name,
+        'provider': provider,
+        'agent_citations': agent_citations,
+        'alert_targets': alert_targets,
+        'core_capabilities_enabled': True,
+    }
+
+
+def _execute_model_workflow(
+    workflow,
+    settings,
+    conversation_id='',
+    run_id=None,
+    thought_tracker=None,
+    url_access_context=None,
+):
+    if _workflow_model_chat_capabilities_enabled(workflow):
+        return _execute_model_workflow_with_core_capabilities(
+            workflow,
+            settings,
+            conversation_id=conversation_id,
+            run_id=run_id,
+            thought_tracker=thought_tracker,
+            url_access_context=url_access_context,
+        )
+
+    return _execute_raw_model_workflow(
+        workflow,
+        settings,
+        run_id=run_id,
+        thought_tracker=thought_tracker,
+        url_access_context=url_access_context,
+    )
+
+
 def _execute_document_analysis_workflow(
     workflow,
     settings,
@@ -4762,7 +6645,14 @@ def _execute_document_analysis_workflow(
     external_activity_callback=None,
     action_config=None,
     url_access_context=None,
+    cancel_requested=None,
+    request_correlation_id=None,
 ):
+    raise_if_mixed_source_cancelled(
+        cancel_requested,
+        'manifest',
+        request_correlation_id=request_correlation_id,
+    )
     analysis_config = action_config if isinstance(action_config, dict) else _get_document_action_config(workflow)
     if analysis_config.get('type') != DOCUMENT_ACTION_TYPE_ANALYZE:
         raise ValueError('Document analysis is not enabled for this workflow.')
@@ -4779,7 +6669,7 @@ def _execute_document_analysis_workflow(
     user_id = str(workflow.get('user_id') or '').strip()
     selected_agent = workflow.get('selected_agent') if isinstance(workflow.get('selected_agent'), dict) else {}
     debug_print(
-        '[WorkflowDocumentAnalysis] Starting workflow action | '
+        '[WORKFLOW_DOCUMENT_ANALYSIS] Starting workflow action | '
         f"workflow_id={workflow.get('id')} | "
         f'run_id={run_id} | '
         f"runner_type={workflow.get('runner_type')} | "
@@ -4826,6 +6716,8 @@ def _execute_document_analysis_workflow(
                     external_activity_callback=external_activity_callback,
                     action_config=per_document_action,
                     url_access_context=url_access_context,
+                    cancel_requested=cancel_requested,
+                    request_correlation_id=request_correlation_id,
                 ),
             })
 
@@ -4912,45 +6804,77 @@ def _execute_document_analysis_workflow(
                     _accumulate_token_usage(token_usage_aggregate, result)
                     return str(result)
 
-                tabular_action_payload = _maybe_execute_tabular_document_action(
-                    DOCUMENT_ACTION_TYPE_ANALYZE,
+                def record_native_token_usage(token_usage):
+                    _accumulate_token_usage_summary(token_usage_aggregate, token_usage)
+
+                analysis_result = _execute_mixed_source_analyze_workflow(
+                    workflow, analysis_config, settings, invoke_prompt,
+                    conversation_id=conversation_id, activity_callback=activity_callback,
+                    thought_tracker=thought_tracker, live_thought_callback=external_activity_callback,
+                    max_documents=workflow_analysis_max_documents,
+                    cancel_requested=cancel_requested,
+                    request_correlation_id=request_correlation_id,
+                    token_usage_callback=record_native_token_usage,
+                )
+                primary_generated_outputs = list(
+                    analysis_result.get('generated_tabular_outputs')
+                    or []
+                )
+                _reauthorize_mixed_source_workflow_result(
                     workflow,
                     analysis_config,
-                    settings,
-                    conversation_id=conversation_id,
-                    invoke_prompt=invoke_prompt,
-                    thought_tracker=thought_tracker,
-                    live_thought_callback=external_activity_callback,
-                )
-                if tabular_action_payload:
-                    analysis_result = tabular_action_payload.get('result') or {}
-                else:
-                    analysis_result = run_document_analysis(
-                        user_id=user_id,
-                        analysis_prompt=workflow.get('task_prompt', ''),
-                        document_ids=analysis_config.get('document_ids'),
-                        invoke_prompt=invoke_prompt,
-                        doc_scope=analysis_config.get('doc_scope'),
-                        active_group_ids=analysis_config.get('active_group_ids'),
-                        active_public_workspace_id=analysis_config.get('active_public_workspace_id'),
-                        window_unit=analysis_config.get('window_unit'),
-                        window_size=analysis_config.get('window_size'),
-                        window_percent=analysis_config.get('window_percent'),
-                        max_retries_per_window=analysis_config.get('max_retries_per_window'),
-                        activity_callback=activity_callback,
-                        max_documents=workflow_analysis_max_documents,
-                    )
-                document_analysis_artifact_payload = _maybe_create_document_analysis_generated_artifacts(
                     analysis_result,
-                    workflow.get('task_prompt', ''),
-                    conversation_id=conversation_id,
-                    primary_generated_outputs=list((tabular_action_payload or {}).get('generated_tabular_outputs') or []),
+                    settings,
+                    conversation_id,
+                    cancel_requested=cancel_requested,
+                    request_correlation_id=request_correlation_id,
+                    additional_generated_outputs=primary_generated_outputs,
+                )
+                try:
+                    document_analysis_artifact_payload = _maybe_create_document_analysis_generated_artifacts(
+                        analysis_result,
+                        workflow.get('task_prompt', ''),
+                        conversation_id=conversation_id,
+                        primary_generated_outputs=primary_generated_outputs,
+                        cancel_requested=cancel_requested,
+                        request_correlation_id=request_correlation_id,
+                    )
+                except MixedSourceCancellationError:
+                    _rollback_mixed_source_generated_outputs(
+                        user_id,
+                        conversation_id,
+                        primary_generated_outputs,
+                        reason='cancellation',
+                    )
+                    raise
+                _reauthorize_mixed_source_workflow_result(
+                    workflow,
+                    analysis_config,
+                    analysis_result,
+                    settings,
+                    conversation_id,
+                    cancel_requested=cancel_requested,
+                    request_correlation_id=request_correlation_id,
+                    additional_generated_outputs=(
+                        primary_generated_outputs
+                        + list(document_analysis_artifact_payload.get('artifacts') or [])
+                    ),
                 )
                 agent_citations = _build_agent_citations_from_invocations(user_id, conversation_id)
                 if not agent_citations:
-                    agent_citations = list((tabular_action_payload or {}).get('agent_citations') or [])
+                    agent_citations = list(
+                        analysis_result.get('agent_citations')
+                        or []
+                    )
                 alert_targets = _collect_agent_alert_targets(user_id, conversation_id)
                 token_usage = _finalize_token_usage(token_usage_aggregate)
+                if analysis_result.get('mixed_source_manifest'):
+                    _emit_mixed_source_token_telemetry(
+                        settings,
+                        'analyze',
+                        token_usage,
+                        request_correlation_id=request_correlation_id,
+                    )
 
                 return {
                     'reply': (
@@ -4966,7 +6890,10 @@ def _execute_document_analysis_workflow(
                     'agent_name': getattr(loaded_agent, 'name', None) or requested_name,
                     'agent_display_name': getattr(loaded_agent, 'display_name', None) or selected_agent.get('display_name') or requested_name,
                     'agent_citations': agent_citations,
-                    'generated_tabular_outputs': list((tabular_action_payload or {}).get('generated_tabular_outputs') or []),
+                    'generated_tabular_outputs': list(
+                        analysis_result.get('generated_tabular_outputs')
+                        or []
+                    ),
                     'alert_targets': alert_targets,
                 }
             finally:
@@ -5027,43 +6954,72 @@ def _execute_document_analysis_workflow(
             return ''
         return _extract_message_text(completion.choices[0].message.content)
 
-    tabular_action_payload = _maybe_execute_tabular_document_action(
-        DOCUMENT_ACTION_TYPE_ANALYZE,
+    def record_native_token_usage(token_usage):
+        _accumulate_token_usage_summary(token_usage_aggregate, token_usage)
+
+    analysis_result = _execute_mixed_source_analyze_workflow(
+        workflow, analysis_config, settings, invoke_model_prompt,
+        conversation_id=conversation_id, activity_callback=activity_callback,
+        thought_tracker=thought_tracker, live_thought_callback=external_activity_callback,
+        max_documents=workflow_analysis_max_documents,
+        cancel_requested=cancel_requested,
+        request_correlation_id=request_correlation_id,
+        token_usage_callback=record_native_token_usage,
+    )
+    primary_generated_outputs = list(
+        analysis_result.get('generated_tabular_outputs')
+        or []
+    )
+    _reauthorize_mixed_source_workflow_result(
         workflow,
         analysis_config,
-        settings,
-        conversation_id=conversation_id,
-        invoke_prompt=invoke_model_prompt,
-        thought_tracker=thought_tracker,
-        live_thought_callback=external_activity_callback,
-    )
-    if tabular_action_payload:
-        analysis_result = tabular_action_payload.get('result') or {}
-    else:
-        analysis_result = run_document_analysis(
-            user_id=user_id,
-            analysis_prompt=workflow.get('task_prompt', ''),
-            document_ids=analysis_config.get('document_ids'),
-            invoke_prompt=invoke_model_prompt,
-            doc_scope=analysis_config.get('doc_scope'),
-            active_group_ids=analysis_config.get('active_group_ids'),
-            active_public_workspace_id=analysis_config.get('active_public_workspace_id'),
-            window_unit=analysis_config.get('window_unit'),
-            window_size=analysis_config.get('window_size'),
-            window_percent=analysis_config.get('window_percent'),
-            max_retries_per_window=analysis_config.get('max_retries_per_window'),
-            activity_callback=activity_callback,
-            max_documents=workflow_analysis_max_documents,
-        )
-    document_analysis_artifact_payload = _maybe_create_document_analysis_generated_artifacts(
         analysis_result,
-        workflow.get('task_prompt', ''),
-        conversation_id=conversation_id,
-        primary_generated_outputs=list((tabular_action_payload or {}).get('generated_tabular_outputs') or []),
+        settings,
+        conversation_id,
+        cancel_requested=cancel_requested,
+        request_correlation_id=request_correlation_id,
+        additional_generated_outputs=primary_generated_outputs,
+    )
+    try:
+        document_analysis_artifact_payload = _maybe_create_document_analysis_generated_artifacts(
+            analysis_result,
+            workflow.get('task_prompt', ''),
+            conversation_id=conversation_id,
+            primary_generated_outputs=primary_generated_outputs,
+            cancel_requested=cancel_requested,
+            request_correlation_id=request_correlation_id,
+        )
+    except MixedSourceCancellationError:
+        _rollback_mixed_source_generated_outputs(
+            user_id,
+            conversation_id,
+            primary_generated_outputs,
+            reason='cancellation',
+        )
+        raise
+    _reauthorize_mixed_source_workflow_result(
+        workflow,
+        analysis_config,
+        analysis_result,
+        settings,
+        conversation_id,
+        cancel_requested=cancel_requested,
+        request_correlation_id=request_correlation_id,
+        additional_generated_outputs=(
+            primary_generated_outputs
+            + list(document_analysis_artifact_payload.get('artifacts') or [])
+        ),
     )
     token_usage = _finalize_token_usage(token_usage_aggregate)
+    if analysis_result.get('mixed_source_manifest'):
+        _emit_mixed_source_token_telemetry(
+            settings,
+            'analyze',
+            token_usage,
+            request_correlation_id=request_correlation_id,
+        )
     debug_print(
-        '[WorkflowDocumentAnalysis] Completed workflow action | '
+        '[WORKFLOW_DOCUMENT_ANALYSIS] Completed workflow action | '
         f"workflow_id={workflow.get('id')} | "
         f'run_id={run_id} | '
         f'provider={provider} | '
@@ -5083,8 +7039,14 @@ def _execute_document_analysis_workflow(
         'model_deployment_name': deployment_name,
         'token_usage': token_usage,
         'provider': provider,
-        'agent_citations': list((tabular_action_payload or {}).get('agent_citations') or []),
-        'generated_tabular_outputs': list((tabular_action_payload or {}).get('generated_tabular_outputs') or []),
+        'agent_citations': list(
+            analysis_result.get('agent_citations')
+            or []
+        ),
+        'generated_tabular_outputs': list(
+            analysis_result.get('generated_tabular_outputs')
+            or []
+        ),
     }
 
 
@@ -5097,7 +7059,14 @@ def _execute_document_comparison_workflow(
     external_activity_callback=None,
     action_config=None,
     url_access_context=None,
+    cancel_requested=None,
+    request_correlation_id=None,
 ):
+    raise_if_mixed_source_cancelled(
+        cancel_requested,
+        'manifest',
+        request_correlation_id=request_correlation_id,
+    )
     comparison_config = action_config if isinstance(action_config, dict) else _get_document_action_config(workflow)
     if comparison_config.get('type') != DOCUMENT_ACTION_TYPE_COMPARISON:
         raise ValueError('Document comparison is not enabled for this workflow.')
@@ -5109,7 +7078,7 @@ def _execute_document_comparison_workflow(
     user_id = str(workflow.get('user_id') or '').strip()
     selected_agent = workflow.get('selected_agent') if isinstance(workflow.get('selected_agent'), dict) else {}
     debug_print(
-        '[WorkflowDocumentComparison] Starting workflow action | '
+        '[WORKFLOW_DOCUMENT_COMPARISON] Starting workflow action | '
         f"workflow_id={workflow.get('id')} | "
         f'run_id={run_id} | '
         f"runner_type={workflow.get('runner_type')} | "
@@ -5184,17 +7153,33 @@ def _execute_document_comparison_workflow(
                     _accumulate_token_usage(token_usage_aggregate, result)
                     return str(result)
 
-                tabular_action_payload = _maybe_execute_tabular_document_action(
-                    DOCUMENT_ACTION_TYPE_COMPARISON,
-                    workflow,
-                    comparison_config,
-                    settings,
-                    conversation_id=conversation_id,
-                    invoke_prompt=invoke_prompt,
-                    thought_tracker=thought_tracker,
-                    live_thought_callback=external_activity_callback,
+                def record_native_token_usage(token_usage):
+                    _accumulate_token_usage_summary(token_usage_aggregate, token_usage)
+
+                mixed_comparison_enabled = is_cross_format_compare_enabled(settings)
+                mixed_comparison_result = (
+                    _execute_cross_format_comparison_workflow(
+                        workflow, comparison_config, settings, invoke_prompt,
+                        conversation_id=conversation_id, activity_callback=activity_callback,
+                        thought_tracker=thought_tracker, live_thought_callback=external_activity_callback,
+                        cancel_requested=cancel_requested,
+                        request_correlation_id=request_correlation_id,
+                        token_usage_callback=record_native_token_usage,
+                    ) if mixed_comparison_enabled else None
                 )
-                if tabular_action_payload:
+                if not mixed_comparison_enabled:
+                    _raise_legacy_cross_format_compare_limitation(comparison_config, user_id, conversation_id)
+                tabular_action_payload = None if mixed_comparison_result else _maybe_execute_tabular_document_action(
+                    DOCUMENT_ACTION_TYPE_COMPARISON, workflow, comparison_config, settings,
+                    conversation_id=conversation_id, invoke_prompt=invoke_prompt,
+                    thought_tracker=thought_tracker, live_thought_callback=external_activity_callback,
+                    cancel_requested=cancel_requested,
+                    request_correlation_id=request_correlation_id,
+                    token_usage_callback=record_native_token_usage,
+                )
+                if mixed_comparison_result:
+                    comparison_result = mixed_comparison_result
+                elif tabular_action_payload:
                     comparison_result = tabular_action_payload.get('result') or {}
                 else:
                     comparison_result = run_document_comparison(
@@ -5204,17 +7189,69 @@ def _execute_document_comparison_workflow(
                         invoke_prompt=invoke_prompt,
                         activity_callback=activity_callback,
                         conversation_id=conversation_id,
+                        cancel_requested=cancel_requested,
+                        request_correlation_id=request_correlation_id,
                     )
-                comparison_artifact_payload = _maybe_create_comparison_generated_artifacts(
-                    comparison_result,
-                    workflow.get('task_prompt', ''),
-                    conversation_id=conversation_id,
-                )
                 agent_citations = _build_agent_citations_from_invocations(user_id, conversation_id)
-                if not agent_citations:
-                    agent_citations = list((tabular_action_payload or {}).get('agent_citations') or [])
+                agent_citations = deduplicate_mixed_source_references(
+                    list(agent_citations or [])
+                    + list((tabular_action_payload or {}).get('agent_citations') or [])
+                    + list(comparison_result.get('agent_citations') or []),
+                    reference_type='citation',
+                )
+                generated_tabular_outputs = deduplicate_mixed_source_references(
+                    list((tabular_action_payload or {}).get('generated_tabular_outputs') or [])
+                    + list(comparison_result.get('generated_tabular_outputs') or []),
+                    reference_type='artifact',
+                )
+                _reauthorize_mixed_source_workflow_result(
+                    workflow,
+                    comparison_config,
+                    comparison_result,
+                    settings,
+                    conversation_id,
+                    cancel_requested=cancel_requested,
+                    request_correlation_id=request_correlation_id,
+                    additional_generated_outputs=generated_tabular_outputs,
+                )
+                try:
+                    comparison_artifact_payload = _maybe_create_comparison_generated_artifacts(
+                        comparison_result,
+                        workflow.get('task_prompt', ''),
+                        conversation_id=conversation_id,
+                        cancel_requested=cancel_requested,
+                        request_correlation_id=request_correlation_id,
+                    )
+                except MixedSourceCancellationError:
+                    _rollback_mixed_source_generated_outputs(
+                        user_id,
+                        conversation_id,
+                        generated_tabular_outputs,
+                        reason='cancellation',
+                    )
+                    raise
+                _reauthorize_mixed_source_workflow_result(
+                    workflow,
+                    comparison_config,
+                    comparison_result,
+                    settings,
+                    conversation_id,
+                    cancel_requested=cancel_requested,
+                    request_correlation_id=request_correlation_id,
+                    additional_generated_outputs=(
+                        generated_tabular_outputs
+                        + list(comparison_artifact_payload.get('artifacts') or [])
+                    ),
+                )
                 alert_targets = _collect_agent_alert_targets(user_id, conversation_id)
                 token_usage = _finalize_token_usage(token_usage_aggregate)
+                if comparison_result.get('mixed_source_manifest'):
+                    _emit_mixed_source_token_telemetry(
+                        settings,
+                        'compare',
+                        token_usage,
+                        request_correlation_id=request_correlation_id,
+                    )
 
                 return {
                     'reply': (
@@ -5230,7 +7267,7 @@ def _execute_document_comparison_workflow(
                     'agent_name': getattr(loaded_agent, 'name', None) or requested_name,
                     'agent_display_name': getattr(loaded_agent, 'display_name', None) or selected_agent.get('display_name') or requested_name,
                     'agent_citations': agent_citations,
-                    'generated_tabular_outputs': list((tabular_action_payload or {}).get('generated_tabular_outputs') or []),
+                    'generated_tabular_outputs': generated_tabular_outputs,
                     'alert_targets': alert_targets,
                 }
             finally:
@@ -5291,17 +7328,33 @@ def _execute_document_comparison_workflow(
             return ''
         return _extract_message_text(completion.choices[0].message.content)
 
-    tabular_action_payload = _maybe_execute_tabular_document_action(
-        DOCUMENT_ACTION_TYPE_COMPARISON,
-        workflow,
-        comparison_config,
-        settings,
-        conversation_id=conversation_id,
-        invoke_prompt=invoke_model_prompt,
-        thought_tracker=thought_tracker,
-        live_thought_callback=external_activity_callback,
+    def record_native_token_usage(token_usage):
+        _accumulate_token_usage_summary(token_usage_aggregate, token_usage)
+
+    mixed_comparison_enabled = is_cross_format_compare_enabled(settings)
+    mixed_comparison_result = (
+        _execute_cross_format_comparison_workflow(
+            workflow, comparison_config, settings, invoke_model_prompt,
+            conversation_id=conversation_id, activity_callback=activity_callback,
+            thought_tracker=thought_tracker, live_thought_callback=external_activity_callback,
+            cancel_requested=cancel_requested,
+            request_correlation_id=request_correlation_id,
+            token_usage_callback=record_native_token_usage,
+        ) if mixed_comparison_enabled else None
     )
-    if tabular_action_payload:
+    if not mixed_comparison_enabled:
+        _raise_legacy_cross_format_compare_limitation(comparison_config, user_id, conversation_id)
+    tabular_action_payload = None if mixed_comparison_result else _maybe_execute_tabular_document_action(
+        DOCUMENT_ACTION_TYPE_COMPARISON, workflow, comparison_config, settings,
+        conversation_id=conversation_id, invoke_prompt=invoke_model_prompt,
+        thought_tracker=thought_tracker, live_thought_callback=external_activity_callback,
+        cancel_requested=cancel_requested,
+        request_correlation_id=request_correlation_id,
+        token_usage_callback=record_native_token_usage,
+    )
+    if mixed_comparison_result:
+        comparison_result = mixed_comparison_result
+    elif tabular_action_payload:
         comparison_result = tabular_action_payload.get('result') or {}
     else:
         comparison_result = run_document_comparison(
@@ -5311,15 +7364,68 @@ def _execute_document_comparison_workflow(
             invoke_prompt=invoke_model_prompt,
             activity_callback=activity_callback,
             conversation_id=conversation_id,
+            cancel_requested=cancel_requested,
+            request_correlation_id=request_correlation_id,
         )
-    comparison_artifact_payload = _maybe_create_comparison_generated_artifacts(
+    agent_citations = deduplicate_mixed_source_references(
+        list((tabular_action_payload or {}).get('agent_citations') or [])
+        + list(comparison_result.get('agent_citations') or []),
+        reference_type='citation',
+    )
+    generated_tabular_outputs = deduplicate_mixed_source_references(
+        list((tabular_action_payload or {}).get('generated_tabular_outputs') or [])
+        + list(comparison_result.get('generated_tabular_outputs') or []),
+        reference_type='artifact',
+    )
+    _reauthorize_mixed_source_workflow_result(
+        workflow,
+        comparison_config,
         comparison_result,
-        workflow.get('task_prompt', ''),
-        conversation_id=conversation_id,
+        settings,
+        conversation_id,
+        cancel_requested=cancel_requested,
+        request_correlation_id=request_correlation_id,
+        additional_generated_outputs=generated_tabular_outputs,
+    )
+    try:
+        comparison_artifact_payload = _maybe_create_comparison_generated_artifacts(
+            comparison_result,
+            workflow.get('task_prompt', ''),
+            conversation_id=conversation_id,
+            cancel_requested=cancel_requested,
+            request_correlation_id=request_correlation_id,
+        )
+    except MixedSourceCancellationError:
+        _rollback_mixed_source_generated_outputs(
+            user_id,
+            conversation_id,
+            generated_tabular_outputs,
+            reason='cancellation',
+        )
+        raise
+    _reauthorize_mixed_source_workflow_result(
+        workflow,
+        comparison_config,
+        comparison_result,
+        settings,
+        conversation_id,
+        cancel_requested=cancel_requested,
+        request_correlation_id=request_correlation_id,
+        additional_generated_outputs=(
+            generated_tabular_outputs
+            + list(comparison_artifact_payload.get('artifacts') or [])
+        ),
     )
     token_usage = _finalize_token_usage(token_usage_aggregate)
+    if comparison_result.get('mixed_source_manifest'):
+        _emit_mixed_source_token_telemetry(
+            settings,
+            'compare',
+            token_usage,
+            request_correlation_id=request_correlation_id,
+        )
     debug_print(
-        '[WorkflowDocumentComparison] Completed workflow action | '
+        '[WORKFLOW_DOCUMENT_COMPARISON] Completed workflow action | '
         f"workflow_id={workflow.get('id')} | "
         f'run_id={run_id} | '
         f'provider={provider} | '
@@ -5339,8 +7445,8 @@ def _execute_document_comparison_workflow(
         'model_deployment_name': deployment_name,
         'token_usage': token_usage,
         'provider': provider,
-        'agent_citations': list((tabular_action_payload or {}).get('agent_citations') or []),
-        'generated_tabular_outputs': list((tabular_action_payload or {}).get('generated_tabular_outputs') or []),
+        'agent_citations': agent_citations,
+        'generated_tabular_outputs': generated_tabular_outputs,
     }
 
 
@@ -5352,13 +7458,23 @@ def _execute_document_action_workflow(
     thought_tracker=None,
     external_activity_callback=None,
     url_access_context=None,
+    cancel_requested=None,
+    request_correlation_id=None,
 ):
+    request_correlation_id = normalize_mixed_source_correlation_id(
+        request_correlation_id
+    )
+    raise_if_mixed_source_cancelled(
+        cancel_requested,
+        'manifest',
+        request_correlation_id=request_correlation_id,
+    )
     action_config = _get_document_action_config(workflow)
     action_config = _resolve_recent_document_action_targets(workflow, action_config, settings)
     workflow = _apply_runtime_document_action_config(workflow, action_config)
     action_type = action_config.get('type')
     debug_print(
-        '[WorkflowDocumentAction] Dispatching action | '
+        '[WORKFLOW_DOCUMENT_ACTION] Dispatching action | '
         f"workflow_id={workflow.get('id')} | "
         f'run_id={run_id} | '
         f'action_type={action_type} | '
@@ -5377,6 +7493,8 @@ def _execute_document_action_workflow(
                 external_activity_callback=external_activity_callback,
                 action_config=action_config,
                 url_access_context=url_access_context,
+                cancel_requested=cancel_requested,
+                request_correlation_id=request_correlation_id,
             )
         elif action_type == DOCUMENT_ACTION_TYPE_COMPARISON:
             result = _execute_document_comparison_workflow(
@@ -5388,12 +7506,14 @@ def _execute_document_action_workflow(
                 external_activity_callback=external_activity_callback,
                 action_config=action_config,
                 url_access_context=url_access_context,
+                cancel_requested=cancel_requested,
+                request_correlation_id=request_correlation_id,
             )
         else:
             raise ValueError('No document action is enabled for this workflow.')
     except Exception as exc:
         debug_print(
-            '[WorkflowDocumentAction] Action failed | '
+            '[WORKFLOW_DOCUMENT_ACTION] Action failed | '
             f"workflow_id={workflow.get('id')} | "
             f'run_id={run_id} | '
             f'action_type={action_type} | '
@@ -5402,8 +7522,13 @@ def _execute_document_action_workflow(
         )
         raise
 
+    raise_if_mixed_source_cancelled(
+        cancel_requested,
+        'finalization',
+        request_correlation_id=request_correlation_id,
+    )
     debug_print(
-        '[WorkflowDocumentAction] Action completed | '
+        '[WORKFLOW_DOCUMENT_ACTION] Action completed | '
         f"workflow_id={workflow.get('id')} | "
         f'run_id={run_id} | '
         f'action_type={action_type} | '
@@ -5416,6 +7541,7 @@ def _execute_document_action_workflow(
 
 
 def _execute_agent_workflow(workflow, settings, conversation_id='', run_id=None, thought_tracker=None, url_access_context=None):
+    _raise_if_workflow_run_cancelled(workflow, run_id)
     user_id = str(workflow.get('user_id') or '').strip()
     selected_agent = workflow.get('selected_agent') if isinstance(workflow.get('selected_agent'), dict) else {}
     if not selected_agent:
@@ -5489,14 +7615,30 @@ def _execute_agent_workflow(workflow, settings, conversation_id='', run_id=None,
             requested_name = str(selected_agent.get('name') or '').strip()
             if requested_name:
                 loaded_agent = agent_objs.get(requested_name)
+            if loaded_agent is None and workflow.get('task_runner_override'):
+                raise ValueError('The selected task agent is no longer available for workflow execution.')
             if loaded_agent is None:
                 loaded_agent = next(iter(agent_objs.values()))
 
-            result = asyncio.run(loaded_agent.invoke(_build_workflow_agent_messages(
-                workflow.get('task_prompt', ''),
-                url_access_context=url_access_context,
-                apply_generation_guidance=True,
-            )))
+            _resolve_workflow_conversation_context(
+                workflow,
+                model_name=getattr(loaded_agent, 'deployment_name', None) or requested_name,
+                model_provider=(workflow.get('model_binding_summary') or {}).get('provider'),
+                model_endpoint_id=workflow.get('model_endpoint_id'),
+                selected_agent=loaded_agent,
+            )
+
+            result = _execute_cancelable_workflow_step(
+                workflow,
+                run_id,
+                lambda: asyncio.run(loaded_agent.invoke(_build_workflow_agent_messages(
+                    workflow.get('task_prompt', ''),
+                    url_access_context=url_access_context,
+                    apply_generation_guidance=True,
+                    conversation_context_system=workflow.get('conversation_context_system_message'),
+                    conversation_context_data=workflow.get('conversation_context_data_message'),
+                ))),
+            )
             reply = str(result)
             agent_citations = _build_agent_citations_from_invocations(user_id, conversation_id)
             alert_targets = _collect_agent_alert_targets(user_id, conversation_id)
@@ -5568,14 +7710,672 @@ def _execute_agent_workflow(workflow, settings, conversation_id='', run_id=None,
                 g.authorized_chat_context = previous_authorized_chat_context
 
 
-def run_personal_workflow(workflow, trigger_source='manual', user_roles=None, actor_user_id=None):
+def _truncate_workflow_task_context(value, max_chars=WORKFLOW_TASK_CONTEXT_MAX_CHARS):
+    normalized = str(value or '').strip()
+    if len(normalized) <= max_chars:
+        return normalized
+
+    head_length = max_chars // 2
+    tail_length = max_chars - head_length
+    return (
+        f'{normalized[:head_length].rstrip()}\n\n'
+        '[Previous task output truncated]\n\n'
+        f'{normalized[-tail_length:].lstrip()}'
+    )
+
+
+def _build_workflow_task_execution_workflow(workflow, task, previous_reply='', include_document_action=False):
+    task = task if isinstance(task, dict) else {}
+    prepared_workflow = dict(workflow or {})
+    task_instructions = str(task.get('instructions') or '').strip()
+    file_sync_context = str(workflow.get('file_sync_prompt_context') or '').strip()
+    if include_document_action and file_sync_context:
+        task_instructions = (
+            f'{task_instructions}\n\n'
+            '[Workflow input context]\n'
+            f'{file_sync_context}'
+        ).strip()
+    previous_context = _truncate_workflow_task_context(previous_reply)
+    if previous_context:
+        task_instructions = (
+            f'{task_instructions}\n\n'
+            '[Previous workflow task output]\n'
+            f'{previous_context}\n\n'
+            'Use the previous task output as context. Complete only the current task instructions.'
+        ).strip()
+
+    prepared_workflow['task_prompt'] = task_instructions
+    prepared_workflow['active_task'] = {
+        'id': str(task.get('id') or '').strip(),
+        'name': str(task.get('name') or '').strip(),
+        'order': int(task.get('order') or 0),
+    }
+    if not include_document_action:
+        prepared_workflow['document_action'] = {'type': DOCUMENT_ACTION_TYPE_NONE}
+        prepared_workflow['analyze'] = build_analyze_config(prepared_workflow['document_action'])
+    return prepared_workflow
+
+
+def _get_workflow_task_requested_runner_mode(task):
+    task = task if isinstance(task, dict) else {}
+    runner = task.get('runner') if isinstance(task.get('runner'), dict) else {}
+    return str(runner.get('type') or 'inherit').strip().lower() or 'inherit'
+
+
+def _build_workflow_task_runner_audit(workflow, requested_mode, normalized_runner, execution_result=None):
+    workflow = workflow if isinstance(workflow, dict) else {}
+    normalized_runner = normalized_runner if isinstance(normalized_runner, dict) else {'type': 'inherit'}
+    requested_mode = str(requested_mode or 'inherit').strip().lower() or 'inherit'
+    inherited = normalized_runner.get('type') == 'inherit'
+    resolved_type = str(workflow.get('runner_type') if inherited else normalized_runner.get('type') or '').strip().lower()
+    runner_source = workflow if inherited else normalized_runner
+    audit = {
+        'requested_mode': requested_mode,
+        'resolved_type': resolved_type,
+    }
+
+    if resolved_type == 'model':
+        binding_summary = (
+            runner_source.get('model_binding_summary')
+            if isinstance(runner_source.get('model_binding_summary'), dict)
+            else {}
+        )
+        endpoint_id = str(runner_source.get('model_endpoint_id') or binding_summary.get('endpoint_id') or '').strip()
+        model_id = str(runner_source.get('model_id') or binding_summary.get('model_id') or '').strip()
+        if endpoint_id:
+            audit['model_endpoint_id'] = endpoint_id
+        if model_id:
+            audit['model_id'] = model_id
+    elif resolved_type == 'agent':
+        selected_agent = runner_source.get('selected_agent') if isinstance(runner_source.get('selected_agent'), dict) else {}
+        agent_id = str(selected_agent.get('id') or '').strip()
+        agent_name = str(selected_agent.get('name') or '').strip()
+        if agent_id:
+            audit['agent_id'] = agent_id
+        if agent_name:
+            audit['agent_name'] = agent_name
+        if selected_agent.get('is_global'):
+            audit['agent_scope'] = 'global'
+        elif selected_agent.get('is_group'):
+            audit['agent_scope'] = 'group'
+            agent_group_id = str(selected_agent.get('group_id') or '').strip()
+            if agent_group_id:
+                audit['agent_group_id'] = agent_group_id
+        else:
+            audit['agent_scope'] = 'personal'
+
+    execution_result = execution_result if isinstance(execution_result, dict) else {}
+    model_deployment_name = str(execution_result.get('model_deployment_name') or '').strip()
+    provider = str(execution_result.get('provider') or '').strip().lower()
+    if model_deployment_name:
+        audit['model_deployment_name'] = model_deployment_name
+    if provider:
+        audit['provider'] = provider
+    return audit
+
+
+def _resolve_workflow_task_runner(workflow, task, settings, actor_user_id=None):
+    workflow = workflow if isinstance(workflow, dict) else {}
+    task = task if isinstance(task, dict) else {}
+    requested_runner = task.get('runner') if isinstance(task.get('runner'), dict) else {'type': 'inherit'}
+    requested_mode = _get_workflow_task_requested_runner_mode(task)
+    group_id = _get_workflow_group_id(workflow)
+    if group_id:
+        current_actor_user_id = str(actor_user_id or '').strip()
+        if not current_actor_user_id:
+            raise ValueError('Group workflow task runner resolution requires an actor user id.')
+        normalized_runner = normalize_group_workflow_task_runner(
+            current_actor_user_id,
+            group_id,
+            requested_runner,
+            settings=settings,
+        )
+    else:
+        normalized_runner = normalize_personal_workflow_task_runner(
+            str(workflow.get('user_id') or '').strip(),
+            requested_runner,
+            settings=settings,
+        )
+
+    execution_workflow = dict(workflow)
+    if normalized_runner.get('type') == 'model':
+        execution_workflow.update({
+            'runner_type': 'model',
+            'task_runner_override': True,
+            'selected_agent': {},
+            'model_endpoint_id': normalized_runner.get('model_endpoint_id') or '',
+            'model_id': normalized_runner.get('model_id') or '',
+            'model_provider': normalized_runner.get('model_provider') or '',
+            'model_binding_summary': normalized_runner.get('model_binding_summary') or {},
+        })
+    elif normalized_runner.get('type') == 'agent':
+        execution_workflow.update({
+            'runner_type': 'agent',
+            'task_runner_override': True,
+            'selected_agent': normalized_runner.get('selected_agent') or {},
+            'model_endpoint_id': '',
+            'model_id': '',
+            'model_provider': '',
+            'model_binding_summary': None,
+        })
+
+    runner_audit = _build_workflow_task_runner_audit(
+        workflow,
+        requested_mode,
+        normalized_runner,
+    )
+    return execution_workflow, runner_audit
+
+
+def _workflow_task_run_item_id(run_id, task_id):
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f'workflow-task:{run_id}:{task_id}'))
+
+
+def _save_workflow_task_run_item(
+    workflow,
+    run_id,
+    task,
+    status,
+    attempt_count=0,
+    error='',
+    output_summary='',
+    created_at=None,
+    runner_audit=None,
+    token_usage=None,
+):
+    task = task if isinstance(task, dict) else {}
+    task_id = str(task.get('id') or '').strip()
+    now_iso = _utc_now_iso()
+    output_preview = str(output_summary or '')[:4000]
+    allowed_runner_audit_fields = (
+        'requested_mode',
+        'resolved_type',
+        'model_endpoint_id',
+        'model_id',
+        'agent_id',
+        'agent_name',
+        'agent_scope',
+        'agent_group_id',
+        'model_deployment_name',
+        'provider',
+    )
+    runner_audit = runner_audit if isinstance(runner_audit, dict) else {}
+    safe_runner_audit = {
+        field: str(runner_audit.get(field) or '').strip()[:500]
+        for field in allowed_runner_audit_fields
+        if str(runner_audit.get(field) or '').strip()
+    }
+    token_usage = token_usage if isinstance(token_usage, dict) else {}
+    safe_token_usage = {
+        field: int(token_usage.get(field) or 0)
+        for field in ('prompt_tokens', 'completion_tokens', 'total_tokens', 'request_count')
+        if isinstance(token_usage.get(field), (int, float))
+    }
+    item = {
+        'id': _workflow_task_run_item_id(run_id, task_id),
+        'type': 'workflow_run_item',
+        'item_type': 'task',
+        'run_id': run_id,
+        'user_id': str(workflow.get('user_id') or '').strip(),
+        'workflow_id': workflow.get('id'),
+        'group_id': _get_workflow_group_id(workflow) or None,
+        'workflow_name': workflow.get('name'),
+        'task_id': task_id,
+        'task_type': str(task.get('type') or 'instructions').strip(),
+        'task_order': int(task.get('order') or 0),
+        'label': str(task.get('name') or f"Task {task.get('order') or ''}").strip(),
+        'status': status,
+        'attempt_count': int(attempt_count or 0),
+        'error': str(error or '')[:2000],
+        'output_summary': output_preview,
+        'output_preview': output_preview,
+        'runner': safe_runner_audit,
+        'token_usage': safe_token_usage or None,
+        'created_at': created_at or now_iso,
+        'updated_at': now_iso,
+    }
+    if status in {'running', 'succeeded', 'failed', 'skipped', 'cancelled'}:
+        item['started_at'] = created_at or now_iso
+    if status in {'succeeded', 'failed', 'skipped', 'cancelled'}:
+        item['completed_at'] = now_iso
+    return _save_workflow_run_item_record(workflow, item)
+
+
+def _execute_workflow_dispatch(
+    execution_workflow,
+    settings,
+    conversation_id,
+    run_id,
+    thought_tracker,
+    url_access_context,
+    file_sync_result=None,
+):
+    document_action = _get_document_action_config(execution_workflow)
+    workflow_search_context = None
+    if document_action.get('type') == DOCUMENT_ACTION_TYPE_SEARCH:
+        workflow_search_context = _execute_cancelable_workflow_step(
+            execution_workflow,
+            run_id,
+            lambda: _prepare_workflow_search_context(
+                execution_workflow,
+                document_action,
+                settings,
+                conversation_id=conversation_id,
+                thought_tracker=thought_tracker,
+                run_id=run_id,
+            ),
+        )
+        execution_workflow = workflow_search_context.get('workflow') or execution_workflow
+        document_action = _get_document_action_config(execution_workflow)
+
+    if document_action.get('type') in {DOCUMENT_ACTION_TYPE_ANALYZE, DOCUMENT_ACTION_TYPE_COMPARISON}:
+        _raise_if_workflow_run_cancelled(execution_workflow, run_id)
+        document_action = _resolve_recent_document_action_targets(execution_workflow, document_action, settings)
+        execution_workflow = _apply_runtime_document_action_config(execution_workflow, document_action)
+        run_item_callback = _build_run_item_activity_callback(
+            execution_workflow,
+            run_id,
+            file_sync_result=file_sync_result or {},
+        )
+        _initialize_document_run_items(
+            execution_workflow,
+            run_id,
+            document_action,
+            file_sync_result=file_sync_result or {},
+        )
+        execution_result = _execute_cancelable_workflow_step(
+            execution_workflow,
+            run_id,
+            lambda: _execute_document_action_workflow(
+                execution_workflow,
+                settings,
+                conversation_id=conversation_id,
+                run_id=run_id,
+                thought_tracker=thought_tracker,
+                external_activity_callback=run_item_callback,
+                url_access_context=url_access_context,
+                cancel_requested=lambda: _is_workflow_run_cancellation_requested(execution_workflow, run_id),
+                request_correlation_id=run_id,
+            ),
+        )
+    elif execution_workflow.get('runner_type') == 'agent':
+        execution_result = _execute_cancelable_workflow_step(
+            execution_workflow,
+            run_id,
+            lambda: _execute_agent_workflow(
+                execution_workflow,
+                settings,
+                conversation_id=conversation_id,
+                run_id=run_id,
+                thought_tracker=thought_tracker,
+                url_access_context=url_access_context,
+            ),
+        )
+        execution_result = _attach_workflow_search_context(execution_result, workflow_search_context)
+    else:
+        execution_result = _execute_cancelable_workflow_step(
+            execution_workflow,
+            run_id,
+            lambda: _execute_model_workflow(
+                execution_workflow,
+                settings,
+                conversation_id=conversation_id,
+                run_id=run_id,
+                thought_tracker=thought_tracker,
+                url_access_context=url_access_context,
+            ),
+        )
+        execution_result = _attach_workflow_search_context(execution_result, workflow_search_context)
+
+    return execution_result
+
+
+def _merge_workflow_task_execution_results(task_results):
+    task_results = list(task_results or [])
+    successful_results = [item for item in task_results if item.get('status') == 'succeeded']
+    reply_sections = []
+    for item in task_results:
+        task = item.get('task') if isinstance(item.get('task'), dict) else {}
+        task_name = str(task.get('name') or f"Task {task.get('order') or ''}").strip()
+        if item.get('status') == 'succeeded':
+            reply_text = str((item.get('result') or {}).get('reply') or '').strip()
+            reply_sections.extend([f'## {task_name}', '', reply_text or 'No response was generated.', ''])
+        else:
+            reply_sections.extend([
+                f'## {task_name}',
+                '',
+                f"Task failed: {item.get('error') or 'Unknown error'}",
+                '',
+            ])
+
+    final_source = (successful_results[-1].get('result') or {}) if successful_results else {}
+    merged_result = dict(final_source)
+    merged_result['reply'] = '\n'.join(reply_sections).strip()
+    merged_result['task_results'] = [
+        {
+            'task_id': str((item.get('task') or {}).get('id') or '').strip(),
+            'task_name': str((item.get('task') or {}).get('name') or '').strip(),
+            'task_order': int((item.get('task') or {}).get('order') or 0),
+            'status': item.get('status'),
+            'attempt_count': int(item.get('attempt_count') or 0),
+            'error': str(item.get('error') or ''),
+            'response_preview': _build_response_preview((item.get('result') or {}).get('reply')),
+            'runner': dict(item.get('runner') or {}),
+            'token_usage': _merge_token_usage_summaries([item.get('result') or {}]),
+        }
+        for item in task_results
+    ]
+    merged_result['task_error_count'] = sum(1 for item in task_results if item.get('status') == 'failed')
+    merged_result['token_usage'] = _merge_token_usage_summaries([
+        item.get('result') or {}
+        for item in successful_results
+    ])
+
+    for field in (
+        'agent_citations',
+        'hybrid_citations',
+        'web_search_citations',
+        'generated_analysis_artifacts',
+        'generated_tabular_outputs',
+        'alert_targets',
+    ):
+        merged_result[field] = [
+            value
+            for item in successful_results
+            for value in list((item.get('result') or {}).get(field) or [])
+        ]
+    merged_result['augmented'] = any(
+        bool((item.get('result') or {}).get('augmented'))
+        for item in successful_results
+    )
+    return merged_result
+
+
+def _execute_workflow_task_sequence(
+    workflow,
+    settings,
+    conversation_id,
+    run_id,
+    thought_tracker,
+    url_access_context,
+    file_sync_result=None,
+    actor_user_id=None,
+):
+    tasks = list(workflow.get('tasks') or [])
+    error_handling = workflow.get('error_handling') if isinstance(workflow.get('error_handling'), dict) else {}
+    error_strategy = str(error_handling.get('strategy') or 'halt').strip().lower()
+    retry_count = max(0, min(5, int(error_handling.get('retry_count') or 0)))
+    previous_reply = ''
+    task_results = []
+
+    def raise_if_cancelled():
+        cancel_check = globals().get('_raise_if_workflow_run_cancelled')
+        if callable(cancel_check):
+            cancel_check(workflow, run_id)
+
+    for task_index, raw_task in enumerate(tasks):
+        raise_if_cancelled()
+        task = dict(raw_task or {})
+        task['order'] = task_index + 1
+        task_id = str(task.get('id') or f'task-{task_index + 1}').strip()
+        task['id'] = task_id
+        created_at = _utc_now_iso()
+        runner_audit = {
+            'requested_mode': _get_workflow_task_requested_runner_mode(task),
+        }
+        _save_workflow_task_run_item(
+            workflow,
+            run_id,
+            task,
+            'queued',
+            created_at=created_at,
+            runner_audit=runner_audit,
+        )
+        if thought_tracker and run_id:
+            _add_workflow_activity_thought(
+                thought_tracker,
+                workflow,
+                run_id,
+                step_type='task',
+                content=f"Starting task {task_index + 1}: {task.get('name') or task_id}",
+                detail=None,
+                activity_key=f'task:{run_id}:{task_id}',
+                kind='workflow_task',
+                title=str(task.get('name') or f'Task {task_index + 1}'),
+                status='running',
+            )
+        prepared_workflow = _build_workflow_task_execution_workflow(
+            workflow,
+            task,
+            previous_reply=previous_reply,
+            include_document_action=task_index == 0,
+        )
+
+        task_result = None
+        task_error = ''
+        attempt_count = 0
+        for attempt_index in range(retry_count + 1):
+            raise_if_cancelled()
+            attempt_count = attempt_index + 1
+            try:
+                attempt_workflow, runner_audit = _resolve_workflow_task_runner(
+                    prepared_workflow,
+                    task,
+                    settings,
+                    actor_user_id=actor_user_id,
+                )
+                _save_workflow_task_run_item(
+                    workflow,
+                    run_id,
+                    task,
+                    'running',
+                    attempt_count=attempt_count,
+                    created_at=created_at,
+                    runner_audit=runner_audit,
+                )
+                task_result = _execute_workflow_dispatch(
+                    attempt_workflow,
+                    settings,
+                    conversation_id,
+                    run_id,
+                    thought_tracker,
+                    url_access_context,
+                    file_sync_result=file_sync_result,
+                )
+                task_error = ''
+                runner_audit = dict(runner_audit)
+                model_deployment_name = str(task_result.get('model_deployment_name') or '').strip()
+                provider = str(task_result.get('provider') or '').strip().lower()
+                if model_deployment_name:
+                    runner_audit['model_deployment_name'] = model_deployment_name
+                if provider:
+                    runner_audit['provider'] = provider
+                break
+            except Exception as exc:
+                task_error = str(exc)
+                if attempt_index >= retry_count:
+                    break
+                if thought_tracker and run_id:
+                    _add_workflow_activity_thought(
+                        thought_tracker,
+                        workflow,
+                        run_id,
+                        step_type='task',
+                        content=f"Retrying task {task_index + 1}: {task.get('name') or task_id}",
+                        detail=f'attempt={attempt_count + 1}',
+                        activity_key=f'task:{run_id}:{task_id}',
+                        kind='workflow_task',
+                        title=str(task.get('name') or f'Task {task_index + 1}'),
+                        status='running',
+                    )
+
+        if task_result is not None:
+            _save_workflow_task_run_item(
+                workflow,
+                run_id,
+                task,
+                'succeeded',
+                attempt_count=attempt_count,
+                output_summary=_build_response_preview(task_result.get('reply'), max_length=4000),
+                created_at=created_at,
+                runner_audit=runner_audit,
+                token_usage=_merge_token_usage_summaries([task_result]),
+            )
+            task_results.append({
+                'task': task,
+                'status': 'succeeded',
+                'attempt_count': attempt_count,
+                'result': task_result,
+                'error': '',
+                'runner': runner_audit,
+            })
+            if thought_tracker and run_id:
+                _add_workflow_activity_thought(
+                    thought_tracker,
+                    workflow,
+                    run_id,
+                    step_type='task',
+                    content=f"Completed task {task_index + 1}: {task.get('name') or task_id}",
+                    detail=f'attempts={attempt_count}',
+                    activity_key=f'task:{run_id}:{task_id}',
+                    kind='workflow_task',
+                    title=str(task.get('name') or f'Task {task_index + 1}'),
+                    status='completed',
+                )
+            previous_reply = str(task_result.get('reply') or '').strip()
+            continue
+
+        _save_workflow_task_run_item(
+            workflow,
+            run_id,
+            task,
+            'failed',
+            attempt_count=attempt_count,
+            error=task_error,
+            created_at=created_at,
+            runner_audit=runner_audit,
+        )
+        task_results.append({
+            'task': task,
+            'status': 'failed',
+            'attempt_count': attempt_count,
+            'result': {},
+            'error': task_error,
+            'runner': runner_audit,
+        })
+        if thought_tracker and run_id:
+            _add_workflow_activity_thought(
+                thought_tracker,
+                workflow,
+                run_id,
+                step_type='task',
+                content=f"Failed task {task_index + 1}: {task.get('name') or task_id}",
+                detail=task_error,
+                activity_key=f'task:{run_id}:{task_id}',
+                kind='workflow_task',
+                title=str(task.get('name') or f'Task {task_index + 1}'),
+                status='failed',
+            )
+        if error_strategy != 'continue':
+            raise RuntimeError(
+                f"Workflow task '{task.get('name') or task_id}' failed after {attempt_count} attempt(s): {task_error}"
+            )
+
+    return _merge_workflow_task_execution_results(task_results)
+
+
+def _finalize_cancelled_workflow_run(
+    workflow,
+    run_record,
+    run_id,
+    started_at,
+    trigger_source,
+    execution_workflow,
+    thought_tracker=None,
+    file_sync_result=None,
+):
+    """Persist the terminal cancellation state for a workflow run."""
+    workflow = workflow if isinstance(workflow, dict) else {}
+    run_record = dict(run_record or {})
+    user_id = str(workflow.get('user_id') or '').strip()
+    group_id = _get_workflow_group_id(workflow)
+    workspace_type = _get_workflow_scope(workflow)
+    workflow_id = str(workflow.get('id') or '').strip()
+    completed_at = _utc_now_iso()
+    runtime_workflow = _get_current_workflow_runtime(workflow) or {}
+    run_record.update({
+        'status': 'cancelled',
+        'success': False,
+        'completed_at': completed_at,
+        'cancellation_requested_at': (
+            run_record.get('cancellation_requested_at')
+            or runtime_workflow.get('cancellation_requested_at')
+            or completed_at
+        ),
+        'cancellation_requested_by': (
+            run_record.get('cancellation_requested_by')
+            or runtime_workflow.get('cancellation_requested_by')
+            or ''
+        ),
+        'file_sync': file_sync_result or {},
+        'response_preview': '',
+        'error': '',
+    })
+    _mark_unfinished_workflow_run_items_cancelled(workflow, run_id)
+    if thought_tracker:
+        _add_workflow_activity_thought(
+            thought_tracker,
+            execution_workflow,
+            run_id,
+            step_type='workflow',
+            content='Workflow run cancelled',
+            detail=WORKFLOW_RUN_CANCELLED_MESSAGE,
+            activity_key=f'run:{run_id}',
+            kind='workflow_run',
+            title='Workflow run',
+            status='cancelled',
+        )
+    _save_workflow_run_record(workflow, run_record)
+    log_workflow_run(
+        user_id=user_id,
+        workflow_id=workflow_id,
+        workflow_name=workflow.get('name', ''),
+        status='cancelled',
+        trigger_source=trigger_source,
+        run_id=run_id,
+        conversation_id=run_record.get('conversation_id'),
+        runner_type=workflow.get('runner_type'),
+        workspace_type=workspace_type,
+        group_id=group_id or None,
+    )
+    return {
+        'success': True,
+        'run': run_record,
+        'notification': None,
+        'workflow_updates': {
+            'last_run_started_at': started_at,
+            'last_run_at': completed_at,
+            'last_run_status': 'cancelled',
+            'last_run_error': '',
+            'last_run_response_preview': '',
+            'last_run_trigger_source': trigger_source,
+            'run_count': int(workflow.get('run_count') or 0) + 1,
+            'conversation_id': run_record.get('conversation_id'),
+            'active_run_id': '',
+            'cancellation_requested_at': None,
+            'cancellation_requested_by': '',
+        },
+    }
+
+
+def run_personal_workflow(workflow, trigger_source='manual', user_roles=None, actor_user_id=None, run_id=None):
     """Execute a workflow and persist a run record."""
     workflow = workflow if isinstance(workflow, dict) else {}
     user_id = str(workflow.get('user_id') or '').strip()
     group_id = _get_workflow_group_id(workflow)
     workspace_type = _get_workflow_scope(workflow)
     workflow_id = str(workflow.get('id') or '').strip()
-    run_id = str(uuid.uuid4())
+    run_id = str(run_id or create_workflow_run_id())
     started_at = _utc_now_iso()
     settings = get_settings()
 
@@ -5597,6 +8397,8 @@ def run_personal_workflow(workflow, trigger_source='manual', user_roles=None, ac
         'conversation_id': workflow.get('conversation_id'),
         'response_preview': '',
         'error': '',
+        'cancellation_requested_at': None,
+        'cancellation_requested_by': '',
     }
     _save_workflow_run_record(workflow, run_record)
 
@@ -5605,12 +8407,18 @@ def run_personal_workflow(workflow, trigger_source='manual', user_roles=None, ac
     execution_workflow = workflow
     file_sync_result = None
     try:
-        file_sync_result = _execute_workflow_file_sync(workflow, run_id, trigger_source)
+        _raise_if_workflow_run_cancelled(workflow, run_id)
+        file_sync_result = _execute_cancelable_workflow_step(
+            workflow,
+            run_id,
+            lambda: _execute_workflow_file_sync(workflow, run_id, trigger_source),
+        )
         if file_sync_result and file_sync_result.get('enabled'):
             run_record['file_sync'] = file_sync_result
             _save_workflow_run_record(workflow, run_record)
 
             if not file_sync_result.get('should_continue', True):
+                _raise_if_workflow_run_cancelled(workflow, run_id)
                 completed_at = _utc_now_iso()
                 response_preview = 'No new or changed files were detected by File Sync.'
                 run_record.update({
@@ -5646,14 +8454,20 @@ def run_personal_workflow(workflow, trigger_source='manual', user_roles=None, ac
                         'last_run_trigger_source': trigger_source,
                         'run_count': int(workflow.get('run_count') or 0) + 1,
                         'conversation_id': run_record.get('conversation_id'),
+                        'active_run_id': '',
+                        'cancellation_requested_at': None,
+                        'cancellation_requested_by': '',
                     },
                 }
 
             execution_workflow = _apply_file_sync_context_to_workflow(workflow, file_sync_result)
 
+        _raise_if_workflow_run_cancelled(workflow, run_id)
         conversation = _ensure_workflow_conversation(execution_workflow)
         run_record['conversation_id'] = conversation.get('id')
+        _raise_if_workflow_run_cancelled(workflow, run_id)
         user_message_doc = _create_user_message(conversation.get('id'), execution_workflow, trigger_source, run_id)
+        _raise_if_workflow_run_cancelled(workflow, run_id)
         assistant_message_id, thought_tracker = _initialize_workflow_assistant_tracking(
             conversation.get('id'),
             user_id,
@@ -5676,89 +8490,52 @@ def run_personal_workflow(workflow, trigger_source='manual', user_roles=None, ac
             status='running',
         )
 
-        url_access_context = _prepare_workflow_url_access_context(
+        url_access_workflow = execution_workflow
+        if execution_workflow.get('tasks'):
+            url_access_workflow = dict(execution_workflow)
+            url_access_workflow['task_prompt'] = '\n\n'.join(
+                str(task.get('instructions') or '').strip()
+                for task in execution_workflow.get('tasks') or []
+                if str(task.get('instructions') or '').strip()
+            )
+        url_access_context = _execute_cancelable_workflow_step(
             execution_workflow,
-            settings,
-            conversation.get('id'),
             run_id,
-            thought_tracker=thought_tracker,
-            user_roles=user_roles,
+            lambda: _prepare_workflow_url_access_context(
+                url_access_workflow,
+                settings,
+                conversation.get('id'),
+                run_id,
+                thought_tracker=thought_tracker,
+                user_roles=user_roles,
+            ),
         )
-        document_action = _get_document_action_config(execution_workflow)
-        workflow_search_context = None
-        if document_action.get('type') == DOCUMENT_ACTION_TYPE_SEARCH:
-            workflow_search_context = _prepare_workflow_search_context(
-                execution_workflow,
-                document_action,
-                settings,
-                thought_tracker=thought_tracker,
-                run_id=run_id,
-            )
-            execution_workflow = workflow_search_context.get('workflow') or execution_workflow
-            document_action = _get_document_action_config(execution_workflow)
-
-        if document_action.get('type') in {DOCUMENT_ACTION_TYPE_ANALYZE, DOCUMENT_ACTION_TYPE_COMPARISON}:
-            document_action = _resolve_recent_document_action_targets(execution_workflow, document_action, settings)
-            execution_workflow = _apply_runtime_document_action_config(execution_workflow, document_action)
-            run_item_callback = _build_run_item_activity_callback(
-                execution_workflow,
-                run_id,
-                file_sync_result=file_sync_result or {},
-            )
-            _initialize_document_run_items(
-                execution_workflow,
-                run_id,
-                document_action,
-                file_sync_result=file_sync_result or {},
-            )
-            execution_result = _execute_document_action_workflow(
+        conversation_id = str(conversation.get('id') or '')
+        if execution_workflow.get('tasks'):
+            execution_result = _execute_workflow_task_sequence(
                 execution_workflow,
                 settings,
-                conversation_id=conversation.get('id'),
-                run_id=run_id,
-                thought_tracker=thought_tracker,
-                external_activity_callback=run_item_callback,
-                url_access_context=url_access_context,
-            )
-        elif execution_workflow.get('runner_type') == 'agent':
-            execution_result = _execute_agent_workflow(
-                execution_workflow,
-                settings,
-                conversation_id=conversation.get('id'),
+                conversation_id,
                 run_id=run_id,
                 thought_tracker=thought_tracker,
                 url_access_context=url_access_context,
+                file_sync_result=file_sync_result,
+                actor_user_id=actor_user_id or user_id,
             )
-            if workflow_search_context:
-                execution_result.update({
-                    'hybrid_citations': workflow_search_context.get('citations') or [],
-                    'augmented': bool(workflow_search_context.get('citations')),
-                    'document_search': {
-                        'query': workflow_search_context.get('query'),
-                        'result_count': workflow_search_context.get('result_count', 0),
-                        'document_count': workflow_search_context.get('document_count', 0),
-                    },
-                })
         else:
-            execution_result = _execute_model_workflow(
+            execution_result = _execute_workflow_dispatch(
                 execution_workflow,
                 settings,
-                run_id=run_id,
-                thought_tracker=thought_tracker,
-                url_access_context=url_access_context,
+                conversation_id,
+                run_id,
+                thought_tracker,
+                url_access_context,
+                file_sync_result=file_sync_result,
             )
-            if workflow_search_context:
-                execution_result.update({
-                    'hybrid_citations': workflow_search_context.get('citations') or [],
-                    'augmented': bool(workflow_search_context.get('citations')),
-                    'document_search': {
-                        'query': workflow_search_context.get('query'),
-                        'result_count': workflow_search_context.get('result_count', 0),
-                        'document_count': workflow_search_context.get('document_count', 0),
-                    },
-                })
+        _raise_if_workflow_run_cancelled(execution_workflow, run_id)
         execution_result = _attach_workflow_url_access_result(execution_result, url_access_context)
 
+        _raise_if_workflow_run_cancelled(execution_workflow, run_id)
         assistant_doc = _create_assistant_message(
             conversation,
             execution_workflow,
@@ -5768,11 +8545,13 @@ def run_personal_workflow(workflow, trigger_source='manual', user_roles=None, ac
             user_message_doc,
             assistant_message_id=assistant_message_id,
         )
+        _raise_if_workflow_run_cancelled(execution_workflow, run_id)
         _mirror_workflow_visualizations_to_created_conversations(
             execution_workflow,
             assistant_doc,
             execution_result,
         )
+        _raise_if_workflow_run_cancelled(execution_workflow, run_id)
 
         _add_workflow_activity_thought(
             thought_tracker,
@@ -5786,6 +8565,7 @@ def run_personal_workflow(workflow, trigger_source='manual', user_roles=None, ac
             title='Workflow run',
             status='completed',
         )
+        _raise_if_workflow_run_cancelled(execution_workflow, run_id)
 
         completed_at = _utc_now_iso()
         run_record.update({
@@ -5799,13 +8579,17 @@ def run_personal_workflow(workflow, trigger_source='manual', user_roles=None, ac
             'agent_name': execution_result.get('agent_name'),
             'agent_display_name': execution_result.get('agent_display_name'),
             'analysis_coverage': execution_result.get('analysis_coverage') or {},
+            'task_results': execution_result.get('task_results') or [],
+            'task_error_count': int(execution_result.get('task_error_count') or 0),
             'url_access': execution_result.get('url_access') or {},
             'source_review': execution_result.get('source_review') or {},
             'file_sync': file_sync_result or {},
             'response_preview': _build_response_preview(execution_result.get('reply')),
             'error': '',
         })
+        _raise_if_workflow_run_cancelled(execution_workflow, run_id)
         _save_workflow_run_record(workflow, run_record)
+        _raise_if_workflow_run_cancelled(execution_workflow, run_id)
         log_workflow_run(
             user_id=user_id,
             workflow_id=workflow_id,
@@ -5818,11 +8602,15 @@ def run_personal_workflow(workflow, trigger_source='manual', user_roles=None, ac
             workspace_type=workspace_type,
             group_id=group_id or None,
         )
-        alert_notification = _create_workflow_priority_alert(
+        alert_notification = _execute_cancelable_workflow_step(
             execution_workflow,
-            run_record,
-            conversation,
-            execution_result=execution_result,
+            run_id,
+            lambda: _create_workflow_priority_alert(
+                execution_workflow,
+                run_record,
+                conversation,
+                execution_result=execution_result,
+            ),
         )
 
         return {
@@ -5838,9 +8626,34 @@ def run_personal_workflow(workflow, trigger_source='manual', user_roles=None, ac
                 'last_run_response_preview': run_record.get('response_preview', ''),
                 'last_run_trigger_source': trigger_source,
                 'run_count': int(workflow.get('run_count') or 0) + 1,
+                'active_run_id': '',
+                'cancellation_requested_at': None,
+                'cancellation_requested_by': '',
             },
         }
+    except WorkflowRunCancelledError:
+        return _finalize_cancelled_workflow_run(
+            workflow,
+            run_record,
+            run_id,
+            started_at,
+            trigger_source,
+            execution_workflow,
+            thought_tracker=thought_tracker,
+            file_sync_result=file_sync_result,
+        )
     except Exception as exc:
+        if _is_workflow_run_cancellation_requested(workflow, run_id):
+            return _finalize_cancelled_workflow_run(
+                workflow,
+                run_record,
+                run_id,
+                started_at,
+                trigger_source,
+                execution_workflow,
+                thought_tracker=thought_tracker,
+                file_sync_result=file_sync_result,
+            )
         if thought_tracker:
             _add_workflow_activity_thought(
                 thought_tracker,
@@ -5864,6 +8677,17 @@ def run_personal_workflow(workflow, trigger_source='manual', user_roles=None, ac
             'response_preview': '',
         })
         _save_workflow_run_record(workflow, run_record)
+        if _is_workflow_run_cancellation_requested(workflow, run_id):
+            return _finalize_cancelled_workflow_run(
+                workflow,
+                run_record,
+                run_id,
+                started_at,
+                trigger_source,
+                execution_workflow,
+                thought_tracker=thought_tracker,
+                file_sync_result=file_sync_result,
+            )
         log_workflow_run(
             user_id=user_id,
             workflow_id=workflow_id,
@@ -5878,7 +8702,7 @@ def run_personal_workflow(workflow, trigger_source='manual', user_roles=None, ac
             group_id=group_id or None,
         )
         log_event(
-            f'[WorkflowRunner] Workflow execution failed: {exc}',
+            f'[WORKFLOW_RUNNER] Workflow execution failed: {exc}',
             extra={
                 'workflow_id': workflow_id,
                 'workflow_name': workflow.get('name'),
@@ -5906,11 +8730,14 @@ def run_personal_workflow(workflow, trigger_source='manual', user_roles=None, ac
                 'last_run_trigger_source': trigger_source,
                 'run_count': int(workflow.get('run_count') or 0) + 1,
                 'conversation_id': run_record.get('conversation_id'),
+                'active_run_id': '',
+                'cancellation_requested_at': None,
+                'cancellation_requested_by': '',
             },
         }
 
 
-def run_group_workflow(workflow, trigger_source='manual', user_roles=None, actor_user_id=None):
+def run_group_workflow(workflow, trigger_source='manual', user_roles=None, actor_user_id=None, run_id=None):
     """Execute a group workflow and persist group-scoped run records."""
     workflow = workflow if isinstance(workflow, dict) else {}
     if not _get_workflow_group_id(workflow):
@@ -5920,4 +8747,5 @@ def run_group_workflow(workflow, trigger_source='manual', user_roles=None, actor
         trigger_source=trigger_source,
         user_roles=user_roles,
         actor_user_id=actor_user_id,
+        run_id=run_id,
     )

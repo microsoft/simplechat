@@ -12,6 +12,7 @@ Action dropdown in Chat and Workflow.
 
 from pathlib import Path
 import traceback
+from test_support.versioning import assert_app_version_at_least
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -27,9 +28,7 @@ def test_admin_document_action_capabilities_card_location() -> None:
     config_content = read_text("application/single_app/config.py")
     template_content = read_text("application/single_app/templates/admin_settings.html")
 
-    assert 'VERSION = "0.241.095"' in config_content, (
-        "Expected config.py version 0.241.095 for the admin document action capabilities placement update."
-    )
+    assert_app_version_at_least("0.241.095")
     assert template_content.count('id="document-action-capabilities-card"') == 1, (
         "Expected exactly one document action capabilities card in the admin settings template."
     )

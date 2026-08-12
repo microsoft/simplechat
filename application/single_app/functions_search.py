@@ -1,5 +1,6 @@
 # functions_search.py
 
+import hashlib
 import logging
 from typing import List, Dict, Any
 from config import *
@@ -20,6 +21,13 @@ from functions_service_health import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _query_log_context(query):
+    """Return non-sensitive query metadata for search diagnostics."""
+    query_text = str(query or "")
+    query_hash = hashlib.sha256(query_text.encode("utf-8")).hexdigest()[:12] if query_text else ""
+    return len(query_text), query_hash
 
 
 SEARCH_DEFAULT_TOP_N = 12
@@ -358,25 +366,29 @@ def hybrid_search(query, user_id, document_id=None, document_ids=None, top_n=12,
             active_public_workspace_id=active_public_workspace_ids
         )
     if cached_results is not None:
+        query_length, query_hash = _query_log_context(query)
         debug_print(
             "Returning CACHED search results",
             "SEARCH",
-            query=query[:40],
+            query_length=query_length,
+            query_hash=query_hash,
             scope=doc_scope,
             result_count=len(cached_results)
         )
-        logger.info(f"Returning cached search results for query: '{query[:50]}...'")
+        logger.info("Returning cached search results for query hash %s", query_hash)
         return cached_results
 
     # Cache miss - proceed with search
+    query_length, query_hash = _query_log_context(query)
     debug_print(
         "Cache MISS - Executing Azure AI Search",
         "SEARCH",
-        query=query[:40],
+        query_length=query_length,
+        query_hash=query_hash,
         scope=doc_scope,
         top_n=top_n
     )
-    logger.info(f"Cache miss - executing search for query: '{query[:50]}...'")
+    logger.info("Cache miss - executing search for query hash %s", query_hash)
 
     # Unpack tuple from generate_embedding (returns embedding, token_usage)
     result = generate_embedding(query)

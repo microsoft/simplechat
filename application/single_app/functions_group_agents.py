@@ -18,6 +18,7 @@ from functions_keyvault import (
 )
 from functions_agent_payload import sanitize_agent_payload
 from functions_governance import ensure_governance_access
+from functions_chat_bootstrap_cache import bump_chat_bootstrap_global_cache_version
 
 
 _NAME_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
@@ -141,6 +142,7 @@ def save_group_agent(group_id: str, agent_data: Dict[str, Any], user_id: Optiona
 
     try:
         stored = cosmos_group_agents_container.upsert_item(body=payload)
+        bump_chat_bootstrap_global_cache_version(reason="group_agent_saved")
         return _clean_agent(stored)
     except Exception as exc:
         debug_print(
@@ -165,6 +167,7 @@ def delete_group_agent(group_id: str, agent_id: str) -> bool:
             item=agent_id,
             partition_key=group_id,
         )
+        bump_chat_bootstrap_global_cache_version(reason="group_agent_deleted")
         return True
     except Exception as exc:
         debug_print(

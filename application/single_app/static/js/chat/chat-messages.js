@@ -10,7 +10,8 @@ import { promptSelect } from "./chat-prompts.js";
 import {
   createNewConversation,
   selectConversation,
-  addConversationToList
+  addConversationToList,
+  loadConversations
 } from "./chat-conversations.js";
 import { updateSidebarConversationTitle } from "./chat-sidebar-conversations.js";
 import { getActiveConversationContext, getActiveConversationScope } from "./chat-conversation-scope.js";
@@ -58,6 +59,12 @@ const documentComparisonSelectionList = document.getElementById('document-compar
 const documentComparisonPickerPanel = document.getElementById('document-comparison-picker-panel');
 const documentComparisonPickerControls = document.getElementById('document-comparison-picker-controls');
 const documentComparisonPickerStatus = document.getElementById('document-comparison-picker-status');
+const conversationForkModalEl = document.getElementById('fork-conversation-modal');
+const confirmConversationForkBtn = document.getElementById('confirm-fork-conversation-btn');
+const conversationForkButtonLabel = document.getElementById('fork-conversation-button-label');
+const conversationForkButtonSpinner = document.getElementById('fork-conversation-button-spinner');
+let pendingConversationFork = null;
+let conversationForkRequestPending = false;
 let comparisonVersionLoadToken = 0;
 let comparisonVersionCatalog = [];
 let comparisonChatUploadCatalog = [];
@@ -582,6 +589,14 @@ function isWorkspaceDocumentSearchEnabled() {
 }
 
 const INLINE_ASSISTANT_EXPORT_ACTIONS = Object.freeze({
+  audio: {
+    actionName: 'exportMessageAsAudio',
+    buttonClass: 'inline-export-audio-btn',
+    iconClass: 'bi bi-file-earmark-music',
+    label: 'Create Audio File',
+    pendingLabel: 'Creating Audio File...',
+    title: 'Create Audio File',
+  },
   powerpoint: {
     actionName: 'exportMessageAsPowerPoint',
     buttonClass: 'inline-export-ppt-btn',
@@ -3146,6 +3161,128 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     return !isStreamingAssistantPlaceholder(messageId, fullMessageObject);
   }
 
+  function getForkableSingleUserConversationId(fullMessageObject = null) {
+    const conversationId = resolveMessageConversationId(fullMessageObject);
+    const activeConversationId = String(
+      window.chatConversations?.getCurrentConversationId?.()
+      || window.currentConversationId
+      || ''
+    ).trim();
+    if (!conversationId || conversationId !== activeConversationId) {
+      return '';
+    }
+
+    const conversationItem = document.querySelector(
+      `.conversation-item[data-conversation-id="${CSS.escape(conversationId)}"], `
+      + `.sidebar-conversation-item[data-conversation-id="${CSS.escape(conversationId)}"]`
+    );
+    if (!conversationItem || conversationItem.dataset.conversationKind === 'collaborative') {
+      return '';
+    }
+
+    const chatType = String(conversationItem.dataset.chatType || '').trim().toLowerCase();
+    return [
+      '',
+      'new',
+      'personal',
+      'personal_single_user',
+      'group-single-user',
+      'public',
+    ].includes(chatType)
+      ? conversationId
+      : '';
+  }
+
+  function shouldRenderConversationForkAction(messageId, fullMessageObject = null) {
+    const normalizedMessageId = String(messageId || '').trim();
+    const persistedMessageId = String(fullMessageObject?.id || '').trim();
+    return Boolean(
+      normalizedMessageId
+      && persistedMessageId === normalizedMessageId
+      && shouldRenderCompletedAssistantActions(messageId, fullMessageObject)
+      && getForkableSingleUserConversationId(fullMessageObject)
+    );
+  }
+
+  function setConversationForkPendingState(isPending) {
+    conversationForkRequestPending = isPending;
+    if (confirmConversationForkBtn) {
+      confirmConversationForkBtn.disabled = isPending;
+    }
+    conversationForkButtonLabel?.classList.toggle('d-none', isPending);
+    conversationForkButtonSpinner?.classList.toggle('d-none', !isPending);
+  }
+
+  function openConversationForkModal(messageDiv, fullMessageObject = null) {
+    if (!conversationForkModalEl || !window.bootstrap || conversationForkRequestPending) {
+      return;
+    }
+
+    const messageId = String(messageDiv?.dataset?.messageId || '').trim();
+    const conversationId = getForkableSingleUserConversationId(fullMessageObject);
+    if (!messageId || !conversationId) {
+      showToast('This message is not available to fork.', 'warning');
+      return;
+    }
+
+    pendingConversationFork = { conversationId, messageId };
+    setConversationForkPendingState(false);
+    bootstrap.Modal.getOrCreateInstance(conversationForkModalEl).show();
+  }
+
+  async function executeConversationFork() {
+    if (!pendingConversationFork || conversationForkRequestPending) {
+      return;
+    }
+
+    const { conversationId, messageId } = pendingConversationFork;
+    setConversationForkPendingState(true);
+
+    try {
+      const response = await fetch(
+        `/api/conversations/${encodeURIComponent(conversationId)}/fork`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message_id: messageId }),
+        }
+      );
+      const responsePayload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(responsePayload.error || 'Failed to fork conversation');
+      }
+
+      const forkConversationId = String(responsePayload.conversation_id || '').trim();
+      if (!forkConversationId) {
+        throw new Error('The fork response did not include a conversation ID');
+      }
+
+      bootstrap.Modal.getOrCreateInstance(conversationForkModalEl).hide();
+      pendingConversationFork = null;
+      addConversationToList(
+        forkConversationId,
+        String(responsePayload.title || 'Forked Conversation')
+      );
+      await selectConversation(forkConversationId);
+      void loadConversations();
+      showToast('Conversation fork created.', 'success');
+    } catch (error) {
+      console.error('Failed to fork conversation:', error);
+      showToast(error.message || 'Failed to fork conversation', 'danger');
+    } finally {
+      setConversationForkPendingState(false);
+    }
+  }
+
+  confirmConversationForkBtn?.addEventListener('click', () => {
+    void executeConversationFork();
+  });
+  conversationForkModalEl?.addEventListener('hidden.bs.modal', () => {
+    if (!conversationForkRequestPending) {
+      pendingConversationFork = null;
+    }
+  });
+
   function buildInlineAssistantExportActionsHtml(messageId) {
     const previousMessage = getMostRecentRenderedMessage();
     if (!(previousMessage instanceof HTMLElement) || !previousMessage.classList.contains('user-message')) {
@@ -3196,7 +3333,12 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     const normalizedDocumentId = String(output.document_id || '').trim();
     const normalizedExportRunId = String(output.export_run_id || output.run_id || '').trim();
     const isBackgroundExport = Boolean(output.background_export) && Boolean(normalizedExportRunId);
-    if (!normalizedArtifactMessageId && !normalizedDocumentId && !isBackgroundExport) {
+    const terminalStatus = String(output.status || '').trim().toLowerCase();
+    const isTerminalExportStatus = Boolean(
+      output.suppress_assistant_table_export
+      && ['failed', 'canceled'].includes(terminalStatus)
+    );
+    if (!normalizedArtifactMessageId && !normalizedDocumentId && !isBackgroundExport && !isTerminalExportStatus) {
       return null;
     }
 
@@ -3207,7 +3349,8 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
       document_id: normalizedDocumentId,
       export_run_id: normalizedExportRunId,
       run_id: normalizedExportRunId,
-      background_export: isBackgroundExport,
+      background_export: isBackgroundExport || isTerminalExportStatus,
+      suppress_assistant_table_export: Boolean(output.suppress_assistant_table_export),
     };
   }
 
@@ -3272,6 +3415,174 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     return normalizedRowCount.toLocaleString();
   }
 
+  function parseLargeTabularRunInteger(value) {
+    const normalizedValue = String(value || '').replace(/,/g, '').trim();
+    const parsedValue = Number.parseInt(normalizedValue, 10);
+    return Number.isFinite(parsedValue) && parsedValue > 0 ? parsedValue : 0;
+  }
+
+  export function estimateLargeTabularRunForPrompt(messageText, appSettings = window.appSettings || {}) {
+    const normalizedMessage = String(messageText || '').toLowerCase();
+    const confirmationEnabled = appSettings?.enable_tabular_durable_run_confirmation !== false;
+    if (!confirmationEnabled || !normalizedMessage.trim()) {
+      return { shouldConfirm: false, estimatedRows: 0, estimatedBatches: 0 };
+    }
+
+    const exhaustiveRowRequested = /\b(all rows|every row|each row|for each row|for every row|one row per|one object per)\b/.test(normalizedMessage);
+    const exportRequested = /\b(csv|json|xml|export|download|generate|create|save)\b/.test(normalizedMessage);
+    const rowCountMatch = normalizedMessage.match(/\b(\d{1,3}(?:,\d{3})+|\d+)\s*(?:rows?|records?|entries?)\b/);
+    const estimatedRows = parseLargeTabularRunInteger(rowCountMatch?.[1]);
+    const maxBatchRows = Math.max(
+      parseLargeTabularRunInteger(appSettings?.tabular_generated_output_max_batch_rows) || 50,
+      1,
+    );
+    const estimatedBatches = estimatedRows > 0 ? Math.ceil(estimatedRows / maxBatchRows) : 0;
+    const rowThreshold = Math.max(
+      parseLargeTabularRunInteger(appSettings?.tabular_durable_run_confirmation_threshold_rows) || 500,
+      1,
+    );
+    const batchThreshold = Math.max(
+      parseLargeTabularRunInteger(appSettings?.tabular_durable_run_confirmation_threshold_batches) || 75,
+      1,
+    );
+
+    return {
+      shouldConfirm: Boolean(
+        exhaustiveRowRequested
+        && exportRequested
+        && estimatedRows > 0
+        && (estimatedRows > rowThreshold || estimatedBatches > batchThreshold)
+      ),
+      estimatedRows,
+      estimatedBatches,
+      rowThreshold,
+      batchThreshold,
+      maxBatchRows,
+    };
+  }
+
+  function getOrCreateLargeTabularRunConfirmationModal() {
+    let modalElement = document.getElementById('large-tabular-run-confirmation-modal');
+    if (modalElement) {
+      return modalElement;
+    }
+
+    modalElement = document.createElement('div');
+    modalElement.className = 'modal fade';
+    modalElement.id = 'large-tabular-run-confirmation-modal';
+    modalElement.tabIndex = -1;
+    modalElement.setAttribute('aria-labelledby', 'large-tabular-run-confirmation-title');
+    modalElement.setAttribute('aria-hidden', 'true');
+
+    const dialog = document.createElement('div');
+    dialog.className = 'modal-dialog modal-dialog-centered';
+    dialog.setAttribute('role', 'dialog');
+    dialog.setAttribute('aria-modal', 'true');
+    dialog.setAttribute('aria-labelledby', 'large-tabular-run-confirmation-title');
+    modalElement.appendChild(dialog);
+
+    const content = document.createElement('div');
+    content.className = 'modal-content';
+    dialog.appendChild(content);
+
+    const header = document.createElement('div');
+    header.className = 'modal-header';
+    content.appendChild(header);
+
+    const title = document.createElement('h5');
+    title.className = 'modal-title';
+    title.id = 'large-tabular-run-confirmation-title';
+    title.textContent = 'Large tabular run';
+    header.appendChild(title);
+
+    const closeButton = document.createElement('button');
+    closeButton.type = 'button';
+    closeButton.className = 'btn-close';
+    closeButton.setAttribute('data-bs-dismiss', 'modal');
+    closeButton.setAttribute('aria-label', 'Close');
+    header.appendChild(closeButton);
+
+    const body = document.createElement('div');
+    body.className = 'modal-body';
+    content.appendChild(body);
+
+    const summary = document.createElement('p');
+    summary.className = 'mb-2';
+    summary.dataset.largeTabularRunSummary = 'true';
+    body.appendChild(summary);
+
+    const detail = document.createElement('p');
+    detail.className = 'text-muted mb-0';
+    detail.dataset.largeTabularRunDetail = 'true';
+    body.appendChild(detail);
+
+    const footer = document.createElement('div');
+    footer.className = 'modal-footer';
+    content.appendChild(footer);
+
+    const narrowButton = document.createElement('button');
+    narrowButton.type = 'button';
+    narrowButton.className = 'btn btn-outline-secondary';
+    narrowButton.dataset.largeTabularRunCancel = 'true';
+    narrowButton.textContent = 'Narrow scope';
+    footer.appendChild(narrowButton);
+
+    const continueButton = document.createElement('button');
+    continueButton.type = 'button';
+    continueButton.className = 'btn btn-primary';
+    continueButton.dataset.largeTabularRunContinue = 'true';
+    continueButton.textContent = 'Continue run';
+    footer.appendChild(continueButton);
+
+    document.body.appendChild(modalElement);
+    return modalElement;
+  }
+
+  export function confirmLargeTabularRunForPrompt(messageText, appSettings = window.appSettings || {}) {
+    const estimate = estimateLargeTabularRunForPrompt(messageText, appSettings);
+    if (!estimate.shouldConfirm) {
+      return Promise.resolve(true);
+    }
+
+    const modalElement = getOrCreateLargeTabularRunConfirmationModal();
+    const summary = modalElement.querySelector('[data-large-tabular-run-summary="true"]');
+    const detail = modalElement.querySelector('[data-large-tabular-run-detail="true"]');
+    const continueButton = modalElement.querySelector('[data-large-tabular-run-continue="true"]');
+    const cancelButton = modalElement.querySelector('[data-large-tabular-run-cancel="true"]');
+
+    if (summary) {
+      summary.textContent = `This request mentions ${estimate.estimatedRows.toLocaleString()} rows and is estimated at about ${estimate.estimatedBatches.toLocaleString()} batches.`;
+    }
+    if (detail) {
+      detail.textContent = 'Large row-level runs are checkpointed in the background. Continue to start the run, or narrow the prompt before sending.';
+    }
+
+    return new Promise(resolve => {
+      const modal = window.bootstrap?.Modal?.getOrCreateInstance(modalElement);
+      let resolved = false;
+
+      const finish = shouldContinue => {
+        if (resolved) {
+          return;
+        }
+        resolved = true;
+        continueButton?.removeEventListener('click', onContinue);
+        cancelButton?.removeEventListener('click', onCancel);
+        modalElement.removeEventListener('hidden.bs.modal', onHidden);
+        modal?.hide();
+        resolve(shouldContinue);
+      };
+      const onContinue = () => finish(true);
+      const onCancel = () => finish(false);
+      const onHidden = () => finish(false);
+
+      continueButton?.addEventListener('click', onContinue, { once: true });
+      cancelButton?.addEventListener('click', onCancel, { once: true });
+      modalElement.addEventListener('hidden.bs.modal', onHidden, { once: true });
+      modal?.show();
+    });
+  }
+
   function clampGeneratedOutputProgress(value) {
     const numericValue = Number.parseFloat(value);
     if (!Number.isFinite(numericValue)) {
@@ -3317,6 +3628,17 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     }
 
     return 'Queued';
+  }
+
+  function getGeneratedOutputRunTypeLabel(outputMetadata = {}) {
+    const taskType = String(outputMetadata?.task_type || '').trim().toLowerCase();
+    if (taskType === 'combined') {
+      return 'Background analysis + export';
+    }
+    if (taskType === 'hierarchical_analysis') {
+      return 'Background analysis';
+    }
+    return 'Background export';
   }
 
   function getGeneratedOutputStatusBadgeClass(outputMetadata) {
@@ -3393,6 +3715,36 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     }
   }
 
+  function canCancelBackgroundGeneratedOutput(outputMetadata) {
+    return Boolean(outputMetadata?.background_export && outputMetadata?.can_cancel);
+  }
+
+  function setBackgroundGeneratedOutputCancelButtonLabel(cancelButton, label) {
+    if (!(cancelButton instanceof HTMLElement)) {
+      return;
+    }
+
+    const icon = document.createElement('i');
+    icon.className = 'bi bi-x-circle me-1';
+    icon.setAttribute('aria-hidden', 'true');
+    const labelText = document.createElement('span');
+    labelText.textContent = label;
+    cancelButton.replaceChildren(icon, labelText);
+  }
+
+  function updateBackgroundGeneratedOutputCancelButton(cancelButton, outputMetadata) {
+    if (!(cancelButton instanceof HTMLElement)) {
+      return;
+    }
+
+    const canCancel = canCancelBackgroundGeneratedOutput(outputMetadata);
+    cancelButton.classList.toggle('d-none', !canCancel);
+    cancelButton.disabled = !canCancel;
+    if (cancelButton.dataset.busy !== 'true') {
+      setBackgroundGeneratedOutputCancelButtonLabel(cancelButton, 'Cancel');
+    }
+  }
+
   function formatGeneratedTabularPreviewValue(value, maxLength = 120) {
     let formattedValue = '';
 
@@ -3421,12 +3773,14 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     return Boolean(row) && typeof row === 'object' && !Array.isArray(row);
   }
 
-  function buildGeneratedTabularPreviewTable(previewRows) {
+  function buildGeneratedTabularPreviewTable(previewRows, options = {}) {
     if (!Array.isArray(previewRows) || !previewRows.length || !previewRows.every(isGeneratedTabularPreviewObjectRow)) {
       return null;
     }
 
-    const previewColumns = [];
+    const previewColumns = Array.isArray(options.columns)
+      ? options.columns.map(columnName => String(columnName || '')).filter(Boolean)
+      : [];
     previewRows.forEach(row => {
       Object.keys(row).forEach(columnName => {
         if (!previewColumns.includes(columnName)) {
@@ -3439,7 +3793,15 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
       return null;
     }
 
-    const displayedColumns = previewColumns.slice(0, 4);
+    const requestedMaxColumns = Number.parseInt(options.maxColumns, 10);
+    const maxColumns = Number.isFinite(requestedMaxColumns) && requestedMaxColumns > 0
+      ? requestedMaxColumns
+      : 4;
+    const requestedCellLength = Number.parseInt(options.maxCellLength, 10);
+    const maxCellLength = Number.isFinite(requestedCellLength) && requestedCellLength > 0
+      ? requestedCellLength
+      : 120;
+    const displayedColumns = previewColumns.slice(0, maxColumns);
     const tableWrapper = document.createElement('div');
     tableWrapper.className = 'table-responsive small border rounded';
 
@@ -3462,7 +3824,7 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
       const tableRow = document.createElement('tr');
       displayedColumns.forEach(columnName => {
         const valueCell = document.createElement('td');
-        valueCell.textContent = formatGeneratedTabularPreviewValue(row[columnName]);
+        valueCell.textContent = formatGeneratedTabularPreviewValue(row[columnName], maxCellLength);
         tableRow.appendChild(valueCell);
       });
       tbody.appendChild(tableRow);
@@ -3535,6 +3897,149 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     const previewBlock = formatGeneratedAnalysisPreviewBlock(document.createElement('pre'));
     previewBlock.textContent = String(previewText || '').trim();
     return previewBlock;
+  }
+
+  function getGeneratedArtifactPreviewRows(outputMetadata) {
+    if (Array.isArray(outputMetadata?.preview_rows) && outputMetadata.preview_rows.length) {
+      return outputMetadata.preview_rows;
+    }
+    if (Array.isArray(outputMetadata?.preview_items) && outputMetadata.preview_items.length) {
+      return outputMetadata.preview_items;
+    }
+    return [];
+  }
+
+  function hasGeneratedArtifactPreview(outputMetadata, outputFormat) {
+    void outputFormat;
+    return Boolean(
+      getGeneratedArtifactPreviewRows(outputMetadata).length
+      || (Array.isArray(outputMetadata?.preview_lines) && outputMetadata.preview_lines.length)
+      || String(
+        outputMetadata?.preview_text
+        || outputMetadata?.analysis_text
+        || outputMetadata?.panalysis_text
+        || ''
+      ).trim()
+    );
+  }
+
+  function getOrCreateGeneratedArtifactPreviewModal() {
+    let modal = document.getElementById('generated-artifact-preview-modal');
+    if (modal) {
+      return modal;
+    }
+
+    modal = document.createElement('div');
+    modal.id = 'generated-artifact-preview-modal';
+    modal.className = 'modal fade';
+    modal.tabIndex = -1;
+    modal.setAttribute('aria-labelledby', 'generated-artifact-preview-modal-label');
+    modal.setAttribute('aria-hidden', 'true');
+
+    const dialog = document.createElement('div');
+    dialog.className = 'modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable';
+    modal.appendChild(dialog);
+
+    const content = document.createElement('div');
+    content.className = 'modal-content';
+    dialog.appendChild(content);
+
+    const header = document.createElement('div');
+    header.className = 'modal-header';
+    content.appendChild(header);
+
+    const title = document.createElement('h5');
+    title.id = 'generated-artifact-preview-modal-label';
+    title.className = 'modal-title';
+    header.appendChild(title);
+
+    const closeButton = document.createElement('button');
+    closeButton.type = 'button';
+    closeButton.className = 'btn-close';
+    closeButton.setAttribute('data-bs-dismiss', 'modal');
+    closeButton.setAttribute('aria-label', 'Close');
+    header.appendChild(closeButton);
+
+    const body = document.createElement('div');
+    body.className = 'modal-body';
+    body.dataset.generatedArtifactPreviewBody = 'true';
+    content.appendChild(body);
+
+    const footer = document.createElement('div');
+    footer.className = 'modal-footer justify-content-between';
+    content.appendChild(footer);
+
+    const rowInfo = document.createElement('span');
+    rowInfo.className = 'small text-muted';
+    rowInfo.dataset.generatedArtifactPreviewInfo = 'true';
+    footer.appendChild(rowInfo);
+
+    const footerCloseButton = document.createElement('button');
+    footerCloseButton.type = 'button';
+    footerCloseButton.className = 'btn btn-sm btn-secondary';
+    footerCloseButton.setAttribute('data-bs-dismiss', 'modal');
+    footerCloseButton.textContent = 'Close';
+    footer.appendChild(footerCloseButton);
+
+    document.body.appendChild(modal);
+    return modal;
+  }
+
+  function showGeneratedArtifactPreviewModal(outputMetadata, outputFormat) {
+    const previewRows = getGeneratedArtifactPreviewRows(outputMetadata);
+    const previewLines = Array.isArray(outputMetadata?.preview_lines) ? outputMetadata.preview_lines : [];
+    const previewText = String(
+      outputMetadata?.preview_text
+      || outputMetadata?.analysis_text
+      || outputMetadata?.panalysis_text
+      || ''
+    ).trim();
+    let previewContent = null;
+    if (previewRows.length) {
+      previewContent = buildGeneratedTabularPreviewTable(previewRows, {
+        columns: outputMetadata?.preview_columns,
+        maxColumns: 50,
+        maxCellLength: 240,
+      }) || buildGeneratedTabularPreviewFallback(previewRows);
+    } else if (previewLines.length) {
+      previewContent = buildGeneratedAnalysisPreviewText(
+        previewLines.join('\n'),
+        outputMetadata,
+        outputFormat,
+      );
+    } else if (previewText) {
+      previewContent = buildGeneratedAnalysisPreviewText(previewText, outputMetadata, outputFormat);
+    }
+
+    if (!previewContent) {
+      showToast('A preview is not available for this generated artifact.', 'warning');
+      return;
+    }
+
+    const modal = getOrCreateGeneratedArtifactPreviewModal();
+    const title = modal.querySelector('.modal-title');
+    const body = modal.querySelector('[data-generated-artifact-preview-body="true"]');
+    const rowInfo = modal.querySelector('[data-generated-artifact-preview-info="true"]');
+    const fileName = String(outputMetadata?.file_name || `generated-output.${outputFormat}`).trim();
+    if (title) {
+      title.textContent = `Preview: ${fileName}`;
+    }
+    if (body) {
+      body.replaceChildren(previewContent);
+    }
+    if (rowInfo) {
+      const totalRows = formatGeneratedTabularRowCount(outputMetadata?.row_count);
+      rowInfo.textContent = previewRows.length
+        ? `Showing ${previewRows.length.toLocaleString()}${totalRows ? ` of ${totalRows}` : ''} rows. Preview values may be shortened; download for complete content.`
+        : 'Generated artifact preview';
+    }
+
+    const modalInstance = window.bootstrap?.Modal?.getOrCreateInstance(modal);
+    if (!modalInstance) {
+      showToast('Could not open the generated artifact preview.', 'warning');
+      return;
+    }
+    modalInstance.show();
   }
 
   function getGeneratedAnalysisArtifactTitle(outputMetadata, outputFormat) {
@@ -4056,14 +4561,29 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     const statusLabel = formatGeneratedOutputStatusLabel(outputMetadata?.status, outputMetadata);
     const completedBatches = Number.parseInt(outputMetadata?.completed_batches, 10);
     const batchCount = Number.parseInt(outputMetadata?.batch_count, 10);
+    const processedChunkCount = Number.parseInt(outputMetadata?.processed_chunk_count, 10);
+    const totalChunkCount = Number.parseInt(outputMetadata?.total_chunk_count, 10);
+    const failedChunkCount = Number.parseInt(outputMetadata?.failed_chunk_count, 10);
+    const analysisReduceLevel = Number.parseInt(outputMetadata?.analysis_reduce_level, 10);
+    const analysisReduceNode = Number.parseInt(outputMetadata?.analysis_reduce_node, 10);
+    const analysisReduceNodeCount = Number.parseInt(outputMetadata?.analysis_reduce_node_count, 10);
     const processedRows = Number.parseInt(outputMetadata?.processed_rows, 10);
     const rowCount = Number.parseInt(outputMetadata?.row_count, 10);
     const transientFailureCount = Number.parseInt(outputMetadata?.transient_failure_count, 10);
     const manualResumeCount = Number.parseInt(outputMetadata?.manual_resume_count, 10);
     const retryDelaySeconds = Number.parseInt(outputMetadata?.retry_delay_seconds, 10);
     const estimatedRemainingSeconds = Number.parseInt(outputMetadata?.estimated_remaining_seconds, 10);
+    const rowsPerMinute = Number.parseFloat(outputMetadata?.rows_per_minute);
+    const batchConcurrency = Number.parseInt(outputMetadata?.batch_concurrency, 10);
+    const effectiveBatchConcurrency = Number.parseInt(outputMetadata?.effective_batch_concurrency, 10);
+    const taskType = String(outputMetadata?.task_type || '').trim().toLowerCase();
+    const analysisPhase = String(outputMetadata?.analysis_phase || '').trim().toLowerCase();
     const progressPercent = calculateGeneratedOutputProgress(outputMetadata);
     const progressPercentLabel = `${Math.round(progressPercent)}%`;
+
+    if (statusElements.statusLabel) {
+      statusElements.statusLabel.textContent = getGeneratedOutputRunTypeLabel(outputMetadata);
+    }
 
     if (statusElements.statusBadge) {
       statusElements.statusBadge.textContent = statusLabel;
@@ -4091,6 +4611,51 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
         checkpointParts.push(`${processedRows.toLocaleString()} of ${rowCount.toLocaleString()} rows`);
       }
       detailParts.push(checkpointParts.join(', '));
+    }
+
+    if (taskType === 'hierarchical_analysis' || taskType === 'combined') {
+      if (analysisPhase === 'reducing') {
+        const reduceParts = ['Reduce phase'];
+        if (Number.isFinite(analysisReduceLevel) && analysisReduceLevel > 0) {
+          reduceParts.push(`level ${analysisReduceLevel.toLocaleString()}`);
+        }
+        if (
+          Number.isFinite(analysisReduceNode)
+          && Number.isFinite(analysisReduceNodeCount)
+          && analysisReduceNodeCount > 0
+        ) {
+          reduceParts.push(`node ${analysisReduceNode.toLocaleString()} of ${analysisReduceNodeCount.toLocaleString()}`);
+        }
+        detailParts.push(reduceParts.join(' '));
+      } else if (analysisPhase === 'publishing') {
+        detailParts.push('Publishing final artifact');
+      } else if (Number.isFinite(processedChunkCount) && Number.isFinite(totalChunkCount) && totalChunkCount > 0) {
+        detailParts.push(`Map phase: ${processedChunkCount.toLocaleString()} of ${totalChunkCount.toLocaleString()} chunks`);
+      }
+
+      if (Number.isFinite(failedChunkCount) && failedChunkCount > 0) {
+        detailParts.push(`Chunks needing retry: ${failedChunkCount.toLocaleString()}`);
+      }
+    }
+
+    if (Number.isFinite(completedBatches) && Number.isFinite(batchCount) && batchCount > completedBatches) {
+      detailParts.push(`Remaining batches: ${(batchCount - completedBatches).toLocaleString()}`);
+    }
+    if (Number.isFinite(processedChunkCount) && Number.isFinite(totalChunkCount) && totalChunkCount > processedChunkCount) {
+      detailParts.push(`Remaining chunks: ${(totalChunkCount - processedChunkCount).toLocaleString()}`);
+    }
+    if (Number.isFinite(rowsPerMinute) && rowsPerMinute > 0) {
+      detailParts.push(`Throughput: ${rowsPerMinute.toLocaleString(undefined, { maximumFractionDigits: 1 })} rows/min`);
+    }
+    if (Number.isFinite(batchConcurrency) && batchConcurrency > 0) {
+      const concurrencyLabel = (
+        Number.isFinite(effectiveBatchConcurrency)
+        && effectiveBatchConcurrency > 0
+        && effectiveBatchConcurrency !== batchConcurrency
+      )
+        ? `${effectiveBatchConcurrency.toLocaleString()} of ${batchConcurrency.toLocaleString()}`
+        : batchConcurrency.toLocaleString();
+      detailParts.push(`Model concurrency: ${concurrencyLabel}`);
     }
 
     if (outputMetadata?.waiting_for_retry) {
@@ -4137,7 +4702,7 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     }
   }
 
-  function createBackgroundGeneratedOutputStatusBlock(outputMetadata) {
+  function createBackgroundGeneratedOutputStatusBlock(outputMetadata, supportingDetailElements = []) {
     const wrapper = document.createElement('div');
     wrapper.className = 'generated-tabular-background-status mt-3';
 
@@ -4146,7 +4711,7 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
 
     const statusLabel = document.createElement('span');
     statusLabel.className = 'fw-semibold';
-    statusLabel.textContent = 'Background export';
+    statusLabel.textContent = getGeneratedOutputRunTypeLabel(outputMetadata);
     statusRow.appendChild(statusLabel);
 
     const statusBadge = document.createElement('span');
@@ -4165,17 +4730,39 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     progress.appendChild(progressBar);
     wrapper.appendChild(progress);
 
+    const details = document.createElement('details');
+    details.className = 'generated-analysis-preview-details generated-tabular-background-details mt-2';
+    details.dataset.generatedExportDetails = 'true';
+
+    const detailsSummary = document.createElement('summary');
+    detailsSummary.className = 'small fw-semibold';
+    detailsSummary.textContent = 'View details';
+    details.appendChild(detailsSummary);
+
+    const detailsContent = document.createElement('div');
+    detailsContent.className = 'mt-2';
+    supportingDetailElements.forEach(detailElement => {
+      if (detailElement instanceof HTMLElement) {
+        detailsContent.appendChild(detailElement);
+      }
+    });
+
     const detailText = document.createElement('div');
-    detailText.className = 'small text-muted mt-2';
-    wrapper.appendChild(detailText);
+    detailText.className = 'small text-muted';
+    detailsContent.appendChild(detailText);
 
     const updatedText = document.createElement('div');
     updatedText.className = 'small text-muted';
-    wrapper.appendChild(updatedText);
+    detailsContent.appendChild(updatedText);
+    details.appendChild(detailsContent);
+    wrapper.appendChild(details);
 
     const statusElements = {
+      statusLabel,
       statusBadge,
       progressBar,
+      details,
+      detailsContent,
       detailText,
       updatedText,
     };
@@ -4185,6 +4772,17 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
       wrapper,
       statusElements,
     };
+  }
+
+  function hideCompletedGeneratedArtifactHandoff(container, outputMetadata) {
+    if (outputMetadata?.background_export || !outputMetadata?.suppress_assistant_text) {
+      return;
+    }
+    const message = container?.matches?.('.message')
+      ? container
+      : container?.closest?.('.message');
+    message?.querySelector('.message-text')?.classList.add('d-none');
+    message?.querySelector('.message-footer')?.classList.add('d-none');
   }
 
   async function refreshBackgroundGeneratedOutputStatus(outputMetadata, card, statusElements = {}) {
@@ -4221,12 +4819,14 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
           run_id: runStatus.run_id || runId,
         });
         const refreshedCard = createGeneratedAnalysisArtifactCard(outputMetadata);
+        hideCompletedGeneratedArtifactHandoff(card, outputMetadata);
         card.replaceWith(refreshedCard);
         return;
       }
 
       updateBackgroundGeneratedOutputStatusCard(statusElements, outputMetadata);
       updateBackgroundGeneratedOutputContinueButton(statusElements.continueButton, outputMetadata);
+      updateBackgroundGeneratedOutputCancelButton(statusElements.cancelButton, outputMetadata);
     } catch (error) {
       if (statusElements.detailText) {
         statusElements.detailText.textContent = error.message || 'Could not refresh export progress.';
@@ -4276,6 +4876,7 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
           run_id: runStatus.run_id || runId,
         });
         const refreshedCard = createGeneratedAnalysisArtifactCard(outputMetadata);
+        hideCompletedGeneratedArtifactHandoff(card, outputMetadata);
         card.replaceWith(refreshedCard);
         showToast(responseData?.message || 'Background export is already complete.', 'success');
         return;
@@ -4294,6 +4895,53 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
       if (continueButton) {
         continueButton.textContent = originalButtonText;
         updateBackgroundGeneratedOutputContinueButton(continueButton, outputMetadata);
+      }
+    }
+  }
+
+  async function cancelBackgroundGeneratedOutputRun(outputMetadata, card, statusElements = {}, cancelButton = null) {
+    const runId = String(outputMetadata?.export_run_id || outputMetadata?.run_id || '').trim();
+    if (!runId || !(card instanceof HTMLElement) || !document.body.contains(card)) {
+      return;
+    }
+
+    if (cancelButton) {
+      cancelButton.dataset.busy = 'true';
+      cancelButton.disabled = true;
+      setBackgroundGeneratedOutputCancelButtonLabel(cancelButton, 'Canceling...');
+    }
+
+    try {
+      const response = await fetch(`/api/tabular/generated-output/runs/${encodeURIComponent(runId)}/cancel`, {
+        method: 'POST',
+        headers: {
+          'Accept': 'application/json',
+        },
+      });
+      const responseData = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(responseData?.message || responseData?.error || `Server responded with status ${response.status}`);
+      }
+
+      const runStatus = responseData?.run || {};
+      Object.assign(outputMetadata, runStatus, {
+        export_run_id: runStatus.run_id || runId,
+        run_id: runStatus.run_id || runId,
+        background_export: true,
+      });
+      updateBackgroundGeneratedOutputStatusCard(statusElements, outputMetadata);
+      updateBackgroundGeneratedOutputContinueButton(statusElements.continueButton, outputMetadata);
+      updateBackgroundGeneratedOutputCancelButton(cancelButton, outputMetadata);
+      showToast(responseData?.message || 'Background export canceled.', 'success');
+    } catch (error) {
+      if (statusElements.detailText) {
+        statusElements.detailText.textContent = error.message || 'Could not cancel background export.';
+      }
+      showToast(error.message || 'Could not cancel background export.', 'danger');
+    } finally {
+      if (cancelButton) {
+        delete cancelButton.dataset.busy;
+        updateBackgroundGeneratedOutputCancelButton(cancelButton, outputMetadata);
       }
     }
   }
@@ -4352,6 +5000,21 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     const previewText = String(
       outputMetadata?.preview_text || outputMetadata?.analysis_text || outputMetadata?.panalysis_text || ''
     ).trim();
+    const isBackgroundExport = Boolean(outputMetadata?.background_export);
+    const capability = String(outputMetadata?.capability || '').trim().toLowerCase();
+    const isCompletedTabularArtifact = Boolean(
+      !isBackgroundExport
+      && ['csv', 'json', 'xml'].includes(outputFormat)
+      && ['tabular', 'file_export'].includes(capability)
+    );
+    const backgroundDetailElements = [];
+    const appendSupportingDetail = element => {
+      if (isBackgroundExport) {
+        backgroundDetailElements.push(element);
+      } else {
+        card.appendChild(element);
+      }
+    };
 
     const header = document.createElement('div');
     header.className = 'd-flex flex-wrap justify-content-between align-items-start gap-2';
@@ -4364,53 +5027,67 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
 
     const fileNameText = document.createElement('div');
     fileNameText.className = 'small text-muted text-break';
-    fileNameText.textContent = fileName;
-    headerText.appendChild(fileNameText);
+    fileNameText.textContent = isBackgroundExport ? `File: ${fileName}` : fileName;
+    if (isBackgroundExport) {
+      backgroundDetailElements.push(fileNameText);
+    } else {
+      headerText.appendChild(fileNameText);
+    }
     header.appendChild(headerText);
 
-    if (rowCountLabel) {
+    if (rowCountLabel && !isBackgroundExport) {
       const rowCountBadge = document.createElement('span');
       rowCountBadge.className = 'badge text-bg-light';
       rowCountBadge.textContent = `${rowCountLabel} rows`;
       header.appendChild(rowCountBadge);
+    } else if (rowCountLabel) {
+      const rowCountDetail = document.createElement('div');
+      rowCountDetail.className = 'small text-muted';
+      rowCountDetail.textContent = `Rows: ${rowCountLabel}`;
+      backgroundDetailElements.push(rowCountDetail);
     }
 
     card.appendChild(header);
 
-    const storageNote = document.createElement('div');
-    storageNote.className = 'small text-muted mt-2';
-    storageNote.textContent = getGeneratedTabularStorageNote(outputMetadata);
-    card.appendChild(storageNote);
+    if (!isCompletedTabularArtifact) {
+      const storageNote = document.createElement('div');
+      storageNote.className = 'small text-muted mt-2';
+      storageNote.textContent = getGeneratedTabularStorageNote(outputMetadata);
+      appendSupportingDetail(storageNote);
 
-    if (sourceFileName || selectedSheet) {
-      const sourceNote = document.createElement('div');
-      sourceNote.className = 'small text-muted';
-      const sourceSegments = [];
-      if (sourceFileName) {
-        sourceSegments.push(`Source: ${sourceFileName}`);
+      if (sourceFileName || selectedSheet) {
+        const sourceNote = document.createElement('div');
+        sourceNote.className = 'small text-muted';
+        const sourceSegments = [];
+        if (sourceFileName) {
+          sourceSegments.push(`Source: ${sourceFileName}`);
+        }
+        if (selectedSheet) {
+          sourceSegments.push(`Sheet: ${selectedSheet}`);
+        }
+        sourceNote.textContent = sourceSegments.join(' | ');
+        appendSupportingDetail(sourceNote);
       }
-      if (selectedSheet) {
-        sourceSegments.push(`Sheet: ${selectedSheet}`);
-      }
-      sourceNote.textContent = sourceSegments.join(' | ');
-      card.appendChild(sourceNote);
-    }
 
-    if (summary) {
-      const summaryText = document.createElement('p');
-      summaryText.className = 'small mb-0 mt-2';
-      summaryText.textContent = summary;
-      card.appendChild(summaryText);
+      if (summary) {
+        const summaryText = document.createElement('p');
+        summaryText.className = 'small mb-0 mt-2';
+        summaryText.textContent = summary;
+        appendSupportingDetail(summaryText);
+      }
     }
 
     let backgroundStatusElements = null;
-    if (outputMetadata?.background_export) {
-      const backgroundStatusBlock = createBackgroundGeneratedOutputStatusBlock(outputMetadata);
+    if (isBackgroundExport) {
+      const backgroundStatusBlock = createBackgroundGeneratedOutputStatusBlock(
+        outputMetadata,
+        backgroundDetailElements,
+      );
       backgroundStatusElements = backgroundStatusBlock.statusElements;
       card.appendChild(backgroundStatusBlock.wrapper);
     }
 
-    if (previewRows.length || previewItems.length || previewLines.length || previewText) {
+    if (!isCompletedTabularArtifact && (previewRows.length || previewItems.length || previewLines.length || previewText)) {
       let previewContent = null;
       if (previewRows.length) {
         previewContent = buildGeneratedTabularPreviewTable(previewRows) || buildGeneratedTabularPreviewFallback(previewRows);
@@ -4427,7 +5104,13 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
       }
 
       if (previewContent) {
-        if (shouldCollapseGeneratedAnalysisPreview(outputMetadata)) {
+        if (isBackgroundExport && backgroundStatusElements?.detailsContent) {
+          const previewLabel = document.createElement('div');
+          previewLabel.className = 'small fw-semibold mt-3 mb-2';
+          previewLabel.textContent = 'Preview';
+          backgroundStatusElements.detailsContent.appendChild(previewLabel);
+          backgroundStatusElements.detailsContent.appendChild(previewContent);
+        } else if (shouldCollapseGeneratedAnalysisPreview(outputMetadata)) {
           const previewDetails = document.createElement('details');
           previewDetails.className = 'generated-analysis-preview-details mt-3';
 
@@ -4451,6 +5134,11 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     actions.className = 'd-flex flex-wrap gap-2 mt-3';
 
     if (outputMetadata?.background_export) {
+      const backgroundRunId = String(outputMetadata?.export_run_id || outputMetadata?.run_id || '').trim();
+      if (!backgroundRunId) {
+        return card;
+      }
+
       const continueButton = document.createElement('button');
       continueButton.type = 'button';
       continueButton.className = 'btn btn-sm btn-outline-primary generated-tabular-continue-btn d-none';
@@ -4464,18 +5152,20 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
       updateBackgroundGeneratedOutputContinueButton(continueButton, outputMetadata);
       actions.appendChild(continueButton);
 
-      const refreshStatusButton = document.createElement('button');
-      refreshStatusButton.type = 'button';
-      refreshStatusButton.className = 'btn btn-sm btn-outline-secondary generated-tabular-refresh-status-btn';
-      refreshStatusButton.textContent = 'Refresh Status';
-      refreshStatusButton.addEventListener('click', async () => {
-        refreshStatusButton.disabled = true;
-        refreshStatusButton.textContent = 'Refreshing...';
-        await refreshBackgroundGeneratedOutputStatus(outputMetadata, card, backgroundStatusElements || {});
-        refreshStatusButton.disabled = false;
-        refreshStatusButton.textContent = 'Refresh Status';
+      const cancelButton = document.createElement('button');
+      cancelButton.type = 'button';
+      cancelButton.className = 'btn btn-sm btn-outline-danger generated-tabular-cancel-btn d-none';
+      cancelButton.setAttribute('aria-label', 'Cancel background export');
+      setBackgroundGeneratedOutputCancelButtonLabel(cancelButton, 'Cancel');
+      cancelButton.addEventListener('click', async () => {
+        await cancelBackgroundGeneratedOutputRun(outputMetadata, card, backgroundStatusElements || {}, cancelButton);
       });
-      actions.appendChild(refreshStatusButton);
+      if (backgroundStatusElements) {
+        backgroundStatusElements.cancelButton = cancelButton;
+      }
+      updateBackgroundGeneratedOutputCancelButton(cancelButton, outputMetadata);
+      actions.appendChild(cancelButton);
+
       card.appendChild(actions);
       scheduleBackgroundGeneratedOutputStatusPolling(outputMetadata, card, backgroundStatusElements || {});
       return card;
@@ -4490,7 +5180,19 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     });
     actions.appendChild(downloadButton);
 
-    if (isGeneratedMarkdownArtifact(outputMetadata, outputFormat)) {
+    if (isCompletedTabularArtifact && hasGeneratedArtifactPreview(outputMetadata, outputFormat)) {
+      const viewButton = document.createElement('button');
+      viewButton.type = 'button';
+      viewButton.className = 'btn btn-sm btn-outline-secondary generated-artifact-view-btn';
+      viewButton.textContent = `View ${outputFormat.toUpperCase()}`;
+      viewButton.setAttribute('aria-label', `View generated ${outputFormat.toUpperCase()} preview`);
+      viewButton.addEventListener('click', () => {
+        showGeneratedArtifactPreviewModal(outputMetadata, outputFormat);
+      });
+      actions.appendChild(viewButton);
+    }
+
+    if (isGeneratedMarkdownArtifact(outputMetadata, outputFormat) && !isCompletedTabularArtifact) {
       const normalizedArtifactMessageId = String(outputMetadata?.artifact_message_id || '').trim();
       const normalizedConversationId = String(outputMetadata?.conversation_id || window.currentConversationId || '').trim();
       if (normalizedArtifactMessageId && normalizedConversationId) {
@@ -4553,6 +5255,7 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
 
     generatedOutputs.forEach(outputMetadata => {
       generatedOutputsContainer.appendChild(createGeneratedAnalysisArtifactCard(outputMetadata));
+      hideCompletedGeneratedArtifactHandoff(messageDiv, outputMetadata);
     });
     generatedOutputsContainer.classList.remove('d-none');
   }
@@ -4572,6 +5275,7 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
 
     generatedOutputs.forEach(outputMetadata => {
       generatedOutputsContainer.appendChild(createGeneratedTabularOutputCard(outputMetadata));
+      hideCompletedGeneratedArtifactHandoff(messageDiv, outputMetadata);
     });
     generatedOutputsContainer.classList.remove('d-none');
   }
@@ -4641,6 +5345,10 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
   function attachMessageExportActionListeners(messageDiv, role) {
     const actionMappings = [
       {
+        selectors: ['.dropdown-export-audio-btn', '.inline-export-audio-btn'],
+        actionName: 'exportMessageAsAudio',
+      },
+      {
         selectors: ['.dropdown-export-md-btn', '.inline-export-md-btn'],
         actionName: 'exportMessageAsMarkdown',
       },
@@ -4667,6 +5375,9 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
         messageDiv.querySelectorAll(selector).forEach(button => {
           button.addEventListener('click', (event) => {
             event.preventDefault();
+            if (button.getAttribute('aria-busy') === 'true') {
+              return;
+            }
             void triggerMessageExportAction(messageDiv, role, actionName, button);
           });
         });
@@ -4694,6 +5405,10 @@ export function appendMessage(
   messageDiv.classList.add("mb-2", "message");
   messageDiv.setAttribute("data-message-id", messageId || `msg-${Date.now()}`);
   messageDiv.dataset.conversationId = resolveMessageConversationId(fullMessageObject);
+  messageDiv.dataset.conversationContentsRole =
+    sender === "You" || sender === "Collaborator" ? "user" : "other";
+  messageDiv.conversationContentsText =
+    sender === "You" || sender === "Collaborator" ? String(messageContent || "") : "";
 
   let avatarImg = "";
   let avatarAltText = "";
@@ -4778,13 +5493,20 @@ export function appendMessage(
         `;
 
     const maskButtonHtml = buildMaskControlsHtml(messageId, maskState);
+    const audioExportMenuItemHtml = window.appSettings?.enable_text_to_speech
+      ? '<li><a class="dropdown-item dropdown-export-audio-btn" href="#" data-default-label="Export to Audio" data-pending-label="Creating Audio File..." data-icon-class="bi bi-file-earmark-music" data-default-title="Export to Audio"><i class="bi bi-file-earmark-music me-2"></i>Export to Audio</a></li>'
+      : '';
     const exportMenuItemsHtml = renderCompletedAssistantActions ? `
             <li><hr class="dropdown-divider"></li>
             <li><a class="dropdown-item dropdown-export-md-btn" href="#" data-message-id="${messageId}"><i class="bi bi-markdown me-2"></i>Export to Markdown</a></li>
             <li><a class="dropdown-item dropdown-export-word-btn" href="#" data-message-id="${messageId}"><i class="bi bi-file-earmark-word me-2"></i>Export to Word</a></li>
             <li><a class="dropdown-item dropdown-export-ppt-btn" href="#" data-message-id="${messageId}"><i class="bi bi-file-earmark-slides me-2"></i>Export to PowerPoint</a></li>
+            ${audioExportMenuItemHtml}
             <li><a class="dropdown-item dropdown-copy-prompt-btn" href="#" data-message-id="${messageId}"><i class="bi bi-clipboard-plus me-2"></i>Use as Prompt</a></li>
             <li><a class="dropdown-item dropdown-open-email-btn" href="#" data-message-id="${messageId}"><i class="bi bi-envelope me-2"></i>Open in Email</a></li>` : '';
+    const forkConversationMenuItemHtml = shouldRenderConversationForkAction(messageId, fullMessageObject)
+      ? '<li><button class="dropdown-item dropdown-fork-conversation-btn" type="button"><i class="bi bi-signpost-split me-2"></i>Fork conversation</button></li>'
+      : '';
     const actionsDropdownHtml = `
             <div class="dropdown">
                 <button class="btn btn-sm btn-link text-muted" type="button" data-bs-toggle="dropdown" data-bs-boundary="viewport" data-bs-reference="parent" aria-expanded="false" title="More actions">
@@ -4793,6 +5515,7 @@ export function appendMessage(
                 <ul class="dropdown-menu dropdown-menu-start">
                     <li><a class="dropdown-item dropdown-delete-btn" href="#" data-message-id="${messageId}"><i class="bi bi-trash me-2"></i>Delete</a></li>
                     <li><a class="dropdown-item dropdown-retry-btn" href="#" data-message-id="${messageId}"><i class="bi bi-arrow-clockwise me-2"></i>Retry</a></li>
+                    ${forkConversationMenuItemHtml}
                     ${feedbackHtml}
             ${exportMenuItemsHtml}
                 </ul>
@@ -5019,6 +5742,11 @@ export function appendMessage(
       });
     }
 
+    const dropdownForkConversationBtn = messageDiv.querySelector('.dropdown-fork-conversation-btn');
+    dropdownForkConversationBtn?.addEventListener('click', () => {
+      openConversationForkModal(messageDiv, fullMessageObject);
+    });
+
     // Handle dropdown positioning manually - move to chatbox container
     const dropdownToggle = messageDiv.querySelector(".message-actions .dropdown button[data-bs-toggle='dropdown']");
     const dropdownMenu = messageDiv.querySelector(".message-actions .dropdown-menu");
@@ -5117,7 +5845,14 @@ export function appendMessage(
       });
     }
 
-    scrollChatToBottom();
+    // For AI messages, only auto-scroll if the user is currently near
+    // the bottom. This prevents a final jump after a long answer if
+    // the user has scrolled up to read earlier content.
+    if (typeof isChatNearBottom === 'function' && typeof scrollChatToBottom === 'function') {
+      if (isChatNearBottom()) {
+        scrollChatToBottom();
+      }
+    }
     return; // <<< EXIT EARLY FOR AI MESSAGES
 
     // --- Handle ALL OTHER message types ---
@@ -5209,7 +5944,10 @@ export function appendMessage(
 
       // Validate image URL before creating img tag
       if (messageContent && messageContent !== 'null' && messageContent.trim() !== '') {
-        messageContentHtml = `<img src="${messageContent}" alt="${isUserUpload ? 'Uploaded' : 'Generated'} Image" class="generated-image" style="width: 170px; height: 170px; cursor: pointer;" data-image-src="${messageContent}" onload="scrollChatToBottom()" onerror="this.src='/static/images/image-error.png'; this.alt='Failed to load image';" />`;
+        // Use a placeholder container; the actual <img> element will be
+        // created with DOM APIs after insertion to avoid string-based
+        // attribute interpolation in src/data-*.
+        messageContentHtml = '<span class="generated-image-placeholder"></span>';
       } else {
         messageContentHtml = `<div class="alert alert-warning"><i class="bi bi-exclamation-triangle me-2"></i>Failed to ${isUserUpload ? 'load' : 'generate'} image - invalid response from image service</div>`;
       }
@@ -5265,6 +6003,9 @@ export function appendMessage(
     if (sender === "You") {
       const metadataContainerId = `metadata-${messageId || Date.now()}`;
       const maskState = getMaskStateFromMetadata(fullMessageObject?.metadata);
+      const audioExportMenuItemHtml = window.appSettings?.enable_text_to_speech
+        ? '<li><a class="dropdown-item dropdown-export-audio-btn" href="#" data-default-label="Export to Audio" data-pending-label="Creating Audio File..." data-icon-class="bi bi-file-earmark-music" data-default-title="Export to Audio"><i class="bi bi-file-earmark-music me-2"></i>Export to Audio</a></li>'
+        : '';
 
       messageFooterHtml = `
         <div class="message-footer d-flex justify-content-between align-items-center mt-2">
@@ -5281,6 +6022,7 @@ export function appendMessage(
                 <li><a class="dropdown-item dropdown-export-md-btn" href="#" data-message-id="${messageId}"><i class="bi bi-markdown me-2"></i>Export to Markdown</a></li>
                 <li><a class="dropdown-item dropdown-export-word-btn" href="#" data-message-id="${messageId}"><i class="bi bi-file-earmark-word me-2"></i>Export to Word</a></li>
                 <li><a class="dropdown-item dropdown-export-ppt-btn" href="#" data-message-id="${messageId}"><i class="bi bi-file-earmark-slides me-2"></i>Export to PowerPoint</a></li>
+                ${audioExportMenuItemHtml}
                 <li><a class="dropdown-item dropdown-copy-prompt-btn" href="#" data-message-id="${messageId}"><i class="bi bi-clipboard-plus me-2"></i>Use as Prompt</a></li>
                 <li><a class="dropdown-item dropdown-open-email-btn" href="#" data-message-id="${messageId}"><i class="bi bi-envelope me-2"></i>Open in Email</a></li>
               </ul>
@@ -5398,6 +6140,28 @@ export function appendMessage(
     // Append and scroll (common actions for non-AI)
     chatbox.appendChild(messageDiv);
     hydrateChatWorkspaceAttachmentProgress(messageDiv);
+
+    // Attach safe image element and error handler for generated/uploaded images
+    if (sender === "image") {
+      const placeholder = messageDiv.querySelector('.generated-image-placeholder');
+      if (placeholder && messageContent && messageContent !== 'null' && messageContent.trim() !== '') {
+        const imgEl = document.createElement('img');
+        imgEl.className = 'generated-image';
+        imgEl.style.width = '170px';
+        imgEl.style.height = '170px';
+        imgEl.style.cursor = 'pointer';
+        imgEl.src = messageContent;
+        imgEl.alt = isUserUpload ? 'Uploaded Image' : 'Generated Image';
+        imgEl.dataset.imageSrc = messageContent;
+
+        imgEl.addEventListener('error', () => {
+          imgEl.src = '/static/images/image-error.png';
+          imgEl.alt = 'Failed to load image';
+        });
+
+        placeholder.replaceWith(imgEl);
+      }
+    }
 
     // Highlight code blocks in the messages
     messageDiv.querySelectorAll('pre code[class^="language-"]').forEach((block) => {
@@ -5517,11 +6281,20 @@ export function appendMessage(
       }
     }
 
-    scrollChatToBottom();
+    // For new user/file/image messages, scroll to bottom once so the
+    // user sees what they just sent. For history loads, only scroll
+    // if they are already near the bottom.
+    if (isNewMessage && typeof scrollChatToBottom === 'function') {
+      scrollChatToBottom();
+    } else if (typeof isChatNearBottom === 'function' && typeof scrollChatToBottom === 'function') {
+      if (isChatNearBottom()) {
+        scrollChatToBottom();
+      }
+    }
   } // End of the large 'else' block for non-AI messages
 }
 
-export function sendMessage() {
+export async function sendMessage() {
   if (!userInput) {
     console.error("User input element not found.");
     return;
@@ -5551,6 +6324,12 @@ export function sendMessage() {
     return;
   }
 
+  const largeTabularRunConfirmed = await confirmLargeTabularRunForPrompt(combinedMessage);
+  if (!largeTabularRunConfirmed) {
+    userInput.focus();
+    return;
+  }
+
   if (!currentConversationId) {
     createNewConversation(() => {
       actuallySendMessage(combinedMessage);
@@ -5568,6 +6347,12 @@ export function sendMessage() {
   updateSendButtonVisibility();
   // Keep focus on input
   userInput.focus();
+
+  // After sending, ensure the chat view scrolls so the
+  // user can see their newly submitted message.
+  if (typeof window.scrollChatToBottom === 'function') {
+    window.scrollChatToBottom();
+  }
 }
 
 function getCurrentModelSelection() {
@@ -5964,6 +6749,8 @@ export function buildChatRequestPayload(finalMessageToSend, conversationId = cur
       .filter(value => value);
     selectedDocumentId = selectedDocumentIds.length > 0 ? selectedDocumentIds[0] : null;
   }
+  const selectionMode = selectedDocumentIds.length > 0 ? 'selected' : 'relevance';
+  const documentContextRequested = hybridSearchEnabled || selectedDocumentIds.length > 0;
 
   let imageGenEnabled = false;
   const igbtn = document.getElementById('image-generate-btn');
@@ -6078,6 +6865,8 @@ export function buildChatRequestPayload(finalMessageToSend, conversationId = cur
     message: finalMessageToSend,
     conversation_id: conversationId,
     hybrid_search: hybridSearchEnabled,
+    selection_mode: selectionMode,
+    document_context_requested: documentContextRequested,
     user_workspace_context_enabled: userWorkspaceContextEnabled,
     web_search_enabled: webSearchEnabled,
     url_access_enabled: urlAccessEnabled,
@@ -6139,6 +6928,13 @@ export function buildCollaborativeInvocationTarget(messageData = {}, explicitInv
     messageData.agent_info
     && (messageData.agent_info.id || messageData.agent_info.name || messageData.agent_info.display_name)
   );
+  const workspaceContextInvocationRequested = Boolean(
+    messageData.hybrid_search
+    || (
+      messageData.document_context_requested
+      && window.appSettings?.enable_mixed_source_chat_search
+    )
+  );
   const sourceMode = messageData.image_generation
     ? 'image_generation'
     : hasAgentTarget
@@ -6149,7 +6945,7 @@ export function buildCollaborativeInvocationTarget(messageData = {}, explicitInv
     ? 'url_access'
     : messageData.web_search_enabled
     ? 'web_search'
-    : messageData.hybrid_search
+    : workspaceContextInvocationRequested
     ? 'workspace'
     : messageData.prompt_info
     ? 'prompt'
@@ -6216,7 +7012,7 @@ export function actuallySendMessage(finalMessageToSend) {
     }
 
     const pendingCollaborativeContext = window.chatCollaboration?.getPendingMessageContext?.({ invocationTarget }) || null;
-    appendMessage("You", displayMessageText, null, tempUserMessageId, false, [], [], [], null, null, pendingCollaborativeContext);
+    appendMessage("You", displayMessageText, null, tempUserMessageId, false, [], [], [], null, null, pendingCollaborativeContext, true);
     userInput.value = "";
     userInput.style.height = "";
     updateSendButtonVisibility();

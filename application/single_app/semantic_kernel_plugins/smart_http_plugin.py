@@ -192,7 +192,7 @@ class SmartHttpPlugin:
             "plugin_type": "SmartHttpPlugin"
         }
         self.function_calls.append(call_data)
-        self.logger.info(f"[Smart HTTP Plugin] Tracked function call: {function_name} ({duration:.3f}s) -> {url}")
+        self.logger.info(f"[SMART_HTTP_PLUGIN] Tracked function call: {function_name} ({duration:.3f}s) -> {url}")
         
     @async_plugin_logger("SmartHttpPlugin")
     @kernel_function(

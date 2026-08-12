@@ -10,6 +10,7 @@ contract intact for existing workflow storage.
 """
 
 from pathlib import Path
+from test_support.versioning import assert_app_version_at_least
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -29,9 +30,7 @@ def test_workflow_instruction_drafting_contract():
     group_workspace_template_content = read_text("application/single_app/templates/group_workspaces.html")
     action_modal_content = read_text("application/single_app/templates/_plugin_modal.html")
 
-    assert 'VERSION = "0.250.028"' in config_content, (
-        "Expected config.py to carry the workflow instruction drafting version."
-    )
+    assert_app_version_at_least("0.250.028")
     assert "@app.route('/api/workflows/draft-instructions', methods=['POST'])" in route_content, (
         "Expected a shared workflow instruction drafting endpoint."
     )

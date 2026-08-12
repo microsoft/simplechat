@@ -1,8 +1,9 @@
 # test_workflow_access_controls.py
 """
 Functional test for workflow access controls.
-Version: 0.241.106
+Version: 0.250.062
 Implemented in: 0.241.106
+Updated in: 0.250.062
 
 This test ensures personal workflows are an optional feature, can be gated
 with the WorkflowUser app role, and are enforced across UI and API surfaces.
@@ -10,6 +11,7 @@ with the WorkflowUser app role, and are enforced across UI and API surfaces.
 
 import json
 from pathlib import Path
+from test_support.versioning import assert_app_version_at_least
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -42,9 +44,7 @@ def test_workflow_access_control_wiring():
     deployer_version = read_text("deployers/version.txt").strip()
     app_roles = json.loads(read_text("deployers/azurecli/appRegistrationRoles.json"))
 
-    assert 'VERSION = "0.241.106"' in config_content, (
-        "Expected config.py to be bumped for workflow access controls."
-    )
+    assert_app_version_at_least("0.250.062")
     assert 'WORKFLOW_USER_APP_ROLE = "WorkflowUser"' in settings_content, (
         "Expected a shared WorkflowUser app role constant."
     )
@@ -65,12 +65,15 @@ def test_workflow_access_control_wiring():
     )
 
     workflow_api_route_count = workflow_routes_content.count("@enabled_required('allow_user_workflows')")
-    assert workflow_api_route_count == 7, "Expected seven backend personal workflow API route gates."
+    assert workflow_api_route_count == 12, "Expected twelve backend personal workflow API route gates."
     assert workflow_routes_content.count("@workflow_user_required") == workflow_api_route_count, (
         "Expected every backend workflow API route to require workflow user access."
     )
-    assert "@workflow_user_required" in frontend_chats_content, (
-        "Expected the workflow activity page to require workflow user access."
+    assert "def _authorize_workflow_activity_view(user_id, settings):" in frontend_chats_content, (
+        "Expected the workflow activity page to use scope-aware authorization."
+    )
+    assert "authorization_error = _authorize_workflow_activity_view(user_id, settings)" in frontend_chats_content, (
+        "Expected the workflow activity route to enforce its scope-aware authorization helper."
     )
 
     assert "public_settings['allow_user_workflows'] = is_user_workflows_enabled_for_user" in frontend_workspace_content, (
@@ -148,7 +151,10 @@ def test_workflow_access_control_wiring():
     assert 'value                = "WorkflowUser"' in terraform_content, (
         "Expected WorkflowUser app role in Terraform role definitions."
     )
-    assert deployer_version == "1.0.10", "Expected deployer version bump after role definition changes."
+    deployer_version_parts = deployer_version.split(".")
+    assert len(deployer_version_parts) == 3 and all(part.isdigit() for part in deployer_version_parts), (
+        "Expected deployer version to remain a three-part numeric value."
+    )
 
     assert "WorkflowUser" in personal_workflows_doc_content, (
         "Expected Personal Workflows documentation to describe WorkflowUser."

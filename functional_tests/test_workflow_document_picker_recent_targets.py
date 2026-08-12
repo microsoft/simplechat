@@ -15,6 +15,7 @@ import os
 import sys
 import types
 from pathlib import Path
+from test_support.versioning import assert_app_version_at_least
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -283,7 +284,7 @@ def test_recent_target_runner_hooks() -> None:
     document_actions = read_text(DOCUMENT_ACTIONS_PY)
     config = read_text(CONFIG_PY)
 
-    assert 'VERSION = "0.241.188"' in config
+    assert_app_version_at_least("0.241.188")
     assert "DOCUMENT_ACTION_TYPE_SEARCH = 'search'" in document_actions
     assert "DOCUMENT_ACTION_TYPE_SEARCH: get_document_action_max_documents(" in document_actions
     assert 'DOCUMENT_ACTION_TARGET_MODE_RECENT' in document_actions

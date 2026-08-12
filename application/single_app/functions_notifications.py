@@ -18,6 +18,7 @@ from azure.cosmos import exceptions
 from flask import current_app
 import logging
 from config import cosmos_notifications_container
+from functions_appinsights import log_event
 from functions_group import find_group_by_id
 from functions_debug import debug_print
 from functions_public_workspaces import find_public_workspace_by_id, get_user_public_workspaces
@@ -26,6 +27,7 @@ from functions_public_workspaces import find_public_workspace_by_id, get_user_pu
 TTL_60_DAYS = 60 * 24 * 60 * 60  # 60 days in seconds (5184000)
 ASSIGNMENT_NOTIFICATIONS_PARTITION_KEY = 'assignment-notifications'
 WORKFLOW_ALERT_NOTIFICATION_TYPE = 'workflow_priority_alert'
+KEY_VAULT_SECRET_REMINDER_NOTIFICATION_TYPE = 'key_vault_secret_expiring'
 WORKFLOW_ALERT_PRIORITY_CONFIG = {
     'low': {
         'icon': 'bi-bell',
@@ -162,6 +164,10 @@ NOTIFICATION_TYPES = {
     WORKFLOW_ALERT_NOTIFICATION_TYPE: {
         'icon': 'bi-bell',
         'color': 'secondary'
+    },
+    KEY_VAULT_SECRET_REMINDER_NOTIFICATION_TYPE: {
+        'icon': 'bi-safe',
+        'color': 'warning'
     }
 }
 
@@ -753,6 +759,42 @@ def get_unread_notification_count(user_id):
     except Exception as e:
         debug_print(f"Error counting unread notifications for {user_id}: {e}")
         return 0
+
+
+def get_recent_chat_response_notifications(user_id, limit=50):
+    """Return recent personal chat completion event identities for one user."""
+    try:
+        normalized_limit = max(1, min(int(limit or 50), 100))
+    except (TypeError, ValueError):
+        normalized_limit = 50
+
+    try:
+        notifications = list(cosmos_notifications_container.query_items(
+            query=(
+                f"SELECT TOP {normalized_limit} "
+                "c.id, c.created_at, c.link_context, c.metadata "
+                "FROM c WHERE c.user_id = @user_id "
+                "AND c.notification_type = @notification_type "
+                "ORDER BY c.created_at DESC"
+            ),
+            parameters=[
+                {"name": "@user_id", "value": user_id},
+                {"name": "@notification_type", "value": "chat_response_complete"},
+            ],
+            partition_key=user_id,
+        ))
+        return notifications
+    except Exception as e:
+        log_event(
+            "[NOTIFICATIONS] Failed to load recent chat completion events.",
+            extra={
+                "user_id": user_id,
+                "error": str(e),
+            },
+            level=logging.ERROR,
+            exceptionTraceback=True,
+        )
+        raise
 
 
 def get_unread_workflow_priority_notifications(user_id, limit=5):

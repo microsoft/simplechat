@@ -33,6 +33,7 @@ function getDocumentSyncTypeConfig(doc) {
     const sourceTypeMap = {
         smb: { label: 'SMB', className: 'bg-primary text-white', title: 'Managed by File Sync from an SMB source.' },
         azure_files: { label: 'Azure Files', className: 'bg-info text-dark', title: 'Managed by File Sync from Azure Files.' },
+        azure_blob: { label: 'Azure Blob', className: 'bg-info text-dark', title: 'Managed by File Sync from Azure Blob Storage.' },
         m365sp: { label: 'M365SP', className: 'bg-info text-dark', title: 'Managed by File Sync from Microsoft 365 SharePoint.' },
         m365_sp: { label: 'M365SP', className: 'bg-info text-dark', title: 'Managed by File Sync from Microsoft 365 SharePoint.' },
         m365_sharepoint: { label: 'M365SP', className: 'bg-info text-dark', title: 'Managed by File Sync from Microsoft 365 SharePoint.' },

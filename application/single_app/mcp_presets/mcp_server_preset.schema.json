@@ -1,0 +1,255 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "MCP Server Preset",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+        "id",
+        "version",
+        "displayName",
+        "description",
+        "enabled",
+        "sortOrder",
+        "defaults",
+        "ui",
+        "constraints"
+    ],
+    "properties": {
+        "id": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$",
+            "description": "Stable preset identifier stored in MCP action additionalFields.server_profile."
+        },
+        "version": {
+            "type": "string",
+            "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
+            "description": "Preset definition version."
+        },
+        "displayName": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+        },
+        "description": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+        },
+        "provider": {
+            "type": "string",
+            "maxLength": 120
+        },
+        "enabled": {
+            "type": "boolean",
+            "default": true
+        },
+        "sortOrder": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 10000,
+            "default": 100
+        },
+        "defaults": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+                "transport",
+                "auth_method",
+                "load_tools",
+                "load_prompts",
+                "request_timeout",
+                "connect_timeout",
+                "sse_read_timeout",
+                "retry_count",
+                "retry_backoff_seconds"
+            ],
+            "properties": {
+                "transport": {
+                    "type": "string",
+                    "enum": ["streamable_http", "sse", "websocket", "stdio"]
+                },
+                "auth_method": {
+                    "type": "string",
+                    "enum": ["none", "bearer", "api_key", "basic", "identity"]
+                },
+                "api_key_header_name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128,
+                    "default": "X-API-Key"
+                },
+                "load_tools": {
+                    "type": "boolean"
+                },
+                "load_prompts": {
+                    "type": "boolean"
+                },
+                "request_timeout": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 300
+                },
+                "connect_timeout": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 300
+                },
+                "sse_read_timeout": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 300
+                },
+                "retry_count": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 3
+                },
+                "retry_backoff_seconds": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 30
+                },
+                "validate_tool_arguments": {
+                    "type": "boolean",
+                    "default": false
+                },
+                "tool_result_policy": {
+                    "type": "string",
+                    "enum": ["truncate", "error_on_limit"],
+                    "default": "truncate"
+                },
+                "allowed_tool_names": {
+                    "type": "array",
+                    "maxItems": 100,
+                    "items": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 120
+                    },
+                    "default": []
+                }
+            }
+        },
+        "ui": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["helpText", "endpointPlaceholder"],
+            "properties": {
+                "helpText": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 500
+                },
+                "endpointPlaceholder": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 300
+                },
+                "websocketEndpointPlaceholder": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 300,
+                    "default": "wss://example.com/mcp"
+                }
+            }
+        },
+        "constraints": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+                "allowedTransports",
+                "allowedAuthMethods",
+                "customHeadersAllowed",
+                "stdioAllowed"
+            ],
+            "properties": {
+                "allowedTransports": {
+                    "type": "array",
+                    "minItems": 1,
+                    "uniqueItems": true,
+                    "items": {
+                        "type": "string",
+                        "enum": ["streamable_http", "sse", "websocket", "stdio"]
+                    }
+                },
+                "allowedAuthMethods": {
+                    "type": "array",
+                    "minItems": 1,
+                    "uniqueItems": true,
+                    "items": {
+                        "type": "string",
+                        "enum": ["none", "bearer", "api_key", "basic", "identity"]
+                    }
+                },
+                "customHeadersAllowed": {
+                    "type": "boolean"
+                },
+                "stdioAllowed": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "implementation": {
+            "type": "object",
+            "additionalProperties": false,
+            "default": {},
+            "required": ["id", "schemaVersion"],
+            "properties": {
+                "id": {
+                    "type": "string",
+                    "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$"
+                },
+                "schemaVersion": {
+                    "type": "string",
+                    "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
+                    "default": "1.0.0"
+                }
+            }
+        },
+        "additionalSettings": {
+            "type": "object",
+            "default": {},
+            "additionalProperties": true
+        },
+        "suggestedHeaders": {
+            "type": "array",
+            "maxItems": 20,
+            "default": [],
+            "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["name", "description"],
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 128
+                    },
+                    "description": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 300
+                    },
+                    "required": {
+                        "type": "boolean",
+                        "default": false
+                    },
+                    "placeholder": {
+                        "type": "string",
+                        "maxLength": 120
+                    }
+                }
+            }
+        },
+        "warnings": {
+            "type": "array",
+            "maxItems": 20,
+            "default": [],
+            "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 500
+            }
+        }
+    }
+}

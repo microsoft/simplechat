@@ -16,9 +16,9 @@ def _support_menu_access_allowed():
     return 'Admin' in roles or 'User' in roles
 
 
-def register_route_frontend_support(app):
+def register_route_frontend_support(bp):
 
-    @app.route('/support/latest-features')
+    @bp.route('/support/latest-features')
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -50,7 +50,7 @@ def register_route_frontend_support(app):
             support_previous_release_feature_groups=previous_release_feature_groups,
         )
 
-    @app.route('/support/send-feedback')
+    @bp.route('/support/send-feedback')
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required

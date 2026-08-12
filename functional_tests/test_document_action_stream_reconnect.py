@@ -2,7 +2,7 @@
 # test_document_action_stream_reconnect.py
 """
 Functional test for document action stream reconnect support.
-Version: 0.241.023
+Version: 0.250.070
 Implemented in: 0.241.090
 
 This test ensures analysis and document comparison streaming
@@ -12,6 +12,7 @@ active conversation resumes progress updates after navigation.
 
 from pathlib import Path
 import traceback
+from test_support.versioning import assert_app_version_at_least
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -41,22 +42,20 @@ def test_document_action_stream_reconnect_wiring() -> None:
 
     document_action_stream_block = slice_between(
         route_content,
-        "@app.route('/api/chat/document-action/stream', methods=['POST'])",
-        "@app.route('/api/chat/analyze', methods=['POST'])",
+        "@bp.route('/api/chat/document-action/stream', methods=['POST'])",
+        "@bp.route('/api/chat/analyze', methods=['POST'])",
     )
     analyze_stream_block = slice_between(
         route_content,
-        "@app.route('/api/chat/analyze/stream', methods=['POST'])",
-        "@app.route('/api/chat', methods=['POST'])",
+        "@bp.route('/api/chat/analyze/stream', methods=['POST'])",
+        "@bp.route('/api/chat/image-proposals/generate', methods=['POST'])",
     )
 
-    assert 'VERSION = "0.241.023"' in config_content, (
-        "Expected config.py version 0.241.023 for the document action reconnect fix."
-    )
-    assert "@app.route('/api/chat/stream/status/<conversation_id>', methods=['GET'])" in route_content, (
+    assert_app_version_at_least("0.250.070")
+    assert "@bp.route('/api/chat/stream/status/<conversation_id>', methods=['GET'])" in route_content, (
         "Expected the shared chat stream status endpoint to exist for reconnect support."
     )
-    assert "@app.route('/api/chat/stream/reattach/<conversation_id>', methods=['GET'])" in route_content, (
+    assert "@bp.route('/api/chat/stream/reattach/<conversation_id>', methods=['GET'])" in route_content, (
         "Expected the shared chat stream reattach endpoint to exist for reconnect support."
     )
 

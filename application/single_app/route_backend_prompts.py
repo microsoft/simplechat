@@ -1,13 +1,15 @@
 # route_backend_prompts.py
 
 from config import *
+from flask import current_app
+
 from functions_authentication import *
 from functions_settings import *
 from functions_prompts import *
 from swagger_wrapper import swagger_route, get_auth_security
 
-def register_route_backend_prompts(app):
-    @app.route('/api/prompts', methods=['GET'])
+def register_route_backend_prompts(bp):
+    @bp.route('/api/prompts', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -27,10 +29,10 @@ def register_route_backend_prompts(app):
                 "total_count": total
             }), 200
         except Exception as e:
-            app.logger.error(f"Error fetching prompts: {e}")
+            current_app.logger.error(f"Error fetching prompts: {e}")
             return jsonify({"error":"An unexpected error occurred"}), 500
 
-    @app.route('/api/prompts', methods=['POST'])
+    @bp.route('/api/prompts', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -54,10 +56,10 @@ def register_route_backend_prompts(app):
             )
             return jsonify(result), 201
         except Exception as e:
-            app.logger.error(f"Error creating prompt: {e}")
+            current_app.logger.error(f"Error creating prompt: {e}")
             return jsonify({"error":"An unexpected error occurred"}), 500
 
-    @app.route('/api/prompts/<prompt_id>', methods=['GET'])
+    @bp.route('/api/prompts/<prompt_id>', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -74,10 +76,10 @@ def register_route_backend_prompts(app):
                 return jsonify({"error":"Prompt not found or access denied"}), 404
             return jsonify(item), 200
         except Exception as e:
-            app.logger.error(f"Unexpected error getting prompt {prompt_id}: {e}")
+            current_app.logger.error(f"Unexpected error getting prompt {prompt_id}: {e}")
             return jsonify({"error": "An unexpected error occurred"}), 500
 
-    @app.route('/api/prompts/<prompt_id>', methods=['PATCH'])
+    @bp.route('/api/prompts/<prompt_id>', methods=['PATCH'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -108,10 +110,10 @@ def register_route_backend_prompts(app):
                 return jsonify({"error":"Prompt not found or access denied"}), 404
             return jsonify(result), 200
         except Exception as e:
-            app.logger.error(f"Unexpected error updating prompt {prompt_id}: {e}")
+            current_app.logger.error(f"Unexpected error updating prompt {prompt_id}: {e}")
             return jsonify({"error":"An unexpected error occurred"}), 500
 
-    @app.route('/api/prompts/<prompt_id>', methods=['DELETE'])
+    @bp.route('/api/prompts/<prompt_id>', methods=['DELETE'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -127,5 +129,5 @@ def register_route_backend_prompts(app):
                 return jsonify({"error":"Prompt not found or access denied"}), 404
             return jsonify({"message":"Prompt deleted successfully"}), 200
         except Exception as e:
-            app.logger.error(f"Unexpected error deleting prompt {prompt_id}: {e}")
+            current_app.logger.error(f"Unexpected error deleting prompt {prompt_id}: {e}")
             return jsonify({"error":"An unexpected error occurred"}), 500

@@ -7,6 +7,13 @@ from functions_authentication import *
 from functions_settings import *
 from functions_public_workspaces import *
 from functions_documents import *
+from functions_document_access_index import (
+    DOCUMENT_ACCESS_SCOPE_PUBLIC,
+    is_document_access_shadow_validation_enabled,
+    query_items_with_cosmos_diagnostics,
+    query_document_access_index_documents,
+    query_document_access_index_legacy_count,
+)
 from functions_appinsights import log_event
 from functions_activity_logging import log_document_metadata_update_transaction
 from swagger_wrapper import swagger_route, get_auth_security
@@ -47,14 +54,14 @@ def _require_external_public_workspace_context(allowed_roles, operation_type=Non
 
     return user_id, active_workspace_id, workspace_doc, role, None
 
-def register_route_external_public_documents(app):
+def register_route_external_public_documents(bp):
     """
     Provides backend routes for public-level document management:
     - GET /external/public_documents      (list)
     - POST /external/public_documents/upload
     - DELETE /external/public_documents/<doc_id>
     """
-    @app.route('/external/public_documents/upload', methods=['POST'])
+    @bp.route('/external/public_documents/upload', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @accesstoken_required
     @enabled_required("enable_public_workspaces")
@@ -73,7 +80,7 @@ def register_route_external_public_documents(app):
         classification = request.form.get('classification')
 
         log_event(
-            '[ExternalPublicDocuments] Authorized external public document upload request.',
+            '[EXTERNAL_PUBLIC_DOCUMENTS] Authorized external public document upload request.',
             extra={
                 'user_id': user_id,
                 'public_workspace_id': active_workspace_id,
@@ -168,7 +175,7 @@ def register_route_external_public_documents(app):
         }), response_status
 
         
-    @app.route('/external/public_documents', methods=['GET'])
+    @bp.route('/external/public_documents', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @accesstoken_required
     @enabled_required("enable_public_workspaces")
@@ -236,6 +243,16 @@ def register_route_external_public_documents(app):
             param_count += 1
 
         where_clause = " AND ".join(query_conditions)
+        shadow_filters = {
+            'search': search_term,
+            'classification': classification_filter,
+            'classification_none_matches_literal': False,
+            'author': author_filter,
+            'keywords': keywords_filter,
+            'abstract': abstract_filter,
+            'array_match_mode': 'exact',
+        }
+        used_document_access_index = False
 
         # --- 3) Query matching documents, then collapse to current revisions before paginating ---
         try:
@@ -245,17 +262,64 @@ def register_route_external_public_documents(app):
                 FROM c
                 WHERE {where_clause}
             """
-            matching_docs = list(cosmos_public_documents_container.query_items(
-                query=data_query_str,
-                parameters=query_params,
-                enable_cross_partition_query=True
-            ))
-            current_docs = sort_documents(select_current_documents(matching_docs))
+            index_read_result = query_document_access_index_documents(
+                source_scope=DOCUMENT_ACCESS_SCOPE_PUBLIC,
+                public_workspace_id=active_workspace_id,
+                filters=shadow_filters,
+            )
+            if index_read_result.get('success'):
+                used_document_access_index = True
+                current_docs = sort_documents(index_read_result.get('documents', []))
+                if is_document_access_shadow_validation_enabled():
+                    try:
+                        matching_docs, source_query_metrics = query_items_with_cosmos_diagnostics(
+                            cosmos_public_documents_container,
+                            diagnostics_label='source_documents',
+                            query=data_query_str,
+                            parameters=query_params,
+                            enable_cross_partition_query=True
+                        )
+                        source_current_docs = sort_documents(select_current_documents(matching_docs))
+                        validate_document_access_index_shadow(
+                            source_current_docs,
+                            source_scope=DOCUMENT_ACCESS_SCOPE_PUBLIC,
+                            user_id=user_id,
+                            public_workspace_id=active_workspace_id,
+                            filters=shadow_filters,
+                            source_query_metrics=source_query_metrics,
+                            context='external_get_public_documents',
+                        )
+                    except Exception as shadow_error:
+                        log_event(
+                            '[DOCUMENT_ACCESS_INDEX] Shadow validation source query failed after DAI read succeeded.',
+                            extra={'source_scope': DOCUMENT_ACCESS_SCOPE_PUBLIC, 'error': str(shadow_error)},
+                            level=logging.WARNING,
+                            exceptionTraceback=True,
+                        )
+            else:
+                matching_docs, source_query_metrics = query_items_with_cosmos_diagnostics(
+                    cosmos_public_documents_container,
+                    diagnostics_label='source_documents',
+                    collect_diagnostics=is_document_access_shadow_validation_enabled(),
+                    query=data_query_str,
+                    parameters=query_params,
+                    enable_cross_partition_query=True
+                )
+                current_docs = sort_documents(select_current_documents(matching_docs))
+                validate_document_access_index_shadow(
+                    current_docs,
+                    source_scope=DOCUMENT_ACCESS_SCOPE_PUBLIC,
+                    user_id=user_id,
+                    public_workspace_id=active_workspace_id,
+                    filters=shadow_filters,
+                    source_query_metrics=source_query_metrics,
+                    context='external_get_public_documents',
+                )
             total_count = len(current_docs)
             docs = current_docs[offset:offset + page_size]
         except Exception as e:
             log_event(
-                '[ExternalPublicDocuments] Error fetching public documents.',
+                '[EXTERNAL_PUBLIC_DOCUMENTS] Error fetching public documents.',
                 extra={'public_workspace_id': active_workspace_id, 'error': str(e)},
                 level=logging.ERROR,
             )
@@ -263,27 +327,34 @@ def register_route_external_public_documents(app):
 
         
         # --- new: do we have any legacy documents? ---
-        try:
-            legacy_q = """
-                SELECT VALUE COUNT(1)
-                FROM c
-                WHERE c.public_workspace_id = @public_workspace_id
-                    AND NOT IS_DEFINED(c.percentage_complete)
-            """
-            legacy_docs = list(
-                cosmos_public_documents_container.query_items(
-                    query=legacy_q,
-                    parameters=[{"name":"@public_workspace_id","value":active_workspace_id}],
-                    enable_cross_partition_query=True
+        if used_document_access_index:
+            legacy_count_result = query_document_access_index_legacy_count(
+                source_scope=DOCUMENT_ACCESS_SCOPE_PUBLIC,
+                public_workspace_id=active_workspace_id,
+            )
+            legacy_count = legacy_count_result.get('legacy_count', 0) if legacy_count_result.get('success') else 0
+        else:
+            try:
+                legacy_q = """
+                    SELECT VALUE COUNT(1)
+                    FROM c
+                    WHERE c.public_workspace_id = @public_workspace_id
+                        AND NOT IS_DEFINED(c.percentage_complete)
+                """
+                legacy_docs = list(
+                    cosmos_public_documents_container.query_items(
+                        query=legacy_q,
+                        parameters=[{"name":"@public_workspace_id","value":active_workspace_id}],
+                        enable_cross_partition_query=True
+                    )
                 )
-            )
-            legacy_count = legacy_docs[0] if legacy_docs else 0
-        except Exception as e:
-            log_event(
-                '[ExternalPublicDocuments] Error executing public legacy document query.',
-                extra={'public_workspace_id': active_workspace_id, 'error': str(e)},
-                level=logging.ERROR,
-            )
+                legacy_count = legacy_docs[0] if legacy_docs else 0
+            except Exception as e:
+                log_event(
+                    '[EXTERNAL_PUBLIC_DOCUMENTS] Error executing public legacy document query.',
+                    extra={'public_workspace_id': active_workspace_id, 'error': str(e)},
+                    level=logging.ERROR,
+                )
 
         # --- 5) Return results ---
         return jsonify({
@@ -295,7 +366,7 @@ def register_route_external_public_documents(app):
         }), 200
 
 
-    @app.route('/external/public_documents/<document_id>', methods=['GET'])
+    @bp.route('/external/public_documents/<document_id>', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @accesstoken_required
     @enabled_required("enable_public_workspaces")
@@ -313,7 +384,7 @@ def register_route_external_public_documents(app):
 
         return get_document(user_id=user_id, document_id=document_id, public_workspace_id=active_workspace_id)
 
-    @app.route('/external/public_documents/<document_id>', methods=['PATCH'])
+    @bp.route('/external/public_documents/<document_id>', methods=['PATCH'])
     @swagger_route(security=get_auth_security())
     @accesstoken_required
     @enabled_required("enable_public_workspaces")
@@ -433,7 +504,7 @@ def register_route_external_public_documents(app):
    
 
 
-    @app.route('/external/public_documents/<document_id>', methods=['DELETE'])
+    @bp.route('/external/public_documents/<document_id>', methods=['DELETE'])
     @swagger_route(security=get_auth_security())
     @accesstoken_required
     @enabled_required("enable_public_workspaces")
@@ -468,7 +539,7 @@ def register_route_external_public_documents(app):
             return jsonify({'error': f'Error deleting public document: {str(e)}'}), 500
 
 
-    @app.route('/external/public_documents/<document_id>/extract_metadata', methods=['POST'])
+    @bp.route('/external/public_documents/<document_id>/extract_metadata', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @accesstoken_required
     @enabled_required("enable_public_workspaces")
@@ -506,7 +577,7 @@ def register_route_external_public_documents(app):
             'document_id': document_id
         }), 200
         
-    @app.route('/external/public_documents/upgrade_legacy', methods=['POST'])
+    @bp.route('/external/public_documents/upgrade_legacy', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @accesstoken_required
     @enabled_required("enable_public_workspaces")

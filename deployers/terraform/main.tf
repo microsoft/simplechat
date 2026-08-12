@@ -354,64 +354,73 @@ locals {
   existing_openai_subscription_id       = var.param_existing_azure_openai_subscription_id != "" ? var.param_existing_azure_openai_subscription_id : var.param_subscription_id
   use_existing_openai_resource_metadata = var.param_use_existing_openai_instance && var.param_existing_azure_openai_resource_name != "" && var.param_existing_azure_openai_resource_group_name != ""
   enable_openai_rbac_assignments        = !var.param_use_existing_openai_instance || local.use_existing_openai_resource_metadata
+  data_management_history_composite_indexes = [
+    [
+      { path = "/created_at", order = "Descending" },
+      { path = "/id", order = "Descending" }
+    ]
+  ]
   cosmos_containers = {
-    conversations                 = { partition_key_path = "/id", default_ttl = null }
-    messages                      = { partition_key_path = "/conversation_id", default_ttl = null }
-    tabular_export_runs           = { partition_key_path = "/user_id", default_ttl = null }
-    personal_workflows            = { partition_key_path = "/user_id", default_ttl = null }
-    personal_workflow_runs        = { partition_key_path = "/user_id", default_ttl = null }
-    personal_workflow_run_items   = { partition_key_path = "/run_id", default_ttl = null }
-    group_workflows               = { partition_key_path = "/group_id", default_ttl = null }
-    group_workflow_runs           = { partition_key_path = "/group_id", default_ttl = null }
-    group_workflow_run_items      = { partition_key_path = "/run_id", default_ttl = null }
-    group_conversations           = { partition_key_path = "/id", default_ttl = null }
-    group_messages                = { partition_key_path = "/conversation_id", default_ttl = null }
-    collaboration_conversations   = { partition_key_path = "/id", default_ttl = null }
-    collaboration_messages        = { partition_key_path = "/conversation_id", default_ttl = null }
-    collaboration_user_state      = { partition_key_path = "/user_id", default_ttl = null }
-    settings                      = { partition_key_path = "/id", default_ttl = null }
-    groups                        = { partition_key_path = "/id", default_ttl = null }
-    public_workspaces             = { partition_key_path = "/id", default_ttl = null }
-    documents                     = { partition_key_path = "/id", default_ttl = null }
-    group_documents               = { partition_key_path = "/id", default_ttl = null }
-    public_documents              = { partition_key_path = "/id", default_ttl = null }
-    personal_file_sync_sources    = { partition_key_path = "/user_id", default_ttl = null }
-    group_file_sync_sources       = { partition_key_path = "/group_id", default_ttl = null }
-    public_file_sync_sources      = { partition_key_path = "/public_workspace_id", default_ttl = null }
-    personal_workspace_identities = { partition_key_path = "/user_id", default_ttl = null }
-    group_workspace_identities    = { partition_key_path = "/group_id", default_ttl = null }
-    public_workspace_identities   = { partition_key_path = "/public_workspace_id", default_ttl = null }
-    global_workspace_identities   = { partition_key_path = "/global_id", default_ttl = null }
-    personal_file_sync_items      = { partition_key_path = "/source_id", default_ttl = null }
-    group_file_sync_items         = { partition_key_path = "/source_id", default_ttl = null }
-    public_file_sync_items        = { partition_key_path = "/source_id", default_ttl = null }
-    personal_file_sync_runs       = { partition_key_path = "/source_id", default_ttl = null }
-    group_file_sync_runs          = { partition_key_path = "/source_id", default_ttl = null }
-    public_file_sync_runs         = { partition_key_path = "/source_id", default_ttl = null }
-    user_settings                 = { partition_key_path = "/id", default_ttl = null }
-    safety                        = { partition_key_path = "/id", default_ttl = null }
-    feedback                      = { partition_key_path = "/id", default_ttl = null }
-    archived_conversations        = { partition_key_path = "/id", default_ttl = null }
-    archived_messages             = { partition_key_path = "/conversation_id", default_ttl = null }
-    prompts                       = { partition_key_path = "/id", default_ttl = null }
-    group_prompts                 = { partition_key_path = "/id", default_ttl = null }
-    public_prompts                = { partition_key_path = "/id", default_ttl = null }
-    file_processing               = { partition_key_path = "/document_id", default_ttl = null }
-    personal_agents               = { partition_key_path = "/user_id", default_ttl = null }
-    personal_actions              = { partition_key_path = "/user_id", default_ttl = null }
-    group_agents                  = { partition_key_path = "/group_id", default_ttl = null }
-    group_actions                 = { partition_key_path = "/group_id", default_ttl = null }
-    global_agents                 = { partition_key_path = "/id", default_ttl = null }
-    global_actions                = { partition_key_path = "/id", default_ttl = null }
-    agent_templates               = { partition_key_path = "/id", default_ttl = null }
-    agent_facts                   = { partition_key_path = "/scope_id", default_ttl = null }
-    search_cache                  = { partition_key_path = "/user_id", default_ttl = null }
-    activity_logs                 = { partition_key_path = "/user_id", default_ttl = null }
-    notifications                 = { partition_key_path = "/user_id", default_ttl = -1 }
-    approvals                     = { partition_key_path = "/group_id", default_ttl = -1 }
-    msgraph_pending_actions       = { partition_key_path = "/user_id", default_ttl = -1 }
-    thoughts                      = { partition_key_path = "/user_id", default_ttl = null }
-    archive_thoughts              = { partition_key_path = "/user_id", default_ttl = null }
+    conversations                      = { partition_key_path = "/id", default_ttl = null }
+    messages                           = { partition_key_path = "/conversation_id", default_ttl = null }
+    tabular_export_runs                = { partition_key_path = "/user_id", default_ttl = null }
+    data_management_jobs               = { partition_key_path = "/id", default_ttl = null }
+    data_management_job_items          = { partition_key_path = "/job_id", default_ttl = null }
+    data_management_backup_item_states = { partition_key_path = "/source_scope", default_ttl = null }
+    personal_workflows                 = { partition_key_path = "/user_id", default_ttl = null }
+    personal_workflow_runs             = { partition_key_path = "/user_id", default_ttl = null }
+    personal_workflow_run_items        = { partition_key_path = "/run_id", default_ttl = null }
+    group_workflows                    = { partition_key_path = "/group_id", default_ttl = null }
+    group_workflow_runs                = { partition_key_path = "/group_id", default_ttl = null }
+    group_workflow_run_items           = { partition_key_path = "/run_id", default_ttl = null }
+    group_conversations                = { partition_key_path = "/id", default_ttl = null }
+    group_messages                     = { partition_key_path = "/conversation_id", default_ttl = null }
+    collaboration_conversations        = { partition_key_path = "/id", default_ttl = null }
+    collaboration_messages             = { partition_key_path = "/conversation_id", default_ttl = null }
+    collaboration_user_state           = { partition_key_path = "/user_id", default_ttl = null }
+    settings                           = { partition_key_path = "/id", default_ttl = null }
+    groups                             = { partition_key_path = "/id", default_ttl = null }
+    public_workspaces                  = { partition_key_path = "/id", default_ttl = null }
+    documents                          = { partition_key_path = "/id", default_ttl = null }
+    group_documents                    = { partition_key_path = "/id", default_ttl = null }
+    public_documents                   = { partition_key_path = "/id", default_ttl = null }
+    personal_file_sync_sources         = { partition_key_path = "/user_id", default_ttl = null }
+    group_file_sync_sources            = { partition_key_path = "/group_id", default_ttl = null }
+    public_file_sync_sources           = { partition_key_path = "/public_workspace_id", default_ttl = null }
+    personal_workspace_identities      = { partition_key_path = "/user_id", default_ttl = null }
+    group_workspace_identities         = { partition_key_path = "/group_id", default_ttl = null }
+    public_workspace_identities        = { partition_key_path = "/public_workspace_id", default_ttl = null }
+    global_workspace_identities        = { partition_key_path = "/global_id", default_ttl = null }
+    personal_file_sync_items           = { partition_key_path = "/source_id", default_ttl = null }
+    group_file_sync_items              = { partition_key_path = "/source_id", default_ttl = null }
+    public_file_sync_items             = { partition_key_path = "/source_id", default_ttl = null }
+    personal_file_sync_runs            = { partition_key_path = "/source_id", default_ttl = null }
+    group_file_sync_runs               = { partition_key_path = "/source_id", default_ttl = null }
+    public_file_sync_runs              = { partition_key_path = "/source_id", default_ttl = null }
+    user_settings                      = { partition_key_path = "/id", default_ttl = null }
+    safety                             = { partition_key_path = "/id", default_ttl = null }
+    feedback                           = { partition_key_path = "/id", default_ttl = null }
+    archived_conversations             = { partition_key_path = "/id", default_ttl = null }
+    archived_messages                  = { partition_key_path = "/conversation_id", default_ttl = null }
+    prompts                            = { partition_key_path = "/id", default_ttl = null }
+    group_prompts                      = { partition_key_path = "/id", default_ttl = null }
+    public_prompts                     = { partition_key_path = "/id", default_ttl = null }
+    file_processing                    = { partition_key_path = "/document_id", default_ttl = null }
+    personal_agents                    = { partition_key_path = "/user_id", default_ttl = null }
+    personal_actions                   = { partition_key_path = "/user_id", default_ttl = null }
+    group_agents                       = { partition_key_path = "/group_id", default_ttl = null }
+    group_actions                      = { partition_key_path = "/group_id", default_ttl = null }
+    global_agents                      = { partition_key_path = "/id", default_ttl = null }
+    global_actions                     = { partition_key_path = "/id", default_ttl = null }
+    agent_templates                    = { partition_key_path = "/id", default_ttl = null }
+    agent_facts                        = { partition_key_path = "/scope_id", default_ttl = null }
+    search_cache                       = { partition_key_path = "/user_id", default_ttl = null }
+    activity_logs                      = { partition_key_path = "/user_id", default_ttl = null }
+    notifications                      = { partition_key_path = "/user_id", default_ttl = -1 }
+    approvals                          = { partition_key_path = "/group_id", default_ttl = -1 }
+    msgraph_pending_actions            = { partition_key_path = "/user_id", default_ttl = -1 }
+    thoughts                           = { partition_key_path = "/user_id", default_ttl = null }
+    archive_thoughts                   = { partition_key_path = "/user_id", default_ttl = null }
   }
 
   # Tags for resources
@@ -904,6 +913,34 @@ resource "azurerm_cosmosdb_sql_container" "simplechat" {
   partition_key_paths = [each.value.partition_key_path]
   default_ttl         = each.value.default_ttl
 
+  dynamic "indexing_policy" {
+    for_each = each.key == "data_management_jobs" ? [local.data_management_history_composite_indexes] : []
+    content {
+      indexing_mode = "Consistent"
+
+      included_path {
+        path = "/*"
+      }
+
+      excluded_path {
+        path = "/\"_etag\"/?"
+      }
+
+      dynamic "composite_index" {
+        for_each = indexing_policy.value
+        content {
+          dynamic "index" {
+            for_each = composite_index.value
+            content {
+              path  = index.value.path
+              order = index.value.order
+            }
+          }
+        }
+      }
+    }
+  }
+
   dynamic "autoscale_settings" {
     for_each = lower(var.param_cosmos_capacity_mode) == "provisioned" ? [1] : []
     content {
@@ -1017,6 +1054,44 @@ resource "azurerm_role_assignment" "managed_identity_cosmosdb_contributor" {
   scope                = azurerm_cosmosdb_account.cosmos.id
   role_definition_name = "Contributor" # The script specifies "Contributor" here. For Cosmos DB data plane, "Cosmos DB Built-in Data Contributor" or "Cosmos DB Operator" might be more appropriate.
   principal_id         = azurerm_user_assigned_identity.id.principal_id
+}
+
+# Minimum management-plane access for Cosmos throughput monitoring and temporary
+# Data Management source-capacity boosts. This does not grant Cosmos data-plane access.
+resource "azurerm_role_definition" "simplechat_cosmos_throughput_operator" {
+  name        = "SimpleChat Cosmos Throughput Operator ${azurerm_resource_group.rg.name}"
+  scope       = azurerm_resource_group.rg.id
+  description = "Allows SimpleChat to read and adjust Cosmos DB SQL database/container throughput settings."
+
+  permissions {
+    actions = [
+      "Microsoft.DocumentDB/databaseAccounts/read",
+      "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/read",
+      "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers/read",
+      "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/throughputSettings/read",
+      "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/throughputSettings/write",
+      "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/throughputSettings/migrateToAutoscale/action",
+      "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/throughputSettings/operationResults/read",
+      "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/throughputSettings/migrateToAutoscale/operationResults/read",
+      "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers/throughputSettings/read",
+      "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers/throughputSettings/write",
+      "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers/throughputSettings/migrateToAutoscale/action",
+      "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers/throughputSettings/operationResults/read",
+      "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers/throughputSettings/migrateToAutoscale/operationResults/read",
+      "Microsoft.Insights/metrics/read",
+    ]
+    not_actions = []
+  }
+
+  assignable_scopes = [
+    azurerm_resource_group.rg.id,
+  ]
+}
+
+resource "azurerm_role_assignment" "managed_identity_cosmos_throughput_operator" {
+  scope              = azurerm_cosmosdb_account.cosmos.id
+  role_definition_id = azurerm_role_definition.simplechat_cosmos_throughput_operator.role_definition_resource_id
+  principal_id       = azurerm_user_assigned_identity.id.principal_id
 }
 
 # Storage Blob Data Contributor on Storage Account

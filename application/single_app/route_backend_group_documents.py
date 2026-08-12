@@ -13,6 +13,15 @@ from functions_file_sync import (
     build_synced_document_delete_guard,
 )
 from functions_notifications import create_notification, delete_notifications_by_metadata
+from functions_document_access_index import (
+    DOCUMENT_ACCESS_SCOPE_GROUP,
+    build_document_access_scope_key,
+    is_document_access_shadow_validation_enabled,
+    query_items_with_cosmos_diagnostics,
+    query_document_access_index_documents,
+    query_document_access_index_legacy_count,
+    query_document_access_index_tag_counts,
+)
 from functions_simplechat_operations import download_blob_content, queue_generated_document_processing
 from utils_cache import invalidate_group_search_cache
 from functions_debug import *
@@ -271,7 +280,7 @@ def _create_group_document_share_decision_notification(
         },
     )
 
-def register_route_backend_group_documents(app):
+def register_route_backend_group_documents(bp):
     """
     Provides backend routes for group-level document management:
     - GET /api/group_documents      (list)
@@ -279,7 +288,7 @@ def register_route_backend_group_documents(app):
     - DELETE /api/group_documents/<doc_id>
     """
 
-    @app.route('/api/group_documents/upload', methods=['POST'])
+    @bp.route('/api/group_documents/upload', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -397,7 +406,7 @@ def register_route_backend_group_documents(app):
         }), response_status
 
 
-    @app.route('/api/group_documents', methods=['GET'])
+    @bp.route('/api/group_documents', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -503,6 +512,7 @@ def register_route_backend_group_documents(app):
 
         query_conditions = [group_condition]
         param_count = 0
+        shadow_tags_filter = []
 
         if search_term:
             param_name = f"@search_term_{param_count}"
@@ -541,6 +551,7 @@ def register_route_backend_group_documents(app):
             from functions_documents import sanitize_tags_for_filter
             tags_list = sanitize_tags_for_filter(tags_filter)
             if tags_list:
+                shadow_tags_filter = tags_list
                 for idx, tag in enumerate(tags_list):
                     param_name = f"@tag_{param_count}_{idx}"
                     query_conditions.append(f"ARRAY_CONTAINS(c.tags, {param_name})")
@@ -550,6 +561,17 @@ def register_route_backend_group_documents(app):
         where_clause = " AND ".join(query_conditions)
 
         # --- 3) Query matching documents, then collapse to current revisions before paginating ---
+        shadow_filters = {
+            'search': search_term,
+            'classification': classification_filter,
+            'classification_none_matches_literal': False,
+            'author': author_filter,
+            'keywords': keywords_filter,
+            'abstract': abstract_filter,
+            'tags': shadow_tags_filter,
+            'array_match_mode': 'contains',
+        }
+        used_document_access_index = False
         try:
             offset = (page - 1) * page_size
             data_query_str = f"""
@@ -557,16 +579,70 @@ def register_route_backend_group_documents(app):
                 FROM c
                 WHERE {where_clause}
             """
-            matching_docs = list(cosmos_group_documents_container.query_items(
-                query=data_query_str,
-                parameters=query_params,
-                enable_cross_partition_query=True
-            ))
-            current_docs = sort_documents(
-                select_current_documents(matching_docs),
-                sort_by=sort_by,
-                sort_order=sort_order,
+            index_read_result = query_document_access_index_documents(
+                source_scope=DOCUMENT_ACCESS_SCOPE_GROUP,
+                group_ids=validated_group_ids,
+                filters=shadow_filters,
             )
+
+            if index_read_result.get('success'):
+                used_document_access_index = True
+                current_docs = sort_documents(
+                    index_read_result.get('documents', []),
+                    sort_by=sort_by,
+                    sort_order=sort_order,
+                )
+                if is_document_access_shadow_validation_enabled():
+                    try:
+                        matching_docs, source_query_metrics = query_items_with_cosmos_diagnostics(
+                            cosmos_group_documents_container,
+                            diagnostics_label='source_documents',
+                            query=data_query_str,
+                            parameters=query_params,
+                            enable_cross_partition_query=True
+                        )
+                        source_current_docs = sort_documents(
+                            select_current_documents(matching_docs),
+                            sort_by=sort_by,
+                            sort_order=sort_order,
+                        )
+                        validate_document_access_index_shadow(
+                            source_current_docs,
+                            source_scope=DOCUMENT_ACCESS_SCOPE_GROUP,
+                            group_ids=validated_group_ids,
+                            filters=shadow_filters,
+                            source_query_metrics=source_query_metrics,
+                            context='api_get_group_documents',
+                        )
+                    except Exception as shadow_error:
+                        log_event(
+                            '[DOCUMENT_ACCESS_INDEX] Shadow validation source query failed after DAI read succeeded.',
+                            extra={'source_scope': DOCUMENT_ACCESS_SCOPE_GROUP, 'error': str(shadow_error)},
+                            level=logging.WARNING,
+                            exceptionTraceback=True,
+                        )
+            else:
+                matching_docs, source_query_metrics = query_items_with_cosmos_diagnostics(
+                    cosmos_group_documents_container,
+                    diagnostics_label='source_documents',
+                    collect_diagnostics=is_document_access_shadow_validation_enabled(),
+                    query=data_query_str,
+                    parameters=query_params,
+                    enable_cross_partition_query=True
+                )
+                current_docs = sort_documents(
+                    select_current_documents(matching_docs),
+                    sort_by=sort_by,
+                    sort_order=sort_order,
+                )
+                validate_document_access_index_shadow(
+                    current_docs,
+                    source_scope=DOCUMENT_ACCESS_SCOPE_GROUP,
+                    group_ids=validated_group_ids,
+                    filters=shadow_filters,
+                    source_query_metrics=source_query_metrics,
+                    context='api_get_group_documents',
+                )
             total_count = len(current_docs)
             docs = current_docs[offset:offset + page_size]
 
@@ -602,26 +678,16 @@ def register_route_backend_group_documents(app):
 
 
         # --- new: do we have any legacy documents? ---
-        legacy_count = 0
-        try:
-            if len(validated_group_ids) == 1:
-                legacy_q = """
-                    SELECT VALUE COUNT(1)
-                    FROM c
-                    WHERE c.group_id = @group_id
-                        AND NOT IS_DEFINED(c.percentage_complete)
-                """
-                legacy_docs = list(
-                    cosmos_group_documents_container.query_items(
-                        query=legacy_q,
-                        parameters=[{"name":"@group_id","value":validated_group_ids[0]}],
-                        enable_cross_partition_query=True
-                    )
-                )
-                legacy_count = legacy_docs[0] if legacy_docs else 0
-            else:
-                # For multi-group, check each group
-                for gid in validated_group_ids:
+        if used_document_access_index:
+            legacy_count_result = query_document_access_index_legacy_count(
+                source_scope=DOCUMENT_ACCESS_SCOPE_GROUP,
+                group_ids=validated_group_ids,
+            )
+            legacy_count = legacy_count_result.get('legacy_count', 0) if legacy_count_result.get('success') else 0
+        else:
+            legacy_count = 0
+            try:
+                if len(validated_group_ids) == 1:
                     legacy_q = """
                         SELECT VALUE COUNT(1)
                         FROM c
@@ -631,13 +697,30 @@ def register_route_backend_group_documents(app):
                     legacy_docs = list(
                         cosmos_group_documents_container.query_items(
                             query=legacy_q,
-                            parameters=[{"name":"@group_id","value":gid}],
+                            parameters=[{"name":"@group_id","value":validated_group_ids[0]}],
                             enable_cross_partition_query=True
                         )
                     )
-                    legacy_count += legacy_docs[0] if legacy_docs else 0
-        except Exception as e:
-            print(f"Error executing legacy query: {e}")
+                    legacy_count = legacy_docs[0] if legacy_docs else 0
+                else:
+                    # For multi-group, check each group
+                    for gid in validated_group_ids:
+                        legacy_q = """
+                            SELECT VALUE COUNT(1)
+                            FROM c
+                            WHERE c.group_id = @group_id
+                                AND NOT IS_DEFINED(c.percentage_complete)
+                        """
+                        legacy_docs = list(
+                            cosmos_group_documents_container.query_items(
+                                query=legacy_q,
+                                parameters=[{"name":"@group_id","value":gid}],
+                                enable_cross_partition_query=True
+                            )
+                        )
+                        legacy_count += legacy_docs[0] if legacy_docs else 0
+            except Exception as e:
+                print(f"Error executing legacy query: {e}")
 
         # --- 5) Return results ---
         app_settings = get_settings()
@@ -661,7 +744,7 @@ def register_route_backend_group_documents(app):
             "needs_legacy_update_check": legacy_count > 0
         }), 200
 
-    @app.route('/api/group_documents/<document_id>', methods=['GET'])
+    @bp.route('/api/group_documents/<document_id>', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -689,7 +772,7 @@ def register_route_backend_group_documents(app):
 
         return get_document(user_id=user_id, document_id=document_id, group_id=active_group_id)
 
-    @app.route('/api/group_documents/<document_id>/versions', methods=['GET'])
+    @bp.route('/api/group_documents/<document_id>/versions', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -753,7 +836,7 @@ def register_route_backend_group_documents(app):
             return None, None, (jsonify({'error': 'Document not found or access denied'}), 404)
         return active_group_id, document_record, None
 
-    @app.route('/api/group_documents/<document_id>/download', methods=['GET'])
+    @bp.route('/api/group_documents/<document_id>/download', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -773,13 +856,13 @@ def register_route_backend_group_documents(app):
             return jsonify({'error': str(exc)}), 404
         except Exception as exc:
             log_event(
-                '[DocumentDownload] Failed group document download',
+                '[DOCUMENT_DOWNLOAD] Failed group document download',
                 {'document_id': document_id, 'group_id': active_group_id, 'error': str(exc)},
                 debug_only=True,
             )
             return jsonify({'error': 'Unable to download document'}), 500
 
-    @app.route('/api/group_documents/download', methods=['POST'])
+    @bp.route('/api/group_documents/download', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -831,13 +914,13 @@ def register_route_backend_group_documents(app):
             return jsonify({'error': str(exc)}), 404
         except Exception as exc:
             log_event(
-                '[DocumentDownload] Failed group document ZIP download',
+                '[DOCUMENT_DOWNLOAD] Failed group document ZIP download',
                 {'group_id': active_group_id, 'document_count': len(documents), 'error': str(exc)},
                 debug_only=True,
             )
             return jsonify({'error': 'Unable to download selected documents'}), 500
 
-    @app.route('/api/group_documents/<document_id>', methods=['PATCH'])
+    @bp.route('/api/group_documents/<document_id>', methods=['PATCH'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -980,7 +1063,7 @@ def register_route_backend_group_documents(app):
         except Exception as e:
             return jsonify({'error': str(e)}), 500
 
-    @app.route('/api/group_documents/<document_id>', methods=['DELETE'])
+    @bp.route('/api/group_documents/<document_id>', methods=['DELETE'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -1062,7 +1145,7 @@ def register_route_backend_group_documents(app):
         except Exception as e:
             return jsonify({'error': f'Error deleting group document: {str(e)}'}), 500
 
-    @app.route('/api/group_documents/<document_id>/extract_metadata', methods=['POST'])
+    @bp.route('/api/group_documents/<document_id>/extract_metadata', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -1102,7 +1185,87 @@ def register_route_backend_group_documents(app):
             'document_id': document_id
         }), 200
 
-    @app.route('/api/group_documents/reprocess_extraction', methods=['POST'])
+    @bp.route('/api/group_documents/extract_metadata', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_group_workspaces")
+    def api_extract_group_metadata_batch():
+        """
+        POST /api/group_documents/extract_metadata
+        Queues background metadata extraction jobs for selected group documents.
+        """
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+
+        settings = get_settings()
+        if not settings.get('enable_extract_meta_data'):
+            return jsonify({'error': 'Metadata extraction not enabled'}), 403
+
+        active_group_id, group_doc, _, error_response = _require_active_group_document_context(
+            user_id,
+            allowed_roles=("Owner", "Admin", "DocumentManager"),
+            permission_message='You do not have permission to extract metadata for group documents',
+        )
+        if error_response:
+            return error_response
+
+        allowed, reason = check_group_status_allows_operation(group_doc, 'upload')
+        if not allowed:
+            return jsonify({'error': reason}), 403
+
+        payload = request.get_json(silent=True) or {}
+        document_ids = payload.get('document_ids')
+        if not isinstance(document_ids, list):
+            document_id = payload.get('document_id')
+            document_ids = [document_id] if document_id else []
+        document_ids = list(dict.fromkeys(
+            str(document_id).strip()
+            for document_id in document_ids
+            if str(document_id or '').strip()
+        ))
+        if not document_ids:
+            return jsonify({'error': 'At least one document ID is required.'}), 400
+
+        queued = []
+        errors = []
+        for document_id in document_ids:
+            try:
+                document_item = get_document_metadata(
+                    document_id=document_id,
+                    user_id=user_id,
+                    group_id=active_group_id,
+                )
+                if not document_item:
+                    errors.append({'document_id': document_id, 'error': 'Document not found.'})
+                    continue
+                if document_item.get('group_id') != active_group_id:
+                    errors.append({'document_id': document_id, 'error': 'Only documents in the active group can have metadata extracted.'})
+                    continue
+
+                current_app.extensions['executor'].submit_stored(
+                    f"{document_id}_group_metadata",
+                    process_metadata_extraction_background,
+                    document_id=document_id,
+                    user_id=user_id,
+                    group_id=active_group_id
+                )
+                queued.append({'document_id': document_id})
+            except Exception as e:
+                errors.append({'document_id': document_id, 'error': str(e)})
+
+        if queued:
+            invalidate_group_search_cache(active_group_id)
+
+        status_code = 202 if queued and not errors else (207 if queued else 400)
+        return jsonify({
+            'message': f'Queued {len(queued)} document(s) for metadata extraction.',
+            'queued': queued,
+            'errors': errors,
+        }), status_code
+
+    @bp.route('/api/group_documents/reprocess_extraction', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -1194,7 +1357,7 @@ def register_route_backend_group_documents(app):
             'errors': errors,
         }), status_code
 
-    @app.route('/api/group_documents/upgrade_legacy', methods=['POST'])
+    @bp.route('/api/group_documents/upgrade_legacy', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -1218,7 +1381,7 @@ def register_route_backend_group_documents(app):
         except Exception as e:
             return jsonify({'error': str(e)}), 500
 
-    @app.route('/api/group_documents/<document_id>/shared-groups', methods=['GET'])
+    @bp.route('/api/group_documents/<document_id>/shared-groups', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -1283,7 +1446,7 @@ def register_route_backend_group_documents(app):
         except Exception as e:
             return jsonify({'error': f'Error retrieving shared groups: {str(e)}'}), 500
 
-    @app.route('/api/group_documents/<document_id>/approve-share-with-group', methods=['POST'])
+    @bp.route('/api/group_documents/<document_id>/approve-share-with-group', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -1364,7 +1527,7 @@ def register_route_backend_group_documents(app):
         except Exception as e:
             return jsonify({'error': f'Error approving shared document: {str(e)}'}), 500
 
-    @app.route('/api/group_documents/<document_id>/approve-generated-artifact', methods=['POST'])
+    @bp.route('/api/group_documents/<document_id>/approve-generated-artifact', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -1478,7 +1641,7 @@ def register_route_backend_group_documents(app):
         except Exception as e:
             return jsonify({'error': f'Error approving generated artifact: {str(e)}'}), 500
 
-    @app.route('/api/group_documents/<document_id>/deny-generated-artifact', methods=['POST'])
+    @bp.route('/api/group_documents/<document_id>/deny-generated-artifact', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -1560,7 +1723,7 @@ def register_route_backend_group_documents(app):
         except Exception as e:
             return jsonify({'error': f'Error denying generated artifact: {str(e)}'}), 500
 
-    @app.route('/api/group_documents/<document_id>/cancel-generated-artifact', methods=['POST'])
+    @bp.route('/api/group_documents/<document_id>/cancel-generated-artifact', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -1620,7 +1783,7 @@ def register_route_backend_group_documents(app):
         except Exception as e:
             return jsonify({'error': f'Error canceling generated artifact: {str(e)}'}), 500
 
-    @app.route('/api/group_documents/<document_id>/share-with-group', methods=['POST'])
+    @bp.route('/api/group_documents/<document_id>/share-with-group', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -1732,7 +1895,7 @@ def register_route_backend_group_documents(app):
         except Exception as e:
             return jsonify({'error': f'Error sharing document: {str(e)}'}), 500
 
-    @app.route('/api/group_documents/<document_id>/unshare-with-group', methods=['DELETE'])
+    @bp.route('/api/group_documents/<document_id>/unshare-with-group', methods=['DELETE'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -1801,7 +1964,7 @@ def register_route_backend_group_documents(app):
         except Exception as e:
             return jsonify({'error': f'Error unsharing document: {str(e)}'}), 500
 
-    @app.route('/api/group_documents/<document_id>/remove-self', methods=['DELETE'])
+    @bp.route('/api/group_documents/<document_id>/remove-self', methods=['DELETE'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -1878,7 +2041,7 @@ def register_route_backend_group_documents(app):
         except Exception as e:
             return jsonify({'error': f'Error removing group from shared document: {str(e)}'}), 500
 
-    @app.route('/api/group_documents/tags', methods=['GET'])
+    @bp.route('/api/group_documents/tags', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -1904,9 +2067,10 @@ def register_route_backend_group_documents(app):
             except (ValueError, LookupError, PermissionError):
                 group_ids = []
 
-        from functions_documents import get_workspace_tags
+        from functions_documents import build_workspace_tags_from_counts, get_workspace_tags
 
         all_tags = {}
+        validated_group_ids = []
         for gid in group_ids:
             group_doc = find_group_by_id(gid)
             if not group_doc:
@@ -1914,8 +2078,23 @@ def register_route_backend_group_documents(app):
             role = get_user_role_in_group(group_doc, user_id)
             if not role:
                 continue
+            validated_group_ids.append(gid)
 
-            tags = get_workspace_tags(user_id, group_id=gid)
+        index_tag_result = query_document_access_index_tag_counts(
+            DOCUMENT_ACCESS_SCOPE_GROUP,
+            group_ids=validated_group_ids,
+        ) if validated_group_ids else {'success': False}
+
+        for gid in validated_group_ids:
+            if index_tag_result.get('success'):
+                scope_key = build_document_access_scope_key(DOCUMENT_ACCESS_SCOPE_GROUP, gid)
+                tags = build_workspace_tags_from_counts(
+                    index_tag_result.get('tag_counts_by_scope_key', {}).get(scope_key, {}),
+                    user_id,
+                    group_id=gid,
+                )
+            else:
+                tags = get_workspace_tags(user_id, group_id=gid)
             for tag in tags:
                 if tag['name'] in all_tags:
                     all_tags[tag['name']]['count'] += tag['count']
@@ -1925,7 +2104,7 @@ def register_route_backend_group_documents(app):
         merged = sorted(all_tags.values(), key=lambda t: t['name'])
         return jsonify({'tags': merged}), 200
 
-    @app.route('/api/group_documents/tags', methods=['POST'])
+    @bp.route('/api/group_documents/tags', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -1995,7 +2174,7 @@ def register_route_backend_group_documents(app):
         except Exception as e:
             return jsonify({'error': str(e)}), 500
 
-    @app.route('/api/group_documents/bulk-tag', methods=['POST'])
+    @bp.route('/api/group_documents/bulk-tag', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -2118,7 +2297,7 @@ def register_route_backend_group_documents(app):
         except Exception as e:
             return jsonify({'error': str(e)}), 500
 
-    @app.route('/api/group_documents/tags/<tag_name>', methods=['PATCH'])
+    @bp.route('/api/group_documents/tags/<tag_name>', methods=['PATCH'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -2241,7 +2420,7 @@ def register_route_backend_group_documents(app):
         except Exception as e:
             return jsonify({'error': str(e)}), 500
 
-    @app.route('/api/group_documents/tags/<tag_name>', methods=['DELETE'])
+    @bp.route('/api/group_documents/tags/<tag_name>', methods=['DELETE'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required

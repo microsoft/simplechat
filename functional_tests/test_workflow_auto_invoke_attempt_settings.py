@@ -12,6 +12,7 @@ capacity guidance when raising the limit.
 """
 
 from pathlib import Path
+from test_support.versioning import assert_app_version_at_least
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -31,9 +32,7 @@ def test_workflow_auto_invoke_attempt_settings_wiring() -> None:
     loader_content = read_text("application/single_app/semantic_kernel_loader.py")
     workflow_runner_content = read_text("application/single_app/functions_workflow_runner.py")
 
-    assert 'VERSION = "0.241.194"' in config_content, (
-        "Expected config.py version 0.241.194 for workflow action limit settings."
-    )
+    assert_app_version_at_least("0.241.194")
     assert "'workflow_max_auto_invoke_attempts': 60" in settings_content, (
         "Expected app settings defaults to persist the workflow action limit."
     )

@@ -17,6 +17,7 @@ DOCUMENT_ACTION_TYPE_ANALYZE = 'analyze'
 DOCUMENT_ACTION_TYPE_COMPARISON = 'comparison'
 DOCUMENT_ACTION_ANALYSIS_MODE_COMBINED = 'combined'
 DOCUMENT_ACTION_ANALYSIS_MODE_PER_DOCUMENT = 'per_document'
+DOCUMENT_ACTION_TARGET_MODE_ALL = 'all'
 DOCUMENT_ACTION_TARGET_MODE_SELECTED = 'selected'
 DOCUMENT_ACTION_TARGET_MODE_RECENT = 'recent'
 DEFAULT_RECENT_DOCUMENT_WINDOW_MINUTES = 10
@@ -25,6 +26,7 @@ VALID_DOCUMENT_ACTION_ANALYSIS_MODES = {
     DOCUMENT_ACTION_ANALYSIS_MODE_PER_DOCUMENT,
 }
 VALID_DOCUMENT_ACTION_TARGET_MODES = {
+    DOCUMENT_ACTION_TARGET_MODE_ALL,
     DOCUMENT_ACTION_TARGET_MODE_SELECTED,
     DOCUMENT_ACTION_TARGET_MODE_RECENT,
 }
@@ -270,6 +272,8 @@ def normalize_document_action_config(
 
     if action_type == DOCUMENT_ACTION_TYPE_SEARCH:
         target_mode = normalize_document_action_target_mode(source_action.get('target_mode'))
+        if target_mode == DOCUMENT_ACTION_TARGET_MODE_ALL:
+            raise ValueError('All Documents is exhaustive only for Analyze.')
         document_ids = normalize_search_id_list(source_action.get('document_ids'))
         if resolved_max_documents is not None and len(document_ids) > resolved_max_documents:
             raise ValueError(f'Document search supports up to {resolved_max_documents} documents at a time.')
@@ -297,6 +301,19 @@ def normalize_document_action_config(
 
     if action_type == DOCUMENT_ACTION_TYPE_ANALYZE:
         target_mode = normalize_document_action_target_mode(source_action.get('target_mode'))
+        if target_mode == DOCUMENT_ACTION_TARGET_MODE_ALL:
+            normalized_action.update({
+                'doc_scope': source_action.get('doc_scope', 'all'),
+                'active_group_ids': normalize_search_id_list(source_action.get('active_group_ids')),
+                'active_public_workspace_id': normalize_search_id_list(source_action.get('active_public_workspace_id')),
+                'window_unit': source_action.get('window_unit') or 'pages',
+                'window_size': source_action.get('window_size'),
+                'window_percent': source_action.get('window_percent'),
+                'max_retries_per_window': source_action.get('max_retries_per_window', 1),
+                'analysis_mode': normalize_document_action_analysis_mode(source_action.get('analysis_mode')),
+                'target_mode': target_mode,
+            })
+            return normalized_action
         recent_targets_resolved = bool(source_action.get('recent_targets_resolved'))
         if target_mode == DOCUMENT_ACTION_TARGET_MODE_RECENT and not normalize_search_id_list(source_action.get('document_ids')):
             source_action = dict(source_action)
@@ -323,6 +340,8 @@ def normalize_document_action_config(
         return normalized_action
 
     target_mode = normalize_document_action_target_mode(source_action.get('target_mode'))
+    if target_mode == DOCUMENT_ACTION_TARGET_MODE_ALL:
+        raise ValueError('All Documents is supported only for Analyze.')
     recent_targets_resolved = bool(source_action.get('recent_targets_resolved'))
     if target_mode == DOCUMENT_ACTION_TARGET_MODE_RECENT and not recent_targets_resolved:
         normalized_action.update({

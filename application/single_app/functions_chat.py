@@ -17,7 +17,7 @@ def load_user_kernel(user_id, redis_client):
     kernel_state_json = redis_client.get(f"sk:state:{user_id}") if redis_client else None
     if not kernel_state_json:
         return None, None
-    log_event(f"[SK Loader] Loaded kernel state from Redis for user {user_id}.",
+    log_event(f"[SK_LOADER] Loaded kernel state from Redis for user {user_id}.",
         extra={
             "user_id": user_id,
             "kernel_state": kernel_state_json
@@ -26,7 +26,7 @@ def load_user_kernel(user_id, redis_client):
     )
     try:
         kernel_state = json.loads(kernel_state_json)
-        log_event(f"[SK Loader] Loaded kernel state from Redis for user {user_id}.")
+        log_event(f"[SK_LOADER] Loaded kernel state from Redis for user {user_id}.")
         kernel = Kernel()
         # Restore kernel config if possible
         kernel_config = kernel_state.get('kernel_config')
@@ -40,7 +40,7 @@ def load_user_kernel(user_id, redis_client):
                         config.__dict__.update(kernel_config)
             except Exception as conf_ex:
                 log_event(
-                    f"[SK Loader] Error restoring kernel config: {conf_ex}",
+                    f"[SK_LOADER] Error restoring kernel config: {conf_ex}",
                     level=logging.WARNING
                 )
         # Restore memory/chat history if possible
@@ -56,7 +56,7 @@ def load_user_kernel(user_id, redis_client):
                     mem.__dict__.update(memory_state)
             except Exception as mem_ex:
                 log_event(
-                    f"[SK Loader] Error restoring memory: {mem_ex}",
+                    f"[SK_LOADER] Error restoring memory: {mem_ex}",
                     level=logging.WARNING
                 )
         # Restore agents/plugins state if possible
@@ -73,13 +73,13 @@ def load_user_kernel(user_id, redis_client):
                 kernel_agents[agent_name] = agent_obj
             except Exception as agent_ex:
                 log_event(
-                    f"[SK Loader] Error restoring agent '{agent_name}': {agent_ex}",
+                    f"[SK_LOADER] Error restoring agent '{agent_name}': {agent_ex}",
                     level=logging.WARNING
                 )
         return kernel, kernel_agents
     except Exception as e:
         log_event(
-            f"[SK Loader] Error loading kernel state from Redis: {e}",
+            f"[SK_LOADER] Error loading kernel state from Redis: {e}",
             level=logging.ERROR
         )
         return None, None
@@ -111,7 +111,7 @@ def save_user_kernel(user_id, kernel, kernel_agents, redis_client):
                         agent_state = v.get_state()
                         kernel_agents_state[k] = agent_state
                     except Exception as agent_ex:
-                        kernel_agents_state[k] = f"[SK Loader] Error extracting agent state: {agent_ex}"
+                        kernel_agents_state[k] = f"[SK_LOADER] Error extracting agent state: {agent_ex}"
         # Extract memory/chat history if present
         memory_state = None
         if hasattr(kernel, 'memory'):
@@ -120,7 +120,7 @@ def save_user_kernel(user_id, kernel, kernel_agents, redis_client):
                 try:
                     memory_state = mem.get_history()
                 except Exception as mem_ex:
-                    memory_state = f"[SK Loader] Error extracting memory history: {mem_ex}"
+                    memory_state = f"[SK_LOADER] Error extracting memory history: {mem_ex}"
             elif hasattr(mem, 'to_dict') and callable(getattr(mem, 'to_dict')):
                 try:
                     memory_state = mem.to_dict()
@@ -154,7 +154,7 @@ def save_user_kernel(user_id, kernel, kernel_agents, redis_client):
         }
         redis_client.set(f"sk:state:{user_id}", json.dumps(state, default=str))
         log_event(
-            f"[SK Loader] Saved kernel state snapshot to Redis for user {user_id}.",
+            f"[SK_LOADER] Saved kernel state snapshot to Redis for user {user_id}.",
             extra={
                 "user_id": user_id,
                 'services': kernel_services,
@@ -168,7 +168,7 @@ def save_user_kernel(user_id, kernel, kernel_agents, redis_client):
         )
     except Exception as e:
         log_event(
-            f"[SK Loader] Error saving kernel state to Redis: {e}",
+            f"[SK_LOADER] Error saving kernel state to Redis: {e}",
             level=logging.ERROR
         )
 

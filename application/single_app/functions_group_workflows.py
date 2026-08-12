@@ -25,13 +25,14 @@ from functions_file_sync import (
     sanitize_file_sync_source,
 )
 from functions_global_agents import get_global_agents
-from functions_group import get_group_model_endpoints
+from functions_group import assert_group_role, get_group_model_endpoints
 from functions_group_agents import get_group_agents
 from functions_personal_workflows import (
     WORKFLOW_FILE_SYNC_CONTINUE_MODES,
     WORKFLOW_FILE_SYNC_MAX_SOURCES,
     WORKFLOW_FILE_SYNC_WAIT_MODES,
     WORKFLOW_RUNNER_TYPES,
+    WORKFLOW_TASK_RUNNER_TYPES,
     WORKFLOW_TRIGGER_TYPES,
     _build_default_model_summary,
     _normalize_alert_priority,
@@ -39,9 +40,12 @@ from functions_personal_workflows import (
     _normalize_document_action_config,
     _normalize_schedule,
     _normalize_text,
+    _normalize_workflow_error_handling,
+    _normalize_workflow_tasks,
     _strip_cosmos_metadata,
     _utc_now_iso,
     compute_next_run_at,
+    get_workflow_max_tasks,
 )
 from functions_settings import get_settings, normalize_model_endpoints
 
@@ -217,8 +221,14 @@ def _find_matching_agent(candidates, requested_agent, group_id):
     return None
 
 
-def _normalize_selected_agent(group_id, settings, requested_agent):
-    candidates = _build_selectable_agents(group_id, settings, requested_agent=requested_agent)
+def _normalize_selected_agent(group_id, settings, requested_agent, strict_permissions=False):
+    candidates = _build_selectable_agents(
+        group_id,
+        settings,
+        requested_agent=None if strict_permissions else requested_agent,
+    )
+    if strict_permissions:
+        candidates = [candidate for candidate in candidates if candidate.get('is_enabled', True)]
     matched_agent = _find_matching_agent(candidates, requested_agent, group_id)
     if not matched_agent:
         raise ValueError('Select a valid group or merged global agent.')
@@ -299,6 +309,55 @@ def _summarize_model_binding(candidates, endpoint_id, model_id):
     }
 
 
+def normalize_group_workflow_task_runner(actor_user_id, group_id, requested_runner, settings=None):
+    """Resolve a task runner against the group's currently authorized options."""
+    assert_group_role(
+        actor_user_id,
+        group_id,
+        allowed_roles=GROUP_WORKFLOW_MEMBER_ROLES,
+    )
+    requested_runner = requested_runner if isinstance(requested_runner, dict) else {}
+    runner_type = _normalize_text(requested_runner.get('type') or 'inherit', 'Task runner type').lower()
+    if runner_type not in WORKFLOW_TASK_RUNNER_TYPES:
+        raise ValueError('Task runner type must be inherit, model, or agent.')
+    if runner_type == 'inherit':
+        return {'type': 'inherit'}
+
+    settings = settings or get_settings()
+    if runner_type == 'agent':
+        if not settings.get('enable_semantic_kernel', False):
+            raise ValueError('Agents must be enabled before selecting a task agent.')
+        if not settings.get('allow_group_agents', False):
+            raise ValueError('Group agents must be enabled before selecting a task agent.')
+        selected_agent = _normalize_selected_agent(
+            group_id,
+            settings,
+            requested_runner.get('selected_agent'),
+            strict_permissions=True,
+        )
+        return {
+            'type': 'agent',
+            'selected_agent': selected_agent,
+        }
+
+    model_endpoint_id = _normalize_text(requested_runner.get('model_endpoint_id'), 'Task model endpoint')
+    model_id = _normalize_text(requested_runner.get('model_id'), 'Task model')
+    model_binding_summary = _summarize_model_binding(
+        _build_model_endpoint_candidates(group_id, settings),
+        model_endpoint_id,
+        model_id,
+    )
+    if not model_binding_summary:
+        raise ValueError('Select a model endpoint and model for the task override.')
+    return {
+        'type': 'model',
+        'model_endpoint_id': model_endpoint_id,
+        'model_id': model_id,
+        'model_provider': str(model_binding_summary.get('provider') or '').strip().lower(),
+        'model_binding_summary': model_binding_summary,
+    }
+
+
 def get_group_workflows(group_id):
     """Fetch all workflows for a group."""
     try:
@@ -314,7 +373,7 @@ def get_group_workflows(group_id):
         return []
     except Exception as exc:
         log_event(
-            f'[GroupWorkflowStore] Error fetching workflows for group {group_id}: {exc}',
+            f'[GROUP_WORKFLOW_STORE] Error fetching workflows for group {group_id}: {exc}',
             extra={'group_id': group_id},
             level=logging.ERROR,
             exceptionTraceback=True,
@@ -331,7 +390,7 @@ def get_group_workflow(group_id, workflow_id):
         return None
     except Exception as exc:
         log_event(
-            f'[GroupWorkflowStore] Error fetching workflow {workflow_id}: {exc}',
+            f'[GROUP_WORKFLOW_STORE] Error fetching workflow {workflow_id}: {exc}',
             extra={'group_id': group_id, 'workflow_id': workflow_id},
             level=logging.ERROR,
             exceptionTraceback=True,
@@ -363,7 +422,7 @@ def get_due_group_workflows(limit=20):
         return cleaned[:limit]
     except Exception as exc:
         log_event(
-            f'[GroupWorkflowStore] Error fetching due workflows: {exc}',
+            f'[GROUP_WORKFLOW_STORE] Error fetching due workflows: {exc}',
             level=logging.ERROR,
             exceptionTraceback=True,
         )
@@ -381,7 +440,22 @@ def save_group_workflow(group_id, workflow_data, actor_user_id, user_info=None):
 
     workflow_name = _normalize_text(workflow_data.get('name'), 'Workflow name', required=True)
     description = _normalize_text(workflow_data.get('description'), 'Description')
-    task_prompt = _normalize_text(workflow_data.get('task_prompt'), 'Task prompt', required=True)
+    tasks = _normalize_workflow_tasks(
+        workflow_data,
+        existing_workflow=existing_workflow,
+        task_runner_normalizer=lambda runner: normalize_group_workflow_task_runner(
+            actor_user_id,
+            group_id,
+            runner,
+            settings=settings,
+        ),
+        max_tasks=get_workflow_max_tasks(settings),
+    )
+    task_prompt = _normalize_text(
+        workflow_data.get('task_prompt') or (tasks[0].get('instructions') if tasks else ''),
+        'Task prompt',
+        required=True,
+    )
     runner_type = _normalize_text(workflow_data.get('runner_type'), 'Runner type', required=True).lower()
     if runner_type not in WORKFLOW_RUNNER_TYPES:
         raise ValueError('Runner type must be agent or model.')
@@ -407,6 +481,16 @@ def save_group_workflow(group_id, workflow_data, actor_user_id, user_info=None):
     ) if url_access_enabled else False
     alert_priority = _normalize_alert_priority(
         workflow_data.get('alert_priority', (existing_workflow or {}).get('alert_priority', 'none'))
+    )
+    error_handling = _normalize_workflow_error_handling(workflow_data, existing_workflow=existing_workflow)
+    default_chat_capabilities_enabled = (
+        (existing_workflow or {}).get('chat_capabilities_enabled', False)
+        if existing_workflow
+        else True
+    )
+    chat_capabilities_enabled = _normalize_bool(
+        workflow_data.get('chat_capabilities_enabled', default_chat_capabilities_enabled),
+        default=default_chat_capabilities_enabled,
     )
     file_sync = _normalize_file_sync_config(
         actor_user_id,
@@ -465,7 +549,10 @@ def save_group_workflow(group_id, workflow_data, actor_user_id, user_info=None):
         'name': workflow_name,
         'description': description,
         'task_prompt': task_prompt,
+        'tasks': tasks,
+        'error_handling': error_handling,
         'runner_type': runner_type,
+        'chat_capabilities_enabled': chat_capabilities_enabled,
         'trigger_type': trigger_type,
         'is_enabled': is_enabled,
         'url_access_enabled': url_access_enabled,
@@ -506,6 +593,9 @@ def save_group_workflow(group_id, workflow_data, actor_user_id, user_info=None):
         'last_run_response_preview': (existing_workflow or {}).get('last_run_response_preview', ''),
         'last_run_trigger_source': (existing_workflow or {}).get('last_run_trigger_source', ''),
         'run_count': int((existing_workflow or {}).get('run_count') or 0),
+        'active_run_id': (existing_workflow or {}).get('active_run_id', ''),
+        'cancellation_requested_at': (existing_workflow or {}).get('cancellation_requested_at'),
+        'cancellation_requested_by': (existing_workflow or {}).get('cancellation_requested_by', ''),
     }
 
     if trigger_type in {'interval', 'file_sync'} and is_enabled:
@@ -523,7 +613,7 @@ def save_group_workflow(group_id, workflow_data, actor_user_id, user_info=None):
 
     result = cosmos_group_workflows_container.upsert_item(body=workflow)
     cleaned_result = _strip_cosmos_metadata(result)
-    debug_print(f"[GroupWorkflowStore] Saved workflow {cleaned_result.get('id')} for group {group_id}")
+    debug_print(f"[GROUP_WORKFLOW_STORE] Saved workflow {cleaned_result.get('id')} for group {group_id}")
     return cleaned_result
 
 
@@ -558,7 +648,7 @@ def list_group_workflow_runs(group_id, workflow_id, limit=25):
         return [_strip_cosmos_metadata(item) for item in items[:limit]]
     except Exception as exc:
         log_event(
-            f'[GroupWorkflowStore] Error fetching workflow runs for {workflow_id}: {exc}',
+            f'[GROUP_WORKFLOW_STORE] Error fetching workflow runs for {workflow_id}: {exc}',
             extra={'group_id': group_id, 'workflow_id': workflow_id},
             level=logging.ERROR,
             exceptionTraceback=True,
@@ -575,7 +665,7 @@ def get_group_workflow_run(group_id, run_id):
         return None
     except Exception as exc:
         log_event(
-            f'[GroupWorkflowStore] Error fetching workflow run {run_id}: {exc}',
+            f'[GROUP_WORKFLOW_STORE] Error fetching workflow run {run_id}: {exc}',
             extra={'group_id': group_id, 'run_id': run_id},
             level=logging.ERROR,
             exceptionTraceback=True,
@@ -611,7 +701,7 @@ def get_latest_group_workflow_run_for_conversation(group_id, conversation_id, wo
         return _strip_cosmos_metadata(items[0])
     except Exception as exc:
         log_event(
-            f'[GroupWorkflowStore] Error fetching latest run for conversation {conversation_id}: {exc}',
+            f'[GROUP_WORKFLOW_STORE] Error fetching latest run for conversation {conversation_id}: {exc}',
             extra={'group_id': group_id, 'conversation_id': conversation_id, 'workflow_id': workflow_id},
             level=logging.ERROR,
             exceptionTraceback=True,
@@ -646,7 +736,7 @@ def get_group_workflow_run_item(run_id, item_id):
         return None
     except Exception as exc:
         log_event(
-            f'[GroupWorkflowStore] Error fetching workflow run item {item_id}: {exc}',
+            f'[GROUP_WORKFLOW_STORE] Error fetching workflow run item {item_id}: {exc}',
             extra={'run_id': run_id, 'item_id': item_id},
             level=logging.ERROR,
             exceptionTraceback=True,
@@ -669,7 +759,7 @@ def list_group_workflow_run_items(run_id, limit=1000):
         return [_strip_cosmos_metadata(item) for item in items[:limit]]
     except Exception as exc:
         log_event(
-            f'[GroupWorkflowStore] Error fetching workflow run items for {run_id}: {exc}',
+            f'[GROUP_WORKFLOW_STORE] Error fetching workflow run items for {run_id}: {exc}',
             extra={'run_id': run_id},
             level=logging.ERROR,
             exceptionTraceback=True,
@@ -695,7 +785,7 @@ def delete_group_workflow(group_id, workflow_id):
                 continue
             except Exception as exc:
                 log_event(
-                    f"[GroupWorkflowStore] Error deleting workflow run item {item.get('id')}: {exc}",
+                    f"[GROUP_WORKFLOW_STORE] Error deleting workflow run item {item.get('id')}: {exc}",
                     extra={'group_id': group_id, 'workflow_id': workflow_id, 'run_id': run_id},
                     level=logging.WARNING,
                 )
@@ -705,7 +795,7 @@ def delete_group_workflow(group_id, workflow_id):
             continue
         except Exception as exc:
             log_event(
-                f"[GroupWorkflowStore] Error deleting workflow run {run.get('id')}: {exc}",
+                f"[GROUP_WORKFLOW_STORE] Error deleting workflow run {run.get('id')}: {exc}",
                 extra={'group_id': group_id, 'workflow_id': workflow_id},
                 level=logging.WARNING,
             )
