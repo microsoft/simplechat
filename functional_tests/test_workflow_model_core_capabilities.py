@@ -1,9 +1,9 @@
 # test_workflow_model_core_capabilities.py
 """
 Functional test for Direct Model workflow core capabilities.
-Version: 0.250.168
+Version: 0.250.172
 Implemented in: 0.250.063
-Enhanced in: 0.250.064; updated in 0.250.168
+Enhanced in: 0.250.064; updated in 0.250.172
 
 This test ensures new Direct Model workflows bind their saved model selection
 to a Semantic Kernel service and pass the kernel to auto-invoked core tools.

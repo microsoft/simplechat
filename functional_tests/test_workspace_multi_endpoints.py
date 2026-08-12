@@ -1,8 +1,8 @@
 # test_workspace_multi_endpoints.py
 """
 Functional test for workspace multi-endpoint routing.
-Version: 0.250.168
-Implemented in: 0.239.155; updated in 0.250.168
+Version: 0.250.172
+Implemented in: 0.239.155; updated in 0.250.172
 
 This test ensures that workspace multi-endpoint payloads are sanitized and that
 agent payloads accept multi-endpoint selection fields.

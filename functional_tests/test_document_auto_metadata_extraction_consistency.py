@@ -2,9 +2,9 @@
 # test_document_auto_metadata_extraction_consistency.py
 """
 Functional test for document auto metadata extraction consistency.
-Version: 0.250.168
+Version: 0.250.172
 Implemented in: 0.241.110
-Updated in: 0.250.168
+Updated in: 0.250.172
 
 This test ensures upload processing runs final metadata extraction consistently
 for all supported file types and preserves public workspace scope for media files.

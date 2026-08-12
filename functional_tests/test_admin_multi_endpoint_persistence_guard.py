@@ -2,8 +2,8 @@
 #!/usr/bin/env python3
 """
 Functional test for admin multi-endpoint persistence guard.
-Version: 0.250.168
-Implemented in: 0.239.199; updated in 0.250.168
+Version: 0.250.172
+Implemented in: 0.239.199; updated in 0.250.172
 
 This test ensures that once multi-endpoint model management is enabled, admin
 settings saves preserve it even if the checkbox is omitted from later form

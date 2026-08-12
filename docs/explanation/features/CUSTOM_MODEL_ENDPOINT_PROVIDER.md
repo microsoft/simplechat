@@ -4,7 +4,7 @@
 
 The Custom provider lets administrators and authorized workspace owners configure chat models through a supported API contract without changing the provider label shown throughout SimpleChat. Custom endpoints are available in global, personal, and group model endpoint scopes and use manual model entry.
 
-**Implemented in version: 0.250.168**
+**Implemented in version: 0.250.172**
 
 **Issue:** [#1222](https://github.com/microsoft/simplechat/issues/1222)
 
@@ -113,4 +113,4 @@ Custom model discovery is disabled, so configuration does not perform model-list
 
 ## Version Reference
 
-The application version was updated in `application/single_app/config.py` to **0.250.168**.
+The application version was updated in `application/single_app/config.py` to **0.250.172**.

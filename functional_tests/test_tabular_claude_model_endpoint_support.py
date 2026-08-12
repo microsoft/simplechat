@@ -2,9 +2,9 @@
 #!/usr/bin/env python3
 """
 Functional test for tabular Claude model endpoint support.
-Version: 0.250.168
+Version: 0.250.172
 Implemented in: 0.241.186
-Updated in: 0.250.168
+Updated in: 0.250.172
 
 This test ensures tabular analysis and generated tabular exports preserve the
 selected Claude/Anthropic model endpoint context, use provider-aware Semantic

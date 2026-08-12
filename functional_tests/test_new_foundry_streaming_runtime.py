@@ -2,9 +2,9 @@
 #!/usr/bin/env python3
 """
 Functional test for new Foundry REST streaming runtime.
-Version: 0.250.168
+Version: 0.250.172
 Implemented in: 0.239.177
-Updated in: 0.250.168
+Updated in: 0.250.172
 
 This test ensures that new Foundry application discovery stays REST-based,
 that the runtime exposes a streaming executor, and that the chat stream route

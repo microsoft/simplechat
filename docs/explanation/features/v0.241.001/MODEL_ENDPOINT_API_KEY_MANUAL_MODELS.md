@@ -1,4 +1,4 @@
-# Model Endpoint API Key Manual Models (v0.250.168)
+# Model Endpoint API Key Manual Models (v0.250.172)
 
 ## Overview and Purpose
 Adds manual model entry for API key-authenticated endpoints, with per-model connection tests and guidance to prefer identity-based discovery.
@@ -6,7 +6,7 @@ Adds manual model entry for API key-authenticated endpoints, with per-model conn
 ## Version Implemented
 Fixed/Implemented in version: **0.236.019**
 
-Updated in version: **0.250.168**
+Updated in version: **0.250.172**
 
 ## Dependencies
 - Admin model endpoint modal
@@ -61,4 +61,4 @@ Updated in version: **0.250.168**
 
 ## Reference to Config Version Update
 - Initial version updated in application/single_app/config.py to **0.236.019**.
-- Custom provider update in application/single_app/config.py: **0.250.168**.
+- Custom provider update in application/single_app/config.py: **0.250.172**.

@@ -5,7 +5,7 @@ Workspace multi-endpoint management extends the admin multi-endpoint system to p
 
 **Implemented in version: 0.236.045**
 
-**Updated in version: 0.250.168**
+**Updated in version: 0.250.172**
 
 ## Dependencies
 - Global model endpoints configured in admin settings

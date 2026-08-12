@@ -2,8 +2,8 @@
 #!/usr/bin/env python3
 """
 Functional test for the Custom model endpoint provider.
-Version: 0.250.168
-Implemented in: 0.250.168
+Version: 0.250.172
+Implemented in: 0.250.172
 
 This test validates canonical model identifiers, API-type precedence, Custom
 endpoint URL safety, direct Anthropic request behavior, normalization, secret
