@@ -14,7 +14,7 @@ This phase reuses the existing durable tabular generated-output runner, source a
 - Mixed-source evidence ledger in `application/single_app/functions_mixed_source_orchestration.py`
 - Durable tabular generated-output runner in `application/single_app/functions_tabular_generated_exports.py`
 - Deferred mixed-source workflow coordination in `application/single_app/functions_workflow_runner.py`
-- Current application version from `application/single_app/config.py`: **0.250.163**
+- Current application version from `application/single_app/config.py`: **0.250.166**
 
 ## Technical Specifications
 
