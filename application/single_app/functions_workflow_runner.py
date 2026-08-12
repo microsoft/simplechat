@@ -2605,7 +2605,11 @@ def _emit_analyze_shared_preflight_event(
             safe_dimensions.update({
                 'rollout_contract_version': str(rollout_assignment.get('contract_version') or '').strip()[:80],
                 'rollout_mode': str(rollout_assignment.get('mode') or '').strip().lower()[:40],
+                'rollout_state': str(rollout_assignment.get('rollout_state') or 'active').strip().lower()[:40],
                 'rollout_assigned': str(bool(rollout_assignment.get('assigned'))).lower(),
+                'rollout_assignment_reason': str(
+                    rollout_assignment.get('assignment_reason_code') or ''
+                ).strip().lower()[:80],
                 'rollout_percent': str(_coerce_document_analysis_count(rollout_assignment.get('rollout_percent'))),
                 'rollout_cohort_bucket': str(_coerce_document_analysis_count(rollout_assignment.get('cohort_bucket'))),
                 'legacy_post_tool_fallback_mode': str(

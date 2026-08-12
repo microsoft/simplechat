@@ -2,8 +2,8 @@
 # test_tabular_phase9_legacy_retirement.py
 """
 Functional test for Phase 9 tabular legacy fallback retirement controls.
-Version: 0.250.167
-Implemented in: 0.250.165
+Version: 0.250.177
+Implemented in: 0.250.165; Phase 7 harness compatibility in 0.250.177
 
 This test ensures the shared planner records safe legacy post-tool fallback
 retirement decisions, active shared durable acceptance suppresses duplicate
@@ -35,16 +35,15 @@ def install_lightweight_planner_dependency_stubs():
     )
     generated_exports_module = types.ModuleType("functions_generated_file_exports")
 
-    def get_requested_structured_artifact_format(prompt):
+    def get_requested_artifact_formats(prompt):
         normalized_prompt = str(prompt or "").lower()
-        for output_format in ("json", "xml", "csv"):
-            if output_format in normalized_prompt:
-                return output_format
-        return None
+        return [output_format for output_format in ("json", "xml", "csv") if output_format in normalized_prompt]
 
+    generated_exports_module.get_requested_artifact_formats = get_requested_artifact_formats
     generated_exports_module.get_requested_structured_artifact_format = (
-        get_requested_structured_artifact_format
+        lambda prompt: next(iter(get_requested_artifact_formats(prompt)), None)
     )
+    generated_exports_module.get_requested_structured_artifact_formats = get_requested_artifact_formats
     sys.modules.setdefault("functions_assistant_table_exports", assistant_exports_module)
     sys.modules.setdefault("functions_generated_file_exports", generated_exports_module)
 
@@ -189,7 +188,9 @@ def load_post_tool_namespace():
     namespace = {
         "TABULAR_RUN_TASK_COMBINED": "combined",
         "TABULAR_RUN_TASK_HIERARCHICAL_ANALYSIS": "hierarchical_analysis",
-        "_get_tabular_generated_output_task_type": lambda generated, hierarchical, settings: "structured_export",
+        "_get_tabular_generated_output_task_type": (
+            lambda generated, hierarchical, settings, action_mode=None: "structured_export"
+        ),
         "_shared_build_tabular_legacy_post_tool_fallback_decision": build_tabular_legacy_post_tool_fallback_decision,
         "classify_tabular_parity_request": lambda prompt: {"execution_contract": "structured_export"},
         "emit_tabular_parity_event": fake_emit_tabular_parity_event,
