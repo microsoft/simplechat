@@ -2,8 +2,8 @@
 # test_tabular_entity_lookup_mode.py
 """
 Functional test for cross-sheet entity lookup routing fix.
-Version: 0.240.009
-Implemented in: 0.240.009
+Version: 0.250.127
+Implemented in: 0.240.009; exhaustive row routing in 0.250.127
 
 This test ensures related-record workbook questions route to entity-lookup
 mode, rank relevant worksheets beyond the first successful sheet, keep the
@@ -27,6 +27,9 @@ ROUTE_FILE = os.path.join(ROOT_DIR, 'application', 'single_app', 'route_backend_
 TARGET_FUNCTIONS = {
     'is_tabular_schema_summary_question',
     'is_tabular_entity_lookup_question',
+    'question_requests_tabular_exhaustive_results',
+    'question_requests_tabular_generated_output',
+    'question_requests_tabular_structured_object_output',
     'get_tabular_execution_mode',
     'get_tabular_invocation_result_payload',
     'get_tabular_invocation_selected_sheet',
@@ -56,6 +59,10 @@ def load_tabular_route_helpers():
 
     module = ast.Module(body=selected_nodes, type_ignores=[])
     namespace = {
+        'assistant_table_export_requested': lambda question: 'csv' in str(question).lower(),
+        'get_tabular_generated_output_format': lambda question: (
+            'csv' if 'csv' in str(question).lower() else None
+        ),
         'json': json,
         're': __import__('re'),
     }
@@ -98,6 +105,44 @@ def test_cross_sheet_questions_route_to_entity_lookup_mode():
         print('✅ Cross-sheet entity-lookup intent detection passed')
         return True
 
+    except Exception as exc:
+        print(f'❌ Test failed: {exc}')
+        import traceback
+        traceback.print_exc()
+        return False
+
+
+def test_per_row_exports_route_to_exhaustive_mode():
+    """Verify natural per-row export prompts select replay-oriented orchestration."""
+    print('🔍 Testing exhaustive per-row export routing...')
+
+    try:
+        helpers, route_content = load_tabular_route_helpers()
+        requests_exhaustive_results = helpers['question_requests_tabular_exhaustive_results']
+        requests_generated_output = helpers['question_requests_tabular_generated_output']
+        requests_structured_output = helpers[
+            'question_requests_tabular_structured_object_output'
+        ]
+        get_execution_mode = helpers['get_tabular_execution_mode']
+        prompts = (
+            'For each row, answer each question and generate a CSV.',
+            'Answer this for every row and save the complete CSV.',
+            'Produce one row per source row in a CSV file.',
+        )
+
+        for prompt in prompts:
+            assert requests_exhaustive_results(prompt), prompt
+            assert requests_generated_output(prompt), prompt
+            assert requests_structured_output(prompt), prompt
+            assert get_execution_mode(prompt) == 'exhaustive', prompt
+
+        assert get_execution_mode('What is the average risk score?') == 'analysis'
+        assert 'EXHAUSTIVE ROW REQUEST:' in route_content
+        assert 'Prefer one query_tabular_data call with a simple row-local query expression' in route_content
+        assert 'do not page the full cohort into model context' in route_content
+
+        print('✅ Exhaustive per-row export routing passed')
+        return True
     except Exception as exc:
         print(f'❌ Test failed: {exc}')
         import traceback
@@ -343,6 +388,7 @@ def test_entity_lookup_missing_sheet_feedback_generates_concrete_examples():
 if __name__ == '__main__':
     tests = [
         test_cross_sheet_questions_route_to_entity_lookup_mode,
+        test_per_row_exports_route_to_exhaustive_mode,
         test_entity_lookup_sheet_selection_prioritizes_related_worksheets,
         test_entity_lookup_primary_sheet_hint_prefers_anchor_entity_sheet,
         test_entity_lookup_retry_guardrails_detect_incomplete_successes,

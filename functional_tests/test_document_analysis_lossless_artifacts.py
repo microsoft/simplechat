@@ -2,12 +2,13 @@
 # test_document_analysis_lossless_artifacts.py
 """
 Functional test for document analysis lossless artifacts.
-Version: 0.250.112
+Version: 0.250.154
 Implemented in: 0.241.040
 Updated in: 0.241.065
 Updated in: 0.241.197
 Updated in: 0.250.065
 Updated in: 0.250.112
+Updated in: 0.250.154
 
 This test ensures exhaustive/table-style document analysis preserves raw window
 outputs and can build both structured CSV rows and Markdown raw-note artifacts
@@ -50,6 +51,12 @@ from functions_assistant_table_exports import (  # noqa: E402
     build_safe_csv_headers,
     neutralize_csv_spreadsheet_formula,
 )
+from functions_generated_file_exports import (  # noqa: E402
+    get_requested_structured_artifact_format,
+    normalize_xml_artifact_payload,
+    serialize_generated_json,
+)
+from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
 
 def assert_equal(actual, expected, label):
@@ -88,6 +95,9 @@ def load_module_functions(file_path, extra_globals=None):
         'json': json,
         'logging': logging,
         'neutralize_csv_spreadsheet_formula': neutralize_csv_spreadsheet_formula,
+        'get_requested_structured_artifact_format': get_requested_structured_artifact_format,
+        'normalize_xml_artifact_payload': normalize_xml_artifact_payload,
+        'serialize_generated_json': serialize_generated_json,
         'os': os,
         're': re,
         'WORKFLOW_TASK_CONTEXT_MAX_CHARS': 12000,
@@ -486,7 +496,7 @@ def test_workflow_markdown_fence_parser_is_linear_and_compatible():
 
 def test_version_alignment():
     print('Testing version alignment...')
-    assert_equal(read_config_version(), '0.250.112', 'config version')
+    assert_app_version_at_least('0.250.154')
     print('Version alignment verified.')
 
 

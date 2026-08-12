@@ -96,7 +96,7 @@ DOTENV_LOAD_RESULT = load_simplechat_dotenv()
 EXECUTOR_TYPE = 'thread'
 EXECUTOR_MAX_WORKERS = 30
 SESSION_TYPE = 'filesystem'
-VERSION = "0.250.129"
+VERSION = "0.250.160"
 IS_DEVELOPMENT = is_development_env_enabled()
 
 SESSION_COOKIE_SAMESITE = os.getenv('SESSION_COOKIE_SAMESITE', 'Lax')
@@ -630,9 +630,20 @@ cosmos_tabular_export_runs_container = cosmos_database.create_container_if_not_e
 )
 
 cosmos_data_management_jobs_container_name = "data_management_jobs"
+DATA_MANAGEMENT_HISTORY_INDEXING_POLICY = {
+    "indexingMode": "consistent",
+    "automatic": True,
+    "includedPaths": [{"path": "/*"}],
+    "excludedPaths": [{"path": "/\"_etag\"/?"}],
+    "compositeIndexes": [[
+        {"path": "/created_at", "order": "descending"},
+        {"path": "/id", "order": "descending"},
+    ]],
+}
 cosmos_data_management_jobs_container = cosmos_database.create_container_if_not_exists(
     id=cosmos_data_management_jobs_container_name,
-    partition_key=PartitionKey(path="/id")
+    partition_key=PartitionKey(path="/id"),
+    indexing_policy=DATA_MANAGEMENT_HISTORY_INDEXING_POLICY
 )
 
 cosmos_data_management_job_items_container_name = "data_management_job_items"

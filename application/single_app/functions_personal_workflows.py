@@ -46,7 +46,10 @@ WORKFLOW_FILE_SYNC_WAIT_MODES = {'complete', 'queued'}
 WORKFLOW_FILE_SYNC_CONTINUE_MODES = {'always', 'changed'}
 WORKFLOW_FILE_SYNC_MAX_SOURCES = 10
 WORKFLOW_ERROR_STRATEGIES = {'halt', 'continue'}
-WORKFLOW_MAX_TASKS = 20
+WORKFLOW_TASK_LIMIT_DEFAULT = 50
+WORKFLOW_TASK_LIMIT_MIN = 1
+WORKFLOW_TASK_LIMIT_MAX = 100
+WORKFLOW_MAX_TASKS = WORKFLOW_TASK_LIMIT_DEFAULT
 WORKFLOW_TASK_INSTRUCTIONS_MAX_LENGTH = 12000
 WORKFLOW_TASK_NAME_MAX_LENGTH = 120
 WORKFLOW_TASK_RUNNER_TYPES = {'inherit', 'agent', 'model'}
@@ -82,6 +85,21 @@ def _normalize_bool(value, default=False):
     if isinstance(value, str):
         return value.strip().lower() in {'1', 'true', 'yes', 'on'}
     return bool(value)
+
+
+def normalize_workflow_max_tasks(value=None):
+    """Normalize configured workflow task limits to the supported range."""
+    try:
+        parsed_value = int(value)
+    except (TypeError, ValueError):
+        parsed_value = WORKFLOW_TASK_LIMIT_DEFAULT
+    return min(WORKFLOW_TASK_LIMIT_MAX, max(WORKFLOW_TASK_LIMIT_MIN, parsed_value))
+
+
+def get_workflow_max_tasks(settings=None):
+    """Return the effective max task count for workflow authoring."""
+    source_settings = settings if isinstance(settings, dict) else get_settings()
+    return normalize_workflow_max_tasks(source_settings.get('workflow_max_tasks'))
 
 
 def _normalize_personal_workflow_conversation_id(user_id, workflow_data, existing_workflow=None):
@@ -139,9 +157,15 @@ def _normalize_alert_priority(value):
     return normalized
 
 
-def _normalize_workflow_tasks(workflow_data, existing_workflow=None, task_runner_normalizer=None):
+def _normalize_workflow_tasks(
+    workflow_data,
+    existing_workflow=None,
+    task_runner_normalizer=None,
+    max_tasks=WORKFLOW_MAX_TASKS,
+):
     workflow_data = workflow_data if isinstance(workflow_data, dict) else {}
     existing_workflow = existing_workflow if isinstance(existing_workflow, dict) else {}
+    configured_max_tasks = normalize_workflow_max_tasks(max_tasks)
     tasks_supplied = 'tasks' in workflow_data
     raw_tasks = workflow_data.get('tasks') if tasks_supplied else existing_workflow.get('tasks') or []
     if not isinstance(raw_tasks, list):
@@ -150,8 +174,8 @@ def _normalize_workflow_tasks(workflow_data, existing_workflow=None, task_runner
         if not tasks_supplied:
             return []
         raise ValueError('Add at least one workflow task.')
-    if len(raw_tasks) > WORKFLOW_MAX_TASKS:
-        raise ValueError(f'Workflows support up to {WORKFLOW_MAX_TASKS} tasks.')
+    if len(raw_tasks) > configured_max_tasks:
+        raise ValueError(f'Workflows support up to {configured_max_tasks} tasks.')
 
     normalized_tasks = []
     seen_task_ids = set()
@@ -666,6 +690,7 @@ def save_personal_workflow(user_id, workflow_data, actor_user_id=None):
             runner,
             settings=settings,
         ),
+        max_tasks=get_workflow_max_tasks(settings),
     )
     task_prompt = _normalize_text(
         workflow_data.get('task_prompt') or (tasks[0].get('instructions') if tasks else ''),

@@ -57,6 +57,11 @@ from functions_terms_of_use import (
 from swagger_wrapper import swagger_route, get_auth_security
 from datetime import datetime, timedelta, timezone
 from admin_settings_int_utils import safe_int_with_source
+from functions_personal_workflows import (
+    WORKFLOW_TASK_LIMIT_DEFAULT,
+    WORKFLOW_TASK_LIMIT_MAX,
+    WORKFLOW_TASK_LIMIT_MIN,
+)
 from support_menu_config import (
     get_admin_latest_feature_release_groups_for_settings,
     get_support_latest_feature_catalog,
@@ -1140,6 +1145,18 @@ def register_route_frontend_admin_settings(bp):
                         settings.get('workflow_max_auto_invoke_attempts', 60),
                         'workflow_max_auto_invoke_attempts',
                         60
+                    )
+                )
+            )
+            workflow_max_tasks = min(
+                WORKFLOW_TASK_LIMIT_MAX,
+                max(
+                    WORKFLOW_TASK_LIMIT_MIN,
+                    parse_admin_int(
+                        form_data.get('workflow_max_tasks'),
+                        settings.get('workflow_max_tasks', WORKFLOW_TASK_LIMIT_DEFAULT),
+                        'workflow_max_tasks',
+                        WORKFLOW_TASK_LIMIT_DEFAULT
                     )
                 )
             )
@@ -2450,6 +2467,7 @@ def register_route_frontend_admin_settings(bp):
                 'require_group_assignment_for_group_workflows': form_data.get('require_group_assignment_for_group_workflows') == 'on',
                 'group_workflow_allowed_group_ids': group_workflow_allowed_group_ids,
                 'workflow_max_auto_invoke_attempts': workflow_max_auto_invoke_attempts,
+                'workflow_max_tasks': workflow_max_tasks,
                 'allow_personal_workspace_file_downloads': form_data.get('allow_personal_workspace_file_downloads') == 'on',
                 'allow_group_workspace_file_downloads': form_data.get('allow_group_workspace_file_downloads') == 'on',
                 'require_group_assignment_for_file_downloads': form_data.get('require_group_assignment_for_file_downloads') == 'on',
@@ -2561,6 +2579,27 @@ def register_route_frontend_admin_settings(bp):
                 'enable_enhanced_citations_mount': form_data.get('enable_enhanced_citations_mount') == 'on' and enable_enhanced_citations,
                 'enhanced_citations_mount': form_data.get('enhanced_citations_mount', '/view_documents').strip(),
                 'tabular_preview_max_blob_size_mb': int(form_data.get('tabular_preview_max_blob_size_mb', 200)),
+                'enable_tabular_durable_run_confirmation': form_data.get('enable_tabular_durable_run_confirmation') == 'on',
+                'tabular_durable_run_confirmation_threshold_rows': max(1, parse_admin_int(
+                    form_data.get('tabular_durable_run_confirmation_threshold_rows'),
+                    settings.get('tabular_durable_run_confirmation_threshold_rows', 500),
+                    'tabular_durable_run_confirmation_threshold_rows',
+                    500,
+                )),
+                'tabular_durable_run_confirmation_threshold_batches': max(1, parse_admin_int(
+                    form_data.get('tabular_durable_run_confirmation_threshold_batches'),
+                    settings.get('tabular_durable_run_confirmation_threshold_batches', 75),
+                    'tabular_durable_run_confirmation_threshold_batches',
+                    75,
+                )),
+                'tabular_generated_output_chunk_model_mode': form_data.get(
+                    'tabular_generated_output_chunk_model_mode',
+                    settings.get('tabular_generated_output_chunk_model_mode', 'current'),
+                ).strip() if form_data.get('tabular_generated_output_chunk_model_mode') in {'current', 'configured'} else 'current',
+                'tabular_generated_output_chunk_model_deployment': form_data.get(
+                    'tabular_generated_output_chunk_model_deployment',
+                    settings.get('tabular_generated_output_chunk_model_deployment', ''),
+                ).strip(),
                 'office_docs_storage_account_blob_endpoint': admin_secret('office_docs_storage_account_blob_endpoint'),
                 'office_docs_storage_account_url': admin_secret('office_docs_storage_account_url'),
                 'office_docs_authentication_type': form_data.get('office_docs_authentication_type', 'key'),

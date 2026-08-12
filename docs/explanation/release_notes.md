@@ -2,7 +2,7 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
-### **(v0.250.129)**
+### **(v0.250.160)**
 
 #### Bug Fixes
 
@@ -10,6 +10,51 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Redirects direct `/getAToken` browser visits without an OAuth authorization code back to the home sign-in page instead of showing a technical callback error.
     *   Preserves the normal Microsoft Entra authorization-code callback flow and keeps `/getATokenApi` explicit error behavior unchanged for API token callbacks.
     *   (Ref: `/getAToken` OAuth callback, `route_frontend_authentication.py`, `test_getatoken_missing_code_redirect.py`)
+
+### **(v0.250.159)**
+
+#### New Features
+
+*   **Chat Used Documents Pane**
+    *   Added a Used Documents mode to the existing chat conversation side pane so users can review documents that were actually cited in the conversation without opening the full details modal.
+    *   Reuses the same conversation metadata document tags as the details modal, excludes selected-but-unused documents, and auto-opens once when cited documents first appear.
+    *   (Ref: #1209, conversation contents drawer, cited document metadata, `chat-conversation-contents.js`, `chat-conversation-details.js`)
+
+### **(v0.250.157)**
+
+#### Bug Fixes
+
+*   **Prior Grounded Source Continuity**
+    *   Follow-up mixed-source turns can now detect references such as "that XML file," "same template," or "previous spreadsheet" and merge reauthorized prior grounded sources with the current selected sources.
+    *   Preserved authorization boundaries by deriving prior sources from `last_grounded_document_refs` and revalidating scope before use.
+    *   (Ref: #1204, mixed-source source continuity, `route_backend_chats.py`, `test_chat_history_grounded_follow_up_fix.py`)
+
+### **(v0.250.156)**
+
+#### Bug Fixes
+
+*   **JSON/XML Source-Only Intent Guardrails**
+    *   Prevented source-reading prompts such as "Summarize this XML document" and "Validate this JSON object" from being misclassified as generated artifact requests.
+    *   Kept explicit output requests such as "Export as JSON" and "Create an XML file" routed to generated artifact workflows.
+    *   (Ref: #1198, structured artifact intent detection, `functions_generated_file_exports.py`, `test_generated_json_xml_exports.py`)
+
+### **(v0.250.155)**
+
+#### Bug Fixes
+
+*   **Tabular Contains Replay Semantics**
+    *   Aligned foreground `filter_rows contains` matching with durable CSV replay by using literal, case-insensitive containment in both paths.
+    *   Added regression coverage for regex-shaped values such as `A.*` so previews and generated export replays select the same row cohort.
+    *   (Ref: #1197, tabular durable replay descriptors, `tabular_processing_plugin.py`, `test_tabular_large_result_pagination.py`)
+
+### **(v0.250.129)**
+
+#### New Features
+
+*   **Configurable Workflow Task Limit**
+    *   Added an admin setting that controls how many ordered instruction tasks users can add to a workflow.
+    *   The default is 50 tasks, with backend and browser enforcement clamped to a supported range of 1-100 tasks.
+    *   (Ref: workflow task sequences, Admin Settings Workflow section, `functions_personal_workflows.py`, `workspace_workflows.js`)
 
 ### **(v0.250.128)**
 
@@ -19,6 +64,16 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Fixed outbound MCP tool calls that could wrap parameters inside a `kwargs` object, preventing standards-compliant MCP servers from seeing required top-level fields such as `type`.
     *   Added schema-aware normalization before MCP argument validation and invocation while preserving tools that explicitly define a real top-level `kwargs` property.
     *   (Ref: #1163, MCP `tools/call` arguments, `functions_mcp_operations.py`, `mcp_plugin.py`, `mcp_plugin_factory.py`)
+
+### **(v0.250.127)**
+
+#### Bug Fixes
+
+*   **Replayable Exhaustive Tabular Exports**
+    *   Generalized version-pinned CSV source descriptors so exhaustive `filter_rows` and `search_rows` requests can replay the complete authorized cohort through the existing durable export runner instead of failing on bounded preview gaps.
+    *   Added exhaustive per-row request routing for natural phrases such as "for each row," "every row," and "one row per," while preserving direct deterministic aggregation behavior.
+    *   Non-replayable semantics such as normalized entity matching now fail closed with an explicit reason and never publish a partial CSV.
+    *   (Ref: #1031, tabular source descriptors, durable generated exports, `functions_tabular_csv_query.py`, `tabular_processing_plugin.py`, `route_backend_chats.py`)
 
 ### **(v0.250.126)**
 

@@ -2,6 +2,8 @@
 
 Implemented in version: **0.250.072**
 
+Updated through version: **0.250.154**
+
 GitHub issue: [#1071](https://github.com/microsoft/simplechat/issues/1071)
 
 Related config.py update: `VERSION = "0.250.072"`
@@ -10,7 +12,7 @@ Related config.py update: `VERSION = "0.250.072"`
 
 Generated file output is a first-class response capability. The framework accepts the completed assistant response and the successful structured function results produced during the same turn, selects a requested renderer, and publishes one authorized downloadable chat artifact.
 
-CSV, Word (`.docx`), and PDF are separate renderer capabilities. They share source normalization, output intent detection, artifact metadata, authorization-safe publication, downloads, and workspace-promotion behavior.
+CSV, JSON, XML, Word (`.docx`), and PDF are separate renderer capabilities. They share source normalization, output intent detection, artifact metadata, authorization-safe publication, downloads, and workspace-promotion behavior.
 
 ## Purpose
 
@@ -31,6 +33,8 @@ The framework normalizes current-turn structured function results once and makes
 ### Supported Renderers
 
 - **CSV**: Renders structured rows with safe headers, formula neutralization, quoted/multiline values, and durable background execution when the existing row or batch threshold is exceeded.
+- **JSON**: Persists a valid generated JSON payload as a concise completed artifact with `Download JSON`, `View JSON`, and workspace-promotion actions.
+- **XML**: Persists one hardened, well-formed XML document as a concise completed artifact with `Download XML`, `View XML`, and workspace-promotion actions.
 - **DOCX**: Renders a titled document with final assistant content and, when present, a structured function-result table.
 - **PDF**: Renders a titled PDF with final assistant content and, when present, a structured function-result table.
 
@@ -68,6 +72,12 @@ The existing generated chat-artifact uploader remains the sole publication mecha
 
 Generated artifacts retain their format, capability, summary, preview metadata, and source provenance. The existing authorized download and workspace-promotion routes work without a new browser transport or external runtime asset.
 
+Completed CSV, JSON, and XML file-export cards omit inline payloads and supporting diagnostics. They show the generated filename and row count when available, followed by format-specific Download and View actions plus Add to Workspace. View renders only bounded artifact preview metadata in a modal; the full file is read only by Download.
+
+During streaming JSON/XML generation, the browser receives one server-authored status such as `Generating the XML file. It will appear here when ready.` The model payload is accumulated privately for validation and publication rather than rendered token by token. If artifact publication cannot complete, finalization falls back to the accumulated model response instead of leaving the temporary status in place.
+
+Structured artifact intent is normalized once for Chat, document Analyze, and workflow output selection. Destination phrasing such as `put the PDF content into the XML`, `place these fields in an XML document`, or `write these records as JSON` selects the existing artifact generation path without requiring words such as `create`, `download`, `file`, or `populate`. Source-only mentions such as `summarize the selected XML` and explicitly negated generation requests do not select an output artifact.
+
 ## Usage
 
 Examples:
@@ -82,6 +92,10 @@ When an action returns structured data and the assistant summarizes it instead o
 ## Testing and Validation
 
 - `functional_tests/test_assistant_table_csv_artifact.py` covers CSV, DOCX, PDF, structured function-result normalization, sensitive-field exclusion, multi-action provenance, assistant-table precedence, and tabular-plugin exclusion.
+- `functional_tests/test_generated_json_xml_exports.py` covers JSON/XML parsing, hardened XML handling, completed file-export metadata, and format-specific View actions.
+- `ui_tests/test_chat_generated_tabular_output_card.py` covers concise completed cards and bounded CSV, JSON, and XML preview modals.
+- `functional_tests/test_generated_json_xml_exports.py` also covers payload-only model guidance, private stream gates for agent and direct-model paths, truthful generation status, and safe failure fallback.
+- The same test executes a cross-path terminology matrix for Chat, Analyze, and workflow wrappers, including destination disambiguation such as `Convert JSON to XML`.
 - `functional_tests/test_mixed_source_hardening.py` covers cancellation and artifact rollback through the generic finalizer.
 - `functional_tests/test_document_action_token_usage_aggregation.py` covers workflow assistant-message persistence with the shared finalizer.
 - Existing durable CSV, document action, workflow, and generated-artifact tests remain part of validation.

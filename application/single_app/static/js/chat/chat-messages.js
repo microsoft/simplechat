@@ -3415,6 +3415,174 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     return normalizedRowCount.toLocaleString();
   }
 
+  function parseLargeTabularRunInteger(value) {
+    const normalizedValue = String(value || '').replace(/,/g, '').trim();
+    const parsedValue = Number.parseInt(normalizedValue, 10);
+    return Number.isFinite(parsedValue) && parsedValue > 0 ? parsedValue : 0;
+  }
+
+  export function estimateLargeTabularRunForPrompt(messageText, appSettings = window.appSettings || {}) {
+    const normalizedMessage = String(messageText || '').toLowerCase();
+    const confirmationEnabled = appSettings?.enable_tabular_durable_run_confirmation !== false;
+    if (!confirmationEnabled || !normalizedMessage.trim()) {
+      return { shouldConfirm: false, estimatedRows: 0, estimatedBatches: 0 };
+    }
+
+    const exhaustiveRowRequested = /\b(all rows|every row|each row|for each row|for every row|one row per|one object per)\b/.test(normalizedMessage);
+    const exportRequested = /\b(csv|json|xml|export|download|generate|create|save)\b/.test(normalizedMessage);
+    const rowCountMatch = normalizedMessage.match(/\b(\d{1,3}(?:,\d{3})+|\d+)\s*(?:rows?|records?|entries?)\b/);
+    const estimatedRows = parseLargeTabularRunInteger(rowCountMatch?.[1]);
+    const maxBatchRows = Math.max(
+      parseLargeTabularRunInteger(appSettings?.tabular_generated_output_max_batch_rows) || 50,
+      1,
+    );
+    const estimatedBatches = estimatedRows > 0 ? Math.ceil(estimatedRows / maxBatchRows) : 0;
+    const rowThreshold = Math.max(
+      parseLargeTabularRunInteger(appSettings?.tabular_durable_run_confirmation_threshold_rows) || 500,
+      1,
+    );
+    const batchThreshold = Math.max(
+      parseLargeTabularRunInteger(appSettings?.tabular_durable_run_confirmation_threshold_batches) || 75,
+      1,
+    );
+
+    return {
+      shouldConfirm: Boolean(
+        exhaustiveRowRequested
+        && exportRequested
+        && estimatedRows > 0
+        && (estimatedRows > rowThreshold || estimatedBatches > batchThreshold)
+      ),
+      estimatedRows,
+      estimatedBatches,
+      rowThreshold,
+      batchThreshold,
+      maxBatchRows,
+    };
+  }
+
+  function getOrCreateLargeTabularRunConfirmationModal() {
+    let modalElement = document.getElementById('large-tabular-run-confirmation-modal');
+    if (modalElement) {
+      return modalElement;
+    }
+
+    modalElement = document.createElement('div');
+    modalElement.className = 'modal fade';
+    modalElement.id = 'large-tabular-run-confirmation-modal';
+    modalElement.tabIndex = -1;
+    modalElement.setAttribute('aria-labelledby', 'large-tabular-run-confirmation-title');
+    modalElement.setAttribute('aria-hidden', 'true');
+
+    const dialog = document.createElement('div');
+    dialog.className = 'modal-dialog modal-dialog-centered';
+    dialog.setAttribute('role', 'dialog');
+    dialog.setAttribute('aria-modal', 'true');
+    dialog.setAttribute('aria-labelledby', 'large-tabular-run-confirmation-title');
+    modalElement.appendChild(dialog);
+
+    const content = document.createElement('div');
+    content.className = 'modal-content';
+    dialog.appendChild(content);
+
+    const header = document.createElement('div');
+    header.className = 'modal-header';
+    content.appendChild(header);
+
+    const title = document.createElement('h5');
+    title.className = 'modal-title';
+    title.id = 'large-tabular-run-confirmation-title';
+    title.textContent = 'Large tabular run';
+    header.appendChild(title);
+
+    const closeButton = document.createElement('button');
+    closeButton.type = 'button';
+    closeButton.className = 'btn-close';
+    closeButton.setAttribute('data-bs-dismiss', 'modal');
+    closeButton.setAttribute('aria-label', 'Close');
+    header.appendChild(closeButton);
+
+    const body = document.createElement('div');
+    body.className = 'modal-body';
+    content.appendChild(body);
+
+    const summary = document.createElement('p');
+    summary.className = 'mb-2';
+    summary.dataset.largeTabularRunSummary = 'true';
+    body.appendChild(summary);
+
+    const detail = document.createElement('p');
+    detail.className = 'text-muted mb-0';
+    detail.dataset.largeTabularRunDetail = 'true';
+    body.appendChild(detail);
+
+    const footer = document.createElement('div');
+    footer.className = 'modal-footer';
+    content.appendChild(footer);
+
+    const narrowButton = document.createElement('button');
+    narrowButton.type = 'button';
+    narrowButton.className = 'btn btn-outline-secondary';
+    narrowButton.dataset.largeTabularRunCancel = 'true';
+    narrowButton.textContent = 'Narrow scope';
+    footer.appendChild(narrowButton);
+
+    const continueButton = document.createElement('button');
+    continueButton.type = 'button';
+    continueButton.className = 'btn btn-primary';
+    continueButton.dataset.largeTabularRunContinue = 'true';
+    continueButton.textContent = 'Continue run';
+    footer.appendChild(continueButton);
+
+    document.body.appendChild(modalElement);
+    return modalElement;
+  }
+
+  export function confirmLargeTabularRunForPrompt(messageText, appSettings = window.appSettings || {}) {
+    const estimate = estimateLargeTabularRunForPrompt(messageText, appSettings);
+    if (!estimate.shouldConfirm) {
+      return Promise.resolve(true);
+    }
+
+    const modalElement = getOrCreateLargeTabularRunConfirmationModal();
+    const summary = modalElement.querySelector('[data-large-tabular-run-summary="true"]');
+    const detail = modalElement.querySelector('[data-large-tabular-run-detail="true"]');
+    const continueButton = modalElement.querySelector('[data-large-tabular-run-continue="true"]');
+    const cancelButton = modalElement.querySelector('[data-large-tabular-run-cancel="true"]');
+
+    if (summary) {
+      summary.textContent = `This request mentions ${estimate.estimatedRows.toLocaleString()} rows and is estimated at about ${estimate.estimatedBatches.toLocaleString()} batches.`;
+    }
+    if (detail) {
+      detail.textContent = 'Large row-level runs are checkpointed in the background. Continue to start the run, or narrow the prompt before sending.';
+    }
+
+    return new Promise(resolve => {
+      const modal = window.bootstrap?.Modal?.getOrCreateInstance(modalElement);
+      let resolved = false;
+
+      const finish = shouldContinue => {
+        if (resolved) {
+          return;
+        }
+        resolved = true;
+        continueButton?.removeEventListener('click', onContinue);
+        cancelButton?.removeEventListener('click', onCancel);
+        modalElement.removeEventListener('hidden.bs.modal', onHidden);
+        modal?.hide();
+        resolve(shouldContinue);
+      };
+      const onContinue = () => finish(true);
+      const onCancel = () => finish(false);
+      const onHidden = () => finish(false);
+
+      continueButton?.addEventListener('click', onContinue, { once: true });
+      cancelButton?.addEventListener('click', onCancel, { once: true });
+      modalElement.addEventListener('hidden.bs.modal', onHidden, { once: true });
+      modal?.show();
+    });
+  }
+
   function clampGeneratedOutputProgress(value) {
     const numericValue = Number.parseFloat(value);
     if (!Number.isFinite(numericValue)) {
@@ -3460,6 +3628,17 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     }
 
     return 'Queued';
+  }
+
+  function getGeneratedOutputRunTypeLabel(outputMetadata = {}) {
+    const taskType = String(outputMetadata?.task_type || '').trim().toLowerCase();
+    if (taskType === 'combined') {
+      return 'Background analysis + export';
+    }
+    if (taskType === 'hierarchical_analysis') {
+      return 'Background analysis';
+    }
+    return 'Background export';
   }
 
   function getGeneratedOutputStatusBadgeClass(outputMetadata) {
@@ -3594,12 +3773,14 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     return Boolean(row) && typeof row === 'object' && !Array.isArray(row);
   }
 
-  function buildGeneratedTabularPreviewTable(previewRows) {
+  function buildGeneratedTabularPreviewTable(previewRows, options = {}) {
     if (!Array.isArray(previewRows) || !previewRows.length || !previewRows.every(isGeneratedTabularPreviewObjectRow)) {
       return null;
     }
 
-    const previewColumns = [];
+    const previewColumns = Array.isArray(options.columns)
+      ? options.columns.map(columnName => String(columnName || '')).filter(Boolean)
+      : [];
     previewRows.forEach(row => {
       Object.keys(row).forEach(columnName => {
         if (!previewColumns.includes(columnName)) {
@@ -3612,7 +3793,15 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
       return null;
     }
 
-    const displayedColumns = previewColumns.slice(0, 4);
+    const requestedMaxColumns = Number.parseInt(options.maxColumns, 10);
+    const maxColumns = Number.isFinite(requestedMaxColumns) && requestedMaxColumns > 0
+      ? requestedMaxColumns
+      : 4;
+    const requestedCellLength = Number.parseInt(options.maxCellLength, 10);
+    const maxCellLength = Number.isFinite(requestedCellLength) && requestedCellLength > 0
+      ? requestedCellLength
+      : 120;
+    const displayedColumns = previewColumns.slice(0, maxColumns);
     const tableWrapper = document.createElement('div');
     tableWrapper.className = 'table-responsive small border rounded';
 
@@ -3635,7 +3824,7 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
       const tableRow = document.createElement('tr');
       displayedColumns.forEach(columnName => {
         const valueCell = document.createElement('td');
-        valueCell.textContent = formatGeneratedTabularPreviewValue(row[columnName]);
+        valueCell.textContent = formatGeneratedTabularPreviewValue(row[columnName], maxCellLength);
         tableRow.appendChild(valueCell);
       });
       tbody.appendChild(tableRow);
@@ -3708,6 +3897,149 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     const previewBlock = formatGeneratedAnalysisPreviewBlock(document.createElement('pre'));
     previewBlock.textContent = String(previewText || '').trim();
     return previewBlock;
+  }
+
+  function getGeneratedArtifactPreviewRows(outputMetadata) {
+    if (Array.isArray(outputMetadata?.preview_rows) && outputMetadata.preview_rows.length) {
+      return outputMetadata.preview_rows;
+    }
+    if (Array.isArray(outputMetadata?.preview_items) && outputMetadata.preview_items.length) {
+      return outputMetadata.preview_items;
+    }
+    return [];
+  }
+
+  function hasGeneratedArtifactPreview(outputMetadata, outputFormat) {
+    void outputFormat;
+    return Boolean(
+      getGeneratedArtifactPreviewRows(outputMetadata).length
+      || (Array.isArray(outputMetadata?.preview_lines) && outputMetadata.preview_lines.length)
+      || String(
+        outputMetadata?.preview_text
+        || outputMetadata?.analysis_text
+        || outputMetadata?.panalysis_text
+        || ''
+      ).trim()
+    );
+  }
+
+  function getOrCreateGeneratedArtifactPreviewModal() {
+    let modal = document.getElementById('generated-artifact-preview-modal');
+    if (modal) {
+      return modal;
+    }
+
+    modal = document.createElement('div');
+    modal.id = 'generated-artifact-preview-modal';
+    modal.className = 'modal fade';
+    modal.tabIndex = -1;
+    modal.setAttribute('aria-labelledby', 'generated-artifact-preview-modal-label');
+    modal.setAttribute('aria-hidden', 'true');
+
+    const dialog = document.createElement('div');
+    dialog.className = 'modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable';
+    modal.appendChild(dialog);
+
+    const content = document.createElement('div');
+    content.className = 'modal-content';
+    dialog.appendChild(content);
+
+    const header = document.createElement('div');
+    header.className = 'modal-header';
+    content.appendChild(header);
+
+    const title = document.createElement('h5');
+    title.id = 'generated-artifact-preview-modal-label';
+    title.className = 'modal-title';
+    header.appendChild(title);
+
+    const closeButton = document.createElement('button');
+    closeButton.type = 'button';
+    closeButton.className = 'btn-close';
+    closeButton.setAttribute('data-bs-dismiss', 'modal');
+    closeButton.setAttribute('aria-label', 'Close');
+    header.appendChild(closeButton);
+
+    const body = document.createElement('div');
+    body.className = 'modal-body';
+    body.dataset.generatedArtifactPreviewBody = 'true';
+    content.appendChild(body);
+
+    const footer = document.createElement('div');
+    footer.className = 'modal-footer justify-content-between';
+    content.appendChild(footer);
+
+    const rowInfo = document.createElement('span');
+    rowInfo.className = 'small text-muted';
+    rowInfo.dataset.generatedArtifactPreviewInfo = 'true';
+    footer.appendChild(rowInfo);
+
+    const footerCloseButton = document.createElement('button');
+    footerCloseButton.type = 'button';
+    footerCloseButton.className = 'btn btn-sm btn-secondary';
+    footerCloseButton.setAttribute('data-bs-dismiss', 'modal');
+    footerCloseButton.textContent = 'Close';
+    footer.appendChild(footerCloseButton);
+
+    document.body.appendChild(modal);
+    return modal;
+  }
+
+  function showGeneratedArtifactPreviewModal(outputMetadata, outputFormat) {
+    const previewRows = getGeneratedArtifactPreviewRows(outputMetadata);
+    const previewLines = Array.isArray(outputMetadata?.preview_lines) ? outputMetadata.preview_lines : [];
+    const previewText = String(
+      outputMetadata?.preview_text
+      || outputMetadata?.analysis_text
+      || outputMetadata?.panalysis_text
+      || ''
+    ).trim();
+    let previewContent = null;
+    if (previewRows.length) {
+      previewContent = buildGeneratedTabularPreviewTable(previewRows, {
+        columns: outputMetadata?.preview_columns,
+        maxColumns: 50,
+        maxCellLength: 240,
+      }) || buildGeneratedTabularPreviewFallback(previewRows);
+    } else if (previewLines.length) {
+      previewContent = buildGeneratedAnalysisPreviewText(
+        previewLines.join('\n'),
+        outputMetadata,
+        outputFormat,
+      );
+    } else if (previewText) {
+      previewContent = buildGeneratedAnalysisPreviewText(previewText, outputMetadata, outputFormat);
+    }
+
+    if (!previewContent) {
+      showToast('A preview is not available for this generated artifact.', 'warning');
+      return;
+    }
+
+    const modal = getOrCreateGeneratedArtifactPreviewModal();
+    const title = modal.querySelector('.modal-title');
+    const body = modal.querySelector('[data-generated-artifact-preview-body="true"]');
+    const rowInfo = modal.querySelector('[data-generated-artifact-preview-info="true"]');
+    const fileName = String(outputMetadata?.file_name || `generated-output.${outputFormat}`).trim();
+    if (title) {
+      title.textContent = `Preview: ${fileName}`;
+    }
+    if (body) {
+      body.replaceChildren(previewContent);
+    }
+    if (rowInfo) {
+      const totalRows = formatGeneratedTabularRowCount(outputMetadata?.row_count);
+      rowInfo.textContent = previewRows.length
+        ? `Showing ${previewRows.length.toLocaleString()}${totalRows ? ` of ${totalRows}` : ''} rows. Preview values may be shortened; download for complete content.`
+        : 'Generated artifact preview';
+    }
+
+    const modalInstance = window.bootstrap?.Modal?.getOrCreateInstance(modal);
+    if (!modalInstance) {
+      showToast('Could not open the generated artifact preview.', 'warning');
+      return;
+    }
+    modalInstance.show();
   }
 
   function getGeneratedAnalysisArtifactTitle(outputMetadata, outputFormat) {
@@ -4229,14 +4561,29 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     const statusLabel = formatGeneratedOutputStatusLabel(outputMetadata?.status, outputMetadata);
     const completedBatches = Number.parseInt(outputMetadata?.completed_batches, 10);
     const batchCount = Number.parseInt(outputMetadata?.batch_count, 10);
+    const processedChunkCount = Number.parseInt(outputMetadata?.processed_chunk_count, 10);
+    const totalChunkCount = Number.parseInt(outputMetadata?.total_chunk_count, 10);
+    const failedChunkCount = Number.parseInt(outputMetadata?.failed_chunk_count, 10);
+    const analysisReduceLevel = Number.parseInt(outputMetadata?.analysis_reduce_level, 10);
+    const analysisReduceNode = Number.parseInt(outputMetadata?.analysis_reduce_node, 10);
+    const analysisReduceNodeCount = Number.parseInt(outputMetadata?.analysis_reduce_node_count, 10);
     const processedRows = Number.parseInt(outputMetadata?.processed_rows, 10);
     const rowCount = Number.parseInt(outputMetadata?.row_count, 10);
     const transientFailureCount = Number.parseInt(outputMetadata?.transient_failure_count, 10);
     const manualResumeCount = Number.parseInt(outputMetadata?.manual_resume_count, 10);
     const retryDelaySeconds = Number.parseInt(outputMetadata?.retry_delay_seconds, 10);
     const estimatedRemainingSeconds = Number.parseInt(outputMetadata?.estimated_remaining_seconds, 10);
+    const rowsPerMinute = Number.parseFloat(outputMetadata?.rows_per_minute);
+    const batchConcurrency = Number.parseInt(outputMetadata?.batch_concurrency, 10);
+    const effectiveBatchConcurrency = Number.parseInt(outputMetadata?.effective_batch_concurrency, 10);
+    const taskType = String(outputMetadata?.task_type || '').trim().toLowerCase();
+    const analysisPhase = String(outputMetadata?.analysis_phase || '').trim().toLowerCase();
     const progressPercent = calculateGeneratedOutputProgress(outputMetadata);
     const progressPercentLabel = `${Math.round(progressPercent)}%`;
+
+    if (statusElements.statusLabel) {
+      statusElements.statusLabel.textContent = getGeneratedOutputRunTypeLabel(outputMetadata);
+    }
 
     if (statusElements.statusBadge) {
       statusElements.statusBadge.textContent = statusLabel;
@@ -4264,6 +4611,51 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
         checkpointParts.push(`${processedRows.toLocaleString()} of ${rowCount.toLocaleString()} rows`);
       }
       detailParts.push(checkpointParts.join(', '));
+    }
+
+    if (taskType === 'hierarchical_analysis' || taskType === 'combined') {
+      if (analysisPhase === 'reducing') {
+        const reduceParts = ['Reduce phase'];
+        if (Number.isFinite(analysisReduceLevel) && analysisReduceLevel > 0) {
+          reduceParts.push(`level ${analysisReduceLevel.toLocaleString()}`);
+        }
+        if (
+          Number.isFinite(analysisReduceNode)
+          && Number.isFinite(analysisReduceNodeCount)
+          && analysisReduceNodeCount > 0
+        ) {
+          reduceParts.push(`node ${analysisReduceNode.toLocaleString()} of ${analysisReduceNodeCount.toLocaleString()}`);
+        }
+        detailParts.push(reduceParts.join(' '));
+      } else if (analysisPhase === 'publishing') {
+        detailParts.push('Publishing final artifact');
+      } else if (Number.isFinite(processedChunkCount) && Number.isFinite(totalChunkCount) && totalChunkCount > 0) {
+        detailParts.push(`Map phase: ${processedChunkCount.toLocaleString()} of ${totalChunkCount.toLocaleString()} chunks`);
+      }
+
+      if (Number.isFinite(failedChunkCount) && failedChunkCount > 0) {
+        detailParts.push(`Chunks needing retry: ${failedChunkCount.toLocaleString()}`);
+      }
+    }
+
+    if (Number.isFinite(completedBatches) && Number.isFinite(batchCount) && batchCount > completedBatches) {
+      detailParts.push(`Remaining batches: ${(batchCount - completedBatches).toLocaleString()}`);
+    }
+    if (Number.isFinite(processedChunkCount) && Number.isFinite(totalChunkCount) && totalChunkCount > processedChunkCount) {
+      detailParts.push(`Remaining chunks: ${(totalChunkCount - processedChunkCount).toLocaleString()}`);
+    }
+    if (Number.isFinite(rowsPerMinute) && rowsPerMinute > 0) {
+      detailParts.push(`Throughput: ${rowsPerMinute.toLocaleString(undefined, { maximumFractionDigits: 1 })} rows/min`);
+    }
+    if (Number.isFinite(batchConcurrency) && batchConcurrency > 0) {
+      const concurrencyLabel = (
+        Number.isFinite(effectiveBatchConcurrency)
+        && effectiveBatchConcurrency > 0
+        && effectiveBatchConcurrency !== batchConcurrency
+      )
+        ? `${effectiveBatchConcurrency.toLocaleString()} of ${batchConcurrency.toLocaleString()}`
+        : batchConcurrency.toLocaleString();
+      detailParts.push(`Model concurrency: ${concurrencyLabel}`);
     }
 
     if (outputMetadata?.waiting_for_retry) {
@@ -4310,7 +4702,7 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     }
   }
 
-  function createBackgroundGeneratedOutputStatusBlock(outputMetadata) {
+  function createBackgroundGeneratedOutputStatusBlock(outputMetadata, supportingDetailElements = []) {
     const wrapper = document.createElement('div');
     wrapper.className = 'generated-tabular-background-status mt-3';
 
@@ -4319,7 +4711,7 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
 
     const statusLabel = document.createElement('span');
     statusLabel.className = 'fw-semibold';
-    statusLabel.textContent = 'Background export';
+    statusLabel.textContent = getGeneratedOutputRunTypeLabel(outputMetadata);
     statusRow.appendChild(statusLabel);
 
     const statusBadge = document.createElement('span');
@@ -4338,17 +4730,39 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     progress.appendChild(progressBar);
     wrapper.appendChild(progress);
 
+    const details = document.createElement('details');
+    details.className = 'generated-analysis-preview-details generated-tabular-background-details mt-2';
+    details.dataset.generatedExportDetails = 'true';
+
+    const detailsSummary = document.createElement('summary');
+    detailsSummary.className = 'small fw-semibold';
+    detailsSummary.textContent = 'View details';
+    details.appendChild(detailsSummary);
+
+    const detailsContent = document.createElement('div');
+    detailsContent.className = 'mt-2';
+    supportingDetailElements.forEach(detailElement => {
+      if (detailElement instanceof HTMLElement) {
+        detailsContent.appendChild(detailElement);
+      }
+    });
+
     const detailText = document.createElement('div');
-    detailText.className = 'small text-muted mt-2';
-    wrapper.appendChild(detailText);
+    detailText.className = 'small text-muted';
+    detailsContent.appendChild(detailText);
 
     const updatedText = document.createElement('div');
     updatedText.className = 'small text-muted';
-    wrapper.appendChild(updatedText);
+    detailsContent.appendChild(updatedText);
+    details.appendChild(detailsContent);
+    wrapper.appendChild(details);
 
     const statusElements = {
+      statusLabel,
       statusBadge,
       progressBar,
+      details,
+      detailsContent,
       detailText,
       updatedText,
     };
@@ -4358,6 +4772,17 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
       wrapper,
       statusElements,
     };
+  }
+
+  function hideCompletedGeneratedArtifactHandoff(container, outputMetadata) {
+    if (outputMetadata?.background_export || !outputMetadata?.suppress_assistant_text) {
+      return;
+    }
+    const message = container?.matches?.('.message')
+      ? container
+      : container?.closest?.('.message');
+    message?.querySelector('.message-text')?.classList.add('d-none');
+    message?.querySelector('.message-footer')?.classList.add('d-none');
   }
 
   async function refreshBackgroundGeneratedOutputStatus(outputMetadata, card, statusElements = {}) {
@@ -4394,6 +4819,7 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
           run_id: runStatus.run_id || runId,
         });
         const refreshedCard = createGeneratedAnalysisArtifactCard(outputMetadata);
+        hideCompletedGeneratedArtifactHandoff(card, outputMetadata);
         card.replaceWith(refreshedCard);
         return;
       }
@@ -4450,6 +4876,7 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
           run_id: runStatus.run_id || runId,
         });
         const refreshedCard = createGeneratedAnalysisArtifactCard(outputMetadata);
+        hideCompletedGeneratedArtifactHandoff(card, outputMetadata);
         card.replaceWith(refreshedCard);
         showToast(responseData?.message || 'Background export is already complete.', 'success');
         return;
@@ -4573,6 +5000,21 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     const previewText = String(
       outputMetadata?.preview_text || outputMetadata?.analysis_text || outputMetadata?.panalysis_text || ''
     ).trim();
+    const isBackgroundExport = Boolean(outputMetadata?.background_export);
+    const capability = String(outputMetadata?.capability || '').trim().toLowerCase();
+    const isCompletedTabularArtifact = Boolean(
+      !isBackgroundExport
+      && ['csv', 'json', 'xml'].includes(outputFormat)
+      && ['tabular', 'file_export'].includes(capability)
+    );
+    const backgroundDetailElements = [];
+    const appendSupportingDetail = element => {
+      if (isBackgroundExport) {
+        backgroundDetailElements.push(element);
+      } else {
+        card.appendChild(element);
+      }
+    };
 
     const header = document.createElement('div');
     header.className = 'd-flex flex-wrap justify-content-between align-items-start gap-2';
@@ -4585,53 +5027,67 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
 
     const fileNameText = document.createElement('div');
     fileNameText.className = 'small text-muted text-break';
-    fileNameText.textContent = fileName;
-    headerText.appendChild(fileNameText);
+    fileNameText.textContent = isBackgroundExport ? `File: ${fileName}` : fileName;
+    if (isBackgroundExport) {
+      backgroundDetailElements.push(fileNameText);
+    } else {
+      headerText.appendChild(fileNameText);
+    }
     header.appendChild(headerText);
 
-    if (rowCountLabel) {
+    if (rowCountLabel && !isBackgroundExport) {
       const rowCountBadge = document.createElement('span');
       rowCountBadge.className = 'badge text-bg-light';
       rowCountBadge.textContent = `${rowCountLabel} rows`;
       header.appendChild(rowCountBadge);
+    } else if (rowCountLabel) {
+      const rowCountDetail = document.createElement('div');
+      rowCountDetail.className = 'small text-muted';
+      rowCountDetail.textContent = `Rows: ${rowCountLabel}`;
+      backgroundDetailElements.push(rowCountDetail);
     }
 
     card.appendChild(header);
 
-    const storageNote = document.createElement('div');
-    storageNote.className = 'small text-muted mt-2';
-    storageNote.textContent = getGeneratedTabularStorageNote(outputMetadata);
-    card.appendChild(storageNote);
+    if (!isCompletedTabularArtifact) {
+      const storageNote = document.createElement('div');
+      storageNote.className = 'small text-muted mt-2';
+      storageNote.textContent = getGeneratedTabularStorageNote(outputMetadata);
+      appendSupportingDetail(storageNote);
 
-    if (sourceFileName || selectedSheet) {
-      const sourceNote = document.createElement('div');
-      sourceNote.className = 'small text-muted';
-      const sourceSegments = [];
-      if (sourceFileName) {
-        sourceSegments.push(`Source: ${sourceFileName}`);
+      if (sourceFileName || selectedSheet) {
+        const sourceNote = document.createElement('div');
+        sourceNote.className = 'small text-muted';
+        const sourceSegments = [];
+        if (sourceFileName) {
+          sourceSegments.push(`Source: ${sourceFileName}`);
+        }
+        if (selectedSheet) {
+          sourceSegments.push(`Sheet: ${selectedSheet}`);
+        }
+        sourceNote.textContent = sourceSegments.join(' | ');
+        appendSupportingDetail(sourceNote);
       }
-      if (selectedSheet) {
-        sourceSegments.push(`Sheet: ${selectedSheet}`);
-      }
-      sourceNote.textContent = sourceSegments.join(' | ');
-      card.appendChild(sourceNote);
-    }
 
-    if (summary) {
-      const summaryText = document.createElement('p');
-      summaryText.className = 'small mb-0 mt-2';
-      summaryText.textContent = summary;
-      card.appendChild(summaryText);
+      if (summary) {
+        const summaryText = document.createElement('p');
+        summaryText.className = 'small mb-0 mt-2';
+        summaryText.textContent = summary;
+        appendSupportingDetail(summaryText);
+      }
     }
 
     let backgroundStatusElements = null;
-    if (outputMetadata?.background_export) {
-      const backgroundStatusBlock = createBackgroundGeneratedOutputStatusBlock(outputMetadata);
+    if (isBackgroundExport) {
+      const backgroundStatusBlock = createBackgroundGeneratedOutputStatusBlock(
+        outputMetadata,
+        backgroundDetailElements,
+      );
       backgroundStatusElements = backgroundStatusBlock.statusElements;
       card.appendChild(backgroundStatusBlock.wrapper);
     }
 
-    if (previewRows.length || previewItems.length || previewLines.length || previewText) {
+    if (!isCompletedTabularArtifact && (previewRows.length || previewItems.length || previewLines.length || previewText)) {
       let previewContent = null;
       if (previewRows.length) {
         previewContent = buildGeneratedTabularPreviewTable(previewRows) || buildGeneratedTabularPreviewFallback(previewRows);
@@ -4648,7 +5104,13 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
       }
 
       if (previewContent) {
-        if (shouldCollapseGeneratedAnalysisPreview(outputMetadata)) {
+        if (isBackgroundExport && backgroundStatusElements?.detailsContent) {
+          const previewLabel = document.createElement('div');
+          previewLabel.className = 'small fw-semibold mt-3 mb-2';
+          previewLabel.textContent = 'Preview';
+          backgroundStatusElements.detailsContent.appendChild(previewLabel);
+          backgroundStatusElements.detailsContent.appendChild(previewContent);
+        } else if (shouldCollapseGeneratedAnalysisPreview(outputMetadata)) {
           const previewDetails = document.createElement('details');
           previewDetails.className = 'generated-analysis-preview-details mt-3';
 
@@ -4718,7 +5180,19 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     });
     actions.appendChild(downloadButton);
 
-    if (isGeneratedMarkdownArtifact(outputMetadata, outputFormat)) {
+    if (isCompletedTabularArtifact && hasGeneratedArtifactPreview(outputMetadata, outputFormat)) {
+      const viewButton = document.createElement('button');
+      viewButton.type = 'button';
+      viewButton.className = 'btn btn-sm btn-outline-secondary generated-artifact-view-btn';
+      viewButton.textContent = `View ${outputFormat.toUpperCase()}`;
+      viewButton.setAttribute('aria-label', `View generated ${outputFormat.toUpperCase()} preview`);
+      viewButton.addEventListener('click', () => {
+        showGeneratedArtifactPreviewModal(outputMetadata, outputFormat);
+      });
+      actions.appendChild(viewButton);
+    }
+
+    if (isGeneratedMarkdownArtifact(outputMetadata, outputFormat) && !isCompletedTabularArtifact) {
       const normalizedArtifactMessageId = String(outputMetadata?.artifact_message_id || '').trim();
       const normalizedConversationId = String(outputMetadata?.conversation_id || window.currentConversationId || '').trim();
       if (normalizedArtifactMessageId && normalizedConversationId) {
@@ -4781,6 +5255,7 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
 
     generatedOutputs.forEach(outputMetadata => {
       generatedOutputsContainer.appendChild(createGeneratedAnalysisArtifactCard(outputMetadata));
+      hideCompletedGeneratedArtifactHandoff(messageDiv, outputMetadata);
     });
     generatedOutputsContainer.classList.remove('d-none');
   }
@@ -4800,6 +5275,7 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
 
     generatedOutputs.forEach(outputMetadata => {
       generatedOutputsContainer.appendChild(createGeneratedTabularOutputCard(outputMetadata));
+      hideCompletedGeneratedArtifactHandoff(messageDiv, outputMetadata);
     });
     generatedOutputsContainer.classList.remove('d-none');
   }
@@ -5818,7 +6294,7 @@ export function appendMessage(
   } // End of the large 'else' block for non-AI messages
 }
 
-export function sendMessage() {
+export async function sendMessage() {
   if (!userInput) {
     console.error("User input element not found.");
     return;
@@ -5845,6 +6321,12 @@ export function sendMessage() {
   combinedMessage = combinedMessage.trim();
 
   if (!combinedMessage) {
+    return;
+  }
+
+  const largeTabularRunConfirmed = await confirmLargeTabularRunForPrompt(combinedMessage);
+  if (!largeTabularRunConfirmed) {
+    userInput.focus();
     return;
   }
 

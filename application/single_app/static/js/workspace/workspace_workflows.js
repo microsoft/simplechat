@@ -138,7 +138,20 @@ const WORKFLOW_STEP_DESCRIPTIONS = {
     reliability: "Choose retry and failure behavior.",
     review: "Review the workflow and completion alert before saving.",
 };
-const WORKFLOW_MAX_TASKS = 20;
+const WORKFLOW_TASK_LIMIT_DEFAULT = 50;
+const WORKFLOW_TASK_LIMIT_MIN = 1;
+const WORKFLOW_TASK_LIMIT_MAX = 100;
+function getWorkflowMaxTasks() {
+    const configuredLimit = Number.parseInt(
+        window.workflowSettings?.workflow_max_tasks ?? WORKFLOW_TASK_LIMIT_DEFAULT,
+        10,
+    );
+    if (!Number.isFinite(configuredLimit)) {
+        return WORKFLOW_TASK_LIMIT_DEFAULT;
+    }
+    return Math.min(WORKFLOW_TASK_LIMIT_MAX, Math.max(WORKFLOW_TASK_LIMIT_MIN, configuredLimit));
+}
+const WORKFLOW_MAX_TASKS = getWorkflowMaxTasks();
 const DOCUMENT_ACTION_NONE = "none";
 const DOCUMENT_ACTION_SEARCH = "search";
 const DOCUMENT_ACTION_ANALYZE = "analyze";
