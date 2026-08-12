@@ -2,7 +2,7 @@
 # test_mixed_source_deferred_composition_phase5.py
 """
 Functional test for Phase 5 mixed-source deferred composition.
-Version: 0.250.161
+Version: 0.250.166
 Implemented in: 0.250.161
 
 This test ensures pending durable tabular work remains nonterminal evidence,
