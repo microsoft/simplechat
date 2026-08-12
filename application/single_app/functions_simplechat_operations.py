@@ -2737,7 +2737,7 @@ def assert_generated_chat_artifact_is_published_for_user(current_user_id: str, m
         or str(manifest.get("set_id") or "").strip() != set_id
         or str(manifest.get("lifecycle_state") or "").strip().lower() != "completed"
         or str(manifest.get("validation_state") or "").strip().lower() != GENERATED_CHAT_ARTIFACT_VALIDATION_VALIDATED
-        or _safe_positive_int(manifest.get("publication_generation")) < publication_generation
+        or _safe_positive_int(manifest.get("publication_generation")) != publication_generation
     ):
         raise PermissionError("Artifact is not published")
 
