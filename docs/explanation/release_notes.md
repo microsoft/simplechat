@@ -2,6 +2,16 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.180)**
+
+#### Bug Fixes
+
+*   **Analyze Artifact Output Contract Closure**
+    *   Made Analyze generated-output delivery Markdown-first and contract-faithful across durable tabular execution by adding reviewed transformation planning, deterministic server-side rules, bounded semantic verification and repair, and exact Search/Analyze 200-row parity validation.
+    *   Hardened artifact-set publication so new staged generated artifacts are not downloadable or promotable until the completed run manifest commits every required member, while preserving legacy generated artifact compatibility.
+    *   Restored explicit Word/DOCX current-turn function-result serialization and repaired cumulative lifecycle, scale, route, and UI validation harnesses through 30,000-row bounded finalization and 100,000-row deterministic planning/hardening contracts.
+    *   (Ref: #1233, PR #1234, PR #1235, PR #1236, Analyze deliverable contract, tabular transformation contract, artifact-set publication lifecycle)
+
 ### **(v0.250.170)**
 
 #### Bug Fixes

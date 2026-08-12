@@ -18,6 +18,8 @@ Phase 7B correctness updated in version: **0.250.179**
 
 Phase 7C publication updated in version: **0.250.180**
 
+Phase 7D validation completed in version: **0.250.180**
+
 ## Overview
 
 The Analyze deliverable contract defines a server-owned, versioned plan for analysis artifacts before production routing changes are made. It records whether an action requires a primary Markdown analysis artifact, which sibling artifacts were explicitly requested, the public structured schema, row cardinality, ordering, transformation mode, validation profile, and publication policy.
@@ -38,6 +40,8 @@ Phase 7B makes the production durable runner own rule-faithful structured output
 
 Phase 7C makes artifact-set publication the visibility boundary for new generated tabular artifacts. Uploaded artifact messages are staged with server-owned run, set, member, and publication-generation metadata. Direct download and workspace promotion reauthorize the caller against the committed run manifest before serving the blob. Completed manifests commit every required member in one publication generation, while staged, rolled-back, stale-generation, or incomplete members remain inaccessible through direct artifact routes. The same validated checkpoint set can now publish multiple requested durable structured siblings, such as JSON and XML, in request order.
 
+Phase 7D completed the deterministic final integration gate for the closure. The executed matrix covered generated-file compatibility, Analyze deliverable contracts, public schema projection, deterministic and semantic validation, production Search/Analyze exact 200-row equivalence, artifact-set publication, rollout metadata, legacy fallback decisions, route policy, available browser artifact UI checks, 30,000-row bounded finalization, and 100,000-row deterministic planning and hardening contracts. Live paid semantic validation above 3,000 rows and destructive legacy code deletion remain explicitly outside this closure.
+
 ## Dependencies
 
 - `application/single_app/functions_analysis_deliverables.py` for contract construction, artifact-set validation, structured-row validation, and gated shadow telemetry.
@@ -51,7 +55,7 @@ Phase 7C makes artifact-set publication the visibility boundary for new generate
 - `functional_tests/test_tabular_phase5_artifact_set_lifecycle.py` for durable artifact-set lifecycle and public projection coverage.
 - `ui_tests/test_chat_background_generated_export_status.py` for plural completion rendering, ordering, actions, and safe UI event coverage.
 - `functional_tests/test_document_analysis_lossless_artifacts.py` for document-analysis artifact finalizer behavior.
-- `application/single_app/config.py` version `0.250.177`.
+- `application/single_app/config.py` version `0.250.180`.
 
 ## Technical Specifications
 
