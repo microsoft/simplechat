@@ -45,7 +45,7 @@ langchain-text-splitters==1.1.2
 beautifulsoup4==4.13.3
 openpyxl==3.1.5
 xlrd==2.0.1
-pillow==12.2.0
+pillow==12.3.0
 ffmpeg-binaries-compat==1.0.1
 ffmpeg-python==0.2.0
 semantic-kernel==1.39.4
