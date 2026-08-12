@@ -1,7 +1,7 @@
 # test_tabular_analyze_per_document_multifile_state.py
 """
 Functional test for Phase 6 per-document tabular Analyze state preservation.
-Version: 0.250.162
+Version: 0.250.166
 Implemented in: 0.250.162
 
 This test ensures recursive per-document Analyze preserves pending tabular
