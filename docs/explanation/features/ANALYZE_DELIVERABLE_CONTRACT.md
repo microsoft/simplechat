@@ -12,6 +12,8 @@ Phase 6 updated in version: **0.250.176**
 
 Phase 7 updated in version: **0.250.177**
 
+Phase 7A stabilization updated in version: **0.250.178**
+
 ## Overview
 
 The Analyze deliverable contract defines a server-owned, versioned plan for analysis artifacts before production routing changes are made. It records whether an action requires a primary Markdown analysis artifact, which sibling artifacts were explicitly requested, the public structured schema, row cardinality, ordering, transformation mode, validation profile, and publication policy.
@@ -25,6 +27,8 @@ Phase 5 adds a versioned durable artifact-set manifest for tabular generated-out
 Phase 6 updates the chat browser completion path to consume the plural artifact-set projection. When polling or Continue receives a completed set, the progress card is replaced by one unframed generated-artifact group that renders every published member. Analyze Markdown is shown first, requested siblings retain their server order, and old singular `generated_artifact` responses still render as one compatible card.
 
 Phase 7 adds an explicit rollout state for new shared tabular parity assignments. Administrators can pause or roll back new assignment while preserving accepted run contracts, readers, status endpoints, and artifact-set recovery for already queued work.
+
+Phase 7A restores explicit Word/DOCX serialization of authorized current-turn non-tabular function-result rows. The passthrough guard still rejects derived requests before serialization, keeps tabular tool rows on their coverage-aware durable path, and omits sensitive fields. It also restores the cumulative lifecycle and scale harnesses to the current schema, planner, and artifact-set contracts.
 
 ## Dependencies
 

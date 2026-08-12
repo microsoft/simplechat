@@ -1,8 +1,8 @@
 # test_tabular_row_orchestration_scale.py
 """
 Functional test for scalable per-row tabular orchestration.
-Version: 0.250.167
-Implemented in: 0.250.060; generated CSV formula safety in 0.250.065; generated file export routing in 0.250.072; source descriptor generalization in 0.250.127; unified durable run contract in 0.250.128; hierarchical analysis in 0.250.129; combined analysis and export in 0.250.130; scale validation in 0.250.132; direct source-backed exhaustive queueing in 0.250.133; direct queue call-site hardening in 0.250.134; model-validation auto retry in 0.250.135; model-aware parallel throughput in 0.250.136; Phase 1 acceleration contracts and observability in 0.250.137; Phase 2 truthful background handoff in 0.250.138; Phase 3 durable LLM generation planning in 0.250.139; Phase 4 compact row response protocol in 0.250.140; Phase 5 completion-driven checkpointing in 0.250.141; Phase 6 rolling worker pool in 0.250.142; Phase 7 independent batch retries in 0.250.143; Phase 8 scale, chaos, and rollout in 0.250.144; background metadata streaming fix in 0.250.145; source-token echo recovery in 0.250.146; fixed-window stale heartbeat fix in 0.250.147; nested CSV output recovery in 0.250.148; generic tabular artifact routing and fast startup in 0.250.149; balanced concurrency waves and default completion checkpoints in 0.250.152; Search shared preflight adapter in 0.250.159; aggregate route-helper harness coverage in 0.250.166
+Version: 0.250.178
+Implemented in: 0.250.060; generated CSV formula safety in 0.250.065; generated file export routing in 0.250.072; source descriptor generalization in 0.250.127; unified durable run contract in 0.250.128; hierarchical analysis in 0.250.129; combined analysis and export in 0.250.130; scale validation in 0.250.132; direct source-backed exhaustive queueing in 0.250.133; direct queue call-site hardening in 0.250.134; model-validation auto retry in 0.250.135; model-aware parallel throughput in 0.250.136; Phase 1 acceleration contracts and observability in 0.250.137; Phase 2 truthful background handoff in 0.250.138; Phase 3 durable LLM generation planning in 0.250.139; Phase 4 compact row response protocol in 0.250.140; Phase 5 completion-driven checkpointing in 0.250.141; Phase 6 rolling worker pool in 0.250.142; Phase 7 independent batch retries in 0.250.143; Phase 8 scale, chaos, and rollout in 0.250.144; background metadata streaming fix in 0.250.145; source-token echo recovery in 0.250.146; fixed-window stale heartbeat fix in 0.250.147; nested CSV output recovery in 0.250.148; generic tabular artifact routing and fast startup in 0.250.149; balanced concurrency waves and default completion checkpoints in 0.250.152; Search shared preflight adapter in 0.250.159; aggregate route-helper harness coverage in 0.250.166; Analyze artifact Phase 7A harness compatibility updated in 0.250.178
 
 This test ensures generated exports preserve source identity and row order while
 enforcing one stable output schema across independently generated batches.
@@ -57,6 +57,11 @@ from functions_generated_file_exports import (  # noqa: E402
     get_requested_generated_file_format,
     get_requested_structured_artifact_format,
 )
+from functions_analysis_deliverables import (  # noqa: E402
+    is_analysis_internal_lineage_field,
+    project_structured_deliverable_row,
+)
+from functions_tabular_transformations import normalize_tabular_transformation_spec  # noqa: E402
 from functions_tabular_orchestration import (  # noqa: E402
     build_tabular_legacy_post_tool_fallback_decision,
     get_tabular_generated_output_format,
@@ -91,6 +96,8 @@ CANDIDATE_FUNCTIONS = {
 STREAM_FUNCTIONS = {
     '_serialize_generated_output_value',
     '_validate_tabular_output_checkpoint_metadata',
+    '_get_tabular_run_public_output_schema',
+    '_get_tabular_run_serialized_public_schema',
     '_write_ordered_output_stream',
 }
 SOURCE_VERSION_FUNCTIONS = {'_revalidate_tabular_source_version_for_publication'}
@@ -210,6 +217,9 @@ PERFORMANCE_FUNCTIONS = {
     '_build_tabular_generation_rollout_assignment',
     '_get_tabular_generation_rollout_settings_for_run',
     '_sync_tabular_generation_contract_fields',
+    '_get_tabular_run_lineage_schema',
+    '_get_tabular_run_public_output_schema',
+    '_get_tabular_run_internal_checkpoint_schema',
     '_build_generation_progress_contract_fields',
     '_extract_tabular_response_usage',
     '_resolve_tabular_batch_concurrency',
@@ -249,6 +259,10 @@ GENERATION_PLAN_FUNCTIONS = {
     '_build_tabular_generation_plan',
     '_validate_tabular_generation_plan',
     '_get_tabular_generation_plan_output_schema',
+    '_get_tabular_generation_plan_llm_fields',
+    '_get_tabular_run_lineage_schema',
+    '_get_tabular_run_public_output_schema',
+    '_get_tabular_run_transformation_spec',
     '_tabular_generation_plan_blob_path',
     '_get_tabular_generation_plan_source_etag',
     '_build_tabular_output_checkpoint_metadata',
@@ -780,6 +794,8 @@ def _load_stream_writer(download_json_blob):
         '_output_blob_path': lambda user_id, conversation_id, run_id, batch_number: batch_number,
         '_download_json_blob': download_json_blob,
         'TABULAR_EXPORT_OUTPUT_ROW_NUMBER_FIELD': 'source_row_number',
+        'is_analysis_internal_lineage_field': is_analysis_internal_lineage_field,
+        'project_structured_deliverable_row': project_structured_deliverable_row,
     }
     extracted_module = ast.Module(body=selected_nodes, type_ignores=[])
     exec(compile(extracted_module, str(EXPORT_MODULE), 'exec'), namespace)
@@ -1451,6 +1467,7 @@ def _load_performance_helpers(progress_updates=None):
         'os': os,
         're': re,
         'timezone': timezone,
+        'is_analysis_internal_lineage_field': is_analysis_internal_lineage_field,
     }
     extracted_module = ast.Module(body=selected_nodes, type_ignores=[])
     exec(compile(extracted_module, str(EXPORT_MODULE), 'exec'), namespace)
@@ -1571,6 +1588,8 @@ def _load_generation_plan_helpers():
             (input_batches or run['_test_batches'])[batch_number - 1]
         ),
         '_normalize_tabular_run_task_type': lambda value: value or 'structured_export',
+        'is_analysis_internal_lineage_field': is_analysis_internal_lineage_field,
+        'normalize_tabular_transformation_spec': normalize_tabular_transformation_spec,
         '_resolve_tabular_generation_planner_model': lambda run, settings: {
             'endpoint_id': 'endpoint-1',
             'model_id': 'gpt-plan',
@@ -4573,6 +4592,7 @@ def test_direct_source_backed_queue_supports_all_workbook_formats():
     fake_module.TabularProcessingPlugin = FakeWorkbookPlugin
     sys.modules['semantic_kernel_plugins.tabular_processing_plugin'] = fake_module
     queued_runs = []
+    log_events = []
     try:
         helpers = _load_direct_source_queue_helpers({
             '_safe_int': lambda value: int(value or 0),
@@ -4580,7 +4600,7 @@ def test_direct_source_backed_queue_supports_all_workbook_formats():
                 'max_rows': 60,
                 'max_chars': 60000,
             },
-            '_get_tabular_generated_output_task_type': lambda *args: None,
+            '_get_tabular_generated_output_task_type': lambda *args, **kwargs: None,
             'question_requests_tabular_generated_output': lambda question: True,
             'question_requests_tabular_hierarchical_analysis': lambda question: False,
             'get_tabular_generated_output_format': lambda question: 'csv',
@@ -4601,7 +4621,7 @@ def test_direct_source_backed_queue_supports_all_workbook_formats():
                 'status': 'failed',
             },
             'logging': logging,
-            'log_event': lambda *args, **kwargs: None,
+            'log_event': lambda *args, **kwargs: log_events.append((args, kwargs)),
         })
         for source_format in ('xlsx', 'xls', 'xlsm'):
             output_metadata = helpers['maybe_queue_direct_tabular_generated_output'](
@@ -4615,7 +4635,7 @@ def test_direct_source_backed_queue_supports_all_workbook_formats():
                 gpt_model='test-model',
                 settings={},
             )
-            assert output_metadata['background_export'] is True
+            assert output_metadata.get('background_export') is True, log_events
     finally:
         if original_module is None:
             sys.modules.pop('semantic_kernel_plugins.tabular_processing_plugin', None)
@@ -4702,7 +4722,10 @@ def test_direct_source_backed_csv_queue_bypasses_tool_paging():
                 'max_rows': 60,
                 'max_chars': 60000,
             },
-            '_get_tabular_generated_output_task_type': lambda generated, analysis, settings: 'combined' if generated and analysis else None,
+            '_get_tabular_generated_output_task_type': (
+                lambda generated, analysis, settings, action_mode=None:
+                'combined' if generated and analysis else None
+            ),
             'question_requests_tabular_generated_output': lambda question: True,
             'question_requests_tabular_hierarchical_analysis': lambda question: True,
             'get_tabular_generated_output_format': lambda question: 'csv',
@@ -4783,7 +4806,9 @@ def test_direct_source_backed_queue_failure_suppresses_inline_exhaustive_output(
                 'max_rows': 60,
                 'max_chars': 60000,
             },
-            '_get_tabular_generated_output_task_type': lambda generated, analysis, settings: None,
+            '_get_tabular_generated_output_task_type': (
+                lambda generated, analysis, settings, action_mode=None: None
+            ),
             'question_requests_tabular_generated_output': lambda question: True,
             'question_requests_tabular_hierarchical_analysis': lambda question: False,
             'get_tabular_generated_output_format': lambda question: 'csv',
@@ -5666,8 +5691,10 @@ def test_runner_routes_combined_analysis_and_export_once():
     )
     assert '_analysis_chunk_summary_blob_path' in load_summaries_source
     assert "'generated_artifacts': generated_artifacts" in public_status_source
-    assert "'structured_export_artifact': run.get('structured_export_artifact')" in public_status_source
-    assert "'analysis_artifact': run.get('analysis_artifact')" in public_status_source
+    assert "'structured_export_artifact': structured_export_public_artifact" in public_status_source
+    assert "'analysis_artifact': analysis_public_artifact" in public_status_source
+    assert "'structured_export_artifact': run.get('structured_export_artifact')" not in public_status_source
+    assert "'analysis_artifact': run.get('analysis_artifact')" not in public_status_source
     assert 'analysis_generated_file_name' in queue_source
     assert '_generate_combined_chunk_result_window' in export_source
     assert 'tabular_combined_analysis_summary' in export_source
