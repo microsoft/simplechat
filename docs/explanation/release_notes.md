@@ -2,6 +2,15 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.168)**
+
+#### Bug Fixes
+
+*   **Tabular Execution Settings Sanitization**
+    *   Prevented normal user-facing settings responses from exposing admin-only hierarchical-analysis, chunk-model deployment, and model-validation retry controls.
+    *   Preserved the durable-run confirmation settings required by chat so users continue to receive prompts before very large tabular runs.
+    *   (Ref: #1199, `sanitize_settings_for_user()`, `TABULAR_GENERATION_BACKEND_SETTING_KEYS`)
+
 ### **(v0.250.167)**
 
 #### Bug Fixes
