@@ -10,6 +10,8 @@ Phase 5 updated in version: **0.250.175**
 
 Phase 6 updated in version: **0.250.176**
 
+Phase 7 updated in version: **0.250.177**
+
 ## Overview
 
 The Analyze deliverable contract defines a server-owned, versioned plan for analysis artifacts before production routing changes are made. It records whether an action requires a primary Markdown analysis artifact, which sibling artifacts were explicitly requested, the public structured schema, row cardinality, ordering, transformation mode, validation profile, and publication policy.
@@ -21,6 +23,8 @@ Phase 3 separates public structured schemas from internal checkpoint lineage. Du
 Phase 5 adds a versioned durable artifact-set manifest for tabular generated-output runs. Combined Analyze runs can stage a requested structured sibling while hierarchical reduction continues, but public status withholds generated artifacts until every required member is validated and the set lifecycle reaches `completed`. New completed combined runs project Markdown as the primary artifact and requested structured files as ordered siblings.
 
 Phase 6 updates the chat browser completion path to consume the plural artifact-set projection. When polling or Continue receives a completed set, the progress card is replaced by one unframed generated-artifact group that renders every published member. Analyze Markdown is shown first, requested siblings retain their server order, and old singular `generated_artifact` responses still render as one compatible card.
+
+Phase 7 adds an explicit rollout state for new shared tabular parity assignments. Administrators can pause or roll back new assignment while preserving accepted run contracts, readers, status endpoints, and artifact-set recovery for already queued work.
 
 ## Dependencies
 
@@ -34,7 +38,7 @@ Phase 6 updates the chat browser completion path to consume the plural artifact-
 - `functional_tests/test_tabular_phase5_artifact_set_lifecycle.py` for durable artifact-set lifecycle and public projection coverage.
 - `ui_tests/test_chat_background_generated_export_status.py` for plural completion rendering, ordering, actions, and safe UI event coverage.
 - `functional_tests/test_document_analysis_lossless_artifacts.py` for document-analysis artifact finalizer behavior.
-- `application/single_app/config.py` version `0.250.176`.
+- `application/single_app/config.py` version `0.250.177`.
 
 ## Technical Specifications
 
@@ -145,6 +149,8 @@ The planner preserves explicit requested artifact order and direct negation. For
 After Phase 6, a completed combined Analyze plus CSV run visibly presents both artifacts after live polling, after Continue, and when compatible completed metadata is hydrated. The progress card remains visible for queued, running, retry-waiting, failed, canceled, rollback, or otherwise nonterminal sets and does not expose staged or rolled-back downloads.
 
 When Analyze requests a structured tabular artifact, the shared planner selects `combined` only when hierarchical analysis is enabled. If the required analysis capability is disabled, the request is declined before durable execution rather than being reinterpreted as `structured_export`.
+
+Phase 7 rollout assignment includes backend-only `tabular_analyze_parity_rollout_state`. Supported values are `active`, `paused`, and `rollback`. `active` keeps percent-based cohort assignment. `paused` and `rollback` stop new shared durable assignment with safe reason codes while old run metadata remains readable and resumable under its persisted contract. The setting is sanitized away from frontend settings and appears in public run status only as normalized low-cardinality metadata.
 
 The default settings keep telemetry off:
 

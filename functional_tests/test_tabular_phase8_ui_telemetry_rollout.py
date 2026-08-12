@@ -2,8 +2,8 @@
 # test_tabular_phase8_ui_telemetry_rollout.py
 """
 Functional test for Phase 8 tabular UI telemetry and rollout metadata.
-Version: 0.250.167
-Implemented in: 0.250.164; planning-only metadata hardening in 0.250.167
+Version: 0.250.177
+Implemented in: 0.250.164; planning-only metadata hardening in 0.250.167; Phase 7 harness compatibility in 0.250.177
 
 This test ensures shared tabular planner rollout assignment is stable and
 redacted, backend-only rollout controls remain sanitized from frontend
@@ -38,16 +38,15 @@ def install_lightweight_planner_dependency_stubs():
     )
     generated_exports_module = types.ModuleType("functions_generated_file_exports")
 
-    def get_requested_structured_artifact_format(prompt):
+    def get_requested_artifact_formats(prompt):
         normalized_prompt = str(prompt or "").lower()
-        for output_format in ("json", "xml", "csv"):
-            if output_format in normalized_prompt:
-                return output_format
-        return None
+        return [output_format for output_format in ("json", "xml", "csv") if output_format in normalized_prompt]
 
+    generated_exports_module.get_requested_artifact_formats = get_requested_artifact_formats
     generated_exports_module.get_requested_structured_artifact_format = (
-        get_requested_structured_artifact_format
+        lambda prompt: next(iter(get_requested_artifact_formats(prompt)), None)
     )
+    generated_exports_module.get_requested_structured_artifact_formats = get_requested_artifact_formats
     sys.modules.setdefault("functions_assistant_table_exports", assistant_exports_module)
     sys.modules.setdefault("functions_generated_file_exports", generated_exports_module)
 
@@ -142,15 +141,21 @@ def load_public_status_helpers():
             "status_detail": "Queued and waiting for a worker.",
         },
         "_build_checkpoint_summary": lambda completed_batches, batch_count, processed_rows, row_count: "",
+        "_build_or_update_artifact_set_manifest": lambda run: {"lifecycle_state": "completed"},
+        "_build_public_generated_artifacts_from_manifest": lambda run, artifact_set_manifest: [],
+        "_build_public_artifact_projection": lambda artifact: dict(artifact or {}),
         "TABULAR_EXPORT_STATUS_QUEUED": "queued",
         "TABULAR_EXPORT_STATUS_RUNNING": "running",
         "TABULAR_EXPORT_STATUS_COMPLETED": "completed",
         "TABULAR_EXPORT_STATUS_FAILED": "failed",
         "TABULAR_EXPORT_STATUS_CANCELED": "canceled",
         "TABULAR_EXPORT_TERMINAL_STATUSES": {"completed", "failed", "canceled"},
+        "TABULAR_ARTIFACT_SET_LIFECYCLE_COMPLETED": "completed",
         "TABULAR_RUN_TASK_STRUCTURED_EXPORT": "structured_export",
         "TABULAR_RUN_TASK_HIERARCHICAL_ANALYSIS": "hierarchical_analysis",
         "TABULAR_RUN_TASK_COMBINED": "combined",
+        "ANALYSIS_ARTIFACT_ROLE_REQUESTED_OUTPUT": "requested_output",
+        "ANALYSIS_ARTIFACT_ROLE_PRIMARY_ANALYSIS": "primary_analysis",
         "TABULAR_EXPORT_ARTIFACT_PREVIEW_MAX_ROWS": 3,
         "TABULAR_GENERATION_PLAN_MAX_FIELDS": 50,
         "TABULAR_EXPORT_ARTIFACT_PREVIEW_MAX_CHARS": 1200,

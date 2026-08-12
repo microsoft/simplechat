@@ -51,6 +51,7 @@ TABULAR_PLANNER_MODES = {
     TABULAR_PLANNER_MODE_ACTIVE,
 }
 TABULAR_PARITY_ROLLOUT_CONTRACT_VERSION = "tabular-parity-rollout-v1"
+TABULAR_PARITY_ROLLOUT_STATES = {"active", "paused", "rollback"}
 TABULAR_LEGACY_POST_TOOL_FALLBACK_MODES = {"enabled", "observe", "disabled"}
 TABULAR_LEGACY_POST_TOOL_FALLBACK_DECISION_VERSION = "tabular-legacy-fallback-retirement-v1"
 
@@ -80,6 +81,17 @@ def _coerce_rollout_percentage(value, default=100):
     except (TypeError, ValueError):
         parsed_value = int(default)
     return max(0, min(100, parsed_value))
+
+
+def normalize_tabular_parity_rollout_state(settings=None, state=None):
+    """Return the supported rollout state for new shared tabular assignments."""
+    raw_state = state
+    if raw_state is None:
+        raw_state = (settings or {}).get("tabular_analyze_parity_rollout_state", "active")
+    normalized_state = str(raw_state or "").strip().lower()
+    if normalized_state in TABULAR_PARITY_ROLLOUT_STATES:
+        return normalized_state
+    return "active"
 
 
 def normalize_tabular_legacy_post_tool_fallback_mode(settings=None, mode=None):
@@ -148,6 +160,7 @@ def build_tabular_parity_rollout_assignment(settings=None, request_key=None, mod
     normalized_mode = str(mode or "").strip().lower()
     if normalized_mode not in {"search", "analyze", "multifile", "mixed"}:
         normalized_mode = "tabular"
+    rollout_state = normalize_tabular_parity_rollout_state(settings)
     rollout_percent = _coerce_rollout_percentage(
         settings.get(
             "tabular_analyze_parity_rollout_percent",
@@ -165,11 +178,23 @@ def build_tabular_parity_rollout_assignment(settings=None, request_key=None, mod
         separators=(",", ":"),
     )
     cohort_bucket = int(hashlib.sha256(assignment_key.encode("utf-8")).hexdigest()[:8], 16) % 100
+    assigned_by_cohort = cohort_bucket < rollout_percent
+    assigned = rollout_state == "active" and assigned_by_cohort
+    if rollout_state == "rollback":
+        assignment_reason_code = "rollback_active"
+    elif rollout_state == "paused":
+        assignment_reason_code = "rollout_paused"
+    elif assigned_by_cohort:
+        assignment_reason_code = "assigned"
+    else:
+        assignment_reason_code = "outside_rollout_cohort"
     return {
         "contract_version": TABULAR_PARITY_ROLLOUT_CONTRACT_VERSION,
         "mode": normalized_mode,
         "planner_mode": normalize_tabular_request_planner_mode(settings),
-        "assigned": cohort_bucket < rollout_percent,
+        "rollout_state": rollout_state,
+        "assigned": assigned,
+        "assignment_reason_code": assignment_reason_code,
         "cohort_bucket": cohort_bucket,
         "rollout_percent": rollout_percent,
         "search_shared_preflight_enabled": settings_flag_enabled(
