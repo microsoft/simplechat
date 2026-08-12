@@ -2,7 +2,7 @@
 # test_tabular_phase3_public_schema_projection.py
 """
 Functional test for Phase 3 public schema projection and passthrough safety.
-Version: 0.250.173
+Version: 0.250.175
 Implemented in: 0.250.173
 
 This test ensures generated tabular artifacts expose only the persisted public
@@ -131,7 +131,7 @@ def test_contract_separates_public_internal_and_lineage_schema():
         ordering="source_order",
     ).to_dict()
 
-    assert_equal(contract["contract_version"], "analysis-deliverables-v2", "contract version")
+    assert_equal(contract["contract_version"], "analysis-deliverables-v3", "contract version")
     assert_equal(contract["public_output_schema"], ["Decision", "Amount"], "public schema")
     assert_equal(contract["lineage_schema"], ["source_row_number", "source_row_identity"], "lineage schema")
     assert_equal(

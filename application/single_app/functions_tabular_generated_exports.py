@@ -39,8 +39,12 @@ from config import (
 )
 from functions_appinsights import log_event
 from functions_analysis_deliverables import (
+    ANALYSIS_ARTIFACT_ROLE_PRIMARY_ANALYSIS,
+    ANALYSIS_ARTIFACT_ROLE_REQUESTED_OUTPUT,
+    ANALYSIS_ARTIFACT_ROLE_SUPPORTING_OUTPUT,
     is_analysis_internal_lineage_field,
     project_structured_deliverable_row,
+    validate_analysis_artifact_set,
 )
 from functions_assistant_table_exports import build_safe_csv_headers, neutralize_csv_spreadsheet_formula
 from functions_tabular_transformations import (
@@ -123,6 +127,52 @@ TABULAR_EXPORT_TERMINAL_STATUSES = {
     TABULAR_EXPORT_STATUS_COMPLETED,
     TABULAR_EXPORT_STATUS_FAILED,
     TABULAR_EXPORT_STATUS_CANCELED,
+}
+TABULAR_ARTIFACT_SET_CONTRACT_VERSION = 'tabular-artifact-set-v1'
+TABULAR_ARTIFACT_SET_LIFECYCLE_PLANNED = 'planned'
+TABULAR_ARTIFACT_SET_LIFECYCLE_GENERATING = 'generating'
+TABULAR_ARTIFACT_SET_LIFECYCLE_VALIDATING = 'validating'
+TABULAR_ARTIFACT_SET_LIFECYCLE_READY_TO_PUBLISH = 'ready_to_publish'
+TABULAR_ARTIFACT_SET_LIFECYCLE_PUBLISHING = 'publishing'
+TABULAR_ARTIFACT_SET_LIFECYCLE_COMPLETED = 'completed'
+TABULAR_ARTIFACT_SET_LIFECYCLE_FAILED = 'failed'
+TABULAR_ARTIFACT_SET_LIFECYCLE_CANCELED = 'canceled'
+TABULAR_ARTIFACT_SET_LIFECYCLE_ROLLBACK_REQUIRED = 'rollback_required'
+TABULAR_ARTIFACT_SET_LIFECYCLE_ROLLED_BACK = 'rolled_back'
+TABULAR_ARTIFACT_SET_LIFECYCLE_STATES = {
+    TABULAR_ARTIFACT_SET_LIFECYCLE_PLANNED,
+    TABULAR_ARTIFACT_SET_LIFECYCLE_GENERATING,
+    TABULAR_ARTIFACT_SET_LIFECYCLE_VALIDATING,
+    TABULAR_ARTIFACT_SET_LIFECYCLE_READY_TO_PUBLISH,
+    TABULAR_ARTIFACT_SET_LIFECYCLE_PUBLISHING,
+    TABULAR_ARTIFACT_SET_LIFECYCLE_COMPLETED,
+    TABULAR_ARTIFACT_SET_LIFECYCLE_FAILED,
+    TABULAR_ARTIFACT_SET_LIFECYCLE_CANCELED,
+    TABULAR_ARTIFACT_SET_LIFECYCLE_ROLLBACK_REQUIRED,
+    TABULAR_ARTIFACT_SET_LIFECYCLE_ROLLED_BACK,
+}
+TABULAR_ARTIFACT_MEMBER_LIFECYCLE_PLANNED = 'planned'
+TABULAR_ARTIFACT_MEMBER_LIFECYCLE_GENERATING = 'generating'
+TABULAR_ARTIFACT_MEMBER_LIFECYCLE_STAGED = 'staged'
+TABULAR_ARTIFACT_MEMBER_LIFECYCLE_VALIDATED = 'validated'
+TABULAR_ARTIFACT_MEMBER_LIFECYCLE_PUBLISHING = 'publishing'
+TABULAR_ARTIFACT_MEMBER_LIFECYCLE_PUBLISHED = 'published'
+TABULAR_ARTIFACT_MEMBER_LIFECYCLE_FAILED = 'failed'
+TABULAR_ARTIFACT_MEMBER_LIFECYCLE_CANCELED = 'canceled'
+TABULAR_ARTIFACT_MEMBER_LIFECYCLE_ROLLED_BACK = 'rolled_back'
+TABULAR_ARTIFACT_MEMBER_LIFECYCLE_STATES = {
+    TABULAR_ARTIFACT_MEMBER_LIFECYCLE_PLANNED,
+    TABULAR_ARTIFACT_MEMBER_LIFECYCLE_GENERATING,
+    TABULAR_ARTIFACT_MEMBER_LIFECYCLE_STAGED,
+    TABULAR_ARTIFACT_MEMBER_LIFECYCLE_VALIDATED,
+    TABULAR_ARTIFACT_MEMBER_LIFECYCLE_PUBLISHING,
+    TABULAR_ARTIFACT_MEMBER_LIFECYCLE_PUBLISHED,
+    TABULAR_ARTIFACT_MEMBER_LIFECYCLE_FAILED,
+    TABULAR_ARTIFACT_MEMBER_LIFECYCLE_CANCELED,
+    TABULAR_ARTIFACT_MEMBER_LIFECYCLE_ROLLED_BACK,
+}
+TABULAR_ARTIFACT_MEMBER_PUBLIC_LIFECYCLE_STATES = {
+    TABULAR_ARTIFACT_MEMBER_LIFECYCLE_PUBLISHED,
 }
 
 TABULAR_EXPORT_DEFAULT_INLINE_MAX_BATCHES = 75
@@ -6273,57 +6323,31 @@ def _build_run_public_status(run, settings=None):
     deferred_composition = _build_tabular_run_deferred_composition_reference(run)
     rollout_assignment = _build_tabular_run_rollout_assignment_public_fields(run)
     checkpoint_summary = _build_checkpoint_summary(completed_batches, batch_count, processed_rows, row_count)
-    generated_artifacts = []
-
-    def append_generated_artifact(artifact, fallback_file_name, fallback_output_format, summary):
-        artifact = artifact if isinstance(artifact, dict) else {}
-        if not artifact.get('artifact_message_id'):
-            return
-        generated_artifacts.append({
-            'capability': artifact.get('capability') or 'tabular',
-            'artifact_message_id': artifact.get('artifact_message_id'),
-            'conversation_id': run.get('conversation_id'),
-            'file_name': artifact.get('file_name') or fallback_file_name,
-            'output_format': artifact.get('output_format') or fallback_output_format,
-            'row_count': processed_rows or row_count,
-            'storage_scope': 'chat',
-            'source_file_name': run.get('source_file_name'),
-            'selected_sheet': run.get('selected_sheet'),
-            'summary': summary,
-            'preview_rows': list(artifact.get('preview_rows') or [])[
-                :TABULAR_EXPORT_ARTIFACT_PREVIEW_MAX_ROWS
-            ],
-            'preview_columns': list(artifact.get('preview_columns') or [])[
-                :TABULAR_GENERATION_PLAN_MAX_FIELDS + 2
-            ],
-            'preview_text': str(artifact.get('preview_text') or '')[
-                :TABULAR_EXPORT_ARTIFACT_PREVIEW_MAX_CHARS
-            ],
-            'suppress_assistant_text': bool(artifact.get('suppress_assistant_text')),
-            'suppress_assistant_table_export': True,
-        })
-
-    if task_type == TABULAR_RUN_TASK_COMBINED:
-        append_generated_artifact(
-            run.get('structured_export_artifact') or final_artifact,
-            run.get('generated_file_name'),
-            run.get('output_format'),
-            run.get('post_run_export_summary'),
-        )
-        append_generated_artifact(
-            run.get('analysis_artifact'),
-            run.get('analysis_generated_file_name'),
-            'md',
-            run.get('post_run_summary'),
-        )
-    else:
-        append_generated_artifact(
-            final_artifact,
-            run.get('generated_file_name'),
-            run.get('output_format'),
-            run.get('post_run_summary'),
-        )
+    artifact_set_manifest = _build_or_update_artifact_set_manifest(run)
+    generated_artifacts = _build_public_generated_artifacts_from_manifest(run, artifact_set_manifest)
     generated_artifact = generated_artifacts[0] if generated_artifacts else None
+    primary_final_artifact = generated_artifact or (
+        _build_public_artifact_projection(final_artifact)
+        if (
+            run.get('status') == TABULAR_EXPORT_STATUS_COMPLETED
+            and artifact_set_manifest.get('lifecycle_state') == TABULAR_ARTIFACT_SET_LIFECYCLE_COMPLETED
+        )
+        else None
+    ) or {}
+    structured_export_public_artifact = next(
+        (
+            artifact for artifact in generated_artifacts
+            if artifact.get('role') == ANALYSIS_ARTIFACT_ROLE_REQUESTED_OUTPUT
+        ),
+        None,
+    )
+    analysis_public_artifact = next(
+        (
+            artifact for artifact in generated_artifacts
+            if artifact.get('role') == ANALYSIS_ARTIFACT_ROLE_PRIMARY_ANALYSIS
+        ),
+        None,
+    )
 
     return {
         'run_id': run.get('id'),
@@ -6403,12 +6427,22 @@ def _build_run_public_status(run, settings=None):
         'can_resume': can_resume,
         'can_cancel': _can_cancel_run(run),
         'retryable_failure': retryable_failure,
-        'artifact_message_id': final_artifact.get('artifact_message_id'),
-        'file_name': final_artifact.get('file_name') or run.get('generated_file_name'),
+        'artifact_message_id': primary_final_artifact.get('artifact_message_id'),
+        'file_name': primary_final_artifact.get('file_name') or run.get('generated_file_name'),
         'generated_artifact': generated_artifact,
         'generated_artifacts': generated_artifacts,
-        'structured_export_artifact': run.get('structured_export_artifact'),
-        'analysis_artifact': run.get('analysis_artifact'),
+        'artifact_set': {
+            'contract_version': artifact_set_manifest.get('contract_version'),
+            'set_id': artifact_set_manifest.get('set_id'),
+            'lifecycle_state': artifact_set_manifest.get('lifecycle_state'),
+            'validation_state': artifact_set_manifest.get('validation_state'),
+            'primary_artifact_id': artifact_set_manifest.get('primary_artifact_id'),
+            'member_count': len(artifact_set_manifest.get('members') or []),
+            'published_member_count': len(generated_artifacts),
+            'publication_generation': _safe_int(artifact_set_manifest.get('publication_generation'), minimum=0),
+        },
+        'structured_export_artifact': structured_export_public_artifact,
+        'analysis_artifact': analysis_public_artifact,
         'capability': 'tabular',
         'suppress_assistant_table_export': True,
         'background_export': not (
@@ -7305,6 +7339,465 @@ def _build_artifact_metadata(
     }
 
 
+def _normalize_tabular_artifact_lifecycle_state(value, allowed_states, default_state):
+    normalized_state = str(value or '').strip().lower()
+    if normalized_state in allowed_states:
+        return normalized_state
+    return default_state
+
+
+def _normalize_tabular_artifact_format(value, fallback_format='json'):
+    normalized_format = str(value or '').strip().lower().lstrip('.')
+    if normalized_format:
+        return normalized_format[:20]
+    return str(fallback_format or 'json').strip().lower().lstrip('.')[:20] or 'json'
+
+
+def _normalize_tabular_artifact_role(value, fallback_role=ANALYSIS_ARTIFACT_ROLE_REQUESTED_OUTPUT):
+    normalized_role = str(value or '').strip().lower()
+    if normalized_role in {
+        ANALYSIS_ARTIFACT_ROLE_PRIMARY_ANALYSIS,
+        ANALYSIS_ARTIFACT_ROLE_REQUESTED_OUTPUT,
+        ANALYSIS_ARTIFACT_ROLE_SUPPORTING_OUTPUT,
+    }:
+        return normalized_role
+    return fallback_role
+
+
+def _normalize_tabular_artifact_member_id(value, role, output_format, request_order):
+    normalized_value = re.sub(r'[^a-z0-9_-]+', '-', str(value or '').strip().lower())
+    normalized_value = re.sub(r'-+', '-', normalized_value).strip('-')
+    if normalized_value:
+        return normalized_value[:96]
+    if role == ANALYSIS_ARTIFACT_ROLE_PRIMARY_ANALYSIS:
+        return 'analysis'
+    return f'requested-{output_format or request_order}'[:96]
+
+
+def _get_tabular_run_deliverable_contract(run):
+    planner_metadata = (run or {}).get('tabular_planner_metadata')
+    if not isinstance(planner_metadata, dict):
+        return {}
+    deliverable_contract = planner_metadata.get('deliverable_contract')
+    if not isinstance(deliverable_contract, dict):
+        return {}
+    return deliverable_contract
+
+
+def _normalize_artifact_descriptor(raw_descriptor, fallback_order=0):
+    raw_descriptor = raw_descriptor if isinstance(raw_descriptor, dict) else {}
+    request_order = _safe_int(raw_descriptor.get('request_order'), default=fallback_order, minimum=0)
+    role = _normalize_tabular_artifact_role(raw_descriptor.get('role'))
+    output_format = _normalize_tabular_artifact_format(
+        raw_descriptor.get('format') or raw_descriptor.get('output_format'),
+        fallback_format='md' if role == ANALYSIS_ARTIFACT_ROLE_PRIMARY_ANALYSIS else 'json',
+    )
+    member_id = _normalize_tabular_artifact_member_id(
+        raw_descriptor.get('artifact_id') or raw_descriptor.get('member_id'),
+        role,
+        output_format,
+        request_order,
+    )
+    return {
+        'member_id': member_id,
+        'artifact_id': member_id,
+        'role': role,
+        'format': output_format,
+        'required': bool(raw_descriptor.get('required', True)),
+        'request_order': request_order,
+    }
+
+
+def _default_artifact_descriptors_for_run(run):
+    task_type = _normalize_tabular_run_task_type((run or {}).get('task_type'))
+    output_format = _normalize_tabular_artifact_format((run or {}).get('output_format'), fallback_format='json')
+    if task_type == TABULAR_RUN_TASK_HIERARCHICAL_ANALYSIS:
+        return [{
+            'artifact_id': 'analysis',
+            'role': ANALYSIS_ARTIFACT_ROLE_PRIMARY_ANALYSIS,
+            'format': 'md',
+            'required': True,
+            'request_order': 0,
+        }]
+    if task_type == TABULAR_RUN_TASK_COMBINED:
+        return [
+            {
+                'artifact_id': 'analysis',
+                'role': ANALYSIS_ARTIFACT_ROLE_PRIMARY_ANALYSIS,
+                'format': 'md',
+                'required': True,
+                'request_order': 0,
+            },
+            {
+                'artifact_id': f'requested-{output_format}',
+                'role': ANALYSIS_ARTIFACT_ROLE_REQUESTED_OUTPUT,
+                'format': output_format,
+                'required': True,
+                'request_order': 1,
+            },
+        ]
+    return [{
+        'artifact_id': f'requested-{output_format}',
+        'role': ANALYSIS_ARTIFACT_ROLE_REQUESTED_OUTPUT,
+        'format': output_format,
+        'required': True,
+        'request_order': 0,
+    }]
+
+
+def _get_artifact_descriptors_for_run(run):
+    deliverable_contract = _get_tabular_run_deliverable_contract(run)
+    contract_artifacts = list(deliverable_contract.get('requested_artifacts') or [])
+    if not contract_artifacts:
+        contract_artifacts = _default_artifact_descriptors_for_run(run)
+    descriptors = [
+        _normalize_artifact_descriptor(raw_descriptor, fallback_order=index)
+        for index, raw_descriptor in enumerate(contract_artifacts)
+    ]
+    return sorted(descriptors, key=lambda descriptor: (
+        _safe_int(descriptor.get('request_order'), minimum=0),
+        str(descriptor.get('member_id') or ''),
+    ))
+
+
+def _get_primary_artifact_member_id(run, descriptors):
+    deliverable_contract = _get_tabular_run_deliverable_contract(run)
+    primary_role = str(deliverable_contract.get('primary_artifact_role') or '').strip().lower()
+    if not primary_role:
+        task_type = _normalize_tabular_run_task_type((run or {}).get('task_type'))
+        primary_role = (
+            ANALYSIS_ARTIFACT_ROLE_PRIMARY_ANALYSIS
+            if task_type in {TABULAR_RUN_TASK_HIERARCHICAL_ANALYSIS, TABULAR_RUN_TASK_COMBINED}
+            else ANALYSIS_ARTIFACT_ROLE_REQUESTED_OUTPUT
+        )
+    for descriptor in descriptors:
+        if descriptor.get('role') == primary_role:
+            return descriptor.get('member_id')
+    return descriptors[0].get('member_id') if descriptors else ''
+
+
+def _get_structured_artifact_member_id(run):
+    output_format = _normalize_tabular_artifact_format((run or {}).get('output_format'), fallback_format='json')
+    for descriptor in _get_artifact_descriptors_for_run(run):
+        if (
+            descriptor.get('role') == ANALYSIS_ARTIFACT_ROLE_REQUESTED_OUTPUT
+            and descriptor.get('format') == output_format
+        ):
+            return descriptor.get('member_id')
+    return f'requested-{output_format}'
+
+
+def _get_analysis_artifact_member_id(run):
+    for descriptor in _get_artifact_descriptors_for_run(run):
+        if descriptor.get('role') == ANALYSIS_ARTIFACT_ROLE_PRIMARY_ANALYSIS:
+            return descriptor.get('member_id')
+    return 'analysis'
+
+
+def _build_artifact_member_idempotency_key(run, member):
+    role = str((member or {}).get('role') or '').strip().lower()
+    output_format = str((member or {}).get('format') or '').strip().lower()
+    member_id = str((member or {}).get('member_id') or '').strip()
+    run_id = (run or {}).get('id')
+    if role == ANALYSIS_ARTIFACT_ROLE_PRIMARY_ANALYSIS and output_format == 'md':
+        return f'tabular-hierarchical-analysis:{run_id}'
+    if role == ANALYSIS_ARTIFACT_ROLE_REQUESTED_OUTPUT and output_format == (run or {}).get('output_format'):
+        return f'tabular-generated-output:{run_id}'
+    return f'tabular-artifact-set:{run_id}:{member_id}'
+
+
+def _build_artifact_set_member(run, descriptor, existing_member=None):
+    existing_member = existing_member if isinstance(existing_member, dict) else {}
+    lifecycle_state = _normalize_tabular_artifact_lifecycle_state(
+        existing_member.get('lifecycle_state'),
+        TABULAR_ARTIFACT_MEMBER_LIFECYCLE_STATES,
+        TABULAR_ARTIFACT_MEMBER_LIFECYCLE_PLANNED,
+    )
+    validation_state = str(existing_member.get('validation_state') or '').strip().lower()[:40]
+    member = {
+        'member_id': descriptor.get('member_id'),
+        'artifact_id': descriptor.get('artifact_id') or descriptor.get('member_id'),
+        'role': descriptor.get('role'),
+        'format': descriptor.get('format'),
+        'required': bool(descriptor.get('required', True)),
+        'request_order': _safe_int(descriptor.get('request_order'), minimum=0),
+        'lifecycle_state': lifecycle_state,
+        'validation_state': validation_state or TABULAR_ARTIFACT_MEMBER_LIFECYCLE_PLANNED,
+        'artifact_message_id': existing_member.get('artifact_message_id'),
+        'file_name': existing_member.get('file_name'),
+        'capability': existing_member.get('capability') or 'tabular',
+        'output_format': existing_member.get('output_format') or descriptor.get('format'),
+        'row_count': _safe_int(existing_member.get('row_count'), default=_safe_int((run or {}).get('row_count'))),
+        'preview_rows': list(existing_member.get('preview_rows') or [])[:TABULAR_EXPORT_ARTIFACT_PREVIEW_MAX_ROWS],
+        'preview_columns': list(existing_member.get('preview_columns') or [])[:TABULAR_GENERATION_PLAN_MAX_FIELDS + 2],
+        'preview_text': str(existing_member.get('preview_text') or '')[:TABULAR_EXPORT_ARTIFACT_PREVIEW_MAX_CHARS],
+        'suppress_assistant_text': bool(existing_member.get('suppress_assistant_text', True)),
+    }
+    member['idempotency_key'] = existing_member.get('idempotency_key') or _build_artifact_member_idempotency_key(
+        run,
+        member,
+    )
+    return member
+
+
+def _artifact_lifecycle_for_existing_run_artifact(run, artifact):
+    artifact = artifact if isinstance(artifact, dict) else {}
+    status = str((run or {}).get('status') or '').strip().lower()
+    if not artifact.get('artifact_message_id'):
+        return TABULAR_ARTIFACT_MEMBER_LIFECYCLE_PLANNED
+    if status == TABULAR_EXPORT_STATUS_COMPLETED:
+        return TABULAR_ARTIFACT_MEMBER_LIFECYCLE_PUBLISHED
+    if status == TABULAR_EXPORT_STATUS_CANCELED:
+        return TABULAR_ARTIFACT_MEMBER_LIFECYCLE_CANCELED
+    if status == TABULAR_EXPORT_STATUS_FAILED:
+        return TABULAR_ARTIFACT_MEMBER_LIFECYCLE_FAILED
+    return TABULAR_ARTIFACT_MEMBER_LIFECYCLE_STAGED
+
+
+def _artifact_set_lifecycle_for_run(run, members):
+    status = str((run or {}).get('status') or '').strip().lower()
+    member_states = {
+        str((member or {}).get('lifecycle_state') or '').strip().lower()
+        for member in list(members or [])
+        if isinstance(member, dict)
+    }
+    if status == TABULAR_EXPORT_STATUS_COMPLETED:
+        return TABULAR_ARTIFACT_SET_LIFECYCLE_COMPLETED
+    if status == TABULAR_EXPORT_STATUS_CANCELED:
+        return TABULAR_ARTIFACT_SET_LIFECYCLE_CANCELED
+    if status == TABULAR_EXPORT_STATUS_FAILED:
+        if TABULAR_ARTIFACT_MEMBER_LIFECYCLE_PUBLISHED in member_states:
+            return TABULAR_ARTIFACT_SET_LIFECYCLE_ROLLBACK_REQUIRED
+        return TABULAR_ARTIFACT_SET_LIFECYCLE_FAILED
+    if (run or {}).get('publishing_started_at'):
+        return TABULAR_ARTIFACT_SET_LIFECYCLE_PUBLISHING
+    if TABULAR_ARTIFACT_MEMBER_LIFECYCLE_STAGED in member_states:
+        return TABULAR_ARTIFACT_SET_LIFECYCLE_VALIDATING
+    return TABULAR_ARTIFACT_SET_LIFECYCLE_GENERATING if status == TABULAR_EXPORT_STATUS_RUNNING else TABULAR_ARTIFACT_SET_LIFECYCLE_PLANNED
+
+
+def _merge_artifact_metadata_into_member(member, artifact, lifecycle_state=None, validation_state=None):
+    artifact = artifact if isinstance(artifact, dict) else {}
+    if not artifact:
+        return member
+    member.update({
+        'artifact_message_id': artifact.get('artifact_message_id') or member.get('artifact_message_id'),
+        'file_name': artifact.get('file_name') or member.get('file_name'),
+        'capability': artifact.get('capability') or member.get('capability') or 'tabular',
+        'output_format': artifact.get('output_format') or member.get('output_format') or member.get('format'),
+        'row_count': _safe_int(artifact.get('row_count'), default=_safe_int(member.get('row_count'))),
+        'preview_rows': list(artifact.get('preview_rows') or member.get('preview_rows') or [])[
+            :TABULAR_EXPORT_ARTIFACT_PREVIEW_MAX_ROWS
+        ],
+        'preview_columns': list(artifact.get('preview_columns') or member.get('preview_columns') or [])[
+            :TABULAR_GENERATION_PLAN_MAX_FIELDS + 2
+        ],
+        'preview_text': str(artifact.get('preview_text') or member.get('preview_text') or '')[
+            :TABULAR_EXPORT_ARTIFACT_PREVIEW_MAX_CHARS
+        ],
+        'suppress_assistant_text': bool(artifact.get('suppress_assistant_text', member.get('suppress_assistant_text', True))),
+    })
+    if lifecycle_state:
+        member['lifecycle_state'] = _normalize_tabular_artifact_lifecycle_state(
+            lifecycle_state,
+            TABULAR_ARTIFACT_MEMBER_LIFECYCLE_STATES,
+            member.get('lifecycle_state') or TABULAR_ARTIFACT_MEMBER_LIFECYCLE_PLANNED,
+        )
+    if validation_state:
+        member['validation_state'] = str(validation_state or '').strip().lower()[:40]
+    return member
+
+
+def _build_or_update_artifact_set_manifest(run):
+    run = run if isinstance(run, dict) else {}
+    existing_manifest = run.get('artifact_set_manifest') if isinstance(run.get('artifact_set_manifest'), dict) else {}
+    descriptors = _get_artifact_descriptors_for_run(run)
+    existing_members = {
+        str(member.get('member_id') or '').strip(): member
+        for member in list(existing_manifest.get('members') or [])
+        if isinstance(member, dict)
+    }
+    members = []
+    for descriptor in descriptors:
+        member = _build_artifact_set_member(
+            run,
+            descriptor,
+            existing_members.get(descriptor.get('member_id')),
+        )
+        if member.get('role') == ANALYSIS_ARTIFACT_ROLE_PRIMARY_ANALYSIS:
+            artifact = run.get('analysis_artifact') if isinstance(run.get('analysis_artifact'), dict) else {}
+            _merge_artifact_metadata_into_member(
+                member,
+                artifact,
+                lifecycle_state=_artifact_lifecycle_for_existing_run_artifact(run, artifact),
+                validation_state='validated' if artifact.get('artifact_message_id') else None,
+            )
+        elif member.get('role') == ANALYSIS_ARTIFACT_ROLE_REQUESTED_OUTPUT:
+            artifact = run.get('structured_export_artifact') if isinstance(run.get('structured_export_artifact'), dict) else {}
+            if not artifact and _normalize_tabular_run_task_type(run.get('task_type')) != TABULAR_RUN_TASK_COMBINED:
+                artifact = run.get('final_artifact') if isinstance(run.get('final_artifact'), dict) else {}
+            _merge_artifact_metadata_into_member(
+                member,
+                artifact,
+                lifecycle_state=_artifact_lifecycle_for_existing_run_artifact(run, artifact),
+                validation_state='validated' if artifact.get('artifact_message_id') else None,
+            )
+        members.append(member)
+
+    primary_member_id = existing_manifest.get('primary_artifact_id') or _get_primary_artifact_member_id(run, descriptors)
+    lifecycle_state = _normalize_tabular_artifact_lifecycle_state(
+        existing_manifest.get('lifecycle_state'),
+        TABULAR_ARTIFACT_SET_LIFECYCLE_STATES,
+        _artifact_set_lifecycle_for_run(run, members),
+    )
+    if lifecycle_state == TABULAR_ARTIFACT_SET_LIFECYCLE_PLANNED:
+        lifecycle_state = _artifact_set_lifecycle_for_run(run, members)
+    manifest = {
+        'contract_version': TABULAR_ARTIFACT_SET_CONTRACT_VERSION,
+        'set_id': existing_manifest.get('set_id') or f"tabular-artifact-set:{run.get('id')}",
+        'run_id': run.get('id'),
+        'conversation_id': run.get('conversation_id'),
+        'user_id': run.get('user_id'),
+        'task_type': _normalize_tabular_run_task_type(run.get('task_type')),
+        'source_fingerprint': str(_get_tabular_run_deliverable_contract(run).get('source_fingerprint') or '')[:64],
+        'request_fingerprint': str(_get_tabular_run_deliverable_contract(run).get('request_fingerprint') or '')[:64],
+        'lifecycle_state': lifecycle_state,
+        'publication_generation': _safe_int(existing_manifest.get('publication_generation'), minimum=0),
+        'primary_artifact_id': primary_member_id,
+        'validation_state': str(existing_manifest.get('validation_state') or '').strip().lower()[:40] or 'planned',
+        'rollback_state': str(existing_manifest.get('rollback_state') or '').strip().lower()[:40],
+        'members': members,
+    }
+    return manifest
+
+
+def _set_artifact_set_member_state(run, member_id, artifact=None, lifecycle_state=None, validation_state=None):
+    manifest = _build_or_update_artifact_set_manifest(run)
+    for member in manifest.get('members') or []:
+        if member.get('member_id') == member_id:
+            _merge_artifact_metadata_into_member(
+                member,
+                artifact,
+                lifecycle_state=lifecycle_state,
+                validation_state=validation_state,
+            )
+            break
+    manifest['lifecycle_state'] = _artifact_set_lifecycle_for_run(run, manifest.get('members') or [])
+    run['artifact_set_manifest'] = manifest
+    return manifest
+
+
+def _publish_artifact_set_members(run, published_member_ids):
+    published_ids = {str(member_id or '').strip() for member_id in list(published_member_ids or []) if member_id}
+    manifest = _build_or_update_artifact_set_manifest(run)
+    for member in manifest.get('members') or []:
+        if member.get('member_id') in published_ids and member.get('artifact_message_id'):
+            member['lifecycle_state'] = TABULAR_ARTIFACT_MEMBER_LIFECYCLE_PUBLISHED
+            member['validation_state'] = 'validated'
+    validation_artifacts = [
+        {
+            'artifact_id': member.get('artifact_id') or member.get('member_id'),
+            'role': member.get('role'),
+            'format': member.get('format'),
+            'status': member.get('lifecycle_state'),
+        }
+        for member in manifest.get('members') or []
+    ]
+    deliverable_contract = _get_tabular_run_deliverable_contract(run)
+    artifact_set_valid = True
+    if deliverable_contract:
+        validation_report = validate_analysis_artifact_set(deliverable_contract, validation_artifacts)
+        artifact_set_valid = validation_report.valid
+        manifest['validation_state'] = 'validated' if validation_report.valid else 'invalid'
+        manifest['validation_report'] = validation_report.to_dict()
+    else:
+        manifest['validation_state'] = 'validated'
+    manifest['lifecycle_state'] = (
+        TABULAR_ARTIFACT_SET_LIFECYCLE_COMPLETED
+        if artifact_set_valid
+        else TABULAR_ARTIFACT_SET_LIFECYCLE_ROLLBACK_REQUIRED
+    )
+    manifest['publication_generation'] = _safe_int(manifest.get('publication_generation'), minimum=0) + 1
+    run['artifact_set_manifest'] = manifest
+    return manifest
+
+
+def _build_public_generated_artifact_from_member(run, manifest, member):
+    if not isinstance(member, dict) or not member.get('artifact_message_id'):
+        return None
+    if member.get('lifecycle_state') not in TABULAR_ARTIFACT_MEMBER_PUBLIC_LIFECYCLE_STATES:
+        return None
+    return {
+        'artifact_id': member.get('artifact_id') or member.get('member_id'),
+        'artifact_set_id': manifest.get('set_id'),
+        'artifact_set_contract_version': manifest.get('contract_version'),
+        'role': member.get('role'),
+        'required': bool(member.get('required', True)),
+        'request_order': _safe_int(member.get('request_order'), minimum=0),
+        'lifecycle_state': member.get('lifecycle_state'),
+        'validation_state': member.get('validation_state'),
+        'capability': member.get('capability') or 'tabular',
+        'artifact_message_id': member.get('artifact_message_id'),
+        'conversation_id': run.get('conversation_id'),
+        'file_name': member.get('file_name') or run.get('generated_file_name'),
+        'output_format': member.get('output_format') or member.get('format'),
+        'row_count': _safe_int(member.get('row_count'), default=_safe_int(run.get('processed_rows'), default=_safe_int(run.get('row_count')))),
+        'storage_scope': 'chat',
+        'source_file_name': run.get('source_file_name'),
+        'selected_sheet': run.get('selected_sheet'),
+        'summary': run.get('post_run_summary') if member.get('role') == ANALYSIS_ARTIFACT_ROLE_PRIMARY_ANALYSIS else run.get('post_run_export_summary') or run.get('post_run_summary'),
+        'preview_rows': list(member.get('preview_rows') or [])[:TABULAR_EXPORT_ARTIFACT_PREVIEW_MAX_ROWS],
+        'preview_columns': list(member.get('preview_columns') or [])[:TABULAR_GENERATION_PLAN_MAX_FIELDS + 2],
+        'preview_text': str(member.get('preview_text') or '')[:TABULAR_EXPORT_ARTIFACT_PREVIEW_MAX_CHARS],
+        'suppress_assistant_text': bool(member.get('suppress_assistant_text')),
+        'suppress_assistant_table_export': True,
+    }
+
+
+def _build_public_generated_artifacts_from_manifest(run, manifest):
+    manifest = manifest if isinstance(manifest, dict) else {}
+    if manifest.get('lifecycle_state') != TABULAR_ARTIFACT_SET_LIFECYCLE_COMPLETED:
+        return []
+    public_artifacts = []
+    for member in sorted(
+        list(manifest.get('members') or []),
+        key=lambda item: (_safe_int(item.get('request_order'), minimum=0), str(item.get('member_id') or '')),
+    ):
+        public_artifact = _build_public_generated_artifact_from_member(run, manifest, member)
+        if public_artifact:
+            public_artifacts.append(public_artifact)
+    primary_member_id = str(manifest.get('primary_artifact_id') or '').strip()
+    primary_artifact = next(
+        (
+            artifact for artifact in public_artifacts
+            if str(artifact.get('artifact_id') or '').strip() == primary_member_id
+        ),
+        public_artifacts[0] if public_artifacts else None,
+    )
+    if primary_artifact and public_artifacts and public_artifacts[0] != primary_artifact:
+        public_artifacts = [primary_artifact] + [
+            artifact for artifact in public_artifacts
+            if artifact.get('artifact_id') != primary_artifact.get('artifact_id')
+        ]
+    return public_artifacts
+
+
+def _build_public_artifact_projection(artifact):
+    artifact = artifact if isinstance(artifact, dict) else {}
+    if not artifact.get('artifact_message_id'):
+        return None
+    return {
+        'artifact_message_id': artifact.get('artifact_message_id'),
+        'file_name': artifact.get('file_name'),
+        'capability': artifact.get('capability') or 'tabular',
+        'output_format': artifact.get('output_format'),
+        'preview_rows': list(artifact.get('preview_rows') or [])[:TABULAR_EXPORT_ARTIFACT_PREVIEW_MAX_ROWS],
+        'preview_columns': list(artifact.get('preview_columns') or [])[:TABULAR_GENERATION_PLAN_MAX_FIELDS + 2],
+        'preview_text': str(artifact.get('preview_text') or '')[:TABULAR_EXPORT_ARTIFACT_PREVIEW_MAX_CHARS],
+        'suppress_assistant_text': bool(artifact.get('suppress_assistant_text')),
+    }
+
+
 def _publish_structured_export_artifact(run):
     output_format = normalize_generated_output_format(run.get('output_format'))
     generated_file_name = run.get('generated_file_name') or _build_generated_file_name(
@@ -7384,6 +7877,7 @@ def _complete_run(run):
         ),
         'estimated_remaining_seconds': 0,
     })
+    _publish_artifact_set_members(run, [_get_structured_artifact_member_id(run)])
     run.update(_build_generation_progress_contract_fields(
         run,
         run.get('batch_count'),
@@ -7548,6 +8042,7 @@ def _complete_analysis_run(run, final_summary):
         ),
         'estimated_remaining_seconds': 0,
     })
+    _publish_artifact_set_members(run, [_get_analysis_artifact_member_id(run)])
     run.update(_build_generation_progress_contract_fields(
         run,
         run.get('batch_count'),
@@ -7603,6 +8098,13 @@ def _publish_combined_structured_export_phase(run):
         'final_artifact': structured_artifact,
         'estimated_remaining_seconds': None,
     })
+    _set_artifact_set_member_state(
+        run,
+        _get_structured_artifact_member_id(run),
+        artifact=structured_artifact,
+        lifecycle_state=TABULAR_ARTIFACT_MEMBER_LIFECYCLE_STAGED,
+        validation_state='validated',
+    )
     run = _replace_claimed_run(run)
     log_event(
         '[TABULAR_GENERATED_OUTPUT] Combined structured export artifact published',
@@ -7631,6 +8133,7 @@ def _complete_combined_analysis_run(run, final_summary):
         )
         analysis_artifact = existing_analysis_artifact
         generated_file_name = existing_analysis_artifact.get('file_name') or run.get('analysis_generated_file_name')
+        uploaded_message = {'file_name': generated_file_name}
     else:
         run, uploaded_message, final_summary, generated_file_name = _publish_analysis_artifact(run, final_summary)
         analysis_artifact = _build_artifact_metadata(
@@ -7642,6 +8145,20 @@ def _complete_combined_analysis_run(run, final_summary):
         )
 
     structured_artifact = run.get('structured_export_artifact') or run.get('final_artifact') or {}
+    _set_artifact_set_member_state(
+        run,
+        _get_structured_artifact_member_id(run),
+        artifact=structured_artifact,
+        lifecycle_state=TABULAR_ARTIFACT_MEMBER_LIFECYCLE_STAGED,
+        validation_state='validated',
+    )
+    _set_artifact_set_member_state(
+        run,
+        _get_analysis_artifact_member_id(run),
+        artifact=analysis_artifact,
+        lifecycle_state=TABULAR_ARTIFACT_MEMBER_LIFECYCLE_STAGED,
+        validation_state='validated',
+    )
     now = _now_iso()
     run.update({
         'status': TABULAR_EXPORT_STATUS_COMPLETED,
@@ -7660,11 +8177,15 @@ def _complete_combined_analysis_run(run, final_summary):
         'structured_export_artifact': structured_artifact,
         'analysis_artifact': analysis_artifact,
         'combined_artifacts': [
-            artifact for artifact in (structured_artifact, analysis_artifact) if artifact
+            artifact for artifact in (analysis_artifact, structured_artifact) if artifact
         ],
-        'final_artifact': structured_artifact or analysis_artifact,
+        'final_artifact': analysis_artifact or structured_artifact,
         'estimated_remaining_seconds': 0,
     })
+    _publish_artifact_set_members(
+        run,
+        [_get_analysis_artifact_member_id(run), _get_structured_artifact_member_id(run)],
+    )
     run.update(_build_generation_progress_contract_fields(
         run,
         run.get('batch_count'),
@@ -9341,6 +9862,7 @@ def queue_tabular_generated_output_run(
         'analysis_artifact': None,
         'combined_artifacts': [],
     }
+    run['artifact_set_manifest'] = _build_or_update_artifact_set_manifest(run)
     cosmos_tabular_export_runs_container.create_item(body=run)
     submitted = submit_tabular_generated_output_run(run_id, normalized_user_id)
     run['submitted_to_executor'] = submitted

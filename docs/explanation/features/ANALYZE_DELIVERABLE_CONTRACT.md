@@ -6,6 +6,8 @@ Phase 2 updated in version: **0.250.172**
 
 Phase 3 updated in version: **0.250.173**
 
+Phase 5 updated in version: **0.250.175**
+
 ## Overview
 
 The Analyze deliverable contract defines a server-owned, versioned plan for analysis artifacts before production routing changes are made. It records whether an action requires a primary Markdown analysis artifact, which sibling artifacts were explicitly requested, the public structured schema, row cardinality, ordering, transformation mode, validation profile, and publication policy.
@@ -13,6 +15,8 @@ The Analyze deliverable contract defines a server-owned, versioned plan for anal
 Phase 2 keeps the contract additive, but begins enforcing intent admission for shared tabular planning and bounded document Analyze finalization. Successful bounded Analyze results now publish a primary Markdown artifact. Explicit JSON, XML, or CSV requests are represented as ordered sibling artifacts, and Analyze plus structured output can no longer silently downgrade to structured-only export work when analysis is required.
 
 Phase 3 separates public structured schemas from internal checkpoint lineage. Durable tabular checkpoints still retain source row number and identity for validation, retries, audit, and restart, but final CSV, JSON, XML, preview rows, and preview columns are projected through the persisted public schema. Raw source or function rows are no longer accepted as a derived generated-output artifact unless the request is an explicit unchanged copy, serialization, or format conversion and the rows satisfy the public schema contract.
+
+Phase 5 adds a versioned durable artifact-set manifest for tabular generated-output runs. Combined Analyze runs can stage a requested structured sibling while hierarchical reduction continues, but public status withholds generated artifacts until every required member is validated and the set lifecycle reaches `completed`. New completed combined runs project Markdown as the primary artifact and requested structured files as ordered siblings.
 
 ## Dependencies
 
@@ -23,14 +27,15 @@ Phase 3 separates public structured schemas from internal checkpoint lineage. Du
 - `application/single_app/functions_workflow_runner.py` for bounded Analyze Markdown artifact finalization.
 - `functional_tests/test_analyze_deliverable_contract.py` for the executable regression oracle.
 - `functional_tests/test_tabular_phase3_public_schema_projection.py` for public schema projection and passthrough guard coverage.
+- `functional_tests/test_tabular_phase5_artifact_set_lifecycle.py` for durable artifact-set lifecycle and public projection coverage.
 - `functional_tests/test_document_analysis_lossless_artifacts.py` for document-analysis artifact finalizer behavior.
-- `application/single_app/config.py` version `0.250.173`.
+- `application/single_app/config.py` version `0.250.175`.
 
 ## Technical Specifications
 
 ### Contract Fields
 
-- `contract_version`: currently `analysis-deliverables-v2`.
+- `contract_version`: currently `analysis-deliverables-v3`.
 - `action_mode`: normalized caller action such as `analyze` or `search`.
 - `analysis_required`: true for Analyze by server policy.
 - `requested_artifacts`: ordered artifact descriptors with role, format, required state, and request order.
@@ -99,6 +104,21 @@ Pure validators report safe counts and reason codes for:
 
 Validation reports intentionally omit prompts, row values, storage paths, credentials, and provider errors.
 
+### Artifact-Set Publication
+
+Durable tabular generated-output runs now persist an `artifact_set_manifest` with contract version `tabular-artifact-set-v1`. The manifest records:
+
+- set, run, conversation, user, source, and request identifiers
+- ordered member descriptors with role, format, required state, request order, and idempotency key
+- member lifecycle state, validation state, and staged artifact metadata
+- set lifecycle state, validation state, publication generation, rollback state, and primary artifact id
+
+Member lifecycle states include `planned`, `generating`, `staged`, `validated`, `publishing`, `published`, `failed`, `canceled`, and `rolled_back`. Set lifecycle states include `planned`, `generating`, `validating`, `ready_to_publish`, `publishing`, `completed`, `failed`, `canceled`, `rollback_required`, and `rolled_back`.
+
+Public generated-output status treats `generated_artifacts` as the authoritative ordered projection. A member appears there only when the full set lifecycle is `completed` and the member lifecycle is `published`. For new combined Analyze runs, the primary member is the Markdown analysis artifact and requested structured outputs follow as siblings. Singular compatibility fields are derived from the same primary projection and do not expose staged or invalid members.
+
+If a required member remains missing or unpublished, the set validation state becomes `invalid`, the lifecycle becomes `rollback_required`, and no generated artifact is projected as a completed request.
+
 ## Usage
 
 Shared tabular planning attaches a `deliverable_contract` field to planner results. When `enable_analysis_deliverable_contract_telemetry` is true and `analysis_deliverable_contract_mode` is `observe` or `shadow`, the planner emits debug-only `[ANALYSIS_DELIVERABLE_CONTRACT]` events with safe dimensions.
@@ -139,6 +159,12 @@ The committed 200-row fixture builder in `functional_tests/test_support/analyze_
 - XML output escapes projected values without leaking lineage fields.
 - Generic generated-file finalizers refuse raw function rows for derived requests but allow explicit serialization.
 
+`functional_tests/test_tabular_phase5_artifact_set_lifecycle.py` verifies:
+
+- A staged structured sibling in a running combined Analyze set is not public.
+- A completed combined set publishes Markdown first and the requested structured sibling second.
+- An invalid required set fails closed with `rollback_required` and no public generated artifacts.
+
 ## Known Limitations
 
-Phase 3 enforces structural schema fidelity and passthrough safety. It does not implement deterministic rule execution, semantic repair, atomic multi-artifact durable publication, or plural artifact UI rendering. Those remain in later phases.
+Phase 5 introduces manifest-backed atomic visibility for the existing durable tabular publication path. It does not yet add full cleanup sweepers for abandoned staged members, expand durable execution to every requested format, or render every plural artifact in the browser completion card; those remain later-phase work.
