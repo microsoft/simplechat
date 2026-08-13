@@ -705,7 +705,10 @@ def run_file_sync_scheduler_loop():
         try:
             lock_document = acquire_distributed_task_lock('file_sync_scheduler_scan', lease_seconds=300)
             if lock_document:
-                check_due_file_sync_sources_once()
+                due_sources = check_due_file_sync_sources_once()
+                debug_print(f"File Sync scheduler tick processed {len(due_sources or [])} source(s).")
+            else:
+                debug_print('Skipping File Sync scheduler tick because another worker holds the lease.')
         except Exception as exc:
             print(f"Error in File Sync scheduler check: {exc}")
             log_event(f"[FILE_SYNC] Error in scheduler check: {exc}", level=logging.ERROR)
@@ -723,7 +726,14 @@ def run_tabular_generated_output_scheduler_loop():
         try:
             lock_document = acquire_distributed_task_lock('tabular_generated_output_scheduler_scan', lease_seconds=120)
             if lock_document:
-                check_due_tabular_generated_output_runs_once()
+                processed_run_ids = check_due_tabular_generated_output_runs_once()
+                debug_print(
+                    f"Tabular generated-output scheduler tick processed {len(processed_run_ids or [])} run(s)."
+                )
+            else:
+                debug_print(
+                    'Skipping tabular generated-output scheduler tick because another worker holds the lease.'
+                )
         except Exception as exc:
             print(f"Error in tabular generated-output scheduler check: {exc}")
             log_event(f"[TABULAR_GENERATED_OUTPUT] Error in scheduler check: {exc}", level=logging.ERROR)
@@ -741,7 +751,10 @@ def run_data_management_scheduler_loop(app=None):
         try:
             lock_document = acquire_distributed_task_lock('data_management_scheduler_scan', lease_seconds=300)
             if lock_document:
-                check_due_data_management_jobs_once(app=app)
+                due_jobs = check_due_data_management_jobs_once(app=app)
+                debug_print(f"Data Management scheduler tick processed {len(due_jobs or [])} job(s).")
+            else:
+                debug_print('Skipping Data Management scheduler tick because another worker holds the lease.')
         except Exception as exc:
             print(f"Error in Data Management scheduler check: {exc}")
             log_event(f"[DATA_MANAGEMENT] Error in scheduler check: {exc}", level=logging.ERROR)

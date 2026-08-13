@@ -42,6 +42,8 @@ from functions_analysis_deliverables import (
     ANALYSIS_ARTIFACT_ROLE_PRIMARY_ANALYSIS,
     ANALYSIS_ARTIFACT_ROLE_REQUESTED_OUTPUT,
     ANALYSIS_ARTIFACT_ROLE_SUPPORTING_OUTPUT,
+    ANALYSIS_DELIVERABLE_MAX_ARTIFACT_ID_LENGTH,
+    ANALYSIS_DELIVERABLE_MAX_ARTIFACTS,
     build_analysis_deliverable_contract,
     is_analysis_internal_lineage_field,
     project_structured_deliverable_row,
@@ -6855,6 +6857,17 @@ def _normalize_tabular_run_planner_metadata(planner_metadata):
             'action_mode': str(deliverable_contract.get('action_mode') or '').strip().lower()[:40],
             'analysis_required': bool(deliverable_contract.get('analysis_required')),
             'primary_artifact_role': str(deliverable_contract.get('primary_artifact_role') or '').strip().lower()[:80],
+            'requested_artifacts': [
+                {
+                    'artifact_id': str(artifact.get('artifact_id') or '').strip()[:ANALYSIS_DELIVERABLE_MAX_ARTIFACT_ID_LENGTH],
+                    'role': str(artifact.get('role') or '').strip().lower()[:40],
+                    'format': str(artifact.get('format') or '').strip().lower()[:20],
+                    'required': bool(artifact.get('required', True)),
+                    'request_order': _safe_int(artifact.get('request_order'), default=0, minimum=0),
+                }
+                for artifact in list(deliverable_contract.get('requested_artifacts') or [])[:ANALYSIS_DELIVERABLE_MAX_ARTIFACTS]
+                if isinstance(artifact, dict) and str(artifact.get('artifact_id') or '').strip()
+            ],
             'public_output_schema': [
                 str(field_name or '').strip()
                 for field_name in list(deliverable_contract.get('public_output_schema') or [])[:TABULAR_GENERATION_PLAN_MAX_FIELDS]
@@ -8689,6 +8702,33 @@ def _build_or_update_artifact_set_manifest(run):
         'rollback_state': str(existing_manifest.get('rollback_state') or '').strip().lower()[:40],
         'members': members,
     }
+    if (
+        str((run or {}).get('status') or '').strip().lower() == TABULAR_EXPORT_STATUS_COMPLETED
+        and lifecycle_state != TABULAR_ARTIFACT_SET_LIFECYCLE_COMPLETED
+    ):
+        log_event(
+            '[TABULAR_GENERATED_OUTPUT] Artifact set stuck below completed lifecycle on a completed run',
+            {
+                'run_id': run.get('id'),
+                'conversation_id': run.get('conversation_id'),
+                'task_type': manifest.get('task_type'),
+                'persisted_lifecycle_state': str(existing_manifest.get('lifecycle_state') or ''),
+                'recomputed_lifecycle_state': lifecycle_state,
+                'validation_state': manifest.get('validation_state'),
+                'validation_report': existing_manifest.get('validation_report'),
+                'members': [
+                    {
+                        'member_id': member.get('member_id'),
+                        'role': member.get('role'),
+                        'lifecycle_state': member.get('lifecycle_state'),
+                        'validation_state': member.get('validation_state'),
+                        'has_artifact_message_id': bool(member.get('artifact_message_id')),
+                    }
+                    for member in members
+                ],
+            },
+            level=logging.WARNING,
+        )
     return manifest
 
 
@@ -8738,6 +8778,7 @@ def _publish_artifact_set_members(run, published_member_ids):
     ]
     deliverable_contract = _get_tabular_run_deliverable_contract(run)
     artifact_set_valid = True
+    validation_report = None
     if deliverable_contract:
         validation_report = validate_analysis_artifact_set(deliverable_contract, validation_artifacts)
         artifact_set_valid = validation_report.valid
@@ -8745,6 +8786,25 @@ def _publish_artifact_set_members(run, published_member_ids):
         manifest['validation_report'] = validation_report.to_dict()
     else:
         manifest['validation_state'] = 'validated'
+    log_event(
+        '[TABULAR_GENERATED_OUTPUT] Artifact set publication validation',
+        {
+            'run_id': run.get('id'),
+            'conversation_id': run.get('conversation_id'),
+            'task_type': _normalize_tabular_run_task_type(run.get('task_type')),
+            'published_member_ids': sorted(published_ids),
+            'has_deliverable_contract': bool(deliverable_contract),
+            'artifact_set_valid': artifact_set_valid,
+            'reason_codes': list(validation_report.reason_codes) if validation_report else [],
+            'counts': dict(validation_report.counts) if validation_report else {},
+            'validation_artifacts': validation_artifacts,
+            'expected_artifact_ids': [
+                artifact.get('artifact_id')
+                for artifact in list((deliverable_contract or {}).get('requested_artifacts') or [])
+            ],
+        },
+        level=logging.INFO,
+    )
     manifest['lifecycle_state'] = (
         TABULAR_ARTIFACT_SET_LIFECYCLE_COMPLETED
         if artifact_set_valid
@@ -10946,7 +11006,9 @@ def queue_tabular_generated_output_run(
         'planner_started_at': None,
         'planner_completed_at': None,
         'processed_rows': 0,
-        'output_schema': contract_internal_checkpoint_schema or None,
+        # Only lock the schema up front when real output columns are already known; otherwise
+        # defer to batch-1 discovery instead of validating against a lineage-only placeholder.
+        'output_schema': contract_internal_checkpoint_schema if contract_public_output_schema else None,
         'public_output_schema': contract_public_output_schema,
         'internal_checkpoint_schema': contract_internal_checkpoint_schema,
         'lineage_schema': [
@@ -11103,17 +11165,16 @@ def check_due_tabular_generated_output_runs_once(limit=None):
                     'reason': f"{candidate.get('reason')}; claim or processing did not start",
                 })
 
-    if scanned_candidates or candidates:
-        log_event(
-            '[TABULAR_GENERATED_OUTPUT] Background scheduler scan result',
-            {
-                'scanned_count': len(scanned_candidates),
-                'candidate_count': len(candidates),
-                'status_counts': status_counts,
-                'processed_run_ids': processed,
-                'processed_count': len(processed),
-                'skipped': skipped[:10],
-            },
-            debug_only=True,
-        )
+    log_event(
+        '[TABULAR_GENERATED_OUTPUT] Background scheduler scan result',
+        {
+            'scanned_count': len(scanned_candidates),
+            'candidate_count': len(candidates),
+            'status_counts': status_counts,
+            'processed_run_ids': processed,
+            'processed_count': len(processed),
+            'skipped': skipped[:10],
+        },
+        debug_only=True,
+    )
     return processed
