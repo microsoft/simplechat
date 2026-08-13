@@ -235,15 +235,17 @@ Analyze All requires a ready document access index and uses the configured workf
 
 #### Tabular Analyze/Search Parity Controls
 
-Tabular Analyze/Search parity uses backend-only controls so operators can shadow, canary, and roll back shared preflight behavior without exposing rollout settings to the browser:
+Tabular Analyze/Search parity ships **active by default** as of `0.250.186`. The durable preflight path is what stops Chat/Search/Analyze from answering exhaustive row-by-row tabular requests with a truncated, bounded foreground answer, so there is no admin UI toggle for it. These remain backend-only controls; use them only for canary/rollback during an incident:
 
 | Stage | Setting | Default |
 |---|---|---|
-| Shared planner mode | `tabular_request_planner_mode` | `off` |
-| Search shared preflight | `enable_tabular_search_shared_preflight` | Off |
-| Pure tabular Analyze durable preflight | `enable_tabular_analyze_durable_preflight` | Off |
+| Shared planner mode | `tabular_request_planner_mode` | `active` |
+| Search shared preflight | `enable_tabular_search_shared_preflight` | On |
+| Pure tabular Analyze durable preflight | `enable_tabular_analyze_durable_preflight` | On |
 | Mixed deferred-composition planning | `enable_tabular_mixed_deferred_composition_planning` | Off |
 | Multi-file execution-unit planning | `enable_tabular_multifile_execution_unit_planning` | Off |
+
+Emergency rollback (no admin UI, no settings edit required): set the App Service/environment variable `SIMPLECHAT_DISABLE_TABULAR_PARITY_DURABLE_PREFLIGHT=true` to force `tabular_request_planner_mode` back to `off` and both shared-preflight flags back to `False` for every request, regardless of stored settings. Remove or unset the variable to restore the active default.
 | Parity rollout percentage | `tabular_analyze_parity_rollout_percent` | `100` |
 | Legacy post-tool fallback mode | `tabular_legacy_post_tool_fallback_mode` | `enabled` |
 

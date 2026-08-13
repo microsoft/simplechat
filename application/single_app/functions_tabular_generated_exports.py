@@ -10946,7 +10946,9 @@ def queue_tabular_generated_output_run(
         'planner_started_at': None,
         'planner_completed_at': None,
         'processed_rows': 0,
-        'output_schema': contract_internal_checkpoint_schema or None,
+        # Only lock the schema up front when real output columns are already known; otherwise
+        # defer to batch-1 discovery instead of validating against a lineage-only placeholder.
+        'output_schema': contract_internal_checkpoint_schema if contract_public_output_schema else None,
         'public_output_schema': contract_public_output_schema,
         'internal_checkpoint_schema': contract_internal_checkpoint_schema,
         'lineage_schema': [
@@ -11103,17 +11105,16 @@ def check_due_tabular_generated_output_runs_once(limit=None):
                     'reason': f"{candidate.get('reason')}; claim or processing did not start",
                 })
 
-    if scanned_candidates or candidates:
-        log_event(
-            '[TABULAR_GENERATED_OUTPUT] Background scheduler scan result',
-            {
-                'scanned_count': len(scanned_candidates),
-                'candidate_count': len(candidates),
-                'status_counts': status_counts,
-                'processed_run_ids': processed,
-                'processed_count': len(processed),
-                'skipped': skipped[:10],
-            },
-            debug_only=True,
-        )
+    log_event(
+        '[TABULAR_GENERATED_OUTPUT] Background scheduler scan result',
+        {
+            'scanned_count': len(scanned_candidates),
+            'candidate_count': len(candidates),
+            'status_counts': status_counts,
+            'processed_run_ids': processed,
+            'processed_count': len(processed),
+            'skipped': skipped[:10],
+        },
+        debug_only=True,
+    )
     return processed

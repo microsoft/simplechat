@@ -18,6 +18,7 @@ from functions_service_health import get_default_service_health
 import app_settings_cache
 import inspect
 import copy
+import os
 import json
 import uuid
 from support_menu_config import (
@@ -1010,6 +1011,25 @@ def _refresh_app_settings_cache_after_write(settings_payload, context="app_setti
     _update_cache("after_version_bump")
 
 
+def _env_flag_enabled(name):
+    return str(os.environ.get(name, '')).strip().lower() in {'1', 'true', 'yes', 'on'}
+
+
+def _apply_tabular_parity_env_kill_switch(settings_payload):
+    """Force tabular durable-preflight parity off when the emergency env kill switch is set.
+
+    These parity controls ship active by default with no admin UI toggle; this
+    environment variable is the only rollback path for an operator incident.
+    """
+    if not isinstance(settings_payload, dict):
+        return settings_payload
+    if _env_flag_enabled('SIMPLECHAT_DISABLE_TABULAR_PARITY_DURABLE_PREFLIGHT'):
+        settings_payload['tabular_request_planner_mode'] = 'off'
+        settings_payload['enable_tabular_search_shared_preflight'] = False
+        settings_payload['enable_tabular_analyze_durable_preflight'] = False
+    return settings_payload
+
+
 def get_settings(use_cosmos=False, include_source=False):
     import secrets
     default_settings = {
@@ -1048,9 +1068,9 @@ def get_settings(use_cosmos=False, include_source=False):
         'tabular_analyze_parity_rollout_percent': 100,
         'tabular_analyze_parity_rollout_state': 'active',
         'tabular_background_handoff_mode': 'legacy',
-        'tabular_request_planner_mode': 'off',
-        'enable_tabular_search_shared_preflight': False,
-        'enable_tabular_analyze_durable_preflight': False,
+        'tabular_request_planner_mode': 'active',
+        'enable_tabular_search_shared_preflight': True,
+        'enable_tabular_analyze_durable_preflight': True,
         'enable_tabular_mixed_deferred_composition_planning': False,
         'enable_tabular_multifile_execution_unit_planning': False,
         'tabular_legacy_post_tool_fallback_mode': 'enabled',
@@ -1615,6 +1635,8 @@ def get_settings(use_cosmos=False, include_source=False):
     }
 
     def _format_result(settings_payload, source):
+        if isinstance(settings_payload, dict):
+            settings_payload = _apply_tabular_parity_env_kill_switch(settings_payload)
         if include_source:
             return settings_payload, source
         return settings_payload
