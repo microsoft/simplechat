@@ -2,6 +2,50 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.185)**
+
+#### Bug Fixes
+
+*   **Analyze Combined Generated Output Routing**
+    *   Treats Analyze requests that ask for row-level answers plus CSV/JSON/XML output as first-class combined durable work, producing both the Markdown analysis artifact and requested structured output artifacts.
+    *   Queues planner-approved combined tabular Analyze work before foreground tabular tools run, preventing empty inline tool output from becoming a stream-level 500.
+    *   Carries the selected model endpoint context into background generated-output runs so non-default endpoints do not fall back to an Azure OpenAI deployment name lookup.
+    *   (Ref: `functions_tabular_orchestration.py`, `functions_workflow_runner.py`, Analyze deliverable contract, combined durable generated output)
+
+*   **Data Management Scheduler Context Guard**
+    *   Prevented the background Data Management scheduler from using request-context-copying executor APIs when no Flask request context exists.
+    *   Scheduler-submitted jobs now use the existing worker-thread path outside request handling, while route-triggered submissions can still use the configured executor.
+    *   (Ref: `functions_data_management.py`, Data Management scheduler, background job submission)
+
+### **(v0.250.182)**
+
+#### Bug Fixes
+
+*   **Analyze Artifact Copilot Review Cleanup**
+    *   Preserved explicit request order for combined JSON/XML artifact requests when both formats share the same action phrase.
+    *   Kept explicit unchanged-copy requests eligible even when source field names include descriptive terms such as risk or status.
+    *   Made semantic validation shadow mode fail open on verifier errors and prevented the chat UI from falling back to withheld legacy artifacts when `generated_artifacts` is explicitly empty.
+    *   (Ref: PR #1238, Copilot review comments, generated artifact ordering, semantic validation shadow mode, plural artifact UI)
+
+### **(v0.250.181)**
+
+#### Bug Fixes
+
+*   **Analyze Artifact Advanced Security Cleanup**
+    *   Replaced a self-comparison float finite check in the tabular transformation validator with an explicit finite-number check.
+    *   Simplified an unnecessary callable wrapper in the Phase 7B production-correctness functional test harness.
+    *   (Ref: PR #1238, GitHub Advanced Security comments, tabular transformation validation)
+
+### **(v0.250.180)**
+
+#### Bug Fixes
+
+*   **Analyze Artifact Output Contract Closure**
+    *   Made Analyze generated-output delivery Markdown-first and contract-faithful across durable tabular execution by adding reviewed transformation planning, deterministic server-side rules, bounded semantic verification and repair, and exact Search/Analyze 200-row parity validation.
+    *   Hardened artifact-set publication so new staged generated artifacts are not downloadable or promotable until the completed run manifest commits every required member, while preserving legacy generated artifact compatibility.
+    *   Restored explicit Word/DOCX current-turn function-result serialization and repaired cumulative lifecycle, scale, route, and UI validation harnesses through 30,000-row bounded finalization and 100,000-row deterministic planning/hardening contracts.
+    *   (Ref: #1233, PR #1234, PR #1235, PR #1236, Analyze deliverable contract, tabular transformation contract, artifact-set publication lifecycle)
+
 ### **(v0.250.170)**
 
 #### Bug Fixes

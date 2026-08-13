@@ -2,8 +2,8 @@
 #!/usr/bin/env python3
 """
 Functional test for assistant-rendered table CSV artifacts.
-Version: 0.250.112
-Implemented in: 0.241.050; non-tabular document CSV parsing in 0.250.065; generated file export framework in 0.250.072; updated in 0.250.073; linear fence parsing coverage in 0.250.112
+Version: 0.250.178
+Implemented in: 0.241.050; non-tabular document CSV parsing in 0.250.065; generated file export framework in 0.250.072; updated in 0.250.073; linear fence parsing coverage in 0.250.112; version assertion compatibility updated in 0.250.172; Word function-result serialization restored in 0.250.178
 
 This test ensures that explicit table-format requests with assistant-rendered
 tables, including CSV rows extracted from non-tabular documents, are converted
@@ -18,14 +18,18 @@ import sys
 import traceback
 from pathlib import Path
 
+from test_support.versioning import assert_app_version_at_least
+
 
 ROOT = Path(__file__).resolve().parents[1]
 APP_DIR = ROOT / 'application' / 'single_app'
 CONFIG_FILE = APP_DIR / 'config.py'
 CHAT_ROUTE_FILE = APP_DIR / 'route_backend_chats.py'
 BACKGROUND_EXPORT_FILE = APP_DIR / 'functions_tabular_generated_exports.py'
+GENERATED_EXPORTS_FILE = APP_DIR / 'functions_generated_file_exports.py'
+TABULAR_ORCHESTRATION_FILE = APP_DIR / 'functions_tabular_orchestration.py'
 WORKFLOW_RUNNER_FILE = APP_DIR / 'functions_workflow_runner.py'
-EXPECTED_VERSION = '0.250.112'
+IMPLEMENTED_VERSION = '0.250.112'
 
 sys.path.append(str(APP_DIR))
 
@@ -297,6 +301,7 @@ def test_tabular_action_result_does_not_bypass_coverage_aware_exports():
 
 def test_function_results_render_docx_and_pdf_capabilities():
     print('Testing DOCX and PDF function-result export capabilities...')
+    assert_app_version_at_least('0.250.178')
 
     function_results = [{
         'plugin_name': 'DirectoryPlugin',
@@ -323,6 +328,35 @@ def test_function_results_render_docx_and_pdf_capabilities():
     assert_true(pdf_export is not None and pdf_export['file_content'].startswith(b'%PDF'), 'Expected a PDF file export.')
     assert_true(docx_export['row_source'] == 'structured function result', 'Expected DOCX to include function-result rows.')
     assert_true(pdf_export['row_source'] == 'structured function result', 'Expected PDF to include function-result rows.')
+    assert_true(
+        docx_export.get('passthrough_reason_code') == 'explicit_format_conversion',
+        'Expected Word function-result serialization to record its explicit format-conversion contract.',
+    )
+    assert_true(
+        pdf_export.get('passthrough_reason_code') == 'explicit_format_conversion',
+        'Expected PDF function-result serialization to record its explicit format-conversion contract.',
+    )
+
+
+def test_derived_word_export_does_not_serialize_function_rows():
+    print('Testing derived Word export function-result exclusion...')
+    assert_app_version_at_least('0.250.178')
+
+    export_payload = build_generated_file_export(
+        'create a Word document from the action results and classify each person by risk',
+        'The directory action completed successfully.',
+        function_results=[{
+            'plugin_name': 'DirectoryPlugin',
+            'function_name': 'list_people',
+            'success': True,
+            'function_result': {'value': [{'Name': 'Ada', 'Department': 'Engineering'}]},
+        }],
+    )
+
+    assert_true(export_payload is not None, 'Expected the assistant response to remain exportable as a Word document.')
+    assert_true(export_payload['row_source'] == 'assistant response', 'Expected derived function rows to remain excluded.')
+    assert_true(export_payload['row_count'] == 0, 'Expected no untransformed function rows in the derived Word export.')
+    assert_true('passthrough_reason_code' not in export_payload, 'Expected no passthrough claim for a derived request.')
 
 
 def test_plain_document_csv_response_excludes_surrounding_prose_and_citation():
@@ -1030,10 +1064,9 @@ Source: ParkingPrint.pdf, Page: 1
 def test_chat_route_wires_assistant_table_artifacts():
     print('Testing chat route assistant-table artifact plumbing...')
 
-    current_version = read_current_version()
     chat_route_content = read_text(CHAT_ROUTE_FILE)
 
-    assert_true(current_version == EXPECTED_VERSION, f'Expected config.py version {EXPECTED_VERSION}.')
+    assert_app_version_at_least(IMPLEMENTED_VERSION)
     assert_true(
         'assistant_table_export_requested' in chat_route_content,
         'Expected route_backend_chats.py to reuse the shared assistant table export intent predicate.',
@@ -1067,7 +1100,8 @@ def test_chat_route_wires_assistant_table_artifacts():
         'Expected normal and streaming assistant messages to include generated file artifacts.',
     )
     assert_true(
-        'assistant_content=get_generated_file_export_content(execution_result)' in chat_route_content,
+        'document_action_reply_content = get_generated_file_export_content(execution_result)' in chat_route_content
+        and 'assistant_content=document_action_reply_content' in chat_route_content,
         'Expected document-action file exports to use the structured analysis reply when available.',
     )
     assert_true(
@@ -1075,10 +1109,12 @@ def test_chat_route_wires_assistant_table_artifacts():
         'Expected workflow file exports to use the structured analysis reply when available.',
     )
     assert_true(
-        chat_route_content.count('build_generated_file_output_guidance(user_message)') == 2,
+        chat_route_content.count('build_generated_file_output_guidance(') == 2,
         'Expected normal and streaming Chat to apply the same file-output guidance.',
     )
     workflow_runner_content = read_text(WORKFLOW_RUNNER_FILE)
+    generated_exports_content = read_text(GENERATED_EXPORTS_FILE)
+    tabular_orchestration_content = read_text(TABULAR_ORCHESTRATION_FILE)
     assert_true(
         workflow_runner_content.count('build_generated_file_output_guidance(prompt_text)') == 2,
         'Expected workflow model and agent execution to apply the same file-output guidance.',
@@ -1096,11 +1132,11 @@ def test_chat_route_wires_assistant_table_artifacts():
         'Expected workflows to pass current-turn action results to generated-file exports.',
     )
     assert_true(
-        'if assistant_table_export_requested(user_question):' in chat_route_content,
+        'if not assistant_table_export_requested(user_question):' in generated_exports_content,
         'Expected tabular output format detection to use the shared CSV/table intent predicate.',
     )
     assert_true(
-        "requested_format == 'csv'" in chat_route_content,
+        'return get_requested_structured_artifact_formats(user_question)' in tabular_orchestration_content,
         'Expected CSV request markers to create tabular generated outputs when available.',
     )
 
@@ -1115,6 +1151,7 @@ def run_tests() -> bool:
         test_structured_action_results_combine_and_preserve_assistant_priority,
         test_tabular_action_result_does_not_bypass_coverage_aware_exports,
         test_function_results_render_docx_and_pdf_capabilities,
+        test_derived_word_export_does_not_serialize_function_rows,
         test_plain_document_csv_response_excludes_surrounding_prose_and_citation,
         test_document_csv_response_preserves_multiline_and_escaped_quotes,
         test_fenced_document_csv_preserves_sentence_shaped_rows,

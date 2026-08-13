@@ -6,8 +6,25 @@ import json
 import os
 from typing import Mapping
 
+from functions_analysis_deliverables import (
+    ANALYSIS_DELIVERABLE_EVENT_FINALIZED,
+    ANALYSIS_DELIVERABLE_EVENT_PLANNED,
+    ANALYSIS_ORDERING_NOT_APPLICABLE,
+    ANALYSIS_ORDERING_SOURCE_ORDER,
+    ANALYSIS_ROW_CARDINALITY_NOT_APPLICABLE,
+    ANALYSIS_ROW_CARDINALITY_ONE_PER_SOURCE_ROW,
+    ANALYSIS_TRANSFORMATION_MODE_DETERMINISTIC,
+    ANALYSIS_TRANSFORMATION_MODE_SEMANTIC,
+    ANALYSIS_VALIDATION_PROFILE_ARTIFACT_SET,
+    ANALYSIS_VALIDATION_PROFILE_EXACT_ROWS_SCHEMA,
+    ANALYSIS_VALIDATION_PROFILE_EXACT_ROWS_SCHEMA_AND_RULES,
+    build_analysis_deliverable_contract,
+    emit_analysis_deliverable_contract_event,
+)
 from functions_assistant_table_exports import assistant_table_export_requested
+from functions_generated_file_exports import get_requested_artifact_formats
 from functions_generated_file_exports import get_requested_structured_artifact_format
+from functions_generated_file_exports import get_requested_structured_artifact_formats
 
 
 TABULAR_ORCHESTRATION_PLANNER_CONTRACT_VERSION = "tabular-orchestration-v1"
@@ -34,6 +51,7 @@ TABULAR_PLANNER_MODES = {
     TABULAR_PLANNER_MODE_ACTIVE,
 }
 TABULAR_PARITY_ROLLOUT_CONTRACT_VERSION = "tabular-parity-rollout-v1"
+TABULAR_PARITY_ROLLOUT_STATES = {"active", "paused", "rollback"}
 TABULAR_LEGACY_POST_TOOL_FALLBACK_MODES = {"enabled", "observe", "disabled"}
 TABULAR_LEGACY_POST_TOOL_FALLBACK_DECISION_VERSION = "tabular-legacy-fallback-retirement-v1"
 
@@ -63,6 +81,17 @@ def _coerce_rollout_percentage(value, default=100):
     except (TypeError, ValueError):
         parsed_value = int(default)
     return max(0, min(100, parsed_value))
+
+
+def normalize_tabular_parity_rollout_state(settings=None, state=None):
+    """Return the supported rollout state for new shared tabular assignments."""
+    raw_state = state
+    if raw_state is None:
+        raw_state = (settings or {}).get("tabular_analyze_parity_rollout_state", "active")
+    normalized_state = str(raw_state or "").strip().lower()
+    if normalized_state in TABULAR_PARITY_ROLLOUT_STATES:
+        return normalized_state
+    return "active"
 
 
 def normalize_tabular_legacy_post_tool_fallback_mode(settings=None, mode=None):
@@ -131,6 +160,7 @@ def build_tabular_parity_rollout_assignment(settings=None, request_key=None, mod
     normalized_mode = str(mode or "").strip().lower()
     if normalized_mode not in {"search", "analyze", "multifile", "mixed"}:
         normalized_mode = "tabular"
+    rollout_state = normalize_tabular_parity_rollout_state(settings)
     rollout_percent = _coerce_rollout_percentage(
         settings.get(
             "tabular_analyze_parity_rollout_percent",
@@ -148,11 +178,23 @@ def build_tabular_parity_rollout_assignment(settings=None, request_key=None, mod
         separators=(",", ":"),
     )
     cohort_bucket = int(hashlib.sha256(assignment_key.encode("utf-8")).hexdigest()[:8], 16) % 100
+    assigned_by_cohort = cohort_bucket < rollout_percent
+    assigned = rollout_state == "active" and assigned_by_cohort
+    if rollout_state == "rollback":
+        assignment_reason_code = "rollback_active"
+    elif rollout_state == "paused":
+        assignment_reason_code = "rollout_paused"
+    elif assigned_by_cohort:
+        assignment_reason_code = "assigned"
+    else:
+        assignment_reason_code = "outside_rollout_cohort"
     return {
         "contract_version": TABULAR_PARITY_ROLLOUT_CONTRACT_VERSION,
         "mode": normalized_mode,
         "planner_mode": normalize_tabular_request_planner_mode(settings),
-        "assigned": cohort_bucket < rollout_percent,
+        "rollout_state": rollout_state,
+        "assigned": assigned,
+        "assignment_reason_code": assignment_reason_code,
         "cohort_bucket": cohort_bucket,
         "rollout_percent": rollout_percent,
         "search_shared_preflight_enabled": settings_flag_enabled(
@@ -181,7 +223,13 @@ def build_tabular_parity_rollout_assignment(settings=None, request_key=None, mod
 
 def get_tabular_generated_output_format(user_question):
     """Return the requested generated-output file format when the user asked for one."""
-    return get_requested_structured_artifact_format(user_question)
+    requested_formats = get_tabular_generated_output_formats(user_question)
+    return requested_formats[0] if requested_formats else None
+
+
+def get_tabular_generated_output_formats(user_question):
+    """Return requested durable tabular artifact formats in user-request order."""
+    return get_requested_structured_artifact_formats(user_question)
 
 
 def question_requests_tabular_generated_output(user_question):
@@ -266,6 +314,7 @@ def get_tabular_generated_output_task_type(
     generated_output_requested,
     hierarchical_analysis_requested,
     settings,
+    action_mode=None,
 ):
     """Map request intent to the existing durable generated-output task type."""
     hierarchical_analysis_enabled = settings_flag_enabled(
@@ -273,6 +322,9 @@ def get_tabular_generated_output_task_type(
         "enable_tabular_hierarchical_analysis",
         False,
     )
+    analysis_required = str(action_mode or "").strip().lower() == "analyze"
+    if generated_output_requested and analysis_required:
+        return TABULAR_RUN_TASK_COMBINED
     if generated_output_requested and hierarchical_analysis_requested and hierarchical_analysis_enabled:
         return TABULAR_RUN_TASK_COMBINED
     if generated_output_requested:
@@ -472,6 +524,15 @@ def _build_request_fingerprint(
     return hashlib.sha256(serialized_payload.encode("utf-8")).hexdigest()
 
 
+def _build_source_coverage_fingerprint(source_coverage):
+    fingerprint_payload = {
+        "planner_contract_version": TABULAR_ORCHESTRATION_PLANNER_CONTRACT_VERSION,
+        "source_coverage": list(source_coverage or []),
+    }
+    serialized_payload = json.dumps(fingerprint_payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(serialized_payload.encode("utf-8")).hexdigest()
+
+
 def _callback_requested_cancellation(cancel_requested=None):
     if cancel_requested is None:
         return False
@@ -494,14 +555,20 @@ def plan_tabular_request(
         for file_context in _dedupe_tabular_file_contexts(file_contexts)
         if _is_supported_tabular_context(file_context)
     ]
+    output_hints = dict(requested_output_hints or {}) if isinstance(requested_output_hints, Mapping) else {}
+    normalized_action_mode = str(action_mode or "").strip().lower()
+    analysis_required = normalized_action_mode == "analyze"
+    requested_output_formats = get_requested_artifact_formats(user_question)
+    structured_output_formats = get_tabular_generated_output_formats(user_question)
     generated_output_requested = question_requests_tabular_generated_output(user_question)
     hierarchical_analysis_requested = question_requests_tabular_hierarchical_analysis(user_question)
     durable_task_type = get_tabular_generated_output_task_type(
         generated_output_requested,
         hierarchical_analysis_requested,
         settings,
+        action_mode=normalized_action_mode,
     )
-    output_format = get_tabular_generated_output_format(user_question)
+    output_format = structured_output_formats[0] if structured_output_formats else None
     execution_contract = durable_task_type or TABULAR_EXECUTION_CONTRACT_FOREGROUND_AGGREGATE
     source_coverage = _build_source_coverage(normalized_contexts)
     execution_group_id = _build_execution_group_id(
@@ -556,16 +623,55 @@ def plan_tabular_request(
         request_key=request_fingerprint,
         mode=action_mode,
     )
+    transformation_spec = output_hints.get("transformation_spec")
+    transformation_mode = output_hints.get("transformation_mode") or (
+        ANALYSIS_TRANSFORMATION_MODE_DETERMINISTIC
+        if transformation_spec
+        else ANALYSIS_TRANSFORMATION_MODE_SEMANTIC
+    )
+    validation_profile = (
+        ANALYSIS_VALIDATION_PROFILE_EXACT_ROWS_SCHEMA_AND_RULES
+        if generated_output_requested and transformation_spec
+        else ANALYSIS_VALIDATION_PROFILE_EXACT_ROWS_SCHEMA
+        if generated_output_requested
+        else ANALYSIS_VALIDATION_PROFILE_ARTIFACT_SET
+    )
+    deliverable_contract = build_analysis_deliverable_contract(
+        action_mode=action_mode,
+        requested_output_formats=requested_output_formats,
+        public_output_schema=(
+            output_hints.get("public_output_schema")
+            or output_hints.get("output_schema")
+            or []
+        ),
+        row_cardinality=(
+            ANALYSIS_ROW_CARDINALITY_ONE_PER_SOURCE_ROW
+            if generated_output_requested
+            else ANALYSIS_ROW_CARDINALITY_NOT_APPLICABLE
+        ),
+        ordering=(
+            ANALYSIS_ORDERING_SOURCE_ORDER
+            if generated_output_requested
+            else ANALYSIS_ORDERING_NOT_APPLICABLE
+        ),
+        transformation_mode=transformation_mode,
+        transformation_spec=transformation_spec,
+        validation_profile=validation_profile,
+        source_fingerprint=_build_source_coverage_fingerprint(source_coverage),
+        request_fingerprint=request_fingerprint,
+    )
 
-    return {
+    result = {
         "planner_contract_version": TABULAR_ORCHESTRATION_PLANNER_CONTRACT_VERSION,
+        "deliverable_contract": deliverable_contract.to_dict(),
         "execution_contract": execution_contract,
         "execution_state": execution_state,
         "durable_task_type": durable_task_type,
         "generated_output_requested": generated_output_requested,
         "hierarchical_analysis_requested": hierarchical_analysis_requested,
+        "requested_output_formats": requested_output_formats,
         "output_format": output_format,
-        "action_mode": str(action_mode or "").strip().lower(),
+        "action_mode": normalized_action_mode,
         "caller": str(caller or "").strip().lower(),
         "source_count": len(normalized_contexts),
         "source_coverage": source_coverage,
@@ -578,9 +684,7 @@ def plan_tabular_request(
             fallback_source="planner",
         ),
         "reason_code": reason_code,
-        "requested_output_hints": dict(requested_output_hints or {})
-        if isinstance(requested_output_hints, Mapping)
-        else {},
+        "requested_output_hints": output_hints,
         "token_usage": None,
         "citations": [],
         "generated_output_metadata": None,
@@ -588,6 +692,17 @@ def plan_tabular_request(
         "deferred_composition": None,
         "safe_failure_details": safe_failure_details,
     }
+    emit_analysis_deliverable_contract_event(
+        settings,
+        ANALYSIS_DELIVERABLE_EVENT_PLANNED,
+        contract=deliverable_contract,
+        dimensions={
+            "selected_execution_task_type": durable_task_type or execution_contract,
+            "passthrough_selected": False,
+            "planner_reason_code": reason_code,
+        },
+    )
+    return result
 
 
 def execute_tabular_plan(
@@ -771,5 +886,20 @@ def orchestrate_tabular_request(
         settings=settings,
         planner_result=result,
         fallback_source="shared_preflight",
+    )
+    emit_analysis_deliverable_contract_event(
+        settings,
+        ANALYSIS_DELIVERABLE_EVENT_FINALIZED,
+        contract=result.get("deliverable_contract"),
+        dimensions={
+            "selected_execution_task_type": result.get("durable_task_type") or result.get("execution_contract"),
+            "execution_state": result.get("execution_state"),
+            "planner_reason_code": result.get("reason_code"),
+        },
+        metrics={
+            "required_artifact_completion_count": 1
+            if isinstance(result.get("generated_output_metadata"), Mapping)
+            else 0,
+        },
     )
     return result

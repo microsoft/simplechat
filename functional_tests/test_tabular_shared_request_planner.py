@@ -1,8 +1,8 @@
 # test_tabular_shared_request_planner.py
 """
 Functional test for the shared tabular request planner.
-Version: 0.250.167
-Implemented in: 0.250.158; Phase 6 execution units added in 0.250.162; rollout and fingerprint hardening in 0.250.167
+Version: 0.250.177
+Implemented in: 0.250.158; Phase 6 execution units added in 0.250.162; rollout and fingerprint hardening in 0.250.167; Phase 7 harness compatibility in 0.250.177
 
 This test ensures Phase 2 tabular request planning classifies Search and
 Analyze caller metadata through one route-neutral planner before row retrieval.
@@ -34,16 +34,15 @@ def install_lightweight_planner_dependency_stubs():
     )
     generated_exports_module = types.ModuleType("functions_generated_file_exports")
 
-    def get_requested_structured_artifact_format(prompt):
+    def get_requested_artifact_formats(prompt):
         normalized_prompt = str(prompt or "").lower()
-        for output_format in ("json", "xml", "csv"):
-            if output_format in normalized_prompt:
-                return output_format
-        return None
+        return [output_format for output_format in ("json", "xml", "csv") if output_format in normalized_prompt]
 
+    generated_exports_module.get_requested_artifact_formats = get_requested_artifact_formats
     generated_exports_module.get_requested_structured_artifact_format = (
-        get_requested_structured_artifact_format
+        lambda prompt: next(iter(get_requested_artifact_formats(prompt)), None)
     )
+    generated_exports_module.get_requested_structured_artifact_formats = get_requested_artifact_formats
     sys.modules.setdefault("functions_assistant_table_exports", assistant_exports_module)
     sys.modules.setdefault("functions_generated_file_exports", generated_exports_module)
 
@@ -114,11 +113,13 @@ def test_classification_contracts():
         (
             "Export every row as JSON with one object per row.",
             TABULAR_EXECUTION_CONTRACT_STRUCTURED_EXPORT,
+            TABULAR_EXECUTION_CONTRACT_COMBINED,
             "json",
             "durable_intent",
         ),
         (
             "Analyze all rows and summarize the risk patterns.",
+            TABULAR_EXECUTION_CONTRACT_HIERARCHICAL_ANALYSIS,
             TABULAR_EXECUTION_CONTRACT_HIERARCHICAL_ANALYSIS,
             None,
             "durable_intent",
@@ -126,17 +127,19 @@ def test_classification_contracts():
         (
             "Analyze every row and create a CSV file with one output row per source row.",
             TABULAR_EXECUTION_CONTRACT_COMBINED,
+            TABULAR_EXECUTION_CONTRACT_COMBINED,
             "csv",
             "durable_intent",
         ),
         (
             "What is the average score by department?",
             TABULAR_EXECUTION_CONTRACT_FOREGROUND_AGGREGATE,
+            TABULAR_EXECUTION_CONTRACT_FOREGROUND_AGGREGATE,
             None,
             "bounded_foreground",
         ),
     ]
-    for prompt, expected_contract, expected_format, expected_reason in cases:
+    for prompt, expected_search_contract, expected_analyze_contract, expected_format, expected_reason in cases:
         search_plan = plan_for(prompt, caller="search")
         analyze_plan = plan_for(prompt, caller="analyze")
         assert_equal(
@@ -146,19 +149,20 @@ def test_classification_contracts():
         )
         assert_equal(
             search_plan["execution_contract"],
-            expected_contract,
+            expected_search_contract,
             f"Search execution contract for {prompt}",
         )
         assert_equal(
             analyze_plan["execution_contract"],
-            expected_contract,
+            expected_analyze_contract,
             f"Analyze execution contract for {prompt}",
         )
-        assert_equal(
-            search_plan["durable_task_type"],
-            analyze_plan["durable_task_type"],
-            f"caller parity durable task type for {prompt}",
-        )
+        if expected_search_contract == expected_analyze_contract:
+            assert_equal(
+                search_plan["durable_task_type"],
+                analyze_plan["durable_task_type"],
+                f"caller parity durable task type for {prompt}",
+            )
         assert_equal(search_plan["output_format"], expected_format, "output format")
         assert_equal(search_plan["reason_code"], expected_reason, "reason code")
 

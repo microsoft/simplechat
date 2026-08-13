@@ -2,8 +2,8 @@
 # test_tabular_phase7_lifecycle_coverage.py
 """
 Functional test for Phase 7 tabular lifecycle coverage hardening.
-Version: 0.250.167
-Implemented in: 0.250.163
+Version: 0.250.178
+Implemented in: 0.250.163; planner dependency compatibility updated in 0.250.178
 
 This test ensures shared tabular planner coverage starts as planned pending
 evidence, canceled durable tabular evidence remains terminal but incomplete,
@@ -38,8 +38,20 @@ def install_lightweight_planner_dependency_stubs():
                 return output_format
         return None
 
+    def get_requested_artifact_formats(prompt):
+        normalized_prompt = str(prompt or "").lower()
+        return [
+            output_format
+            for output_format in ("json", "xml", "csv")
+            if output_format in normalized_prompt
+        ]
+
+    generated_exports_module.get_requested_artifact_formats = get_requested_artifact_formats
     generated_exports_module.get_requested_structured_artifact_format = (
         get_requested_structured_artifact_format
+    )
+    generated_exports_module.get_requested_structured_artifact_formats = (
+        get_requested_artifact_formats
     )
     sys.modules.setdefault("functions_assistant_table_exports", assistant_exports_module)
     sys.modules.setdefault("functions_generated_file_exports", generated_exports_module)

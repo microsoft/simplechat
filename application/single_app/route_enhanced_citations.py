@@ -24,7 +24,11 @@ from functions_visio import render_vsdx_page_preview
 from functions_group import check_group_status_allows_operation, find_group_by_id, get_user_groups, require_active_group
 from functions_notifications import create_group_notification, create_notification, create_public_workspace_notification
 from functions_public_workspaces import check_public_workspace_status_allows_operation, get_user_visible_public_workspace_ids_from_settings, require_active_public_workspace
-from functions_simplechat_operations import download_blob_content, upload_generated_document_for_current_user
+from functions_simplechat_operations import (
+    assert_generated_chat_artifact_is_published_for_user,
+    download_blob_content,
+    upload_generated_document_for_current_user,
+)
 from swagger_wrapper import swagger_route, get_auth_security
 from config import CLIENTS, storage_account_user_documents_container_name, storage_account_group_documents_container_name, storage_account_public_documents_container_name, storage_account_personal_chat_container_name, IMAGE_EXTENSIONS, VIDEO_EXTENSIONS, AUDIO_EXTENSIONS, TABULAR_EXTENSIONS, VISIO_EXTENSIONS, cosmos_messages_container, cosmos_conversations_container
 from functions_debug import debug_print
@@ -65,6 +69,7 @@ def _get_authorized_chat_artifact_message(user_id, conversation_id, message_id):
     if not str(message_item.get('blob_container') or '').strip() or not str(message_item.get('blob_path') or '').strip():
         raise LookupError('Chat artifact content is unavailable')
 
+    assert_generated_chat_artifact_is_published_for_user(user_id, message_item)
     return message_item
 
 

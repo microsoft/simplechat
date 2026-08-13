@@ -2,19 +2,21 @@
 # test_document_analysis_lossless_artifacts.py
 """
 Functional test for document analysis lossless artifacts.
-Version: 0.250.154
+Version: 0.250.172
 Implemented in: 0.241.040
 Updated in: 0.241.065
 Updated in: 0.241.197
 Updated in: 0.250.065
 Updated in: 0.250.112
 Updated in: 0.250.154
+Updated in: 0.250.172
 
 This test ensures exhaustive/table-style document analysis preserves raw window
 outputs and can build both structured CSV rows and Markdown raw-note artifacts
 instead of relying only on the reduced final answer. It also ensures primary
 tabular generated exports suppress redundant analysis JSON/Markdown cards, and
-that JSON artifacts are only created when the prompt explicitly requests JSON.
+that explicitly requested JSON artifacts are siblings of the required Markdown
+analysis artifact.
 """
 
 import ast
@@ -461,15 +463,22 @@ def test_json_artifact_requires_explicit_json_request():
         conversation_id='conversation-1',
     )
 
-    assert_equal(len(uploaded_artifacts), 1, 'explicit JSON upload count')
-    assert_equal(uploaded_artifacts[0]['output_format'], 'json', 'explicit JSON artifact format')
+    assert_equal(len(uploaded_artifacts), 2, 'explicit JSON upload count')
     assert_equal(
-        uploaded_artifacts[0]['file_name'],
-        '14-cfr-part-91-general-operating-and-flight-rules-analysis.json',
+        [artifact['output_format'] for artifact in uploaded_artifacts],
+        ['md', 'json'],
+        'explicit JSON artifact formats',
+    )
+    assert_equal(
+        [artifact['file_name'] for artifact in uploaded_artifacts],
+        [
+            '14-cfr-part-91-general-operating-and-flight-rules-analysis.md',
+            '14-cfr-part-91-general-operating-and-flight-rules-analysis.json',
+        ],
         'explicit JSON artifact filename',
     )
     explicit_assistant_reply = explicit_artifact_payload.get('assistant_reply') or ''
-    assert_contains(explicit_assistant_reply, 'downloadable JSON artifact', 'explicit JSON assistant reply')
+    assert_contains(explicit_assistant_reply, 'MD, JSON artifacts', 'explicit JSON assistant reply')
     print('JSON artifact opt-in behavior verified.')
 
 

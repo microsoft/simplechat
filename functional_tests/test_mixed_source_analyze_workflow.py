@@ -53,6 +53,8 @@ def test_phase_3_mixed_analyze_contracts_are_wired():
     assert "'phase': 'complete'" in helper_source
     assert 'Tabular evidence could not be completed for this source.' in helper_source
     assert 'Narrative evidence could not be completed for this source.' in helper_source
+    assert 'We are analyzing the data and generating the requested file in the background.' in source
+    assert 'Automatic deferred composition is unavailable' not in source
     assert "'generated_tabular_outputs': generated_tabular_outputs" in helper_source
     assert "'agent_citations': tabular_agent_citations" in helper_source
 

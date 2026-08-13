@@ -733,6 +733,14 @@ def _get_primary_tabular_generated_outputs(primary_generated_outputs):
     return normalized_outputs
 
 
+def _primary_tabular_generated_outputs_are_pending(primary_tabular_outputs):
+    for output in primary_tabular_outputs or []:
+        status = str(output.get('status') or output.get('run_status') or '').strip().lower()
+        if output.get('background_export') or status in {'pending', 'queued', 'running', 'in_progress'}:
+            return True
+    return False
+
+
 def _prompt_explicitly_requests_markdown_artifact(analysis_prompt):
     prompt_text = str(analysis_prompt or '').strip().lower()
     if not prompt_text:
@@ -1339,13 +1347,16 @@ def _maybe_create_document_analysis_generated_artifacts(
     create_lossless_artifacts = bool(
         artifact_intent.get('exhaustive')
         or artifact_intent.get('table_output_requested')
+        or json_artifact_requested
         or xml_artifact_requested
         or primary_tabular_outputs
+        or analysis_reply
     )
     deferred_composition = analysis_result.get('deferred_composition') if isinstance(analysis_result.get('deferred_composition'), dict) else {}
     if deferred_composition.get('status') in {'pending', 'gate_disabled', 'continuation_unavailable'}:
         return {'artifacts': [], 'assistant_reply': None}
 
+    primary_tabular_outputs_pending = _primary_tabular_generated_outputs_are_pending(primary_tabular_outputs)
     if create_lossless_artifacts:
         artifacts = []
         structured_rows = _build_document_analysis_structured_rows(analysis_result)
@@ -1372,15 +1383,8 @@ def _maybe_create_document_analysis_generated_artifacts(
 
             markdown_output = _build_document_analysis_markdown_artifact(analysis_result)
             should_create_markdown_artifact = bool(
-                (
-                    artifact_intent.get('markdown_analysis_artifact_recommended')
-                    or (json_payload is not None and not json_artifact_requested)
-                )
-                and markdown_output
-                and (
-                    not primary_tabular_outputs
-                    or _prompt_explicitly_requests_markdown_artifact(analysis_prompt)
-                )
+                markdown_output
+                and not primary_tabular_outputs_pending
             )
             if should_create_markdown_artifact:
                 markdown_file_name = _build_document_analysis_artifact_file_name(analysis_result, 'md')
@@ -1446,14 +1450,26 @@ def _maybe_create_document_analysis_generated_artifacts(
             raise
 
         if artifacts or primary_tabular_outputs:
-            assistant_reply = _build_document_analysis_multi_artifact_reply(
-                document_count,
-                artifacts,
-                len(structured_rows),
-                len(raw_analysis_items),
-                analysis_reply,
-                structured_rows=structured_rows,
+            markdown_only_artifacts = bool(
+                artifacts
+                and not primary_tabular_outputs
+                and all(str(artifact.get('output_format') or '').strip().lower() == 'md' for artifact in artifacts)
             )
+            if markdown_only_artifacts:
+                assistant_reply = _build_document_analysis_artifact_reply(
+                    document_count,
+                    'md',
+                    analysis_reply=analysis_reply,
+                )
+            else:
+                assistant_reply = _build_document_analysis_multi_artifact_reply(
+                    document_count,
+                    artifacts,
+                    len(structured_rows),
+                    len(raw_analysis_items),
+                    analysis_reply,
+                    structured_rows=structured_rows,
+                )
             if primary_tabular_outputs:
                 assistant_reply = _build_document_analysis_primary_output_reply(
                     document_count,
@@ -2551,15 +2567,9 @@ def _build_mixed_source_deferred_composition_descriptor(
 
 
 def _build_mixed_source_deferred_reply(deferred_descriptor):
-    descriptor = deferred_descriptor if isinstance(deferred_descriptor, dict) else {}
-    pending_source_count = _coerce_document_analysis_count(
-        descriptor.get('pending_source_count'),
-    )
-    source_label = 'source' if pending_source_count == 1 else 'sources'
     return (
-        f'Completed narrative and bounded evidence has been preserved, but {pending_source_count} tabular {source_label} '
-        'still require full-source generated-output processing. Automatic deferred composition is unavailable, so no '
-        'collective conclusion was generated from incomplete table evidence. Individual generated outputs will continue.'
+        'We are analyzing the data and generating the requested file in the background. '
+        'It will be available here shortly.'
     )
 
 
@@ -2589,7 +2599,11 @@ def _emit_analyze_shared_preflight_event(
             safe_dimensions.update({
                 'rollout_contract_version': str(rollout_assignment.get('contract_version') or '').strip()[:80],
                 'rollout_mode': str(rollout_assignment.get('mode') or '').strip().lower()[:40],
+                'rollout_state': str(rollout_assignment.get('rollout_state') or 'active').strip().lower()[:40],
                 'rollout_assigned': str(bool(rollout_assignment.get('assigned'))).lower(),
+                'rollout_assignment_reason': str(
+                    rollout_assignment.get('assignment_reason_code') or ''
+                ).strip().lower()[:80],
                 'rollout_percent': str(_coerce_document_analysis_count(rollout_assignment.get('rollout_percent'))),
                 'rollout_cohort_bucket': str(_coerce_document_analysis_count(rollout_assignment.get('cohort_bucket'))),
                 'legacy_post_tool_fallback_mode': str(
@@ -3761,6 +3775,11 @@ def _maybe_execute_tabular_document_action(
     gpt_model = _resolve_tabular_document_action_model_name(workflow, settings)
     if not gpt_model:
         return None
+    tabular_model_context = _build_workflow_model_context(
+        workflow,
+        gpt_model,
+        workflow.get('model_provider'),
+    )
 
     # Import lazily to avoid a circular dependency during workflow startup.
     from functions_tabular_analysis import (
@@ -3768,6 +3787,8 @@ def _maybe_execute_tabular_document_action(
         build_tabular_related_document_evidence_summary,
         get_new_plugin_invocations,
         maybe_create_tabular_generated_output,
+        maybe_queue_direct_tabular_generated_output,
+        plan_tabular_request,
         run_tabular_analysis_with_thought_tracking,
     )
 
@@ -3797,6 +3818,37 @@ def _maybe_execute_tabular_document_action(
                     plugin_logger.get_invocations_for_conversation(user_id, conversation_id, limit=1000)
                 )
 
+            tabular_file_context = {
+                'file_name': tabular_document.get('file_name'),
+                'source_hint': tabular_document.get('source_hint', 'workspace'),
+                'group_id': tabular_document.get('group_id'),
+                'public_workspace_id': tabular_document.get('public_workspace_id'),
+            }
+            if action_type == DOCUMENT_ACTION_TYPE_ANALYZE:
+                tabular_plan = plan_tabular_request(
+                    task_prompt,
+                    [tabular_file_context],
+                    action_mode='analyze',
+                    settings=settings,
+                )
+                if isinstance(tabular_plan, dict) and tabular_plan.get('durable_task_type'):
+                    direct_generated_output = maybe_queue_direct_tabular_generated_output(
+                        user_question=task_prompt,
+                        file_contexts=[tabular_file_context],
+                        user_id=user_id,
+                        conversation_id=conversation_id,
+                        gpt_model=gpt_model,
+                        settings=settings,
+                        model_context=tabular_model_context,
+                        thought_callback=tabular_post_processing_thought_callback,
+                        cancel_requested=cancel_requested,
+                        request_correlation_id=request_correlation_id,
+                        planner_metadata=tabular_plan,
+                    )
+                    if direct_generated_output:
+                        generated_tabular_outputs.append(direct_generated_output)
+                        continue
+
             parity_result = classify_tabular_parity_request(task_prompt)
             emit_tabular_parity_event(
                 settings,
@@ -3824,12 +3876,8 @@ def _maybe_execute_tabular_document_action(
                     group_id=tabular_document.get('group_id'),
                     public_workspace_id=tabular_document.get('public_workspace_id'),
                     execution_mode='analysis',
-                    tabular_file_contexts=[{
-                        'file_name': tabular_document.get('file_name'),
-                        'source_hint': tabular_document.get('source_hint', 'workspace'),
-                        'group_id': tabular_document.get('group_id'),
-                        'public_workspace_id': tabular_document.get('public_workspace_id'),
-                    }],
+                    tabular_file_contexts=[tabular_file_context],
+                    model_context=tabular_model_context,
                     thought_tracker=thought_tracker,
                     live_thought_callback=live_thought_callback,
                     token_usage_callback=token_usage_callback,
@@ -3877,6 +3925,7 @@ def _maybe_execute_tabular_document_action(
                         conversation_id=conversation_id,
                         thought_callback=tabular_post_processing_thought_callback,
                         user_id=user_id,
+                        model_context=tabular_model_context,
                         cancel_requested=cancel_requested,
                         request_correlation_id=request_correlation_id,
                         token_usage_callback=token_usage_callback,
@@ -3915,6 +3964,88 @@ def _maybe_execute_tabular_document_action(
     tabular_agent_citations = _build_agent_citations_from_plugin_invocations(tabular_invocations)
 
     if action_type == DOCUMENT_ACTION_TYPE_ANALYZE:
+        pending_generated_output = _get_pending_tabular_generated_output(generated_tabular_outputs)
+        terminal_unsuccessful_output = _get_terminal_unsuccessful_tabular_generated_output(generated_tabular_outputs)
+        completed_tabular_documents = [
+            tabular_document
+            for tabular_document in tabular_documents
+            if str(tabular_document.get('analysis') or '').strip()
+        ]
+        if (pending_generated_output or terminal_unsuccessful_output) and not completed_tabular_documents:
+            terminal_status = _get_tabular_generated_output_status(terminal_unsuccessful_output)
+            terminal_canceled = terminal_status in {'canceled', 'cancelled'}
+            evidence_status = (
+                EVIDENCE_STATUS_PENDING
+                if pending_generated_output
+                else (EVIDENCE_STATUS_CANCELED if terminal_canceled else EVIDENCE_STATUS_FAILED)
+            )
+            failed_units = 0 if pending_generated_output else 1
+            handoff_reply = (
+                _build_tabular_analyze_durable_handoff(pending_generated_output)
+                if pending_generated_output
+                else (
+                    'The full-source tabular work was canceled before completion. No exhaustive tabular result has been completed.'
+                    if terminal_canceled
+                    else 'The full-source tabular work could not be completed. No exhaustive tabular result has been completed.'
+                )
+            )
+            coverage = _build_tabular_document_action_coverage(
+                tabular_documents,
+                'Queued' if pending_generated_output else ('Canceled' if terminal_canceled else 'Failed'),
+            )
+            for document_summary in list(coverage.get('documents') or []):
+                document_summary.update({
+                    'processed_windows': 0,
+                    'processed_chunks': 0,
+                    'failed_windows': failed_units,
+                    'failed_chunks': failed_units,
+                    'status': evidence_status,
+                    'status_text': (
+                        'Full-source tabular work is pending'
+                        if pending_generated_output
+                        else (
+                            'Full-source tabular work was canceled'
+                            if terminal_canceled
+                            else 'Full-source tabular work failed'
+                        )
+                    ),
+                })
+            coverage.update({
+                'processed_windows': 0,
+                'processed_chunks': 0,
+                'failed_windows': failed_units,
+                'failed_chunks': failed_units,
+            })
+            coverage['progress_meta'].update({
+                'phase': 'queued' if pending_generated_output else ('canceled' if terminal_canceled else 'failed'),
+                'phase_label': 'Queued' if pending_generated_output else ('Canceled' if terminal_canceled else 'Failed'),
+                'phase_detail': (
+                    'Full-source tabular work is running in the background'
+                    if pending_generated_output
+                    else (
+                        'Full-source tabular work was canceled before completion'
+                        if terminal_canceled
+                        else 'Full-source tabular work could not be completed'
+                    )
+                ),
+                'status': evidence_status,
+                'percent_override': 0 if pending_generated_output else 100,
+            })
+            return {
+                'result': {
+                    'reply': handoff_reply,
+                    'analysis_reply': handoff_reply,
+                    'coverage': coverage,
+                    'documents': coverage.get('documents', []),
+                    'document_ids': [tabular_document.get('document_id') for tabular_document in tabular_documents],
+                    'doc_scope': action_config.get('doc_scope'),
+                    'window_unit': 'tabular',
+                    'window_size': None,
+                    'window_percent': None,
+                },
+                'agent_citations': tabular_agent_citations,
+                'generated_tabular_outputs': generated_tabular_outputs,
+            }
         raise_if_mixed_source_cancelled(
             cancel_requested,
             'reduction',
@@ -5282,6 +5413,7 @@ def _maybe_create_workflow_generated_file_output(
                 source_candidate={
                     'filename': generated_file_name,
                     'selected_sheet': '',
+                    'passthrough_reason_code': export_payload.get('passthrough_reason_code'),
                     'source_authorization': {
                         'source': 'chat',
                     },
@@ -7228,6 +7360,15 @@ def _build_workflow_model_context(workflow, deployment_name, provider):
     group_id = _get_workflow_group_id(workflow)
     if group_id:
         model_context['active_group_ids'] = [group_id]
+    else:
+        document_action = workflow.get('document_action') if isinstance(workflow.get('document_action'), dict) else {}
+        active_group_ids = [
+            str(group_id or '').strip()
+            for group_id in document_action.get('active_group_ids') or []
+            if str(group_id or '').strip()
+        ]
+        if active_group_ids:
+            model_context['active_group_ids'] = active_group_ids
 
     return model_context
 

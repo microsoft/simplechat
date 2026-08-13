@@ -32,6 +32,7 @@ GENERATED_FILE_FORMATS = {
 }
 SUPPORTED_GENERATED_EXPORT_FORMATS = {'csv', 'json', 'xml'}
 GENERATED_FILE_PREVIEW_ROWS = 3
+REQUESTED_ARTIFACT_FORMATS = ('csv', 'json', 'xml', 'md', 'docx', 'pdf')
 STRUCTURED_ARTIFACT_FORMAT_MARKERS = {
     'json': (
         'json artifact',
@@ -165,37 +166,84 @@ th { background-color: #e8eef5; font-weight: bold; }
 th, td { border: 0.6pt solid #aab7c4; padding: 4pt; vertical-align: top; }
 """
 
+MARKDOWN_OUTPUT_REQUEST_PATTERNS = (
+    re.compile(
+        r'\b(?:build|create|download|export|generate|make|prepare|save|write)\b'
+        r'.{0,120}\b(?:markdown|md)(?:\s+(?:analysis|artifact|document|file|output|report))?\b'
+    ),
+    re.compile(r'\b(?:markdown|md)\s+(?:analysis|artifact|document|file|output|report|version)\b'),
+    re.compile(r'\b(?:in|as)\s+(?:a\s+)?(?:markdown|md)(?:\s+(?:document|file|report))?\b'),
+)
 
-def get_requested_generated_file_format(user_question: str) -> Optional[str]:
-    """Return the requested generated file format, if any."""
-    if assistant_table_export_requested(user_question):
-        return GENERATED_FILE_FORMAT_CSV
+PASSTHROUGH_DERIVED_OUTPUT_PATTERNS = (
+    re.compile(r'\b(?:derive|derived|classify|classification|categorize|category|calculate|computed?|map|mapping)\b'),
+    re.compile(r'\b(?:score|rank|judge|evaluate|determine|flag|label|extract|populate|fill)\b'),
+    re.compile(r'\b(?:analy[sz]e|summari[sz]e)\b'),
+    re.compile(r'\b(?:exactly|only)\s+(?:these\s+)?(?:fields|columns)\b'),
+    re.compile(r'\b(?:output|requested|derived)\s+(?:fields|columns|schema)\b'),
+    re.compile(r'\bone\s+output\s+row\s+(?:for|per)\s+(?:each|every|source)\s+row\b'),
+)
+PASSTHROUGH_COPY_PATTERNS = (
+    re.compile(r'\b(?:unchanged|as-is|as\s+is|verbatim|raw|original)\s+(?:copy|rows?|data|table|result|results)\b'),
+    re.compile(r'\b(?:copy|export|download|save)\b[\w\s,.:;\-/]{0,100}\b(?:unchanged|as-is|as\s+is|verbatim|raw|original|source)\b'),
+)
+PASSTHROUGH_SERIALIZE_PATTERNS = (
+    re.compile(r'\b(?:build|create|download|export|format|generate|make|prepare|save|serialize|convert)\b[\w\s,.:;\-/]{0,100}\b(?:csv|json|xml|docx|word|pdf|spreadsheet)\b'),
+    re.compile(r'\b(?:csv|json|xml|docx|word|pdf|spreadsheet)\b[\w\s,.:;\-/]{0,100}\b(?:export|download|file|format|copy)\b'),
+)
 
-    normalized_question = re.sub(r'\s+', ' ', str(user_question or '').strip().casefold())
-    if not normalized_question:
+
+def _normalize_question_for_artifact_detection(user_question: str) -> str:
+    return re.sub(r'\s+', ' ', str(user_question or '').strip().casefold())
+
+
+def _iter_request_clauses(normalized_question: str):
+    for match in re.finditer(r'[^.!?;\n]+', normalized_question):
+        clause = match.group(0).strip()
+        if clause:
+            leading_offset = len(match.group(0)) - len(match.group(0).lstrip())
+            yield clause, match.start() + leading_offset
+
+
+def _first_pattern_position(normalized_question: str, patterns) -> Optional[int]:
+    positions = [match.start() for pattern in patterns for match in [pattern.search(normalized_question)] if match]
+    return min(positions) if positions else None
+
+
+def _format_aliases(output_format: str) -> Tuple[str, ...]:
+    aliases = {
+        'docx': ('docx', 'word'),
+        'md': ('md', 'markdown'),
+    }
+    return aliases.get(output_format, (output_format,))
+
+
+def _clause_negates_output_format(clause: str, output_format: str) -> bool:
+    return any(
+        _structured_artifact_format_is_negated(clause, format_alias)
+        for format_alias in _format_aliases(output_format)
+    )
+
+
+def _first_csv_artifact_position(user_question: str, normalized_question: str) -> Optional[int]:
+    if not assistant_table_export_requested(user_question):
         return None
-    if any(pattern.search(normalized_question) for pattern in DOCX_OUTPUT_REQUEST_PATTERNS):
-        return GENERATED_FILE_FORMAT_DOCX
-    if any(pattern.search(normalized_question) for pattern in PDF_OUTPUT_REQUEST_PATTERNS):
-        return GENERATED_FILE_FORMAT_PDF
-    return None
+    for clause, clause_offset in _iter_request_clauses(normalized_question):
+        if _clause_negates_output_format(clause, 'csv'):
+            continue
+        for marker in ('csv', 'spreadsheet'):
+            marker_position = clause.find(marker)
+            if marker_position >= 0:
+                return clause_offset + marker_position
+    return 0
 
 
-def get_requested_structured_artifact_format(user_question: str) -> Optional[str]:
-    """Return a requested CSV, JSON, or XML artifact target without resolving source orchestration."""
-    normalized_question = re.sub(r'\s+', ' ', str(user_question or '').strip().casefold())
-    if not normalized_question:
-        return None
-
-    clauses = [
-        clause.strip()
-        for clause in re.split(r'[.!?;\n]+', normalized_question)
-        if clause.strip()
-    ]
-    destination_matches = []
-    for clause_index, clause in enumerate(clauses):
+def _collect_structured_artifact_format_matches(normalized_question: str) -> List[Tuple[int, str]]:
+    matches = []
+    destination_formats_by_clause_offset = {}
+    for clause, clause_offset in _iter_request_clauses(normalized_question):
         for output_format in ('json', 'xml'):
-            if output_format not in clause or _structured_artifact_format_is_negated(clause, output_format):
+            if output_format not in clause or _clause_negates_output_format(clause, output_format):
                 continue
             destination_match = re.search(
                 rf'\b(?:{STRUCTURED_ARTIFACT_DESTINATION_ACTION_PATTERN})\b'
@@ -205,25 +253,104 @@ def get_requested_structured_artifact_format(user_question: str) -> Optional[str
                 clause,
             )
             if destination_match:
-                destination_matches.append((clause_index, destination_match.start(), output_format))
-    if destination_matches:
-        return min(destination_matches)[2]
+                format_position = clause.find(output_format, destination_match.start())
+                matches.append((clause_offset + (format_position if format_position >= 0 else destination_match.start()), output_format))
+                destination_formats_by_clause_offset.setdefault(clause_offset, set()).add(output_format)
 
-    for output_format in ('json', 'xml'):
-        for clause in clauses:
-            if output_format not in clause or _structured_artifact_format_is_negated(clause, output_format):
+    for clause, clause_offset in _iter_request_clauses(normalized_question):
+        destination_formats = destination_formats_by_clause_offset.get(clause_offset, set())
+        for output_format in ('json', 'xml'):
+            if output_format not in clause or _clause_negates_output_format(clause, output_format):
                 continue
-            if any(marker in clause for marker in STRUCTURED_ARTIFACT_FORMAT_MARKERS[output_format]):
-                return output_format
-            if re.search(
+            if destination_formats and output_format not in destination_formats:
+                continue
+            marker_positions = [
+                clause.find(marker)
+                for marker in STRUCTURED_ARTIFACT_FORMAT_MARKERS[output_format]
+                if marker in clause
+            ]
+            if marker_positions:
+                matches.append((clause_offset + min(marker_positions), output_format))
+                continue
+            generic_match = re.search(
                 rf'\b(?:{STRUCTURED_ARTIFACT_ACTION_PATTERN})\b'
                 rf'[\w\s.,:;\-/]{{0,80}}\b(?:an?\s+)?{output_format}\b',
                 clause,
-            ):
-                return output_format
-    if assistant_table_export_requested(user_question):
-        return GENERATED_FILE_FORMAT_CSV
-    return None
+            )
+            if generic_match:
+                format_position = clause.find(output_format, generic_match.start())
+                matches.append((clause_offset + (format_position if format_position >= 0 else generic_match.start()), output_format))
+    return matches
+
+
+def get_requested_artifact_formats(user_question: str) -> List[str]:
+    """Return explicitly requested artifact formats in user-request order."""
+    normalized_question = _normalize_question_for_artifact_detection(user_question)
+    if not normalized_question:
+        return []
+
+    matches = []
+    csv_position = _first_csv_artifact_position(user_question, normalized_question)
+    if csv_position is not None:
+        matches.append((csv_position, 'csv'))
+    matches.extend(_collect_structured_artifact_format_matches(normalized_question))
+
+    format_pattern_sets = {
+        'md': MARKDOWN_OUTPUT_REQUEST_PATTERNS,
+        'docx': DOCX_OUTPUT_REQUEST_PATTERNS,
+        'pdf': PDF_OUTPUT_REQUEST_PATTERNS,
+    }
+    for output_format, patterns in format_pattern_sets.items():
+        position = _first_pattern_position(normalized_question, patterns)
+        if position is None:
+            continue
+        containing_clause = next(
+            (
+                clause
+                for clause, clause_offset in _iter_request_clauses(normalized_question)
+                if clause_offset <= position < clause_offset + len(clause)
+            ),
+            normalized_question,
+        )
+        if _clause_negates_output_format(containing_clause, output_format):
+            continue
+        matches.append((position, output_format))
+
+    ordered_formats = []
+    for _, output_format in sorted(matches, key=lambda item: (item[0], REQUESTED_ARTIFACT_FORMATS.index(item[1]))):
+        if output_format not in ordered_formats:
+            ordered_formats.append(output_format)
+    return ordered_formats
+
+
+def get_requested_structured_artifact_formats(user_question: str) -> List[str]:
+    """Return requested durable structured artifact formats in user-request order."""
+    return [
+        output_format
+        for output_format in get_requested_artifact_formats(user_question)
+        if output_format in SUPPORTED_GENERATED_EXPORT_FORMATS
+    ]
+
+
+def get_requested_generated_file_formats(user_question: str) -> List[str]:
+    """Return requested single-reply generated file formats in user-request order."""
+    return [
+        output_format
+        for output_format in get_requested_artifact_formats(user_question)
+        if output_format in GENERATED_FILE_FORMATS
+    ]
+
+
+def get_requested_generated_file_format(user_question: str) -> Optional[str]:
+    """Return the requested generated file format, if any."""
+    requested_formats = get_requested_generated_file_formats(user_question)
+    return requested_formats[0] if requested_formats else None
+
+
+def get_requested_structured_artifact_format(user_question: str) -> Optional[str]:
+    """Return a requested CSV, JSON, or XML artifact target without resolving source orchestration."""
+    requested_formats = get_requested_structured_artifact_formats(user_question)
+    return requested_formats[0] if requested_formats else None
 
 
 def _structured_artifact_format_is_negated(clause: str, output_format: str) -> bool:
@@ -242,6 +369,57 @@ def _structured_artifact_format_is_negated(clause: str, output_format: str) -> b
 def generated_file_export_requested(user_question: str) -> bool:
     """Return whether the user asked for a supported generated file artifact."""
     return get_requested_generated_file_format(user_question) is not None
+
+
+def _question_requires_derived_output(normalized_question: str) -> bool:
+    return any(pattern.search(normalized_question) for pattern in PASSTHROUGH_DERIVED_OUTPUT_PATTERNS)
+
+
+def _question_requests_unchanged_copy(normalized_question: str) -> bool:
+    return any(pattern.search(normalized_question) for pattern in PASSTHROUGH_COPY_PATTERNS)
+
+
+def _question_requests_serialization(normalized_question: str) -> bool:
+    return any(pattern.search(normalized_question) for pattern in PASSTHROUGH_SERIALIZE_PATTERNS)
+
+
+def _collect_row_schema(rows: Sequence[Dict[str, Any]]) -> List[str]:
+    for row in rows or []:
+        if isinstance(row, dict):
+            return [str(field_name or '').strip() for field_name in row if str(field_name or '').strip()]
+    return []
+
+
+def evaluate_generated_file_passthrough_eligibility(
+    user_question: str,
+    rows: Optional[Sequence[Dict[str, Any]]] = None,
+    public_output_schema: Optional[Sequence[str]] = None,
+) -> Dict[str, Any]:
+    """Return whether raw rows can satisfy a requested generated file contract."""
+    normalized_question = _normalize_question_for_artifact_detection(user_question)
+    normalized_rows = [row for row in list(rows or []) if isinstance(row, dict)]
+    if not normalized_rows:
+        return {'allowed': False, 'reason_code': 'source_result_incomplete'}
+
+    normalized_public_schema = [
+        str(field_name or '').strip()
+        for field_name in list(public_output_schema or [])
+        if str(field_name or '').strip()
+    ]
+    if normalized_public_schema:
+        expected_schema = set(normalized_public_schema)
+        if _collect_row_schema(normalized_rows) != normalized_public_schema:
+            return {'allowed': False, 'reason_code': 'schema_not_satisfied'}
+        if any(set(row.keys()) != expected_schema for row in normalized_rows):
+            return {'allowed': False, 'reason_code': 'schema_not_satisfied'}
+
+    if _question_requests_unchanged_copy(normalized_question):
+        return {'allowed': True, 'reason_code': 'explicit_unchanged_copy'}
+    if _question_requires_derived_output(normalized_question):
+        return {'allowed': False, 'reason_code': 'derived_output_requires_transform'}
+    if _question_requests_serialization(normalized_question):
+        return {'allowed': True, 'reason_code': 'explicit_format_conversion'}
+    return {'allowed': False, 'reason_code': 'no_explicit_passthrough_contract'}
 
 
 def build_generated_file_output_guidance(
@@ -307,9 +485,13 @@ def build_generated_file_export(
     assistant_text = str(assistant_content or '').strip()
     assistant_rows = extract_assistant_table_entries(assistant_text)
     function_rows = extract_authorized_function_result_rows(function_results)
+    function_passthrough = evaluate_generated_file_passthrough_eligibility(
+        user_question,
+        rows=function_rows,
+    ) if function_rows else {'allowed': False, 'reason_code': 'source_result_incomplete'}
 
     if output_format == GENERATED_FILE_FORMAT_CSV:
-        rows = assistant_rows or function_rows
+        rows = assistant_rows or (function_rows if function_passthrough.get('allowed') else [])
         if not rows:
             return None
         row_source = 'assistant response' if assistant_rows else 'structured function result'
@@ -319,12 +501,15 @@ def build_generated_file_export(
             rows=rows,
             row_source=row_source,
             assistant_content=assistant_text,
+            passthrough_reason_code=(None if assistant_rows else function_passthrough.get('reason_code')),
         )
 
     if not assistant_text and not assistant_rows and not function_rows:
         return None
-    rows = function_rows or assistant_rows
-    row_source = 'structured function result' if function_rows else 'assistant response'
+    rows = function_rows if function_rows and function_passthrough.get('allowed') else assistant_rows
+    if not assistant_text and not rows:
+        return None
+    row_source = 'structured function result' if rows and rows is function_rows else 'assistant response'
     title = _build_generated_file_title(output_format)
     if output_format == GENERATED_FILE_FORMAT_DOCX:
         file_content = _render_docx_file_export(title, assistant_text, rows, row_source)
@@ -337,6 +522,7 @@ def build_generated_file_export(
         row_source=row_source,
         assistant_content=assistant_text,
         title=title,
+        passthrough_reason_code=(function_passthrough.get('reason_code') if row_source == 'structured function result' else None),
     )
 
 
@@ -437,11 +623,12 @@ def _build_generated_file_payload(
     row_source: str,
     assistant_content: str,
     title: str = '',
+    passthrough_reason_code: Optional[str] = None,
 ) -> Dict[str, Any]:
     normalized_output_format = str(output_format or '').strip().lower()
     row_count = len(rows or [])
     normalized_title = str(title or _build_generated_file_title(normalized_output_format)).strip()
-    return {
+    payload = {
         'capability': 'file_export',
         'file_name': _build_generated_file_name(normalized_output_format),
         'file_content': file_content,
@@ -458,6 +645,9 @@ def _build_generated_file_payload(
             normalized_title,
         ),
     }
+    if passthrough_reason_code:
+        payload['passthrough_reason_code'] = str(passthrough_reason_code or '').strip()[:80]
+    return payload
 
 
 def _build_generated_file_name(output_format: str) -> str:

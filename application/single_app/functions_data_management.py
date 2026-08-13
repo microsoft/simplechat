@@ -40,6 +40,7 @@ from azure.search.documents.indexes import SearchIndexClient
 from azure.search.documents.indexes.models import SearchField, SearchFieldDataType, SearchIndex
 from azure.storage.blob import BlobBlock, BlobServiceClient, ContentSettings
 from cryptography.fernet import Fernet, InvalidToken
+from flask import has_request_context
 
 import config as app_config
 from config import (
@@ -18892,14 +18893,14 @@ def process_data_management_job(job_id):
 
 def submit_data_management_job(app, job_id):
     executor = app.extensions.get("executor") if app else None
-    if executor and hasattr(executor, "submit_stored"):
+    if executor and has_request_context() and hasattr(executor, "submit_stored"):
         executor.submit_stored(
             f"data_management_{job_id}",
             process_data_management_job,
             job_id=job_id,
         )
         return True
-    if executor and hasattr(executor, "submit"):
+    if executor and has_request_context() and hasattr(executor, "submit"):
         executor.submit(process_data_management_job, job_id)
         return True
     worker_thread = Thread(
