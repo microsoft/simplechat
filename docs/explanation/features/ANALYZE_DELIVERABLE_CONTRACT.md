@@ -55,7 +55,7 @@ Phase 7D completed the deterministic final integration gate for the closure. The
 - `functional_tests/test_tabular_phase5_artifact_set_lifecycle.py` for durable artifact-set lifecycle and public projection coverage.
 - `ui_tests/test_chat_background_generated_export_status.py` for plural completion rendering, ordering, actions, and safe UI event coverage.
 - `functional_tests/test_document_analysis_lossless_artifacts.py` for document-analysis artifact finalizer behavior.
-- `application/single_app/config.py` version `0.250.182`.
+- `application/single_app/config.py` version `0.250.185`.
 
 ## Technical Specifications
 

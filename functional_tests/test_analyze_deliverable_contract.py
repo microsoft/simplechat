@@ -2,8 +2,8 @@
 # test_analyze_deliverable_contract.py
 """
 Functional test for Analyze deliverable contract baselines.
-Version: 0.250.180
-Implemented in: 0.250.171; multi-format durable admission updated in 0.250.180
+Version: 0.250.185
+Implemented in: 0.250.171; multi-format durable admission updated in 0.250.180; generated-output Analyze routing updated in 0.250.184
 
 This test ensures Phase 1 defines a versioned Analyze deliverable contract,
 keeps Analyze Markdown distinct from requested structured siblings, and uses
@@ -276,21 +276,22 @@ def test_phase2_planner_normalizes_ordered_artifact_intent():
     assert multi_plan["execution_state"] == "declined"
     assert multi_plan["reason_code"] == "durable_intent"
 
-    disabled_plan = plan_tabular_request(
+    generated_output_analyze_plan = plan_tabular_request(
         "Analyze every row and create a CSV artifact.",
         [{"file_name": "financial_review.csv", "document_id": "doc-1", "source_version": "v1"}],
         action_mode="analyze",
         settings={"enable_tabular_hierarchical_analysis": False},
     )
-    assert disabled_plan["durable_task_type"] is None
-    assert disabled_plan["execution_state"] == "declined"
-    assert disabled_plan["reason_code"] == "analysis_required_durable_capability_disabled"
+    assert generated_output_analyze_plan["durable_task_type"] == "combined"
+    assert generated_output_analyze_plan["execution_contract"] == "combined"
+    assert generated_output_analyze_plan["execution_state"] == "declined"
+    assert generated_output_analyze_plan["reason_code"] == "durable_intent"
     assert get_tabular_generated_output_task_type(
         True,
         False,
         {"enable_tabular_hierarchical_analysis": False},
         action_mode="analyze",
-    ) is None
+    ) == "combined"
     assert get_tabular_generated_output_task_type(
         True,
         False,

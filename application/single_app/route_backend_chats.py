@@ -15087,7 +15087,8 @@ def register_route_backend_chats(bp):
             'assigned_knowledge_context': assigned_context_metadata,
             'model_endpoint_id': str(data.get('model_endpoint_id') or '').strip(),
             'model_id': str(data.get('model_id') or '').strip(),
-            'legacy_model_deployment': str(data.get('model_deployment') or '').strip(),
+            'model_provider': str(data.get('model_provider') or '').strip(),
+            'legacy_model_deployment': str(data.get('model_deployment') or data.get('model_id') or '').strip(),
             'model_binding_summary': {
                 'endpoint_id': str(data.get('model_endpoint_id') or '').strip(),
                 'model_id': str(data.get('model_id') or '').strip(),

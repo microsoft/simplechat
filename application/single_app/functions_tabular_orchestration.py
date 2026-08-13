@@ -323,10 +323,10 @@ def get_tabular_generated_output_task_type(
         False,
     )
     analysis_required = str(action_mode or "").strip().lower() == "analyze"
-    if generated_output_requested and (hierarchical_analysis_requested or analysis_required) and hierarchical_analysis_enabled:
-        return TABULAR_RUN_TASK_COMBINED
     if generated_output_requested and analysis_required:
-        return None
+        return TABULAR_RUN_TASK_COMBINED
+    if generated_output_requested and hierarchical_analysis_requested and hierarchical_analysis_enabled:
+        return TABULAR_RUN_TASK_COMBINED
     if generated_output_requested:
         return TABULAR_RUN_TASK_STRUCTURED_EXPORT
     if hierarchical_analysis_requested and hierarchical_analysis_enabled:
@@ -569,13 +569,6 @@ def plan_tabular_request(
         action_mode=normalized_action_mode,
     )
     output_format = structured_output_formats[0] if structured_output_formats else None
-    analysis_durable_capability_disabled = bool(
-        analysis_required
-        and generated_output_requested
-        and not settings_flag_enabled(settings, "enable_tabular_hierarchical_analysis", False)
-    )
-    if analysis_durable_capability_disabled:
-        durable_task_type = None
     execution_contract = durable_task_type or TABULAR_EXECUTION_CONTRACT_FOREGROUND_AGGREGATE
     source_coverage = _build_source_coverage(normalized_contexts)
     execution_group_id = _build_execution_group_id(
@@ -609,10 +602,6 @@ def plan_tabular_request(
     if durable_task_type:
         execution_state = TABULAR_EXECUTION_STATE_DECLINED
         reason_code = "durable_intent"
-    elif analysis_durable_capability_disabled:
-        execution_state = TABULAR_EXECUTION_STATE_DECLINED
-        reason_code = "analysis_required_durable_capability_disabled"
-        safe_failure_details = "Analyze with a requested tabular artifact requires the hierarchical analysis capability."
     elif hierarchical_analysis_requested and not durable_task_type:
         reason_code = "hierarchical_analysis_disabled"
 

@@ -2,6 +2,21 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.185)**
+
+#### Bug Fixes
+
+*   **Analyze Combined Generated Output Routing**
+    *   Treats Analyze requests that ask for row-level answers plus CSV/JSON/XML output as first-class combined durable work, producing both the Markdown analysis artifact and requested structured output artifacts.
+    *   Queues planner-approved combined tabular Analyze work before foreground tabular tools run, preventing empty inline tool output from becoming a stream-level 500.
+    *   Carries the selected model endpoint context into background generated-output runs so non-default endpoints do not fall back to an Azure OpenAI deployment name lookup.
+    *   (Ref: `functions_tabular_orchestration.py`, `functions_workflow_runner.py`, Analyze deliverable contract, combined durable generated output)
+
+*   **Data Management Scheduler Context Guard**
+    *   Prevented the background Data Management scheduler from using request-context-copying executor APIs when no Flask request context exists.
+    *   Scheduler-submitted jobs now use the existing worker-thread path outside request handling, while route-triggered submissions can still use the configured executor.
+    *   (Ref: `functions_data_management.py`, Data Management scheduler, background job submission)
+
 ### **(v0.250.182)**
 
 #### Bug Fixes
