@@ -2,8 +2,8 @@
 #!/usr/bin/env python3
 """
 Functional test for live user-message metadata reconciliation.
-Version: 0.250.197
-Implemented in: 0.250.197
+Version: 0.250.201
+Implemented in: 0.250.201
 
 This test ensures streaming routes acknowledge persisted user messages before
 assistant completion and the browser replaces temporary IDs without a refresh.
@@ -171,7 +171,7 @@ def test_browser_reconciles_pending_metadata_without_terminal_event() -> None:
 
 def test_implementation_version() -> None:
     """Verify the application version includes this fix."""
-    assert_app_version_at_least("0.250.197")
+    assert_app_version_at_least("0.250.201")
 
 
 if __name__ == "__main__":

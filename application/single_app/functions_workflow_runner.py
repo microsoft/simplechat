@@ -1373,6 +1373,13 @@ def _maybe_create_document_analysis_generated_artifacts(
         return {'artifacts': [], 'assistant_reply': None}
 
     primary_tabular_outputs_pending = _primary_tabular_generated_outputs_are_pending(primary_tabular_outputs)
+    pure_tabular_durable_handoff = bool(
+        primary_tabular_outputs
+        and isinstance(analysis_result.get('tabular_preflight_result'), dict)
+    )
+    if pure_tabular_durable_handoff:
+        return {'artifacts': [], 'assistant_reply': None}
+
     if create_lossless_artifacts:
         artifacts = []
         structured_rows = _build_document_analysis_structured_rows(analysis_result)
@@ -2710,6 +2717,11 @@ def _maybe_execute_pure_tabular_analyze_preflight(
     gpt_model = _resolve_tabular_document_action_model_name(workflow, settings)
     if not user_id or not gpt_model:
         return None
+    model_context = _build_workflow_model_context(
+        workflow,
+        gpt_model,
+        workflow.get('model_provider'),
+    )
 
     file_contexts = build_tabular_file_contexts_from_manifest(tabular_sources)
     if len(file_contexts) != 1:
@@ -2749,6 +2761,7 @@ def _maybe_execute_pure_tabular_analyze_preflight(
             user_id=user_id,
             conversation_id=conversation_id,
             gpt_model=gpt_model,
+            model_context=model_context,
             thought_callback=publish_post_processing_thought,
             cancel_requested=cancel_requested,
             request_correlation_id=request_correlation_id,
@@ -7413,6 +7426,7 @@ def _workflow_model_chat_capabilities_enabled(workflow):
 
 
 def _build_workflow_model_context(workflow, deployment_name, provider):
+    """Build non-secret model selection identifiers for deferred execution."""
     workflow = workflow if isinstance(workflow, dict) else {}
     binding_summary = workflow.get('model_binding_summary') if isinstance(workflow.get('model_binding_summary'), dict) else {}
     endpoint_id = str(workflow.get('model_endpoint_id') or binding_summary.get('endpoint_id') or '').strip()
