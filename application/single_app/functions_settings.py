@@ -1027,7 +1027,49 @@ def _apply_tabular_parity_env_kill_switch(settings_payload):
         settings_payload['tabular_request_planner_mode'] = 'off'
         settings_payload['enable_tabular_search_shared_preflight'] = False
         settings_payload['enable_tabular_analyze_durable_preflight'] = False
+        settings_payload['enable_tabular_hierarchical_analysis'] = False
     return settings_payload
+
+
+# Backend-only tabular durable-preflight parity flags that ship "active" by default with no
+# admin UI toggle. The only sanctioned way to disable them is the
+# SIMPLECHAT_DISABLE_TABULAR_PARITY_DURABLE_PREFLIGHT environment kill switch (applied later,
+# dynamically, in _apply_tabular_parity_env_kill_switch()) -- never a persisted settings value.
+TABULAR_PARITY_DURABLE_PREFLIGHT_ACTIVE_DEFAULTS = {
+    'tabular_request_planner_mode': 'active',
+    'enable_tabular_search_shared_preflight': True,
+    'enable_tabular_analyze_durable_preflight': True,
+    'enable_tabular_hierarchical_analysis': True,
+}
+
+
+def normalize_tabular_parity_durable_preflight_defaults(settings):
+    """Upgrade stale persisted tabular durable-preflight parity flags to their active defaults.
+
+    deep_merge_dicts() only fills in keys that are *missing* from a persisted settings
+    document; it never overwrites a key that already exists. These four flags were
+    originally introduced with off/False defaults, so the first settings load in any
+    existing deployment permanently persisted the old off/False values to Cosmos DB.
+    Later raising the code-level default to active/True (see
+    TABULAR_PARITY_DURABLE_PREFLIGHT_ACTIVE_DEFAULTS) therefore had no effect for any
+    deployment whose settings document already had these keys -- every tabular Analyze/
+    Search request kept silently falling back to the legacy bounded foreground path.
+
+    Because these settings have no admin UI, any stored value that differs from the
+    active default can only be stale drift (never an intentional admin choice), so it is
+    safe to unconditionally correct it here on every load. This runs independently of the
+    env kill switch, which is still applied afterwards in _apply_tabular_parity_env_kill_switch()
+    and continues to work exactly as before.
+    """
+    if not isinstance(settings, dict):
+        return False
+
+    changed = False
+    for key, active_value in TABULAR_PARITY_DURABLE_PREFLIGHT_ACTIVE_DEFAULTS.items():
+        if settings.get(key) != active_value:
+            settings[key] = active_value
+            changed = True
+    return changed
 
 
 def get_settings(use_cosmos=False, include_source=False):
@@ -1054,7 +1096,7 @@ def get_settings(use_cosmos=False, include_source=False):
         'enable_tabular_processing_plugin': False,
         'enable_analysis_deliverable_contract_telemetry': False,
         'analysis_deliverable_contract_mode': 'off',
-        'enable_tabular_hierarchical_analysis': False,
+        'enable_tabular_hierarchical_analysis': True,
         'enable_tabular_parity_contract_telemetry': False,
         'tabular_parity_contract_mode': 'off',
         'tabular_hierarchical_analysis_reduce_fan_in': 25,
@@ -1745,6 +1787,7 @@ def get_settings(use_cosmos=False, include_source=False):
         inbound_mcp_settings_updated = normalize_inbound_mcp_settings(merged)
         public_workspace_display_settings_updated = normalize_public_workspace_display_settings(merged)
         key_vault_reminder_settings_updated = normalize_key_vault_reminder_settings(merged)
+        tabular_parity_durable_preflight_settings_updated = normalize_tabular_parity_durable_preflight_defaults(merged)
 
         merged['enable_tabular_processing_plugin'] = is_tabular_processing_enabled(merged)
 
@@ -1759,6 +1802,7 @@ def get_settings(use_cosmos=False, include_source=False):
             or inbound_mcp_settings_updated
             or public_workspace_display_settings_updated
             or key_vault_reminder_settings_updated
+            or tabular_parity_durable_preflight_settings_updated
         ):
             cosmos_settings_container.upsert_item(merged)
             _refresh_app_settings_cache_after_write(merged, context="merge_upsert")

@@ -2,7 +2,7 @@
 # test_document_analysis_lossless_artifacts.py
 """
 Functional test for document analysis lossless artifacts.
-Version: 0.250.172
+Version: 0.250.199
 Implemented in: 0.241.040
 Updated in: 0.241.065
 Updated in: 0.241.197
@@ -10,6 +10,7 @@ Updated in: 0.250.065
 Updated in: 0.250.112
 Updated in: 0.250.154
 Updated in: 0.250.172
+Updated in: 0.250.199
 
 This test ensures exhaustive/table-style document analysis preserves raw window
 outputs and can build both structured CSV rows and Markdown raw-note artifacts
@@ -396,6 +397,71 @@ def test_primary_tabular_output_demotes_secondary_artifacts():
     print('Primary generated tabular output artifact presentation verified.')
 
 
+def test_pure_tabular_durable_handoff_does_not_create_companion_artifacts():
+    print('Testing pure-tabular durable handoff artifact suppression...')
+    uploaded_artifacts = []
+
+    def fake_upload_generated_artifact(**kwargs):
+        uploaded_artifacts.append(kwargs)
+        return {
+            'message': {
+                'id': f'artifact-{len(uploaded_artifacts)}',
+                'file_name': kwargs.get('file_name'),
+            }
+        }
+
+    namespace = load_module_functions(
+        WORKFLOW_RUNNER_PATH,
+        extra_globals={
+            'DOCUMENT_ANALYSIS_ARTIFACT_PREVIEW_ITEM_COUNT': 3,
+            'DOCUMENT_ANALYSIS_ARTIFACT_PREVIEW_ROW_COUNT': 5,
+            'DOCUMENT_ANALYSIS_ARTIFACT_PREVIEW_LINE_COUNT': 5,
+            'DOCUMENT_ANALYSIS_ARTIFACT_PREVIEW_LINE_LENGTH': 220,
+            'debug_print': lambda *args, **kwargs: None,
+            'has_request_context': lambda: True,
+            'raise_if_mixed_source_cancelled': lambda *args, **kwargs: None,
+            'upload_generated_analysis_artifact_for_current_user': fake_upload_generated_artifact,
+        },
+    )
+
+    analysis_result = {
+        'analysis_reply': 'The full-source analysis has been accepted for background processing.',
+        'analysis_intent': {
+            'exhaustive': True,
+            'csv_artifact_recommended': True,
+            'markdown_analysis_artifact_recommended': True,
+        },
+        'documents': [{'file_name': 'financial_review.csv'}],
+        'tabular_execution_state': 'queued',
+        'tabular_preflight_result': {
+            'execution_state': 'queued',
+            'durable_task_type': 'hierarchical_analysis',
+        },
+    }
+    primary_generated_outputs = [{
+        'capability': 'tabular',
+        'background_export': True,
+        'export_run_id': 'run-hierarchical',
+        'status': 'queued',
+        'task_type': 'hierarchical_analysis',
+        'output_format': 'md',
+        'row_count': 200,
+        'batch_count': 1,
+    }]
+
+    artifact_payload = namespace['_maybe_create_document_analysis_generated_artifacts'](
+        analysis_result,
+        'For each line, answer all eight questions.',
+        conversation_id='conversation-1',
+        primary_generated_outputs=primary_generated_outputs,
+    )
+
+    assert_equal(artifact_payload.get('artifacts'), [], 'durable handoff artifacts')
+    assert_equal(artifact_payload.get('assistant_reply'), None, 'durable handoff assistant override')
+    assert_equal(uploaded_artifacts, [], 'durable handoff upload count')
+    print('Pure-tabular durable handoff artifact suppression verified.')
+
+
 def test_json_artifact_requires_explicit_json_request():
     print('Testing JSON artifact opt-in behavior for document analysis...')
     uploaded_artifacts = []
@@ -514,6 +580,7 @@ def run_tests():
         test_analysis_preserves_raw_outputs,
         test_lossless_artifact_helpers_build_csv_and_markdown,
         test_primary_tabular_output_demotes_secondary_artifacts,
+        test_pure_tabular_durable_handoff_does_not_create_companion_artifacts,
         test_json_artifact_requires_explicit_json_request,
         test_workflow_markdown_fence_parser_is_linear_and_compatible,
         test_version_alignment,

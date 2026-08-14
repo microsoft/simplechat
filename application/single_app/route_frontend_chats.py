@@ -34,7 +34,12 @@ from functions_group import (
 from functions_governance import ensure_governance_access
 from functions_image_messages import build_image_message_documents
 from functions_prompts import list_all_prompts_for_scope
-from functions_public_workspaces import find_public_workspace_by_id, get_user_visible_public_workspace_ids_from_settings
+from functions_public_workspaces import (
+    add_visible_public_workspace,
+    find_public_workspace_by_id,
+    get_user_role_in_public_workspace,
+    get_user_visible_public_workspace_ids_from_settings,
+)
 from functions_simplechat_operations import upload_chat_image_bytes_for_user
 from functions_appinsights import log_event
 from functions_chat_bootstrap_cache import (
@@ -664,6 +669,29 @@ def _is_valid_chat_bootstrap_payload(payload):
     )
 
 
+def _ensure_public_chat_workspace_visible(user_id, request_args, user_settings_dict):
+    search_documents = str(request_args.get('search_documents') or '').strip().lower() == 'true'
+    doc_scope = str(request_args.get('doc_scope') or '').strip().lower()
+    workspace_id = str(request_args.get('workspace_id') or '').strip()
+    if not search_documents or doc_scope != 'public' or not workspace_id:
+        return False
+
+    public_directory_settings = user_settings_dict.get('publicDirectorySettings')
+    if isinstance(public_directory_settings, dict) and public_directory_settings.get(workspace_id) is True:
+        return False
+
+    workspace = find_public_workspace_by_id(workspace_id)
+    if not workspace or not get_user_role_in_public_workspace(workspace, user_id):
+        return False
+
+    add_visible_public_workspace(user_id, workspace_id)
+    if not isinstance(public_directory_settings, dict):
+        public_directory_settings = {}
+        user_settings_dict['publicDirectorySettings'] = public_directory_settings
+    public_directory_settings[workspace_id] = True
+    return True
+
+
 def register_route_frontend_chats(bp):
     @bp.route('/chats', methods=['GET'])
     @swagger_route(security=get_auth_security())
@@ -677,6 +705,7 @@ def register_route_frontend_chats(bp):
         settings = get_settings()
         user_settings = get_user_settings(user_id)
         user_settings_dict = user_settings.get("settings", {}) if isinstance(user_settings, dict) else {}
+        _ensure_public_chat_workspace_visible(user_id, request.args, user_settings_dict)
         public_settings = sanitize_settings_for_user(settings)
         ai_notice = get_ai_notice_config(public_settings)
         ai_notice['dismissed'] = is_ai_notice_dismissed(

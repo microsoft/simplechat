@@ -244,6 +244,11 @@ def question_requests_tabular_generated_output(user_question):
         "every row",
         "for each row",
         "for every row",
+        "all lines",
+        "every line",
+        "for each line",
+        "for every line",
+        "line by line",
         "full json",
         "full csv",
         "full xml",
@@ -258,9 +263,11 @@ def question_requests_tabular_generated_output(user_question):
         "populate",
         "one object per",
         "one row per",
+        "one line per",
         "one output row per",
         "each object",
         "each row",
+        "each line",
     )
     if requested_format == "csv" and assistant_table_export_requested(user_question):
         return True
@@ -280,6 +287,12 @@ def question_requests_tabular_hierarchical_analysis(user_question):
         "each row",
         "for each row",
         "for every row",
+        "all lines",
+        "every line",
+        "each line",
+        "for each line",
+        "for every line",
+        "line by line",
         "entire dataset",
         "entire file",
         "whole dataset",
@@ -639,6 +652,13 @@ def plan_tabular_request(
     deliverable_contract = build_analysis_deliverable_contract(
         action_mode=action_mode,
         requested_output_formats=requested_output_formats,
+        analysis_required=(
+            normalized_action_mode == "analyze"
+            or durable_task_type in {
+                TABULAR_RUN_TASK_HIERARCHICAL_ANALYSIS,
+                TABULAR_RUN_TASK_COMBINED,
+            }
+        ),
         public_output_schema=(
             output_hints.get("public_output_schema")
             or output_hints.get("output_schema")
