@@ -2,6 +2,45 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.200)**
+
+#### Bug Fixes
+
+*   **Hidden Public Workspace Document Chat Grounding**
+    *   Fixed document chat handoffs from accessible public workspaces that users had hidden from the public directory, so the selected document is now available to grounded search instead of appearing selected while being silently excluded.
+    *   Adds the selected workspace to the user's visible Chat workspaces without hiding any existing choices and revalidates the requested public workspace before updating user settings.
+    *   (Ref: #1245, `route_frontend_chats.py`, `test_public_workspace_hidden_document_chat_visibility.py`, `PUBLIC_WORKSPACE_HIDDEN_DOCUMENT_CHAT_VISIBILITY_FIX.md`)
+
+### **(v0.250.199)**
+
+#### Bug Fixes
+
+*   **Tabular Analyze/Search Artifact Lifecycle Completion**
+    *   Preserved the selected model endpoint for pure-tabular Analyze background work, preventing non-default model selections from falling back to an unavailable deployment on the default Azure OpenAI resource.
+    *   Enforced one artifact contract across Search and Analyze: Search CSV produces CSV; Analyze CSV produces Markdown plus CSV; exhaustive requests without an explicit output format produce Markdown in either mode.
+    *   Made artifact publication complete before run completion, repaired previously uploaded-but-hidden Markdown artifacts during status reconciliation, and preserved original generation failures instead of masking them as schema errors.
+    *   Removed misleading one-row Analyze CSV handoff artifacts and added sanitized user-visible failure reasons without exposing provider errors or endpoint details.
+    *   (Ref: `functions_tabular_orchestration.py`, `functions_workflow_runner.py`, `functions_tabular_generated_exports.py`, `TABULAR_DURABLE_ARTIFACT_LIFECYCLE_FIX.md`)
+
+### **(v0.250.198)**
+
+#### Bug Fixes
+
+*   **Tabular Parity Stale Settings Migration**
+    *   Fixed the four backend-only tabular durable-preflight parity flags (`tabular_request_planner_mode`, `enable_tabular_search_shared_preflight`, `enable_tabular_analyze_durable_preflight`, `enable_tabular_hierarchical_analysis`) silently staying disabled on any deployment whose Cosmos settings document already stored them from before their defaults were raised to active.
+    *   `get_settings()` merges code defaults into the persisted document via `deep_merge_dicts()`, which only fills in missing keys and never overwrites an existing one, so raising a default in code alone never took effect for upgraded-in-place deployments.
+    *   Both Analyze and Search durable preflight now self-correct to the active defaults on the next settings load and persist the fix back to Cosmos DB; the `SIMPLECHAT_DISABLE_TABULAR_PARITY_DURABLE_PREFLIGHT` emergency rollback env var continues to work unchanged.
+    *   (Ref: `functions_settings.py`, `normalize_tabular_parity_durable_preflight_defaults()`, `TABULAR_PARITY_STALE_SETTINGS_MIGRATION_FIX.md`)
+
+### **(v0.250.197)**
+
+#### Bug Fixes
+
+*   **Tabular "Line" Terminology Routing**
+    *   Recognized "line"-phrased exhaustive tabular requests (for example, "for each line," "line by line," "one line per") as equivalent to "row"-phrased requests across eight duplicated keyword-detection functions, so they route through the durable generated-output/analysis pipeline instead of the bounded foreground tool-calling path.
+    *   Activated `enable_tabular_hierarchical_analysis` by default so narrative (non-export) exhaustive whole-dataset Analyze/Search requests can resolve to the durable `hierarchical_analysis` task type, extending the existing emergency env kill switch to also cover this flag.
+    *   (Ref: `functions_tabular_orchestration.py`, `functions_tabular_parity_contract.py`, `route_backend_chats.py`, `functions_document_analysis.py`, `TABULAR_LINE_TERMINOLOGY_ROUTING_FIX.md`)
+
 ### **(v0.250.196)**
 
 #### Bug Fixes

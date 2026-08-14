@@ -2,8 +2,8 @@
 # test_tabular_line_terminology_routing_fix.py
 """
 Functional test for tabular exhaustive per-line terminology routing.
-Version: 0.250.197
-Implemented in: 0.250.197
+Version: 0.250.199
+Implemented in: 0.250.197; updated in 0.250.199
 
 A customer reported that a prompt phrased as "For each line in this document,
 I need eight questions answered... Go line by line and make sure all eight
@@ -84,6 +84,7 @@ _install_lightweight_planner_dependency_stubs()
 
 from functions_tabular_orchestration import (  # noqa: E402
     get_tabular_generated_output_task_type,
+    plan_tabular_request,
     question_requests_tabular_generated_output,
     question_requests_tabular_hierarchical_analysis,
 )
@@ -124,6 +125,19 @@ def test_customer_prompt_routes_to_durable_hierarchical_analysis_for_analyze_and
     assert get_tabular_generated_output_task_type(
         generated_output_requested, hierarchical_analysis_requested, active_settings, action_mode="search"
     ) == "hierarchical_analysis"
+    for action_mode in ("analyze", "search"):
+        plan = plan_tabular_request(
+            CUSTOMER_PROMPT,
+            [{"file_name": "simple_financial_review_test_200.csv", "document_id": "doc-1"}],
+            action_mode=action_mode,
+            settings=active_settings,
+        )
+        assert plan["durable_task_type"] == "hierarchical_analysis"
+        assert plan["deliverable_contract"]["analysis_required"] is True
+        assert [
+            artifact["format"]
+            for artifact in plan["deliverable_contract"]["requested_artifacts"]
+        ] == ["md"]
 
     # Reproduce the reported bug: with the flag off, no durable task type is selected.
     disabled_settings = {"enable_tabular_hierarchical_analysis": False}

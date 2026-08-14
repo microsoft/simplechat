@@ -1,8 +1,8 @@
 # test_chat_background_generated_export_status.py
 """
 UI test for chat background generated export status cards.
-Version: 0.250.182
-Implemented in: 0.241.046; cancellation in 0.250.060; automatic-only refresh in 0.250.061; combined progress and large-run confirmation in 0.250.131; throughput and concurrency status in 0.250.136; truthful background handoff in 0.250.138; collapsed operational details in 0.250.150; confirmation deduplication in 0.250.169; plural artifact-set completion rendering in 0.250.176; empty plural artifact-set fallback suppression in 0.250.182
+Version: 0.250.199
+Implemented in: 0.241.046; cancellation in 0.250.060; automatic-only refresh in 0.250.061; combined progress and large-run confirmation in 0.250.131; throughput and concurrency status in 0.250.136; truthful background handoff in 0.250.138; collapsed operational details in 0.250.150; confirmation deduplication in 0.250.169; plural artifact-set completion rendering in 0.250.176; empty plural artifact-set fallback suppression in 0.250.182; hierarchical completion and safe failure details in 0.250.199
 
 This test ensures queued tabular generated exports render progress in chat and
 turn into a downloadable artifact when complete or a visible canceled state.
@@ -367,6 +367,202 @@ def test_chat_combined_completion_renders_plural_artifact_set(playwright) -> Non
             assert completion_events[-1]["memberCount"] == 2
             assert completion_events[-1]["formats"] == ["md", "csv"]
             assert completion_events[-1]["primaryRendered"] is True
+            assert page_errors == []
+    finally:
+        context.close()
+        browser.close()
+
+
+@pytest.mark.ui
+def test_chat_hierarchical_completion_renders_markdown_download(playwright) -> None:
+    """Validate completed hierarchical analysis replaces progress with its Markdown artifact."""
+    browser = playwright.chromium.launch()
+    context = browser.new_context(viewport={"width": 1440, "height": 900})
+    page = context.new_page()
+    page_errors = []
+    page.on("pageerror", lambda error: page_errors.append(str(error)))
+
+    try:
+        with _start_static_test_server() as server_base_url:
+            page.route(
+                "**/api/tabular/generated-output/runs/run-hierarchical-md",
+                lambda route: route.fulfill(
+                    status=200,
+                    content_type="application/json",
+                    json={
+                        "success": True,
+                        "run": {
+                            "run_id": "run-hierarchical-md",
+                            "conversation_id": "conversation-ui-test",
+                            "task_type": "hierarchical_analysis",
+                            "status": "completed",
+                            "row_count": 200,
+                            "processed_rows": 200,
+                            "batch_count": 1,
+                            "completed_batches": 1,
+                            "progress_percent": 100,
+                            "artifact_set": {
+                                "lifecycle_state": "completed",
+                                "validation_state": "validated",
+                                "primary_artifact_id": "analysis",
+                                "member_count": 1,
+                                "published_member_count": 1,
+                            },
+                            "generated_artifacts": [{
+                                "artifact_id": "analysis",
+                                "role": "primary_analysis",
+                                "capability": "analyze",
+                                "artifact_message_id": "artifact-md-ui-test",
+                                "conversation_id": "conversation-ui-test",
+                                "file_name": "financial_review_analysis.md",
+                                "output_format": "md",
+                                "row_count": 200,
+                                "storage_scope": "chat",
+                                "preview_text": "# Financial review\n\nAll 200 rows were analyzed.",
+                            }],
+                        },
+                    },
+                ),
+            )
+            response = page.goto(f"{server_base_url}/{HARNESS_PATH}", wait_until="domcontentloaded")
+            assert response is not None and response.ok
+            _install_minimal_chat_dom(page)
+            page.evaluate(
+                """
+                async () => {
+                    const module = await import('/application/single_app/static/js/chat/chat-messages.js');
+                    module.appendMessage(
+                        'AI',
+                        'The full-source analysis is continuing in the background.',
+                        null,
+                        'message-hierarchical-md',
+                        false,
+                        [], [], [], null, null,
+                        {
+                            metadata: {
+                                generated_tabular_outputs: [{
+                                    capability: 'tabular',
+                                    background_export: true,
+                                    export_run_id: 'run-hierarchical-md',
+                                    run_id: 'run-hierarchical-md',
+                                    task_type: 'hierarchical_analysis',
+                                    status: 'running',
+                                    output_format: 'md',
+                                    row_count: 200,
+                                    processed_rows: 0,
+                                    batch_count: 1,
+                                    completed_batches: 0,
+                                    suppress_assistant_text: true,
+                                }]
+                            }
+                        },
+                        false
+                    );
+                }
+                """
+            )
+
+            message = page.locator('[data-message-id="message-hierarchical-md"]')
+            expect(message.get_by_text("Background analysis")).to_be_visible()
+            expect(
+                message.get_by_role("button", name="Download financial_review_analysis.md")
+            ).to_be_visible(timeout=15000)
+            expect(message.get_by_text("Analyze MD artifact", exact=True)).to_be_visible()
+            assert page_errors == []
+    finally:
+        context.close()
+        browser.close()
+
+
+@pytest.mark.ui
+def test_chat_failed_background_analysis_shows_safe_reason(playwright) -> None:
+    """Validate failed background analysis explains the safe failure category in details."""
+    browser = playwright.chromium.launch()
+    context = browser.new_context(viewport={"width": 1440, "height": 900})
+    page = context.new_page()
+    page_errors = []
+    page.on("pageerror", lambda error: page_errors.append(str(error)))
+
+    try:
+        with _start_static_test_server() as server_base_url:
+            page.route(
+                "**/api/tabular/generated-output/runs/run-safe-failure",
+                lambda route: route.fulfill(
+                    status=200,
+                    content_type="application/json",
+                    json={
+                        "success": True,
+                        "run": {
+                            "run_id": "run-safe-failure",
+                            "task_type": "hierarchical_analysis",
+                            "status": "failed",
+                            "status_label": "Failed",
+                            "status_tone": "danger",
+                            "status_detail": "The selected model deployment is unavailable. Select another model or ask an administrator to verify the model endpoint.",
+                            "failure_code": "model_deployment_unavailable",
+                            "failure_detail": "The selected model deployment is unavailable. Select another model or ask an administrator to verify the model endpoint.",
+                            "retryable_failure": False,
+                            "can_resume": False,
+                            "can_cancel": True,
+                            "row_count": 200,
+                            "processed_rows": 0,
+                            "batch_count": 1,
+                            "completed_batches": 0,
+                            "progress_percent": 0,
+                            "artifact_set": {
+                                "lifecycle_state": "failed",
+                                "validation_state": "invalid",
+                                "member_count": 1,
+                                "published_member_count": 0,
+                            },
+                        },
+                    },
+                ),
+            )
+            response = page.goto(f"{server_base_url}/{HARNESS_PATH}", wait_until="domcontentloaded")
+            assert response is not None and response.ok
+            _install_minimal_chat_dom(page)
+            page.evaluate(
+                """
+                async () => {
+                    const module = await import('/application/single_app/static/js/chat/chat-messages.js');
+                    module.appendMessage(
+                        'AI',
+                        'The full-source analysis is continuing in the background.',
+                        null,
+                        'message-safe-failure',
+                        false,
+                        [], [], [], null, null,
+                        {
+                            metadata: {
+                                generated_tabular_outputs: [{
+                                    capability: 'tabular',
+                                    background_export: true,
+                                    export_run_id: 'run-safe-failure',
+                                    run_id: 'run-safe-failure',
+                                    task_type: 'hierarchical_analysis',
+                                    status: 'running',
+                                    output_format: 'md',
+                                    row_count: 200,
+                                    batch_count: 1,
+                                    completed_batches: 0,
+                                    suppress_assistant_table_export: true,
+                                }]
+                            }
+                        },
+                        false
+                    );
+                }
+                """
+            )
+
+            message = page.locator('[data-message-id="message-safe-failure"]')
+            expect(message.get_by_text("Failed", exact=True)).to_be_visible(timeout=15000)
+            message.get_by_text("View details", exact=True).click()
+            expect(
+                message.get_by_text("The selected model deployment is unavailable.", exact=False)
+            ).to_be_visible()
+            expect(message.get_by_text("DeploymentNotFound", exact=False)).to_have_count(0)
             assert page_errors == []
     finally:
         context.close()

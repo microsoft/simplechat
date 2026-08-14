@@ -652,6 +652,13 @@ def plan_tabular_request(
     deliverable_contract = build_analysis_deliverable_contract(
         action_mode=action_mode,
         requested_output_formats=requested_output_formats,
+        analysis_required=(
+            normalized_action_mode == "analyze"
+            or durable_task_type in {
+                TABULAR_RUN_TASK_HIERARCHICAL_ANALYSIS,
+                TABULAR_RUN_TASK_COMBINED,
+            }
+        ),
         public_output_schema=(
             output_hints.get("public_output_schema")
             or output_hints.get("output_schema")

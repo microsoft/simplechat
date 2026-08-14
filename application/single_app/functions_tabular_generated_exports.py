@@ -7051,6 +7051,68 @@ def _build_tabular_run_rollout_assignment_public_fields(run):
     }
 
 
+def _build_safe_tabular_run_failure(run):
+    """Return a stable client-safe failure category without exposing provider details."""
+    run = run if isinstance(run, dict) else {}
+    error_text = str(run.get('last_error') or '').strip().lower()
+    retry_category = str(run.get('last_retry_category') or '').strip().lower()
+    artifact_manifest = run.get('artifact_set_manifest') if isinstance(run.get('artifact_set_manifest'), dict) else {}
+    artifact_lifecycle = str(artifact_manifest.get('lifecycle_state') or '').strip().lower()
+
+    if artifact_lifecycle in {
+        TABULAR_ARTIFACT_SET_LIFECYCLE_ROLLBACK_REQUIRED,
+        TABULAR_ARTIFACT_SET_LIFECYCLE_FAILED,
+    } or 'artifact set failed publication validation' in error_text:
+        return {
+            'failure_code': 'artifact_publication_failed',
+            'failure_detail': 'The analysis finished, but its downloadable artifact could not be published.',
+        }
+    if 'deploymentnotfound' in error_text or 'api deployment for this resource does not exist' in error_text:
+        return {
+            'failure_code': 'model_deployment_unavailable',
+            'failure_detail': 'The selected model deployment is unavailable. Select another model or ask an administrator to verify the model endpoint.',
+        }
+    if retry_category == 'rate_limit' or 'http_429' in error_text or 'rate limit' in error_text:
+        return {
+            'failure_code': 'model_rate_limited',
+            'failure_detail': 'The model service is temporarily rate limited. Continue the run after a short wait.',
+        }
+    if retry_category == 'timeout' or 'timed out' in error_text or 'timeout' in error_text:
+        return {
+            'failure_code': 'model_timeout',
+            'failure_detail': 'The model service did not finish this batch before the processing timeout.',
+        }
+    if 'authorization' in error_text or 'permission' in error_text or 'access is no longer authorized' in error_text:
+        return {
+            'failure_code': 'source_access_changed',
+            'failure_detail': 'Access to the selected source changed before processing completed.',
+        }
+    if 'source csv changed' in error_text or 'source etag' in error_text or 'source version' in error_text:
+        return {
+            'failure_code': 'source_changed',
+            'failure_detail': 'The selected source changed during processing. Start a new run against the latest version.',
+        }
+    if (
+        retry_category == 'model_validation'
+        or 'schema' in error_text
+        or 'validation' in error_text
+        or 'valid combined output' in error_text
+    ):
+        return {
+            'failure_code': 'output_validation_failed',
+            'failure_detail': 'The generated output did not satisfy the required row and artifact structure.',
+        }
+    if retry_category in {'transient', 'connection', 'provider_transient'}:
+        return {
+            'failure_code': 'model_service_interrupted',
+            'failure_detail': 'The model service was interrupted while processing the background run.',
+        }
+    return {
+        'failure_code': 'background_processing_failed',
+        'failure_detail': 'The background analysis could not be completed.',
+    }
+
+
 def _build_run_status_detail(run, settings, retryable_failure, can_resume):
     status = str((run or {}).get('status') or '').strip().lower()
     task_type = _normalize_tabular_run_task_type((run or {}).get('task_type'))
@@ -7258,14 +7320,11 @@ def _build_run_status_detail(run, settings, retryable_failure, can_resume):
             'retry_delay_seconds': None,
         }
     if status == TABULAR_EXPORT_STATUS_FAILED:
+        safe_failure = _build_safe_tabular_run_failure(run)
         return {
             'status_label': 'Failed',
             'status_tone': 'danger',
-            'status_detail': (
-                'Analysis failed and cannot continue from checkpoints.'
-                if is_analysis_like
-                else 'Export failed and cannot continue from checkpoints.'
-            ),
+            'status_detail': safe_failure['failure_detail'],
             'is_stale': False,
             'waiting_for_retry': False,
             'retry_due': False,
@@ -7323,6 +7382,33 @@ def _build_run_public_status(run, settings=None):
     rollout_assignment = _build_tabular_run_rollout_assignment_public_fields(run)
     checkpoint_summary = _build_checkpoint_summary(completed_batches, batch_count, processed_rows, row_count)
     artifact_set_manifest = _build_or_update_artifact_set_manifest(run)
+    safe_failure = _build_safe_tabular_run_failure({
+        **run,
+        'artifact_set_manifest': artifact_set_manifest,
+    })
+    artifact_publication_incomplete = bool(
+        str(run.get('status') or '').strip().lower() == TABULAR_EXPORT_STATUS_COMPLETED
+        and artifact_set_manifest.get('lifecycle_state') != TABULAR_ARTIFACT_SET_LIFECYCLE_COMPLETED
+    )
+    public_status = run.get('status')
+    if artifact_publication_incomplete:
+        public_status = TABULAR_EXPORT_STATUS_FAILED
+        status_detail = {
+            'status_label': 'Failed',
+            'status_tone': 'danger',
+            'status_detail': safe_failure['failure_detail'],
+            'is_stale': False,
+            'waiting_for_retry': False,
+            'retry_due': False,
+            'retry_delay_seconds': None,
+        }
+        lifecycle_fields.update({
+            'lifecycle_state': 'intervention_required',
+            'execution_state': 'intervention_required',
+            'evidence_status': 'failed',
+            'terminal': True,
+            'safe_reason_code': safe_failure['failure_code'],
+        })
     generated_artifacts = _build_public_generated_artifacts_from_manifest(run, artifact_set_manifest)
     generated_artifact = generated_artifacts[0] if generated_artifacts else None
     primary_final_artifact = generated_artifact or (
@@ -7352,7 +7438,7 @@ def _build_run_public_status(run, settings=None):
         'run_id': run.get('id'),
         'conversation_id': run.get('conversation_id'),
         'task_type': task_type,
-        'status': run.get('status'),
+        'status': public_status,
         'metadata_contract_version': 'phase8.v1',
         'planner_contract_version': planner_metadata.get('planner_contract_version'),
         'execution_contract': planner_metadata.get('execution_contract') or task_type,
@@ -7402,10 +7488,20 @@ def _build_run_public_status(run, settings=None):
         'updated_at': run.get('updated_at'),
         'completed_at': run.get('completed_at'),
         'last_heartbeat_at': run.get('last_heartbeat_at'),
-        'last_message': run.get('last_message'),
+        'last_message': status_detail.get('status_detail'),
         'status_label': status_detail.get('status_label'),
         'status_tone': status_detail.get('status_tone'),
         'status_detail': status_detail.get('status_detail'),
+        'failure_code': (
+            safe_failure['failure_code']
+            if public_status == TABULAR_EXPORT_STATUS_FAILED
+            else None
+        ),
+        'failure_detail': (
+            safe_failure['failure_detail']
+            if public_status == TABULAR_EXPORT_STATUS_FAILED
+            else None
+        ),
         'checkpoint_summary': checkpoint_summary,
         'is_stale': status_detail.get('is_stale'),
         'waiting_for_retry': status_detail.get('waiting_for_retry'),
@@ -7501,6 +7597,10 @@ def get_tabular_generated_output_run_status(user_id, run_id):
         )
     except CosmosResourceNotFoundError:
         return None
+    # Legacy completion repair is a bounded, idempotent status-read exception:
+    # the partition-authorized run already owns the uploaded artifact, and the
+    # missing publication commit is the only mutation performed.
+    run = _reconcile_completed_tabular_artifact_set(run)
     return _build_run_public_status(run, settings=settings)
 
 
@@ -7862,6 +7962,7 @@ def _mark_run_failed(run, error_message):
         'last_error': str(error_message or 'Unknown error')[:1000],
         'last_message': 'Background structured export failed',
     })
+    run['failure_code'] = _build_safe_tabular_run_failure(run)['failure_code']
     run['performance_summary'] = _build_tabular_generation_performance_summary(run, completed_at=now)
     try:
         run = _replace_claimed_run(run)
@@ -8381,7 +8482,22 @@ def _get_tabular_run_deliverable_contract(run):
     deliverable_contract = planner_metadata.get('deliverable_contract')
     if not isinstance(deliverable_contract, dict):
         return {}
-    return deliverable_contract
+    normalized_contract = dict(deliverable_contract)
+    if not list(normalized_contract.get('requested_artifacts') or []):
+        # Every durable task publishes at least one artifact; empty lists only
+        # occur on legacy or malformed durable contracts.
+        task_type = _normalize_tabular_run_task_type((run or {}).get('task_type'))
+        normalized_contract['requested_artifacts'] = _default_artifact_descriptors_for_run(run)
+        normalized_contract['analysis_required'] = task_type in {
+            TABULAR_RUN_TASK_HIERARCHICAL_ANALYSIS,
+            TABULAR_RUN_TASK_COMBINED,
+        }
+        normalized_contract['primary_artifact_role'] = (
+            ANALYSIS_ARTIFACT_ROLE_PRIMARY_ANALYSIS
+            if normalized_contract['analysis_required']
+            else ANALYSIS_ARTIFACT_ROLE_REQUESTED_OUTPUT
+        )
+    return normalized_contract
 
 
 def _normalize_artifact_descriptor(raw_descriptor, fallback_order=0):
@@ -8660,6 +8776,11 @@ def _build_or_update_artifact_set_manifest(run):
         )
         if member.get('role') == ANALYSIS_ARTIFACT_ROLE_PRIMARY_ANALYSIS:
             artifact = run.get('analysis_artifact') if isinstance(run.get('analysis_artifact'), dict) else {}
+            if (
+                not artifact
+                and _normalize_tabular_run_task_type(run.get('task_type')) == TABULAR_RUN_TASK_HIERARCHICAL_ANALYSIS
+            ):
+                artifact = run.get('final_artifact') if isinstance(run.get('final_artifact'), dict) else {}
             _merge_artifact_metadata_into_member(
                 member,
                 artifact,
@@ -8826,6 +8947,48 @@ def _publish_artifact_set_members(run, published_member_ids):
     manifest['publication_generation'] = next_publication_generation
     run['artifact_set_manifest'] = manifest
     return manifest
+
+
+def _reconcile_completed_tabular_artifact_set(run):
+    """Repair completed legacy runs whose uploaded artifacts were never committed."""
+    run = run if isinstance(run, dict) else {}
+    if str(run.get('status') or '').strip().lower() != TABULAR_EXPORT_STATUS_COMPLETED:
+        return run
+
+    existing_manifest = run.get('artifact_set_manifest') if isinstance(run.get('artifact_set_manifest'), dict) else {}
+    if existing_manifest.get('lifecycle_state') == TABULAR_ARTIFACT_SET_LIFECYCLE_COMPLETED:
+        return run
+
+    manifest = _build_or_update_artifact_set_manifest(run)
+    published_member_ids = [
+        member.get('member_id')
+        for member in list(manifest.get('members') or [])
+        if member.get('member_id') and member.get('artifact_message_id')
+    ]
+    if not published_member_ids:
+        return run
+
+    reconciled_manifest = _publish_artifact_set_members(run, published_member_ids)
+    if reconciled_manifest.get('lifecycle_state') != TABULAR_ARTIFACT_SET_LIFECYCLE_COMPLETED:
+        return run
+
+    try:
+        repaired_run = _replace_run(run)
+    except Exception as exc:
+        if getattr(exc, 'status_code', None) not in (409, 412):
+            raise
+        repaired_run = _read_run(run.get('user_id'), run.get('id'))
+    log_event(
+        '[TABULAR_GENERATED_OUTPUT] Reconciled completed artifact-set publication',
+        {
+            'run_id': repaired_run.get('id'),
+            'conversation_id': repaired_run.get('conversation_id'),
+            'user_id': repaired_run.get('user_id'),
+            'published_member_ids': published_member_ids,
+        },
+        level=logging.INFO,
+    )
+    return repaired_run
 
 
 def _build_public_generated_artifact_from_member(run, manifest, member):
@@ -9013,10 +9176,7 @@ def _complete_run(run):
     structured_artifact = structured_artifacts[0] if structured_artifacts else {}
     now = _now_iso()
     run.update({
-        'status': TABULAR_EXPORT_STATUS_COMPLETED,
         'updated_at': now,
-        'completed_at': now,
-        'generation_completed_at': now,
         'last_heartbeat_at': now,
         'processed_rows': output_entry_count,
         'completed_batches': _safe_int(run.get('batch_count')),
@@ -9030,10 +9190,17 @@ def _complete_run(run):
         'final_artifact': structured_artifact,
         'estimated_remaining_seconds': 0,
     })
-    _publish_artifact_set_members(
+    artifact_set_manifest = _publish_artifact_set_members(
         run,
         [artifact.get('artifact_id') or artifact.get('member_id') for artifact in structured_artifacts],
     )
+    if artifact_set_manifest.get('lifecycle_state') != TABULAR_ARTIFACT_SET_LIFECYCLE_COMPLETED:
+        raise ValueError('Generated artifact set failed publication validation')
+    run.update({
+        'status': TABULAR_EXPORT_STATUS_COMPLETED,
+        'completed_at': now,
+        'generation_completed_at': now,
+    })
     run.update(_build_generation_progress_contract_fields(
         run,
         run.get('batch_count'),
@@ -9177,14 +9344,25 @@ def _publish_analysis_artifact(run, final_summary):
 def _complete_analysis_run(run, final_summary):
     run, uploaded_message, final_summary, generated_file_name = _publish_analysis_artifact(run, final_summary)
     artifact_preview_text = _build_analysis_summary_markdown(run, final_summary)
+    analysis_artifact = _build_artifact_metadata(
+        uploaded_message,
+        generated_file_name,
+        'md',
+        preview_text=artifact_preview_text,
+        suppress_assistant_text=True,
+    )
+    _set_artifact_set_member_state(
+        run,
+        _get_analysis_artifact_member_id(run),
+        artifact=analysis_artifact,
+        lifecycle_state=TABULAR_ARTIFACT_MEMBER_LIFECYCLE_STAGED,
+        validation_state='validated',
+    )
     now = _now_iso()
     run.update({
-        'status': TABULAR_EXPORT_STATUS_COMPLETED,
         'updated_at': now,
-        'completed_at': now,
-        'generation_completed_at': now,
         'last_heartbeat_at': now,
-        'analysis_phase': 'completed',
+        'analysis_phase': 'publishing',
         'processed_rows': _safe_int(final_summary.get('row_count'), default=_safe_int(run.get('row_count'))),
         'completed_batches': _safe_int(run.get('batch_count')),
         'processed_chunk_count': _safe_int(run.get('batch_count')),
@@ -9193,16 +9371,20 @@ def _complete_analysis_run(run, final_summary):
         'post_run_summary': final_summary.get('summary'),
         'generated_file_name': uploaded_message.get('file_name') or generated_file_name,
         'output_format': 'md',
-        'final_artifact': _build_artifact_metadata(
-            uploaded_message,
-            generated_file_name,
-            'md',
-            preview_text=artifact_preview_text,
-            suppress_assistant_text=True,
-        ),
+        'analysis_artifact': analysis_artifact,
+        'final_artifact': analysis_artifact,
         'estimated_remaining_seconds': 0,
     })
-    _publish_artifact_set_members(run, [_get_analysis_artifact_member_id(run)])
+    artifact_set_manifest = _publish_artifact_set_members(run, [_get_analysis_artifact_member_id(run)])
+    if artifact_set_manifest.get('lifecycle_state') != TABULAR_ARTIFACT_SET_LIFECYCLE_COMPLETED:
+        raise ValueError('Generated analysis artifact failed publication validation')
+    run.update({
+        'status': TABULAR_EXPORT_STATUS_COMPLETED,
+        'completed_at': now,
+        'generation_completed_at': now,
+        'analysis_phase': 'completed',
+        'last_message': 'Background tabular analysis completed',
+    })
     run.update(_build_generation_progress_contract_fields(
         run,
         run.get('batch_count'),
@@ -9321,12 +9503,9 @@ def _complete_combined_analysis_run(run, final_summary):
     )
     now = _now_iso()
     run.update({
-        'status': TABULAR_EXPORT_STATUS_COMPLETED,
         'updated_at': now,
-        'completed_at': now,
-        'generation_completed_at': now,
         'last_heartbeat_at': now,
-        'analysis_phase': 'completed',
+        'analysis_phase': 'publishing',
         'processed_rows': _safe_int(final_summary.get('row_count'), default=_safe_int(run.get('row_count'))),
         'completed_batches': _safe_int(run.get('batch_count')),
         'processed_chunk_count': _safe_int(run.get('batch_count')),
@@ -9343,7 +9522,7 @@ def _complete_combined_analysis_run(run, final_summary):
         'final_artifact': analysis_artifact or structured_artifact,
         'estimated_remaining_seconds': 0,
     })
-    _publish_artifact_set_members(
+    artifact_set_manifest = _publish_artifact_set_members(
         run,
         [
             _get_analysis_artifact_member_id(run),
@@ -9353,6 +9532,15 @@ def _complete_combined_analysis_run(run, final_summary):
             ],
         ],
     )
+    if artifact_set_manifest.get('lifecycle_state') != TABULAR_ARTIFACT_SET_LIFECYCLE_COMPLETED:
+        raise ValueError('Generated combined artifact set failed publication validation')
+    run.update({
+        'status': TABULAR_EXPORT_STATUS_COMPLETED,
+        'completed_at': now,
+        'generation_completed_at': now,
+        'analysis_phase': 'completed',
+        'last_message': 'Background combined tabular analysis and export completed',
+    })
     run.update(_build_generation_progress_contract_fields(
         run,
         run.get('batch_count'),
@@ -10322,6 +10510,8 @@ def _process_combined_run(
                 )
             )
             _raise_if_tabular_export_canceled(run)
+            if generation_error and not generated_results:
+                raise generation_error
             batch_results.update(_checkpoint_combined_batch_results(run, generated_results))
 
         previous_completed_batches = completed_batches
