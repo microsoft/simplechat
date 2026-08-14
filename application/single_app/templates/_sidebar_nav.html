@@ -505,8 +505,28 @@
                 </a>
               </li>
               <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="general" data-section="health-check-section">
+                  <i class="bi bi-heart-pulse me-2" style="font-size: 0.8em;"></i><span class="nav-text">Health Check</span>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="general" data-section="swagger-section">
+                  <i class="bi bi-file-earmark-code me-2" style="font-size: 0.8em;"></i><span class="nav-text">API Documentation</span>
+                </a>
+              </li>
+              <li class="nav-item">
                 <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="general" data-section="classification-banner-section">
                   <i class="bi bi-shield-exclamation me-2" style="font-size: 0.8em;"></i><span class="nav-text">Classification Banner</span>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="general" data-section="ai-notice-section">
+                  <i class="bi bi-robot me-2" style="font-size: 0.8em;"></i><span class="nav-text">Chat AI Notice</span>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="general" data-section="terms-of-use-section">
+                  <i class="bi bi-door-open me-2" style="font-size: 0.8em;"></i><span class="nav-text">Terms of Use</span>
                 </a>
               </li>
               <li class="nav-item">
@@ -517,16 +537,6 @@
               <li class="nav-item">
                 <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="general" data-section="external-links-section">
                   <i class="bi bi-box-arrow-up-right me-2" style="font-size: 0.8em;"></i><span class="nav-text">External Links</span>
-                </a>
-              </li>
-              <li class="nav-item">
-                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="general" data-section="health-check-section">
-                  <i class="bi bi-heart-pulse me-2" style="font-size: 0.8em;"></i><span class="nav-text">Health Check</span>
-                </a>
-              </li>
-              <li class="nav-item">
-                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="general" data-section="swagger-section">
-                  <i class="bi bi-file-earmark-code me-2" style="font-size: 0.8em;"></i><span class="nav-text">API Documentation</span>
                 </a>
               </li>
               <li class="nav-item">
@@ -554,8 +564,8 @@
             </a>
             <ul class="nav flex-column ms-3" style="display: none;" id="ai-models-submenu">
               <li class="nav-item">
-                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="ai-models" data-section="gpt-config">
-                  <i class="bi bi-chat-square-text me-2" style="font-size: 0.8em;"></i><span class="nav-text">Chat Model</span>
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="ai-models" data-section="multi-endpoint-configuration">
+                  <i class="bi bi-hdd-network me-2" style="font-size: 0.8em;"></i><span class="nav-text">Model Endpoints</span>
                 </a>
               </li>
               <li class="nav-item">
@@ -573,6 +583,11 @@
                   <i class="bi bi-image me-2" style="font-size: 0.8em;"></i><span class="nav-text">Image Generation</span>
                 </a>
               </li>
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="ai-models" data-section="gpt-config">
+                  <i class="bi bi-chat-square-text me-2" style="font-size: 0.8em;"></i><span class="nav-text">Chat Model</span>
+                </a>
+              </li>
             </ul>
           </li>
           <li class="nav-item">
@@ -581,10 +596,22 @@
             </a>
             <ul class="nav flex-column ms-3" style="display: none;" id="agents-submenu">
               <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="agents" data-section="document-action-capabilities-card">
+                  <i class="bi bi-files me-2" style="font-size: 0.8em;"></i><span class="nav-text">Document Action Capabilities</span>
+                </a>
+              </li>
+              <li class="nav-item">
                 <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="agents" data-section="agents-config">
                   <i class="bi bi-robot me-2" style="font-size: 0.8em;"></i><span class="nav-text">Agents Configuration</span>
                 </a>
               </li>
+              {% if app_settings.enable_agent_template_gallery %}
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="agents" data-section="agent-template-approvals-section">
+                  <i class="bi bi-layers me-2" style="font-size: 0.8em;"></i><span class="nav-text">Agent Template Approvals</span>
+                </a>
+              </li>
+              {% endif %}
               <li class="nav-item">
                 <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="agents" data-section="actions-config">
                   <i class="bi bi-plugin me-2" style="font-size: 0.8em;"></i><span class="nav-text">Actions Configuration</span>
@@ -637,6 +664,11 @@
                 </a>
               </li>
               <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="scale" data-section="conversation-cache-section">
+                  <i class="bi bi-chat-square-text me-2" style="font-size: 0.8em;"></i><span class="nav-text">Conversation Cache</span>
+                </a>
+              </li>
+              <li class="nav-item">
                 <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="scale" data-section="document-access-index-section">
                   <i class="bi bi-diagram-3 me-2" style="font-size: 0.8em;"></i><span class="nav-text">DAI Metrics</span>
                 </a>
@@ -667,6 +699,18 @@
             <a class="nav-link d-flex align-items-center admin-nav-tab" href="#" data-tab="control-center-config">
               <i class="bi bi-speedometer2 me-2"></i><span class="nav-text">Control Center</span>
             </a>
+            <ul class="nav flex-column ms-3" style="display: none;" id="control-center-config-submenu">
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="control-center-config" data-section="control-center-auto-refresh-section">
+                  <i class="bi bi-calendar-check me-2" style="font-size: 0.8em;"></i><span class="nav-text">Automatic Data Refresh</span>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="control-center-config" data-section="control-center-overview-section">
+                  <i class="bi bi-gear-wide-connected me-2" style="font-size: 0.8em;"></i><span class="nav-text">Control Center Access</span>
+                </a>
+              </li>
+            </ul>
           </li>
           <li class="nav-item">
             <a class="nav-link d-flex align-items-center admin-nav-tab" href="#" data-tab="data-management">
@@ -724,6 +768,33 @@
             <a class="nav-link d-flex align-items-center admin-nav-tab" href="#" data-tab="governance">
               <i class="bi bi-braces-asterisk me-2"></i><span class="nav-text">Governance</span>
             </a>
+            <ul class="nav flex-column ms-3" style="display: none;" id="governance-submenu">
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="governance" data-section="governance-feature-toggles-section">
+                  <i class="bi bi-braces-asterisk me-2" style="font-size: 0.8em;"></i><span class="nav-text">Governance Feature Toggles</span>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="governance" data-section="governance-mcp-destination-section">
+                  <i class="bi bi-diagram-3 me-2" style="font-size: 0.8em;"></i><span class="nav-text">MCP Action Destination Governance</span>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="governance" data-section="governance-inbound-mcp-section">
+                  <i class="bi bi-box-arrow-in-down-right me-2" style="font-size: 0.8em;"></i><span class="nav-text">Inbound MCP Source Governance</span>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="governance" data-section="governance-feature-policies-section">
+                  <i class="bi bi-sliders2 me-2" style="font-size: 0.8em;"></i><span class="nav-text">Feature Policies</span>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="governance" data-section="governance-item-policies-section">
+                  <i class="bi bi-list-check me-2" style="font-size: 0.8em;"></i><span class="nav-text">Delegated Item Policies</span>
+                </a>
+              </li>
+            </ul>
           </li>
           <li class="nav-item">
             <a class="nav-link d-flex align-items-center admin-nav-tab" href="#" data-tab="workspaces">
@@ -738,6 +809,11 @@
               <li class="nav-item">
                 <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="workspaces" data-section="workflow-settings-section">
                   <i class="bi bi-diagram-3 me-2" style="font-size: 0.8em;"></i><span class="nav-text">Workflow</span>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="workspaces" data-section="file-download-settings-section">
+                  <i class="bi bi-download me-2" style="font-size: 0.8em;"></i><span class="nav-text">File Downloads</span>
                 </a>
               </li>
               <li class="nav-item">
@@ -756,8 +832,18 @@
                 </a>
               </li>
               <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="workspaces" data-section="chat-file-uploads-section">
+                  <i class="bi bi-paperclip me-2" style="font-size: 0.8em;"></i><span class="nav-text">Chat File Uploads</span>
+                </a>
+              </li>
+              <li class="nav-item">
                 <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="workspaces" data-section="metadata-extraction-section">
                   <i class="bi bi-file-earmark-code me-2" style="font-size: 0.8em;"></i><span class="nav-text">Metadata Extraction</span>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="workspaces" data-section="multimodal-vision-section">
+                  <i class="bi bi-eye me-2" style="font-size: 0.8em;"></i><span class="nav-text">Multi-Modal Vision Analysis</span>
                 </a>
               </li>
               <li class="nav-item">
@@ -768,6 +854,11 @@
               <li class="nav-item">
                 <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="workspaces" data-section="retention-policy-section">
                   <i class="bi bi-hourglass-split me-2" style="font-size: 0.8em;"></i><span class="nav-text">Retention Policy</span>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="workspaces" data-section="workspace-scope-lock-section">
+                  <i class="bi bi-lock me-2" style="font-size: 0.8em;"></i><span class="nav-text">Workspace Scope Lock</span>
                 </a>
               </li>
               <li class="nav-item">
@@ -820,6 +911,11 @@
                 </a>
               </li>
               <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="safety" data-section="desktop-notifications-section">
+                  <i class="bi bi-bell me-2" style="font-size: 0.8em;"></i><span class="nav-text">Desktop Conversation Notifications</span>
+                </a>
+              </li>
+              <li class="nav-item">
                 <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="safety" data-section="permissions-section">
                   <i class="bi bi-person-check me-2" style="font-size: 0.8em;"></i><span class="nav-text">Permissions</span>
                 </a>
@@ -854,6 +950,16 @@
                 </a>
               </li>
               <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="search-extract" data-section="url-access-section">
+                  <i class="bi bi-link-45deg me-2" style="font-size: 0.8em;"></i><span class="nav-text">URL Access</span>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="search-extract" data-section="source-review-section">
+                  <i class="bi bi-binoculars me-2" style="font-size: 0.8em;"></i><span class="nav-text">Deep Research</span>
+                </a>
+              </li>
+              <li class="nav-item">
                 <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="search-extract" data-section="azure-ai-search-section">
                   <i class="bi bi-search me-2" style="font-size: 0.8em;"></i><span class="nav-text">Azure AI Search</span>
                 </a>
@@ -864,8 +970,18 @@
                 </a>
               </li>
               <li class="nav-item">
-                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="search-extract" data-section="multimedia-support-section">
-                  <i class="bi bi-play-circle me-2" style="font-size: 0.8em;"></i><span class="nav-text">Multimedia Support</span>
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="search-extract" data-section="chunk-size-section">
+                  <i class="bi bi-collection me-2" style="font-size: 0.8em;"></i><span class="nav-text">Chunk Sizes</span>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="search-extract" data-section="video-intelligence-section">
+                  <i class="bi bi-play-circle me-2" style="font-size: 0.8em;"></i><span class="nav-text">AI Video Intelligence</span>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="search-extract" data-section="ai-voice-chat-section">
+                  <i class="bi bi-mic me-2" style="font-size: 0.8em;"></i><span class="nav-text">AI Voice Conversations</span>
                 </a>
               </li>
             </ul>
