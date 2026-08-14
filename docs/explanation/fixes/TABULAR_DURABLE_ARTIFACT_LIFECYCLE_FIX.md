@@ -20,6 +20,8 @@ The intended output contract is:
 - Search exhaustive analysis without an explicit format: one primary Markdown analysis artifact.
 - Analyze exhaustive analysis without an explicit format: one primary Markdown analysis artifact.
 
+> **Superseded for explicit row-by-row prompts in 0.250.201:** Search now publishes one exhaustive row Markdown artifact, while Analyze publishes a summary Markdown artifact plus an exhaustive row Markdown sibling. Aggregate whole-dataset analysis remains summary-only.
+
 ## Root Cause Analysis
 
 The production failures had seven related causes:

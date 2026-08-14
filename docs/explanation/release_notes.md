@@ -2,7 +2,7 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
-### **(v0.250.201)**
+### **(v0.250.202)**
 
 #### Bug Fixes
 
@@ -10,6 +10,16 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Made submitted user-message metadata available as soon as storage is acknowledged, without waiting for the assistant response to finish or requiring a page refresh.
     *   Preserved finalized metadata across success, server errors, cancellation, disconnect, recovery, image generation, document actions, and shared-chat streams while keeping in-flight message mutations gated until terminal completion.
     *   (Ref: #1244, `functions_chat_stream_events.py`, `chat-streaming.js`, `chat-messages.js`, `USER_MESSAGE_METADATA_STREAMING_FIX.md`)
+
+### **(v0.250.201)**
+
+#### Bug Fixes
+
+*   **Exhaustive Row-by-Row Markdown Output**
+    *   Fixed line-by-line Markdown analysis reading every source row but publishing only 12 summarized findings because the previous hierarchical lane intentionally bounded findings and notable rows.
+    *   Search now produces one exhaustive Markdown artifact containing every source row and every requested answer; Analyze produces a concise Markdown summary plus a separate exhaustive row-by-row Markdown artifact.
+    *   Exact-row Markdown uses ordered checkpoints, output-aware batching, consecutive answer-field validation, non-empty answer enforcement, final row-count/source-order checks, and literal Markdown escaping for untrusted content.
+    *   (Ref: `functions_tabular_orchestration.py`, `functions_tabular_generated_exports.py`, `route_backend_chats.py`, `TABULAR_EXHAUSTIVE_ROW_MARKDOWN_FIX.md`)
 
 ### **(v0.250.200)**
 

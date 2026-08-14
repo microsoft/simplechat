@@ -4,9 +4,9 @@
 
 **Root cause:** The backend persisted the user message before model work but returned its real ID only in the terminal SSE event. The browser therefore retained a `temp_user_*` ID throughout streaming, and a metadata drawer opened during that interval retried the stale ID.
 
-**Fixed/Implemented in version: `0.250.201`**
+**Fixed/Implemented in version: `0.250.202`**
 
-**Related config.py update:** `VERSION = "0.250.201"`
+**Related config.py update:** `VERSION = "0.250.202"`
 
 **Tracking:** `microsoft/simplechat#1244`
 

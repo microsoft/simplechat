@@ -2,8 +2,8 @@
 #!/usr/bin/env python3
 """
 Functional matrix for Search and Analyze durable tabular artifact ownership.
-Version: 0.250.199
-Implemented in: 0.250.199
+Version: 0.250.201
+Implemented in: 0.250.199; updated in 0.250.201
 
 This test drives the real shared planner, persisted-metadata sanitizer,
 artifact-set manifest, validation, and public projection for four customer
@@ -19,7 +19,7 @@ from test_support.versioning import assert_app_version_at_least
 ROOT_DIR = Path(__file__).resolve().parents[1]
 APP_ROOT = ROOT_DIR / "application" / "single_app"
 TEST_ROOT = Path(__file__).resolve().parent
-IMPLEMENTED_VERSION = "0.250.199"
+IMPLEMENTED_VERSION = "0.250.201"
 
 for import_path in (APP_ROOT, TEST_ROOT):
     if str(import_path) not in sys.path:
@@ -38,7 +38,15 @@ from test_tabular_phase5_artifact_set_lifecycle import (  # noqa: E402
 
 LINE_BY_LINE_PROMPT = (
     "For each line in this document, answer all eight questions individually. "
-    "Go line by line and do not consolidate or omit any line."
+    "Go line by line and do not consolidate or omit any line. The questions are as follows:\n"
+    "What is this and what is it trying to accomplish?\n"
+    "Why are we doing it?\n"
+    "What value does it produce?\n"
+    "What resources are identified or implied?\n"
+    "What is the timeline or schedule?\n"
+    "What happens if we stop?\n"
+    "Does this appear reasonable? Concerns / duplication / measurable outcomes\n"
+    "What information is missing to assess this activity?"
 )
 
 SETTINGS = {
@@ -135,15 +143,17 @@ def test_search_analyze_artifact_matrix():
             "name": "search_implicit_markdown",
             "action_mode": "search",
             "prompt": LINE_BY_LINE_PROMPT,
-            "task_type": "hierarchical_analysis",
+            "task_type": "structured_export",
             "formats": ["md"],
+            "artifact_ids": ["row-analysis-md"],
         },
         {
             "name": "analyze_implicit_markdown",
             "action_mode": "analyze",
             "prompt": LINE_BY_LINE_PROMPT,
-            "task_type": "hierarchical_analysis",
-            "formats": ["md"],
+            "task_type": "combined",
+            "formats": ["md", "md"],
+            "artifact_ids": ["analysis-summary", "row-analysis-md"],
         },
     ]
 
@@ -160,9 +170,20 @@ def test_search_analyze_artifact_matrix():
             for artifact in plan["deliverable_contract"]["requested_artifacts"]
         ]
         assert contract_formats == scenario["formats"], scenario["name"]
+        if "artifact_ids" in scenario:
+            assert [
+                artifact["artifact_id"]
+                for artifact in plan["deliverable_contract"]["requested_artifacts"]
+            ] == scenario["artifact_ids"], scenario["name"]
         assert plan["deliverable_contract"]["analysis_required"] is (
-            scenario["task_type"] != "structured_export"
+            scenario["action_mode"] == "analyze"
         )
+        if scenario["name"].endswith("implicit_markdown"):
+            assert plan["deliverable_contract"]["public_output_schema"] == [
+                f"answer_{index}" for index in range(1, 9)
+            ]
+            assert plan["deliverable_contract"]["row_cardinality"] == "one_per_source_row"
+            assert plan["deliverable_contract"]["ordering"] == "source_order"
         _publish_planned_artifacts(plan, scenario["formats"])
 
 

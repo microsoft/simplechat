@@ -2,8 +2,8 @@
 # test_tabular_phase8_ui_telemetry_rollout.py
 """
 Functional test for Phase 8 tabular UI telemetry and rollout metadata.
-Version: 0.250.199
-Implemented in: 0.250.164; planning-only metadata hardening in 0.250.167; Phase 7 harness compatibility in 0.250.177; safe failure metadata in 0.250.199
+Version: 0.250.201
+Implemented in: 0.250.164; planning-only metadata hardening in 0.250.167; Phase 7 harness compatibility in 0.250.177; safe failure metadata in 0.250.199; exhaustive Markdown compatibility in 0.250.201
 
 This test ensures shared tabular planner rollout assignment is stable and
 redacted, backend-only rollout controls remain sanitized from frontend
@@ -161,6 +161,7 @@ def load_public_status_helpers():
         "ANALYSIS_ARTIFACT_ROLE_PRIMARY_ANALYSIS": "primary_analysis",
         "TABULAR_EXPORT_ARTIFACT_PREVIEW_MAX_ROWS": 3,
         "TABULAR_GENERATION_PLAN_MAX_FIELDS": 50,
+        "TABULAR_ROW_ANALYSIS_MAX_QUESTIONS": 20,
         "TABULAR_EXPORT_ARTIFACT_PREVIEW_MAX_CHARS": 1200,
     }
     exec(compile(ast.Module(body=selected_nodes, type_ignores=[]), str(EXPORT_MODULE), "exec"), namespace)

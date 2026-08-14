@@ -1,8 +1,8 @@
 # test_chat_user_message_metadata_during_stream.py
 """
 UI test for user-message metadata during assistant streaming.
-Version: 0.250.201
-Implemented in: 0.250.201
+Version: 0.250.202
+Implemented in: 0.250.202
 
 This test ensures an expanded temporary user-message drawer loads persisted
 metadata as soon as the stream acknowledges storage, while the AI remains active.
@@ -50,7 +50,7 @@ def _start_static_test_server():
 @pytest.mark.ui
 def test_user_metadata_loads_before_assistant_stream_finishes(playwright):
     """Reconcile a temp user ID and load its open metadata drawer mid-stream."""
-    assert_app_version_at_least("0.250.201")
+    assert_app_version_at_least("0.250.202")
     browser = playwright.chromium.launch()
     context = browser.new_context(viewport={"width": 1440, "height": 900})
     page = context.new_page()
