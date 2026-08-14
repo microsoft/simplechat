@@ -4311,6 +4311,13 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
   }
 
   function getGeneratedAnalysisArtifactTitle(outputMetadata, outputFormat) {
+    const artifactId = String(outputMetadata?.artifact_id || outputMetadata?.member_id || '').trim().toLowerCase();
+    if (artifactId === 'analysis-summary') {
+      return 'Analyze Markdown summary';
+    }
+    if (artifactId === 'row-analysis-md') {
+      return 'Row-by-row Markdown output';
+    }
     const capability = String(outputMetadata?.capability || '').trim().toLowerCase();
     if (capability === 'analyze') {
       return `Analyze ${outputFormat.toUpperCase()} artifact`;

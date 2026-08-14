@@ -2,6 +2,16 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.201)**
+
+#### Bug Fixes
+
+*   **Exhaustive Row-by-Row Markdown Output**
+    *   Fixed line-by-line Markdown analysis reading every source row but publishing only 12 summarized findings because the previous hierarchical lane intentionally bounded findings and notable rows.
+    *   Search now produces one exhaustive Markdown artifact containing every source row and every requested answer; Analyze produces a concise Markdown summary plus a separate exhaustive row-by-row Markdown artifact.
+    *   Exact-row Markdown uses ordered checkpoints, output-aware batching, consecutive answer-field validation, non-empty answer enforcement, final row-count/source-order checks, and literal Markdown escaping for untrusted content.
+    *   (Ref: `functions_tabular_orchestration.py`, `functions_tabular_generated_exports.py`, `route_backend_chats.py`, `TABULAR_EXHAUSTIVE_ROW_MARKDOWN_FIX.md`)
+
 ### **(v0.250.200)**
 
 #### Bug Fixes

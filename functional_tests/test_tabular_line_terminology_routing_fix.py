@@ -2,8 +2,8 @@
 # test_tabular_line_terminology_routing_fix.py
 """
 Functional test for tabular exhaustive per-line terminology routing.
-Version: 0.250.199
-Implemented in: 0.250.197; updated in 0.250.199
+Version: 0.250.201
+Implemented in: 0.250.197; updated in 0.250.199 and 0.250.201
 
 A customer reported that a prompt phrased as "For each line in this document,
 I need eight questions answered... Go line by line and make sure all eight
@@ -41,7 +41,7 @@ APP_ROOT = REPO_ROOT / "application" / "single_app"
 if str(APP_ROOT) not in sys.path:
     sys.path.insert(0, str(APP_ROOT))
 
-IMPLEMENTED_VERSION = "0.250.197"
+IMPLEMENTED_VERSION = "0.250.201"
 
 CUSTOMER_PROMPT = (
     "For each line in this document, I need eight questions answered. I want "
@@ -83,8 +83,10 @@ def _install_lightweight_planner_dependency_stubs():
 _install_lightweight_planner_dependency_stubs()
 
 from functions_tabular_orchestration import (  # noqa: E402
+    extract_tabular_row_analysis_questions,
     get_tabular_generated_output_task_type,
     plan_tabular_request,
+    question_requests_tabular_exhaustive_row_output,
     question_requests_tabular_generated_output,
     question_requests_tabular_hierarchical_analysis,
 )
@@ -106,46 +108,80 @@ def test_line_phrasing_is_recognized_as_hierarchical_analysis_intent():
     assert question_requests_tabular_hierarchical_analysis(row_prompt) is True, row_prompt
 
 
-def test_customer_prompt_routes_to_durable_hierarchical_analysis_for_analyze_and_search():
-    """The exact reported prompt must resolve to the hierarchical_analysis task
-    type for both Analyze and Search action modes once the feature default is
-    active, and must fall back to no durable routing when the flag is off
-    (reproducing the reported bug)."""
-    print("Testing customer prompt routes to durable hierarchical analysis...")
+def test_customer_prompt_routes_to_exact_row_markdown_for_analyze_and_search():
+    """The exact prompt must preserve every row while keeping Analyze's summary sibling."""
+    print("Testing customer prompt routes to exact-row Markdown...")
     assert_app_version_at_least(IMPLEMENTED_VERSION)
 
     generated_output_requested = question_requests_tabular_generated_output(CUSTOMER_PROMPT)
     hierarchical_analysis_requested = question_requests_tabular_hierarchical_analysis(CUSTOMER_PROMPT)
+    exhaustive_row_output_requested = question_requests_tabular_exhaustive_row_output(CUSTOMER_PROMPT)
     assert hierarchical_analysis_requested is True
+    assert exhaustive_row_output_requested is True
+    assert len(extract_tabular_row_analysis_questions(CUSTOMER_PROMPT)) == 8
 
     active_settings = {"enable_tabular_hierarchical_analysis": True}
     assert get_tabular_generated_output_task_type(
-        generated_output_requested, hierarchical_analysis_requested, active_settings, action_mode="analyze"
-    ) == "hierarchical_analysis"
+        generated_output_requested,
+        hierarchical_analysis_requested,
+        active_settings,
+        action_mode="analyze",
+        exhaustive_row_output_requested=exhaustive_row_output_requested,
+    ) == "combined"
     assert get_tabular_generated_output_task_type(
-        generated_output_requested, hierarchical_analysis_requested, active_settings, action_mode="search"
-    ) == "hierarchical_analysis"
-    for action_mode in ("analyze", "search"):
+        generated_output_requested,
+        hierarchical_analysis_requested,
+        active_settings,
+        action_mode="search",
+        exhaustive_row_output_requested=exhaustive_row_output_requested,
+    ) == "structured_export"
+    expected_plans = {
+        "search": {
+            "task_type": "structured_export",
+            "artifact_ids": ["row-analysis-md"],
+            "analysis_required": False,
+        },
+        "analyze": {
+            "task_type": "combined",
+            "artifact_ids": ["analysis-summary", "row-analysis-md"],
+            "analysis_required": True,
+        },
+    }
+    for action_mode, expected in expected_plans.items():
         plan = plan_tabular_request(
             CUSTOMER_PROMPT,
             [{"file_name": "simple_financial_review_test_200.csv", "document_id": "doc-1"}],
             action_mode=action_mode,
             settings=active_settings,
         )
-        assert plan["durable_task_type"] == "hierarchical_analysis"
-        assert plan["deliverable_contract"]["analysis_required"] is True
-        assert [
-            artifact["format"]
-            for artifact in plan["deliverable_contract"]["requested_artifacts"]
-        ] == ["md"]
+        contract = plan["deliverable_contract"]
+        assert plan["durable_task_type"] == expected["task_type"]
+        assert plan["output_format"] == "md"
+        assert plan["row_analysis_mode"] == "exhaustive"
+        assert len(plan["row_analysis_questions"]) == 8
+        assert contract["analysis_required"] is expected["analysis_required"]
+        assert [artifact["artifact_id"] for artifact in contract["requested_artifacts"]] == expected["artifact_ids"]
+        assert [artifact["format"] for artifact in contract["requested_artifacts"]] == ["md"] * len(expected["artifact_ids"])
+        assert contract["public_output_schema"] == [f"answer_{index}" for index in range(1, 9)]
+        assert contract["row_cardinality"] == "one_per_source_row"
+        assert contract["ordering"] == "source_order"
+        assert contract["validation_profile"] == "exact_rows_schema"
 
     # Reproduce the reported bug: with the flag off, no durable task type is selected.
     disabled_settings = {"enable_tabular_hierarchical_analysis": False}
     assert get_tabular_generated_output_task_type(
-        generated_output_requested, hierarchical_analysis_requested, disabled_settings, action_mode="analyze"
+        generated_output_requested,
+        hierarchical_analysis_requested,
+        disabled_settings,
+        action_mode="analyze",
+        exhaustive_row_output_requested=exhaustive_row_output_requested,
     ) is None
     assert get_tabular_generated_output_task_type(
-        generated_output_requested, hierarchical_analysis_requested, disabled_settings, action_mode="search"
+        generated_output_requested,
+        hierarchical_analysis_requested,
+        disabled_settings,
+        action_mode="search",
+        exhaustive_row_output_requested=exhaustive_row_output_requested,
     ) is None
 
 
@@ -219,7 +255,7 @@ def test_enable_tabular_hierarchical_analysis_defaults_active():
 if __name__ == "__main__":
     tests = [
         test_line_phrasing_is_recognized_as_hierarchical_analysis_intent,
-        test_customer_prompt_routes_to_durable_hierarchical_analysis_for_analyze_and_search,
+        test_customer_prompt_routes_to_exact_row_markdown_for_analyze_and_search,
         test_enable_tabular_hierarchical_analysis_defaults_active,
     ]
     results = []

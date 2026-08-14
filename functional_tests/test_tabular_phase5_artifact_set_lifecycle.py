@@ -2,8 +2,8 @@
 # test_tabular_phase5_artifact_set_lifecycle.py
 """
 Functional test for Phase 5 tabular artifact-set lifecycle publication.
-Version: 0.250.180
-Implemented in: 0.250.175; publication commit compatibility updated in 0.250.180
+Version: 0.250.201
+Implemented in: 0.250.175; publication commit compatibility updated in 0.250.180; exhaustive Markdown compatibility updated in 0.250.201
 
 This test ensures durable tabular artifact sets hide staged members until the
 whole required set is valid, publish Analyze Markdown as the primary member,
@@ -122,6 +122,7 @@ def load_artifact_set_helpers():
         "TABULAR_EXPORT_ARTIFACT_PREVIEW_MAX_ROWS": 10,
         "TABULAR_EXPORT_ARTIFACT_PREVIEW_MAX_CHARS": 24000,
         "TABULAR_GENERATION_PLAN_MAX_FIELDS": 50,
+        "TABULAR_ROW_ANALYSIS_MAX_QUESTIONS": 20,
         "TABULAR_ARTIFACT_SET_CONTRACT_VERSION": "tabular-artifact-set-v1",
         "TABULAR_ARTIFACT_SET_LIFECYCLE_PLANNED": "planned",
         "TABULAR_ARTIFACT_SET_LIFECYCLE_GENERATING": "generating",

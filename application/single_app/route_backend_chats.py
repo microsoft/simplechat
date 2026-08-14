@@ -63,6 +63,7 @@ from functions_tabular_orchestration import (
     build_tabular_legacy_post_tool_fallback_decision as _shared_build_tabular_legacy_post_tool_fallback_decision,
     get_tabular_generated_output_format as _shared_get_tabular_generated_output_format,
     get_tabular_generated_output_task_type as _shared_get_tabular_generated_output_task_type,
+    question_requests_tabular_exhaustive_row_output as _shared_question_requests_tabular_exhaustive_row_output,
     question_requests_tabular_generated_output as _shared_question_requests_tabular_generated_output,
     question_requests_tabular_hierarchical_analysis as _shared_question_requests_tabular_hierarchical_analysis,
     settings_flag_enabled as _shared_settings_flag_enabled,
@@ -5016,16 +5017,28 @@ def question_requests_tabular_hierarchical_analysis(user_question):
     return _shared_question_requests_tabular_hierarchical_analysis(user_question)
 
 
+def question_requests_tabular_exhaustive_row_output(user_question):
+    """Return True when the prompt requires one narrative result per source row."""
+    return _shared_question_requests_tabular_exhaustive_row_output(user_question)
+
+
 def _settings_flag_enabled(settings, key, default=False):
     return _shared_settings_flag_enabled(settings, key, default=default)
 
 
-def _get_tabular_generated_output_task_type(generated_output_requested, hierarchical_analysis_requested, settings, action_mode=None):
+def _get_tabular_generated_output_task_type(
+    generated_output_requested,
+    hierarchical_analysis_requested,
+    settings,
+    action_mode=None,
+    exhaustive_row_output_requested=False,
+):
     return _shared_get_tabular_generated_output_task_type(
         generated_output_requested,
         hierarchical_analysis_requested,
         settings,
         action_mode=action_mode,
+        exhaustive_row_output_requested=exhaustive_row_output_requested,
     )
 
 
@@ -5760,23 +5773,38 @@ def _build_tabular_generated_output_query_descriptor(
     return descriptor
 
 
-def _build_direct_tabular_generated_output_source(user_question, file_contexts, user_id, conversation_id, settings, action_mode=None):
+def _build_direct_tabular_generated_output_source(
+    user_question,
+    file_contexts,
+    user_id,
+    conversation_id,
+    settings,
+    action_mode=None,
+    planner_metadata=None,
+):
     """Build a replayable full-tabular source descriptor without requiring a prior tool page."""
     generated_output_requested = question_requests_tabular_generated_output(user_question)
     hierarchical_analysis_requested = question_requests_tabular_hierarchical_analysis(user_question)
+    exhaustive_row_output_requested = question_requests_tabular_exhaustive_row_output(user_question)
     durable_task_type = _get_tabular_generated_output_task_type(
         generated_output_requested,
         hierarchical_analysis_requested,
         settings,
         action_mode=action_mode,
+        exhaustive_row_output_requested=exhaustive_row_output_requested,
     )
     analysis_only_requested = durable_task_type == TABULAR_RUN_TASK_HIERARCHICAL_ANALYSIS
     combined_requested = durable_task_type == TABULAR_RUN_TASK_COMBINED
     if generated_output_requested and str(action_mode or '').strip().lower() == 'analyze' and not durable_task_type:
         return None
-    if not generated_output_requested and not analysis_only_requested:
+    if not generated_output_requested and not analysis_only_requested and not exhaustive_row_output_requested:
         return None
-    if hierarchical_analysis_requested and not generated_output_requested and not analysis_only_requested:
+    if (
+        hierarchical_analysis_requested
+        and not generated_output_requested
+        and not analysis_only_requested
+        and not exhaustive_row_output_requested
+    ):
         return None
 
     normalized_contexts = dedupe_tabular_file_contexts(file_contexts)
@@ -5920,7 +5948,11 @@ def _build_direct_tabular_generated_output_source(user_question, file_contexts, 
             )
         ),
     })
-    output_format = get_tabular_generated_output_format(user_question) or 'md'
+    output_format = (
+        str((planner_metadata or {}).get('output_format') or '').strip().lower()
+        or get_tabular_generated_output_format(user_question)
+        or 'md'
+    )
     queued_output_format = 'md' if analysis_only_requested else output_format
     return {
         'file_context': file_context,
@@ -5958,6 +5990,7 @@ def _build_direct_tabular_generated_output_source(user_question, file_contexts, 
         'batch_count_estimate': max(1, math.ceil(row_count / max(batch_budget['max_rows'], 1))),
         'analysis_only_requested': analysis_only_requested,
         'combined_requested': combined_requested,
+        'exhaustive_row_output_requested': exhaustive_row_output_requested,
     }
 
 
@@ -6014,6 +6047,7 @@ def maybe_queue_direct_tabular_generated_output(
             conversation_id,
             settings,
             action_mode=planner_action_mode,
+            planner_metadata=planner_metadata,
         )
         if not direct_source:
             emit_direct_parity_event(
@@ -6044,6 +6078,10 @@ def maybe_queue_direct_tabular_generated_output(
             planner_metadata=planner_metadata,
         )
         background_metadata = build_background_tabular_generated_output_metadata(background_run)
+        actual_batch_count = (
+            _safe_int(background_metadata.get('batch_count'))
+            or direct_source['batch_count_estimate']
+        )
         accepted_parity_result = parity_result
         if callable(parity_result_builder):
             accepted_parity_result = parity_result_builder(
@@ -6061,7 +6099,7 @@ def maybe_queue_direct_tabular_generated_output(
             metrics={
                 'source_count': len(file_contexts or []),
                 'row_count': direct_source.get('row_count'),
-                'batch_count_estimate': direct_source.get('batch_count_estimate'),
+                'batch_count_estimate': actual_batch_count,
             },
         )
         emit_direct_parity_event(
@@ -6082,7 +6120,7 @@ def maybe_queue_direct_tabular_generated_output(
                 'content': title,
                 'detail': (
                     f"run_id={background_metadata.get('export_run_id')}; "
-                    f"rows={direct_source['row_count']}; batches~={direct_source['batch_count_estimate']}; checkpointed=true"
+                    f"rows={direct_source['row_count']}; batches={actual_batch_count}; checkpointed=true"
                 ),
                 'activity': build_tabular_post_processing_activity_payload(
                     'tabular.generated_output',
@@ -6092,7 +6130,7 @@ def maybe_queue_direct_tabular_generated_output(
                     output_format=direct_source['output_format'],
                     file_name=direct_source['source_candidate'].get('filename'),
                     batch_index=0,
-                    batch_count=direct_source['batch_count_estimate'],
+                    batch_count=actual_batch_count,
                 ),
             }
             maybe_callback_result = thought_callback(thought_payload)
@@ -6105,7 +6143,7 @@ def maybe_queue_direct_tabular_generated_output(
                 'conversation_id': conversation_id,
                 'source_file_name': direct_source['source_candidate'].get('filename'),
                 'row_count': direct_source['row_count'],
-                'batch_count_estimate': direct_source['batch_count_estimate'],
+                'batch_count_estimate': actual_batch_count,
                 'task_type': direct_source.get('task_type') or 'structured_export',
                 'output_format': direct_source['output_format'],
                 'export_run_id': background_metadata.get('export_run_id'),

@@ -4,9 +4,12 @@
 import hashlib
 import json
 import os
+import re
 from typing import Mapping
 
 from functions_analysis_deliverables import (
+    ANALYSIS_ARTIFACT_ROLE_PRIMARY_ANALYSIS,
+    ANALYSIS_ARTIFACT_ROLE_REQUESTED_OUTPUT,
     ANALYSIS_DELIVERABLE_EVENT_FINALIZED,
     ANALYSIS_DELIVERABLE_EVENT_PLANNED,
     ANALYSIS_ORDERING_NOT_APPLICABLE,
@@ -18,6 +21,7 @@ from functions_analysis_deliverables import (
     ANALYSIS_VALIDATION_PROFILE_ARTIFACT_SET,
     ANALYSIS_VALIDATION_PROFILE_EXACT_ROWS_SCHEMA,
     ANALYSIS_VALIDATION_PROFILE_EXACT_ROWS_SCHEMA_AND_RULES,
+    build_analysis_deliverable_artifact,
     build_analysis_deliverable_contract,
     emit_analysis_deliverable_contract_event,
 )
@@ -323,11 +327,76 @@ def question_requests_tabular_hierarchical_analysis(user_question):
     )
 
 
+def question_requests_tabular_exhaustive_row_output(user_question):
+    """Return True when the user requires one narrative result per source row."""
+    normalized_question = str(user_question or "").strip().lower()
+    if not normalized_question:
+        return False
+
+    row_output_markers = (
+        "for each row",
+        "for every row",
+        "for each line",
+        "for every line",
+        "line by line",
+        "row by row",
+        "each line item",
+        "each row individually",
+        "each line individually",
+        "individually for each row",
+        "individually for each line",
+        "one answer per row",
+        "one answer per line",
+        "one result per row",
+        "one result per line",
+        "one output per row",
+        "one output per line",
+        "one markdown section per row",
+        "one markdown section per line",
+    )
+    return any(marker in normalized_question for marker in row_output_markers)
+
+
+def extract_tabular_row_analysis_questions(user_question, max_questions=20):
+    """Extract an ordered, bounded question list for exact-row narrative output."""
+    question_text = str(user_question or "").strip()
+    if not question_text:
+        return []
+
+    marker_match = re.search(
+        r"(?is)\b(?:questions?\s+(?:are|is)\s+as\s+follows|answer\s+(?:the\s+)?following\s+questions?)\s*:?",
+        question_text,
+    )
+    candidate_text = question_text[marker_match.end():] if marker_match else question_text
+    line_candidates = []
+    for raw_line in candidate_text.splitlines():
+        normalized_line = re.sub(r"^\s*(?:[-*•]|\d+[.)])\s*", "", raw_line).strip()
+        if normalized_line:
+            line_candidates.append(normalized_line)
+    if len(line_candidates) >= 2:
+        return line_candidates[:max_questions]
+
+    split_candidates = re.split(
+        r"(?i)(?=\b(?:what|why|how|when|where|who|which|does|do|is|are|can|could|should|would|concerns?)\b)",
+        candidate_text,
+    )
+    questions = []
+    for candidate in split_candidates:
+        normalized_candidate = re.sub(r"\s+", " ", candidate).strip(" :-\t\r\n")
+        if not normalized_candidate:
+            continue
+        questions.append(normalized_candidate[:500])
+        if len(questions) >= max_questions:
+            break
+    return questions
+
+
 def get_tabular_generated_output_task_type(
     generated_output_requested,
     hierarchical_analysis_requested,
     settings,
     action_mode=None,
+    exhaustive_row_output_requested=False,
 ):
     """Map request intent to the existing durable generated-output task type."""
     hierarchical_analysis_enabled = settings_flag_enabled(
@@ -336,6 +405,10 @@ def get_tabular_generated_output_task_type(
         False,
     )
     analysis_required = str(action_mode or "").strip().lower() == "analyze"
+    if exhaustive_row_output_requested and hierarchical_analysis_enabled:
+        return TABULAR_RUN_TASK_COMBINED if analysis_required else TABULAR_RUN_TASK_STRUCTURED_EXPORT
+    if exhaustive_row_output_requested:
+        return None
     if generated_output_requested and analysis_required:
         return TABULAR_RUN_TASK_COMBINED
     if generated_output_requested and hierarchical_analysis_requested and hierarchical_analysis_enabled:
@@ -575,13 +648,29 @@ def plan_tabular_request(
     structured_output_formats = get_tabular_generated_output_formats(user_question)
     generated_output_requested = question_requests_tabular_generated_output(user_question)
     hierarchical_analysis_requested = question_requests_tabular_hierarchical_analysis(user_question)
+    exhaustive_row_output_requested = question_requests_tabular_exhaustive_row_output(user_question)
+    exhaustive_narrative_row_output_requested = bool(
+        exhaustive_row_output_requested and not structured_output_formats
+    )
+    row_analysis_questions = (
+        extract_tabular_row_analysis_questions(user_question)
+        if exhaustive_narrative_row_output_requested
+        else []
+    )
     durable_task_type = get_tabular_generated_output_task_type(
         generated_output_requested,
         hierarchical_analysis_requested,
         settings,
         action_mode=normalized_action_mode,
+        exhaustive_row_output_requested=exhaustive_narrative_row_output_requested,
     )
-    output_format = structured_output_formats[0] if structured_output_formats else None
+    output_format = (
+        structured_output_formats[0]
+        if structured_output_formats
+        else "md"
+        if exhaustive_narrative_row_output_requested
+        else None
+    )
     execution_contract = durable_task_type or TABULAR_EXECUTION_CONTRACT_FOREGROUND_AGGREGATE
     source_coverage = _build_source_coverage(normalized_contexts)
     execution_group_id = _build_execution_group_id(
@@ -642,16 +731,42 @@ def plan_tabular_request(
         if transformation_spec
         else ANALYSIS_TRANSFORMATION_MODE_SEMANTIC
     )
+    exact_row_output_requested = generated_output_requested or exhaustive_narrative_row_output_requested
     validation_profile = (
         ANALYSIS_VALIDATION_PROFILE_EXACT_ROWS_SCHEMA_AND_RULES
-        if generated_output_requested and transformation_spec
+        if exact_row_output_requested and transformation_spec
         else ANALYSIS_VALIDATION_PROFILE_EXACT_ROWS_SCHEMA
-        if generated_output_requested
+        if exact_row_output_requested
         else ANALYSIS_VALIDATION_PROFILE_ARTIFACT_SET
     )
+    row_analysis_output_schema = [
+        f"answer_{question_index}"
+        for question_index in range(1, len(row_analysis_questions) + 1)
+    ] or (["row_analysis"] if exhaustive_narrative_row_output_requested else [])
+    requested_artifacts = None
+    if exhaustive_narrative_row_output_requested:
+        requested_artifacts = []
+        request_order = 0
+        if normalized_action_mode == "analyze":
+            requested_artifacts.append(build_analysis_deliverable_artifact(
+                "analysis-summary",
+                ANALYSIS_ARTIFACT_ROLE_PRIMARY_ANALYSIS,
+                "md",
+                required=True,
+                request_order=request_order,
+            ))
+            request_order += 1
+        requested_artifacts.append(build_analysis_deliverable_artifact(
+            "row-analysis-md",
+            ANALYSIS_ARTIFACT_ROLE_REQUESTED_OUTPUT,
+            "md",
+            required=True,
+            request_order=request_order,
+        ))
     deliverable_contract = build_analysis_deliverable_contract(
         action_mode=action_mode,
         requested_output_formats=requested_output_formats,
+        requested_artifacts=requested_artifacts,
         analysis_required=(
             normalized_action_mode == "analyze"
             or durable_task_type in {
@@ -660,18 +775,19 @@ def plan_tabular_request(
             }
         ),
         public_output_schema=(
-            output_hints.get("public_output_schema")
+            row_analysis_output_schema
+            or output_hints.get("public_output_schema")
             or output_hints.get("output_schema")
             or []
         ),
         row_cardinality=(
             ANALYSIS_ROW_CARDINALITY_ONE_PER_SOURCE_ROW
-            if generated_output_requested
+            if exact_row_output_requested
             else ANALYSIS_ROW_CARDINALITY_NOT_APPLICABLE
         ),
         ordering=(
             ANALYSIS_ORDERING_SOURCE_ORDER
-            if generated_output_requested
+            if exact_row_output_requested
             else ANALYSIS_ORDERING_NOT_APPLICABLE
         ),
         transformation_mode=transformation_mode,
@@ -689,6 +805,9 @@ def plan_tabular_request(
         "durable_task_type": durable_task_type,
         "generated_output_requested": generated_output_requested,
         "hierarchical_analysis_requested": hierarchical_analysis_requested,
+        "exhaustive_row_output_requested": exhaustive_narrative_row_output_requested,
+        "row_analysis_mode": "exhaustive" if exhaustive_narrative_row_output_requested else "summary",
+        "row_analysis_questions": row_analysis_questions,
         "requested_output_formats": requested_output_formats,
         "output_format": output_format,
         "action_mode": normalized_action_mode,
