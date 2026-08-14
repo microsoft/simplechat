@@ -1248,6 +1248,13 @@ def _upload_document_analysis_generated_artifact(
         )
         return None
 
+    debug_print(
+        '[WORKFLOW_DOCUMENT_ANALYSIS] Uploaded generated artifact | '
+        f'conversation_id={normalized_conversation_id} | '
+        f'file={file_name} | '
+        f'output_format={output_format} | '
+        f'content_chars={len(str(file_content or ""))}'
+    )
     artifact_payload = {
         'capability': 'analyze',
         'artifact_message_id': upload_result.get('message', {}).get('id'),
@@ -1345,6 +1352,15 @@ def _maybe_create_document_analysis_generated_artifacts(
     json_artifact_requested = _prompt_explicitly_requests_json_artifact(analysis_prompt)
     xml_payload = normalize_xml_artifact_payload(analysis_reply)
     xml_artifact_requested = bool(artifact_intent.get('xml_artifact_requested'))
+    debug_print(
+        '[WORKFLOW_DOCUMENT_ANALYSIS] Analysis artifact sizing | '
+        f'document_count={document_count} | '
+        f'analysis_reply_chars={len(analysis_reply)} | '
+        f'xml_payload_chars={len(xml_payload) if xml_payload else 0} | '
+        f'xml_artifact_requested={xml_artifact_requested} | '
+        f'json_payload_present={json_payload is not None} | '
+        f'json_artifact_requested={json_artifact_requested}'
+    )
     create_lossless_artifacts = bool(
         artifact_intent.get('exhaustive')
         or artifact_intent.get('table_output_requested')
@@ -1358,6 +1374,13 @@ def _maybe_create_document_analysis_generated_artifacts(
         return {'artifacts': [], 'assistant_reply': None}
 
     primary_tabular_outputs_pending = _primary_tabular_generated_outputs_are_pending(primary_tabular_outputs)
+    pure_tabular_durable_handoff = bool(
+        primary_tabular_outputs
+        and isinstance(analysis_result.get('tabular_preflight_result'), dict)
+    )
+    if pure_tabular_durable_handoff:
+        return {'artifacts': [], 'assistant_reply': None}
+
     if create_lossless_artifacts:
         artifacts = []
         structured_rows = _build_document_analysis_structured_rows(analysis_result)
@@ -2695,6 +2718,11 @@ def _maybe_execute_pure_tabular_analyze_preflight(
     gpt_model = _resolve_tabular_document_action_model_name(workflow, settings)
     if not user_id or not gpt_model:
         return None
+    model_context = _build_workflow_model_context(
+        workflow,
+        gpt_model,
+        workflow.get('model_provider'),
+    )
 
     file_contexts = build_tabular_file_contexts_from_manifest(tabular_sources)
     if len(file_contexts) != 1:
@@ -2734,6 +2762,7 @@ def _maybe_execute_pure_tabular_analyze_preflight(
             user_id=user_id,
             conversation_id=conversation_id,
             gpt_model=gpt_model,
+            model_context=model_context,
             thought_callback=publish_post_processing_thought,
             cancel_requested=cancel_requested,
             request_correlation_id=request_correlation_id,
@@ -2949,6 +2978,7 @@ def _execute_mixed_source_analyze_workflow(
         return tabular_preflight_result
 
     narrative_sources = partitions['narrative_sources']
+    narrative_result = None
     if narrative_sources:
         if callable(activity_callback):
             activity_callback({'type': 'mixed_source_progress', 'phase': 'analyzing_narrative', 'label': 'Analyzing narrative documents'})
@@ -2993,20 +3023,29 @@ def _execute_mixed_source_analyze_workflow(
                     if total_windows and processed_windows == total_windows and not failed_windows
                     else ('partial' if processed_windows else EVIDENCE_STATUS_FAILED)
                 )
+                narrative_summary_source_text = str(narrative_item.get('text') or '')
                 evidence_envelopes.append(build_evidence_envelope(
                     document_id=document_id,
                     source_kind='narrative',
                     engine=EVIDENCE_ENGINE_DOCUMENT_ANALYSIS,
                     status=status,
-                    summary=str(narrative_item.get('text') or ''),
+                    summary=narrative_summary_source_text,
                     citations=[],
                     generated_artifacts=[],
                     coverage={'terminal': True, 'processed_windows': processed_windows, 'total_windows': total_windows, 'failed_windows': failed_windows},
                     error='Narrative analysis could not be completed.' if status == EVIDENCE_STATUS_FAILED else None,
                 ))
+                debug_print(
+                    '[MIXED_SOURCE_ANALYZE] Narrative evidence envelope sized | '
+                    f'document_id={document_id} | '
+                    f'source_text_chars={len(narrative_summary_source_text)} | '
+                    f"envelope_summary_chars={len(evidence_envelopes[-1].get('summary') or '')} | "
+                    f"envelope_truncated={bool((evidence_envelopes[-1].get('coverage') or {}).get('evidence_envelope_truncated'))}"
+                )
         except MixedSourceCancellationError:
             raise
         except Exception:
+            narrative_result = None
             for source in narrative_sources:
                 evidence_envelopes.append(build_evidence_envelope(
                     document_id=source.get('document_id'), source_kind='narrative',
@@ -3014,6 +3053,39 @@ def _execute_mixed_source_analyze_workflow(
                     summary='Narrative evidence could not be completed for this source.',
                     coverage={'terminal': True}, error='Narrative analysis could not be completed.',
                 ))
+
+    if narrative_sources and narrative_result is not None and not partitions['tabular_sources']:
+        # Pure-narrative Analyze (no tabular sources): use run_document_analysis's own
+        # full-fidelity synthesis directly instead of the bounded evidence-envelope/collective-
+        # reduction hop below, which exists to combine different engine types (narrative +
+        # tabular) and caps each source's contribution far below what run_document_analysis
+        # already produced.
+        debug_print(
+            '[MIXED_SOURCE_ANALYZE] Pure narrative sources only | skipping bounded evidence handoff | '
+            f'document_count={len(narrative_sources)} | '
+            f"analysis_reply_chars={len(str(narrative_result.get('analysis_reply') or ''))}"
+        )
+        if callable(activity_callback):
+            activity_callback({
+                'type': 'mixed_source_progress',
+                'phase': 'complete',
+                'label': 'Analysis complete',
+                'status': EVIDENCE_STATUS_COMPLETED,
+            })
+        return {
+            'reply': narrative_result.get('reply') or narrative_result.get('analysis_reply'),
+            'analysis_reply': narrative_result.get('analysis_reply'),
+            'coverage': narrative_result.get('coverage') or {},
+            'documents': (narrative_result.get('coverage') or {}).get('documents') or [],
+            'document_ids': narrative_result.get('document_ids') or [source.get('document_id') for source in narrative_sources],
+            'raw_analysis_items': narrative_result.get('raw_analysis_items') or [],
+            'document_analysis_items': narrative_result.get('document_analysis_items') or [],
+            'analysis_intent': narrative_result.get('analysis_intent') or {},
+            'mixed_source_manifest': manifest,
+            'mixed_source_evidence': [],
+            'generated_tabular_outputs': [],
+            'agent_citations': [],
+        }
 
     tabular_sources = partitions['tabular_sources']
     if tabular_sources:
@@ -3085,6 +3157,12 @@ def _execute_mixed_source_analyze_workflow(
         telemetry_settings=settings,
         request_correlation_id=request_correlation_id,
     )
+    debug_print(
+        '[MIXED_SOURCE_ANALYZE] Evidence handoff sized | '
+        f'envelope_count={len(evidence_envelopes)} | '
+        f'handoff_bytes={len(json.dumps(handoff, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))} | '
+        f"handoff_compacted={bool((handoff.get('mixed_source_coverage') or {}).get('handoff_compacted'))}"
+    )
     mode_outcome = evaluate_mixed_source_mode_outcome(
         'analyze',
         {
@@ -3144,6 +3222,11 @@ def _execute_mixed_source_analyze_workflow(
     )
     if not collective_reply:
         collective_reply = 'The selected sources could not be combined into a final analysis.'
+    debug_print(
+        '[MIXED_SOURCE_ANALYZE] Collective reduction completed | '
+        f'evidence_envelope_count={len(evidence_envelopes)} | '
+        f'collective_reply_chars={len(collective_reply)}'
+    )
     emit_mixed_source_telemetry(
         settings,
         'reduction',
@@ -7351,6 +7434,7 @@ def _workflow_model_chat_capabilities_enabled(workflow):
 
 
 def _build_workflow_model_context(workflow, deployment_name, provider):
+    """Build non-secret model selection identifiers for deferred execution."""
     workflow = workflow if isinstance(workflow, dict) else {}
     binding_summary = workflow.get('model_binding_summary') if isinstance(workflow.get('model_binding_summary'), dict) else {}
     endpoint_id = str(workflow.get('model_endpoint_id') or binding_summary.get('endpoint_id') or '').strip()

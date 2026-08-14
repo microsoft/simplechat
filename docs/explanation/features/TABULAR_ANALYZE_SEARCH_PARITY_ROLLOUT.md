@@ -37,13 +37,15 @@ Configuration options:
 
 All Phase 8 rollout controls are backend-only and are removed by `sanitize_settings_for_user()` before non-admin frontend settings are returned.
 
+> **Update (0.250.186):** `tabular_request_planner_mode` now defaults to `active` and both `enable_tabular_search_shared_preflight` and `enable_tabular_analyze_durable_preflight` default to `True`. Bounded foreground synthesis for exhaustive row-by-row tabular requests is no longer the default behavior. There is intentionally no admin UI toggle for this; use the `SIMPLECHAT_DISABLE_TABULAR_PARITY_DURABLE_PREFLIGHT` environment variable for emergency rollback (see below).
+
 ## Usage Instructions
 
 How to enable/configure:
-1. Keep the planner mode `off` for the default legacy behavior.
-2. Use `shadow` mode to compare planner decisions without queueing shared-planner durable work.
-3. Enable the relevant single-source Search or Analyze gate before switching that mode to active traffic.
-4. Adjust `tabular_analyze_parity_rollout_percent` for canary cohorts.
+1. The planner mode defaults to `active`; no configuration is required for normal operation.
+2. Use `shadow` mode only to compare planner decisions without queueing shared-planner durable work, for example while validating a new model or source type.
+3. Set the environment variable `SIMPLECHAT_DISABLE_TABULAR_PARITY_DURABLE_PREFLIGHT=true` to force `tabular_request_planner_mode` to `off` and both shared-preflight flags to `False` for every request during an incident; unset it to restore the active default.
+4. Adjust `tabular_analyze_parity_rollout_percent` for canary cohorts if a partial rollout is needed.
 5. Keep `tabular_legacy_post_tool_fallback_mode='enabled'` until operator telemetry shows no required legacy recovery traffic.
 
 Operator telemetry:

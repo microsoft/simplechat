@@ -45,6 +45,10 @@ from functions_collaboration import (
     update_personal_collaboration_title,
 )
 from functions_conversation_cache import bump_conversation_cache_version
+from functions_chat_stream_events import (
+    USER_MESSAGE_PERSISTED_EVENT_TYPE,
+    build_user_message_persisted_stream_event,
+)
 from functions_group import assert_group_role, check_group_status_allows_operation, find_group_by_id, require_active_group
 from functions_image_messages import decode_image_content, get_complete_image_content, is_blob_backed_image_message, is_external_image_url
 from functions_message_masking import (
@@ -1449,6 +1453,10 @@ def register_route_backend_collaboration(bp):
 
             def generate_stream():
                 try:
+                    yield build_user_message_persisted_stream_event(
+                        conversation_id,
+                        serialized_user_message.get('id'),
+                    )
                     internal_stream_view = current_app.view_functions.get('chat_stream_api')
                     if not callable(internal_stream_view):
                         yield _serialize_stream_error(
@@ -1507,6 +1515,9 @@ def register_route_backend_collaboration(bp):
                                     message_persisted=True,
                                     conversation_id=conversation_id,
                                 )
+
+                            if stream_payload.get('type') == USER_MESSAGE_PERSISTED_EVENT_TYPE:
+                                return None
 
                             if not stream_payload.get('done'):
                                 return normalized_event_block + '\n\n'

@@ -2,8 +2,8 @@
 # test_model_endpoint_identity_header.py
 """
 Functional test for model endpoint identity headers.
-Version: 0.250.186
-Implemented in: 0.250.186
+Version: 0.250.203
+Implemented in: 0.250.203
 
 This test ensures configurable model endpoint identity headers produce stable,
 non-reversible HMAC values and honor endpoint-level override behavior.
@@ -25,7 +25,7 @@ from functions_model_endpoint_identity_header import (
 from test_support.versioning import assert_app_version_at_least
 
 
-IMPLEMENTED_VERSION = "0.250.186"
+IMPLEMENTED_VERSION = "0.250.203"
 TEST_SECRET = "test-secret-for-identity-header"
 
 

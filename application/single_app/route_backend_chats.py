@@ -64,6 +64,7 @@ from functions_tabular_orchestration import (
     build_tabular_legacy_post_tool_fallback_decision as _shared_build_tabular_legacy_post_tool_fallback_decision,
     get_tabular_generated_output_format as _shared_get_tabular_generated_output_format,
     get_tabular_generated_output_task_type as _shared_get_tabular_generated_output_task_type,
+    question_requests_tabular_exhaustive_row_output as _shared_question_requests_tabular_exhaustive_row_output,
     question_requests_tabular_generated_output as _shared_question_requests_tabular_generated_output,
     question_requests_tabular_hierarchical_analysis as _shared_question_requests_tabular_hierarchical_analysis,
     settings_flag_enabled as _shared_settings_flag_enabled,
@@ -116,6 +117,7 @@ from functions_assigned_knowledge import (
 from functions_global_agents import get_global_agents
 from functions_group_agents import get_group_agents
 from functions_personal_agents import get_personal_agents
+from functions_chat_stream_events import build_user_message_persisted_stream_event
 from functions_source_review import (
     build_deep_research_ledger,
     build_deep_research_ledger_markdown,
@@ -4010,6 +4012,9 @@ def question_requests_attachment_backed_row_follow_up(user_question):
         'each row',
         'every row',
         'per row',
+        'each line',
+        'every line',
+        'per line',
         'each comment',
         'every comment',
         'per comment',
@@ -5014,16 +5019,28 @@ def question_requests_tabular_hierarchical_analysis(user_question):
     return _shared_question_requests_tabular_hierarchical_analysis(user_question)
 
 
+def question_requests_tabular_exhaustive_row_output(user_question):
+    """Return True when the prompt requires one narrative result per source row."""
+    return _shared_question_requests_tabular_exhaustive_row_output(user_question)
+
+
 def _settings_flag_enabled(settings, key, default=False):
     return _shared_settings_flag_enabled(settings, key, default=default)
 
 
-def _get_tabular_generated_output_task_type(generated_output_requested, hierarchical_analysis_requested, settings, action_mode=None):
+def _get_tabular_generated_output_task_type(
+    generated_output_requested,
+    hierarchical_analysis_requested,
+    settings,
+    action_mode=None,
+    exhaustive_row_output_requested=False,
+):
     return _shared_get_tabular_generated_output_task_type(
         generated_output_requested,
         hierarchical_analysis_requested,
         settings,
         action_mode=action_mode,
+        exhaustive_row_output_requested=exhaustive_row_output_requested,
     )
 
 
@@ -5037,7 +5054,9 @@ def question_requests_tabular_structured_object_output(user_question):
         'one object per comment',
         'one json object per comment',
         'one object per row',
+        'one object per line',
         'one row per comment',
+        'one line per comment',
         'one object per submission',
         'one object for each row',
         'one output row for each source row',
@@ -5047,9 +5066,15 @@ def question_requests_tabular_structured_object_output(user_question):
         'exactly one output row',
         'for each row',
         'for every row',
+        'for each line',
+        'for every line',
         'every row',
         'each row',
+        'every line',
+        'each line',
         'one row per',
+        'one line per',
+        'line by line',
         'each object must contain',
         'exactly these fields',
     )
@@ -5750,23 +5775,38 @@ def _build_tabular_generated_output_query_descriptor(
     return descriptor
 
 
-def _build_direct_tabular_generated_output_source(user_question, file_contexts, user_id, conversation_id, settings, action_mode=None):
+def _build_direct_tabular_generated_output_source(
+    user_question,
+    file_contexts,
+    user_id,
+    conversation_id,
+    settings,
+    action_mode=None,
+    planner_metadata=None,
+):
     """Build a replayable full-tabular source descriptor without requiring a prior tool page."""
     generated_output_requested = question_requests_tabular_generated_output(user_question)
     hierarchical_analysis_requested = question_requests_tabular_hierarchical_analysis(user_question)
+    exhaustive_row_output_requested = question_requests_tabular_exhaustive_row_output(user_question)
     durable_task_type = _get_tabular_generated_output_task_type(
         generated_output_requested,
         hierarchical_analysis_requested,
         settings,
         action_mode=action_mode,
+        exhaustive_row_output_requested=exhaustive_row_output_requested,
     )
     analysis_only_requested = durable_task_type == TABULAR_RUN_TASK_HIERARCHICAL_ANALYSIS
     combined_requested = durable_task_type == TABULAR_RUN_TASK_COMBINED
     if generated_output_requested and str(action_mode or '').strip().lower() == 'analyze' and not durable_task_type:
         return None
-    if not generated_output_requested and not analysis_only_requested:
+    if not generated_output_requested and not analysis_only_requested and not exhaustive_row_output_requested:
         return None
-    if hierarchical_analysis_requested and not generated_output_requested and not analysis_only_requested:
+    if (
+        hierarchical_analysis_requested
+        and not generated_output_requested
+        and not analysis_only_requested
+        and not exhaustive_row_output_requested
+    ):
         return None
 
     normalized_contexts = dedupe_tabular_file_contexts(file_contexts)
@@ -5910,7 +5950,11 @@ def _build_direct_tabular_generated_output_source(user_question, file_contexts, 
             )
         ),
     })
-    output_format = get_tabular_generated_output_format(user_question) or 'md'
+    output_format = (
+        str((planner_metadata or {}).get('output_format') or '').strip().lower()
+        or get_tabular_generated_output_format(user_question)
+        or 'md'
+    )
     queued_output_format = 'md' if analysis_only_requested else output_format
     return {
         'file_context': file_context,
@@ -5948,6 +5992,7 @@ def _build_direct_tabular_generated_output_source(user_question, file_contexts, 
         'batch_count_estimate': max(1, math.ceil(row_count / max(batch_budget['max_rows'], 1))),
         'analysis_only_requested': analysis_only_requested,
         'combined_requested': combined_requested,
+        'exhaustive_row_output_requested': exhaustive_row_output_requested,
     }
 
 
@@ -6004,6 +6049,7 @@ def maybe_queue_direct_tabular_generated_output(
             conversation_id,
             settings,
             action_mode=planner_action_mode,
+            planner_metadata=planner_metadata,
         )
         if not direct_source:
             emit_direct_parity_event(
@@ -6034,6 +6080,10 @@ def maybe_queue_direct_tabular_generated_output(
             planner_metadata=planner_metadata,
         )
         background_metadata = build_background_tabular_generated_output_metadata(background_run)
+        actual_batch_count = (
+            _safe_int(background_metadata.get('batch_count'))
+            or direct_source['batch_count_estimate']
+        )
         accepted_parity_result = parity_result
         if callable(parity_result_builder):
             accepted_parity_result = parity_result_builder(
@@ -6051,7 +6101,7 @@ def maybe_queue_direct_tabular_generated_output(
             metrics={
                 'source_count': len(file_contexts or []),
                 'row_count': direct_source.get('row_count'),
-                'batch_count_estimate': direct_source.get('batch_count_estimate'),
+                'batch_count_estimate': actual_batch_count,
             },
         )
         emit_direct_parity_event(
@@ -6072,7 +6122,7 @@ def maybe_queue_direct_tabular_generated_output(
                 'content': title,
                 'detail': (
                     f"run_id={background_metadata.get('export_run_id')}; "
-                    f"rows={direct_source['row_count']}; batches~={direct_source['batch_count_estimate']}; checkpointed=true"
+                    f"rows={direct_source['row_count']}; batches={actual_batch_count}; checkpointed=true"
                 ),
                 'activity': build_tabular_post_processing_activity_payload(
                     'tabular.generated_output',
@@ -6082,7 +6132,7 @@ def maybe_queue_direct_tabular_generated_output(
                     output_format=direct_source['output_format'],
                     file_name=direct_source['source_candidate'].get('filename'),
                     batch_index=0,
-                    batch_count=direct_source['batch_count_estimate'],
+                    batch_count=actual_batch_count,
                 ),
             }
             maybe_callback_result = thought_callback(thought_payload)
@@ -6095,7 +6145,7 @@ def maybe_queue_direct_tabular_generated_output(
                 'conversation_id': conversation_id,
                 'source_file_name': direct_source['source_candidate'].get('filename'),
                 'row_count': direct_source['row_count'],
-                'batch_count_estimate': direct_source['batch_count_estimate'],
+                'batch_count_estimate': actual_batch_count,
                 'task_type': direct_source.get('task_type') or 'structured_export',
                 'output_format': direct_source['output_format'],
                 'export_run_id': background_metadata.get('export_run_id'),
@@ -9407,16 +9457,22 @@ def question_requests_tabular_exhaustive_results(user_question):
     explicit_phrases = (
         'all results',
         'all rows',
+        'all lines',
         'all values',
         'all of them',
         'complete list',
         'each row',
+        'each line',
         'each one',
         'every row',
+        'every line',
         'every one',
         'exhaustive',
         'for each row',
         'for every row',
+        'for each line',
+        'for every line',
+        'line by line',
         'full list',
         'list all',
         'list each',
@@ -9434,11 +9490,17 @@ def question_requests_tabular_exhaustive_results(user_question):
         r'\bone object per comment row\b',
         r'\bone object per (?:comment|submission)\b',
         r'\bone object per (?:comment|submission|input )?row\b',
+        r'\bone object per (?:comment|submission|input )?line\b',
         r'\bone row per (?:comment|submission|input )?row\b',
+        r'\bone line per (?:comment|submission|input )?line\b',
         r'\bone row per (?:comment|submission)\b',
+        r'\bone line per (?:comment|submission)\b',
         r'\bone object for each row\b',
+        r'\bone object for each line\b',
         r'\bone row per\b',
+        r'\bone line per\b',
         r'\bfor (?:each|every) row\b',
+        r'\bfor (?:each|every) line\b',
     )
     structured_output_markers = (
         'json array',
@@ -14976,6 +15038,13 @@ def register_route_backend_chats(bp):
             'metadata': user_metadata,
         })
         cosmos_messages_container.upsert_item(user_message_doc)
+        if callable(publish_background_event):
+            publish_background_event(
+                build_user_message_persisted_stream_event(
+                    conversation_id,
+                    user_message_id,
+                )
+            )
 
         try:
             document_action_activity_context = {
@@ -15836,6 +15905,11 @@ def register_route_backend_chats(bp):
     @login_required
     @user_required
     def chat_api():
+        publish_background_event = getattr(
+            g,
+            'chat_publish_background_event',
+            None,
+        )
         try:
             request_start_time = time.time()
             settings = get_settings()
@@ -16895,6 +16969,13 @@ def register_route_backend_chats(bp):
                 # Note: Message-level chat_type will be updated after document search
 
                 cosmos_messages_container.upsert_item(user_message_doc)
+                if callable(publish_background_event):
+                    publish_background_event(
+                        build_user_message_persisted_stream_event(
+                            conversation_id,
+                            user_message_id,
+                        )
+                    )
 
                 # Log chat activity for real-time tracking
                 try:
@@ -20064,7 +20145,7 @@ def register_route_backend_chats(bp):
                 'blocked': payload.get('blocked', False),
             })
 
-        def generate_compatibility_response():
+        def generate_compatibility_response(publish_background_event=None):
             """Bridge legacy JSON chat handling into a terminal SSE event for parity cases."""
             try:
                 g.conversation_id = finalized_conversation_id
@@ -20087,6 +20168,7 @@ def register_route_backend_chats(bp):
                     }
                     yield f"data: {json.dumps(image_request_event)}\n\n"
 
+                g.chat_publish_background_event = publish_background_event
                 legacy_result = chat_api()
                 legacy_response = legacy_result
                 status_code = 200
@@ -21177,6 +21259,10 @@ def register_route_backend_chats(bp):
                     }
 
                     cosmos_messages_container.upsert_item(user_message_doc)
+                    yield build_user_message_persisted_stream_event(
+                        conversation_id,
+                        user_message_id,
+                    )
                     debug_print(
                         f"[STREAMING] Saved user message {user_message_id} | thread_id={current_user_thread_id} | previous_thread_id={previous_thread_id}"
                     )

@@ -2,8 +2,8 @@
 # test_tabular_phase5_artifact_set_lifecycle.py
 """
 Functional test for Phase 5 tabular artifact-set lifecycle publication.
-Version: 0.250.180
-Implemented in: 0.250.175; publication commit compatibility updated in 0.250.180
+Version: 0.250.201
+Implemented in: 0.250.175; publication commit compatibility updated in 0.250.180; exhaustive Markdown compatibility updated in 0.250.201
 
 This test ensures durable tabular artifact sets hide staged members until the
 whole required set is valid, publish Analyze Markdown as the primary member,
@@ -11,8 +11,10 @@ and fail closed when a required sibling is missing.
 """
 
 import ast
+import logging
 import re
 import sys
+from collections import Counter
 from pathlib import Path
 
 from test_support.versioning import assert_app_version_at_least
@@ -27,9 +29,13 @@ if str(APP_ROOT) not in sys.path:
 from functions_analysis_deliverables import (  # noqa: E402
     ANALYSIS_ARTIFACT_ROLE_PRIMARY_ANALYSIS,
     ANALYSIS_ARTIFACT_ROLE_REQUESTED_OUTPUT,
+    ANALYSIS_DELIVERABLE_MAX_ARTIFACT_ID_LENGTH,
+    ANALYSIS_DELIVERABLE_MAX_ARTIFACTS,
     build_analysis_deliverable_contract,
+    is_analysis_internal_lineage_field,
     validate_analysis_artifact_set,
 )
+from functions_tabular_transformations import normalize_tabular_transformation_spec  # noqa: E402
 
 
 IMPLEMENTED_VERSION = "0.250.180"
@@ -64,12 +70,16 @@ def load_artifact_set_helpers():
         "_build_public_generated_artifact_from_member",
         "_build_public_generated_artifacts_from_manifest",
         "_build_public_artifact_projection",
+        "_normalize_tabular_run_planner_metadata",
+        "_build_planner_source_coverage_summary",
+        "_normalize_tabular_run_rollout_assignment",
     }
     selected_functions = [
         node for node in tree.body
         if isinstance(node, ast.FunctionDef) and node.name in helper_names
     ]
     publication_commits = []
+    logged_events = []
 
     def commit_publication(current_user_id, conversation_id, artifact_message_id, artifact_set_id, artifact_member_id, publication_generation):
         publication_commits.append({
@@ -81,8 +91,19 @@ def load_artifact_set_helpers():
             "publication_generation": publication_generation,
         })
 
+    def fake_log_event(message, extra=None, level=logging.INFO):
+        logged_events.append({"message": message, "extra": extra or {}, "level": level})
+
     namespace = {
         "re": re,
+        "logging": logging,
+        "log_event": fake_log_event,
+        "logged_events": logged_events,
+        "Counter": Counter,
+        "is_analysis_internal_lineage_field": is_analysis_internal_lineage_field,
+        "ANALYSIS_DELIVERABLE_MAX_ARTIFACT_ID_LENGTH": ANALYSIS_DELIVERABLE_MAX_ARTIFACT_ID_LENGTH,
+        "ANALYSIS_DELIVERABLE_MAX_ARTIFACTS": ANALYSIS_DELIVERABLE_MAX_ARTIFACTS,
+        "normalize_tabular_transformation_spec": normalize_tabular_transformation_spec,
         "validate_analysis_artifact_set": validate_analysis_artifact_set,
         "commit_generated_chat_artifact_publication_for_user": commit_publication,
         "publication_commits": publication_commits,
@@ -93,6 +114,7 @@ def load_artifact_set_helpers():
         "TABULAR_RUN_TASK_HIERARCHICAL_ANALYSIS": "hierarchical_analysis",
         "TABULAR_RUN_TASK_COMBINED": "combined",
         "TABULAR_RUN_TASK_TYPES": {"structured_export", "hierarchical_analysis", "combined"},
+        "TABULAR_RUN_TASK_TYPES": {"structured_export", "hierarchical_analysis", "combined"},
         "TABULAR_EXPORT_STATUS_RUNNING": "running",
         "TABULAR_EXPORT_STATUS_COMPLETED": "completed",
         "TABULAR_EXPORT_STATUS_FAILED": "failed",
@@ -100,6 +122,7 @@ def load_artifact_set_helpers():
         "TABULAR_EXPORT_ARTIFACT_PREVIEW_MAX_ROWS": 10,
         "TABULAR_EXPORT_ARTIFACT_PREVIEW_MAX_CHARS": 24000,
         "TABULAR_GENERATION_PLAN_MAX_FIELDS": 50,
+        "TABULAR_ROW_ANALYSIS_MAX_QUESTIONS": 20,
         "TABULAR_ARTIFACT_SET_CONTRACT_VERSION": "tabular-artifact-set-v1",
         "TABULAR_ARTIFACT_SET_LIFECYCLE_PLANNED": "planned",
         "TABULAR_ARTIFACT_SET_LIFECYCLE_GENERATING": "generating",

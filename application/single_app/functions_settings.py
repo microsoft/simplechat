@@ -25,6 +25,7 @@ from functions_service_health import get_default_service_health
 import app_settings_cache
 import inspect
 import copy
+import os
 import json
 import secrets
 import uuid
@@ -1049,6 +1050,67 @@ def _refresh_app_settings_cache_after_write(settings_payload, context="app_setti
     _update_cache("after_version_bump")
 
 
+def _env_flag_enabled(name):
+    return str(os.environ.get(name, '')).strip().lower() in {'1', 'true', 'yes', 'on'}
+
+
+def _apply_tabular_parity_env_kill_switch(settings_payload):
+    """Force tabular durable-preflight parity off when the emergency env kill switch is set.
+
+    These parity controls ship active by default with no admin UI toggle; this
+    environment variable is the only rollback path for an operator incident.
+    """
+    if not isinstance(settings_payload, dict):
+        return settings_payload
+    if _env_flag_enabled('SIMPLECHAT_DISABLE_TABULAR_PARITY_DURABLE_PREFLIGHT'):
+        settings_payload['tabular_request_planner_mode'] = 'off'
+        settings_payload['enable_tabular_search_shared_preflight'] = False
+        settings_payload['enable_tabular_analyze_durable_preflight'] = False
+        settings_payload['enable_tabular_hierarchical_analysis'] = False
+    return settings_payload
+
+
+# Backend-only tabular durable-preflight parity flags that ship "active" by default with no
+# admin UI toggle. The only sanctioned way to disable them is the
+# SIMPLECHAT_DISABLE_TABULAR_PARITY_DURABLE_PREFLIGHT environment kill switch (applied later,
+# dynamically, in _apply_tabular_parity_env_kill_switch()) -- never a persisted settings value.
+TABULAR_PARITY_DURABLE_PREFLIGHT_ACTIVE_DEFAULTS = {
+    'tabular_request_planner_mode': 'active',
+    'enable_tabular_search_shared_preflight': True,
+    'enable_tabular_analyze_durable_preflight': True,
+    'enable_tabular_hierarchical_analysis': True,
+}
+
+
+def normalize_tabular_parity_durable_preflight_defaults(settings):
+    """Upgrade stale persisted tabular durable-preflight parity flags to their active defaults.
+
+    deep_merge_dicts() only fills in keys that are *missing* from a persisted settings
+    document; it never overwrites a key that already exists. These four flags were
+    originally introduced with off/False defaults, so the first settings load in any
+    existing deployment permanently persisted the old off/False values to Cosmos DB.
+    Later raising the code-level default to active/True (see
+    TABULAR_PARITY_DURABLE_PREFLIGHT_ACTIVE_DEFAULTS) therefore had no effect for any
+    deployment whose settings document already had these keys -- every tabular Analyze/
+    Search request kept silently falling back to the legacy bounded foreground path.
+
+    Because these settings have no admin UI, any stored value that differs from the
+    active default can only be stale drift (never an intentional admin choice), so it is
+    safe to unconditionally correct it here on every load. This runs independently of the
+    env kill switch, which is still applied afterwards in _apply_tabular_parity_env_kill_switch()
+    and continues to work exactly as before.
+    """
+    if not isinstance(settings, dict):
+        return False
+
+    changed = False
+    for key, active_value in TABULAR_PARITY_DURABLE_PREFLIGHT_ACTIVE_DEFAULTS.items():
+        if settings.get(key) != active_value:
+            settings[key] = active_value
+            changed = True
+    return changed
+
+
 def get_settings(use_cosmos=False, include_source=False):
     default_settings = {
         # External health check
@@ -1072,7 +1134,7 @@ def get_settings(use_cosmos=False, include_source=False):
         'enable_tabular_processing_plugin': False,
         'enable_analysis_deliverable_contract_telemetry': False,
         'analysis_deliverable_contract_mode': 'off',
-        'enable_tabular_hierarchical_analysis': False,
+        'enable_tabular_hierarchical_analysis': True,
         'enable_tabular_parity_contract_telemetry': False,
         'tabular_parity_contract_mode': 'off',
         'tabular_hierarchical_analysis_reduce_fan_in': 25,
@@ -1086,9 +1148,9 @@ def get_settings(use_cosmos=False, include_source=False):
         'tabular_analyze_parity_rollout_percent': 100,
         'tabular_analyze_parity_rollout_state': 'active',
         'tabular_background_handoff_mode': 'legacy',
-        'tabular_request_planner_mode': 'off',
-        'enable_tabular_search_shared_preflight': False,
-        'enable_tabular_analyze_durable_preflight': False,
+        'tabular_request_planner_mode': 'active',
+        'enable_tabular_search_shared_preflight': True,
+        'enable_tabular_analyze_durable_preflight': True,
         'enable_tabular_mixed_deferred_composition_planning': False,
         'enable_tabular_multifile_execution_unit_planning': False,
         'tabular_legacy_post_tool_fallback_mode': 'enabled',
@@ -1657,6 +1719,8 @@ def get_settings(use_cosmos=False, include_source=False):
     }
 
     def _format_result(settings_payload, source):
+        if isinstance(settings_payload, dict):
+            settings_payload = _apply_tabular_parity_env_kill_switch(settings_payload)
         if include_source:
             return settings_payload, source
         return settings_payload
@@ -1766,6 +1830,7 @@ def get_settings(use_cosmos=False, include_source=False):
         public_workspace_display_settings_updated = normalize_public_workspace_display_settings(merged)
         key_vault_reminder_settings_updated = normalize_key_vault_reminder_settings(merged)
         model_endpoint_identity_header_settings_updated = normalize_model_endpoint_identity_header_settings(merged)
+        tabular_parity_durable_preflight_settings_updated = normalize_tabular_parity_durable_preflight_defaults(merged)
 
         merged['enable_tabular_processing_plugin'] = is_tabular_processing_enabled(merged)
 
@@ -1781,6 +1846,7 @@ def get_settings(use_cosmos=False, include_source=False):
             or public_workspace_display_settings_updated
             or key_vault_reminder_settings_updated
             or model_endpoint_identity_header_settings_updated
+            or tabular_parity_durable_preflight_settings_updated
         ):
             cosmos_settings_container.upsert_item(merged)
             _refresh_app_settings_cache_after_write(merged, context="merge_upsert")
