@@ -1027,6 +1027,7 @@ def _apply_tabular_parity_env_kill_switch(settings_payload):
         settings_payload['tabular_request_planner_mode'] = 'off'
         settings_payload['enable_tabular_search_shared_preflight'] = False
         settings_payload['enable_tabular_analyze_durable_preflight'] = False
+        settings_payload['enable_tabular_hierarchical_analysis'] = False
     return settings_payload
 
 
@@ -1054,7 +1055,7 @@ def get_settings(use_cosmos=False, include_source=False):
         'enable_tabular_processing_plugin': False,
         'enable_analysis_deliverable_contract_telemetry': False,
         'analysis_deliverable_contract_mode': 'off',
-        'enable_tabular_hierarchical_analysis': False,
+        'enable_tabular_hierarchical_analysis': True,
         'enable_tabular_parity_contract_telemetry': False,
         'tabular_parity_contract_mode': 'off',
         'tabular_hierarchical_analysis_reduce_fan_in': 25,
