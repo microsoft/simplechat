@@ -115,6 +115,7 @@ from functions_assigned_knowledge import (
 from functions_global_agents import get_global_agents
 from functions_group_agents import get_group_agents
 from functions_personal_agents import get_personal_agents
+from functions_chat_stream_events import build_user_message_persisted_stream_event
 from functions_source_review import (
     build_deep_research_ledger,
     build_deep_research_ledger_markdown,
@@ -14959,6 +14960,13 @@ def register_route_backend_chats(bp):
             'metadata': user_metadata,
         })
         cosmos_messages_container.upsert_item(user_message_doc)
+        if callable(publish_background_event):
+            publish_background_event(
+                build_user_message_persisted_stream_event(
+                    conversation_id,
+                    user_message_id,
+                )
+            )
 
         try:
             document_action_activity_context = {
@@ -15819,6 +15827,11 @@ def register_route_backend_chats(bp):
     @login_required
     @user_required
     def chat_api():
+        publish_background_event = getattr(
+            g,
+            'chat_publish_background_event',
+            None,
+        )
         try:
             request_start_time = time.time()
             settings = get_settings()
@@ -16871,6 +16884,13 @@ def register_route_backend_chats(bp):
                 # Note: Message-level chat_type will be updated after document search
 
                 cosmos_messages_container.upsert_item(user_message_doc)
+                if callable(publish_background_event):
+                    publish_background_event(
+                        build_user_message_persisted_stream_event(
+                            conversation_id,
+                            user_message_id,
+                        )
+                    )
 
                 # Log chat activity for real-time tracking
                 try:
@@ -20038,7 +20058,7 @@ def register_route_backend_chats(bp):
                 'blocked': payload.get('blocked', False),
             })
 
-        def generate_compatibility_response():
+        def generate_compatibility_response(publish_background_event=None):
             """Bridge legacy JSON chat handling into a terminal SSE event for parity cases."""
             try:
                 g.conversation_id = finalized_conversation_id
@@ -20061,6 +20081,7 @@ def register_route_backend_chats(bp):
                     }
                     yield f"data: {json.dumps(image_request_event)}\n\n"
 
+                g.chat_publish_background_event = publish_background_event
                 legacy_result = chat_api()
                 legacy_response = legacy_result
                 status_code = 200
@@ -21144,6 +21165,10 @@ def register_route_backend_chats(bp):
                     }
 
                     cosmos_messages_container.upsert_item(user_message_doc)
+                    yield build_user_message_persisted_stream_event(
+                        conversation_id,
+                        user_message_id,
+                    )
                     debug_print(
                         f"[STREAMING] Saved user message {user_message_id} | thread_id={current_user_thread_id} | previous_thread_id={previous_thread_id}"
                     )

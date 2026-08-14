@@ -1,5 +1,13 @@
 // chat-streaming.js
-import { appendMessage, renderAiMessageContent, updateUserMessageId } from './chat-messages.js';
+import {
+    appendMessage,
+    markUserMessageMetadataFinalizationUnconfirmed,
+    markUserMessageMetadataUnconfirmed,
+    refreshUserMessageMetadata,
+    renderAiMessageContent,
+    setUserMessageStreamingActionsDisabled,
+    updateUserMessageId,
+} from './chat-messages.js';
 import { applyConversationMetadataUpdate, markConversationRead } from './chat-conversations.js';
 import { hideLoadingIndicatorInChatbox, showLoadingIndicatorInChatbox } from './chat-loading-indicator.js';
 import { showToast } from './chat-toast.js';
@@ -13,6 +21,7 @@ import { requestDesktopNotificationPermissionIfNeeded, showDesktopConversationNo
 let currentStreamController = null;
 let currentStreamContext = null;
 const MAX_STREAM_CLIENT_ERROR_LENGTH = 500;
+const USER_MESSAGE_PERSISTED_EVENT_TYPE = 'user_message_persisted';
 
 function normalizeLegacyEscapedSseDelimiters(chunk) {
     return String(chunk || '').replace(/(\})\\n\\n(?=(?:data:|event:|id:|retry:|:|$))/g, '$1\n\n');
@@ -468,6 +477,24 @@ export function applyStreamingConversationMetadata(data = {}) {
     applyConversationMetadataUpdate(conversationId, metadataUpdates);
 }
 
+export function applyStreamingUserMessagePersistence(data = {}, tempUserMessageId = null) {
+    if (data.type !== USER_MESSAGE_PERSISTED_EVENT_TYPE || data.message_persisted !== true) {
+        return false;
+    }
+
+    const persistedUserMessageId = String(data.user_message_id || '').trim();
+    if (!persistedUserMessageId) {
+        return null;
+    }
+
+    const pendingUserMessageId = String(tempUserMessageId || '').trim();
+    if (pendingUserMessageId) {
+        updateUserMessageId(pendingUserMessageId, persistedUserMessageId);
+    }
+    setUserMessageStreamingActionsDisabled(persistedUserMessageId, true);
+    return persistedUserMessageId;
+}
+
 async function getStreamingStatus(conversationId) {
     if (!conversationId) {
         return null;
@@ -491,6 +518,7 @@ async function attemptStreamingRecovery(conversationId, failedMessageId, tempUse
         onError = null,
         onFinally = null,
         reconnectStatusLabel = 'Reconnecting...',
+        persistedUserMessageId = null,
     } = options;
 
     if (!conversationId) {
@@ -541,6 +569,7 @@ async function attemptStreamingRecovery(conversationId, failedMessageId, tempUse
                 allowRecovery: false,
                 recoveryConversationId: conversationId,
                 reconnectStatusLabel,
+                initialPersistedUserMessageId: persistedUserMessageId,
             },
         );
     } catch (error) {
@@ -559,6 +588,7 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
         cancelEndpoint = null,
         reconnectStatusLabel = 'Reconnecting...',
         fallbackAgentInfo = null,
+        initialPersistedUserMessageId = null,
     } = options;
 
     if (currentStreamController) {
@@ -584,8 +614,39 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
     let hasStreamedContent = false;
     let streamError = false;
     let streamCompleted = false;
+    let persistedUserMessageId = String(initialPersistedUserMessageId || '').trim() || null;
     let lastChunkAt = null;
     let eventCount = 0;
+
+    function finalizePendingUserMessageMetadata() {
+        if (persistedUserMessageId) {
+            if (tempUserMessageId) {
+                updateUserMessageId(
+                    tempUserMessageId,
+                    persistedUserMessageId,
+                    { refreshExpandedMetadata: true }
+                );
+            } else {
+                refreshUserMessageMetadata(persistedUserMessageId);
+            }
+        } else if (tempUserMessageId) {
+            markUserMessageMetadataUnconfirmed(tempUserMessageId);
+        }
+    }
+
+    function markInterruptedUserMessageMetadata() {
+        if (persistedUserMessageId) {
+            markUserMessageMetadataFinalizationUnconfirmed(persistedUserMessageId);
+        } else if (tempUserMessageId) {
+            markUserMessageMetadataUnconfirmed(tempUserMessageId);
+        }
+    }
+
+    function enablePersistedUserMessageActions() {
+        if (persistedUserMessageId) {
+            setUserMessageStreamingActionsDisabled(persistedUserMessageId, false);
+        }
+    }
 
     requestFactory(abortController.signal).then(response => {
         if (!response.ok) {
@@ -618,6 +679,11 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
             lastChunkAt = Date.now();
 
             if (data.error) {
+                if (data.user_message_id && data.message_persisted === true) {
+                    persistedUserMessageId = String(data.user_message_id);
+                }
+                finalizePendingUserMessageMetadata();
+                enablePersistedUserMessageActions();
                 stopThoughtPolling();
                 streamError = true;
                 clearStreamingThoughtSession(tempAiMessageId);
@@ -654,6 +720,18 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
                 return false;
             }
 
+            if (data.type === USER_MESSAGE_PERSISTED_EVENT_TYPE) {
+                const acknowledgedUserMessageId = applyStreamingUserMessagePersistence(
+                    data,
+                    tempUserMessageId
+                );
+                if (acknowledgedUserMessageId) {
+                    persistedUserMessageId = acknowledgedUserMessageId;
+                }
+                updateStreamContextConversation(streamContext, data.conversation_id || data.conversationId);
+                return false;
+            }
+
             if (data.conversation_id || data.conversationId) {
                 updateStreamContextConversation(streamContext, data.conversation_id || data.conversationId);
             }
@@ -668,6 +746,11 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
                 stopThoughtPolling();
                 streamCompleted = true;
                 clearStreamingThoughtSession(tempAiMessageId);
+                if (data.user_message_id) {
+                    persistedUserMessageId = String(data.user_message_id);
+                }
+                finalizePendingUserMessageMetadata();
+                enablePersistedUserMessageActions();
 
                 if (data.cancelled || data.canceled || data.type === 'cancelled' || data.type === 'canceled') {
                     finalizeCancelledStreamingMessage(
@@ -783,6 +866,7 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
                                     onError,
                                     onFinally,
                                     reconnectStatusLabel,
+                                    persistedUserMessageId,
                                 },
                             );
                             if (recovered) {
@@ -790,6 +874,7 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
                             }
                         }
 
+                        markInterruptedUserMessageMetadata();
                         clearStreamingThoughtSession(tempAiMessageId);
                         handleStreamError(
                             tempAiMessageId,
@@ -820,6 +905,7 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
                 readStream(); // Continue reading
             }).catch(async err => {
                 if (abortController.signal.aborted) {
+                    markInterruptedUserMessageMetadata();
                     void reportClientStreamEvent('stream_aborted', {
                         conversation_id: recoveryConversationId,
                         elapsed_ms: Date.now() - streamStartedAt,
@@ -858,6 +944,7 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
                             onError,
                             onFinally,
                             reconnectStatusLabel,
+                            persistedUserMessageId,
                         },
                     );
                     if (recovered) {
@@ -865,6 +952,7 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
                     }
                 }
 
+                markInterruptedUserMessageMetadata();
                 clearStreamingThoughtSession(tempAiMessageId);
                 handleStreamError(tempAiMessageId, accumulatedContent, err.message, err);
                 if (typeof onError === 'function') {
@@ -880,6 +968,7 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
         
     }).catch(async error => {
         if (abortController.signal.aborted) {
+            markInterruptedUserMessageMetadata();
             void reportClientStreamEvent('stream_aborted', {
                 conversation_id: recoveryConversationId,
                 elapsed_ms: Date.now() - streamStartedAt,
@@ -918,6 +1007,7 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
                     onError,
                     onFinally,
                     reconnectStatusLabel,
+                    persistedUserMessageId,
                 },
             );
             if (recovered) {
@@ -925,6 +1015,7 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
             }
         }
 
+        markInterruptedUserMessageMetadata();
         clearStreamingThoughtSession(tempAiMessageId);
         handleStreamError(tempAiMessageId, accumulatedContent, error.message, error);
 
@@ -1145,10 +1236,6 @@ function finalizeCancelledStreamingMessage(messageId, userMessageId, finalData, 
     const messageElement = getStreamingMessageElement(messageId);
     const partialContent = finalData.full_content || finalData.partial_content || fallbackContent || '';
 
-    if (finalData.user_message_id && userMessageId) {
-        updateUserMessageId(userMessageId, finalData.user_message_id);
-    }
-
     removeStreamingStopButton(messageId);
 
     if (finalData.message_id && finalData.message_persisted) {
@@ -1276,11 +1363,6 @@ function finalizeStreamingMessage(messageId, userMessageId, finalData, fallbackA
     if (!messageElement) return;
 
     removeStreamingStopButton(messageId);
-    
-    // Update user message ID first
-    if (finalData.user_message_id && userMessageId) {
-        updateUserMessageId(userMessageId, finalData.user_message_id);
-    }
     
     // Remove the temporary streaming message
     messageElement.remove();
