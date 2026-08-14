@@ -1,9 +1,9 @@
 # test_chat_sidebar_toggle_controls.py
 """
 UI test for the unified chat navigation shell.
-Version: 0.250.192
+Version: 0.250.196
 Implemented in: 0.241.018
-Top-navigation crash regression added in: 0.250.192
+Top-navigation crash regression added in: 0.250.196
 
 This test ensures that chats in top-nav mode use the adaptive conversation
 rail, preserve compact desktop top-nav links, and become the hamburger drawer

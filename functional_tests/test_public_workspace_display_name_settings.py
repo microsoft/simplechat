@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
 Functional test for configurable Public Workspace end-user display names.
-Version: 0.250.192
+Version: 0.250.196
 Implemented in: 0.250.110
-Top-navigation crash regression added in: 0.250.192
+Top-navigation crash regression added in: 0.250.196
 
 This test ensures that Public Workspace display-name settings are normalized,
 derived labels are safe for frontend use, only the raw setting is persisted,

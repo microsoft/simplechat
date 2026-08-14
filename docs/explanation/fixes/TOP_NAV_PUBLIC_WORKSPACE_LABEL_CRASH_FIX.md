@@ -1,8 +1,8 @@
 # Top Navigation Public Workspace Label Crash Fix
 
-Fixed/Implemented in version: **0.250.192**
+Fixed/Implemented in version: **0.250.196**
 
-Version reference: `application/single_app/config.py` reports version `0.250.192`.
+Version reference: `application/single_app/config.py` reports version `0.250.196`.
 
 ## Issue Description
 
