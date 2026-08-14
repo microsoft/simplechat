@@ -2,8 +2,8 @@
 # test_tabular_phase3_public_schema_projection.py
 """
 Functional test for Phase 3 public schema projection and passthrough safety.
-Version: 0.250.182
-Implemented in: 0.250.173; request-order and unchanged-copy guard compatibility updated in 0.250.182
+Version: 0.250.201
+Implemented in: 0.250.173; request-order and unchanged-copy guard compatibility updated in 0.250.182; exhaustive Markdown updated in 0.250.201
 
 This test ensures generated tabular artifacts expose only the persisted public
 schema while retaining internal checkpoint lineage, and that raw row passthrough
@@ -11,8 +11,10 @@ is refused for derived generated-output requests.
 """
 
 import ast
+import html
 import io
 import json
+import re
 import sys
 import traceback
 from pathlib import Path
@@ -63,6 +65,9 @@ def load_tabular_export_namespace(checkpoint_rows):
     module_tree = ast.parse(source, filename=str(TABULAR_EXPORTS))
     function_names = {
         "_safe_int",
+        "_normalize_analysis_text",
+        "_escape_markdown_text",
+        "_validate_exhaustive_row_analysis_entries",
         "_serialize_generated_output_value",
         "_sanitize_generated_xml_tag_name",
         "_write_generated_xml_row",
@@ -89,6 +94,7 @@ def load_tabular_export_namespace(checkpoint_rows):
         "build_safe_csv_headers": build_safe_csv_headers,
         "csv": __import__("csv"),
         "escape_xml_text": escape_xml_text,
+        "html": html,
         "io": io,
         "is_analysis_internal_lineage_field": lambda field_name: str(field_name or "").strip() in {
             "source_row_number",
@@ -198,6 +204,104 @@ def test_public_projection_drives_csv_json_xml_and_preview():
     assert_false("source_row_number" in preview_rows[0], "preview lineage leakage")
 
 
+def test_exact_row_markdown_serializes_all_200_rows_and_eight_answers():
+    print("Testing exhaustive row-by-row Markdown serialization...")
+    assert_app_version_at_least("0.250.201")
+    questions = [
+        "What [is this](javascript:alert(1)) and what is it trying to accomplish?",
+        "Why are we doing it?",
+        "What value does it produce?",
+        "What resources are identified or implied?",
+        "What is the timeline or schedule?",
+        "What happens if we stop?",
+        "Does this appear reasonable? Concerns / duplication / measurable outcomes",
+        "What information is missing to assess this activity?",
+    ]
+    answer_fields = [f"answer_{index}" for index in range(1, 9)]
+    checkpoint_rows = {}
+    for batch_number in range(1, 5):
+        batch_start = ((batch_number - 1) * 50) + 1
+        checkpoint_rows[f"batch-{batch_number}"] = [
+            {
+                "source_row_number": row_number,
+                "source_row_identity": f"FRI-{row_number:03d}",
+                **{
+                    answer_field: f"FRI-{row_number:03d} answer {answer_index}"
+                    for answer_index, answer_field in enumerate(answer_fields, start=1)
+                },
+            }
+            for row_number in range(batch_start, batch_start + 50)
+        ]
+    checkpoint_rows["batch-1"][0]["source_row_identity"] = "FRI-001 <script>alert(1)</script>"
+    checkpoint_rows["batch-1"][0]["answer_1"] = "[Open](javascript:alert(1)) <img src=x onerror=alert(1)>"
+
+    namespace = load_tabular_export_namespace(checkpoint_rows)
+    run = {
+        "user_id": "user-1",
+        "conversation_id": "conversation-1",
+        "id": "run-row-markdown",
+        "batch_count": 4,
+        "row_count": 200,
+        "output_format": "md",
+        "source_file_name": "financial_review.csv",
+        "output_schema": ["source_row_number", "source_row_identity", *answer_fields],
+        "public_output_schema": answer_fields,
+        "lineage_schema": ["source_row_number", "source_row_identity"],
+        "internal_checkpoint_schema": ["source_row_number", "source_row_identity", *answer_fields],
+        "row_analysis_questions": questions,
+    }
+    markdown_stream = io.StringIO()
+
+    all_checkpoint_rows = [
+        row
+        for batch_rows in checkpoint_rows.values()
+        for row in batch_rows
+    ]
+    namespace["_validate_exhaustive_row_analysis_entries"](
+        all_checkpoint_rows,
+        run["output_schema"],
+    )
+    invalid_rows = [dict(row) for row in all_checkpoint_rows]
+    invalid_rows[-1]["answer_8"] = ""
+    try:
+        namespace["_validate_exhaustive_row_analysis_entries"](
+            invalid_rows,
+            run["output_schema"],
+        )
+    except ValueError as exc:
+        assert_true("answer_8 empty at row 200" in str(exc), "empty final answer rejection")
+    else:
+        raise AssertionError("An empty row answer was accepted")
+    try:
+        namespace["_validate_exhaustive_row_analysis_entries"](
+            all_checkpoint_rows,
+            ["source_row_number", "source_row_identity", "answer_1", "answer_3"],
+        )
+    except ValueError as exc:
+        assert_true("consecutive answer_1 through answer_N" in str(exc), "answer sequence rejection")
+    else:
+        raise AssertionError("A skipped answer field sequence was accepted")
+
+    written_row_count = namespace["_write_ordered_output_stream"](run, markdown_stream)
+    markdown = markdown_stream.getvalue()
+
+    assert_equal(written_row_count, 200, "Markdown written row count")
+    assert_equal(len(re.findall(r"(?m)^## Row \d+", markdown)), 200, "Markdown row headings")
+    for answer_index, question in enumerate(questions, start=1):
+        escaped_question = namespace["_escape_markdown_text"](question)
+        assert_equal(
+            markdown.count(f"{answer_index}. **{escaped_question}**"),
+            200,
+            f"question {answer_index} occurrence count",
+        )
+    assert_true(r"## Row 1: FRI\-001 &lt;script&gt;alert\(1\)&lt;/script&gt;" in markdown, "escaped first row present")
+    assert_true("## Row 200: FRI\\-200" in markdown, "last row present")
+    assert_true("FRI\\-200 answer 8" in markdown, "last row final answer present")
+    assert_false("](javascript:" in markdown, "active Markdown links excluded")
+    assert_false("<script>" in markdown, "raw script tags excluded")
+    assert_false("<img" in markdown, "raw image tags excluded")
+
+
 def test_passthrough_eligibility_and_generic_finalizer_guard():
     print("Testing passthrough eligibility and generic finalizer guard...")
     assert_app_version_at_least("0.250.182")
@@ -272,6 +376,7 @@ def run_all_tests():
     tests = [
         test_contract_separates_public_internal_and_lineage_schema,
         test_public_projection_drives_csv_json_xml_and_preview,
+        test_exact_row_markdown_serializes_all_200_rows_and_eight_answers,
         test_passthrough_eligibility_and_generic_finalizer_guard,
     ]
     results = []

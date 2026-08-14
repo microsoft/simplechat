@@ -2,8 +2,8 @@
 #!/usr/bin/env python3
 """
 Functional test for queue_tabular_generated_output_run() itself.
-Version: 0.250.189
-Implemented in: 0.250.189
+Version: 0.250.201
+Implemented in: 0.250.189; output-aware Markdown batching updated in 0.250.201
 
 Unlike the other tabular fix tests, this one calls the *actual*
 queue_tabular_generated_output_run() function (the function containing the
@@ -185,6 +185,7 @@ class _FakeCosmosContainer:
 
 
 def _build_namespace():
+    import html
     import logging
     import math
     import os
@@ -208,6 +209,7 @@ def _build_namespace():
         "os": os,
         "uuid": uuid,
         "json": json_module,
+        "html": html,
         "math": math,
         "logging": logging,
         "time": time,
@@ -372,10 +374,105 @@ def test_combined_run_with_known_output_schema_still_locks_it_up_front():
     assert run["output_schema"] == persisted_run["output_schema"]
 
 
+def test_exhaustive_markdown_run_uses_output_aware_batches_and_exact_schema():
+    """Eight narrative answers per row must not be attempted as one 200-row model response."""
+    assert_app_version_at_least("0.250.201")
+    namespace, fake_container = _build_namespace()
+    queue_run = namespace["queue_tabular_generated_output_run"]
+    questions = [f"Question {index}?" for index in range(1, 9)]
+    public_schema = [f"answer_{index}" for index in range(1, 9)]
+    internal_schema = ["source_row_number", "source_row_identity", *public_schema]
+    planner_metadata = {
+        "planner_contract_version": "tabular-orchestration-v1",
+        "execution_contract": "structured_export",
+        "execution_state": "queued",
+        "durable_task_type": "structured_export",
+        "reason_code": "active_execution_accepted",
+        "row_analysis_mode": "exhaustive",
+        "row_analysis_questions": questions,
+        "deliverable_contract": {
+            "contract_version": "analysis-deliverables-v3",
+            "action_mode": "search",
+            "analysis_required": False,
+            "primary_artifact_role": "",
+            "requested_artifacts": [{
+                "artifact_id": "row-analysis-md",
+                "role": "requested_output",
+                "format": "md",
+                "required": True,
+                "request_order": 0,
+            }],
+            "public_output_schema": public_schema,
+            "internal_checkpoint_schema": internal_schema,
+            "lineage_schema": ["source_row_number", "source_row_identity"],
+            "row_cardinality": "one_per_source_row",
+            "ordering": "source_order",
+            "transformation_mode": "semantic",
+            "validation_profile": "exact_rows_schema",
+            "publication_policy": "all_required_artifacts",
+        },
+    }
+
+    run = queue_run(
+        user_id="user-1",
+        conversation_id="conversation-1",
+        user_question="For each line, answer all eight questions individually.",
+        source_candidate={"filename": "financial_review.csv"},
+        output_format="md",
+        row_batches=None,
+        gpt_model="gpt-5.6-luna",
+        settings={},
+        source_descriptor=_build_financial_review_source_descriptor(),
+        task_type="structured_export",
+        planner_metadata=planner_metadata,
+    )
+
+    persisted_run = fake_container.created_items[0]
+    assert persisted_run["row_analysis_mode"] == "exhaustive"
+    assert persisted_run["row_analysis_questions"] == questions
+    assert persisted_run["output_format"] == "md"
+    assert "_row_analysis_" in persisted_run["generated_file_name"]
+    assert persisted_run["generated_file_name"].endswith(".md")
+    assert persisted_run["output_schema"] == internal_schema
+    assert persisted_run["public_output_schema"] == public_schema
+    assert persisted_run["batch_budget"]["max_rows"] < 200
+    assert persisted_run["batch_count"] > 1
+    assert run["batch_count"] == persisted_run["batch_count"]
+
+    mismatched_metadata = dict(planner_metadata)
+    mismatched_contract = dict(planner_metadata["deliverable_contract"])
+    mismatched_contract["public_output_schema"] = public_schema[:-1]
+    mismatched_contract["internal_checkpoint_schema"] = [
+        "source_row_number",
+        "source_row_identity",
+        *public_schema[:-1],
+    ]
+    mismatched_metadata["deliverable_contract"] = mismatched_contract
+    try:
+        queue_run(
+            user_id="user-1",
+            conversation_id="conversation-2",
+            user_question="For each line, answer all eight questions individually.",
+            source_candidate={"filename": "financial_review.csv"},
+            output_format="md",
+            row_batches=None,
+            gpt_model="gpt-5.6-luna",
+            settings={},
+            source_descriptor=_build_financial_review_source_descriptor(),
+            task_type="structured_export",
+            planner_metadata=mismatched_metadata,
+        )
+    except ValueError as exc:
+        assert "questions do not match" in str(exc)
+    else:
+        raise AssertionError("A mismatched question and output schema contract was accepted")
+
+
 if __name__ == "__main__":
     tests = [
         test_combined_run_with_no_output_hints_is_created_with_deferred_schema,
         test_combined_run_with_known_output_schema_still_locks_it_up_front,
+        test_exhaustive_markdown_run_uses_output_aware_batches_and_exact_schema,
     ]
     failures = 0
     for test in tests:

@@ -6,6 +6,7 @@ from collections import Counter, deque
 import csv
 import heapq
 import hashlib
+import html
 import io
 import json
 import logging
@@ -282,6 +283,8 @@ TABULAR_ANALYSIS_MAX_REDUCE_FAN_IN = 50
 TABULAR_ANALYSIS_SUMMARY_MAX_CHARS = 24000
 TABULAR_ANALYSIS_MAX_FINDINGS = 12
 TABULAR_ANALYSIS_MAX_NOTABLE_ROWS = 25
+TABULAR_ROW_ANALYSIS_MAX_QUESTIONS = 20
+TABULAR_ROW_ANALYSIS_ANSWER_ESTIMATED_CHARS = 180
 TABULAR_EXPORT_SUMMARY_MAX_FIELDS = 25
 TABULAR_EXPORT_SUMMARY_MAX_VALUES_PER_FIELD = 5
 TABULAR_EXPORT_SUMMARY_AGGREGATE_MAX_VALUES = 25
@@ -1872,8 +1875,13 @@ def _sanitize_file_base_name(file_name):
 
 def _build_generated_file_name(source_file_name, output_format):
     timestamp_suffix = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
-    normalized_extension = normalize_generated_output_format(output_format)
+    normalized_extension = _normalize_tabular_artifact_format(output_format)
     return f"{_sanitize_file_base_name(source_file_name)}_generated_{timestamp_suffix}.{normalized_extension}"
+
+
+def _build_row_analysis_file_name(source_file_name):
+    timestamp_suffix = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
+    return f"{_sanitize_file_base_name(source_file_name)}_row_analysis_{timestamp_suffix}.md"
 
 
 def _build_analysis_file_name(source_file_name):
@@ -1892,6 +1900,17 @@ def _serialize_generated_output_value(value):
         except TypeError:
             pass
     return neutralize_csv_spreadsheet_formula(value)
+
+
+def _escape_markdown_text(value):
+    """Render untrusted values as literal Markdown text, not active markup."""
+    normalized_value = str(value or '').replace('\r\n', '\n').replace('\r', '\n').replace('\t', '    ')
+    escaped_lines = []
+    for line in normalized_value.split('\n'):
+        escaped_line = html.escape(line, quote=False).replace('\\', '\\\\')
+        escaped_line = re.sub(r'([`*_[\]{}()#+\-.!|>])', r'\\\1', escaped_line)
+        escaped_lines.append(escaped_line)
+    return '\n'.join(escaped_lines)
 
 
 def _sanitize_generated_xml_tag_name(value, fallback_value='Field'):
@@ -2054,6 +2073,58 @@ def _normalize_generated_batch_entries(
         for entry in normalized_entries
     ]
     return ordered_entries, output_schema
+
+
+def _validate_exhaustive_row_analysis_entries(entries, output_schema):
+    public_fields = [
+        str(field_name or '').strip().lower()
+        for field_name in list(output_schema or [])
+        if str(field_name or '').strip()
+        and not is_analysis_internal_lineage_field(field_name)
+    ]
+    exact_row_fields = (
+        public_fields == ['row_analysis']
+        or any(re.fullmatch(r'answer_\d+', field_name) for field_name in public_fields)
+    )
+    if not exact_row_fields:
+        return
+    if public_fields != ['row_analysis']:
+        expected_fields = [f'answer_{field_index}' for field_index in range(1, len(public_fields) + 1)]
+        if public_fields != expected_fields:
+            raise ValueError(
+                f'Exhaustive row analysis fields must be consecutive answer_1 through answer_N; got {public_fields}'
+            )
+    for row_index, entry in enumerate(entries or [], start=1):
+        for field_name in public_fields:
+            if (entry or {}).get(field_name) in (None, '', [], {}):
+                raise ValueError(
+                    f'Generated exhaustive row analysis left {field_name} empty at row {row_index}'
+                )
+
+
+def _validate_exhaustive_row_analysis_contract(row_analysis_mode, questions, public_output_schema):
+    if str(row_analysis_mode or '').strip().lower() != 'exhaustive':
+        return
+    normalized_questions = [
+        str(question or '').strip()
+        for question in list(questions or [])[:TABULAR_ROW_ANALYSIS_MAX_QUESTIONS]
+        if str(question or '').strip()
+    ]
+    normalized_public_schema = [
+        str(field_name or '').strip().lower()
+        for field_name in list(public_output_schema or [])
+        if str(field_name or '').strip()
+        and not is_analysis_internal_lineage_field(field_name)
+    ]
+    expected_schema = (
+        [f'answer_{question_index}' for question_index in range(1, len(normalized_questions) + 1)]
+        if normalized_questions
+        else ['row_analysis']
+    )
+    if normalized_public_schema != expected_schema:
+        raise ValueError(
+            'Exhaustive row analysis questions do not match the persisted public output schema'
+        )
 
 
 def _generated_entry_has_source_position_conflict(source_row, generated_entry):
@@ -3259,6 +3330,15 @@ def _build_combined_chunk_prompt(run, batch_rows, batch_number, batch_count, out
         if model_output_schema
         else ''
     )
+    answer_field_line = (
+        'Fields named answer_N map to the Nth question in the user instructions. '
+        'Answer every answer_N field independently and do not combine or omit questions.\n'
+        if any(
+            re.fullmatch(r'answer_\d+', str(field_name or '').strip().lower())
+            for field_name in model_output_schema
+        )
+        else ''
+    )
     return (
         'Transform and analyze the bounded tabular chunk below for the user.\n\n'
         f'User structured-output instructions:\n{user_question}\n\n'
@@ -3266,6 +3346,7 @@ def _build_combined_chunk_prompt(run, batch_rows, batch_number, batch_count, out
         'Return ONLY a valid JSON object with exactly these top-level fields: structured_rows, analysis_summary.\n'
         f'structured_rows must be an array of exactly {len(batch_rows)} object(s), one per input row, in the same order.\n'
         f'{output_schema_line}'
+        f'{answer_field_line}'
         f'Each structured row must copy {TABULAR_EXPORT_INPUT_ROW_TOKEN_FIELD} exactly from the matching input row. '
         f'Do not include {TABULAR_EXPORT_INPUT_ROW_NUMBER_FIELD} or {TABULAR_EXPORT_INPUT_ROW_IDENTITY_FIELD} in structured rows.\n'
         'Do not drop, merge, summarize, or cap structured rows. If a requested field cannot be derived, include it with null or an empty string.\n'
@@ -3740,6 +3821,15 @@ def _build_batch_prompt(
         if model_output_schema
         else ''
     )
+    answer_field_line = (
+        'Fields named answer_N map to the Nth question in the user instructions. '
+        'Answer every answer_N field independently and do not combine or omit questions.\n'
+        if any(
+            re.fullmatch(r'answer_\d+', str(field_name or '').strip().lower())
+            for field_name in model_output_schema
+        )
+        else ''
+    )
 
     return (
         'Transform the tabular input rows below into structured output for the user.\n\n'
@@ -3747,6 +3837,7 @@ def _build_batch_prompt(
         'Return ONLY a valid JSON array.\n'
         f'Return exactly {len(batch_rows)} JSON object(s), one per input row, in the same order.\n'
         f'{output_schema_line}'
+        f'{answer_field_line}'
         f'Copy {TABULAR_EXPORT_INPUT_ROW_TOKEN_FIELD} exactly from each input row into its matching output object. '
         f'The {TABULAR_EXPORT_INPUT_ROW_NUMBER_FIELD} and {TABULAR_EXPORT_INPUT_ROW_IDENTITY_FIELD} fields are internal; '
         'do not include those two fields in generated objects.\n'
@@ -5220,6 +5311,7 @@ async def _generate_batch_entries(
                     expected_output_schema or output_schema,
                     transformation_spec=transformation_spec,
                 )
+                _validate_exhaustive_row_analysis_entries(normalized_entries, output_schema)
                 semantic_validation_counts = {}
                 semantic_validation_attempts = []
                 if transformation_spec:
@@ -6213,6 +6305,7 @@ async def _generate_combined_chunk_result(
                     expected_output_schema or output_schema,
                     transformation_spec=transformation_spec,
                 )
+                _validate_exhaustive_row_analysis_entries(normalized_entries, output_schema)
                 candidate_checkpoint = None
                 if transformation_spec and semantic_mode in {'shadow', 'active'}:
                     candidate_checkpoint = _load_tabular_semantic_candidate_checkpoint(
@@ -6842,6 +6935,12 @@ def _normalize_tabular_run_planner_metadata(planner_metadata):
         'execution_state': str(planner_metadata.get('execution_state') or '').strip().lower()[:40],
         'durable_task_type': _normalize_tabular_run_task_type(planner_metadata.get('durable_task_type')),
         'reason_code': str(planner_metadata.get('reason_code') or '').strip().lower()[:80],
+        'row_analysis_mode': str(planner_metadata.get('row_analysis_mode') or '').strip().lower()[:40],
+        'row_analysis_questions': [
+            str(question or '').strip()[:500]
+            for question in list(planner_metadata.get('row_analysis_questions') or [])[:TABULAR_ROW_ANALYSIS_MAX_QUESTIONS]
+            if str(question or '').strip()
+        ],
         'execution_group_id': str(planner_metadata.get('execution_group_id') or '').strip()[:128],
         'source_coverage_summary': _build_planner_source_coverage_summary(
             planner_metadata.get('source_coverage'),
@@ -8282,6 +8381,12 @@ def _write_ordered_output_stream(run, output_stream):
         csv_writer.writeheader()
     elif output_format == 'xml':
         output_stream.write('<?xml version="1.0" encoding="UTF-8"?>\n<GeneratedOutput>\n')
+    elif output_format == 'md':
+        output_stream.write('# Row-by-Row Tabular Analysis\n\n')
+        output_stream.write(
+            f"Source file: {run.get('source_file_name') or 'unknown file'}  \n"
+            f"Rows: {expected_row_count:,}\n\n"
+        )
     else:
         output_stream.write('[\n')
 
@@ -8326,6 +8431,31 @@ def _write_ordered_output_stream(run, output_stream):
                 })
             elif output_format == 'xml':
                 _write_generated_xml_row(output_stream, public_entry)
+            elif output_format == 'md':
+                source_row_identity = _normalize_analysis_text(
+                    ordered_entry.get(TABULAR_EXPORT_OUTPUT_ROW_IDENTITY_FIELD),
+                    max_chars=200,
+                )
+                identity_suffix = f": {source_row_identity}" if source_row_identity else ''
+                output_stream.write(
+                    f"## Row {source_row_number}{_escape_markdown_text(identity_suffix)}\n\n"
+                )
+                row_questions = list((run or {}).get('row_analysis_questions') or [])
+                for field_index, field_name in enumerate(public_output_schema, start=1):
+                    question_label = (
+                        _normalize_analysis_text(row_questions[field_index - 1], max_chars=500)
+                        if field_index <= len(row_questions)
+                        else str(field_name or '').replace('_', ' ').strip().title()
+                    )
+                    field_value = _escape_markdown_text(
+                        _serialize_generated_output_value(public_entry.get(field_name))
+                    )
+                    output_stream.write(
+                        f"{field_index}. **{_escape_markdown_text(question_label)}**\n\n"
+                    )
+                    for value_line in field_value.split('\n'):
+                        output_stream.write(f"   {value_line}\n")
+                    output_stream.write('\n')
             else:
                 if written_row_count:
                     output_stream.write(',\n')
@@ -8336,7 +8466,7 @@ def _write_ordered_output_stream(run, output_stream):
 
     if output_format == 'xml':
         output_stream.write('</GeneratedOutput>\n')
-    elif output_format != 'csv':
+    elif output_format not in {'csv', 'md'}:
         output_stream.write('\n]\n')
     if written_row_count != expected_row_count:
         raise ValueError(
@@ -9070,7 +9200,11 @@ def _build_public_artifact_projection(artifact):
 def _publish_structured_export_artifact(run, descriptor=None):
     descriptor = descriptor if isinstance(descriptor, dict) else {}
     member_id = str(descriptor.get('member_id') or _get_structured_artifact_member_id(run)).strip()
-    output_format = normalize_generated_output_format(descriptor.get('format') or run.get('output_format'))
+    output_format = _normalize_tabular_artifact_format(
+        descriptor.get('format') or run.get('output_format')
+    )
+    if output_format not in {'csv', 'json', 'xml', 'md'}:
+        raise ValueError(f'Unsupported tabular structured artifact format: {output_format}')
     generated_file_name = run.get('generated_file_name') or _build_generated_file_name(
         run.get('source_file_name'),
         output_format,
@@ -9148,7 +9282,7 @@ def _publish_structured_export_artifacts(run):
     artifacts = []
     first_summary = ''
     first_entry_count = None
-    first_output_format = normalize_generated_output_format(run.get('output_format'))
+    first_output_format = _normalize_tabular_artifact_format(run.get('output_format'))
     first_file_name = run.get('generated_file_name') or _build_generated_file_name(
         run.get('source_file_name'),
         first_output_format,
@@ -10623,6 +10757,11 @@ def process_tabular_generated_output_run(run_id, user_id):
         run = _migrate_legacy_tabular_export_run(run)
         if run.get('source_descriptor') and not run.get('source_staging_complete'):
             run = _stage_tabular_generated_output_source(run, settings)
+        _validate_exhaustive_row_analysis_contract(
+            run.get('row_analysis_mode'),
+            run.get('row_analysis_questions'),
+            _get_tabular_run_public_output_schema(run),
+        )
 
         retry_attempts = _settings_int(
             settings,
@@ -10940,6 +11079,8 @@ def queue_tabular_generated_output_run(
         normalized_analysis_objective = str(user_question or '').strip()
     if normalized_task_type == TABULAR_RUN_TASK_HIERARCHICAL_ANALYSIS:
         generated_file_name = _build_analysis_file_name(source_file_name)
+    elif normalized_output_format == 'md':
+        generated_file_name = _build_row_analysis_file_name(source_file_name)
     else:
         generated_file_name = _build_generated_file_name(source_file_name, normalized_output_format)
     analysis_generated_file_name = (
@@ -10973,6 +11114,28 @@ def queue_tabular_generated_output_run(
         task_type=normalized_task_type,
         user_question=user_question,
     )
+    row_analysis_mode = str(tabular_planner_metadata.get('row_analysis_mode') or '').strip().lower()
+    row_analysis_questions = list(tabular_planner_metadata.get('row_analysis_questions') or [])
+    _validate_exhaustive_row_analysis_contract(
+        row_analysis_mode,
+        row_analysis_questions,
+        contract_public_output_schema,
+    )
+    if row_analysis_mode == 'exhaustive':
+        question_count = max(1, len(row_analysis_questions))
+        estimated_output_chars_per_row = max(
+            600,
+            question_count * TABULAR_ROW_ANALYSIS_ANSWER_ESTIMATED_CHARS,
+        )
+        output_char_budget = max(
+            1000,
+            _safe_int(model_batch_budget.get('output_token_budget'), minimum=1)
+            * TABULAR_EXPORT_APPROXIMATE_CHARS_PER_TOKEN,
+        )
+        model_batch_budget['max_rows'] = min(
+            _safe_int(model_batch_budget.get('max_rows'), minimum=1),
+            max(1, output_char_budget // estimated_output_chars_per_row),
+        )
     chunk_gpt_model, chunk_model_context = _resolve_tabular_chunk_model_selection(
         gpt_model,
         settings,
@@ -11141,6 +11304,8 @@ def queue_tabular_generated_output_run(
         'tabular_planner_metadata': tabular_planner_metadata,
         'task_type': normalized_task_type,
         'analysis_objective': normalized_analysis_objective,
+        'row_analysis_mode': row_analysis_mode,
+        'row_analysis_questions': row_analysis_questions,
         'user_id': normalized_user_id,
         'conversation_id': normalized_conversation_id,
         'status': TABULAR_EXPORT_STATUS_QUEUED,
