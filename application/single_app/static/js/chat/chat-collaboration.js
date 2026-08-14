@@ -5,6 +5,7 @@ import {
     getCollaborativeTagSuggestions,
     getGeneratedImageProposalSourceMessageId,
     groupGeneratedImageProposalMessages,
+    setUserMessageStreamingActionsDisabled,
     updateSendButtonVisibility,
     updateUserMessageId,
     userInput,
@@ -1074,6 +1075,12 @@ function handleConversationEvent(eventEnvelope = {}) {
         const decoratedMessage = decorateReplyMessage(payload.message);
         cacheCollaborationMessage(payload.message);
         if (reconcilePendingCollaborativeUserMessage(payload.message)) {
+            const messageKind = String(
+                payload.message.message_kind || payload.message.metadata?.message_kind || ''
+            ).trim();
+            if (senderUserId === getCurrentUserId() && messageKind !== 'ai_request') {
+                setUserMessageStreamingActionsDisabled(payload.message.id, false);
+            }
             if (shouldClearNotifications) {
                 void markCollaborationConversationRead(eventEnvelope.conversation_id || payload.message.conversation_id, {
                     suppressErrorToast: true,
@@ -1308,6 +1315,7 @@ async function sendCollaborativeMessage(messageText, tempMessageId = null) {
         if (!reconcilePendingCollaborativeUserMessage(payload.message, tempMessageId)) {
             renderCollaborationMessage(decorateReplyMessage(payload.message), { isNewMessage: true });
         }
+        setUserMessageStreamingActionsDisabled(payload.message.id, false);
     }
 
     setTypingState(false, { force: true });

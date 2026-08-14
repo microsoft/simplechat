@@ -6489,6 +6489,9 @@ export function appendMessage(
     // Add event listeners for user message buttons
     if (sender === "You") {
       attachUserMessageEventListeners(messageDiv, messageId, messageContent);
+      if (String(messageId || '').startsWith('temp_user_')) {
+        setUserMessageStreamingActionsDisabled(messageId, true);
+      }
 
       // Apply masked state if message has masking
       if (fullMessageObject?.metadata) {
@@ -7515,8 +7518,58 @@ if (promptSelect) {
 
 updateDocumentActionControls();
 
+let userMetadataRequestSequence = 0;
+
+function renderUserMetadataStatus(container, message, className = 'text-muted') {
+  const status = document.createElement('div');
+  status.className = className;
+  status.textContent = message;
+  container.replaceChildren(status);
+}
+
+export function setUserMessageStreamingActionsDisabled(messageId, disabled) {
+  const normalizedMessageId = String(messageId || '').trim();
+  if (!normalizedMessageId) {
+    return false;
+  }
+
+  const messageDiv = document.querySelector(`[data-message-id="${normalizedMessageId}"]`);
+  if (!messageDiv) {
+    return false;
+  }
+
+  messageDiv.dataset.streamingActionsDisabled = disabled ? 'true' : 'false';
+  const mutatingActions = getUserMessageMutatingActions(normalizedMessageId);
+  mutatingActions.forEach(action => {
+    action.dataset.streamingDisabled = disabled ? 'true' : 'false';
+    action.classList.toggle('disabled', disabled);
+    action.setAttribute('aria-disabled', disabled ? 'true' : 'false');
+    if (disabled) {
+      action.setAttribute('tabindex', '-1');
+    } else {
+      action.removeAttribute('tabindex');
+    }
+    if (action instanceof HTMLButtonElement) {
+      action.disabled = disabled;
+    }
+  });
+  return mutatingActions.length > 0;
+}
+
+function getUserMessageMutatingActions(messageId) {
+  const normalizedMessageId = String(messageId || '').trim();
+  return Array.from(document.querySelectorAll(
+    '.dropdown-edit-btn, .dropdown-delete-btn, .dropdown-retry-btn, .mask-add-btn, .mask-remove-btn'
+  )).filter(action => action.getAttribute('data-message-id') === normalizedMessageId);
+}
+
+function isUserMessageStreamingActionDisabled(action) {
+  return action?.dataset.streamingDisabled === 'true';
+}
+
 // Helper function to update user message ID after backend response
-export function updateUserMessageId(tempId, realId) {
+export function updateUserMessageId(tempId, realId, options = {}) {
+  const { refreshExpandedMetadata = false } = options;
   console.log(`🔄 Updating message ID: ${tempId} -> ${realId}`);
 
   // Find the message with the temporary ID
@@ -7527,12 +7580,13 @@ export function updateUserMessageId(tempId, realId) {
     console.log(`✅ Updated messageDiv data-message-id to: ${realId}`);
 
     // Update ALL elements with the temporary ID to ensure consistency
-    const elementsToUpdate = [
+    const elementsToUpdate = new Set([
       messageDiv.querySelector('.copy-user-btn'),
       messageDiv.querySelector('.metadata-toggle-btn'),
       ...messageDiv.querySelectorAll(`[data-message-id="${tempId}"]`),
-      ...messageDiv.querySelectorAll(`[aria-controls*="${tempId}"]`)
-    ];
+      ...messageDiv.querySelectorAll(`[aria-controls*="${tempId}"]`),
+      ...getUserMessageMutatingActions(tempId)
+    ]);
 
     let updateCount = 0;
     elementsToUpdate.forEach(element => {
@@ -7565,6 +7619,13 @@ export function updateUserMessageId(tempId, realId) {
       updateCount++;
     }
 
+    if (['pending', 'unconfirmed'].includes(metadataContainer?.dataset.metadataState)) {
+      metadataContainer.dataset.metadataState = 'ready';
+      if (metadataContainer.style.display !== 'none') {
+        loadUserMessageMetadata(realId, metadataContainer);
+      }
+    }
+
     console.log(`✅ Updated ${updateCount} elements with new message ID`);
 
     // Verify the update was successful
@@ -7578,10 +7639,72 @@ export function updateUserMessageId(tempId, realId) {
     const existingRealMessageDiv = document.querySelector(`[data-message-id="${realId}"]`);
     if (existingRealMessageDiv) {
       console.info(`ℹ️ Message div for temp ID ${tempId} was already reconciled to ${realId}`);
+      if (refreshExpandedMetadata) {
+        refreshUserMessageMetadata(realId);
+      }
     } else {
       console.warn(`⚠️ Message div with temp ID ${tempId} not found for update`);
     }
   }
+}
+
+export function refreshUserMessageMetadata(messageId) {
+  const normalizedMessageId = String(messageId || '').trim();
+  const messageDiv = normalizedMessageId
+    ? document.querySelector(`[data-message-id="${normalizedMessageId}"]`)
+    : null;
+  const metadataContainer = messageDiv?.querySelector('.metadata-container');
+  if (!metadataContainer) {
+    return false;
+  }
+
+  if (metadataContainer.style.display !== 'none') {
+    loadUserMessageMetadata(normalizedMessageId, metadataContainer);
+  } else {
+    metadataContainer.dataset.metadataState = 'stale';
+    metadataContainer.dataset.metadataRequestToken = '';
+  }
+  return true;
+}
+
+function markUserMessageMetadataState(messageId, metadataState, statusMessage) {
+  const normalizedMessageId = String(messageId || '').trim();
+  if (!normalizedMessageId) {
+    return false;
+  }
+
+  const messageDiv = document.querySelector(`[data-message-id="${normalizedMessageId}"]`);
+  const metadataContainer = messageDiv?.querySelector('.metadata-container');
+  if (!metadataContainer) {
+    return false;
+  }
+
+  metadataContainer.dataset.metadataState = metadataState;
+  metadataContainer.dataset.metadataRequestToken = '';
+  if (metadataContainer.style.display !== 'none') {
+    renderUserMetadataStatus(
+      metadataContainer,
+      statusMessage,
+      'text-warning'
+    );
+  }
+  return true;
+}
+
+export function markUserMessageMetadataUnconfirmed(messageId) {
+  return markUserMessageMetadataState(
+    messageId,
+    'unconfirmed',
+    'Message metadata persistence could not be confirmed. Refresh the conversation to check.'
+  );
+}
+
+export function markUserMessageMetadataFinalizationUnconfirmed(messageId) {
+  return markUserMessageMetadataState(
+    messageId,
+    'finalization-unconfirmed',
+    'Message metadata may still be updating after the stream disconnected. Refresh the conversation to check.'
+  );
 }
 
 // Helper function to attach event listeners to user message buttons
@@ -7609,7 +7732,8 @@ function attachUserMessageEventListeners(messageDiv, messageId, messageContent) 
 
   if (metadataToggleBtn) {
     metadataToggleBtn.addEventListener("click", () => {
-      toggleUserMessageMetadata(messageDiv, messageId);
+      const currentMessageId = messageDiv.getAttribute('data-message-id') || messageId;
+      toggleUserMessageMetadata(messageDiv, currentMessageId);
     });
   }
 
@@ -7619,6 +7743,9 @@ function attachUserMessageEventListeners(messageDiv, messageId, messageContent) 
   if (dropdownDeleteBtn) {
     dropdownDeleteBtn.addEventListener("click", (e) => {
       e.preventDefault();
+      if (isUserMessageStreamingActionDisabled(e.currentTarget)) {
+        return;
+      }
       // Always read the message ID from the DOM attribute dynamically
       // This ensures we use the updated ID after updateUserMessageId is called
       const currentMessageId = messageDiv.getAttribute('data-message-id');
@@ -7631,6 +7758,9 @@ function attachUserMessageEventListeners(messageDiv, messageId, messageContent) 
   if (dropdownRetryBtn) {
     dropdownRetryBtn.addEventListener("click", (e) => {
       e.preventDefault();
+      if (isUserMessageStreamingActionDisabled(e.currentTarget)) {
+        return;
+      }
       // Always read the message ID from the DOM attribute dynamically
       const currentMessageId = messageDiv.getAttribute('data-message-id');
       console.log(`🔄 Retry button clicked - using message ID from DOM: ${currentMessageId}`);
@@ -7642,6 +7772,9 @@ function attachUserMessageEventListeners(messageDiv, messageId, messageContent) 
   if (dropdownEditBtn) {
     dropdownEditBtn.addEventListener("click", (e) => {
       e.preventDefault();
+      if (isUserMessageStreamingActionDisabled(e.currentTarget)) {
+        return;
+      }
       // Always read the message ID from the DOM attribute dynamically
       const currentMessageId = messageDiv.getAttribute('data-message-id');
       console.log(`✏️ Edit button clicked - using message ID from DOM: ${currentMessageId}`);
@@ -7754,22 +7887,8 @@ function attachCollaboratorMessageEventListeners(messageDiv, fullMessageObject, 
 
 // Function to toggle user message metadata drawer
 function toggleUserMessageMetadata(messageDiv, messageId) {
+  messageId = messageDiv.getAttribute('data-message-id') || messageId;
   console.log(`🔀 Toggling metadata for message: ${messageId}`);
-
-  // Validate that we're not using a temporary ID
-  if (messageId && messageId.startsWith('temp_user_')) {
-    console.error(`❌ Metadata toggle called with temporary ID: ${messageId}`);
-    console.log(`🔍 Checking if real ID is available in DOM...`);
-
-    // Try to find the real ID from the message div
-    const actualMessageId = messageDiv.getAttribute('data-message-id');
-    if (actualMessageId && actualMessageId !== messageId && !actualMessageId.startsWith('temp_user_')) {
-      console.log(`✅ Found real ID in DOM: ${actualMessageId}, using that instead`);
-      messageId = actualMessageId;
-    } else {
-      console.error(`❌ No valid real ID found, metadata toggle may fail`);
-    }
-  }
 
   const toggleBtn = messageDiv.querySelector('.metadata-toggle-btn');
   const targetId = toggleBtn.getAttribute('aria-controls');
@@ -7800,7 +7919,7 @@ function toggleUserMessageMetadata(messageDiv, messageId) {
     toggleBtn.innerHTML = '<i class="bi bi-chevron-up"></i>';
 
     // Load metadata if not already loaded
-    if (metadataContainer.innerHTML.includes('Loading metadata...')) {
+    if (metadataContainer.dataset.metadataState !== 'loaded') {
       console.log(`🔄 Loading metadata content for ${messageId}`);
       loadUserMessageMetadata(messageId, metadataContainer);
     }
@@ -7821,36 +7940,61 @@ function toggleUserMessageMetadata(messageDiv, messageId) {
 
 // Function to load user message metadata into the drawer
 function loadUserMessageMetadata(messageId, container, retryCount = 0) {
+  const currentMessageId = container.closest('[data-message-id]')?.getAttribute('data-message-id');
+  if (
+    messageId?.startsWith('temp_user_')
+    && currentMessageId
+    && !currentMessageId.startsWith('temp_user_')
+  ) {
+    messageId = currentMessageId;
+  }
+
   console.log(`🔍 Loading metadata for message ID: ${messageId} (attempt ${retryCount + 1})`);
+
+  if (container.dataset.metadataState === 'unconfirmed') {
+    renderUserMetadataStatus(
+      container,
+      'Message metadata persistence could not be confirmed. Refresh the conversation to check.',
+      'text-warning'
+    );
+    return;
+  }
+
+  if (container.dataset.metadataState === 'finalization-unconfirmed') {
+    renderUserMetadataStatus(
+      container,
+      'Message metadata may still be updating after the stream disconnected. Refresh the conversation to check.',
+      'text-warning'
+    );
+    return;
+  }
 
   // Validate message ID to catch temporary IDs early
   if (!messageId || messageId === "null" || messageId === "undefined") {
     console.error(`❌ Invalid message ID: ${messageId}`);
-    container.innerHTML = '<div class="text-muted">Message metadata not available.</div>';
+    container.dataset.metadataState = 'error';
+    renderUserMetadataStatus(container, 'Message metadata not available.');
     return;
   }
 
-  // Check for temporary IDs which indicate a bug
+  // Wait for the persistence event instead of polling with a stale temporary ID.
   if (messageId.startsWith('temp_user_')) {
-    console.error(`❌ Attempting to load metadata with temporary ID: ${messageId}`);
-    console.error(`This indicates the updateUserMessageId function didn't work properly`);
-
-    if (retryCount < 2) {
-      // Short retry for temp IDs in case the real ID update is still in progress
-      console.log(`🔄 Retrying metadata load for temp ID in 100ms (attempt ${retryCount + 1}/3)`);
-      setTimeout(() => {
-        loadUserMessageMetadata(messageId, container, retryCount + 1);
-      }, 100);
-      return;
-    } else {
-      container.innerHTML = '<div class="text-danger">Message metadata unavailable (temporary ID not updated).</div>';
-      return;
-    }
+    container.dataset.metadataState = 'pending';
+    renderUserMetadataStatus(container, 'Saving message metadata...');
+    return;
   }
+
+  container.dataset.metadataState = 'loading';
+  const requestToken = String(++userMetadataRequestSequence);
+  container.dataset.metadataRequestToken = requestToken;
+  renderUserMetadataStatus(container, 'Loading metadata...');
 
   // Fetch message metadata from the backend
   fetch(`/api/message/${messageId}/metadata`)
     .then(response => {
+      if (container.dataset.metadataRequestToken !== requestToken) {
+        return;
+      }
       console.log(`📡 Metadata API response for ${messageId}: ${response.status}`);
 
       if (!response.ok) {
@@ -7859,7 +8003,9 @@ function loadUserMessageMetadata(messageId, container, retryCount = 0) {
           const delay = Math.min((retryCount + 1) * 500, 2000); // Cap at 2 seconds
           console.log(`⏳ Message ${messageId} not found, retrying in ${delay}ms (attempt ${retryCount + 1}/3)`);
           setTimeout(() => {
-            loadUserMessageMetadata(messageId, container, retryCount + 1);
+            if (container.dataset.metadataRequestToken === requestToken) {
+              loadUserMessageMetadata(messageId, container, retryCount + 1);
+            }
           }, delay);
           return;
         }
@@ -7868,8 +8014,12 @@ function loadUserMessageMetadata(messageId, container, retryCount = 0) {
       return response.json();
     })
     .then(data => {
+      if (container.dataset.metadataRequestToken !== requestToken) {
+        return;
+      }
       if (data) {
         console.log(`✅ Successfully loaded metadata for ${messageId}`);
+        container.dataset.metadataState = 'loaded';
         container.innerHTML = formatMetadataForDrawer(data);
 
         // Attach event listeners to View Text buttons
@@ -7896,8 +8046,12 @@ function loadUserMessageMetadata(messageId, container, retryCount = 0) {
       }
     })
     .catch(error => {
+      if (container.dataset.metadataRequestToken !== requestToken) {
+        return;
+      }
       console.error(`❌ Error fetching message metadata for ${messageId}:`, error);
 
+      container.dataset.metadataState = 'error';
       if (retryCount >= 3) {
         container.innerHTML = '<div class="text-danger">Failed to load message metadata after multiple attempts.</div>';
       } else {
@@ -9227,6 +9381,9 @@ function attachMaskButtonEventListeners(messageDiv) {
       updateMaskControls(messageDiv, messageDiv._maskingMetadata || {});
     });
     addButton.addEventListener('click', () => {
+      if (isUserMessageStreamingActionDisabled(addButton)) {
+        return;
+      }
       handleMaskAddButtonClick(messageDiv);
     });
   }
@@ -9237,6 +9394,9 @@ function attachMaskButtonEventListeners(messageDiv) {
       updateMaskControls(messageDiv, messageDiv._maskingMetadata || {});
     });
     removeButton.addEventListener('click', () => {
+      if (isUserMessageStreamingActionDisabled(removeButton)) {
+        return;
+      }
       handleMaskRemoveButtonClick(messageDiv);
     });
   }
