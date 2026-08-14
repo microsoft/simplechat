@@ -2,6 +2,15 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.196)**
+
+#### Bug Fixes
+
+*   **Top Navigation Public Workspace Lockout**
+    *   Fixed a server-rendering failure that could lock users out after they selected top navigation while Public Workspaces was enabled.
+    *   Preserved the saved navigation preference and default or customized Public Workspace labels without requiring a Cosmos profile repair.
+    *   (Ref: `_top_nav.html`, `test_public_workspace_display_name_settings.py`, `TOP_NAV_PUBLIC_WORKSPACE_LABEL_CRASH_FIX.md`)
+
 ### **(v0.250.185)**
 
 #### Bug Fixes

@@ -1,16 +1,21 @@
 #!/usr/bin/env python3
 """
 Functional test for configurable Public Workspace end-user display names.
-Version: 0.250.110
+Version: 0.250.196
 Implemented in: 0.250.110
+Top-navigation crash regression added in: 0.250.196
 
 This test ensures that Public Workspace display-name settings are normalized,
-derived labels are safe for frontend use, and only the raw setting is persisted.
+derived labels are safe for frontend use, only the raw setting is persisted,
+and the top navigation can render those labels for signed-in users.
 """
 
 import ast
 import os
 import sys
+from types import SimpleNamespace
+
+from jinja2 import Environment
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
@@ -19,6 +24,7 @@ SETTINGS_HELPER = os.path.join(REPO_ROOT, "application", "single_app", "function
 ADMIN_ROUTE = os.path.join(REPO_ROOT, "application", "single_app", "route_frontend_admin_settings.py")
 ADMIN_TEMPLATE = os.path.join(REPO_ROOT, "application", "single_app", "templates", "admin_settings.html")
 BASE_TEMPLATE = os.path.join(REPO_ROOT, "application", "single_app", "templates", "base.html")
+TOP_NAV_TEMPLATE = os.path.join(REPO_ROOT, "application", "single_app", "templates", "_top_nav.html")
 
 
 def read_source(path):
@@ -122,6 +128,55 @@ def test_display_name_persistence_shape():
     return True
 
 
+def test_top_navigation_renders_public_workspace_labels():
+    """Validate persisted top navigation renders enabled Public Workspace labels."""
+    print("Testing top navigation Public Workspace label rendering...")
+    template_source = read_source(TOP_NAV_TEMPLATE)
+    app_settings = {
+        "show_logo": False,
+        "hide_app_title": False,
+        "app_title": "SimpleChat",
+        "enable_user_workspace": False,
+        "enable_group_workspaces": False,
+        "enable_public_workspaces": True,
+        "enable_custom_pages": False,
+        "enable_support_menu": False,
+        "enable_external_links": False,
+        "enable_user_feedback": False,
+        "enable_content_safety": False,
+        "require_member_of_control_center_admin": True,
+        "require_member_of_control_center_dashboard_reader": True,
+        "require_member_of_safety_violation_admin": True,
+        "require_member_of_feedback_admin": True,
+        "public_workspace_labels": {
+            "plural": "Knowledge Spaces",
+        },
+    }
+    rendered = Environment(autoescape=True).from_string(template_source).render(
+        request=SimpleNamespace(endpoint="frontend_workspace.workspace"),
+        session={
+            "user": {
+                "name": "Test User",
+                "roles": ["User"],
+            },
+        },
+        app_settings=app_settings,
+        user_settings={
+            "settings": {
+                "navLayout": "top",
+            },
+        },
+        latest_features_nav_hidden=False,
+        custom_pages_nav=[],
+        url_for=lambda endpoint, **kwargs: f"/{endpoint}",
+    )
+
+    assert '<nav class="navbar ' in rendered
+    assert "My Knowledge Spaces" in rendered
+    print("Top navigation Public Workspace label rendering passed.")
+    return True
+
+
 def test_admin_and_frontend_wiring():
     """Validate Admin Settings and frontend sanitized-label wiring."""
     print("Testing Public Workspace display-name wiring...")
@@ -179,6 +234,7 @@ def main():
     tests = [
         test_display_name_normalization,
         test_display_name_persistence_shape,
+        test_top_navigation_renders_public_workspace_labels,
         test_admin_and_frontend_wiring,
     ]
     results = []
