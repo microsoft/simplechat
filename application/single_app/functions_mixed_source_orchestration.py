@@ -94,7 +94,9 @@ EVIDENCE_STATUSES = frozenset({
 })
 
 EVIDENCE_ENVELOPE_MAX_BYTES = 65536
-EVIDENCE_SUMMARY_MAX_BYTES = 4096
+# Narrative Analyze summaries carry the only copy of document detail (no separate durable
+# artifact channel like tabular exports have), so this must stay well below EVIDENCE_ENVELOPE_MAX_BYTES.
+EVIDENCE_SUMMARY_MAX_BYTES = 16384
 EVIDENCE_ERROR_MAX_BYTES = 1024
 EVIDENCE_LIST_MAX_ITEMS = 10
 EVIDENCE_ITEM_MAX_BYTES = 1536
@@ -102,7 +104,9 @@ EVIDENCE_COVERAGE_MAX_BYTES = 4096
 EVIDENCE_JSON_MAX_DEPTH = 4
 EVIDENCE_JSON_MAX_COLLECTION_ITEMS = 20
 EVIDENCE_JSON_MAX_STRING_BYTES = 1024
-MIXED_SOURCE_HANDOFF_MAX_BYTES = 49152
+# Raised alongside EVIDENCE_SUMMARY_MAX_BYTES so a handful of narrative sources at the new
+# per-summary cap do not immediately fall back to the 512-byte-per-summary compaction path.
+MIXED_SOURCE_HANDOFF_MAX_BYTES = 131072
 MIXED_SOURCE_HANDOFF_MAX_ENVELOPES = 20
 MIXED_SOURCE_MODES = frozenset({"chat", "search", "analyze", "compare"})
 MIXED_SOURCE_TERMINAL_REASON_MAX_BYTES = 128

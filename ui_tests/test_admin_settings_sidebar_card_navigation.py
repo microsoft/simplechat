@@ -1,8 +1,8 @@
 # test_admin_settings_sidebar_card_navigation.py
 """
 UI tests for Admin Settings sidebar card navigation.
-Version: 0.250.192
-Implemented in: 0.250.192
+Version: 0.250.195
+Implemented in: 0.250.195
 
 These tests ensure newly linked configuration cards are searchable and open
 the matching tab and section from the Admin Settings left sidebar.

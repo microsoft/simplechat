@@ -1,8 +1,8 @@
 # test_admin_settings_sidebar_card_parity.py
 """
 Functional test for Admin Settings sidebar card parity.
-Version: 0.250.192
-Implemented in: 0.250.192
+Version: 0.250.195
+Implemented in: 0.250.195
 
 This test ensures every top-level Admin Settings configuration card has an
 equivalent left-sidebar destination and every static destination resolves.
@@ -122,7 +122,7 @@ def _navigation_contract():
 
 def test_every_top_level_card_has_sidebar_destination():
     """Require card parity and preserve card order within each submenu."""
-    assert_app_version_at_least("0.250.192")
+    assert_app_version_at_least("0.250.195")
     contract = _navigation_contract()
     tab_content = contract["admin_soup"].find(id="adminSettingsTabContent")
     assert tab_content is not None, "Admin Settings tab content was not found"

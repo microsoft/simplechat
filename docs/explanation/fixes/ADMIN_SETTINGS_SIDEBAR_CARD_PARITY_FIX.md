@@ -1,6 +1,6 @@
 # Admin Settings Sidebar Card Parity Fix
 
-Fixed/Implemented in version: **0.250.192**
+Fixed/Implemented in version: **0.250.195**
 
 ## Issue Description
 
@@ -55,4 +55,4 @@ Every top-level configuration card has an equivalent sidebar destination, with s
 
 Administrators can locate and open settings directly by card name instead of knowing which broad tab contains them.
 
-The application version in `application/single_app/config.py` was updated to `0.250.192` for traceability.
+The application version in `application/single_app/config.py` was updated to `0.250.195` for traceability.
