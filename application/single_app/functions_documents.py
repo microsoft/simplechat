@@ -32,6 +32,7 @@ from functions_logging import *
 from functions_authentication import *
 from functions_debug import *
 from functions_keyvault import SecretReturnType, keyvault_model_endpoint_get_helper
+from functions_model_endpoint_identity_header import build_model_endpoint_identity_headers
 from functions_model_endpoint_runtime import MODEL_ENDPOINT_PROVIDER_ALLOWLIST, build_model_endpoint_sync_chat_client
 import azure.cognitiveservices.speech as speechsdk
 
@@ -126,18 +127,31 @@ def _resolve_model_endpoint_scope(provider, auth_settings, endpoint=None):
     return "https://ai.azure.com/.default"
 
 
-def _build_model_endpoint_client(auth_settings, provider, endpoint, api_version, deployment_name):
+def _build_model_endpoint_client(
+    auth_settings,
+    provider,
+    endpoint,
+    api_version,
+    deployment_name,
+    *,
+    settings=None,
+    endpoint_config=None,
+    identity_context=None,
+):
     client, _ = build_model_endpoint_sync_chat_client(
         auth_settings,
         provider,
         endpoint,
         api_version,
         deployment_name=deployment_name,
+        settings=settings,
+        endpoint_config=endpoint_config,
+        identity_context=identity_context,
     )
     return client
 
 
-def _resolve_metadata_extraction_client(settings):
+def _resolve_metadata_extraction_client(settings, identity_context=None):
     selection = _normalize_model_endpoint_selection(settings.get("metadata_extraction_model_selection"))
 
     if (
@@ -178,17 +192,28 @@ def _resolve_metadata_extraction_client(settings):
         if not endpoint or not api_version or not deployment:
             raise ValueError("Selected metadata extraction endpoint is missing endpoint, API version, or deployment configuration.")
 
-        return _build_model_endpoint_client(auth_settings, provider, endpoint, api_version, deployment), deployment
+        return _build_model_endpoint_client(
+            auth_settings,
+            provider,
+            endpoint,
+            api_version,
+            deployment,
+            settings=settings,
+            endpoint_config=endpoint_cfg,
+            identity_context=identity_context,
+        ), deployment
 
     gpt_model = settings.get('metadata_extraction_model')
     if not gpt_model:
         raise ValueError("No metadata extraction model is selected.")
 
+    extra_headers = build_model_endpoint_identity_headers(settings, identity_context=identity_context)
     if settings.get('enable_gpt_apim', False):
         return AzureOpenAI(
             api_version=settings.get('azure_apim_gpt_api_version'),
             azure_endpoint=settings.get('azure_apim_gpt_endpoint'),
-            api_key=settings.get('azure_apim_gpt_subscription_key')
+            api_key=settings.get('azure_apim_gpt_subscription_key'),
+            default_headers=extra_headers or None,
         ), gpt_model
 
     if settings.get('azure_openai_gpt_authentication_type') == 'managed_identity':
@@ -199,13 +224,15 @@ def _resolve_metadata_extraction_client(settings):
         return AzureOpenAI(
             api_version=settings.get('azure_openai_gpt_api_version'),
             azure_endpoint=settings.get('azure_openai_gpt_endpoint'),
-            azure_ad_token_provider=token_provider
+            azure_ad_token_provider=token_provider,
+            default_headers=extra_headers or None,
         ), gpt_model
 
     return AzureOpenAI(
         api_version=settings.get('azure_openai_gpt_api_version'),
         azure_endpoint=settings.get('azure_openai_gpt_endpoint'),
-        api_key=settings.get('azure_openai_gpt_key')
+        api_key=settings.get('azure_openai_gpt_key'),
+        default_headers=extra_headers or None,
     ), gpt_model
 
 
@@ -4539,7 +4566,10 @@ def extract_document_metadata(document_id, user_id, group_id=None, public_worksp
 
     # --- Step 5: Prepare GPT Client ---
     try:
-        gpt_client, gpt_model = _resolve_metadata_extraction_client(settings)
+        gpt_client, gpt_model = _resolve_metadata_extraction_client(
+            settings,
+            identity_context={'user_id': user_id},
+        )
     except Exception as e:
         add_file_task_to_file_processing_log(
             document_id=document_id,

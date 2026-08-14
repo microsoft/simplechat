@@ -22,6 +22,7 @@ from functions_appinsights import log_event
 from functions_debug import debug_print
 from functions_documents import get_document_record, get_ordered_document_chunks
 from functions_group import get_user_groups
+from functions_model_endpoint_identity_header import build_model_endpoint_identity_headers
 from functions_public_workspaces import get_user_visible_public_workspace_ids_from_settings
 from functions_search import (
     SEARCH_DEFAULT_TOP_N,
@@ -928,12 +929,17 @@ def _render_window_source_text(window_payload):
     return "\n\n".join(source_parts)
 
 
-def _create_summary_client(settings):
+def _create_summary_client(settings, user_id=None):
+    extra_headers = build_model_endpoint_identity_headers(
+        settings,
+        identity_context={'user_id': user_id},
+    )
     if settings.get('enable_gpt_apim', False):
         return AzureOpenAI(
             api_version=settings.get('azure_apim_gpt_api_version'),
             azure_endpoint=settings.get('azure_apim_gpt_endpoint'),
             api_key=settings.get('azure_apim_gpt_subscription_key'),
+            default_headers=extra_headers or None,
         )
 
     auth_type = settings.get('azure_openai_gpt_authentication_type', 'key')
@@ -946,12 +952,14 @@ def _create_summary_client(settings):
             api_version=settings.get('azure_openai_gpt_api_version'),
             azure_endpoint=settings.get('azure_openai_gpt_endpoint'),
             azure_ad_token_provider=token_provider,
+            default_headers=extra_headers or None,
         )
 
     return AzureOpenAI(
         api_version=settings.get('azure_openai_gpt_api_version'),
         azure_endpoint=settings.get('azure_openai_gpt_endpoint'),
         api_key=settings.get('azure_openai_gpt_key'),
+        default_headers=extra_headers or None,
     )
 
 
@@ -1082,7 +1090,7 @@ def summarize_document_content(
 
     settings = get_settings()
     model_name = _resolve_summary_model(settings)
-    gpt_client = _create_summary_client(settings)
+    gpt_client = _create_summary_client(settings, user_id=user_id)
     reduction_batch_size = _coerce_positive_int(
         reduction_batch_size,
         SUMMARY_DEFAULT_REDUCTION_BATCH_SIZE,

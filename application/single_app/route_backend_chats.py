@@ -31,6 +31,7 @@ from model_endpoint_clients import (
     infer_model_endpoint_protocol,
     normalize_chat_completion_text,
 )
+from functions_model_endpoint_identity_header import build_model_endpoint_identity_headers
 from functions_model_endpoint_runtime import (
     MODEL_ENDPOINT_PROVIDER_ALLOWLIST,
     build_model_endpoint_context,
@@ -13636,7 +13637,17 @@ def get_foundry_api_version_candidates(primary_version, settings):
     return unique_candidates
 
 
-def build_streaming_multi_endpoint_client(auth_settings, provider, endpoint, api_version, deployment_name=''):
+def build_streaming_multi_endpoint_client(
+    auth_settings,
+    provider,
+    endpoint,
+    api_version,
+    deployment_name='',
+    *,
+    settings=None,
+    endpoint_config=None,
+    identity_context=None,
+):
     """Create an inference client for a resolved streaming model endpoint."""
     client, _ = build_model_endpoint_sync_chat_client(
         auth_settings,
@@ -13644,6 +13655,9 @@ def build_streaming_multi_endpoint_client(auth_settings, provider, endpoint, api
         endpoint,
         api_version,
         deployment_name=deployment_name,
+        settings=settings,
+        endpoint_config=endpoint_config,
+        identity_context=identity_context,
     )
     return client
 
@@ -13861,6 +13875,9 @@ def resolve_streaming_multi_endpoint_gpt_config(settings, data, user_id, active_
         endpoint,
         api_version,
         deployment_name=deployment,
+        settings=settings,
+        endpoint_config=resolved_endpoint_cfg,
+        identity_context={'user_id': user_id},
     )
     debug_print(
         f"[STREAMING][Model Resolution] Resolved {selection_source} multi-endpoint model | "
@@ -16200,6 +16217,10 @@ def register_route_backend_chats(bp):
             )
             try:
                 multi_endpoint_config = None
+                legacy_identity_headers = build_model_endpoint_identity_headers(
+                    settings,
+                    identity_context={'user_id': user_id},
+                )
                 if settings.get('enable_multi_model_endpoints', False):
                     multi_endpoint_config = resolve_streaming_multi_endpoint_gpt_config(
                         settings,
@@ -16264,7 +16285,8 @@ def register_route_backend_chats(bp):
                     gpt_client = AzureOpenAI(
                         api_version=settings.get('azure_apim_gpt_api_version'),
                         azure_endpoint=settings.get('azure_apim_gpt_endpoint'),
-                        api_key=settings.get('azure_apim_gpt_subscription_key')
+                        api_key=settings.get('azure_apim_gpt_subscription_key'),
+                        default_headers=legacy_identity_headers or None
                     )
                 else:
                     auth_type = settings.get('azure_openai_gpt_authentication_type')
@@ -16292,7 +16314,8 @@ def register_route_backend_chats(bp):
                         gpt_client = AzureOpenAI(
                             api_version=api_version,
                             azure_endpoint=endpoint,
-                            azure_ad_token_provider=token_provider
+                            azure_ad_token_provider=token_provider,
+                            default_headers=legacy_identity_headers or None
                         )
                     else: # Default to API Key
                         api_key = settings.get('azure_openai_gpt_key')
@@ -16300,7 +16323,8 @@ def register_route_backend_chats(bp):
                         gpt_client = AzureOpenAI(
                             api_version=api_version,
                             azure_endpoint=endpoint,
-                            api_key=api_key
+                            api_key=api_key,
+                            default_headers=legacy_identity_headers or None
                         )
 
                 if not gpt_client or not gpt_model:
@@ -19446,6 +19470,8 @@ def register_route_backend_chats(bp):
                                     gpt_endpoint,
                                     candidate,
                                     deployment_name=gpt_model,
+                                    settings=settings,
+                                    identity_context={'user_id': user_id},
                                 )
                                 response = retry_client.chat.completions.create(**api_params)
                                 break
@@ -20549,6 +20575,10 @@ def register_route_backend_chats(bp):
 
                 try:
                     streaming_multi_endpoint_config = None
+                    legacy_identity_headers = build_model_endpoint_identity_headers(
+                        settings,
+                        identity_context={'user_id': user_id},
+                    )
                     if settings.get('enable_multi_model_endpoints', False):
                         streaming_multi_endpoint_config = resolve_streaming_multi_endpoint_gpt_config(
                             settings,
@@ -20597,7 +20627,8 @@ def register_route_backend_chats(bp):
                         gpt_client = AzureOpenAI(
                             api_version=gpt_api_version,
                             azure_endpoint=gpt_endpoint,
-                            api_key=settings.get('azure_apim_gpt_subscription_key')
+                            api_key=settings.get('azure_apim_gpt_subscription_key'),
+                            default_headers=legacy_identity_headers or None
                         )
                     else:
                         auth_type = settings.get('azure_openai_gpt_authentication_type')
@@ -20626,13 +20657,15 @@ def register_route_backend_chats(bp):
                             gpt_client = AzureOpenAI(
                                 api_version=api_version,
                                 azure_endpoint=endpoint,
-                                azure_ad_token_provider=token_provider
+                                azure_ad_token_provider=token_provider,
+                                default_headers=legacy_identity_headers or None
                             )
                         else:
                             gpt_client = AzureOpenAI(
                                 api_version=api_version,
                                 azure_endpoint=endpoint,
-                                api_key=settings.get('azure_openai_gpt_key')
+                                api_key=settings.get('azure_openai_gpt_key'),
+                                default_headers=legacy_identity_headers or None
                             )
 
                     if not gpt_client or not gpt_model:

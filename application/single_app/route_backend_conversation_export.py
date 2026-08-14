@@ -40,6 +40,7 @@ from functions_image_messages import (
     is_blob_backed_image_message,
     is_external_image_url,
 )
+from functions_model_endpoint_identity_header import build_model_endpoint_identity_headers
 from functions_message_artifacts import (
     build_message_artifact_payload_map,
     hydrate_agent_citations_from_artifacts,
@@ -1185,8 +1186,17 @@ def _build_summary_model_endpoint_client(
     endpoint: str,
     api_version: str,
     deployment_name: str,
+    *,
+    settings: Dict[str, Any] = None,
+    endpoint_config: Dict[str, Any] = None,
+    identity_context: Dict[str, Any] = None,
 ):
     auth_settings = auth_settings or {}
+    extra_headers = build_model_endpoint_identity_headers(
+        settings,
+        endpoint_config=endpoint_config,
+        identity_context=identity_context,
+    )
     auth_type = _normalize_summary_model_value(auth_settings.get('type') or 'managed_identity').lower()
     normalized_provider = _normalize_summary_model_value(provider or 'aoai').lower()
     runtime_protocol = infer_model_endpoint_protocol(normalized_provider, endpoint, deployment_name)
@@ -1196,13 +1206,14 @@ def _build_summary_model_endpoint_client(
         if not api_key:
             raise ValueError('Selected summary model endpoint is missing an API key.')
         if runtime_protocol == MODEL_ENDPOINT_PROTOCOL_ANTHROPIC:
-            return build_anthropic_chat_client(endpoint=endpoint, api_key=api_key)
+            return build_anthropic_chat_client(endpoint=endpoint, api_key=api_key, extra_headers=extra_headers)
         if runtime_protocol == MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE:
-            return build_openai_style_chat_client(api_key, endpoint, api_version)
+            return build_openai_style_chat_client(api_key, endpoint, api_version, default_headers=extra_headers)
         return AzureOpenAI(
             api_version=api_version,
             azure_endpoint=endpoint,
             api_key=api_key,
+            default_headers=extra_headers or None,
         )
 
     if auth_type == 'service_principal':
@@ -1222,17 +1233,18 @@ def _build_summary_model_endpoint_client(
 
     if runtime_protocol == MODEL_ENDPOINT_PROTOCOL_ANTHROPIC:
         token = credential.get_token(scope).token
-        return build_anthropic_chat_client(endpoint=endpoint, bearer_token=token)
+        return build_anthropic_chat_client(endpoint=endpoint, bearer_token=token, extra_headers=extra_headers)
 
     if runtime_protocol == MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE:
         token = credential.get_token(scope).token
-        return build_openai_style_chat_client(token, endpoint, api_version)
+        return build_openai_style_chat_client(token, endpoint, api_version, default_headers=extra_headers)
 
     token_provider = get_bearer_token_provider(credential, scope)
     return AzureOpenAI(
         api_version=api_version,
         azure_endpoint=endpoint,
         azure_ad_token_provider=token_provider,
+        default_headers=extra_headers or None,
     )
 
 
@@ -1318,6 +1330,9 @@ def _resolve_summary_multi_endpoint_client(
             endpoint,
             api_version,
             deployment,
+            settings=settings,
+            endpoint_config=resolved_endpoint_cfg,
+            identity_context={'user_id': user_id},
         )
         debug_print(
             f"[SUMMARY][Model Resolution] Resolved {selection_source} multi-endpoint model | "
@@ -1353,6 +1368,10 @@ def _initialize_gpt_client(
         return multi_endpoint_client
 
     enable_gpt_apim = settings.get('enable_gpt_apim', False)
+    extra_headers = build_model_endpoint_identity_headers(
+        settings,
+        identity_context={'user_id': user_id},
+    )
 
     if enable_gpt_apim:
         raw_models = settings.get('azure_apim_gpt_deployment', '') or ''
@@ -1367,7 +1386,8 @@ def _initialize_gpt_client(
         gpt_client = AzureOpenAI(
             api_version=settings.get('azure_apim_gpt_api_version'),
             azure_endpoint=settings.get('azure_apim_gpt_endpoint'),
-            api_key=settings.get('azure_apim_gpt_subscription_key')
+            api_key=settings.get('azure_apim_gpt_subscription_key'),
+            default_headers=extra_headers or None,
         )
         return gpt_client, gpt_model
 
@@ -1388,7 +1408,8 @@ def _initialize_gpt_client(
         gpt_client = AzureOpenAI(
             api_version=api_version,
             azure_endpoint=endpoint,
-            azure_ad_token_provider=token_provider
+            azure_ad_token_provider=token_provider,
+            default_headers=extra_headers or None,
         )
     else:
         api_key = settings.get('azure_openai_gpt_key')
@@ -1397,7 +1418,8 @@ def _initialize_gpt_client(
         gpt_client = AzureOpenAI(
             api_version=api_version,
             azure_endpoint=endpoint,
-            api_key=api_key
+            api_key=api_key,
+            default_headers=extra_headers or None,
         )
 
     return gpt_client, gpt_model

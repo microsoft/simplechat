@@ -10,6 +10,7 @@ from functions_model_endpoint_runtime import (
     build_model_endpoint_sync_chat_client,
     resolve_model_endpoint_from_context,
 )
+from functions_model_endpoint_identity_header import build_model_endpoint_identity_headers
 from functions_activity_logging import (
     log_admin_feedback_email_submission,
     log_general_admin_action,
@@ -1394,6 +1395,7 @@ def _test_multimodal_vision_connection(payload):
         multi_endpoint_selection = payload.get('multi_endpoint') if isinstance(payload.get('multi_endpoint'), dict) else None
         if multi_endpoint_selection:
             settings = get_settings()
+            identity_context = {'user_id': get_current_user_id()}
             model_context = {
                 'endpoint_id': str(multi_endpoint_selection.get('endpoint_id') or '').strip(),
                 'model_id': str(multi_endpoint_selection.get('model_id') or '').strip(),
@@ -1440,8 +1442,16 @@ def _test_multimodal_vision_connection(payload):
                 connection.get('endpoint'),
                 connection.get('openai_api_version') or connection.get('api_version'),
                 deployment_name=vision_model,
+                settings=settings,
+                endpoint_config=resolved_endpoint,
+                identity_context=identity_context,
             )
         elif enable_apim:
+            settings = get_settings()
+            extra_headers = build_model_endpoint_identity_headers(
+                settings,
+                identity_context={'user_id': get_current_user_id()},
+            )
             apim_data = payload.get('apim', {})
             endpoint = apim_data.get('endpoint')
             api_version = apim_data.get('api_version')
@@ -1450,9 +1460,15 @@ def _test_multimodal_vision_connection(payload):
             gpt_client = AzureOpenAI(
                 api_version=api_version,
                 azure_endpoint=endpoint,
-                api_key=subscription_key
+                api_key=subscription_key,
+                default_headers=extra_headers or None,
             )
         else:
+            settings = get_settings()
+            extra_headers = build_model_endpoint_identity_headers(
+                settings,
+                identity_context={'user_id': get_current_user_id()},
+            )
             direct_data = payload.get('direct', {})
             endpoint = direct_data.get('endpoint')
             api_version = direct_data.get('api_version')
@@ -1466,14 +1482,16 @@ def _test_multimodal_vision_connection(payload):
                 gpt_client = AzureOpenAI(
                     api_version=api_version,
                     azure_endpoint=endpoint,
-                    azure_ad_token_provider=token_provider
+                    azure_ad_token_provider=token_provider,
+                    default_headers=extra_headers or None,
                 )
             else:
                 api_key = direct_data.get('key')
                 gpt_client = AzureOpenAI(
                     api_version=api_version,
                     azure_endpoint=endpoint,
-                    api_key=api_key
+                    api_key=api_key,
+                    default_headers=extra_headers or None,
                 )
 
         # Determine which token parameter to use based on model type
@@ -1560,6 +1578,11 @@ def _test_gpt_connection(payload):
         'role': 'system',
         'content': f"Testing access."
     }
+    settings = get_settings()
+    extra_headers = build_model_endpoint_identity_headers(
+        settings,
+        identity_context={'user_id': get_current_user_id()},
+    )
 
     # Decide GPT model
     if enable_apim:
@@ -1572,7 +1595,8 @@ def _test_gpt_connection(payload):
         gpt_client = AzureOpenAI(
             api_version=api_version,
             azure_endpoint=endpoint,
-            api_key=subscription_key
+            api_key=subscription_key,
+            default_headers=extra_headers or None,
         )
     else:
         direct_data = payload.get('direct', {})
@@ -1586,7 +1610,8 @@ def _test_gpt_connection(payload):
             gpt_client = AzureOpenAI(
                 api_version=api_version,
                 azure_endpoint=endpoint,
-                azure_ad_token_provider=token_provider
+                azure_ad_token_provider=token_provider,
+                default_headers=extra_headers or None,
             )
         else:
             key = direct_data.get('key')
@@ -1594,7 +1619,8 @@ def _test_gpt_connection(payload):
             gpt_client = AzureOpenAI(
                 api_version=api_version,
                 azure_endpoint=endpoint,
-                api_key=key
+                api_key=key,
+                default_headers=extra_headers or None,
             )
 
     try:
