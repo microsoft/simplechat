@@ -12,6 +12,7 @@ is disabled, shadow-only, or classified as bounded foreground work.
 """
 
 import ast
+import json
 import logging
 import sys
 import time
@@ -148,6 +149,8 @@ def load_workflow_namespace(orchestration_result=None, manifest=None):
         "emit_mixed_source_telemetry": lambda *args, **kwargs: False,
         "_build_mixed_source_analyze_reduction_prompt": lambda prompt, handoff: handoff["content"],
         "log_event": lambda *args, **kwargs: log_events.append({"args": args, "kwargs": kwargs}),
+        "debug_print": lambda *args, **kwargs: None,
+        "json": json,
         "logging": logging,
         "time": time,
     }
