@@ -57,6 +57,7 @@ from functions_activity_logging import (
     log_general_admin_action,
 )
 from functions_governance import ensure_governance_access, upsert_item_policy
+from functions_model_endpoint_identity_header import build_model_endpoint_identity_headers
 
 bpa = Blueprint('admin_agents', __name__)
 bpa.before_request(login_required_blueprint())
@@ -108,11 +109,16 @@ def _resolve_agent_instruction_model(settings):
 
 def _create_agent_instruction_client(settings):
     """Create an Azure OpenAI client from existing app GPT/APIM settings."""
+    extra_headers = build_model_endpoint_identity_headers(
+        settings,
+        identity_context={'user_id': get_current_user_id()},
+    )
     if settings.get('enable_gpt_apim', False):
         return AzureOpenAI(
             api_version=settings.get('azure_apim_gpt_api_version') or settings.get('azure_openai_gpt_api_version'),
             azure_endpoint=settings.get('azure_apim_gpt_endpoint'),
             api_key=settings.get('azure_apim_gpt_subscription_key'),
+            default_headers=extra_headers or None,
         )
 
     auth_type = str(settings.get('azure_openai_gpt_authentication_type') or 'key').strip().lower()
@@ -125,12 +131,14 @@ def _create_agent_instruction_client(settings):
             api_version=settings.get('azure_openai_gpt_api_version'),
             azure_endpoint=settings.get('azure_openai_gpt_endpoint'),
             azure_ad_token_provider=token_provider,
+            default_headers=extra_headers or None,
         )
 
     return AzureOpenAI(
         api_version=settings.get('azure_openai_gpt_api_version'),
         azure_endpoint=settings.get('azure_openai_gpt_endpoint'),
         api_key=settings.get('azure_openai_gpt_key'),
+        default_headers=extra_headers or None,
     )
 
 
@@ -2001,4 +2009,3 @@ def get_global_agent_settings(include_admin_extras=False, user_id=None, group_id
         "enable_multi_model_endpoints": effective_multi_flag,
         "model_endpoints": combined_endpoints,
     })
-

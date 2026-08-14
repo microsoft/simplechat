@@ -13,6 +13,13 @@ from functions_cosmos_throughput import get_default_cosmos_throughput_settings
 from functions_document_actions import get_default_document_action_capabilities
 from functions_icon_utils import normalize_icon_payload
 from functions_latest_features_nav import LATEST_FEATURES_HIDDEN_VERSION_SETTING
+from functions_model_endpoint_identity_header import (
+    DEFAULT_MODEL_ENDPOINT_IDENTITY_HEADER_NAME,
+    DEFAULT_MODEL_ENDPOINT_IDENTITY_HEADER_VALUE_TYPE,
+    normalize_model_endpoint_identity_header_name,
+    normalize_model_endpoint_identity_header_override,
+    normalize_model_endpoint_identity_header_value_type,
+)
 from functions_mcp_server_config import INBOUND_MCP_SETTINGS_DEFAULTS, normalize_inbound_mcp_settings
 from functions_service_health import get_default_service_health
 import app_settings_cache
@@ -20,6 +27,7 @@ import inspect
 import copy
 import os
 import json
+import secrets
 import uuid
 from support_menu_config import (
     get_default_support_latest_features_visibility,
@@ -83,6 +91,7 @@ ADMIN_SETTINGS_FORM_SECRET_FIELDS = (
     "azure_document_intelligence_key",
     "azure_apim_document_intelligence_subscription_key",
     "speech_service_key",
+    "model_endpoint_identity_header_hmac_secret",
 )
 ADMIN_SETTINGS_NESTED_SECRET_FIELDS = (
     "web_search_agent.other_settings.azure_ai_foundry.client_secret",
@@ -295,6 +304,36 @@ def normalize_key_vault_reminder_settings(settings):
             900,
             86400,
         ),
+    }
+
+    changed = False
+    for key, normalized_value in normalized_values.items():
+        if settings.get(key) != normalized_value:
+            settings[key] = normalized_value
+            changed = True
+    return changed
+
+
+def normalize_model_endpoint_identity_header_settings(settings):
+    """Normalize model endpoint identity header settings in-place."""
+    if not isinstance(settings, dict):
+        return False
+
+    hmac_secret = str(settings.get("model_endpoint_identity_header_hmac_secret") or "").strip()
+    if not hmac_secret:
+        hmac_secret = secrets.token_urlsafe(48)
+
+    normalized_values = {
+        "model_endpoint_identity_header_enabled": settings.get("model_endpoint_identity_header_enabled") is True,
+        "model_endpoint_identity_header_name": normalize_model_endpoint_identity_header_name(
+            settings.get("model_endpoint_identity_header_name"),
+            fallback=DEFAULT_MODEL_ENDPOINT_IDENTITY_HEADER_NAME,
+        ),
+        "model_endpoint_identity_header_value_type": normalize_model_endpoint_identity_header_value_type(
+            settings.get("model_endpoint_identity_header_value_type")
+            or DEFAULT_MODEL_ENDPOINT_IDENTITY_HEADER_VALUE_TYPE,
+        ),
+        "model_endpoint_identity_header_hmac_secret": hmac_secret,
     }
 
     changed = False
@@ -1073,7 +1112,6 @@ def normalize_tabular_parity_durable_preflight_defaults(settings):
 
 
 def get_settings(use_cosmos=False, include_source=False):
-    import secrets
     default_settings = {
         # External health check
         'enable_external_healthcheck': False,
@@ -1252,6 +1290,10 @@ def get_settings(use_cosmos=False, include_source=False):
         },
         'enable_multi_model_endpoints': False,
         'model_endpoints': [],
+        'model_endpoint_identity_header_enabled': False,
+        'model_endpoint_identity_header_name': DEFAULT_MODEL_ENDPOINT_IDENTITY_HEADER_NAME,
+        'model_endpoint_identity_header_value_type': DEFAULT_MODEL_ENDPOINT_IDENTITY_HEADER_VALUE_TYPE,
+        'model_endpoint_identity_header_hmac_secret': secrets.token_urlsafe(48),
         'default_model_selection': {
             'endpoint_id': '',
             'model_id': '',
@@ -1787,6 +1829,7 @@ def get_settings(use_cosmos=False, include_source=False):
         inbound_mcp_settings_updated = normalize_inbound_mcp_settings(merged)
         public_workspace_display_settings_updated = normalize_public_workspace_display_settings(merged)
         key_vault_reminder_settings_updated = normalize_key_vault_reminder_settings(merged)
+        model_endpoint_identity_header_settings_updated = normalize_model_endpoint_identity_header_settings(merged)
         tabular_parity_durable_preflight_settings_updated = normalize_tabular_parity_durable_preflight_defaults(merged)
 
         merged['enable_tabular_processing_plugin'] = is_tabular_processing_enabled(merged)
@@ -1802,6 +1845,7 @@ def get_settings(use_cosmos=False, include_source=False):
             or inbound_mcp_settings_updated
             or public_workspace_display_settings_updated
             or key_vault_reminder_settings_updated
+            or model_endpoint_identity_header_settings_updated
             or tabular_parity_durable_preflight_settings_updated
         ):
             cosmos_settings_container.upsert_item(merged)
@@ -1856,6 +1900,7 @@ def update_settings(new_settings):
         normalize_inbound_mcp_settings(settings_item)
         normalize_public_workspace_display_settings(settings_item)
         normalize_key_vault_reminder_settings(settings_item)
+        normalize_model_endpoint_identity_header_settings(settings_item)
         settings_item['enable_multi_model_endpoints'] = coerce_multi_model_endpoint_enablement(
             existing_multi_endpoint_enabled,
             settings_item.get('enable_multi_model_endpoints', False),
@@ -2326,6 +2371,10 @@ def normalize_model_endpoints(endpoints):
         endpoint_copy.pop("has_api_key", None)
         endpoint_copy.pop("has_client_secret", None)
         connection = endpoint_copy.get("connection") or {}
+        identity_header = normalize_model_endpoint_identity_header_override(endpoint_copy.get("identity_header"))
+        if endpoint_copy.get("identity_header") != identity_header:
+            endpoint_copy["identity_header"] = identity_header
+            changed = True
 
         if not endpoint_copy.get("id"):
             fallback_id = endpoint_copy.get("name") or connection.get("endpoint")

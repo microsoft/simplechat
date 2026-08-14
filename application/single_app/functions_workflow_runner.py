@@ -149,6 +149,7 @@ from functions_mixed_source_orchestration import (
 from model_endpoint_clients import (
     MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI,
 )
+from functions_model_endpoint_identity_header import build_model_endpoint_identity_headers
 from functions_model_endpoint_runtime import (
     build_model_endpoint_sync_chat_client,
     build_semantic_kernel_chat_service_for_model,
@@ -5761,12 +5762,16 @@ def _build_multi_endpoint_client(user_id, endpoint_id, model_id, settings, group
         endpoint,
         api_version,
         deployment_name=deployment_name,
+        settings=settings,
+        endpoint_config=resolved_endpoint,
+        identity_context={'user_id': user_id},
     )
 
     return client, deployment_name, provider
 
 
-def _build_legacy_default_client(settings):
+def _build_legacy_default_client(settings, identity_context=None):
+    extra_headers = build_model_endpoint_identity_headers(settings, identity_context=identity_context)
     if settings.get('enable_gpt_apim', False):
         endpoint = settings.get('azure_apim_gpt_endpoint')
         deployment_name = settings.get('azure_apim_gpt_deployment')
@@ -5776,6 +5781,7 @@ def _build_legacy_default_client(settings):
             azure_endpoint=endpoint,
             api_key=api_key,
             api_version=api_version,
+            default_headers=extra_headers or None,
         )
         return client, deployment_name, 'aoai'
 
@@ -5792,6 +5798,7 @@ def _build_legacy_default_client(settings):
             azure_endpoint=endpoint,
             api_key=api_key,
             api_version=api_version,
+            default_headers=extra_headers or None,
         )
         return client, deployment_name, 'aoai'
 
@@ -5809,6 +5816,7 @@ def _build_legacy_default_client(settings):
         azure_endpoint=endpoint,
         azure_ad_token_provider=token_provider,
         api_version=api_version,
+        default_headers=extra_headers or None,
     )
     return client, deployment_name, 'aoai'
 
@@ -5825,7 +5833,7 @@ def _resolve_model_workflow_client(workflow, settings):
         return _build_multi_endpoint_client(user_id, endpoint_id, model_id, settings, group_id=group_id)
 
     if legacy_model_deployment:
-        client, _, provider = _build_legacy_default_client(settings)
+        client, _, provider = _build_legacy_default_client(settings, identity_context={'user_id': user_id})
         return client, legacy_model_deployment, provider
 
     default_selection = settings.get('default_model_selection', {}) if isinstance(settings, dict) else {}
@@ -5834,7 +5842,7 @@ def _resolve_model_workflow_client(workflow, settings):
     if default_endpoint_id and default_model_id:
         return _build_multi_endpoint_client(user_id, default_endpoint_id, default_model_id, settings)
 
-    return _build_legacy_default_client(settings)
+    return _build_legacy_default_client(settings, identity_context={'user_id': user_id})
 
 
 def _chain_activity_callbacks(*callbacks):

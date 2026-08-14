@@ -4904,6 +4904,50 @@
                     </div>
                     {% endif %}
 
+                    <div class="border rounded p-3 mt-3">
+                        <div class="d-flex flex-column flex-lg-row justify-content-between gap-2">
+                            <div>
+                                <h6 class="mb-1"><i class="bi bi-fingerprint me-2"></i>Model Endpoint Identity Header</h6>
+                                <p class="text-muted small mb-0">
+                                    Send a stable HMAC-hashed user key to model endpoint backends for APIM counters, quota policies, or routing policies.
+                                </p>
+                            </div>
+                            <div class="form-check form-switch">
+                                <input
+                                    type="checkbox"
+                                    class="form-check-input"
+                                    id="model_endpoint_identity_header_enabled"
+                                    name="model_endpoint_identity_header_enabled"
+                                    {% if settings.model_endpoint_identity_header_enabled %}checked{% endif %}
+                                />
+                                <label class="form-check-label" for="model_endpoint_identity_header_enabled">Enable header</label>
+                            </div>
+                        </div>
+                        <div class="row g-3 mt-1">
+                            <div class="col-md-6">
+                                <label for="model_endpoint_identity_header_name" class="form-label">Header Name</label>
+                                <input
+                                    type="text"
+                                    class="form-control"
+                                    id="model_endpoint_identity_header_name"
+                                    name="model_endpoint_identity_header_name"
+                                    value="{{ settings.model_endpoint_identity_header_name or 'x-simplechat-identity-key' }}"
+                                />
+                                <div class="form-text">Reserved auth/protocol headers cannot be used.</div>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="model_endpoint_identity_header_value_type" class="form-label">Identity Value</label>
+                                <select class="form-select" id="model_endpoint_identity_header_value_type" name="model_endpoint_identity_header_value_type">
+                                    <option value="user_oid_tenant_id" {% if settings.model_endpoint_identity_header_value_type == 'user_oid_tenant_id' %}selected{% endif %}>User object ID + tenant ID</option>
+                                    <option value="user_oid" {% if settings.model_endpoint_identity_header_value_type == 'user_oid' %}selected{% endif %}>User object ID</option>
+                                    <option value="user_upn_tenant_id" {% if settings.model_endpoint_identity_header_value_type == 'user_upn_tenant_id' %}selected{% endif %}>User UPN + tenant ID</option>
+                                    <option value="user_upn" {% if settings.model_endpoint_identity_header_value_type == 'user_upn' %}selected{% endif %}>User UPN</option>
+                                </select>
+                                <div class="form-text">The selected identity is HMAC-hashed before leaving SimpleChat. Missing identity values omit the header.</div>
+                            </div>
+                        </div>
+                    </div>
+
                     <div id="default-model-selection-wrapper" class="mt-3">
                         <label for="default-model-selection" class="form-label">Default model for fallbacks</label>
                         <select class="form-select" id="default-model-selection" aria-label="Default model for fallback selection"></select>

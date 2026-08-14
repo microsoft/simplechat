@@ -564,11 +564,13 @@ class SmartHttpPlugin:
         try:
             # Import settings and AzureOpenAI here to avoid circular imports
             from functions_settings import get_settings
+            from functions_model_endpoint_identity_header import build_model_endpoint_identity_headers
             from openai import AzureOpenAI
             from azure.identity import DefaultAzureCredential, get_bearer_token_provider
             from config import cognitive_services_scope
             
             settings = get_settings()
+            extra_headers = build_model_endpoint_identity_headers(settings)
             
             # Set up Azure OpenAI client (similar to functions_documents.py)
             enable_gpt_apim = settings.get('enable_gpt_apim', False)
@@ -583,7 +585,8 @@ class SmartHttpPlugin:
                 gpt_client = AzureOpenAI(
                     api_version=settings.get('azure_apim_gpt_api_version'),
                     azure_endpoint=settings.get('azure_apim_gpt_endpoint'),
-                    api_key=settings.get('azure_apim_gpt_subscription_key')
+                    api_key=settings.get('azure_apim_gpt_subscription_key'),
+                    default_headers=extra_headers or None,
                 )
             else:
                 if settings.get('azure_openai_gpt_authentication_type') == 'managed_identity':
@@ -594,13 +597,15 @@ class SmartHttpPlugin:
                     gpt_client = AzureOpenAI(
                         api_version=settings.get('azure_openai_gpt_api_version'),
                         azure_endpoint=settings.get('azure_openai_gpt_endpoint'),
-                        azure_ad_token_provider=token_provider
+                        azure_ad_token_provider=token_provider,
+                        default_headers=extra_headers or None,
                     )
                 else:
                     gpt_client = AzureOpenAI(
                         api_version=settings.get('azure_openai_gpt_api_version'),
                         azure_endpoint=settings.get('azure_openai_gpt_endpoint'),
-                        api_key=settings.get('azure_openai_gpt_key')
+                        api_key=settings.get('azure_openai_gpt_key'),
+                        default_headers=extra_headers or None,
                     )
             
             # Chunk the content into manageable pieces (about 100k chars each)

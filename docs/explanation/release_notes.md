@@ -2,6 +2,15 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.203)**
+
+#### New Features
+
+*   **Model Endpoint Identity Header**
+    *   Added admin controls to send a stable HMAC-hashed user identity key with model endpoint requests for APIM counters, quota policies, and backend routing policies.
+    *   Supports global enablement, custom safe header names, selectable identity inputs, and per-endpoint inherit/enable/disable overrides without exposing raw UPN, object ID, or tenant ID values.
+    *   (Ref: #1250, Model Endpoint Identity Header, `functions_model_endpoint_identity_header.py`, model endpoint runtime, Admin Settings)
+
 ### **(v0.250.202)**
 
 #### Bug Fixes

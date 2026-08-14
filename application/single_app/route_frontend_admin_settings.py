@@ -546,6 +546,7 @@ def register_route_frontend_admin_settings(bp):
             settings['enable_multi_model_endpoints'] = False
         if 'model_endpoints' not in settings or not isinstance(settings.get('model_endpoints'), list):
             settings['model_endpoints'] = []
+        normalize_model_endpoint_identity_header_settings(settings)
         if 'default_model_selection' not in settings or not isinstance(settings.get('default_model_selection'), dict):
             settings['default_model_selection'] = {
                 'endpoint_id': '',
@@ -1618,6 +1619,16 @@ def register_route_frontend_admin_settings(bp):
                 existing_multi_endpoints_enabled,
                 requested_enable_multi_model_endpoints,
             )
+            model_endpoint_identity_header_enabled = (
+                form_data.get('model_endpoint_identity_header_enabled') == 'on'
+            )
+            model_endpoint_identity_header_name = normalize_model_endpoint_identity_header_name(
+                form_data.get('model_endpoint_identity_header_name'),
+                fallback=DEFAULT_MODEL_ENDPOINT_IDENTITY_HEADER_NAME,
+            )
+            model_endpoint_identity_header_value_type = normalize_model_endpoint_identity_header_value_type(
+                form_data.get('model_endpoint_identity_header_value_type')
+            )
             should_migrate_endpoints = enable_multi_model_endpoints and not existing_multi_endpoints_enabled
             migration_notice = settings.get('multi_endpoint_migration_notice', {
                 'enabled': False,
@@ -2389,6 +2400,10 @@ def register_route_frontend_admin_settings(bp):
                 'gpt_model': gpt_model_obj,
                 'enable_multi_model_endpoints': enable_multi_model_endpoints,
                 'model_endpoints': parsed_model_endpoints,
+                'model_endpoint_identity_header_enabled': model_endpoint_identity_header_enabled,
+                'model_endpoint_identity_header_name': model_endpoint_identity_header_name,
+                'model_endpoint_identity_header_value_type': model_endpoint_identity_header_value_type,
+                'model_endpoint_identity_header_hmac_secret': settings.get('model_endpoint_identity_header_hmac_secret', ''),
                 'default_model_selection': normalized_default_model_selection,
                 'multi_endpoint_migrated_at': migrated_at,
                 'multi_endpoint_migration_notice': migration_notice,
