@@ -2,8 +2,8 @@
 #!/usr/bin/env python3
 """
 Functional test for governance activity logging and policy mutation behavior.
-Version: 0.241.010
-Implemented in: 0.241.010
+Version: 0.250.204
+Implemented in: 0.241.010; 0.250.204
 
 This test ensures that governance changes create activity log records with
 activity_type/type set to governance and include detailed before/after fields.
@@ -11,12 +11,49 @@ activity_type/type set to governance and include detailed before/after fields.
 
 import os
 import sys
+import types
 
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 SINGLE_APP_DIR = os.path.join(CURRENT_DIR, "..", "application", "single_app")
 if SINGLE_APP_DIR not in sys.path:
     sys.path.append(SINGLE_APP_DIR)
+
+
+class _TestContainer:
+    def read_item(self, item, partition_key):
+        raise KeyError(item)
+
+    def query_items(self, *args, **kwargs):
+        return []
+
+    def upsert_item(self, body):
+        return body
+
+    def delete_item(self, item, partition_key):
+        return None
+
+    def create_item(self, body):
+        return body
+
+
+config_stub = types.ModuleType("config")
+config_stub.cosmos_activity_logs_container = _TestContainer()
+config_stub.cosmos_governance_item_policies_container = _TestContainer()
+config_stub.cosmos_governance_policies_container = _TestContainer()
+sys.modules.setdefault("config", config_stub)
+
+functions_settings_stub = types.ModuleType("functions_settings")
+functions_settings_stub.get_settings = lambda: {}
+sys.modules.setdefault("functions_settings", functions_settings_stub)
+
+functions_group_stub = types.ModuleType("functions_group")
+functions_group_stub.get_user_groups = lambda _user_id: []
+sys.modules.setdefault("functions_group", functions_group_stub)
+
+functions_public_workspaces_stub = types.ModuleType("functions_public_workspaces")
+functions_public_workspaces_stub.get_user_public_workspaces = lambda _user_id: []
+sys.modules.setdefault("functions_public_workspaces", functions_public_workspaces_stub)
 
 import functions_activity_logging as activity_logging
 import functions_governance as governance
@@ -101,6 +138,8 @@ def test_upsert_feature_policy_emits_detailed_diff():
                 "allow_all": False,
                 "allowed_users": ["user-1", "user-2"],
                 "allowed_groups": ["group-1"],
+                "denied_users": ["blocked-user-1"],
+                "denied_groups": ["blocked-group-1"],
             },
             actor_user_id="admin-xyz",
             actor_email="admin@example.com",
@@ -109,6 +148,8 @@ def test_upsert_feature_policy_emits_detailed_diff():
         assert updated.get("allow_all") is False, "allow_all was not updated"
         assert sorted(updated.get("allowed_users", [])) == ["user-1", "user-2"], "allowed_users mismatch"
         assert updated.get("allowed_groups") == ["group-1"], "allowed_groups mismatch"
+        assert updated.get("denied_users") == ["blocked-user-1"], "denied_users mismatch"
+        assert updated.get("denied_groups") == ["blocked-group-1"], "denied_groups mismatch"
 
         assert len(captured_logs) == 1, "Expected one governance log event"
         details = captured_logs[0].get("change_details") or {}
@@ -116,6 +157,8 @@ def test_upsert_feature_policy_emits_detailed_diff():
         assert details.get("allow_all", {}).get("after") is False, "diff.after allow_all mismatch"
         assert details.get("users_added") == ["user-1", "user-2"], "users_added mismatch"
         assert details.get("groups_added") == ["group-1"], "groups_added mismatch"
+        assert details.get("denied_users_added") == ["blocked-user-1"], "denied_users_added mismatch"
+        assert details.get("denied_groups_added") == ["blocked-group-1"], "denied_groups_added mismatch"
 
         print("PASS: governance feature policy emits detailed diff data")
         return True

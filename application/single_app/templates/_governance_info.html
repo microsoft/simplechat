@@ -73,7 +73,7 @@
                                     </div>
                                 </div>
                                 <div class="alert alert-secondary mt-3 mb-0" role="alert">
-                                    <strong>Rule of thumb:</strong> The user must pass the feature policy first. Delegated item policies are additive whitelists inside that feature gate; they do not override feature-level governance.
+                                    <strong>Rule of thumb:</strong> The user must pass the feature policy first. Delegated item policies add allow lists and optional block lists inside that feature gate; they do not override feature-level governance.
                                 </div>
                             </div>
                         </div>
@@ -300,7 +300,7 @@
                                         </h2>
                                         <div id="governanceInfoTroubleFourCollapse" class="accordion-collapse collapse" aria-labelledby="governanceInfoTroubleFour" data-bs-parent="#governanceInfoTroubleshootingAccordion">
                                             <div class="accordion-body small">
-                                                The user is blocked. Feature policy is evaluated first. Item-level whitelists only narrow or organize access after the user passes the feature policy, so they cannot grant access to a feature the user is not allowed to use.
+                                                The user is blocked. Feature policy is evaluated first. Item-level allow lists only narrow or organize access after the user passes the feature policy, so they cannot grant access to a feature the user is not allowed to use.
                                             </div>
                                         </div>
                                     </div>

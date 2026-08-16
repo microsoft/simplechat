@@ -2468,15 +2468,15 @@
                         <h5 class="mb-0"><i class="bi bi-sliders2 me-2"></i>Feature Policies</h5>
                         <button type="button" class="btn btn-primary btn-sm" id="governance-save-feature-policies-btn">Save Feature Policies</button>
                     </div>
-                    <p class="text-muted">Set allow-all or explicit allowlists for each governed feature.</p>
+                    <p class="text-muted">Set allow-all, explicit allow lists, and block lists for each governed feature. Block lists override allow settings.</p>
                     <div class="table-responsive">
                         <table class="table table-bordered" id="governance-feature-policies-table">
                             <thead>
                                 <tr>
                                     <th>Feature</th>
                                     <th>Allow All</th>
-                                    <th>Allowed Users (Entra IDs)</th>
-                                    <th>Allowed Groups (Workspace IDs)</th>
+                                    <th>Allow List</th>
+                                    <th>Block List</th>
                                 </tr>
                             </thead>
                             <tbody id="governance-feature-policies-body"></tbody>
@@ -2494,7 +2494,7 @@
                     </div>
                     <p class="text-muted mb-1">Manage delegated governance for configured global resources and action type entitlements that admins assign to specific users or groups.</p>
                     <div class="alert alert-info py-2 small" role="alert">
-                        Delegated item policies are OR combined whitelists. Action type policies grant create/use entitlement for a type; global action policies grant access to one configured global action.
+                        Delegated item policies are OR combined allow lists with optional block lists. Blocked users and groups are denied even when Allow All or another allow list would grant access.
                     </div>
 
                     <div class="row g-2 align-items-end mb-3" id="governance-item-policy-card-controls">
@@ -2540,8 +2540,6 @@
                                     <th>Entity Type</th>
                                     <th>Item</th>
                                     <th>Allow All</th>
-                                    <th>Allowed Users</th>
-                                    <th>Allowed Groups</th>
                                     <th>Actions</th>
                                 </tr>
                             </thead>
