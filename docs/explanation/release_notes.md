@@ -2,6 +2,52 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.208)**
+
+#### User Interface Enhancements
+
+*   **Governance Policy Copy and Principal Review Actions**
+    *   Added Duplicate and Inverse actions for delegated item governance policies so admins can quickly clone a policy or create an allow/block-list-swapped version before saving it as a new policy.
+    *   Added a Show Users modal and removed the allowed/blocked user and group columns from the main delegated policy table, keeping the table easier to scan while preserving principal detail access.
+    *   (Ref: #1252, `admin_governance.js`, `admin_settings.html`, governance delegated item policies)
+
+### **(v0.250.207)**
+
+#### Bug Fixes
+
+*   **Intentional Governance Item Policy Retargeting**
+    *   Updated delegated item policy edits so admins can intentionally move an existing policy to a different delegated item without creating a duplicate policy document.
+    *   The admin UI keeps the policy ID stable, warns that changing the target will move the policy, and the backend saves the new target while deleting the original source document when original target metadata is supplied.
+    *   Also prevents ambiguous policy-ID reuse and keeps feature-policy saves and item-policy deletes out of the retarget conflict path.
+    *   (Ref: #1252, `functions_governance.py`, `route_backend_governance.py`, `admin_governance.js`)
+
+### **(v0.250.206)**
+
+#### Bug Fixes
+
+*   **Governance Item Policy Retarget Protection**
+    *   Fixed delegated item policy edits so changing the selected target no longer creates a duplicate policy document for the new item while leaving the old policy behind.
+    *   Locks the target controls during existing policy edits and rejects conflicting backend saves when an existing policy ID is reused for a different delegated item.
+    *   (Ref: #1252, `admin_governance.js`, `route_backend_governance.py`, `functions_governance.py`)
+
+### **(v0.250.205)**
+
+#### Bug Fixes
+
+*   **Governance Block List Modal Handoff**
+    *   Fixed the delegated item block-list editor opening behind the item policy editor by hiding the parent modal before opening the shared principal editor, then restoring the item editor after the principal editor closes.
+    *   Keeps Bootstrap modal focus, backdrop, and scroll handling consistent by ensuring only one governance modal is visible at a time.
+    *   (Ref: #1252, `admin_governance.js`, `test_admin_governance_tab.py`)
+
+### **(v0.250.204)**
+
+#### New Features
+
+*   **Governance Policy Block Lists**
+    *   Added admin-managed block lists for feature and delegated item governance policies so specific users or groups can be denied even when allow-all or allow-list rules would otherwise grant access.
+    *   Enables administrator-friendly APIM quota-tier separation, such as allowing a high-threshold group to a high endpoint while blocking that group from a default low-threshold endpoint without maintaining a large low-user allow list.
+    *   (Ref: #1252, `functions_governance.py`, `route_backend_governance.py`, `admin_governance.js`, MCP governance)
+
 ### **(v0.250.203)**
 
 #### New Features

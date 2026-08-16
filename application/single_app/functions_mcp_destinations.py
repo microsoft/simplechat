@@ -213,6 +213,8 @@ def _get_governance_group_ids_for_user(user_id):
 def _governance_item_policy_applies_to_user(policy, user_id, user_group_ids):
     if not isinstance(policy, dict):
         return False
+    if _governance_item_policy_denies_user(policy, user_id, user_group_ids):
+        return False
     if policy.get("allow_all", True):
         return True
 
@@ -231,6 +233,33 @@ def _governance_item_policy_applies_to_user(policy, user_id, user_group_ids):
         if str(allowed_group_id or "").strip()
     }
     return bool(allowed_groups.intersection(user_group_ids or set()))
+
+
+def _governance_item_policy_denies_user(policy, user_id, user_group_ids):
+    if not isinstance(policy, dict):
+        return False
+
+    normalized_user_id = str(user_id or "").strip()
+    denied_users = {
+        str(denied_user_id or "").strip()
+        for denied_user_id in policy.get("denied_users", [])
+        if str(denied_user_id or "").strip()
+    }
+    if normalized_user_id and normalized_user_id in denied_users:
+        return True
+
+    denied_groups = {
+        str(denied_group_id or "").strip()
+        for denied_group_id in policy.get("denied_groups", [])
+        if str(denied_group_id or "").strip()
+    }
+    return bool(denied_groups.intersection(user_group_ids or set()))
+
+
+def _policy_has_group_principal_rules(policy):
+    if not isinstance(policy, dict):
+        return False
+    return bool(policy.get("allowed_groups") or policy.get("denied_groups"))
 
 
 def _normalize_governance_destination_item_id(scope_type, item_id):
@@ -263,26 +292,31 @@ def _append_governance_destination_patterns(policy_config, user_id=""):
     normalized_user_id = str(user_id or "").strip() or _get_request_user_id()
     user_group_ids = None
 
+    def ensure_user_group_ids():
+        nonlocal user_group_ids
+        if user_group_ids is None:
+            user_group_ids = _get_governance_group_ids_for_user(normalized_user_id)
+        return user_group_ids
+
     for scope_type, entity_type in MCP_DESTINATION_ITEM_POLICY_ENTITY_TYPES.items():
         patterns = []
         scoped_group_patterns = {}
+        denied_patterns = []
+        denied_scoped_group_patterns = {}
         for policy in _list_governance_item_policies(entity_type):
-            if not _governance_item_policy_applies_to_user(
-                policy,
-                normalized_user_id,
-                user_group_ids if user_group_ids is not None else set(),
-            ):
-                if user_group_ids is None:
-                    user_group_ids = _get_governance_group_ids_for_user(normalized_user_id)
-                    if _governance_item_policy_applies_to_user(policy, normalized_user_id, user_group_ids):
-                        group_id, pattern = _normalize_governance_destination_item_id(scope_type, policy.get("item_id"))
-                        if group_id:
-                            scoped_group_patterns.setdefault(group_id, []).append(pattern)
-                        else:
-                            patterns.append(pattern)
+            group_ids_for_policy = ensure_user_group_ids() if _policy_has_group_principal_rules(policy) else set()
+            group_id, pattern = _normalize_governance_destination_item_id(scope_type, policy.get("item_id"))
+
+            if _governance_item_policy_denies_user(policy, normalized_user_id, group_ids_for_policy):
+                if group_id:
+                    denied_scoped_group_patterns.setdefault(group_id, []).append(pattern)
+                else:
+                    denied_patterns.append(pattern)
                 continue
 
-            group_id, pattern = _normalize_governance_destination_item_id(scope_type, policy.get("item_id"))
+            if not _governance_item_policy_applies_to_user(policy, normalized_user_id, group_ids_for_policy):
+                continue
+
             if group_id:
                 scoped_group_patterns.setdefault(group_id, []).append(pattern)
             else:
@@ -295,6 +329,15 @@ def _append_governance_destination_patterns(policy_config, user_id=""):
         for group_id, group_patterns in scoped_group_patterns.items():
             policy_config["group_patterns"][group_id] = _merge_unique_patterns(
                 policy_config["group_patterns"].get(group_id, []),
+                group_patterns,
+            )
+        policy_config["denied_scope_patterns"][scope_type] = _merge_unique_patterns(
+            policy_config["denied_scope_patterns"].get(scope_type, []),
+            denied_patterns,
+        )
+        for group_id, group_patterns in denied_scoped_group_patterns.items():
+            policy_config["denied_group_patterns"][group_id] = _merge_unique_patterns(
+                policy_config["denied_group_patterns"].get(group_id, []),
                 group_patterns,
             )
 
@@ -373,6 +416,12 @@ def get_mcp_destination_policy_config(settings=None, user_id=""):
             str(group_id): _coerce_pattern_list(patterns)
             for group_id, patterns in scoped_group_patterns.items()
         },
+        "denied_scope_patterns": {
+            MCP_DESTINATION_SCOPE_PERSONAL: [],
+            MCP_DESTINATION_SCOPE_GROUP: [],
+            MCP_DESTINATION_SCOPE_GLOBAL: [],
+        },
+        "denied_group_patterns": {},
     }
     if not policy_config.get("enabled"):
         return policy_config
@@ -563,6 +612,15 @@ def _allowed_patterns_for_scope(policy_config, scope_type, scope_id):
     return patterns
 
 
+def _denied_patterns_for_scope(policy_config, scope_type, scope_id):
+    normalized_scope = normalize_mcp_destination_scope(scope_type)
+    patterns = []
+    patterns.extend((policy_config.get("denied_scope_patterns") or {}).get(normalized_scope) or [])
+    if normalized_scope == MCP_DESTINATION_SCOPE_GROUP and scope_id:
+        patterns.extend((policy_config.get("denied_group_patterns") or {}).get(str(scope_id)) or [])
+    return patterns
+
+
 def infer_mcp_destination_scope(manifest, fallback_scope=MCP_DESTINATION_SCOPE_PERSONAL):
     """Infer an action scope from a stored MCP manifest when a caller does not pass one."""
     if not isinstance(manifest, dict):
@@ -620,6 +678,18 @@ def evaluate_mcp_destination_policy(manifest, scope_type=None, scope_id="", poli
             "scope_type": normalized_scope,
             "scope_id": normalized_scope_id,
         }
+
+    denied_patterns = _denied_patterns_for_scope(policy, normalized_scope, normalized_scope_id)
+    for pattern in denied_patterns:
+        if _pattern_matches_destination(pattern, descriptor):
+            return {
+                "allowed": False,
+                "reason": "matched_destination_block_policy",
+                "descriptor": descriptor,
+                "matched_pattern": pattern,
+                "scope_type": normalized_scope,
+                "scope_id": normalized_scope_id,
+            }
 
     allowed_patterns = _allowed_patterns_for_scope(policy, normalized_scope, normalized_scope_id)
     for pattern in allowed_patterns:

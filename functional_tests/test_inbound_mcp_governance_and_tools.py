@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for inbound MCP governance and first tool contracts.
-Version: 0.250.100
+Version: 0.250.204
 Implemented in: 0.250.070
 Simplified personal access/source governance implemented in: 0.250.080
 Single inbound MCP access policy implemented in: 0.250.081
@@ -15,6 +15,7 @@ Inbound MCP source governance enforcement implemented in: 0.250.091
 Inbound MCP source-only governance implemented in: 0.250.092
 Personal workflow listing and clear workflow-id guidance implemented in: 0.250.094
 Inbound MCP enterprise readiness hardening implemented in: 0.250.096
+Inbound MCP policy block lists implemented in: 0.250.204
 
 This test ensures inbound MCP uses explicit inbound MCP source governance,
 exposes only implemented tools through JSON-RPC, and binds personal tools to
@@ -48,6 +49,9 @@ def test_governance_policy_dimensions():
     assert "get_explicit_item_policies(entity_type, item_id)" in source
     assert "has no explicit inbound MCP policy" in source
     assert "effect == \"deny\"" in source
+    assert "policy_denies_principal(policy, user_id, group_ids)" in source
+    assert "policy_allows_principal(policy or {}, user_id, group_ids)" in source
+    assert "denied by explicit policy block list" in source
     assert "mcp_identity_type_not_allowed" in source
     assert "mcp_delegated_user_required" in source
     assert '"mcp_access_not_allowed"' not in source
