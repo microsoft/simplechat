@@ -2,6 +2,28 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.211)**
+
+#### User Interface Enhancements
+
+*   **Consistent Workspace Section Order**
+    *   Workspace sections now follow a single order of operations everywhere they are listed: Documents, Prompts, Identities, Sync, Endpoints, Actions, Agents, Workflows.
+    *   The order reflects how a workspace is actually built up, so it is clearer that Identities feed both Sync and Actions, that Actions belong to Agents, and that Workflows run Agents.
+    *   Applied to the tab strip, the collapsed Section dropdown, and the left-hand sidebar submenus for personal and group workspaces. Public workspaces already matched this order and were left unchanged.
+    *   Sections that an admin has disabled stay hidden; the remaining sections simply close up while keeping their relative positions.
+    *   (Ref: #1255, `workspace.html`, `group_workspaces.html`, `_sidebar_nav.html`, `WORKSPACE_SECTION_ORDER.md`)
+
+#### Bug Fixes
+
+*   **Group Workflows Missing From Sidebar Navigation**
+    *   Added the missing Group Workflows link to the left-hand group workspace submenu. Group workflows previously had a working tab but no way to reach it from the sidebar.
+    *   (Ref: #1255, `_sidebar_nav.html`, group workflows navigation)
+
+*   **Sidebar Links Pointing At Unrendered Workspace Tabs**
+    *   Fixed left-hand navigation links whose visibility rules did not match the tabs they opened, so a link could appear for a section that was never rendered.
+    *   Personal Agents and Actions links now respect the user agent and plugin permissions, group Agents and Actions links now respect per-user Semantic Kernel and group plugin permissions, and both Identities links now match their tab's File Sync and Semantic Kernel conditions.
+    *   (Ref: #1255, `_sidebar_nav.html`, `test_workspace_section_order.py`)
+
 ### **(v0.250.210)**
 
 #### Bug Fixes
