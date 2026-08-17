@@ -809,6 +809,30 @@ img.chat-searchable-select-item-icon {
   white-space: nowrap;
 }
 
+/* Document rows stack the title above the file name when the two differ */
+#document-dropdown-items .dropdown-item .chat-document-option-text {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+}
+
+#document-dropdown-items .dropdown-item .chat-document-option-title,
+#document-dropdown-items .dropdown-item .chat-document-option-filename {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#document-dropdown-items .dropdown-item .chat-document-option-filename {
+  font-size: 0.75rem;
+  line-height: 1.2;
+  opacity: 0.85;
+}
+
 /* Document dropdown items must be explicitly displayed */
 #document-dropdown .dropdown-item {
   align-items: center;
