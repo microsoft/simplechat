@@ -106,7 +106,7 @@ def test_agent_modal_assigned_knowledge_step():
                 """
                 async () => {
                     await window.agentModalStepper.showModal();
-                    window.agentModalStepper.goToStep(5);
+                    window.agentModalStepper.goToStep(window.agentModalStepper.getStepNumber('knowledge'));
                 }
                 """
             )
@@ -183,7 +183,7 @@ def test_agent_modal_assigned_knowledge_step():
             assert assigned_knowledge["allow_user_workspace_context"] is True
             assert assigned_knowledge["allowed_user_workspace_actions"] == ["search", "analyze"]
 
-            page.evaluate("() => window.agentModalStepper.goToStep(7)")
+            page.evaluate("() => window.agentModalStepper.goToStep(window.agentModalStepper.getStepNumber('summary'))")
             expect(page.locator("#summary-assigned-knowledge-section")).to_be_visible()
             expect(page.locator("#summary-assigned-knowledge")).to_contain_text("1 public workspace")
             expect(page.locator("#summary-assigned-knowledge")).to_contain_text("1 specific document")

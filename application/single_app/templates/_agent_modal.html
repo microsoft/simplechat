@@ -54,15 +54,15 @@
           </div>
           <div class="step-indicator" data-step="3">
             <div class="step-circle">3</div>
-            <div class="step-label">Instructions</div>
+            <div class="step-label">Actions</div>
           </div>
           <div class="step-indicator" data-step="4">
             <div class="step-circle">4</div>
-            <div class="step-label">Actions</div>
+            <div class="step-label">Knowledge</div>
           </div>
           <div class="step-indicator" data-step="5">
             <div class="step-circle">5</div>
-            <div class="step-label">Knowledge</div>
+            <div class="step-label">Instructions</div>
           </div>
           <div class="step-indicator" data-step="6">
             <div class="step-circle">6</div>
@@ -326,34 +326,8 @@
           {% endif %}
         </div>
 
-        <!-- Step 3: Instructions -->
+        <!-- Step 3: Action Selection -->
         <div class="agent-step d-none" id="agent-step-3">
-          <h6 class="mb-3">Instructions</h6>
-          <div class="alert alert-info d-none" id="agent-instructions-foundry-note" role="alert">
-            Instructions are managed in Foundry for this agent type.
-          </div>
-          <div class="mb-3" id="agent-instructions-container">
-            <label for="agent-instructions" class="form-label">Agent Instructions <span class="text-danger" title="Required">*</span></label>
-            <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Well-crafted instructions guide the agent's behavior, ensuring it performs tasks correctly, consistently, and within scope. These are incredibly important and have a massive effect on how the agent operates."></i>
-            <div class="mb-3 mt-2" id="agent-instructions-draft-container">
-              <label for="agent-instruction-brief" class="form-label">Instruction Brief</label>
-              <textarea class="form-control" id="agent-instruction-brief" rows="3" placeholder="Describe the agent you want to build..."></textarea>
-              <div class="d-flex flex-wrap align-items-center gap-2 mt-2">
-                <button type="button" class="btn btn-outline-primary btn-sm" id="agent-draft-instructions-btn">
-                  <i class="bi bi-stars me-1"></i>Draft Instructions
-                </button>
-                <span class="text-muted small" id="agent-draft-instructions-status" aria-live="polite"></span>
-              </div>
-            </div>
-            <textarea class="form-control" id="agent-instructions" rows="8" placeholder="Define how this agent should behave, what it should do, and any specific guidelines it should follow..."></textarea>
-            <div class="form-text">
-              <strong>Tips:</strong> Be specific about the agent's role, capabilities, and limitations. Include examples of good behavior if relevant.
-            </div>
-          </div>
-        </div>
-
-        <!-- Step 4: Action Selection -->
-        <div class="agent-step d-none" id="agent-step-4">
           <div id="agent-actions-disabled" class="alert alert-info d-none" role="alert">
             Actions are not available for Foundry agents. Foundry-managed tools are used automatically.
           </div>
@@ -491,8 +465,8 @@
           </div>
         </div>
 
-        <!-- Step 5: Assigned Knowledge -->
-        <div class="agent-step d-none" id="agent-step-5">
+        <!-- Step 4: Assigned Knowledge -->
+        <div class="agent-step d-none" id="agent-step-4">
           <div class="d-flex justify-content-between align-items-start gap-2 mb-3">
             <h6 class="mb-0">Assigned Knowledge</h6>
             <button type="button" class="btn btn-outline-secondary btn-sm" id="agent-assigned-knowledge-help-toggle" data-bs-toggle="collapse" data-bs-target="#agent-assigned-knowledge-help" aria-expanded="false" aria-controls="agent-assigned-knowledge-help" title="How Assigned Knowledge works" aria-label="How Assigned Knowledge works">
@@ -660,6 +634,64 @@
           </div>
         </div>
 
+        <!-- Step 5: Instructions -->
+        <div class="agent-step d-none" id="agent-step-5">
+          <h6 class="mb-3">Instructions</h6>
+          <div class="alert alert-info d-none" id="agent-instructions-foundry-note" role="alert">
+            Instructions are managed in Foundry for this agent type.
+          </div>
+          <div class="mb-3" id="agent-instructions-container">
+            <div class="card mb-3" id="agent-instructions-context-panel">
+              <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2 py-2">
+                <button type="button" class="btn btn-link text-decoration-none p-0 fw-semibold text-start" id="agent-instructions-context-toggle" data-bs-toggle="collapse" data-bs-target="#agent-instructions-context-body" aria-expanded="false" aria-controls="agent-instructions-context-body">
+                  <i class="bi bi-diagram-3 me-1" aria-hidden="true"></i>Selected Actions &amp; Knowledge
+                </button>
+                <div class="d-flex flex-wrap gap-1">
+                  <span class="badge text-bg-info" id="agent-instructions-context-actions-count">0 actions</span>
+                  <span class="badge text-bg-secondary" id="agent-instructions-context-knowledge-count">0 knowledge items</span>
+                </div>
+              </div>
+              <div class="collapse" id="agent-instructions-context-body">
+                <div class="card-body">
+                  <p class="text-muted small mb-3">
+                    Type <code>#</code> in the Instruction Brief or the instructions editor to reference these.
+                    Use <code>#action:</code> for a selected action or one of its capabilities, and <code>#knowledge:</code> for an assigned document, workspace, tag, or web source.
+                  </p>
+                  <div class="row g-3">
+                    <div class="col-lg-6">
+                      <h6 class="small text-uppercase text-muted mb-2">Selected Actions</h6>
+                      <div id="agent-instructions-context-actions" class="agent-instructions-context-list" aria-label="Selected actions available to reference"></div>
+                    </div>
+                    <div class="col-lg-6">
+                      <h6 class="small text-uppercase text-muted mb-2">Assigned Knowledge</h6>
+                      <div id="agent-instructions-context-knowledge" class="agent-instructions-context-list" aria-label="Assigned knowledge available to reference"></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <label for="agent-instructions" class="form-label">Agent Instructions <span class="text-danger" title="Required">*</span></label>
+            <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Well-crafted instructions guide the agent's behavior, ensuring it performs tasks correctly, consistently, and within scope. These are incredibly important and have a massive effect on how the agent operates."></i>
+            <div class="mb-3 mt-2" id="agent-instructions-draft-container">
+              <label for="agent-instruction-brief" class="form-label">Instruction Brief</label>
+              <textarea class="form-control" id="agent-instruction-brief" rows="3" placeholder="Describe the agent you want to build... type # to reference a selected action or assigned document."></textarea>
+              <div class="d-flex flex-wrap align-items-center gap-2 mt-2">
+                <button type="button" class="btn btn-outline-primary btn-sm" id="agent-draft-instructions-btn">
+                  <i class="bi bi-stars me-1"></i>Draft Instructions
+                </button>
+                <span class="text-muted small" id="agent-draft-instructions-status" aria-live="polite"></span>
+              </div>
+              <div class="form-text">The draft uses the actions and knowledge you selected in the previous steps.</div>
+            </div>
+            <textarea class="form-control" id="agent-instructions" rows="8" placeholder="Define how this agent should behave, what it should do, and any specific guidelines it should follow..."></textarea>
+            <div class="form-text">
+              <strong>Tips:</strong> Be specific about the agent's role, capabilities, and limitations. Include examples of good behavior if relevant.
+              Type <code>#</code> to reference a selected action, one of its capabilities, or an assigned document.
+            </div>
+          </div>
+        </div>
+
         <!-- Step 6: Advanced -->
         <div class="agent-step d-none" id="agent-step-6">
           <h6 class="mb-3">Advanced Settings</h6>
@@ -784,7 +816,7 @@
               <div id="summary-actions-empty" class="text-center text-muted py-4">
                 <i class="bi bi-inbox display-6 opacity-50"></i>
                 <p class="mt-2 mb-0">No actions selected</p>
-                <small>Go back to step 4 to add actions to your agent</small>
+                <small>                Go back to step 3 to add actions to your agent</small>
               </div>
               <div id="summary-actions-list" class="row g-3" style="display: none;">
                 <!-- Action cards will be populated here -->
@@ -1369,6 +1401,137 @@
 
 [data-bs-theme="dark"] #agent-action-search:focus {
   box-shadow: 0 0 0 0.2rem rgba(134, 183, 254, 0.25);
+}
+
+/* Instructions step: selected actions & knowledge reference panel */
+.agent-instructions-context-list {
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.agent-instructions-context-item {
+  border: 1px solid var(--bs-border-color);
+  border-radius: 0.375rem;
+  padding: 0.5rem 0.625rem;
+  margin-bottom: 0.5rem;
+}
+
+.agent-instructions-context-item:last-child {
+  margin-bottom: 0;
+}
+
+.agent-instructions-context-item-title {
+  font-weight: 600;
+  font-size: 0.875rem;
+}
+
+.agent-instructions-context-item-token {
+  font-family: var(--bs-font-monospace);
+  font-size: 0.75rem;
+  color: var(--bs-secondary-color);
+  word-break: break-all;
+}
+
+.agent-instructions-context-empty {
+  color: var(--bs-secondary-color);
+  font-size: 0.875rem;
+  font-style: italic;
+}
+
+/* Instructions step: "#" reference autocomplete menu */
+.agent-mention-menu {
+  position: fixed;
+  z-index: 1080;
+  min-width: 18rem;
+  max-width: 28rem;
+  background-color: var(--bs-body-bg);
+  color: var(--bs-body-color);
+  border: 1px solid var(--bs-border-color);
+  border-radius: 0.5rem;
+  box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.25);
+  overflow: hidden;
+}
+
+.agent-mention-menu-header {
+  padding: 0.375rem 0.75rem;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--bs-secondary-color);
+  background-color: var(--bs-tertiary-bg);
+  border-bottom: 1px solid var(--bs-border-color);
+}
+
+.agent-mention-menu-list {
+  max-height: 17rem;
+  overflow-y: auto;
+}
+
+.agent-mention-menu-item {
+  padding: 0.375rem 0.75rem;
+  cursor: pointer;
+  border-bottom: 1px solid var(--bs-border-color-translucent);
+}
+
+.agent-mention-menu-item:last-child {
+  border-bottom: 0;
+}
+
+.agent-mention-menu-item.active,
+.agent-mention-menu-item:hover {
+  background-color: var(--bs-primary-bg-subtle);
+}
+
+.agent-mention-menu-item-main {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+}
+
+.agent-mention-menu-item-label {
+  font-weight: 600;
+  font-size: 0.875rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-mention-menu-item-badge {
+  font-size: 0.65rem;
+  flex-shrink: 0;
+}
+
+.agent-mention-menu-item-chevron {
+  margin-left: auto;
+  font-size: 0.75rem;
+  color: var(--bs-secondary-color);
+}
+
+.agent-mention-menu-item-detail {
+  font-size: 0.75rem;
+  color: var(--bs-secondary-color);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-mention-menu-empty,
+.agent-mention-menu-overflow {
+  padding: 0.5rem 0.75rem;
+  font-size: 0.8rem;
+  color: var(--bs-secondary-color);
+}
+
+/* Offscreen mirror used to measure the textarea caret position */
+.agent-mention-caret-mirror {
+  position: absolute;
+  top: -9999px;
+  left: -9999px;
+  visibility: hidden;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  pointer-events: none;
 }
 </style>
 
