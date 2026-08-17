@@ -35,7 +35,6 @@ from functions_personal_workflows import (
     WORKFLOW_TASK_RUNNER_TYPES,
     WORKFLOW_TRIGGER_TYPES,
     _build_default_model_summary,
-    _normalize_alert_priority,
     _normalize_bool,
     _normalize_document_action_config,
     _normalize_schedule,
@@ -48,6 +47,7 @@ from functions_personal_workflows import (
     get_workflow_max_tasks,
 )
 from functions_settings import get_settings, normalize_model_endpoints
+from functions_workflow_alerts import normalize_workflow_alert_settings
 
 
 GROUP_WORKFLOW_MEMBER_ROLES = ("Owner", "Admin", "DocumentManager", "User")
@@ -479,9 +479,12 @@ def save_group_workflow(group_id, workflow_data, actor_user_id, user_info=None):
         ),
         default=False,
     ) if url_access_enabled else False
-    alert_priority = _normalize_alert_priority(
-        workflow_data.get('alert_priority', (existing_workflow or {}).get('alert_priority', 'none'))
+    alert_settings = normalize_workflow_alert_settings(
+        workflow_data,
+        existing_workflow=existing_workflow,
+        task_ids=[task.get('id') for task in tasks],
     )
+    alert_priority = alert_settings['alert_priority']
     error_handling = _normalize_workflow_error_handling(workflow_data, existing_workflow=existing_workflow)
     default_chat_capabilities_enabled = (
         (existing_workflow or {}).get('chat_capabilities_enabled', False)
@@ -566,6 +569,9 @@ def save_group_workflow(group_id, workflow_data, actor_user_id, user_info=None):
             'URL Access authorized at',
         ) if url_access_authorized else '',
         'alert_priority': alert_priority,
+        'alert_mode': alert_settings['alert_mode'],
+        'alert_rules': alert_settings['alert_rules'],
+        'alert_evaluation': alert_settings['alert_evaluation'],
         'schedule': schedule,
         'document_action': document_action,
         'analyze': analyze,

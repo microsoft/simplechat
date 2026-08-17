@@ -1,14 +1,14 @@
 # test_workspace_workflows_tab.py
 """
 UI test for personal workflows workspace tab.
-Version: 0.241.189
+Version: 0.250.209
 Implemented in: 0.241.029
 
 This test ensures the personal workspace workflows tab renders the left-hand
 menu entry, shows workflow rows, opens run history with direct workflow
-conversation links, and submits new agent-based interval workflows with alert
-priorities from the modal on desktop and mobile viewports. It also verifies the
-Activity action opens only in a new tab.
+conversation links, and submits new agent-based interval workflows with the
+selected alert mode from the modal on desktop and mobile viewports. It also
+verifies the Activity action opens only in a new tab.
 """
 
 import json
@@ -204,7 +204,7 @@ def test_workspace_workflows_tab_desktop():
         expect(summary_row).to_be_visible()
         expect(summary_row).to_contain_text("Default app model")
         expect(summary_row).to_contain_text("Every 10 seconds")
-        expect(summary_row).to_contain_text("Alert: Low priority")
+        expect(summary_row).to_contain_text("Alert: Every run (low)")
         expect(summary_row).to_contain_text("Digest completed.")
 
         current_url = page.url
@@ -235,6 +235,7 @@ def test_workspace_workflows_tab_desktop():
         page.select_option("#workflow-trigger-type", "interval")
         page.fill("#workflow-schedule-value", "10")
         page.select_option("#workflow-schedule-unit", "seconds")
+        page.select_option("#workflow-alert-mode", "every_run")
         page.select_option("#workflow-alert-priority", "high")
         page.click("#workflow-save-btn")
 
@@ -243,6 +244,7 @@ def test_workspace_workflows_tab_desktop():
         saved_payload = workflow_state["saved_payloads"][0]
         assert saved_payload["runner_type"] == "agent"
         assert saved_payload["trigger_type"] == "interval"
+        assert saved_payload["alert_mode"] == "every_run"
         assert saved_payload["alert_priority"] == "high"
         assert saved_payload["schedule"] == {"value": 10, "unit": "seconds"}
         assert saved_payload["selected_agent"]["name"] == "researcher_agent"

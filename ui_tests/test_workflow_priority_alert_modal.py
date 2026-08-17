@@ -1,13 +1,15 @@
 # test_workflow_priority_alert_modal.py
 """
 UI test for the workflow priority alert modal.
-Version: 0.241.182
+Version: 0.250.209
 Implemented in: 0.241.055
 
 This test ensures unread workflow alerts open in the global modal, show the
-configured priority, prefer alert-focused enrichment copy over legacy preview
+configured severity, prefer alert-focused enrichment copy over legacy preview
 text, render linked conversations, open conversation targets in a new tab, and
-can be marked as read from the browser workflow.
+can be marked as read from the browser workflow. It also covers the expanded
+severity ladder, the separate failure styling, and quiet alerts that must stay
+in the notification bell instead of interrupting.
 """
 
 import json
@@ -206,6 +208,252 @@ def test_workflow_priority_alert_modal():
             page.locator("#workflow-alert-mark-read-btn").click()
             expect(modal).not_to_be_visible()
             assert any(request_url.endswith('/api/notifications/workflow-alert-001/read') for request_url in read_requests)
+        finally:
+            context.close()
+            browser.close()
+
+def _build_alert_notification(notification_id, priority, category, delivery, title, message):
+    """Build a minimal workflow alert payload for severity and delivery checks."""
+    return {
+        "id": notification_id,
+        "title": title,
+        "message": message,
+        "created_at": "2025-01-01T10:00:00+00:00",
+        "priority": priority,
+        "category": category,
+        "delivery": delivery,
+        "link_url": "",
+        "link_context": {},
+        "metadata": {
+            "workflow_name": "Certificate watch",
+            "priority": priority,
+            "category": category,
+            "delivery": delivery,
+            "trigger_source": "scheduled",
+            "alert_title": title,
+            "alert_summary": message,
+            "alert_detail": message,
+            "matched_rules": [
+                {
+                    "rule_id": "rule-1",
+                    "rule_name": "Expiring certificates",
+                    "severity": priority,
+                    "condition_type": "model_evaluation",
+                    "reason": "Two certificates expire in 3 days.",
+                }
+            ],
+        },
+        "type_config": {"icon": "bi-exclamation-octagon", "color": "danger"},
+        "is_read": False,
+        "is_dismissed": False,
+    }
+
+
+@pytest.mark.ui
+def test_workflow_alert_modal_renders_critical_severity():
+    """Critical alerts use the loudest badge and accent."""
+    _require_ui_env()
+    playwright_sync = _require_playwright()
+
+    payload = {
+        "success": True,
+        "notifications": [
+            _build_alert_notification(
+                "workflow-alert-critical",
+                "critical",
+                "alert",
+                "popup",
+                "Critical priority workflow alert: Expiring certificates",
+                "Two certificates expire in 3 days.",
+            )
+        ],
+    }
+
+    with playwright_sync.sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        context = browser.new_context(
+            storage_state=STORAGE_STATE,
+            viewport={"width": 1440, "height": 900},
+        )
+        page = context.new_page()
+
+        page.route("**/api/notifications/count", lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            body=json.dumps({"success": True, "count": 1}),
+        ))
+        page.route("**/api/notifications/workflow-alerts**", lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            body=json.dumps(payload),
+        ))
+        page.route("**/api/notifications?*", lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            body=json.dumps({
+                "success": True,
+                "notifications": [],
+                "total": 0,
+                "page": 1,
+                "per_page": 20,
+                "has_more": False,
+            }),
+        ))
+
+        try:
+            response = page.goto(f"{BASE_URL}/notifications", wait_until="networkidle")
+            assert response is not None, "Expected a navigation response when loading /notifications."
+            if response.status in SKIP_RESPONSE_CODES:
+                pytest.skip(f"Notifications page unavailable in this environment (HTTP {response.status}).")
+            assert response.ok, f"Expected /notifications to load successfully, got HTTP {response.status}."
+
+            page.evaluate("window.dispatchEvent(new CustomEvent('workflow-alert-refresh-requested'))")
+
+            modal = page.locator("#workflowAlertModal")
+            expect(modal).to_be_visible()
+            expect(page.locator("#workflow-alert-priority-badge")).to_have_text("CRITICAL PRIORITY")
+            expect(page.locator("#workflow-alert-priority-badge")).to_have_class(re.compile(r"text-bg-danger"))
+            expect(page.locator("#workflowAlertModal .workflow-alert-modal-content")).to_have_attribute(
+                "data-priority", "critical"
+            )
+        finally:
+            context.close()
+            browser.close()
+
+
+@pytest.mark.ui
+def test_workflow_alert_modal_marks_run_failures_distinctly():
+    """A failed run is labelled as a failure regardless of its severity."""
+    _require_ui_env()
+    playwright_sync = _require_playwright()
+
+    payload = {
+        "success": True,
+        "notifications": [
+            _build_alert_notification(
+                "workflow-alert-failure",
+                "low",
+                "failure",
+                "popup",
+                "Low priority workflow alert: Certificate watch failed",
+                "The run could not reach the certificate service.",
+            )
+        ],
+    }
+
+    with playwright_sync.sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        context = browser.new_context(
+            storage_state=STORAGE_STATE,
+            viewport={"width": 1440, "height": 900},
+        )
+        page = context.new_page()
+
+        page.route("**/api/notifications/count", lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            body=json.dumps({"success": True, "count": 1}),
+        ))
+        page.route("**/api/notifications/workflow-alerts**", lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            body=json.dumps(payload),
+        ))
+        page.route("**/api/notifications?*", lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            body=json.dumps({
+                "success": True,
+                "notifications": [],
+                "total": 0,
+                "page": 1,
+                "per_page": 20,
+                "has_more": False,
+            }),
+        ))
+
+        try:
+            response = page.goto(f"{BASE_URL}/notifications", wait_until="networkidle")
+            assert response is not None, "Expected a navigation response when loading /notifications."
+            if response.status in SKIP_RESPONSE_CODES:
+                pytest.skip(f"Notifications page unavailable in this environment (HTTP {response.status}).")
+            assert response.ok, f"Expected /notifications to load successfully, got HTTP {response.status}."
+
+            page.evaluate("window.dispatchEvent(new CustomEvent('workflow-alert-refresh-requested'))")
+
+            modal = page.locator("#workflowAlertModal")
+            expect(modal).to_be_visible()
+            expect(page.locator("#workflow-alert-priority-badge")).to_have_text("LOW FAILURE")
+            expect(page.locator("#workflowAlertModal .workflow-alert-modal-content")).to_have_attribute(
+                "data-category", "failure"
+            )
+        finally:
+            context.close()
+            browser.close()
+
+
+@pytest.mark.ui
+def test_quiet_workflow_alerts_do_not_open_the_modal():
+    """Notification-only alerts stay in the bell instead of interrupting."""
+    _require_ui_env()
+    playwright_sync = _require_playwright()
+
+    payload = {
+        "success": True,
+        "notifications": [
+            _build_alert_notification(
+                "workflow-alert-quiet",
+                "info",
+                "alert",
+                "notify_only",
+                "Info priority workflow alert: Nightly summary",
+                "The nightly summary completed with nothing notable.",
+            )
+        ],
+    }
+
+    with playwright_sync.sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        context = browser.new_context(
+            storage_state=STORAGE_STATE,
+            viewport={"width": 1440, "height": 900},
+        )
+        page = context.new_page()
+
+        page.route("**/api/notifications/count", lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            body=json.dumps({"success": True, "count": 1}),
+        ))
+        page.route("**/api/notifications/workflow-alerts**", lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            body=json.dumps(payload),
+        ))
+        page.route("**/api/notifications?*", lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            body=json.dumps({
+                "success": True,
+                "notifications": [],
+                "total": 0,
+                "page": 1,
+                "per_page": 20,
+                "has_more": False,
+            }),
+        ))
+
+        try:
+            response = page.goto(f"{BASE_URL}/notifications", wait_until="networkidle")
+            assert response is not None, "Expected a navigation response when loading /notifications."
+            if response.status in SKIP_RESPONSE_CODES:
+                pytest.skip(f"Notifications page unavailable in this environment (HTTP {response.status}).")
+            assert response.ok, f"Expected /notifications to load successfully, got HTTP {response.status}."
+
+            page.evaluate("window.dispatchEvent(new CustomEvent('workflow-alert-refresh-requested'))")
+            page.wait_for_timeout(1000)
+
+            expect(page.locator("#workflowAlertModal")).not_to_be_visible()
         finally:
             context.close()
             browser.close()

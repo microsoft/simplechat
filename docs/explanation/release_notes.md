@@ -2,6 +2,40 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.209)**
+
+#### New Features
+
+*   **Workflow Alert Rules**
+    *   Workflow alerts are now conditional. Instead of a single Pop-up Alert Priority that notified on every run, a workflow can define rules that describe *why* it should notify you, and a run that matches nothing stays completely silent.
+    *   Conditions cover run status, task status, output text (contains, does not contain, or regex), File Sync results, empty output, an agent-raised signal, and a plain-English condition judged by a model, such as "any certificate expires within 14 days."
+    *   Each rule can be scoped to the final output, any task output, or one specific task.
+    *   Model-judged conditions are batched into a single call per run and skipped entirely when a deterministic rule already matched at a higher severity, so workflows that use only deterministic conditions add no model calls.
+    *   (Ref: `functions_workflow_alerts.py`, `functions_workflow_runner.py`, `functions_personal_workflows.py`, `functions_group_workflows.py`, `workspace_workflows.js`, `WORKFLOW_ALERT_RULES.md`)
+
+*   **Expanded Alert Severities and a Distinct Failure Style**
+    *   The severity ladder grew from low/medium/high to **info, low, medium, high and critical**.
+    *   Info and low alerts land quietly in the notification bell, while medium and above open the pop-up. Any rule can override this.
+    *   Runs that error now carry a separate *failure* category that changes the icon and wording independently of severity, so "the workflow broke" is visually distinct from "the workflow found something."
+    *   When several rules match the same run, the highest severity wins and the alert lists every matched rule with its reason under a new "Triggered by" section.
+    *   (Ref: `functions_notifications.py`, `notifications.js`, `base.html`, workflow alert modal)
+
+*   **Agent-Raised Workflow Alerts**
+    *   Agents running inside a workflow can now raise an alert signal mid-run with severity, title and reason through the new `raise_workflow_alert` SimpleChat capability, and an `agent_signal` rule decides whether it notifies anyone.
+    *   The rule's severity acts as a floor the agent can escalate above but never quiet below, and named signals can route to their own rules.
+    *   The capability is opt-in and refuses outside an active workflow run, so existing agents do not gain the ability to create notifications and a normal chat cannot fabricate one.
+    *   (Ref: `simplechat_plugin.py`, `functions_simplechat_operations.py`, `agent_modal_stepper.js`, `plugin_modal_stepper.js`)
+
+*   **Alert Decision Visibility**
+    *   Each run now records why it did or did not alert, including the winning severity and every matched rule, surfaced through the workflow activity view so noisy or silent workflows can be diagnosed.
+    *   (Ref: `functions_workflow_activity.py`, `functions_workflow_runner.py`)
+
+#### Breaking Changes
+
+*   **Workflow Alert Configuration Model**
+    *   The single `alert_priority` field is superseded by `alert_mode`, `alert_rules` and `alert_evaluation`. The old field is retained and still honored.
+    *   **Migration**: None required. Workflows that only carry `alert_priority` are migrated on read into two editable rules, `Run failed → high` and `Run completed → <previous priority>`, which reproduce the previous behavior exactly, including always opening the pop-up and staying silent on cancelled runs. Owners can then prune the noisy rule.
+
 ### **(v0.250.208)**
 
 #### User Interface Enhancements
