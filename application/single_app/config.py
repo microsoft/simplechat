@@ -96,7 +96,7 @@ DOTENV_LOAD_RESULT = load_simplechat_dotenv()
 EXECUTOR_TYPE = 'thread'
 EXECUTOR_MAX_WORKERS = 30
 SESSION_TYPE = 'filesystem'
-VERSION = "0.250.208"
+VERSION = "0.250.209"
 IS_DEVELOPMENT = is_development_env_enabled()
 
 SESSION_COOKIE_SAMESITE = os.getenv('SESSION_COOKIE_SAMESITE', 'Lax')
@@ -339,6 +339,7 @@ LOGIN_REDIRECT_URL = os.getenv("LOGIN_REDIRECT_URL")
 HOME_REDIRECT_URL = os.getenv("HOME_REDIRECT_URL")  # Front Door URL for home page
 AZURE_ENVIRONMENT = os.getenv("AZURE_ENVIRONMENT", "public") # public, usgovernment, custom
 ENABLE_TEAMS_SSO = os.getenv("ENABLE_TEAMS_SSO", "false").lower() == "true"
+ENABLE_AUTO_LOGIN_ON_INDEX = os.getenv("ENABLE_AUTO_LOGIN_ON_INDEX", "false").lower() == "true"
 TEAMS_APP_RESOURCE = os.getenv("TEAMS_APP_RESOURCE", "")
 TEAMS_SUCCESS_REDIRECT_PATH = os.getenv("TEAMS_SUCCESS_REDIRECT_PATH", "/chats")
 TEAMS_FRAME_ANCESTORS = _split_origin_list(os.getenv("TEAMS_FRAME_ANCESTORS", ""))
