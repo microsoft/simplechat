@@ -75,6 +75,28 @@ LOGGER_DEBUG_MESSAGE = "[SIMPLE_CHAT_DEBUG_TRACE]"
 LOGGER_FALLBACK_MESSAGE = "[SIMPLE_CHAT_LOG_FALLBACK]"
 LOGGER_EXTERNAL_EVENT_MESSAGE = "[SIMPLE_CHAT_EXTERNAL_EVENT]"
 MAX_EXTERNAL_EVENT_STRING_LENGTH = 256
+LOGGER_SAFE_TEXT_MAX_LENGTH = 1024
+# Diagnostic keys whose sanitized text may be retained; everything else stays a length.
+LOGGER_SAFE_TEXT_KEYS = frozenset({
+    "attempt",
+    "container",
+    "containername",
+    "error",
+    "errortype",
+    "failurereasons",
+    "failuresummary",
+    "indexname",
+    "jobid",
+    "operation",
+    "reason",
+    "resource",
+    "resourcename",
+    "service",
+    "stage",
+    "status",
+    "step",
+    "taskname",
+})
 
 
 def _format_message(message: Any, message_args: Optional[Tuple[Any, ...]] = None) -> str:
@@ -111,6 +133,10 @@ def _is_sensitive_external_event_key(key: Any) -> bool:
         _is_sensitive_log_key(key)
         or any(fragment in normalized_key for fragment in EXTERNAL_EVENT_SENSITIVE_KEY_FRAGMENTS)
     )
+
+
+def _is_safe_log_text_key(key: Any) -> bool:
+    return _normalize_log_key(key) in LOGGER_SAFE_TEXT_KEYS
 
 
 def sanitize_log_message(message: Any) -> str:
@@ -176,8 +202,9 @@ def _build_logger_extra(
     message: Any,
     extra: Optional[Dict[str, Any]] = None,
 ) -> Optional[Dict[str, Any]]:
-    """Build log-record properties without clear-text user-controlled values."""
+    """Build log-record properties, keeping only sanitized allowlisted diagnostic text."""
     logger_extra: Dict[str, Any] = {
+        "sc_message": sanitize_log_message(message or "")[:MAX_LOG_STRING_LENGTH],
         "sc_message_length": len(str(message or "")),
     }
 
@@ -193,6 +220,10 @@ def _build_logger_extra(
                 logger_extra[f"{normalized_key}_count"] = len(value)
             elif isinstance(value, str):
                 logger_extra[f"{normalized_key}_length"] = len(value)
+                if _is_safe_log_text_key(key):
+                    logger_extra[normalized_key] = (
+                        sanitize_log_message(value)[:LOGGER_SAFE_TEXT_MAX_LENGTH]
+                    )
             else:
                 logger_extra[normalized_key] = _logger_safe_scalar(value)
 

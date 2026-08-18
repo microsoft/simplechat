@@ -2,6 +2,26 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.209)**
+
+#### Bug Fixes
+
+*   **Cosmos Backup Continuation Token Failure**
+    *   Fixed Data Management backups silently omitting every Cosmos container that held more than one page of documents, which in most deployments meant personal conversations and personal messages were never backed up.
+    *   Affected containers failed with `BadRequest: Invalid Continuation Token` and were dropped from the backup artifact set while the job still reported completion with warnings.
+    *   Root cause was rebuilding the cross-partition query for each page and replaying the previous pager's continuation token; the backup now drains a single pager so the SDK's cross-partition execution context is preserved.
+    *   (Ref: #1258, `functions_data_management.py`, Cosmos backup source paging)
+
+*   **Missing Backup Failure Diagnostics**
+    *   Source blob transfer failures previously produced no log output at all, so a run with nearly 20,000 failed blobs left no trace in App Service logs.
+    *   Backups now log the first failure for each resource plus a bounded rollup of distinct failure reasons and counts when the resource finishes.
+    *   (Ref: #1258, `functions_data_management.py`, source blob backup logging)
+
+*   **Application Insights Log Message Text**
+    *   Structured log events reached Application Insights as the constant `[SIMPLE_CHAT_LOG_EVENT]` with every string property reduced to a character count, making traces unusable for diagnosis.
+    *   Traces now carry the sanitized message text and an allowlist of non-sensitive diagnostic values such as job ID, resource, container, status code, and error. Sensitive keys still collapse to a presence flag and secret redaction is unchanged.
+    *   (Ref: #1258, `functions_appinsights.py`, log event properties)
+
 ### **(v0.250.208)**
 
 #### User Interface Enhancements
