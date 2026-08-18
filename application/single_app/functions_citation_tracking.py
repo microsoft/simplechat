@@ -12,13 +12,18 @@ CITATION_TRACKING_VERSION = 1
 USED_DOCUMENTS_TRACKING_VERSION = 1
 
 _INLINE_DOCUMENT_CITATION_GROUP_PATTERN = re.compile(
-    r"\[\s*#([^\]\r\n]+)\]",
+    r"\[\s{0,8}#([^\]\r\n]{1,1024})\]",
     re.IGNORECASE,
 )
 _INLINE_DOCUMENT_SOURCE_PATTERN = re.compile(
-    r"\(Source:\s*(.+?),\s*(Page(?:s)?|Sheet(?:s)?|Location):\s*(.*?)\)"
-    r"(?=\s*(?:\[#|$|[.;,!? \n]))",
+    r"\(Source:((?:(?!\(Source:).){1,256}?),"
+    r"\s{0,8}(Page(?:s)?|Sheet(?:s)?|Location):"
+    r"((?:(?!\(Source:).){0,256}?)\)"
+    r"(?=\s{0,8}(?:\[#|$|[.;,!? \n]))",
     re.IGNORECASE,
+)
+_PAGE_RANGE_PATTERN = re.compile(
+    r"(\d{1,9})\s{0,8}[-\u2013\u2014]\s{0,8}(\d{1,9})"
 )
 _HTTP_URL_PATTERN = re.compile(r"https?://[^\s<>\"']+", re.IGNORECASE)
 _TRAILING_URL_PUNCTUATION = ".,;:!?"
@@ -124,7 +129,7 @@ def _location_reference_matches(
         return False
 
     for token in explicit_tokens:
-        range_match = re.fullmatch(r"(\d+)\s*[-\u2013\u2014]\s*(\d+)", token)
+        range_match = _PAGE_RANGE_PATTERN.fullmatch(token)
         if not range_match:
             continue
         range_start, range_end = (

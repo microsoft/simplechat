@@ -49,6 +49,7 @@ Conversation records persist `used_documents` for exact active-response usage an
 ### Code changes
 
 - Exact `[#citation-id]` tokens are matched to returned document records after final response content is settled. Explicit `(Source: filename, Page/Sheet/Location: value)` references provide a strict fallback for response paths that omit the hidden ID.
+- Citation matching patterns use bounded quantifiers so hostile or malformed model output cannot trigger polynomial backtracking (ReDoS) while parsing references.
 - Final-response HTTP(S) URLs are normalized and matched to returned web records.
 - Full source arrays remain unchanged for the per-message **Sources** disclosure and JSON audit output.
 - The **Used documents** drawer reads exact active-response usage plus an explicit historical fallback.

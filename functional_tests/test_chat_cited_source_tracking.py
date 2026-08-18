@@ -12,6 +12,7 @@ web references drive used-document aggregates and export reference buckets.
 from copy import deepcopy
 from pathlib import Path
 import sys
+import time
 
 from test_support.versioning import assert_app_version_at_least
 
@@ -206,6 +207,33 @@ def test_schema_aware_citation_location_is_shared():
         chunk_text="Narrative page",
         is_tabular=False,
     ) == ("Page", "4")
+
+
+def test_citation_patterns_resist_adversarial_input():
+    """Bounded citation patterns must not degrade on hostile model output."""
+    adversarial_inputs = (
+        "[#" + ("[#\\" * 20000),
+        "(Source:" + (" " * 40000),
+        "(Source: a, Page:" + (" " * 40000),
+        "(Source: a, Page: " + ("0" * 40000) + "-1)",
+        "[#" + ("0" * 40000),
+    )
+
+    hybrid_citations = _hybrid_sources()
+    started_at = time.monotonic()
+    for adversarial_input in adversarial_inputs:
+        tracked = build_cited_source_subsets(
+            adversarial_input,
+            hybrid_citations=hybrid_citations,
+            web_search_citations=_web_sources(),
+        )
+        assert tracked["cited_hybrid_citations"] == []
+        assert tracked["cited_web_search_citations"] == []
+    elapsed_seconds = time.monotonic() - started_at
+
+    assert elapsed_seconds < 5, (
+        f"Citation matching took {elapsed_seconds:.2f}s on adversarial input"
+    )
 
 
 def test_used_documents_collapse_cited_chunks_only():
@@ -614,6 +642,7 @@ if __name__ == "__main__":
         test_hidden_id_prevents_same_page_source_overmatching,
         test_visible_source_matching_handles_sheet_and_filename_commas,
         test_schema_aware_citation_location_is_shared,
+        test_citation_patterns_resist_adversarial_input,
         test_used_documents_collapse_cited_chunks_only,
         test_reference_buckets_use_strict_empty_values_and_legacy_fallback,
         test_conversation_tracking_preserves_legacy_and_merges_exact_usage,
