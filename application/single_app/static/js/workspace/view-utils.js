@@ -64,6 +64,7 @@ export function getTypeIcon(type) {
     if (t === "databricks" || t === "databricks_table") return "bi-bricks";
     if (t.includes("snowflake")) return "bi-snow2";
     if (t.includes("tableau")) return "bi-bar-chart";
+    if (t.includes("yamcs")) return "bi-broadcast-pin";
     if (t.includes("http") || t.includes("smart_http")) return "bi-cloud-arrow-up";
     if (t.includes("azure_function")) return "bi-lightning";
     if (t.includes("blob")) return "bi-file-earmark";

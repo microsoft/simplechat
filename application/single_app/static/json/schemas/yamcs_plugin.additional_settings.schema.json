@@ -1,0 +1,64 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Yamcs Plugin Additional Settings",
+  "type": "object",
+  "properties": {
+    "server_url": {
+      "type": "string",
+      "description": "Yamcs server base URL, for example https://yamcs.example.com:8090. TLS is derived from the scheme."
+    },
+    "instance": {
+      "type": "string",
+      "description": "Default Yamcs instance name, for example simulator."
+    },
+    "processor": {
+      "type": "string",
+      "default": "realtime",
+      "description": "Default Yamcs processor used to read live parameter values."
+    },
+    "auth_method": {
+      "type": "string",
+      "enum": ["username_password", "api_key", "bearer_token", "none"],
+      "default": "username_password",
+      "description": "Authentication method used by the Yamcs client."
+    },
+    "tls_verify": {
+      "type": "boolean",
+      "default": true,
+      "description": "Verify the Yamcs server TLS certificate. Disable only for internal ground segments using self-signed certificates."
+    },
+    "read_only": {
+      "type": "boolean",
+      "default": true,
+      "description": "Always true. Yamcs actions never issue commands, write parameter values, or change data link state."
+    },
+    "enable_archive_sql": {
+      "type": "boolean",
+      "default": false,
+      "description": "Allow read-only Yamcs archive SQL statements. Disabled by default."
+    },
+    "max_rows": {
+      "type": "integer",
+      "default": 500,
+      "minimum": 1,
+      "maximum": 5000,
+      "description": "Maximum rows returned by any single Yamcs retrieval."
+    },
+    "timeout": {
+      "type": "integer",
+      "default": 30,
+      "minimum": 1,
+      "maximum": 300,
+      "description": "Yamcs HTTP request timeout in seconds."
+    },
+    "byte_limit": {
+      "type": "integer",
+      "default": 250000,
+      "minimum": 1000,
+      "maximum": 2000000,
+      "description": "Approximate serialized result size limit before truncating returned rows."
+    }
+  },
+  "required": ["server_url", "instance", "auth_method"],
+  "additionalProperties": true
+}

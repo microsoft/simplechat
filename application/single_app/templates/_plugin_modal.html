@@ -485,6 +485,121 @@
             </div>
           </div>
 
+          <div id="yamcs-config-section" class="d-none">
+            <div class="alert alert-info mb-3">
+              <strong>Yamcs action:</strong> Connect to a Yamcs mission control server for read-only telemetry, mission database, and archive retrieval.
+            </div>
+            <div class="alert alert-warning mb-3">
+              <i class="bi bi-shield-check me-2"></i><strong>Read-only by design.</strong>
+              This action can never issue commands, set parameter values, run scripts, or change data link state.
+            </div>
+
+            <div class="simplechat-config-card mb-3">
+              <div class="config-section-label">
+                <i class="bi bi-broadcast-pin me-2"></i>Server and Instance
+              </div>
+              <div class="mb-3">
+                <label for="yamcs-server-url" class="form-label">Server URL <span class="text-danger">*</span></label>
+                <input type="url" class="form-control" id="yamcs-server-url" placeholder="https://yamcs.example.com:8090" />
+                <div class="form-text">Base URL of the Yamcs server, including the port. TLS is derived from the scheme.</div>
+              </div>
+              <div class="row g-3">
+                <div class="col-md-6">
+                  <label for="yamcs-instance" class="form-label">Instance <span class="text-danger">*</span></label>
+                  <input type="text" class="form-control" id="yamcs-instance" placeholder="simulator" />
+                  <div class="form-text">Default Yamcs instance used by this action.</div>
+                </div>
+                <div class="col-md-6">
+                  <label for="yamcs-processor" class="form-label">Processor</label>
+                  <input type="text" class="form-control" id="yamcs-processor" value="realtime" placeholder="realtime" />
+                  <div class="form-text">Processor used to read live parameter values.</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="simplechat-config-card mb-3">
+              <div class="config-section-label">
+                <i class="bi bi-shield-lock me-2"></i>Authentication
+              </div>
+              <div class="mb-3 d-none" id="yamcs-action-identity-group">
+                <label for="yamcs-identity-select" class="form-label">Reusable Identity</label>
+                <select class="form-select" id="yamcs-identity-select"></select>
+                <div class="form-text" id="yamcs-identity-status"></div>
+              </div>
+              <div class="mb-3">
+                <label for="yamcs-auth-method" class="form-label">Authentication Method</label>
+                <select class="form-select" id="yamcs-auth-method">
+                  <option value="username_password">Username and Password</option>
+                  <option value="api_key">API Key</option>
+                  <option value="bearer_token">Bearer Token</option>
+                  <option value="none">No Authentication</option>
+                </select>
+                <div class="form-text">Choose "No Authentication" only for unsecured Yamcs instances such as a local simulator.</div>
+              </div>
+              <div class="row g-3" id="yamcs-username-password-group">
+                <div class="col-md-6">
+                  <label for="yamcs-username" class="form-label">Username <span class="text-danger">*</span></label>
+                  <input type="text" class="form-control" id="yamcs-username" placeholder="operator" autocomplete="username" />
+                </div>
+                <div class="col-md-6">
+                  <label for="yamcs-password" class="form-label">Password <span class="text-danger">*</span></label>
+                  <input type="password" class="form-control" id="yamcs-password" placeholder="Password" autocomplete="new-password" data-bwignore="true" data-1p-ignore="true" data-lpignore="true" />
+                </div>
+              </div>
+              <div class="mb-0 d-none" id="yamcs-api-key-group">
+                <label for="yamcs-api-key" class="form-label">API Key <span class="text-danger">*</span></label>
+                <input type="password" class="form-control" id="yamcs-api-key" placeholder="Yamcs API key" autocomplete="new-password" data-bwignore="true" data-1p-ignore="true" data-lpignore="true" />
+              </div>
+              <div class="mb-0 d-none" id="yamcs-bearer-token-group">
+                <label for="yamcs-bearer-token" class="form-label">Bearer Token <span class="text-danger">*</span></label>
+                <input type="password" class="form-control" id="yamcs-bearer-token" placeholder="Yamcs access token" autocomplete="new-password" data-bwignore="true" data-1p-ignore="true" data-lpignore="true" />
+              </div>
+            </div>
+
+            <div class="simplechat-config-card mb-0">
+              <div class="config-section-label">
+                <i class="bi bi-sliders me-2"></i>Retrieval Limits
+              </div>
+              <div class="row g-3">
+                <div class="col-md-6">
+                  <label for="yamcs-max-rows" class="form-label">Max Rows</label>
+                  <input type="number" class="form-control" id="yamcs-max-rows" value="500" min="1" max="5000" />
+                  <div class="form-text">Maximum rows returned by any single retrieval.</div>
+                </div>
+                <div class="col-md-6">
+                  <label for="yamcs-timeout" class="form-label">Timeout (seconds)</label>
+                  <input type="number" class="form-control" id="yamcs-timeout" value="30" min="1" max="300" />
+                  <div class="form-text">Request timeout for Yamcs HTTP calls.</div>
+                </div>
+                <div class="col-12">
+                  <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="yamcs-tls-verify" checked />
+                    <label class="form-check-label" for="yamcs-tls-verify">Verify TLS certificate</label>
+                    <div class="form-text">Uncheck only for internal ground segments using self-signed certificates.</div>
+                  </div>
+                </div>
+                <div class="col-12">
+                  <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="yamcs-enable-archive-sql" />
+                    <label class="form-check-label" for="yamcs-enable-archive-sql">Enable read-only archive SQL</label>
+                    <div class="form-text">Allows SELECT, SHOW, and DESCRIBE statements against the Yamcs archive. Disabled by default.</div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="mt-4 pt-3 border-top" id="yamcs-test-connection-section">
+                <div class="d-flex align-items-center gap-3">
+                  <button type="button" class="btn btn-outline-primary" id="yamcs-test-connection-btn">
+                    <i class="bi bi-plug me-2"></i>Test Yamcs Connection
+                  </button>
+                </div>
+                <div id="yamcs-test-connection-result" class="mt-2 d-none">
+                  <div class="alert mb-0 py-2 px-3 small" id="yamcs-test-connection-alert" role="alert"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
           <div id="simplechat-config-section" class="d-none">
             <div class="alert alert-primary mb-0">
               <strong>Built-in action:</strong> SimpleChat does not require a URL or external credentials.
@@ -1980,6 +2095,60 @@
                   <div class="d-flex flex-column">
                     <label class="text-muted small mb-1">Server Version Negotiation</label>
                     <span class="fw-medium" id="summary-tableau-use-server-version">-</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card mb-3 border-0 shadow-sm d-none" id="summary-yamcs-section">
+            <div class="card-header text-white p-3" style="background: linear-gradient(135deg, #0d6efd 0%, #0a58ca 100%);">
+              <h6 class="mb-0 fw-bold">
+                <i class="bi bi-broadcast-pin me-2"></i>Yamcs Configuration
+              </h6>
+            </div>
+            <div class="card-body p-3">
+              <div class="row g-3">
+                <div class="col-md-6">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Instance</label>
+                    <span class="fw-medium" id="summary-yamcs-instance">-</span>
+                  </div>
+                </div>
+                <div class="col-md-6">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Processor</label>
+                    <span class="fw-medium" id="summary-yamcs-processor">-</span>
+                  </div>
+                </div>
+                <div class="col-md-6">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Authentication</label>
+                    <span class="fw-medium" id="summary-yamcs-auth-method">-</span>
+                  </div>
+                </div>
+                <div class="col-md-6">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">TLS Verification</label>
+                    <span class="fw-medium" id="summary-yamcs-tls-verify">-</span>
+                  </div>
+                </div>
+                <div class="col-md-6">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Max Rows</label>
+                    <span class="fw-medium" id="summary-yamcs-max-rows">-</span>
+                  </div>
+                </div>
+                <div class="col-md-6">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Timeout</label>
+                    <span class="fw-medium" id="summary-yamcs-timeout">-</span>
+                  </div>
+                </div>
+                <div class="col-12">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Archive SQL</label>
+                    <span class="fw-medium" id="summary-yamcs-archive-sql">-</span>
                   </div>
                 </div>
               </div>

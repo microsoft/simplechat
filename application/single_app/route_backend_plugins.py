@@ -92,6 +92,16 @@ from functions_tableau_operations import (
     normalize_tableau_additional_fields,
     normalize_tableau_server_url,
 )
+from functions_yamcs_operations import (
+    YAMCS_AUTH_METHOD_API_KEY,
+    YAMCS_AUTH_METHOD_BEARER_TOKEN,
+    YAMCS_AUTH_METHOD_NONE,
+    YAMCS_AUTH_METHOD_USERNAME_PASSWORD,
+    YAMCS_DEFAULT_PROCESSOR,
+    YAMCS_PLUGIN_TYPE,
+    normalize_yamcs_additional_fields,
+    normalize_yamcs_server_url,
+)
 from functions_mcp_operations import (
     MCP_CUSTOM_HEADERS_FIELD,
     MCP_PLUGIN_TYPE,
@@ -260,6 +270,27 @@ def _apply_plugin_runtime_defaults(plugin_payload):
         plugin_payload['type'] = TABLEAU_PLUGIN_TYPE
         plugin_payload['auth'] = auth
         plugin_payload['additionalFields'] = additional_fields
+    elif plugin_type == YAMCS_PLUGIN_TYPE:
+        auth = plugin_payload.get('auth') if isinstance(plugin_payload.get('auth'), dict) else {}
+        auth_type = str(auth.get('type') or 'username_password').strip() or 'username_password'
+        auth['type'] = auth_type
+        additional_fields = plugin_payload.get('additionalFields') if isinstance(plugin_payload.get('additionalFields'), dict) else {}
+        additional_fields = normalize_yamcs_additional_fields(additional_fields, auth_type=auth_type)
+        if auth_type == 'username_password':
+            additional_fields['auth_method'] = YAMCS_AUTH_METHOD_USERNAME_PASSWORD
+        elif auth_type == 'NoAuth':
+            additional_fields['auth_method'] = YAMCS_AUTH_METHOD_NONE
+        elif auth_type == 'key' and additional_fields.get('auth_method') == YAMCS_AUTH_METHOD_NONE:
+            additional_fields['auth_method'] = YAMCS_AUTH_METHOD_API_KEY
+
+        endpoint = normalize_yamcs_server_url(plugin_payload.get('endpoint') or additional_fields.get('server_url') or '')
+        if endpoint:
+            plugin_payload['endpoint'] = endpoint
+            additional_fields['server_url'] = endpoint
+
+        plugin_payload['type'] = YAMCS_PLUGIN_TYPE
+        plugin_payload['auth'] = auth
+        plugin_payload['additionalFields'] = additional_fields
     elif plugin_type == SIMPLECHAT_PLUGIN_TYPE:
         if not str(plugin_payload.get('endpoint') or '').strip():
             plugin_payload['endpoint'] = SIMPLECHAT_DEFAULT_ENDPOINT
@@ -399,6 +430,20 @@ def get_plugin_types(allowed_type_filter=None):
                                     'timeout': 30,
                                 },
                                 'metadata': {'description': 'Example Tableau plugin'},
+                            }
+                        elif 'yamcs' in module_name.lower():
+                            safe_manifest = {
+                                'endpoint': 'https://yamcs.example.com:8090',
+                                'auth': {'type': 'username_password', 'identity': 'operator', 'key': 'dummy'},
+                                'additionalFields': {
+                                    'server_url': 'https://yamcs.example.com:8090',
+                                    'instance': 'simulator',
+                                    'processor': YAMCS_DEFAULT_PROCESSOR,
+                                    'auth_method': YAMCS_AUTH_METHOD_USERNAME_PASSWORD,
+                                    'max_rows': 500,
+                                    'timeout': 30,
+                                },
+                                'metadata': {'description': 'Example Yamcs mission control action'},
                             }
                         elif 'sql' in module_name.lower():
                             safe_manifest = {
@@ -2508,6 +2553,181 @@ def test_cosmos_connection():
             'success': False,
             'error': 'Cosmos DB authentication failed or the account could not be reached. Verify the endpoint and the selected authentication settings.'
         }), 400
+
+
+@bpap.route('/api/plugins/test-yamcs-connection', methods=['POST'])
+@swagger_route(security=get_auth_security())
+@login_required
+@user_required
+def test_yamcs_connection():
+    """Test a Yamcs mission control server connection using the configured credentials."""
+    data = request.get_json(silent=True) or {}
+    user_id = get_current_user_id()
+    server_url = normalize_yamcs_server_url(data.get('server_url') or data.get('endpoint') or '')
+    instance = (data.get('instance') or '').strip()
+    auth_method = (data.get('auth_method') or YAMCS_AUTH_METHOD_USERNAME_PASSWORD).strip().lower()
+    username = (data.get('username') or '').strip()
+    auth_key = (data.get('auth_key') or '').strip()
+    tls_verify = data.get('tls_verify', True)
+    if isinstance(tls_verify, str):
+        tls_verify = tls_verify.strip().lower() in {'1', 'true', 'yes', 'on'}
+    timeout = min(max(int(data.get('timeout', 10) or 10), 1), 30)
+
+    if not server_url:
+        return jsonify({'success': False, 'error': 'Yamcs server URL is required.'}), 400
+    if not instance:
+        return jsonify({'success': False, 'error': 'Yamcs instance is required.'}), 400
+    if auth_method not in {
+        YAMCS_AUTH_METHOD_USERNAME_PASSWORD,
+        YAMCS_AUTH_METHOD_API_KEY,
+        YAMCS_AUTH_METHOD_BEARER_TOKEN,
+        YAMCS_AUTH_METHOD_NONE,
+    }:
+        return jsonify({
+            'success': False,
+            'error': "Yamcs auth_method must be 'username_password', 'api_key', 'bearer_token', or 'none'."
+        }), 400
+
+    try:
+        existing_plugin = _load_existing_plugin_for_test(data.get('existing_plugin'), user_id)
+    except PermissionError as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 403
+    except LookupError as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 404
+    except ValueError as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 400
+
+    existing_auth = {}
+    if isinstance(existing_plugin, dict) and isinstance(existing_plugin.get('auth'), dict):
+        existing_auth = existing_plugin['auth']
+
+    if auth_method != YAMCS_AUTH_METHOD_NONE:
+        if auth_key in ('', ui_trigger_word):
+            auth_key = existing_auth.get('key', '')
+        if auth_key == ui_trigger_word:
+            return jsonify({
+                'success': False,
+                'error': 'Stored Yamcs credential could not be resolved for testing. Re-enter the credential.'
+            }), 400
+
+        try:
+            auth_key = _resolve_secret_value_for_plugin_test(auth_key, 'auth.key', plugin_label='Yamcs')
+        except ValueError as exc:
+            return jsonify({'success': False, 'error': str(exc)}), 400
+
+        if not auth_key:
+            credential_label = 'password' if auth_method == YAMCS_AUTH_METHOD_USERNAME_PASSWORD else 'credential'
+            return jsonify({'success': False, 'error': f'A Yamcs {credential_label} is required for this authentication method.'}), 400
+
+    if auth_method == YAMCS_AUTH_METHOD_USERNAME_PASSWORD:
+        if not username:
+            username = existing_auth.get('identity', '')
+        if not username:
+            return jsonify({'success': False, 'error': 'A Yamcs username is required for username/password authentication.'}), 400
+
+    client = None
+    try:
+        try:
+            from yamcs.client import APIKeyCredentials, Credentials, YamcsClient
+        except ImportError:
+            return jsonify({
+                'success': False,
+                'error': 'Yamcs client library is not installed on the server. Install yamcs-client to use Yamcs actions.'
+            }), 400
+
+        if auth_method == YAMCS_AUTH_METHOD_NONE:
+            credentials = None
+        elif auth_method == YAMCS_AUTH_METHOD_API_KEY:
+            credentials = APIKeyCredentials(auth_key)
+        elif auth_method == YAMCS_AUTH_METHOD_BEARER_TOKEN:
+            credentials = Credentials(access_token=auth_key)
+        else:
+            credentials = Credentials(username=username, password=auth_key)
+
+        client = YamcsClient(
+            server_url,
+            credentials=credentials,
+            tls_verify=tls_verify,
+            user_agent='SimpleChat',
+        )
+        session = getattr(getattr(client, 'ctx', None), 'session', None)
+        if session is not None:
+            original_request = session.request
+
+            def request_with_timeout(*args, **kwargs):
+                kwargs.setdefault('timeout', timeout)
+                return original_request(*args, **kwargs)
+
+            session.request = request_with_timeout
+
+        server_info = client.get_server_info()
+        instance_names = [str(getattr(item, 'name', '')) for item in client.list_instances()]
+        if instance not in instance_names:
+            log_event(
+                '[PLUGINS] Yamcs connection test could not find the configured instance',
+                extra={
+                    'user_id': user_id,
+                    'server_url': server_url,
+                    'instance': instance,
+                    'auth_method': auth_method,
+                },
+                level=logging.WARNING,
+            )
+            return jsonify({
+                'success': False,
+                'error': f"Connected to Yamcs, but instance '{instance}' was not found. Available instances: {', '.join(instance_names) or 'none'}."
+            }), 404
+
+        log_event(
+            '[PLUGINS] Yamcs connection test succeeded',
+            extra={
+                'user_id': user_id,
+                'server_url': server_url,
+                'instance': instance,
+                'auth_method': auth_method,
+                'instance_count': len(instance_names),
+            },
+            level=logging.INFO,
+        )
+        return jsonify({
+            'success': True,
+            'message': (
+                f"Successfully connected to Yamcs {getattr(server_info, 'version', '') or ''} at {server_url}. "
+                f"Instance '{instance}' is available ({len(instance_names)} instance(s) total)."
+            ).strip()
+        })
+    except Exception as exc:
+        status_code = getattr(getattr(exc, 'response', None), 'status_code', None)
+        raw_message = str(exc)
+        if status_code in (401, 403) or 'unauthorized' in raw_message.lower() or 'forbidden' in raw_message.lower():
+            error_msg = 'Yamcs authentication failed. Verify the selected authentication method and credentials.'
+            status = 403
+        elif status_code == 404:
+            error_msg = 'The Yamcs server responded, but the requested resource was not found. Verify the server URL.'
+            status = 404
+        else:
+            error_msg = 'Yamcs connection failed. Verify the server URL, TLS settings, and network access.'
+            status = 400
+
+        log_event(
+            f'[PLUGINS] Yamcs connection test failed: {exc}',
+            extra={
+                'user_id': user_id,
+                'server_url': server_url,
+                'instance': instance,
+                'auth_method': auth_method,
+                'status_code': status_code,
+            },
+            level=logging.WARNING,
+            exceptionTraceback=True,
+        )
+        return jsonify({'success': False, 'error': error_msg}), status
+    finally:
+        if client is not None:
+            try:
+                client.close()
+            except Exception:
+                pass
 
 
 @bpap.route('/api/plugins/test-rocksdb-connection', methods=['POST'])

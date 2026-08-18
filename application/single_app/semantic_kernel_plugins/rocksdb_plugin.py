@@ -4,7 +4,7 @@ RocksDB key-value store plugin for Semantic Kernel.
 
 RocksDB is an embedded C++ library with no native network protocol, so this plugin talks to a
 RocksDB-backed HTTP/JSON service using the SimpleChat RocksDB service contract documented in
-``docs/explanation/features/v0.250.210/ROCKSDB_ACTION.md``. SimpleChat never opens a RocksDB
+``docs/explanation/features/v0.250.214/ROCKSDB_ACTION.md``. SimpleChat never opens a RocksDB
 database directory itself.
 
 Read operations are always available. Write operations are refused unless the action is

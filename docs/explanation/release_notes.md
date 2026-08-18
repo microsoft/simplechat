@@ -2,7 +2,7 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
-### **(v0.250.210)**
+### **(v0.250.214)**
 
 #### New Features
 
@@ -13,7 +13,141 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Exposes `get_value`, `get_values`, `key_exists`, `scan_prefix`, `scan_range`, `list_column_families`, and `get_database_stats` for reads, plus `put_value`, `delete_value`, and `write_batch` that stay blocked until an action explicitly allows writes.
     *   Handles binary data through configurable UTF-8, base64, and JSON key and value encodings that are sent to the service on every request, caps returned records, and flags values truncated by the size limit.
     *   The RocksDB HTTP service contract is fully documented so operators can implement a conforming service.
-    *   (Ref: `rocksdb_plugin.py`, `route_backend_plugins.py`, `plugin_health_checker.py`, `_plugin_modal.html`, `plugin_modal_stepper.js`, `rocksdb.definition.json`, `test_rocksdb_plugin.py`, `test_workspace_rocksdb_action_modal.py`, `docs/explanation/features/v0.250.210/ROCKSDB_ACTION.md`)
+    *   (Ref: `rocksdb_plugin.py`, `route_backend_plugins.py`, `plugin_health_checker.py`, `_plugin_modal.html`, `plugin_modal_stepper.js`, `rocksdb.definition.json`, `test_rocksdb_plugin.py`, `test_workspace_rocksdb_action_modal.py`, `docs/explanation/features/v0.250.214/ROCKSDB_ACTION.md`)
+
+### **(v0.250.213)**
+
+#### New Features
+
+*   **Workflow Alert Rules**
+    *   Workflow alerts are now conditional. Instead of a single Pop-up Alert Priority that notified on every run, a workflow can define rules that describe *why* it should notify you, and a run that matches nothing stays completely silent.
+    *   Conditions cover run status, task status, output text (contains, does not contain, or regex), File Sync results, empty output, an agent-raised signal, and a plain-English condition judged by a model, such as "any certificate expires within 14 days."
+    *   Each rule can be scoped to the final output, any task output, or one specific task.
+    *   Model-judged conditions are batched into a single call per run and skipped entirely when a deterministic rule already matched at a higher severity, so workflows that use only deterministic conditions add no model calls.
+    *   (Ref: `functions_workflow_alerts.py`, `functions_workflow_runner.py`, `functions_personal_workflows.py`, `functions_group_workflows.py`, `workspace_workflows.js`, `WORKFLOW_ALERT_RULES.md`)
+
+*   **Expanded Alert Severities and a Distinct Failure Style**
+    *   The severity ladder grew from low/medium/high to **info, low, medium, high and critical**.
+    *   Info and low alerts land quietly in the notification bell, while medium and above open the pop-up. Any rule can override this.
+    *   Runs that error now carry a separate *failure* category that changes the icon and wording independently of severity, so "the workflow broke" is visually distinct from "the workflow found something."
+    *   When several rules match the same run, the highest severity wins and the alert lists every matched rule with its reason under a new "Triggered by" section.
+    *   (Ref: `functions_notifications.py`, `notifications.js`, `base.html`, workflow alert modal)
+
+*   **Agent-Raised Workflow Alerts**
+    *   Agents running inside a workflow can now raise an alert signal mid-run with severity, title and reason through the new `raise_workflow_alert` SimpleChat capability, and an `agent_signal` rule decides whether it notifies anyone.
+    *   The rule's severity acts as a floor the agent can escalate above but never quiet below, and named signals can route to their own rules.
+    *   The capability is opt-in and refuses outside an active workflow run, so existing agents do not gain the ability to create notifications and a normal chat cannot fabricate one.
+    *   (Ref: `simplechat_plugin.py`, `functions_simplechat_operations.py`, `agent_modal_stepper.js`, `plugin_modal_stepper.js`)
+
+*   **Alert Decision Visibility**
+    *   Each run now records why it did or did not alert, including the winning severity and every matched rule, surfaced through the workflow activity view so noisy or silent workflows can be diagnosed.
+    *   (Ref: `functions_workflow_activity.py`, `functions_workflow_runner.py`)
+
+#### User Interface Enhancements
+
+*   **Workflow Alert Rules Editor**
+    *   The Review step of the personal and group workflow builders replaces the single Pop-up Alert Priority dropdown with an alert mode selector and a rule editor for adding, editing, enabling and removing alert rules.
+    *   Each rule row exposes its name, condition, severity, delivery and, where relevant, the task or output it should watch, with condition-specific fields appearing as the condition is chosen.
+    *   The workflow list now summarizes alerts as the number of active rules, and the Review summary names the rules that will notify you.
+    *   Invalid rules are caught before saving, such as a missing regex pattern, empty match values, an unwritten model condition, or a task-scoped rule with no task selected.
+    *   (Ref: `workspace.html`, `group_workspaces.html`, `workspace_workflows.js`, workflow builder review step)
+
+#### Breaking Changes
+
+*   **Workflow Alert Configuration Model**
+    *   The single `alert_priority` field is superseded by `alert_mode`, `alert_rules` and `alert_evaluation`. The old field is retained and still honored.
+    *   **Migration**: None required. Workflows that only carry `alert_priority` are migrated on read into two editable rules, `Run failed → high` and `Run completed → <previous priority>`, which reproduce the previous behavior exactly, including always opening the pop-up and staying silent on cancelled runs. Owners can then prune the noisy rule.
+
+### **(v0.250.212)**
+
+#### New Features
+
+*   **Yamcs Mission Control Action**
+    *   Added a first-class, read-only `yamcs` action type that connects agents to a Yamcs mission control server using the official `yamcs-client` Python package.
+    *   Exposes eleven read-only tools: instances, data links, mission database parameters and parameter detail, command *definitions*, live parameter values, parameter history, events, packets, alarms, and an optional guarded archive SQL query.
+    *   Strictly read-only by design. The action cannot issue commands, set parameter values, run scripts, or enable/disable data links, and command listing returns definitions only.
+    *   Archive SQL is disabled by default and, when enabled, is restricted to `SELECT`, `SHOW`, `DESC`, and `DESCRIBE` statements with a forbidden-keyword guard and an automatic row limit.
+    *   Every retrieval is bounded by a row limit, a serialized byte limit, and a request timeout so a broad query cannot walk an entire archive, and error text is scrubbed of credentials.
+    *   (Ref: `functions_yamcs_operations.py`, `semantic_kernel_plugins/yamcs_plugin.py`, `semantic_kernel_plugins/yamcs_plugin_factory.py`, `docs/explanation/features/YAMCS_ACTION.md`)
+
+*   **Yamcs Action Configuration Panel and Test Connection**
+    *   Added a dedicated Yamcs configuration section to the Add/Edit Action modal covering server URL, instance, processor, authentication, TLS verification, archive SQL opt-in, and retrieval limits.
+    *   Supports username/password, API key, bearer token, and unauthenticated Yamcs servers, plus reusable workspace identities using `api_key`, `bearer_token`, or `username_password`.
+    *   Added a **Test Yamcs Connection** button backed by `POST /api/plugins/test-yamcs-connection`, which verifies reachability and credentials and confirms the configured instance exists. Saved actions resolve their stored credential from Key Vault, so secrets do not need to be re-entered to run a test.
+    *   (Ref: `_plugin_modal.html`, `plugin_modal_stepper.js`, `route_backend_plugins.py`, `workspace/view-utils.js`)
+
+#### Breaking Changes
+
+*   **New `yamcs-client` Dependency**
+    *   Added `yamcs-client==2.1.0` to `application/single_app/requirements.txt`.
+    *   This package is licensed **LGPL-3.0**, the first LGPL dependency in this repository. It is used as an unmodified, dynamically linked pip dependency.
+    *   It vendorizes its own protobuf runtime, so it does not conflict with the pinned `protobuf==6.33.5`.
+    *   **Migration**: run `pip install -r requirements.txt` when upgrading. Deployments that do not install it can still run SimpleChat; Yamcs actions will return an actionable dependency error until the package is present.
+    *   (Ref: `requirements.txt`, `semantic_kernel_plugins/yamcs_plugin.py`)
+
+### **(v0.250.211)**
+
+#### User Interface Enhancements
+
+*   **Consistent Workspace Section Order**
+    *   Workspace sections now follow a single order of operations everywhere they are listed: Documents, Prompts, Identities, Sync, Endpoints, Actions, Agents, Workflows.
+    *   The order reflects how a workspace is actually built up, so it is clearer that Identities feed both Sync and Actions, that Actions belong to Agents, and that Workflows run Agents.
+    *   Applied to the tab strip, the collapsed Section dropdown, and the left-hand sidebar submenus for personal and group workspaces. Public workspaces already matched this order and were left unchanged.
+    *   Sections that an admin has disabled stay hidden; the remaining sections simply close up while keeping their relative positions.
+    *   (Ref: #1255, `workspace.html`, `group_workspaces.html`, `_sidebar_nav.html`, `WORKSPACE_SECTION_ORDER.md`)
+
+#### Bug Fixes
+
+*   **Group Workflows Missing From Sidebar Navigation**
+    *   Added the missing Group Workflows link to the left-hand group workspace submenu. Group workflows previously had a working tab but no way to reach it from the sidebar.
+    *   (Ref: #1255, `_sidebar_nav.html`, group workflows navigation)
+
+*   **Sidebar Links Pointing At Unrendered Workspace Tabs**
+    *   Fixed left-hand navigation links whose visibility rules did not match the tabs they opened, so a link could appear for a section that was never rendered.
+    *   Personal Agents and Actions links now respect the user agent and plugin permissions, group Agents and Actions links now respect per-user Semantic Kernel and group plugin permissions, and both Identities links now match their tab's File Sync and Semantic Kernel conditions.
+    *   (Ref: #1255, `_sidebar_nav.html`, `test_workspace_section_order.py`)
+
+### **(v0.250.210)**
+
+#### Bug Fixes
+
+*   **Chat Document Search Now Matches File Names**
+    *   Fixed the chat grounded-search document picker only matching on a document's title, which made file names completely unsearchable for any document that had extracted title metadata.
+    *   Typing any fragment of a file name now surfaces the document, anywhere in the name — searching `200` finds `Quarterly_Report_200_final.pdf`.
+    *   Multi-word queries are also supported, with `_`, `-`, and `.` treated as word breaks, so `report 200` matches `Quarterly_Report_200_final.pdf`. The same improvement applies to the scope, tags, prompt, model, and agent selectors.
+    *   (Ref: #1256, `chat-documents.js`, `chat-searchable-select.js`, chat grounded search, document picker)
+
+*   **Leftover Separator Lines in Filtered Dropdowns**
+    *   Fixed filtered dropdowns leaving orphaned workspace separator lines behind — commonly two stacked horizontal rules directly under the "Select All" / "Clear All" row — when a search removed the leading sections.
+    *   Divider visibility now follows the section it separates instead of the nearest visible row, and separator lines can no longer be leading, trailing, or stacked. Affects the Document, Scope, and Tags dropdowns, plus the Compare modal document picker.
+    *   (Ref: #1256, `chat-searchable-select.js`, dropdown filtering, section dividers)
+
+#### User Interface Enhancements
+
+*   **File Name Shown in Document Picker Rows**
+    *   Document rows in the chat grounded-search picker now show the file name as a smaller muted line beneath the title whenever the two differ, so it is clear which file a search matched.
+    *   Rows without distinct titles are unchanged, and the row tooltip carries both the title and the file name.
+    *   (Ref: #1256, `chat-documents.js`, `chats.css`, document picker rows)
+
+### **(v0.250.209)**
+
+#### Bug Fixes
+
+*   **Cosmos Backup Continuation Token Failure**
+    *   Fixed Data Management backups silently omitting every Cosmos container that held more than one page of documents, which in most deployments meant personal conversations and personal messages were never backed up.
+    *   Affected containers failed with `BadRequest: Invalid Continuation Token` and were dropped from the backup artifact set while the job still reported completion with warnings.
+    *   Root cause was rebuilding the cross-partition query for each page and replaying the previous pager's continuation token; the backup now drains a single pager so the SDK's cross-partition execution context is preserved.
+    *   (Ref: #1258, `functions_data_management.py`, Cosmos backup source paging)
+
+*   **Missing Backup Failure Diagnostics**
+    *   Source blob transfer failures previously produced no log output at all, so a run with nearly 20,000 failed blobs left no trace in App Service logs.
+    *   Backups now log the first failure for each resource plus a bounded rollup of distinct failure reasons and counts when the resource finishes.
+    *   (Ref: #1258, `functions_data_management.py`, source blob backup logging)
+
+*   **Application Insights Log Message Text**
+    *   Structured log events reached Application Insights as the constant `[SIMPLE_CHAT_LOG_EVENT]` with every string property reduced to a character count, making traces unusable for diagnosis.
+    *   Traces now carry the sanitized message text and an allowlist of non-sensitive diagnostic values such as job ID, resource, container, status code, and error. Sensitive keys still collapse to a presence flag and secret redaction is unchanged.
+    *   (Ref: #1258, `functions_appinsights.py`, log event properties)
 
 ### **(v0.250.208)**
 

@@ -52,7 +52,7 @@ def test_workflow_priority_alert_contracts():
     assert "default_label='Open workflow'" in workflow_runner_content
     assert 'def _summarize_workflow_alert_text(text, max_length=140):' in workflow_runner_content
     assert 'def _select_preferred_workflow_alert_targets(targets):' in workflow_runner_content
-    assert 'def _build_workflow_alert_content(workflow, run_record, execution_result, priority):' in workflow_runner_content
+    assert 'def _build_workflow_alert_content(workflow, run_record, execution_result, priority, decision=None):' in workflow_runner_content
     assert "'alert_summary': alert_content.get('alert_summary')," in workflow_runner_content
     assert "'alert_detail': alert_content.get('alert_detail')," in workflow_runner_content
     assert 'plugin_logger.clear_invocations_for_conversation(user_id, conversation_id)' in workflow_runner_content

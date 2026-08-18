@@ -2,8 +2,8 @@
 # test_rocksdb_plugin.py
 """
 Functional test for the RocksDB action (plugin).
-Version: 0.250.210
-Implemented in: 0.250.210
+Version: 0.250.214
+Implemented in: 0.250.214
 
 This test ensures that the RocksDB plugin validates its manifest, blocks writes while the
 action is read-only, shapes RocksDB HTTP service calls and auth headers correctly, caps
@@ -601,7 +601,7 @@ def test_plugin_discovery_and_metadata():
     print("🔍 Testing RocksDB plugin discovery and metadata...")
 
     try:
-        assert_app_version_at_least("0.250.210")
+        assert_app_version_at_least("0.250.214")
 
         loader_module = import_app_module_without_live_cosmos(
             "semantic_kernel_plugins.plugin_loader"
