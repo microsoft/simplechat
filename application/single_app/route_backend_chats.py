@@ -179,6 +179,7 @@ from functions_conversation_context import (
     inject_conversation_context_message,
     serialize_conversation_context_snapshot,
 )
+from functions_agent_document_citations import apply_agent_document_citations
 from functions_citation_tracking import (
     build_cited_source_subsets,
     initialize_conversation_used_document_tracking,
@@ -2833,6 +2834,35 @@ def _append_new_plugin_invocation_citations(
         agent_citations_list.append(_build_plugin_invocation_agent_citation(invocation))
 
     return len(new_invocations)
+
+
+def _get_current_message_plugin_invocations(user_id, conversation_id):
+    """Return this message's plugin invocations.
+
+    Invocations are cleared per chat request, so everything the logger holds for the
+    conversation belongs to the message being generated. Streaming cancellation and
+    error paths read this directly because invocations are only folded into the agent
+    citation list once a stream completes normally.
+    """
+    if not user_id or not conversation_id:
+        return []
+
+    try:
+        return get_plugin_logger().get_invocations_for_conversation(
+            user_id,
+            conversation_id,
+            limit=1000,
+        )
+    except Exception as e:
+        log_event(
+            '[AGENT_DOCUMENT_CITATIONS] Unable to read plugin invocations for document citations',
+            extra={
+                'conversation_id': conversation_id,
+                'error_message': str(e),
+            },
+            level=logging.WARNING,
+        )
+        return []
 
 
 def normalize_fact_memory_type(memory_type):
@@ -15314,6 +15344,12 @@ def register_route_backend_chats(bp):
             document_action_agent_citations,
             document_action_context_json,
         )
+        apply_agent_document_citations(
+            hybrid_citations_list,
+            document_action_agent_citations,
+            sort_key=_build_hybrid_citation_sort_key,
+            conversation_id=conversation_id,
+        )
         prepared_agent_citations = []
         document_generated_analysis_artifacts = list(execution_result.get('generated_analysis_artifacts') or [])
         document_generated_tabular_outputs = list(execution_result.get('generated_tabular_outputs') or [])
@@ -19766,6 +19802,13 @@ def register_route_backend_chats(bp):
                     request_correlation_id=mixed_source_request_correlation_id,
                 )
             assistant_timestamp = datetime.utcnow().isoformat()
+            apply_agent_document_citations(
+                hybrid_citations_list,
+                agent_citations_list,
+                sort_key=_build_hybrid_citation_sort_key,
+                conversation_id=conversation_id,
+                plugin_invocations=_get_current_message_plugin_invocations(user_id, conversation_id),
+            )
             prepared_agent_citations = persist_agent_citation_artifacts(
                 conversation_id=conversation_id,
                 assistant_message_id=assistant_message_id,
@@ -19806,7 +19849,9 @@ def register_route_backend_chats(bp):
             assistant_capability_usage = _build_capability_usage_metadata(
                 workspace_search_enabled=mixed_source_document_context_active,
                 workspace_search_used=bool(
-                    search_results or mixed_source_has_authorized_evidence_sources
+                    search_results
+                    or mixed_source_has_authorized_evidence_sources
+                    or hybrid_citations_list
                 ),
                 workspace_search_result_count=len(hybrid_citations_list or []),
                 document_action_type=DOCUMENT_ACTION_TYPE_NONE,
@@ -20648,7 +20693,9 @@ def register_route_backend_chats(bp):
                     return _build_capability_usage_metadata(
                         workspace_search_enabled=mixed_source_document_context_active,
                         workspace_search_used=bool(
-                            search_results or mixed_source_has_authorized_evidence_sources
+                            search_results
+                            or mixed_source_has_authorized_evidence_sources
+                            or hybrid_citations_list
                         ),
                         workspace_search_result_count=len(hybrid_citations_list or []),
                         document_action_type=DOCUMENT_ACTION_TYPE_NONE,
@@ -23031,6 +23078,13 @@ def register_route_backend_chats(bp):
 
                     if partial_content:
                         assistant_timestamp = datetime.utcnow().isoformat()
+                        apply_agent_document_citations(
+                            hybrid_citations_list,
+                            agent_citations_list,
+                            sort_key=_build_hybrid_citation_sort_key,
+                            conversation_id=conversation_id,
+                            plugin_invocations=_get_current_message_plugin_invocations(user_id, conversation_id),
+                        )
                         partial_citation_tracking = build_cited_source_subsets(
                             partial_content,
                             hybrid_citations=hybrid_citations_list,
@@ -23687,6 +23741,13 @@ def register_route_backend_chats(bp):
                             request_correlation_id=mixed_source_request_correlation_id,
                         )
                     assistant_timestamp = datetime.utcnow().isoformat()
+                    apply_agent_document_citations(
+                        hybrid_citations_list,
+                        agent_citations_list,
+                        sort_key=_build_hybrid_citation_sort_key,
+                        conversation_id=conversation_id,
+                        plugin_invocations=_get_current_message_plugin_invocations(user_id, conversation_id),
+                    )
                     prepared_agent_citations = persist_agent_citation_artifacts(
                         conversation_id=conversation_id,
                         assistant_message_id=assistant_message_id,
@@ -24027,6 +24088,13 @@ def register_route_backend_chats(bp):
                     if accumulated_content:
                         current_assistant_thread_id = str(uuid.uuid4())
                         assistant_timestamp = datetime.utcnow().isoformat()
+                        apply_agent_document_citations(
+                            hybrid_citations_list,
+                            agent_citations_list,
+                            sort_key=_build_hybrid_citation_sort_key,
+                            conversation_id=conversation_id,
+                            plugin_invocations=_get_current_message_plugin_invocations(user_id, conversation_id),
+                        )
                         interrupted_citation_tracking = build_cited_source_subsets(
                             accumulated_content,
                             hybrid_citations=hybrid_citations_list,

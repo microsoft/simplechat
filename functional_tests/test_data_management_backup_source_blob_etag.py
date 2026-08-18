@@ -2,8 +2,8 @@
 # test_data_management_backup_source_blob_etag.py
 """
 Functional test for source blob backup ETag normalization and checkpoint batching.
-Version: 0.250.219
-Implemented in: 0.250.219
+Version: 0.250.220
+Implemented in: 0.250.220
 
 This test ensures source blob backups survive the ETag quoting difference between
 list_blobs() (XML <Etag> element, unquoted) and get_blob_properties() (HTTP ETag
@@ -135,7 +135,7 @@ def load_data_management_module():
     """Load production backup helpers with stubbed infrastructure dependencies."""
     config_module = types.ModuleType("config")
     config_module.CLIENTS = {}
-    config_module.VERSION = "0.250.219"
+    config_module.VERSION = "0.250.220"
     config_module.cosmos_data_management_jobs_container = None
     config_module.cosmos_data_management_job_items_container = None
     config_module.cosmos_settings_container = None
@@ -310,7 +310,7 @@ def test_checkpoint_interval_is_bounded():
 
 def test_version_is_at_least_fix_version():
     """The shipped app version must include this fix."""
-    assert_app_version_at_least("0.250.219")
+    assert_app_version_at_least("0.250.220")
 
 
 if __name__ == "__main__":
