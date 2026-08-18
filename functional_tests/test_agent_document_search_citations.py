@@ -2,8 +2,8 @@
 # test_agent_document_search_citations.py
 """
 Functional test for agent document-search citations.
-Version: 0.250.218
-Implemented in: 0.250.218
+Version: 0.250.219
+Implemented in: 0.250.219
 
 This test ensures that documents an agent retrieves through DocumentSearchPlugin
 produce the same document citation shape as the route-level hybrid search, so they
@@ -30,7 +30,7 @@ from test_support.versioning import assert_app_version_at_least
 import functions_agent_document_citations as agent_document_citations
 from functions_citation_tracking import build_cited_source_subsets
 
-IMPLEMENTED_VERSION = '0.250.218'
+IMPLEMENTED_VERSION = '0.250.219'
 
 
 def read_source(*relative_parts):

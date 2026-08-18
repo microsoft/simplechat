@@ -6,9 +6,9 @@
 
 **Root cause:** The route-level hybrid search built document citation records directly into `hybrid_citations`. `DocumentSearchPlugin` results took a different path: `_build_plugin_invocation_agent_citation()` wrapped the entire invocation into an `agent_citations` entry describing the tool call (`tool_name`, `function_arguments`, `function_result`). The retrieved document payload was present inside `function_result`, but nothing converted it into the document citation shape, and the plugin returned no citation markers for the model to reference. `functions_workflow_runner.py` had the same gap through `_build_agent_citations_from_plugin_invocations()`.
 
-Fixed/Implemented in version: **0.250.218**
+Fixed/Implemented in version: **0.250.219**
 
-Related config.py update: `VERSION = "0.250.218"`
+Related config.py update: `VERSION = "0.250.219"`
 
 Associated issue: `microsoft/simplechat#1239`
 

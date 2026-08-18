@@ -1,5 +1,5 @@
 # postconfig.py
-from azure.cosmos import CosmosClient
+import azure.cosmos as azure_cosmos
 from azure.cosmos.exceptions import CosmosResourceNotFoundError
 from azure.identity import AzureCliCredential
 import json
@@ -291,10 +291,10 @@ cosmosEndpoint = os.getenv("var_cosmosDb_uri")
 cosmosKey = os.getenv("var_cosmosDb_key")
 
 if cosmosKey:
-    client = CosmosClient(cosmosEndpoint, cosmosKey)
+    client = azure_cosmos.CosmosClient(cosmosEndpoint, cosmosKey)
 else:
     credential.get_token("https://cosmos.azure.com/.default")
-    client = CosmosClient(cosmosEndpoint, credential=credential)
+    client = azure_cosmos.CosmosClient(cosmosEndpoint, credential=credential)
 
 database_name = "SimpleChat"
 container_name = "settings"
