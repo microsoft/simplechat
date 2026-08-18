@@ -59,17 +59,12 @@ from functions_mcp_operations import (
 )
 from functions_simplechat_operations import SIMPLECHAT_DEFAULT_ENDPOINT
 from semantic_kernel_plugins.rocksdb_plugin import (
-    CONNECTION_MODE_EMBEDDED,
-    CONNECTION_MODE_REMOTE,
-    ACCESS_MODE_SECONDARY,
     AUTH_SCHEME_NONE,
     MAX_RESULTS_CEILING,
     MAX_TIMEOUT,
     MAX_VALUE_BYTES_CEILING,
     ROCKSDB_PLUGIN_TYPE,
-    SUPPORTED_ACCESS_MODES,
     SUPPORTED_AUTH_SCHEMES,
-    SUPPORTED_CONNECTION_MODES,
     SUPPORTED_KEY_ENCODINGS,
     SUPPORTED_VALUE_ENCODINGS,
     normalize_rocksdb_base_url,
@@ -398,18 +393,13 @@ class PluginHealthChecker:
 
     @staticmethod
     def _validate_rocksdb_manifest(manifest: Dict[str, Any]) -> List[str]:
-        """Validate a RocksDB action manifest for both embedded and remote connection modes."""
+        """Validate a RocksDB action manifest against the RocksDB HTTP service contract."""
         errors: List[str] = []
         additional_fields = manifest.get('additionalFields', {})
         if not isinstance(additional_fields, dict):
             additional_fields = {}
 
         auth = manifest.get('auth', {}) if isinstance(manifest.get('auth'), dict) else {}
-        connection_mode = str(additional_fields.get('connection_mode') or CONNECTION_MODE_EMBEDDED).strip().lower()
-        read_only = str(additional_fields.get('read_only', True)).strip().lower() not in ('false', '0', 'no', 'off')
-
-        if connection_mode not in SUPPORTED_CONNECTION_MODES:
-            errors.append("RocksDB plugin connection_mode must be either 'embedded' or 'remote'")
 
         key_encoding = str(additional_fields.get('key_encoding') or 'utf8').strip().lower()
         if key_encoding not in SUPPORTED_KEY_ENCODINGS:
@@ -437,34 +427,20 @@ class PluginHealthChecker:
                     f"RocksDB plugin additionalFields.{field_name} must be between {minimum} and {maximum}"
                 )
 
-        if connection_mode == CONNECTION_MODE_EMBEDDED:
-            if not str(additional_fields.get('db_path') or '').strip():
-                errors.append("RocksDB plugin requires 'db_path' in additionalFields for embedded connections")
+        base_url = str(additional_fields.get('base_url') or manifest.get('endpoint') or '').strip()
+        if not base_url:
+            errors.append("RocksDB plugin requires 'base_url' in additionalFields")
+        else:
+            try:
+                normalize_rocksdb_base_url(base_url)
+            except ValueError as validation_error:
+                errors.append(f"RocksDB plugin base_url is invalid: {validation_error}")
 
-            access_mode = str(additional_fields.get('access_mode') or 'read_only').strip().lower()
-            if access_mode not in SUPPORTED_ACCESS_MODES:
-                errors.append("RocksDB plugin access_mode must be either 'read_only' or 'secondary'")
-            elif access_mode == ACCESS_MODE_SECONDARY:
-                if not read_only:
-                    errors.append("RocksDB plugin access_mode 'secondary' requires read-only access")
-                if not str(additional_fields.get('secondary_path') or '').strip():
-                    errors.append("RocksDB plugin requires 'secondary_path' when access_mode is 'secondary'")
-
-        elif connection_mode == CONNECTION_MODE_REMOTE:
-            base_url = str(additional_fields.get('base_url') or manifest.get('endpoint') or '').strip()
-            if not base_url:
-                errors.append("RocksDB plugin requires 'base_url' in additionalFields for remote connections")
-            else:
-                try:
-                    normalize_rocksdb_base_url(base_url)
-                except ValueError as validation_error:
-                    errors.append(f"RocksDB plugin base_url is invalid: {validation_error}")
-
-            auth_scheme = str(additional_fields.get('auth_scheme') or AUTH_SCHEME_NONE).strip().lower()
-            if auth_scheme not in SUPPORTED_AUTH_SCHEMES:
-                errors.append("RocksDB plugin auth_scheme must be one of 'none', 'bearer', or 'api_key'")
-            elif auth_scheme != AUTH_SCHEME_NONE and not auth.get('key'):
-                errors.append("RocksDB plugin requires auth.key when auth_scheme is 'bearer' or 'api_key'")
+        auth_scheme = str(additional_fields.get('auth_scheme') or AUTH_SCHEME_NONE).strip().lower()
+        if auth_scheme not in SUPPORTED_AUTH_SCHEMES:
+            errors.append("RocksDB plugin auth_scheme must be one of 'none', 'bearer', or 'api_key'")
+        elif auth_scheme != AUTH_SCHEME_NONE and not auth.get('key'):
+            errors.append("RocksDB plugin requires auth.key when auth_scheme is 'bearer' or 'api_key'")
 
         return errors
 

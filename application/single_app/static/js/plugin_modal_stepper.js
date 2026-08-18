@@ -47,10 +47,6 @@ const MCP_RESERVED_CUSTOM_HEADER_NAMES = new Set([
 const AZURE_MAPS_PLUGIN_TYPE = 'azure_maps_openlayers';
 const AZURE_MAPS_DEFAULT_ENDPOINT = 'https://atlas.microsoft.com';
 const ROCKSDB_PLUGIN_TYPE = 'rocksdb';
-const ROCKSDB_EMBEDDED_ENDPOINT = 'rocksdb://embedded';
-const ROCKSDB_CONNECTION_MODE_EMBEDDED = 'embedded';
-const ROCKSDB_CONNECTION_MODE_REMOTE = 'remote';
-const ROCKSDB_ACCESS_MODE_SECONDARY = 'secondary';
 const ROCKSDB_AUTH_SCHEME_NONE = 'none';
 const ROCKSDB_AUTH_SCHEME_BEARER = 'bearer';
 const ROCKSDB_AUTH_SCHEME_API_KEY = 'api_key';
@@ -709,21 +705,6 @@ export class PluginModalStepper {
     document.getElementById('sql-auth-type').addEventListener('change', () => this.handleSqlAuthTypeChange());
     document.getElementById('sql-identity-select').addEventListener('change', () => this.handleActionIdentityChange('sql'));
     document.getElementById('cosmos-auth-type').addEventListener('change', () => this.handleCosmosAuthTypeChange());
-
-    const rocksDbModeSelect = document.getElementById('rocksdb-connection-mode');
-    if (rocksDbModeSelect) {
-      rocksDbModeSelect.addEventListener('change', () => this.handleRocksDbConnectionModeChange());
-    }
-
-    const rocksDbAccessModeSelect = document.getElementById('rocksdb-access-mode');
-    if (rocksDbAccessModeSelect) {
-      rocksDbAccessModeSelect.addEventListener('change', () => this.handleRocksDbConnectionModeChange());
-    }
-
-    const rocksDbReadOnlySelect = document.getElementById('rocksdb-read-only');
-    if (rocksDbReadOnlySelect) {
-      rocksDbReadOnlySelect.addEventListener('change', () => this.handleRocksDbConnectionModeChange());
-    }
 
     const rocksDbAuthSchemeSelect = document.getElementById('rocksdb-auth-scheme');
     if (rocksDbAuthSchemeSelect) {
@@ -4504,8 +4485,6 @@ export class PluginModalStepper {
 
   initializeRocksDbConfiguration() {
     const defaultValues = [
-      ['rocksdb-connection-mode', ROCKSDB_CONNECTION_MODE_EMBEDDED],
-      ['rocksdb-access-mode', 'read_only'],
       ['rocksdb-auth-scheme', ROCKSDB_AUTH_SCHEME_NONE],
       ['rocksdb-verify-tls', 'true'],
       ['rocksdb-read-only', 'true'],
@@ -4525,54 +4504,18 @@ export class PluginModalStepper {
       }
     });
 
-    this.handleRocksDbConnectionModeChange();
+    const resultDiv = document.getElementById('rocksdb-test-connection-result');
+    if (resultDiv) {
+      resultDiv.classList.add('d-none');
+    }
+
+    this.handleRocksDbAuthSchemeChange();
   }
 
   setRocksDbFieldValue(fieldId, value) {
     const field = document.getElementById(fieldId);
     if (field) {
       field.value = value === null || value === undefined ? '' : value;
-    }
-  }
-
-  handleRocksDbConnectionModeChange() {
-    const modeSelect = document.getElementById('rocksdb-connection-mode');
-    if (!modeSelect) {
-      return;
-    }
-
-    const connectionMode = modeSelect.value || ROCKSDB_CONNECTION_MODE_EMBEDDED;
-    const isEmbedded = connectionMode !== ROCKSDB_CONNECTION_MODE_REMOTE;
-    const readOnly = (document.getElementById('rocksdb-read-only')?.value || 'true') === 'true';
-    const accessModeSelect = document.getElementById('rocksdb-access-mode');
-
-    // Secondary access only exists for read-only connections, so drop it when writes are enabled.
-    if (!readOnly && accessModeSelect && accessModeSelect.value === ROCKSDB_ACCESS_MODE_SECONDARY) {
-      accessModeSelect.value = 'read_only';
-    }
-
-    const isSecondary = !!accessModeSelect && accessModeSelect.value === ROCKSDB_ACCESS_MODE_SECONDARY;
-
-    document.getElementById('rocksdb-embedded-group')?.classList.toggle('d-none', !isEmbedded);
-    document.getElementById('rocksdb-remote-group')?.classList.toggle('d-none', isEmbedded);
-    document.getElementById('rocksdb-access-mode-group')?.classList.toggle('d-none', !readOnly);
-    document.getElementById('rocksdb-secondary-path-group')?.classList.toggle(
-      'd-none',
-      !(isEmbedded && readOnly && isSecondary)
-    );
-
-    const embeddedInfoText = document.getElementById('rocksdb-embedded-info-text');
-    if (embeddedInfoText) {
-      embeddedInfoText.textContent = readOnly
-        ? 'Embedded connections stay disabled until an administrator sets ROCKSDB_ALLOWED_ROOTS to the directories that RocksDB actions may open. Read-only access cannot open a database that a running writer has locked, so choose Secondary for a live database.'
-        : 'Embedded connections stay disabled until an administrator sets ROCKSDB_ALLOWED_ROOTS to the directories that RocksDB actions may open. Allowing writes opens the database in read-write mode, which needs exclusive access to the directory.';
-    }
-
-    this.handleRocksDbAuthSchemeChange();
-
-    const resultDiv = document.getElementById('rocksdb-test-connection-result');
-    if (resultDiv) {
-      resultDiv.classList.add('d-none');
     }
   }
 
@@ -4600,23 +4543,11 @@ export class PluginModalStepper {
       .filter(Boolean);
   }
 
-  isRocksDbRemoteMode() {
-    return (document.getElementById('rocksdb-connection-mode')?.value || ROCKSDB_CONNECTION_MODE_EMBEDDED)
-      === ROCKSDB_CONNECTION_MODE_REMOTE;
-  }
-
   getRocksDbEndpointValue() {
-    if (this.isRocksDbRemoteMode()) {
-      return (document.getElementById('rocksdb-base-url')?.value || '').trim().replace(/\/+$/, '');
-    }
-    return ROCKSDB_EMBEDDED_ENDPOINT;
+    return (document.getElementById('rocksdb-base-url')?.value || '').trim().replace(/\/+$/, '');
   }
 
   getRocksDbAuthLabel() {
-    if (!this.isRocksDbRemoteMode()) {
-      return 'Local file system access';
-    }
-
     const authScheme = document.getElementById('rocksdb-auth-scheme')?.value || ROCKSDB_AUTH_SCHEME_NONE;
     if (authScheme === ROCKSDB_AUTH_SCHEME_BEARER) {
       return 'Bearer Token';
@@ -4628,31 +4559,17 @@ export class PluginModalStepper {
   }
 
   getRocksDbValidationError() {
-    const readOnly = (document.getElementById('rocksdb-read-only')?.value || 'true') === 'true';
+    const baseUrl = (document.getElementById('rocksdb-base-url')?.value || '').trim();
+    if (!baseUrl) {
+      return 'RocksDB service base URL is required.';
+    }
+    if (!/^https?:\/\/.+/i.test(baseUrl)) {
+      return 'RocksDB service base URL must start with http:// or https://.';
+    }
 
-    if (this.isRocksDbRemoteMode()) {
-      const baseUrl = (document.getElementById('rocksdb-base-url')?.value || '').trim();
-      if (!baseUrl) {
-        return 'RocksDB service base URL is required for remote connections.';
-      }
-      if (!/^https?:\/\/.+/i.test(baseUrl)) {
-        return 'RocksDB service base URL must start with http:// or https://.';
-      }
-
-      const authScheme = document.getElementById('rocksdb-auth-scheme')?.value || ROCKSDB_AUTH_SCHEME_NONE;
-      if (authScheme !== ROCKSDB_AUTH_SCHEME_NONE && !(document.getElementById('rocksdb-auth-key')?.value || '').trim()) {
-        return 'A service token is required when the RocksDB authentication scheme is Bearer Token or API Key Header.';
-      }
-    } else {
-      if (!(document.getElementById('rocksdb-db-path')?.value || '').trim()) {
-        return 'RocksDB database path is required for embedded connections.';
-      }
-
-      const accessMode = document.getElementById('rocksdb-access-mode')?.value || 'read_only';
-      if (readOnly && accessMode === ROCKSDB_ACCESS_MODE_SECONDARY
-        && !(document.getElementById('rocksdb-secondary-path')?.value || '').trim()) {
-        return 'Secondary path is required when the RocksDB access mode is Secondary.';
-      }
+    const authScheme = document.getElementById('rocksdb-auth-scheme')?.value || ROCKSDB_AUTH_SCHEME_NONE;
+    if (authScheme !== ROCKSDB_AUTH_SCHEME_NONE && !(document.getElementById('rocksdb-auth-key')?.value || '').trim()) {
+      return 'A service token is required when the RocksDB authentication scheme is Bearer Token or API Key Header.';
     }
 
     const maxResults = parseInt(document.getElementById('rocksdb-max-results')?.value, 10);
@@ -4674,53 +4591,34 @@ export class PluginModalStepper {
   }
 
   getRocksDbConfiguration() {
-    const isRemote = this.isRocksDbRemoteMode();
-    const readOnly = (document.getElementById('rocksdb-read-only')?.value || 'true') === 'true';
+    const endpoint = this.getRocksDbEndpointValue();
+    const authScheme = document.getElementById('rocksdb-auth-scheme')?.value || ROCKSDB_AUTH_SCHEME_NONE;
 
     const additionalFields = {
-      connection_mode: isRemote ? ROCKSDB_CONNECTION_MODE_REMOTE : ROCKSDB_CONNECTION_MODE_EMBEDDED,
+      base_url: endpoint,
+      auth_scheme: authScheme,
+      verify_tls: (document.getElementById('rocksdb-verify-tls')?.value || 'true') === 'true',
       column_family: (document.getElementById('rocksdb-column-family')?.value || '').trim() || ROCKSDB_DEFAULT_COLUMN_FAMILY,
       key_encoding: document.getElementById('rocksdb-key-encoding')?.value || 'utf8',
       value_encoding: document.getElementById('rocksdb-value-encoding')?.value || 'utf8',
       key_prefix_hints: this.getRocksDbKeyPrefixHints(),
-      read_only: readOnly,
+      read_only: (document.getElementById('rocksdb-read-only')?.value || 'true') === 'true',
       max_results: parseInt(document.getElementById('rocksdb-max-results')?.value, 10) || ROCKSDB_DEFAULT_MAX_RESULTS,
       max_value_bytes: parseInt(document.getElementById('rocksdb-max-value-bytes')?.value, 10) || ROCKSDB_DEFAULT_MAX_VALUE_BYTES,
       timeout: parseInt(document.getElementById('rocksdb-timeout')?.value, 10) || ROCKSDB_DEFAULT_TIMEOUT
     };
 
+    if (authScheme === ROCKSDB_AUTH_SCHEME_API_KEY) {
+      additionalFields.api_key_header = (document.getElementById('rocksdb-api-key-header')?.value || '').trim()
+        || ROCKSDB_DEFAULT_API_KEY_HEADER;
+    }
+
     const auth = {};
-    let endpoint = ROCKSDB_EMBEDDED_ENDPOINT;
-
-    if (isRemote) {
-      endpoint = (document.getElementById('rocksdb-base-url')?.value || '').trim().replace(/\/+$/, '');
-      const authScheme = document.getElementById('rocksdb-auth-scheme')?.value || ROCKSDB_AUTH_SCHEME_NONE;
-
-      additionalFields.base_url = endpoint;
-      additionalFields.auth_scheme = authScheme;
-      additionalFields.verify_tls = (document.getElementById('rocksdb-verify-tls')?.value || 'true') === 'true';
-
-      if (authScheme === ROCKSDB_AUTH_SCHEME_API_KEY) {
-        additionalFields.api_key_header = (document.getElementById('rocksdb-api-key-header')?.value || '').trim()
-          || ROCKSDB_DEFAULT_API_KEY_HEADER;
-      }
-
-      if (authScheme === ROCKSDB_AUTH_SCHEME_NONE) {
-        auth.type = 'NoAuth';
-      } else {
-        auth.type = 'key';
-        auth.key = (document.getElementById('rocksdb-auth-key')?.value || '').trim();
-      }
-    } else {
+    if (authScheme === ROCKSDB_AUTH_SCHEME_NONE) {
       auth.type = 'NoAuth';
-      additionalFields.db_path = (document.getElementById('rocksdb-db-path')?.value || '').trim();
-      additionalFields.access_mode = readOnly
-        ? (document.getElementById('rocksdb-access-mode')?.value || 'read_only')
-        : 'read_only';
-
-      if (additionalFields.access_mode === ROCKSDB_ACCESS_MODE_SECONDARY) {
-        additionalFields.secondary_path = (document.getElementById('rocksdb-secondary-path')?.value || '').trim();
-      }
+    } else {
+      auth.type = 'key';
+      auth.key = (document.getElementById('rocksdb-auth-key')?.value || '').trim();
     }
 
     return { endpoint, auth, additionalFields };
@@ -4729,17 +4627,11 @@ export class PluginModalStepper {
   populateRocksDbForm(plugin) {
     const additionalFields = plugin.additionalFields || plugin.additional_fields || {};
     const auth = plugin.auth || {};
-    const connectionMode = additionalFields.connection_mode || ROCKSDB_CONNECTION_MODE_EMBEDDED;
-    const isRemote = connectionMode === ROCKSDB_CONNECTION_MODE_REMOTE;
     const prefixHints = Array.isArray(additionalFields.key_prefix_hints)
       ? additionalFields.key_prefix_hints.join('\n')
       : (additionalFields.key_prefix_hints || '');
 
-    this.setRocksDbFieldValue('rocksdb-connection-mode', connectionMode);
-    this.setRocksDbFieldValue('rocksdb-db-path', additionalFields.db_path || '');
-    this.setRocksDbFieldValue('rocksdb-access-mode', additionalFields.access_mode || 'read_only');
-    this.setRocksDbFieldValue('rocksdb-secondary-path', additionalFields.secondary_path || '');
-    this.setRocksDbFieldValue('rocksdb-base-url', additionalFields.base_url || (isRemote ? (plugin.endpoint || '') : ''));
+    this.setRocksDbFieldValue('rocksdb-base-url', additionalFields.base_url || plugin.endpoint || '');
     this.setRocksDbFieldValue('rocksdb-auth-scheme', additionalFields.auth_scheme || ROCKSDB_AUTH_SCHEME_NONE);
     this.setRocksDbFieldValue('rocksdb-auth-key', auth.key || '');
     this.setRocksDbFieldValue('rocksdb-api-key-header', additionalFields.api_key_header || ROCKSDB_DEFAULT_API_KEY_HEADER);
@@ -4753,7 +4645,7 @@ export class PluginModalStepper {
     this.setRocksDbFieldValue('rocksdb-max-value-bytes', additionalFields.max_value_bytes || ROCKSDB_DEFAULT_MAX_VALUE_BYTES);
     this.setRocksDbFieldValue('rocksdb-timeout', additionalFields.timeout || ROCKSDB_DEFAULT_TIMEOUT);
 
-    this.handleRocksDbConnectionModeChange();
+    this.handleRocksDbAuthSchemeChange();
   }
 
   setRocksDbSummaryText(elementId, value) {
@@ -4774,29 +4666,15 @@ export class PluginModalStepper {
       return;
     }
 
-    const isRemote = this.isRocksDbRemoteMode();
     const readOnly = (document.getElementById('rocksdb-read-only')?.value || 'true') === 'true';
-    const accessMode = document.getElementById('rocksdb-access-mode')?.value || 'read_only';
     const prefixHints = this.getRocksDbKeyPrefixHints();
     const timeoutValue = (document.getElementById('rocksdb-timeout')?.value || '').trim();
-
-    let accessLabel = 'Reads and writes';
-    if (readOnly) {
-      accessLabel = !isRemote && accessMode === ROCKSDB_ACCESS_MODE_SECONDARY
-        ? 'Read-only (secondary)'
-        : 'Read-only';
-    }
-
-    const targetValue = isRemote
-      ? this.getRocksDbEndpointValue()
-      : (document.getElementById('rocksdb-db-path')?.value || '').trim();
-
     const keyEncoding = document.getElementById('rocksdb-key-encoding')?.value || 'utf8';
     const valueEncoding = document.getElementById('rocksdb-value-encoding')?.value || 'utf8';
 
-    this.setRocksDbSummaryText('summary-rocksdb-connection-mode', isRemote ? 'Remote HTTP service' : 'Embedded database');
-    this.setRocksDbSummaryText('summary-rocksdb-target', targetValue || '-');
-    this.setRocksDbSummaryText('summary-rocksdb-access', accessLabel);
+    this.setRocksDbSummaryText('summary-rocksdb-target', this.getRocksDbEndpointValue() || '-');
+    this.setRocksDbSummaryText('summary-rocksdb-auth-scheme', this.getRocksDbAuthLabel());
+    this.setRocksDbSummaryText('summary-rocksdb-access', readOnly ? 'Read-only' : 'Reads and writes');
     this.setRocksDbSummaryText(
       'summary-rocksdb-column-family',
       (document.getElementById('rocksdb-column-family')?.value || '').trim() || ROCKSDB_DEFAULT_COLUMN_FAMILY
@@ -4833,37 +4711,20 @@ export class PluginModalStepper {
       return;
     }
 
-    const isRemote = this.isRocksDbRemoteMode();
+    const authScheme = document.getElementById('rocksdb-auth-scheme')?.value || ROCKSDB_AUTH_SCHEME_NONE;
     const payload = {
-      connection_mode: isRemote ? ROCKSDB_CONNECTION_MODE_REMOTE : ROCKSDB_CONNECTION_MODE_EMBEDDED,
+      base_url: this.getRocksDbEndpointValue(),
+      auth_scheme: authScheme,
+      verify_tls: (document.getElementById('rocksdb-verify-tls')?.value || 'true') === 'true',
       timeout: Math.min(parseInt(document.getElementById('rocksdb-timeout')?.value, 10) || 10, 30)
     };
 
-    if (isRemote) {
-      const authScheme = document.getElementById('rocksdb-auth-scheme')?.value || ROCKSDB_AUTH_SCHEME_NONE;
-      payload.base_url = (document.getElementById('rocksdb-base-url')?.value || '').trim().replace(/\/+$/, '');
-      payload.auth_scheme = authScheme;
-      payload.verify_tls = (document.getElementById('rocksdb-verify-tls')?.value || 'true') === 'true';
-
-      if (authScheme === ROCKSDB_AUTH_SCHEME_API_KEY) {
-        payload.api_key_header = (document.getElementById('rocksdb-api-key-header')?.value || '').trim()
-          || ROCKSDB_DEFAULT_API_KEY_HEADER;
-      }
-      if (authScheme !== ROCKSDB_AUTH_SCHEME_NONE) {
-        payload.auth_key = (document.getElementById('rocksdb-auth-key')?.value || '').trim();
-      }
-    } else {
-      const readOnly = (document.getElementById('rocksdb-read-only')?.value || 'true') === 'true';
-      payload.db_path = (document.getElementById('rocksdb-db-path')?.value || '').trim();
-      payload.access_mode = readOnly
-        ? (document.getElementById('rocksdb-access-mode')?.value || 'read_only')
-        : 'read_only';
-      payload.column_family = (document.getElementById('rocksdb-column-family')?.value || '').trim()
-        || ROCKSDB_DEFAULT_COLUMN_FAMILY;
-
-      if (payload.access_mode === ROCKSDB_ACCESS_MODE_SECONDARY) {
-        payload.secondary_path = (document.getElementById('rocksdb-secondary-path')?.value || '').trim();
-      }
+    if (authScheme === ROCKSDB_AUTH_SCHEME_API_KEY) {
+      payload.api_key_header = (document.getElementById('rocksdb-api-key-header')?.value || '').trim()
+        || ROCKSDB_DEFAULT_API_KEY_HEADER;
+    }
+    if (authScheme !== ROCKSDB_AUTH_SCHEME_NONE) {
+      payload.auth_key = (document.getElementById('rocksdb-auth-key')?.value || '').trim();
     }
 
     const existingPluginContext = this.getTestPluginContext();
@@ -5973,9 +5834,7 @@ export class PluginModalStepper {
       const endpoint = this.getEndpointValue();
       document.getElementById('summary-plugin-endpoint').textContent = endpoint || '-';
       endpointRow.style.display = '';
-      document.getElementById('summary-plugin-database-type').textContent = this.isRocksDbRemoteMode()
-        ? 'RocksDB HTTP service'
-        : 'Embedded RocksDB database';
+      document.getElementById('summary-plugin-database-type').textContent = 'RocksDB HTTP service';
       databaseTypeRow.style.display = '';
     } else if (isDocumentSearchType) {
       endpointRow.style.display = 'none';
@@ -6761,8 +6620,7 @@ export class PluginModalStepper {
         }
       } else if (this.isRocksDbType()) {
         const rocksDbAuthScheme = document.getElementById('rocksdb-auth-scheme')?.value || ROCKSDB_AUTH_SCHEME_NONE;
-        const isRemoteMode = (document.getElementById('rocksdb-connection-mode')?.value || ROCKSDB_CONNECTION_MODE_EMBEDDED) === ROCKSDB_CONNECTION_MODE_REMOTE;
-        currentAuthType = isRemoteMode && rocksDbAuthScheme !== ROCKSDB_AUTH_SCHEME_NONE ? 'key' : 'NoAuth';
+        currentAuthType = rocksDbAuthScheme !== ROCKSDB_AUTH_SCHEME_NONE ? 'key' : 'NoAuth';
         if (currentAuthType === 'key') {
           currentAuthKey = document.getElementById('rocksdb-auth-key')?.value || '';
         }

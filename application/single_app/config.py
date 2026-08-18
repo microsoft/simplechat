@@ -96,12 +96,8 @@ DOTENV_LOAD_RESULT = load_simplechat_dotenv()
 EXECUTOR_TYPE = 'thread'
 EXECUTOR_MAX_WORKERS = 30
 SESSION_TYPE = 'filesystem'
-VERSION = "0.250.209"
+VERSION = "0.250.210"
 IS_DEVELOPMENT = is_development_env_enabled()
-
-# Directories that embedded RocksDB actions are allowed to open, separated by os.pathsep.
-# Embedded RocksDB connections stay disabled while this is empty.
-ROCKSDB_ALLOWED_ROOTS = os.getenv('ROCKSDB_ALLOWED_ROOTS', '')
 
 SESSION_COOKIE_SAMESITE = os.getenv('SESSION_COOKIE_SAMESITE', 'Lax')
 SESSION_COOKIE_HTTPONLY = os.getenv('SESSION_COOKIE_HTTPONLY', 'true').lower() != 'false'

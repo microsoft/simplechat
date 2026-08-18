@@ -1246,53 +1246,7 @@
 
             <div class="rocksdb-config-card">
               <div class="config-section-label">
-                <i class="bi bi-plug me-2"></i>Connection
-              </div>
-
-              <div class="mb-3">
-                <label for="rocksdb-connection-mode" class="form-label">Connection Mode <span class="text-danger">*</span></label>
-                <select class="form-select" id="rocksdb-connection-mode">
-                  <option value="embedded">Embedded (local database directory)</option>
-                  <option value="remote">Remote HTTP service</option>
-                </select>
-                <div class="form-text">RocksDB is an embedded library. Use Embedded to open a database directory on the application host, or Remote to call a RocksDB-backed HTTP service.</div>
-              </div>
-            </div>
-
-            <div class="rocksdb-config-card d-none" id="rocksdb-embedded-group">
-              <div class="config-section-label">
-                <i class="bi bi-hdd me-2"></i>Embedded Database
-              </div>
-
-              <div class="mb-3">
-                <label for="rocksdb-db-path" class="form-label">Database Path <span class="text-danger">*</span></label>
-                <input type="text" class="form-control" id="rocksdb-db-path" placeholder="/mnt/rocksdb/events" />
-                <div class="form-text">Absolute path to the RocksDB directory. The path must sit inside a directory listed in the <code>ROCKSDB_ALLOWED_ROOTS</code> environment variable.</div>
-              </div>
-
-              <div class="mb-3" id="rocksdb-access-mode-group">
-                <label for="rocksdb-access-mode" class="form-label">Access Mode <span class="text-danger">*</span></label>
-                <select class="form-select" id="rocksdb-access-mode">
-                  <option value="read_only">Read-only</option>
-                  <option value="secondary">Secondary (database has a live writer)</option>
-                </select>
-                <div class="form-text">Read-only cannot open a database whose lock is held by a running writer. Choose Secondary to follow a live primary database.</div>
-              </div>
-
-              <div class="mb-3 d-none" id="rocksdb-secondary-path-group">
-                <label for="rocksdb-secondary-path" class="form-label">Secondary Path <span class="text-danger">*</span></label>
-                <input type="text" class="form-control" id="rocksdb-secondary-path" placeholder="/tmp/rocksdb-secondary" />
-                <div class="form-text">Writable scratch directory RocksDB uses to track the primary database.</div>
-              </div>
-
-              <div class="alert alert-info mb-0" id="rocksdb-embedded-info">
-                <span id="rocksdb-embedded-info-text">Embedded connections stay disabled until an administrator sets <code>ROCKSDB_ALLOWED_ROOTS</code> to the directories that RocksDB actions may open.</span>
-              </div>
-            </div>
-
-            <div class="rocksdb-config-card d-none" id="rocksdb-remote-group">
-              <div class="config-section-label">
-                <i class="bi bi-cloud me-2"></i>Remote Service
+                <i class="bi bi-cloud me-2"></i>RocksDB Service
               </div>
 
               <div class="mb-3">
@@ -1766,14 +1720,14 @@
               <div class="row g-3">
                 <div class="col-md-6">
                   <div class="d-flex flex-column">
-                    <label class="text-muted small mb-1">Connection Mode</label>
-                    <span class="fw-medium" id="summary-rocksdb-connection-mode">-</span>
+                    <label class="text-muted small mb-1">Service Base URL</label>
+                    <span class="fw-medium font-monospace" id="summary-rocksdb-target">-</span>
                   </div>
                 </div>
                 <div class="col-md-6">
                   <div class="d-flex flex-column">
-                    <label class="text-muted small mb-1">Target</label>
-                    <span class="fw-medium font-monospace" id="summary-rocksdb-target">-</span>
+                    <label class="text-muted small mb-1">Authentication</label>
+                    <span class="fw-medium" id="summary-rocksdb-auth-scheme">-</span>
                   </div>
                 </div>
                 <div class="col-md-6">
@@ -2504,10 +2458,6 @@
   border-left: 4px solid #17a2b8;
 }
 
-#rocksdb-embedded-info {
-  border-left: 4px solid #6f42c1;
-}
-
 /* Plugin type selection styling */
 .btn-outline-info small,
 .btn-outline-success small {
@@ -2599,12 +2549,6 @@
   background-color: #1f3a4a;
   border-color: #17a2b8;
   color: #b3e5fc;
-}
-
-[data-bs-theme="dark"] #rocksdb-embedded-info {
-  background-color: #2b2140;
-  border-color: #6f42c1;
-  color: #d9ccf7;
 }
 
 /* Dark mode button states for SQL configuration */

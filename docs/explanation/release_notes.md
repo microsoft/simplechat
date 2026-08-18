@@ -2,17 +2,18 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
-### **(v0.250.209)**
+### **(v0.250.210)**
 
 #### New Features
 
 *   **RocksDB Action**
     *   Added a new `rocksdb` action type so agents can read an ordered [RocksDB](https://github.com/facebook/rocksdb) key-value store, with a dedicated configuration card and Test Connection button in the action modal.
-    *   Supports two connection modes because RocksDB is an embedded library rather than a network server: **Embedded**, which opens a database directory on the application host through the `rocksdict` binding, and **Remote**, which calls a RocksDB-backed HTTP/JSON service with optional bearer or API-key authentication.
+    *   RocksDB is an embedded library with no network protocol, so the action calls a RocksDB-backed HTTP/JSON service that you operate alongside your data. SimpleChat never runs RocksDB locally or opens a database directory on the application host.
+    *   Supports no-auth, bearer token, and API key header authentication, with a configurable header name and a TLS verification toggle for trusted internal services.
     *   Exposes `get_value`, `get_values`, `key_exists`, `scan_prefix`, `scan_range`, `list_column_families`, and `get_database_stats` for reads, plus `put_value`, `delete_value`, and `write_batch` that stay blocked until an action explicitly allows writes.
-    *   Embedded access is gated by a new `ROCKSDB_ALLOWED_ROOTS` environment variable; database paths are resolved and checked against that allowlist, and embedded connections stay disabled while it is unset.
-    *   Handles binary data through configurable UTF-8, base64, and JSON key and value encodings, caps returned records, and flags values truncated by the size limit.
-    *   (Ref: `rocksdb_plugin.py`, `route_backend_plugins.py`, `plugin_health_checker.py`, `_plugin_modal.html`, `plugin_modal_stepper.js`, `rocksdb.definition.json`, `test_rocksdb_plugin.py`, `test_workspace_rocksdb_action_modal.py`, `docs/explanation/features/v0.250.209/ROCKSDB_ACTION.md`)
+    *   Handles binary data through configurable UTF-8, base64, and JSON key and value encodings that are sent to the service on every request, caps returned records, and flags values truncated by the size limit.
+    *   The RocksDB HTTP service contract is fully documented so operators can implement a conforming service.
+    *   (Ref: `rocksdb_plugin.py`, `route_backend_plugins.py`, `plugin_health_checker.py`, `_plugin_modal.html`, `plugin_modal_stepper.js`, `rocksdb.definition.json`, `test_rocksdb_plugin.py`, `test_workspace_rocksdb_action_modal.py`, `docs/explanation/features/v0.250.210/ROCKSDB_ACTION.md`)
 
 ### **(v0.250.208)**
 

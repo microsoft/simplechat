@@ -1,13 +1,12 @@
 # test_workspace_rocksdb_action_modal.py
 """
 UI test for the workspace RocksDB action modal.
-Version: 0.250.209
-Implemented in: 0.250.209
+Version: 0.250.210
+Implemented in: 0.250.210
 
-This test ensures users can select the RocksDB action type, switch between the
-embedded and remote connection modes, complete the mode-specific configuration
-fields, run the browser-side connection test, and review the RocksDB summary card
-before saving.
+This test ensures users can select the RocksDB action type, complete the RocksDB HTTP
+service configuration, switch authentication schemes, run the browser-side connection
+test, see inline validation errors, and review the RocksDB summary card before saving.
 """
 
 import json
@@ -75,8 +74,8 @@ def _open_rocksdb_config_step(page):
 
 
 @pytest.mark.ui
-def test_workspace_rocksdb_action_modal_remote_mode(playwright):
-    """Validate the remote RocksDB flow, connection test, and summary card."""
+def test_workspace_rocksdb_action_modal_configuration(playwright):
+    """Validate the RocksDB service flow, connection test, and summary card."""
     _require_ui_env()
 
     browser = playwright.chromium.launch()
@@ -101,20 +100,13 @@ def test_workspace_rocksdb_action_modal_remote_mode(playwright):
 
         page.route("**/api/plugins/test-rocksdb-connection", handle_rocksdb_test)
 
-        modal = _open_rocksdb_config_step(page)
-
-        # Embedded is the default mode, so the embedded card is the visible one.
-        expect(page.locator("#rocksdb-embedded-group")).to_be_visible()
-        expect(page.locator("#rocksdb-remote-group")).to_be_hidden()
-
-        page.locator("#rocksdb-connection-mode").select_option("remote")
-        expect(page.locator("#rocksdb-remote-group")).to_be_visible()
-        expect(page.locator("#rocksdb-embedded-group")).to_be_hidden()
+        _open_rocksdb_config_step(page)
 
         page.locator("#rocksdb-base-url").fill("https://rocksdb.example.com/api")
 
         # Selecting a token-based scheme reveals the token and header fields.
         expect(page.locator("#rocksdb-auth-key-group")).to_be_hidden()
+        expect(page.locator("#rocksdb-api-key-header-group")).to_be_hidden()
         page.locator("#rocksdb-auth-scheme").select_option("api_key")
         expect(page.locator("#rocksdb-auth-key-group")).to_be_visible()
         expect(page.locator("#rocksdb-api-key-header-group")).to_be_visible()
@@ -131,20 +123,19 @@ def test_workspace_rocksdb_action_modal_remote_mode(playwright):
         expect(page.locator("#rocksdb-test-connection-result")).to_be_visible()
         expect(page.locator("#rocksdb-test-connection-alert")).to_contain_text("Successfully reached the RocksDB service")
 
-        assert captured_payload.get("connection_mode") == "remote"
         assert captured_payload.get("base_url") == "https://rocksdb.example.com/api"
         assert captured_payload.get("auth_scheme") == "api_key"
         assert captured_payload.get("api_key_header") == "X-Rocks-Key"
         assert captured_payload.get("auth_key") == "service-token-value"
-        assert "db_path" not in captured_payload, "Remote tests must not send embedded fields."
+        assert captured_payload.get("verify_tls") is True
 
         page.locator("#plugin-modal-skip").click()
 
         expect(page.locator("#summary-rocksdb-section")).to_be_visible()
         expect(page.locator("#summary-plugin-database-type")).to_have_text("RocksDB HTTP service")
         expect(page.locator("#summary-plugin-auth")).to_have_text("API Key Header")
-        expect(page.locator("#summary-rocksdb-connection-mode")).to_have_text("Remote HTTP service")
         expect(page.locator("#summary-rocksdb-target")).to_have_text("https://rocksdb.example.com/api")
+        expect(page.locator("#summary-rocksdb-auth-scheme")).to_have_text("API Key Header")
         expect(page.locator("#summary-rocksdb-access")).to_have_text("Read-only")
         expect(page.locator("#summary-rocksdb-column-family")).to_have_text("events")
         expect(page.locator("#summary-rocksdb-max-results")).to_have_text("50")
@@ -155,8 +146,8 @@ def test_workspace_rocksdb_action_modal_remote_mode(playwright):
 
 
 @pytest.mark.ui
-def test_workspace_rocksdb_action_modal_embedded_mode(playwright):
-    """Validate embedded RocksDB fields, secondary access, and write-mode behavior."""
+def test_workspace_rocksdb_action_modal_write_mode_and_errors(playwright):
+    """Validate write-mode summary text and a failing connection test."""
     _require_ui_env()
 
     browser = playwright.chromium.launch()
@@ -167,56 +158,32 @@ def test_workspace_rocksdb_action_modal_embedded_mode(playwright):
     page = context.new_page()
 
     try:
-        captured_payload = {}
-
         def handle_rocksdb_test(route):
-            request_body = route.request.post_data or "{}"
-            captured_payload.clear()
-            captured_payload.update(json.loads(request_body))
             route.fulfill(
                 status=400,
                 content_type="application/json",
-                body='{"success": false, "error": "No RocksDB database was found at the configured path."}'
+                body='{"success": false, "error": "The RocksDB service returned HTTP 502."}'
             )
 
         page.route("**/api/plugins/test-rocksdb-connection", handle_rocksdb_test)
 
-        modal = _open_rocksdb_config_step(page)
+        _open_rocksdb_config_step(page)
 
-        expect(page.locator("#rocksdb-embedded-group")).to_be_visible()
-        expect(page.locator("#rocksdb-access-mode-group")).to_be_visible()
-        expect(page.locator("#rocksdb-secondary-path-group")).to_be_hidden()
-
-        page.locator("#rocksdb-db-path").fill("/mnt/rocksdb/events")
-
-        # Secondary access reveals the scratch directory field.
-        page.locator("#rocksdb-access-mode").select_option("secondary")
-        expect(page.locator("#rocksdb-secondary-path-group")).to_be_visible()
-        page.locator("#rocksdb-secondary-path").fill("/tmp/rocksdb-secondary")
+        page.locator("#rocksdb-base-url").fill("https://rocksdb.internal/api")
+        page.locator("#rocksdb-auth-scheme").select_option("bearer")
+        page.locator("#rocksdb-auth-key").fill("bearer-token")
+        page.locator("#rocksdb-read-only").select_option("false")
 
         page.locator("#rocksdb-test-connection-btn").click()
         expect(page.locator("#rocksdb-test-connection-result")).to_be_visible()
-        expect(page.locator("#rocksdb-test-connection-alert")).to_contain_text("No RocksDB database was found")
-
-        assert captured_payload.get("connection_mode") == "embedded"
-        assert captured_payload.get("db_path") == "/mnt/rocksdb/events"
-        assert captured_payload.get("access_mode") == "secondary"
-        assert captured_payload.get("secondary_path") == "/tmp/rocksdb-secondary"
-        assert "base_url" not in captured_payload, "Embedded tests must not send remote fields."
-
-        # Allowing writes hides the access mode controls because writes need read-write access.
-        page.locator("#rocksdb-read-only").select_option("false")
-        expect(page.locator("#rocksdb-access-mode-group")).to_be_hidden()
-        expect(page.locator("#rocksdb-secondary-path-group")).to_be_hidden()
-        expect(page.locator("#rocksdb-access-mode")).to_have_value("read_only")
+        expect(page.locator("#rocksdb-test-connection-alert")).to_contain_text("returned HTTP 502")
 
         page.locator("#plugin-modal-skip").click()
 
         expect(page.locator("#summary-rocksdb-section")).to_be_visible()
-        expect(page.locator("#summary-plugin-database-type")).to_have_text("Embedded RocksDB database")
-        expect(page.locator("#summary-rocksdb-connection-mode")).to_have_text("Embedded database")
-        expect(page.locator("#summary-rocksdb-target")).to_have_text("/mnt/rocksdb/events")
         expect(page.locator("#summary-rocksdb-access")).to_have_text("Reads and writes")
+        expect(page.locator("#summary-rocksdb-auth-scheme")).to_have_text("Bearer Token")
+        expect(page.locator("#summary-rocksdb-target")).to_have_text("https://rocksdb.internal/api")
     finally:
         context.close()
         browser.close()
@@ -237,27 +204,34 @@ def test_workspace_rocksdb_action_modal_validation_messages(playwright):
     try:
         _open_rocksdb_config_step(page)
 
-        # Embedded mode requires a database path before the connection test runs.
+        # A missing base URL is rejected before any request is sent.
         page.locator("#rocksdb-test-connection-btn").click()
         expect(page.locator("#rocksdb-test-connection-result")).to_be_visible()
         expect(page.locator("#rocksdb-test-connection-alert")).to_contain_text(
-            "RocksDB database path is required"
+            "RocksDB service base URL is required"
         )
 
-        # Remote mode rejects a non-HTTP base URL.
-        page.locator("#rocksdb-connection-mode").select_option("remote")
+        # A non-HTTP base URL is rejected.
         page.locator("#rocksdb-base-url").fill("ftp://rocks.example.com")
         page.locator("#rocksdb-test-connection-btn").click()
         expect(page.locator("#rocksdb-test-connection-alert")).to_contain_text(
             "must start with http:// or https://"
         )
 
-        # A token-based scheme without a token is rejected too.
+        # A token-based scheme without a token is rejected.
         page.locator("#rocksdb-base-url").fill("https://rocksdb.example.com/api")
         page.locator("#rocksdb-auth-scheme").select_option("bearer")
         page.locator("#rocksdb-test-connection-btn").click()
         expect(page.locator("#rocksdb-test-connection-alert")).to_contain_text(
             "service token is required"
+        )
+
+        # Out-of-range numeric caps are rejected.
+        page.locator("#rocksdb-auth-key").fill("token")
+        page.locator("#rocksdb-max-results").fill("0")
+        page.locator("#rocksdb-test-connection-btn").click()
+        expect(page.locator("#rocksdb-test-connection-alert")).to_contain_text(
+            "Max results must be between 1 and 1000"
         )
     finally:
         context.close()
