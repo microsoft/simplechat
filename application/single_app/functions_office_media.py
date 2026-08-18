@@ -12,6 +12,7 @@ This module deliberately keeps its imports light so it stays importable without 
 import hashlib
 import os
 import re
+import struct
 import zipfile
 from io import BytesIO
 
@@ -46,6 +47,9 @@ OFFICE_ZIP_MAX_ENTRIES = 5000
 OFFICE_ZIP_MAX_RELS_ENTRIES = 500
 # Only the compression methods real OOXML packages use.
 OFFICE_ZIP_ALLOWED_COMPRESSION = (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED)
+# Legacy .doc/.ppt are OLE compound documents, so their pictures are carved by signature instead.
+OLE_COMPOUND_FILE_SIGNATURE = b'\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1'
+OFFICE_BINARY_SCAN_MAX_BYTES = 256 * 1024 * 1024
 
 _OFFICE_MEDIA_INDEX_PATTERN = re.compile(r'(\d+)')
 _PPTX_SLIDE_RELS_PATTERN = re.compile(r'^ppt/slides/_rels/slide(\d+)\.xml\.rels$', re.IGNORECASE)
@@ -200,6 +204,130 @@ def extract_office_embedded_images(file_path, output_dir, min_pixels=150, max_im
     return extracted_images
 
 
+def _carve_metafiles_from_binary(data, max_metafiles):
+    """Locate EMF and placeable WMF blobs inside a non-zip Office container.
+
+    Legacy ``.doc`` and ``.ppt`` files are OLE compound documents rather than zip packages, so
+    there is no ``word/media`` part to enumerate. Their pictures and embedded equation previews are
+    still stored as intact metafile blobs, which can be located by signature and carved using the
+    length recorded in the metafile's own header.
+
+    Validation is deliberately strict -- record type, signature position, and a length that fits
+    inside the remaining bytes -- so a coincidental byte sequence is not mistaken for an image.
+    """
+    carved = []
+    offset = 0
+    length = len(data)
+
+    while offset < length and len(carved) < max_metafiles:
+        emf_index = data.find(b' EMF', offset)
+        wmf_index = data.find(b'\xd7\xcd\xc6\x9a', offset)
+
+        candidates = [index for index in (emf_index, wmf_index) if index != -1]
+        if not candidates:
+            break
+        next_index = min(candidates)
+
+        if next_index == emf_index:
+            record_start = emf_index - 40
+            offset = emf_index + 4
+            if record_start < 0 or record_start + 88 > length:
+                continue
+            record_type, _record_size = struct.unpack_from('<II', data, record_start)
+            if record_type != 1:
+                continue
+            total_bytes = struct.unpack_from('<I', data, record_start + 48)[0]
+            if not (88 <= total_bytes <= OFFICE_EMBEDDED_IMAGE_MAX_BYTES):
+                continue
+            if record_start + total_bytes > length:
+                continue
+            carved.append(('emf', data[record_start:record_start + total_bytes]))
+            offset = record_start + total_bytes
+        else:
+            record_start = wmf_index
+            offset = wmf_index + 4
+            if record_start + 30 > length:
+                continue
+            # Placeable header is 22 bytes; the standard header's mtSize is measured in words.
+            size_words = struct.unpack_from('<I', data, record_start + 28)[0]
+            total_bytes = 22 + size_words * 2
+            if not (30 <= total_bytes <= OFFICE_EMBEDDED_IMAGE_MAX_BYTES):
+                continue
+            if record_start + total_bytes > length:
+                continue
+            carved.append(('wmf', data[record_start:record_start + total_bytes]))
+            offset = record_start + total_bytes
+
+    return carved
+
+
+def _extract_from_binary_office_file(file_path, output_dir, min_pixels, max_images, diagnostics):
+    """Extract embedded metafiles from a legacy binary Office document."""
+    try:
+        file_size = os.path.getsize(file_path)
+        if file_size > OFFICE_BINARY_SCAN_MAX_BYTES:
+            return []
+        with open(file_path, 'rb') as handle:
+            data = handle.read()
+    except OSError:
+        return []
+
+    if not data.startswith(OLE_COMPOUND_FILE_SIGNATURE):
+        return []
+
+    carved = _carve_metafiles_from_binary(data, max_images * 4)
+    diagnostics['candidates'] = len(carved)
+
+    extracted_images = []
+    seen_digests = set()
+
+    for source_format, blob in carved:
+        if len(extracted_images) >= max_images:
+            _record_skip(diagnostics, 'per_document_cap_reached')
+            continue
+
+        if len(blob) < OFFICE_EMBEDDED_IMAGE_MIN_BYTES:
+            _record_skip(diagnostics, 'below_minimum_bytes')
+            continue
+
+        digest = hashlib.sha256(blob).hexdigest()
+        if digest in seen_digests:
+            _record_skip(diagnostics, 'duplicate_image')
+            continue
+
+        png_bytes, width, height, embedded_text, reason = _rasterize_vector_image(blob)
+        if png_bytes is None:
+            _record_skip(diagnostics, reason or 'vector_not_rasterizable')
+            continue
+
+        if width < min_pixels or height < min_pixels:
+            _record_skip(diagnostics, 'below_minimum_pixels')
+            continue
+
+        seen_digests.add(digest)
+        output_path = os.path.join(output_dir, f"{len(extracted_images) + 1:03d}.png")
+        try:
+            with open(output_path, 'wb') as output_file:
+                output_file.write(png_bytes)
+        except OSError:
+            _record_skip(diagnostics, 'write_failed')
+            continue
+
+        diagnostics['analyzed'] += 1
+        extracted_images.append({
+            'name': f"embedded_{len(extracted_images) + 1}.{source_format}",
+            'path': output_path,
+            'width': width,
+            'height': height,
+            'slide_number': None,
+            'source_format': source_format,
+            'rasterized': True,
+            'embedded_text': embedded_text,
+        })
+
+    return extracted_images
+
+
 def extract_office_embedded_images_with_diagnostics(file_path, output_dir, min_pixels=150, max_images=25):
     """Extract embedded images and report what was skipped and why.
 
@@ -215,6 +343,15 @@ def extract_office_embedded_images_with_diagnostics(file_path, output_dir, min_p
 
     if max_images <= 0:
         return [], diagnostics
+
+    # Legacy .doc and .ppt are OLE compound documents, not zip packages.
+    if not zipfile.is_zipfile(file_path):
+        try:
+            return _extract_from_binary_office_file(
+                file_path, output_dir, min_pixels, max_images, diagnostics
+            ), diagnostics
+        except (OSError, ValueError, struct.error):
+            return [], diagnostics
 
     extracted_images = []
     seen_digests = set()

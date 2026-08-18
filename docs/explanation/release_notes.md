@@ -2,6 +2,23 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.224)**
+
+#### New Features
+
+*   **Optional Mathematical Formula Extraction**
+    *   Added an **Extract mathematical formulas** toggle to the Document Intelligence settings. When enabled, equations in PDFs and images are captured as LaTeX instead of being approximated as OCR text.
+    *   This requests a **billed Document Intelligence add-on**, so it is off by default and must be turned on deliberately. It applies to the Layout model only, so it has no effect while extraction is set to Standard.
+    *   (Ref: #1277, `functions_content.py`, `functions_settings.py`, `admin_settings.html`, Document Intelligence formulas add-on)
+
+#### Bug Fixes
+
+*   **Images in Legacy `.doc` and `.ppt` Files Are Now Analyzed**
+    *   Embedded image analysis previously covered only DOCX and PPTX, because legacy Office files are OLE compound documents rather than zip packages and have no media parts to enumerate.
+    *   Pictures and embedded equation previews are now carved out of the legacy container by metafile signature, using the length recorded in the metafile's own header, then rasterized and analyzed like any other embedded image.
+    *   Validation is strict — record type, signature position, and a length that fits the remaining bytes — so a coincidental byte sequence is not mistaken for an image. Duplicate images are still collapsed and the per-document cap still applies.
+    *   (Ref: #1277, `functions_office_media.py`, `functions_documents.py`, legacy Office image extraction)
+
 ### **(v0.250.223)**
 
 #### Bug Fixes

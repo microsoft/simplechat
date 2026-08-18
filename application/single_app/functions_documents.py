@@ -7498,10 +7498,11 @@ def process_di_document(document_id, user_id, temp_file_path, original_filename,
                  final_chunks_to_save = di_extracted_pages
             else: final_chunks_to_save = [] # No text extracted
 
-        # --- Embedded Office image analysis (DOCX/DOC/PPTX) ---
+        # --- Embedded Office image analysis (DOCX/DOC/PPTX/PPT) ---
         # Neither extraction engine describes figures inside Office files, so embedded images are
-        # analyzed separately and appended as their own citable chunks.
-        if (is_word or is_ppt) and not is_legacy_doc and not is_legacy_ppt:
+        # analyzed separately and appended as their own citable chunks. Legacy binary formats are
+        # included because their pictures are carved from the OLE container by signature.
+        if is_word or is_ppt:
             next_chunk_page_number = max(
                 (int(chunk.get('page_number') or 0) for chunk in final_chunks_to_save),
                 default=0,

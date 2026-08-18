@@ -11798,6 +11798,26 @@
                             </div>
                         </div>
 
+                        <div class="form-group form-check form-switch mb-3 d-flex align-items-center">
+                            <input
+                                type="checkbox"
+                                class="form-check-input me-2"
+                                id="enable_document_intelligence_formula_extraction"
+                                name="enable_document_intelligence_formula_extraction"
+                                {% if settings.enable_document_intelligence_formula_extraction %}checked{% endif %}
+                            >
+                            <label class="form-check-label" for="enable_document_intelligence_formula_extraction">
+                                Extract mathematical formulas
+                            </label>
+                            <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Requests the Document Intelligence formulas add-on so equations are captured as LaTeX instead of approximated as OCR text."></i>
+                        </div>
+                        <div class="form-text mb-3">
+                            Captures equations in PDFs and images as LaTeX rather than approximate OCR text. This is a
+                            <strong>billed Document Intelligence add-on</strong> that adds per-page cost to every Enhanced
+                            extraction, so it is off by default. It applies to the Layout model only, so it has no effect
+                            while extraction is set to Standard.
+                        </div>
+
                         {% if content_understanding_supported %}
                         <div class="card p-3 mb-3 bg-body-tertiary" id="content-understanding-section">
                             <div class="d-flex align-items-center gap-2 flex-wrap mb-2">
