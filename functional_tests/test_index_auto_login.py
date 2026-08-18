@@ -2,8 +2,8 @@
 # test_index_auto_login.py
 """
 Functional test for index-page auto-login configuration.
-Version: 0.250.209
-Implemented in: 0.250.209
+Version: 0.250.222
+Implemented in: 0.250.222
 
 This test ensures SimpleChat can redirect unauthenticated index-page requests
 to the existing Microsoft Entra sign-in flow when auto-login is enabled.
@@ -17,7 +17,7 @@ from test_support.versioning import assert_app_version_at_least
 ROOT_DIR = Path(__file__).resolve().parents[1]
 APP_FILE = ROOT_DIR / "application" / "single_app" / "app.py"
 CONFIG_FILE = ROOT_DIR / "application" / "single_app" / "config.py"
-IMPLEMENTED_VERSION = "0.250.209"
+IMPLEMENTED_VERSION = "0.250.222"
 
 
 def _read_source(path):

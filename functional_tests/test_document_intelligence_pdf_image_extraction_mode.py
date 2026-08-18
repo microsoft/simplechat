@@ -84,7 +84,10 @@ def test_document_intelligence_pdf_image_extraction_mode_contract():
     assert_contains(backend_route, 'test_extraction_mode = "layout" if extraction_mode in ("layout", "auto") else "read"', "backend Auto test mode selection")
     assert_contains(backend_route, 'model_id = "prebuilt-layout" if test_extraction_mode == "layout" else "prebuilt-read"', "backend test model selection")
     assert_contains(backend_route, 'analyze_options["output_content_format"] = "markdown"', "backend layout markdown option")
-    assert_contains(backend_route, 'extraction_mode_label = "Enhanced" if extraction_mode == "layout" else "Standard"', "backend test mode label")
+    # Enhanced is now backed by Content Understanding, so the Document Intelligence test reports
+    # Standard plus the Layout model used for Auto sampling and Enhanced fallback.
+    assert_contains(backend_route, "'Azure document intelligence Standard connection successful'", "backend Standard test message")
+    assert_contains(backend_route, "Layout model used for Auto sampling and Enhanced fallback", "backend Layout test message")
 
     assert_contains(extractor, "def extract_content_with_azure_di(file_path, extraction_mode='read', pages=None)", "extractor mode and pages parameter")
     assert_contains(extractor, "functions_settings.normalize_document_intelligence_pdf_image_extraction_mode(extraction_mode)", "extractor module-qualified mode normalizer call")
@@ -99,9 +102,9 @@ def test_document_intelligence_pdf_image_extraction_mode_contract():
     assert_contains(documents, "extraction_mode=document_intelligence_extraction_mode", "document extractor call")
     assert_contains(documents, '"mark_enhanced_citations": False', "source-only PDF/image blob persistence")
 
-    assert_contains(chat_route, "get_document_intelligence_pdf_image_extraction_mode(settings)", "chat upload mode lookup")
+    assert_contains(chat_route, "get_effective_document_intelligence_pdf_image_extraction_mode(settings)", "chat upload mode lookup")
     assert_contains(chat_route, "extraction_mode = 'layout' if is_image_file else 'read'", "chat upload Auto fallback")
-    assert_contains(smart_http_plugin, "get_document_intelligence_pdf_image_extraction_mode(settings)", "Smart HTTP PDF mode lookup")
+    assert_contains(smart_http_plugin, "get_effective_document_intelligence_pdf_image_extraction_mode(settings)", "Smart HTTP PDF mode lookup")
     assert_contains(smart_http_plugin, "if extraction_mode == 'auto':", "Smart HTTP Auto fallback guard")
 
     print("Document Intelligence PDF/image extraction mode contract passed.")

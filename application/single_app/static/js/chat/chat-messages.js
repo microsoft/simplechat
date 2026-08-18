@@ -17,7 +17,7 @@ import { updateSidebarConversationTitle } from "./chat-sidebar-conversations.js"
 import { getActiveConversationContext, getActiveConversationScope } from "./chat-conversation-scope.js";
 import { escapeHtml, isColorLight, addTargetBlankToExternalLinks, sanitizeHttpUrl } from "./chat-utils.js";
 import { showToast } from "./chat-toast.js";
-import { autoplayTTSIfEnabled } from "./chat-tts.js";
+import { autoplayTTSIfEnabled, isTTSAutoplayEnabled, playTTS } from "./chat-tts.js";
 import { saveUserSetting } from "./chat-layout.js";
 import { sendMessageWithStreaming } from "./chat-streaming.js";
 import { getCurrentReasoningEffort, isReasoningEffortEnabled } from './chat-reasoning.js';
@@ -1862,6 +1862,23 @@ function resolveHybridCitationId(cite, index) {
   return `${cite?.chunk_id || ''}_${cite?.page_number || index}`;
 }
 
+// Agent document search can return hundreds of source chunks for one answer, so the
+// source list is collapsed past this many entries instead of being capped server-side.
+const DOCUMENT_CITATION_VISIBLE_LIMIT = 25;
+
+function buildDocumentCitationGroupHtml(citationParts) {
+  if (!Array.isArray(citationParts) || citationParts.length <= DOCUMENT_CITATION_VISIBLE_LIMIT) {
+    return Array.isArray(citationParts) ? citationParts.join("") : "";
+  }
+
+  const visibleParts = citationParts.slice(0, DOCUMENT_CITATION_VISIBLE_LIMIT);
+  const overflowParts = citationParts.slice(DOCUMENT_CITATION_VISIBLE_LIMIT);
+  const collapsedLabel = `Show ${overflowParts.length} more sources`;
+  const expandedLabel = "Show fewer sources";
+
+  return `${visibleParts.join("")}<span class="citation-overflow-group d-none">${overflowParts.join("")}</span><button type="button" class="btn btn-sm citation-button citation-overflow-toggle" data-collapsed-label="${escapeHtml(collapsedLabel)}" data-expanded-label="${escapeHtml(expandedLabel)}" aria-expanded="false" title="${escapeHtml(collapsedLabel)}"><i class="bi bi-plus-circle me-1"></i>${escapeHtml(collapsedLabel)}</button>`;
+}
+
 function createCitationsHtml(
   hybridCitations = [],
   webCitations = [],
@@ -1874,6 +1891,7 @@ function createCitationsHtml(
 
   if (hybridCitations && hybridCitations.length > 0) {
     hasCitations = true;
+    const documentCitationParts = [];
     hybridCitations.forEach((cite, index) => {
       const citationId = resolveHybridCitationId(cite, index);
       const fileName = cite.file_name || 'Document';
@@ -1907,7 +1925,7 @@ function createCitationsHtml(
 
       if (isMetadata && documentId) {
         const summaryText = `${escapeHtml(locationLabel)}: ${escapeHtml(locationValue)}`;
-        citationsHtml += `
+        documentCitationParts.push(`
               <a href="#"
                  class="btn btn-sm citation-button hybrid-citation-link"
                  data-citation-id="${escapeHtml(citationId)}"
@@ -1935,11 +1953,11 @@ function createCitationsHtml(
                  data-metadata-content="${escapeHtml(metadataContent)}"
                  title="View source summary: ${displayText}">
                   <i class="bi bi-tags me-1"></i>${summaryText}
-              </a>`;
+              </a>`);
         return;
       }
 
-      citationsHtml += `
+      documentCitationParts.push(`
               <a href="#"
                  class="btn btn-sm citation-button hybrid-citation-link ${isMetadata ? 'metadata-citation' : ''}"
                  data-citation-id="${escapeHtml(citationId)}"
@@ -1954,8 +1972,9 @@ function createCitationsHtml(
                  data-metadata-content="${escapeHtml(metadataContent)}"
                  title="View source: ${displayText}">
                   <i class="bi ${isMetadata ? 'bi-tags' : 'bi-file-earmark-text'} me-1"></i>${displayText}
-              </a>`;
+              </a>`);
     });
+    citationsHtml += buildDocumentCitationGroupHtml(documentCitationParts);
   }
 
   if (webCitations && webCitations.length > 0) {
@@ -6608,7 +6627,7 @@ export function appendMessage(
   } // End of the large 'else' block for non-AI messages
 }
 
-export async function sendMessage() {
+export async function sendMessage(turnOptions = {}) {
   if (!userInput) {
     console.error("User input element not found.");
     return;
@@ -6660,10 +6679,10 @@ export async function sendMessage() {
 
   if (!currentConversationId) {
     createNewConversation(() => {
-      actuallySendMessage(combinedMessage);
+      actuallySendMessage(combinedMessage, turnOptions);
     }, { preserveSelections: true, initialMessage: combinedMessage });
   } else {
-    actuallySendMessage(combinedMessage);
+    actuallySendMessage(combinedMessage, turnOptions);
   }
 
   userInput.value = "";
@@ -7320,7 +7339,32 @@ export function shouldUseCollaborativeAiWorkflow(messageData = {}, explicitInvoc
   return Boolean(buildCollaborativeInvocationTarget(messageData, explicitInvocationTarget));
 }
 
-export function actuallySendMessage(finalMessageToSend) {
+function buildVoiceResponseCompletionHandler(responseModality) {
+  if (responseModality !== "voice" || !window.appSettings?.enable_text_to_speech) {
+    return null;
+  }
+
+  return (finalData = {}) => {
+    if (isTTSAutoplayEnabled()) {
+      return;
+    }
+
+    const messageId = String(finalData.message_id || "").trim();
+    const responseText = String(finalData.full_content || finalData.content || "").trim();
+    if (!messageId || !responseText || finalData.cancelled || finalData.canceled) {
+      return;
+    }
+
+    void playTTS(messageId, responseText);
+  };
+}
+
+export function actuallySendMessage(finalMessageToSend, turnOptions = {}) {
+  const inputModality = turnOptions.inputModality === "voice" ? "voice" : "text";
+  const responseModality = inputModality === "voice" && turnOptions.responseModality === "voice"
+    ? "voice"
+    : "text";
+  const onVoiceResponseDone = buildVoiceResponseCompletionHandler(responseModality);
   const isCollaborativeConversation = Boolean(
     currentConversationId
     && window.chatCollaboration?.isCollaborationConversation?.(currentConversationId)
@@ -7334,6 +7378,8 @@ export function actuallySendMessage(finalMessageToSend) {
       explicitInvocationTarget,
       displayMessageText,
     } = buildCollaborativeSendContext(finalMessageToSend, currentConversationId);
+    collaborativeMessageData.input_modality = inputModality;
+    collaborativeMessageData.response_modality = responseModality;
     if (invocationTarget && !String(displayMessageText || '').trim()) {
       showToast('Add a message after the selected @agent or @model tag.', 'warning');
       return;
@@ -7351,6 +7397,7 @@ export function actuallySendMessage(finalMessageToSend) {
         tempUserMessageId,
         collaborativeMessageData,
         pendingCollaborativeContext,
+        { onDone: onVoiceResponseDone },
       )
       : window.chatCollaboration.sendCollaborativeMessage(displayMessageText, tempUserMessageId);
 
@@ -7367,6 +7414,8 @@ export function actuallySendMessage(finalMessageToSend) {
   // Generate a temporary message ID for the user message
   const tempUserMessageId = `temp_user_${Date.now()}`;
   const messageData = buildChatRequestPayload(finalMessageToSend, currentConversationId);
+  messageData.input_modality = inputModality;
+  messageData.response_modality = responseModality;
   const actionType = String(messageData.document_action?.type || DOCUMENT_ACTION_NONE).trim() || DOCUMENT_ACTION_NONE;
   const useDocumentAction = actionType !== DOCUMENT_ACTION_NONE;
   const totalSelectedDocuments = actionType === DOCUMENT_ACTION_COMPARISON
@@ -7422,6 +7471,7 @@ export function actuallySendMessage(finalMessageToSend) {
     {
       endpoint: useDocumentAction ? '/api/chat/document-action/stream' : '/api/chat/stream',
       fallbackAgentInfo: messageData.agent_info || null,
+      onDone: onVoiceResponseDone,
     }
   );
 
@@ -7474,7 +7524,7 @@ function attachCodeBlockCopyButtons(parentElement) {
 }
 
 if (sendBtn) {
-  sendBtn.addEventListener("click", sendMessage);
+  sendBtn.addEventListener("click", () => sendMessage());
 }
 
 if (userInput) {
@@ -9539,6 +9589,17 @@ function executeMessageDeletion(deleteThread = false) {
       // Optionally reload conversation list to update preview
       if (typeof loadConversations === 'function') {
         loadConversations();
+      }
+      if (window.currentConversationId) {
+        window.dispatchEvent(new CustomEvent(
+          'chat:conversation-documents-refresh',
+          {
+            detail: {
+              conversationId: window.currentConversationId,
+              autoOpen: false,
+            },
+          }
+        ));
       }
     } else {
       showToast('Failed to delete message', 'error');

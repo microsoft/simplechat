@@ -1317,12 +1317,13 @@ def register_route_frontend_chats(bp):
             if file_ext_nodot in (DOCUMENT_EXTENSIONS | {'html'}) or is_image_file:
                 extraction_mode = 'read'
                 if file_ext == '.pdf' or is_image_file:
-                    extraction_mode = get_document_intelligence_pdf_image_extraction_mode(settings)
+                    extraction_mode = get_effective_document_intelligence_pdf_image_extraction_mode(settings)
                     if extraction_mode == 'auto':
                         extraction_mode = 'layout' if is_image_file else 'read'
-                extracted_content_raw  = extract_content_with_azure_di(
+                extracted_content_raw, _extraction_engine_used, _extraction_engine_fallback = extract_content_with_extraction_engine(
                     temp_file_path,
-                    extraction_mode=extraction_mode
+                    extraction_mode=extraction_mode,
+                    settings=settings
                 )
                 
                 # Convert pages_data list to string

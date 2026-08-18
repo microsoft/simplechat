@@ -24,7 +24,10 @@ category: Version History
 - [Action Type Governance](v0.242.064/ACTION_TYPE_GOVERNANCE.md)
 - [Agents Page Customization](v0.241.229/AGENTS_PAGE_CUSTOMIZATION.md)
 - [Microsoft Graph Send Mail Action](MSGRAPH_SEND_MAIL_ACTION.md)
+- [RocksDB Action](v0.250.216/ROCKSDB_ACTION.md)
 - [Snowflake Action](v0.250.006/SNOWFLAKE_ACTION.md)
+- [Tableau Action](TABLEAU_ACTION.md)
+- [Yamcs Action](YAMCS_ACTION.md)
 
 ## MCP Features
 
@@ -47,6 +50,7 @@ category: Version History
 - [Data Management Durable Backup Jobs](DATA_MANAGEMENT_BACKUP_MIGRATION.md)
 - [Data Management Migration Resilience](DATA_MANAGEMENT_MIGRATION_RESILIENCE.md)
 - [Migration Provenance](MIGRATION_PROVENANCE.md)
+- [Workspace Section Order](v0.250.211/WORKSPACE_SECTION_ORDER.md)
 - [Microsoft Teams App SSO](v0.242.072/TEAMS_APP_SSO.md)
 - [Tabular SK Large Result Pagination](v0.242.067/TABULAR_SK_LARGE_RESULT_PAGINATION.md)
 - [Model Endpoint Model Icon Picker](v0.242.060/MODEL_ENDPOINT_MODEL_ICON_PICKER.md)

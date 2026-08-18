@@ -6811,6 +6811,59 @@ function setupToggles() {
         documentIntelligenceAutoSamplePages.addEventListener('input', markFormAsModified);
     }
 
+    const enableEnhancedExtraction = document.getElementById('enable_enhanced_extraction');
+    const enhancedExtractionSettings = document.getElementById('enhanced_extraction_settings');
+    const updateEnhancedExtractionControls = () => {
+        if (!enableEnhancedExtraction || !enhancedExtractionSettings) {
+            return;
+        }
+        enhancedExtractionSettings.classList.toggle('d-none', !enableEnhancedExtraction.checked);
+    };
+    if (enableEnhancedExtraction) {
+        updateEnhancedExtractionControls();
+        enableEnhancedExtraction.addEventListener('change', function () {
+            updateEnhancedExtractionControls();
+            // Turning Enhanced on defaults to Auto so it upgrades only when structure is detected.
+            if (this.checked && documentIntelligenceExtractionMode && documentIntelligenceExtractionMode.value === 'read') {
+                documentIntelligenceExtractionMode.value = 'auto';
+                updateDocumentIntelligenceAutoControls();
+            }
+            markFormAsModified();
+        });
+    }
+
+    const contentUnderstandingAuthType = document.getElementById('azure_content_understanding_authentication_type');
+    const contentUnderstandingKeyContainer = document.getElementById('azure_content_understanding_key_container');
+    const updateContentUnderstandingAuthControls = () => {
+        if (!contentUnderstandingAuthType || !contentUnderstandingKeyContainer) {
+            return;
+        }
+        contentUnderstandingKeyContainer.classList.toggle('d-none', contentUnderstandingAuthType.value === 'managed_identity');
+    };
+    if (contentUnderstandingAuthType) {
+        updateContentUnderstandingAuthControls();
+        contentUnderstandingAuthType.addEventListener('change', function () {
+            updateContentUnderstandingAuthControls();
+            markFormAsModified();
+        });
+    }
+
+    const enableOfficeEmbeddedImageAnalysis = document.getElementById('enable_office_embedded_image_analysis');
+    const officeEmbeddedImageOptions = document.getElementById('office_embedded_image_options');
+    const updateOfficeEmbeddedImageControls = () => {
+        if (!enableOfficeEmbeddedImageAnalysis || !officeEmbeddedImageOptions) {
+            return;
+        }
+        officeEmbeddedImageOptions.classList.toggle('d-none', !enableOfficeEmbeddedImageAnalysis.checked);
+    };
+    if (enableOfficeEmbeddedImageAnalysis) {
+        updateOfficeEmbeddedImageControls();
+        enableOfficeEmbeddedImageAnalysis.addEventListener('change', function () {
+            updateOfficeEmbeddedImageControls();
+            markFormAsModified();
+        });
+    }
+
     const enableContentSafetyCheckbox = document.getElementById('enable_content_safety');
     if (enableContentSafetyCheckbox) {
         enableContentSafetyCheckbox.addEventListener('change', function() {
@@ -8363,6 +8416,44 @@ function setupTestButtons() {
         });
     }
 
+    const testContentUnderstandingBtn = document.getElementById('test_content_understanding_button');
+    if (testContentUnderstandingBtn) {
+        testContentUnderstandingBtn.addEventListener('click', async () => {
+            const resultDiv = document.getElementById('test_content_understanding_result');
+            resultDiv.className = 'mt-2';
+            resultDiv.textContent = 'Testing Content Understanding...';
+
+            const payload = {
+                test_type: 'content_understanding',
+                endpoint: document.getElementById('azure_content_understanding_endpoint')?.value || '',
+                authentication_type: document.getElementById('azure_content_understanding_authentication_type')?.value || 'key',
+                key: document.getElementById('azure_content_understanding_key')?.value || '',
+                api_version: document.getElementById('azure_content_understanding_api_version')?.value || '',
+                analyzer_id: document.getElementById('azure_content_understanding_analyzer_id')?.value || '',
+                image_analyzer_id: document.getElementById('azure_content_understanding_image_analyzer_id')?.value || ''
+            };
+
+            try {
+                const resp = await fetch('/api/admin/settings/test_connection', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const data = await resp.json();
+                if (resp.ok) {
+                    resultDiv.className = 'mt-2 text-success';
+                    resultDiv.textContent = data.message;
+                } else {
+                    resultDiv.className = 'mt-2 text-danger';
+                    resultDiv.textContent = data.error || 'Error testing Content Understanding';
+                }
+            } catch (err) {
+                resultDiv.className = 'mt-2 text-danger';
+                resultDiv.textContent = `Error: ${err.message}`;
+            }
+        });
+    }
+
     const testKeyVaultBtn = document.getElementById('test_key_vault_button');
     if (testKeyVaultBtn) {
         testKeyVaultBtn.addEventListener('click', async () => {
@@ -9561,6 +9652,7 @@ togglePassword('toggle_image_gen_key', 'azure_openai_image_gen_key');
 togglePassword('toggle_content_safety_key', 'content_safety_key');
 togglePassword('toggle_search_key', 'azure_ai_search_key');
 togglePassword('toggle_docintel_key', 'azure_document_intelligence_key');
+togglePassword('toggle_content_understanding_key', 'azure_content_understanding_key');
 togglePassword('toggle_azure_apim_gpt_subscription_key', 'azure_apim_gpt_subscription_key');
 togglePassword('toggle_azure_apim_embedding_subscription_key', 'azure_apim_embedding_subscription_key');
 togglePassword('toggle_azure_apim_image_gen_subscription_key', 'azure_apim_image_gen_subscription_key');
@@ -10451,7 +10543,17 @@ function setupWalkthroughFieldListeners() {
             {selector: '#document_intelligence_auto_sample_pages', event: 'input'},
             {selector: '#azure_apim_document_intelligence_endpoint', event: 'input'},
             {selector: '#azure_apim_document_intelligence_subscription_key', event: 'input'},
-            {selector: '#enable_document_intelligence_apim', event: 'change'}
+            {selector: '#enable_document_intelligence_apim', event: 'change'},
+            {selector: '#enable_enhanced_extraction', event: 'change'},
+            {selector: '#azure_content_understanding_endpoint', event: 'input'},
+            {selector: '#azure_content_understanding_key', event: 'input'},
+            {selector: '#azure_content_understanding_authentication_type', event: 'change'},
+            {selector: '#azure_content_understanding_api_version', event: 'input'},
+            {selector: '#azure_content_understanding_analyzer_id', event: 'input'},
+            {selector: '#azure_content_understanding_image_analyzer_id', event: 'input'},
+            {selector: '#enable_office_embedded_image_analysis', event: 'change'},
+            {selector: '#office_embedded_image_min_pixels', event: 'input'},
+            {selector: '#office_embedded_image_max_per_document', event: 'input'}
         ],
         8: [ // Video settings
             {selector: '#enable_video_file_support', event: 'change'},

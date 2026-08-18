@@ -52,6 +52,7 @@ from config import cognitive_services_scope
 from functions_databricks_operations import DATABRICKS_LEGACY_TABLE_PLUGIN_TYPE, DATABRICKS_PLUGIN_TYPE
 from functions_snowflake_operations import SNOWFLAKE_PLUGIN_TYPE, SNOWFLAKE_SENSITIVE_ADDITIONAL_FIELDS
 from functions_tableau_operations import TABLEAU_PLUGIN_TYPE
+from functions_yamcs_operations import YAMCS_PLUGIN_TYPE, YAMCS_SENSITIVE_ADDITIONAL_FIELDS
 from functions_keyvault import (
     SQL_PLUGIN_SENSITIVE_ADDITIONAL_FIELDS,
     SQL_PLUGIN_SENSITIVE_AUTH_FIELDS,
@@ -110,6 +111,7 @@ from semantic_kernel_plugins.mcp_plugin_factory import McpPluginFactory
 from semantic_kernel_plugins.openapi_plugin_factory import OpenApiPluginFactory
 from semantic_kernel_plugins.snowflake_plugin_factory import SnowflakePluginFactory
 from semantic_kernel_plugins.tableau_plugin_factory import TableauPluginFactory
+from semantic_kernel_plugins.yamcs_plugin_factory import YamcsPluginFactory
 from functions_agent_scope import find_agent_by_scope, is_selected_agent_scope_enabled
 import app_settings_cache
 
@@ -1476,6 +1478,9 @@ def _load_agent_plugins_original_method(kernel, plugin_manifests, mode_label="gl
                     elif plugin_type == TABLEAU_PLUGIN_TYPE:
                         plugin = TableauPluginFactory.create_from_config(manifest)
                         print(f"[SK_LOADER] Created Tableau plugin: {name}")
+                    elif plugin_type == YAMCS_PLUGIN_TYPE:
+                        plugin = YamcsPluginFactory.create_from_config(manifest)
+                        print(f"[SK_LOADER] Created Yamcs plugin: {name}")
                     elif plugin_type == MCP_PLUGIN_TYPE or normalized_type == normalize(MCP_PLUGIN_TYPE):
                         plugin = McpPluginFactory.create_from_config(manifest)
                         print(f"[SK_LOADER] Created MCP plugin: {name}")
@@ -2106,6 +2111,7 @@ def _is_sensitive_plugin_additional_field(plugin_manifest, field_name):
     return (
         _is_sql_sensitive_plugin_field(plugin_manifest, field_name)
         or (plugin_type == SNOWFLAKE_PLUGIN_TYPE and field_name in SNOWFLAKE_SENSITIVE_ADDITIONAL_FIELDS)
+        or (plugin_type == YAMCS_PLUGIN_TYPE and field_name in YAMCS_SENSITIVE_ADDITIONAL_FIELDS)
     )
 
 
@@ -2352,6 +2358,8 @@ def _load_plugins_original_method(kernel, plugin_manifests, settings, mode_label
                         plugin = SnowflakePluginFactory.create_from_config(manifest)
                     elif plugin_type == TABLEAU_PLUGIN_TYPE:
                         plugin = TableauPluginFactory.create_from_config(manifest)
+                    elif plugin_type == YAMCS_PLUGIN_TYPE:
+                        plugin = YamcsPluginFactory.create_from_config(manifest)
                     elif plugin_type == MCP_PLUGIN_TYPE or normalized_type == normalize(MCP_PLUGIN_TYPE):
                         plugin = McpPluginFactory.create_from_config(manifest)
                     else:

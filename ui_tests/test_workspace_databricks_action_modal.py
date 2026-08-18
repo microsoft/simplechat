@@ -114,6 +114,8 @@ def test_workspace_databricks_action_modal():
             modal.get_by_role("button", name="Next").click()
 
             expect(page.locator("#databricks-config-section")).to_be_visible()
+            expect(page.locator("#databricks-test-connection-btn")).to_be_visible()
+            expect(page.locator("#databricks-test-connection-result")).to_be_hidden()
             expect(page.locator("#generic-config-section")).to_be_hidden()
             expect(page.locator("#sql-config-section")).to_be_hidden()
 

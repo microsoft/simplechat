@@ -179,6 +179,13 @@ from functions_conversation_context import (
     inject_conversation_context_message,
     serialize_conversation_context_snapshot,
 )
+from functions_agent_document_citations import apply_agent_document_citations
+from functions_citation_tracking import (
+    build_cited_source_subsets,
+    initialize_conversation_used_document_tracking,
+    merge_cited_documents_into_conversation,
+    resolve_citation_location,
+)
 from functions_conversation_metadata import collect_conversation_metadata, update_conversation_with_metadata
 from functions_conversation_unread import mark_conversation_unread
 from functions_image_messages import build_image_message_documents, decode_image_content
@@ -2829,6 +2836,35 @@ def _append_new_plugin_invocation_citations(
     return len(new_invocations)
 
 
+def _get_current_message_plugin_invocations(user_id, conversation_id):
+    """Return this message's plugin invocations.
+
+    Invocations are cleared per chat request, so everything the logger holds for the
+    conversation belongs to the message being generated. Streaming cancellation and
+    error paths read this directly because invocations are only folded into the agent
+    citation list once a stream completes normally.
+    """
+    if not user_id or not conversation_id:
+        return []
+
+    try:
+        return get_plugin_logger().get_invocations_for_conversation(
+            user_id,
+            conversation_id,
+            limit=1000,
+        )
+    except Exception as e:
+        log_event(
+            '[AGENT_DOCUMENT_CITATIONS] Unable to read plugin invocations for document citations',
+            extra={
+                'conversation_id': conversation_id,
+                'error_message': str(e),
+            },
+            level=logging.WARNING,
+        )
+        return []
+
+
 def normalize_fact_memory_type(memory_type):
     normalized = str(memory_type or '').strip().lower()
     if normalized == FACT_MEMORY_TYPE_LEGACY_DESCRIBER:
@@ -4298,7 +4334,7 @@ def build_tabular_fallback_system_message(tabular_filenames_str, execution_mode=
 
 def build_search_augmentation_system_prompt(retrieved_content):
     """Build the retrieval augmentation prompt without blocking later tool-backed results."""
-    return f"""You are an AI assistant. Use the following retrieved document excerpts to answer the user's question. Cite sources using the format (Source: filename, Page: page number).
+    return f"""You are an AI assistant. Use the following retrieved document excerpts to answer the user's question. Cite sources using the format (Source: filename, Page: page number) [#citation-id]. Copy the exact bracketed citation ID shown after the supporting excerpt.
 
                         Retrieved Excerpts:
                         {retrieved_content}
@@ -4308,7 +4344,7 @@ def build_search_augmentation_system_prompt(retrieved_content):
 
                         Example
                         User: What is the policy on double dipping?
-                        Assistant: The policy prohibits entities from using federal funds received through one program to apply for additional funds through another program, commonly known as 'double dipping' (Source: PolicyDocument.pdf, Page: 12)
+                        Assistant: The policy prohibits entities from using federal funds received through one program to apply for additional funds through another program, commonly known as 'double dipping' (Source: PolicyDocument.pdf, Page: 12) [#example-citation-id]
                         """
 
 
@@ -13046,17 +13082,12 @@ def is_tabular_filename(filename):
 
 def get_citation_location(file_name, page_number=None, chunk_text=None, sheet_name=None):
     """Return a display label/value pair for a citation location."""
-    if sheet_name:
-        return 'Sheet', str(sheet_name)
-
-    normalized_chunk_text = (chunk_text or '').strip()
-    if is_tabular_filename(file_name) and (
-        normalized_chunk_text.startswith('Tabular workbook:')
-        or normalized_chunk_text.startswith('Tabular data file:')
-    ):
-        return 'Location', 'Workbook Schema'
-
-    return 'Page', str(page_number or 1)
+    return resolve_citation_location(
+        page_number=page_number,
+        chunk_text=chunk_text,
+        sheet_name=sheet_name,
+        is_tabular=is_tabular_filename(file_name),
+    )
 
 
 def get_document_container_for_scope(document_scope):
@@ -14220,6 +14251,9 @@ def register_route_backend_chats(bp):
             'augmented': payload.get('augmented', False),
             'hybrid_citations': payload.get('hybrid_citations', []),
             'web_search_citations': payload.get('web_search_citations', []),
+            'citation_tracking_version': payload.get('citation_tracking_version'),
+            'cited_hybrid_citations': payload.get('cited_hybrid_citations', []),
+            'cited_web_search_citations': payload.get('cited_web_search_citations', []),
             'agent_citations': payload.get('agent_citations', []),
             'agent_display_name': payload.get('agent_display_name'),
             'agent_name': payload.get('agent_name'),
@@ -15310,6 +15344,12 @@ def register_route_backend_chats(bp):
             document_action_agent_citations,
             document_action_context_json,
         )
+        apply_agent_document_citations(
+            hybrid_citations_list,
+            document_action_agent_citations,
+            sort_key=_build_hybrid_citation_sort_key,
+            conversation_id=conversation_id,
+        )
         prepared_agent_citations = []
         document_generated_analysis_artifacts = list(execution_result.get('generated_analysis_artifacts') or [])
         document_generated_tabular_outputs = list(execution_result.get('generated_tabular_outputs') or [])
@@ -15400,6 +15440,11 @@ def register_route_backend_chats(bp):
             generated_analysis_artifacts=document_generated_analysis_artifacts,
             generated_tabular_outputs=document_generated_tabular_outputs,
         )
+        document_action_citation_tracking = build_cited_source_subsets(
+            document_action_reply_content,
+            hybrid_citations=hybrid_citations_list,
+            web_search_citations=[],
+        )
         document_action_capability_usage = _build_capability_usage_metadata(
             workspace_search_used=True,
             workspace_search_result_count=len(hybrid_citations_list or []),
@@ -15419,6 +15464,7 @@ def register_route_backend_chats(bp):
             'augmented': False,
             'hybrid_citations': hybrid_citations_list,
             'web_search_citations': [],
+            **document_action_citation_tracking,
             'hybridsearch_query': None,
             'agent_citations': prepared_agent_citations,
             'model_deployment_name': execution_result.get('model_deployment_name'),
@@ -15521,6 +15567,7 @@ def register_route_backend_chats(bp):
 
         conversation_item['last_updated'] = datetime.utcnow().isoformat()
         conversation_item['chat_type'] = data.get('chat_type') or conversation_item.get('chat_type') or 'new'
+        initialize_conversation_used_document_tracking(conversation_item)
 
         try:
             conversation_item = collect_conversation_metadata(
@@ -15548,6 +15595,10 @@ def register_route_backend_chats(bp):
         except Exception as exc:
             debug_print(f'[CHAT_DOCUMENT_ANALYSIS] Conversation metadata update failed: {exc}')
 
+        merge_cited_documents_into_conversation(
+            conversation_item,
+            document_action_citation_tracking['cited_hybrid_citations'],
+        )
         cosmos_conversations_container.upsert_item(conversation_item)
         invalidate_conversation_cache_for_item(conversation_item, reason="document_action_chat_completed")
         debug_print(
@@ -15580,6 +15631,7 @@ def register_route_backend_chats(bp):
             'augmented': False,
             'hybrid_citations': hybrid_citations_list,
             'web_search_citations': [],
+            **document_action_citation_tracking,
             'agent_citations': prepared_agent_citations,
             'reload_messages': False,
             'kernel_fallback_notice': None,
@@ -17610,6 +17662,9 @@ def register_route_backend_chats(bp):
                             "document_id": source_doc.get("document_id"),
                             "citation_id": source_doc.get("citation_id"), # Seems like a useful identifier
                             "page_number": source_doc.get("page_number"),
+                            "sheet_name": source_doc.get("sheet_name"),
+                            "location_label": source_doc.get("location_label"),
+                            "location_value": source_doc.get("location_value"),
                             "chunk_id": source_doc.get("chunk_id"), # Specific chunk identifier
                             "chunk_sequence": source_doc.get("chunk_sequence"), # Order within document/group
                             "score": source_doc.get("score"), # Relevance score from search
@@ -19747,6 +19802,13 @@ def register_route_backend_chats(bp):
                     request_correlation_id=mixed_source_request_correlation_id,
                 )
             assistant_timestamp = datetime.utcnow().isoformat()
+            apply_agent_document_citations(
+                hybrid_citations_list,
+                agent_citations_list,
+                sort_key=_build_hybrid_citation_sort_key,
+                conversation_id=conversation_id,
+                plugin_invocations=_get_current_message_plugin_invocations(user_id, conversation_id),
+            )
             prepared_agent_citations = persist_agent_citation_artifacts(
                 conversation_id=conversation_id,
                 assistant_message_id=assistant_message_id,
@@ -19787,7 +19849,9 @@ def register_route_backend_chats(bp):
             assistant_capability_usage = _build_capability_usage_metadata(
                 workspace_search_enabled=mixed_source_document_context_active,
                 workspace_search_used=bool(
-                    search_results or mixed_source_has_authorized_evidence_sources
+                    search_results
+                    or mixed_source_has_authorized_evidence_sources
+                    or hybrid_citations_list
                 ),
                 workspace_search_result_count=len(hybrid_citations_list or []),
                 document_action_type=DOCUMENT_ACTION_TYPE_NONE,
@@ -19807,6 +19871,11 @@ def register_route_backend_chats(bp):
                 deep_research_query_count=_deep_research_query_count(deep_research_query_plan, deep_research_web_search_runs),
             )
             agent_runtime_metadata = _build_foundry_runtime_metadata(selected_agent) if selected_agent else {}
+            citation_tracking = build_cited_source_subsets(
+                ai_message,
+                hybrid_citations=hybrid_citations_list,
+                web_search_citations=web_search_citations_list,
+            )
 
             assistant_doc = make_json_serializable({
                 'id': assistant_message_id,
@@ -19817,6 +19886,7 @@ def register_route_backend_chats(bp):
                 'augmented': bool(system_messages_for_augmentation),
                 'hybrid_citations': hybrid_citations_list, # <--- SIMPLIFIED: Directly use the list
                 'web_search_citations': web_search_citations_list,
+                **citation_tracking,
                 'hybridsearch_query': search_query if search_results else None, # Log query when any bounded document retrieval produced results
                 'agent_citations': prepared_agent_citations,
                 'model_deployment_name': actual_model_used,
@@ -19928,6 +19998,7 @@ def register_route_backend_chats(bp):
 
             # Update conversation's last_updated timestamp one last time
             conversation_item['last_updated'] = datetime.utcnow().isoformat()
+            initialize_conversation_used_document_tracking(conversation_item)
 
             # Collect comprehensive conversation metadata
             try:
@@ -19971,6 +20042,10 @@ def register_route_backend_chats(bp):
                 debug_print(f"Error collecting conversation metadata: {e}")
                 # Continue even if metadata collection fails
 
+            merge_cited_documents_into_conversation(
+                conversation_item,
+                citation_tracking['cited_hybrid_citations'],
+            )
             # Add any other final updates to conversation_item if needed (like classifications if not done earlier)
             cosmos_conversations_container.upsert_item(conversation_item)
             invalidate_conversation_cache_for_item(conversation_item, reason="chat_completed")
@@ -19999,6 +20074,7 @@ def register_route_backend_chats(bp):
                 'augmented': bool(system_messages_for_augmentation),
                 'hybrid_citations': hybrid_citations_list,
                 'web_search_citations': web_search_citations_list,
+                **citation_tracking,
                 'source_review': compact_source_review_result_for_metadata(source_review_result),
                 'deep_research': deep_research_result,
                 'agent_citations': prepared_agent_citations,
@@ -20134,6 +20210,9 @@ def register_route_backend_chats(bp):
                 'augmented': payload.get('augmented', False),
                 'hybrid_citations': payload.get('hybrid_citations', []),
                 'web_search_citations': payload.get('web_search_citations', []),
+                'citation_tracking_version': payload.get('citation_tracking_version'),
+                'cited_hybrid_citations': payload.get('cited_hybrid_citations', []),
+                'cited_web_search_citations': payload.get('cited_web_search_citations', []),
                 'agent_citations': payload.get('agent_citations', []),
                 'agent_display_name': payload.get('agent_display_name'),
                 'agent_name': payload.get('agent_name'),
@@ -20614,7 +20693,9 @@ def register_route_backend_chats(bp):
                     return _build_capability_usage_metadata(
                         workspace_search_enabled=mixed_source_document_context_active,
                         workspace_search_used=bool(
-                            search_results or mixed_source_has_authorized_evidence_sources
+                            search_results
+                            or mixed_source_has_authorized_evidence_sources
+                            or hybrid_citations_list
                         ),
                         workspace_search_result_count=len(hybrid_citations_list or []),
                         document_action_type=DOCUMENT_ACTION_TYPE_NONE,
@@ -20632,6 +20713,39 @@ def register_route_backend_chats(bp):
                         deep_research_enabled=deep_research_enabled,
                         deep_research_used=bool(deep_research_enabled and (deep_research_result or deep_research_web_search_runs or source_review_was_used)),
                         deep_research_query_count=_deep_research_query_count(deep_research_query_plan, deep_research_web_search_runs),
+                    )
+
+                def collect_stream_response_conversation_metadata():
+                    nonlocal conversation_item
+                    source_continuity_refs = None
+                    if (
+                        is_mixed_source_conversation_continuity_enabled(settings)
+                        and mixed_source_manifest
+                    ):
+                        source_continuity_refs = _build_mixed_source_continuity_refs(
+                            mixed_source_manifest,
+                            mixed_source_evidence_envelopes,
+                            effective_mixed_source_selection_mode,
+                        )
+                    conversation_item = collect_conversation_metadata(
+                        user_message=user_message,
+                        conversation_id=conversation_id,
+                        user_id=user_id,
+                        active_group_id=effective_active_group_id,
+                        active_group_ids=effective_active_group_ids,
+                        document_scope=effective_document_scope,
+                        selected_document_id=effective_selected_document_id,
+                        model_deployment=final_model_used if use_agent_streaming else gpt_model,
+                        hybrid_search_enabled=mixed_source_document_context_active,
+                        image_gen_enabled=False,
+                        selected_documents=combined_documents if combined_documents else None,
+                        selected_agent=agent_name_used if use_agent_streaming else None,
+                        selected_agent_details=selected_agent_metadata if use_agent_streaming else None,
+                        search_results=search_results if search_results else None,
+                        conversation_item=conversation_item,
+                        active_public_workspace_id=effective_active_public_workspace_id,
+                        active_public_workspace_ids=effective_active_public_workspace_ids,
+                        source_continuity_refs=source_continuity_refs,
                     )
 
                 # Initialize GPT client (simplified version)
@@ -21876,6 +21990,9 @@ def register_route_backend_chats(bp):
                                 "document_id": document_id,
                                 "citation_id": citation_id,
                                 "page_number": page_number,
+                                "sheet_name": sheet_name,
+                                "location_label": location_label,
+                                "location_value": location_value,
                                 "chunk_id": chunk_id,
                                 "chunk_sequence": chunk_sequence,
                                 "score": score,
@@ -22934,6 +23051,7 @@ def register_route_backend_chats(bp):
                     cancel_reason = stream_session.get_cancel_reason() if stream_session else 'user_requested'
                     partial_content = accumulated_content.strip()
                     message_persisted = False
+                    partial_citation_tracking = {}
                     cancel_metadata = {
                         'incomplete': True,
                         'canceled': True,
@@ -22960,6 +23078,18 @@ def register_route_backend_chats(bp):
 
                     if partial_content:
                         assistant_timestamp = datetime.utcnow().isoformat()
+                        apply_agent_document_citations(
+                            hybrid_citations_list,
+                            agent_citations_list,
+                            sort_key=_build_hybrid_citation_sort_key,
+                            conversation_id=conversation_id,
+                            plugin_invocations=_get_current_message_plugin_invocations(user_id, conversation_id),
+                        )
+                        partial_citation_tracking = build_cited_source_subsets(
+                            partial_content,
+                            hybrid_citations=hybrid_citations_list,
+                            web_search_citations=web_search_citations_list,
+                        )
                         prepared_agent_citations = persist_agent_citation_artifacts(
                             conversation_id=conversation_id,
                             assistant_message_id=assistant_message_id,
@@ -22980,6 +23110,7 @@ def register_route_backend_chats(bp):
                             'augmented': bool(system_messages_for_augmentation),
                             'hybrid_citations': hybrid_citations_list,
                             'web_search_citations': web_search_citations_list,
+                            **partial_citation_tracking,
                             'hybridsearch_query': search_query if hybrid_search_enabled and search_results else None,
                             'agent_citations': prepared_agent_citations,
                             'model_deployment_name': final_model_used if use_agent_streaming else gpt_model,
@@ -23016,6 +23147,24 @@ def register_route_backend_chats(bp):
                         })
                         cosmos_messages_container.upsert_item(assistant_doc)
                         conversation_item['last_updated'] = datetime.utcnow().isoformat()
+                        initialize_conversation_used_document_tracking(conversation_item)
+                        try:
+                            collect_stream_response_conversation_metadata()
+                        except Exception as metadata_error:
+                            log_event(
+                                '[STREAMING] Failed to collect canceled response metadata',
+                                extra={
+                                    'conversation_id': conversation_id,
+                                    'message_id': assistant_message_id,
+                                    'error_type': type(metadata_error).__name__,
+                                },
+                                level=logging.WARNING,
+                                exceptionTraceback=True,
+                            )
+                        merge_cited_documents_into_conversation(
+                            conversation_item,
+                            partial_citation_tracking['cited_hybrid_citations'],
+                        )
                         cosmos_conversations_container.upsert_item(conversation_item)
                         invalidate_conversation_cache_for_item(conversation_item, reason="chat_stream_stopped")
                         message_persisted = True
@@ -23043,6 +23192,7 @@ def register_route_backend_chats(bp):
                             'augmented': bool(system_messages_for_augmentation),
                             'hybrid_citations': hybrid_citations_list,
                             'web_search_citations': web_search_citations_list,
+                            **partial_citation_tracking,
                             'agent_citations': agent_citations_list,
                             'model_deployment_name': final_model_used if use_agent_streaming else gpt_model,
                             'model_icon': gpt_model_icon,
@@ -23591,6 +23741,13 @@ def register_route_backend_chats(bp):
                             request_correlation_id=mixed_source_request_correlation_id,
                         )
                     assistant_timestamp = datetime.utcnow().isoformat()
+                    apply_agent_document_citations(
+                        hybrid_citations_list,
+                        agent_citations_list,
+                        sort_key=_build_hybrid_citation_sort_key,
+                        conversation_id=conversation_id,
+                        plugin_invocations=_get_current_message_plugin_invocations(user_id, conversation_id),
+                    )
                     prepared_agent_citations = persist_agent_citation_artifacts(
                         conversation_id=conversation_id,
                         assistant_message_id=assistant_message_id,
@@ -23666,6 +23823,11 @@ def register_route_backend_chats(bp):
                         generated_tabular_outputs=generated_tabular_outputs_list,
                     )
                     agent_runtime_metadata = _build_foundry_runtime_metadata(selected_agent) if use_agent_streaming else {}
+                    stream_citation_tracking = build_cited_source_subsets(
+                        accumulated_content,
+                        hybrid_citations=hybrid_citations_list,
+                        web_search_citations=web_search_citations_list,
+                    )
 
                     assistant_doc = make_json_serializable({
                         'id': assistant_message_id,
@@ -23676,6 +23838,7 @@ def register_route_backend_chats(bp):
                         'augmented': bool(system_messages_for_augmentation),
                         'hybrid_citations': hybrid_citations_list,
                         'web_search_citations': web_search_citations_list,
+                        **stream_citation_tracking,
                         'hybridsearch_query': search_query if search_results else None,
                         'agent_citations': prepared_agent_citations,
                         'model_deployment_name': final_model_used if use_agent_streaming else gpt_model,
@@ -23778,6 +23941,7 @@ def register_route_backend_chats(bp):
 
                     # Update conversation
                     conversation_item['last_updated'] = datetime.utcnow().isoformat()
+                    initialize_conversation_used_document_tracking(conversation_item)
 
                     try:
                         user_message_doc = cosmos_messages_container.read_item(
@@ -23795,39 +23959,14 @@ def register_route_backend_chats(bp):
                         debug_print(f"Warning: Could not update streaming user message metadata: {e}")
 
                     try:
-                        source_continuity_refs = None
-                        if (
-                            is_mixed_source_conversation_continuity_enabled(settings)
-                            and mixed_source_manifest
-                        ):
-                            source_continuity_refs = _build_mixed_source_continuity_refs(
-                                mixed_source_manifest,
-                                mixed_source_evidence_envelopes,
-                                effective_mixed_source_selection_mode,
-                            )
-                        conversation_item = collect_conversation_metadata(
-                            user_message=user_message,
-                            conversation_id=conversation_id,
-                            user_id=user_id,
-                            active_group_id=effective_active_group_id,
-                            active_group_ids=effective_active_group_ids,
-                            document_scope=effective_document_scope,
-                            selected_document_id=effective_selected_document_id,
-                            model_deployment=final_model_used if use_agent_streaming else gpt_model,
-                            hybrid_search_enabled=mixed_source_document_context_active,
-                            image_gen_enabled=False,
-                            selected_documents=combined_documents if combined_documents else None,
-                            selected_agent=agent_name_used if use_agent_streaming else None,
-                            selected_agent_details=selected_agent_metadata if use_agent_streaming else None,
-                            search_results=search_results if search_results else None,
-                            conversation_item=conversation_item,
-                            active_public_workspace_id=effective_active_public_workspace_id,
-                            active_public_workspace_ids=effective_active_public_workspace_ids,
-                            source_continuity_refs=source_continuity_refs,
-                        )
+                        collect_stream_response_conversation_metadata()
                     except Exception as e:
                         debug_print(f"Error collecting conversation metadata: {e}")
 
+                    merge_cited_documents_into_conversation(
+                        conversation_item,
+                        stream_citation_tracking['cited_hybrid_citations'],
+                    )
                     if is_personal_chat_conversation(conversation_item):
                         conversation_item = mark_conversation_unread(
                             conversation_item,
@@ -23871,6 +24010,7 @@ def register_route_backend_chats(bp):
                         'augmented': bool(system_messages_for_augmentation),
                         'hybrid_citations': hybrid_citations_list,
                         'web_search_citations': web_search_citations_list,
+                        **stream_citation_tracking,
                         'source_review': compact_source_review_result_for_metadata(source_review_result),
                         'deep_research': deep_research_result,
                         'agent_citations': prepared_agent_citations,
@@ -23942,10 +24082,25 @@ def register_route_backend_chats(bp):
                     debug_print(f"Error during streaming: {error_msg}")
 
                     # Save partial response if we have content
+                    interrupted_message_persisted = False
+                    interrupted_citation_tracking = {}
+                    interrupted_agent_citations = []
                     if accumulated_content:
                         current_assistant_thread_id = str(uuid.uuid4())
                         assistant_timestamp = datetime.utcnow().isoformat()
-                        prepared_agent_citations = persist_agent_citation_artifacts(
+                        apply_agent_document_citations(
+                            hybrid_citations_list,
+                            agent_citations_list,
+                            sort_key=_build_hybrid_citation_sort_key,
+                            conversation_id=conversation_id,
+                            plugin_invocations=_get_current_message_plugin_invocations(user_id, conversation_id),
+                        )
+                        interrupted_citation_tracking = build_cited_source_subsets(
+                            accumulated_content,
+                            hybrid_citations=hybrid_citations_list,
+                            web_search_citations=web_search_citations_list,
+                        )
+                        interrupted_agent_citations = persist_agent_citation_artifacts(
                             conversation_id=conversation_id,
                             assistant_message_id=assistant_message_id,
                             agent_citations=agent_citations_list,
@@ -23966,8 +24121,9 @@ def register_route_backend_chats(bp):
                             'augmented': bool(system_messages_for_augmentation),
                             'hybrid_citations': hybrid_citations_list,
                             'web_search_citations': web_search_citations_list,
+                            **interrupted_citation_tracking,
                             'hybridsearch_query': search_query if hybrid_search_enabled and search_results else None,
-                            'agent_citations': prepared_agent_citations,
+                            'agent_citations': interrupted_agent_citations,
                             'model_deployment_name': final_model_used if use_agent_streaming else gpt_model,
                             'agent_display_name': agent_display_name_used if use_agent_streaming else None,
                             'agent_name': agent_name_used if use_agent_streaming else None,
@@ -23991,12 +24147,68 @@ def register_route_backend_chats(bp):
                         })
                         try:
                             cosmos_messages_container.upsert_item(assistant_doc)
-                        except Exception as ex:
-                            pass
+                            interrupted_message_persisted = True
+                            conversation_item['last_updated'] = assistant_timestamp
+                            initialize_conversation_used_document_tracking(
+                                conversation_item
+                            )
+                            try:
+                                collect_stream_response_conversation_metadata()
+                            except Exception as metadata_error:
+                                log_event(
+                                    '[STREAMING] Failed to collect interrupted response metadata',
+                                    extra={
+                                        'conversation_id': conversation_id,
+                                        'message_id': assistant_message_id,
+                                        'error_type': type(
+                                            metadata_error
+                                        ).__name__,
+                                    },
+                                    level=logging.WARNING,
+                                    exceptionTraceback=True,
+                                )
+                            merge_cited_documents_into_conversation(
+                                conversation_item,
+                                interrupted_citation_tracking[
+                                    'cited_hybrid_citations'
+                                ],
+                            )
+                            cosmos_conversations_container.upsert_item(
+                                conversation_item
+                            )
+                            invalidate_conversation_cache_for_item(
+                                conversation_item,
+                                reason="chat_stream_interrupted",
+                            )
+                        except Exception as persistence_error:
+                            log_event(
+                                '[STREAMING] Failed to persist interrupted response metadata',
+                                extra={
+                                    'conversation_id': conversation_id,
+                                    'message_id': assistant_message_id,
+                                    'error_type': type(
+                                        persistence_error
+                                    ).__name__,
+                                },
+                                level=logging.WARNING,
+                                exceptionTraceback=True,
+                            )
 
                     yield build_stream_error_event(
                         CLIENT_SAFE_STREAM_ERROR_MESSAGE,
                         partial_content=accumulated_content,
+                        conversation_id=conversation_id,
+                        user_message_id=user_message_id,
+                        message_id=(
+                            assistant_message_id
+                            if interrupted_message_persisted
+                            else None
+                        ),
+                        message_persisted=interrupted_message_persisted,
+                        hybrid_citations=hybrid_citations_list,
+                        web_search_citations=web_search_citations_list,
+                        agent_citations=interrupted_agent_citations,
+                        **interrupted_citation_tracking,
                     )
 
             except Exception as e:

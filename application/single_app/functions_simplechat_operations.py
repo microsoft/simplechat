@@ -35,6 +35,7 @@ from functions_activity_logging import (
     log_workflow_creation,
 )
 from functions_appinsights import log_event
+from functions_citation_tracking import rebuild_conversation_used_documents
 from functions_authentication import (
     get_current_user_info,
     get_graph_endpoint,
@@ -93,6 +94,8 @@ FORKABLE_PERSONAL_CONTEXT_SCOPES = {
 PERSONAL_FORK_CONVERSATION_FIELDS = (
     "context",
     "tags",
+    "used_documents_tracking_version",
+    "legacy_used_documents",
     "strict",
     "classification",
     "scope_locked",
@@ -117,6 +120,7 @@ SIMPLECHAT_CAPABILITY_TO_FUNCTION = {
     "create_personal_conversation": "create_personal_conversation",
     "create_personal_workflow": "create_personal_workflow",
     "create_personal_collaboration_conversation": "create_personal_collaboration_conversation",
+    "raise_workflow_alert": "raise_workflow_alert",
 }
 SIMPLECHAT_CAPABILITY_DEFINITIONS = [
     {
@@ -191,12 +195,24 @@ SIMPLECHAT_CAPABILITY_DEFINITIONS = [
         "label": "Create Personal Collaborative Conversations",
         "description": "Create a personal collaborative conversation and invite other users.",
     },
+    {
+        "key": "raise_workflow_alert",
+        "function_name": SIMPLECHAT_CAPABILITY_TO_FUNCTION["raise_workflow_alert"],
+        "label": "Raise Workflow Alerts",
+        "description": "Raise an alert signal during a workflow run so the workflow's alert rules can notify the owner.",
+        # Opt-in: an agent that can create notifications should be granted that
+        # deliberately rather than inheriting it when the capability was added.
+        "default_enabled": False,
+    },
 ]
 CONVERSATION_ACCESS_ERROR = "Conversation not found or access denied"
 
 
 def get_default_simplechat_capabilities() -> Dict[str, bool]:
-    return {definition["key"]: True for definition in SIMPLECHAT_CAPABILITY_DEFINITIONS}
+    return {
+        definition["key"]: bool(definition.get("default_enabled", True))
+        for definition in SIMPLECHAT_CAPABILITY_DEFINITIONS
+    }
 
 
 def normalize_simplechat_capabilities(raw_capabilities: Any = None) -> Dict[str, bool]:
@@ -795,6 +811,11 @@ def fork_personal_conversation_for_user(
         normalized_user_id,
         destination_chat_type,
     )
+    rebuild_conversation_used_documents(
+        fork_conversation,
+        fork_documents,
+        rebuild_legacy=True,
+    )
     written_message_ids = []
     created_blob_targets: List[Tuple[str, str]] = []
 
@@ -949,6 +970,48 @@ def create_personal_workflow_for_current_user(
     return {
         "workflow": workflow,
         "message": f"Created workflow '{workflow.get('name', 'Workflow')}'.",
+    }
+
+
+def raise_workflow_alert_for_current_user(
+    severity: str = "medium",
+    title: str = "",
+    reason: str = "",
+    signal_name: str = "",
+) -> Dict[str, Any]:
+    """Raise an alert signal for the workflow run the caller is executing inside.
+
+    The signal is only recorded while a workflow run is active. Outside a run the
+    call is refused so a normal chat cannot fabricate a workflow notification.
+    """
+    # Imported lazily because functions_workflow_runner imports this module.
+    from functions_workflow_runner import (
+        is_workflow_alert_signal_scope_active,
+        record_workflow_alert_signal,
+    )
+
+    if not is_workflow_alert_signal_scope_active():
+        raise PermissionError(
+            "Workflow alerts can only be raised while a workflow run is executing."
+        )
+
+    signal = record_workflow_alert_signal(
+        severity=severity,
+        title=title,
+        reason=reason,
+        signal_name=signal_name,
+    )
+    if not signal:
+        raise PermissionError(
+            "Workflow alerts can only be raised while a workflow run is executing."
+        )
+
+    return {
+        "signal": signal,
+        "message": (
+            f"Recorded a {signal.get('severity')} workflow alert signal. "
+            "The workflow's alert rules decide whether it notifies the owner."
+        ),
     }
 
 

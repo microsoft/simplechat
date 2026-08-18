@@ -51,6 +51,7 @@ ffmpeg-python==0.2.0
 semantic-kernel==1.39.4
 snowflake-connector-python[pandas]==3.18.0
 tableauserverclient==0.40
+yamcs-client==2.1.0
 protobuf==6.33.5
 redis==5.3.1
 smbprotocol==1.15.0

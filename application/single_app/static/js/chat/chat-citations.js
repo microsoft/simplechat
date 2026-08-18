@@ -42,7 +42,7 @@ export function parseDocIdAndPage(citationId) {
 
 export function parseCitations(message) {
   // ... (keep existing implementation)
-  const citationRegex = /\(Source:\s*([^,]+),\s*(Page(?:s)?|Sheet(?:s)?|Location):\s*([^)]+)\)\s*((?:\[#.*?\]\s*)+)/gi;
+  const citationRegex = /\(Source:\s*((?:(?!\(Source:).)+?),\s*(Page(?:s)?|Sheet(?:s)?|Location):\s*((?:(?!\(Source:).)+?)\)\s*((?:\[#.*?\]\s*)+)/gi;
 
   let result = message.replace(citationRegex, (whole, filename, locationLabel, locations, bracketSection) => {
     const trimmedFilename = filename.trim();
@@ -80,7 +80,12 @@ export function parseCitations(message) {
     }
 
     const normalizedLocationLabel = locationLabel.toLowerCase();
-    const locationTokens = locations.split(/,/).map(tok => tok.trim());
+    const locationTokens = (
+      normalizedLocationLabel === 'sheet'
+      || normalizedLocationLabel === 'location'
+    )
+      ? [locations.trim()]
+      : locations.split(/,/).map(tok => tok.trim());
     const linkedTokens = locationTokens.map((token, index) => {
       if (!normalizedLocationLabel.startsWith('page')) {
         const ref = orderedRefs[index] || orderedRefs[0];
@@ -867,6 +872,38 @@ export function showPdfModal(docId, pageNumber, citationId) {
     });
 }
 // --------------------------------------------------------------------
+
+function toggleCitationOverflowGroup(toggleButton) {
+  const citationsContainer = toggleButton.closest(".citations-container");
+  const overflowGroup = citationsContainer?.querySelector(".citation-overflow-group");
+  if (!overflowGroup) {
+    return;
+  }
+
+  const isCollapsed = overflowGroup.classList.contains("d-none");
+  overflowGroup.classList.toggle("d-none", !isCollapsed);
+  toggleButton.setAttribute("aria-expanded", String(isCollapsed));
+
+  const label = isCollapsed
+    ? toggleButton.dataset.expandedLabel || "Show fewer sources"
+    : toggleButton.dataset.collapsedLabel || "Show more sources";
+  const icon = document.createElement("i");
+  icon.className = `bi ${isCollapsed ? "bi-dash-circle" : "bi-plus-circle"} me-1`;
+
+  toggleButton.replaceChildren(icon, document.createTextNode(label));
+  toggleButton.title = label;
+}
+
+document.addEventListener("click", (event) => {
+  const eventTarget = event.target instanceof Element ? event.target : null;
+  const toggleButton = eventTarget?.closest("button.citation-overflow-toggle");
+  if (!toggleButton) {
+    return;
+  }
+
+  event.preventDefault();
+  toggleCitationOverflowGroup(toggleButton);
+});
 
 // --- MODIFIED: Event Listener Logic ---
 if (chatboxEl) {

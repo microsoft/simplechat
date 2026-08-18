@@ -3,7 +3,10 @@
 import {
     extractPageNumbers,
     fetchConversationMetadata,
-    getConversationDocumentTags,
+    getConversationExactUsedDocuments,
+    getConversationLegacyUsedDocuments,
+    getConversationUsedDocuments,
+    hasConversationUsedDocumentTracking,
 } from "./chat-conversation-details.js";
 import { isColorLight } from "./chat-utils.js";
 
@@ -47,6 +50,9 @@ let restoreFocusAfterClose = true;
 let metadataRequestToken = 0;
 let documentLoadState = "idle";
 let activeDocumentConversationId = "";
+let documentUsageTrackingAvailable = false;
+let exactDocumentUsageAvailable = false;
+let legacyDocumentFallbackAvailable = false;
 const autoOpenedDocumentConversationIds = new Set();
 
 export function normalizeConversationContentsLabel(value, fallbackLabel = "User message") {
@@ -178,9 +184,15 @@ function syncDrawerModeControls() {
         drawerTitle.textContent = contentsActive ? "Conversation contents" : "Used documents";
     }
     if (drawerSubtitle) {
+        let documentsSubtitle = "Documents associated with this historical conversation";
+        if (documentUsageTrackingAvailable && exactDocumentUsageAvailable) {
+            documentsSubtitle = legacyDocumentFallbackAvailable
+                ? "Cited documents and historical associations"
+                : "Documents cited in active responses";
+        }
         drawerSubtitle.textContent = contentsActive
             ? "Jump to a user message"
-            : "Documents cited in this conversation";
+            : documentsSubtitle;
     }
 
     contentsPanel?.classList.toggle("d-none", !contentsActive);
@@ -428,9 +440,62 @@ function createDocumentMetaLine(iconName, text) {
     return line;
 }
 
+function getDocumentCitationLocationLines(doc) {
+    const groupedLocations = new Map();
+    const appendLocation = (label, value) => {
+        const normalizedLabel = String(label || "Location").trim() || "Location";
+        const normalizedValue = String(value ?? "").trim();
+        if (!normalizedValue) {
+            return;
+        }
+        const values = groupedLocations.get(normalizedLabel) || [];
+        if (!values.includes(normalizedValue)) {
+            values.push(normalizedValue);
+            groupedLocations.set(normalizedLabel, values);
+        }
+    };
+
+    const citationLocations = Array.isArray(doc?.citation_locations)
+        ? doc.citation_locations
+        : [];
+    citationLocations.forEach(location => {
+        if (!location || typeof location !== "object") {
+            return;
+        }
+        const label = location.location_label
+            || (location.sheet_name ? "Sheet" : "Page");
+        const value = location.location_value
+            || location.sheet_name
+            || location.page_number;
+        appendLocation(label, value);
+    });
+
+    if (groupedLocations.size === 0) {
+        (Array.isArray(doc?.sheet_names) ? doc.sheet_names : [])
+            .forEach(value => appendLocation("Sheet", value));
+        (Array.isArray(doc?.page_numbers) ? doc.page_numbers : [])
+            .forEach(value => appendLocation("Page", value));
+    }
+
+    if (groupedLocations.size === 0) {
+        const chunkIds = Array.isArray(doc?.chunk_ids) ? doc.chunk_ids : [];
+        extractPageNumbers(chunkIds).forEach(value => appendLocation("Page", value));
+    }
+
+    return Array.from(groupedLocations.entries()).map(([label, values]) => {
+        const normalizedLabel = label.toLowerCase();
+        const displayLabel = normalizedLabel === "page"
+            ? "Pages"
+            : normalizedLabel === "sheet"
+                ? "Sheets"
+                : normalizedLabel === "location"
+                    ? "Locations"
+                    : label;
+        return `${displayLabel}: ${values.join(", ")}`;
+    });
+}
+
 function createDocumentEntry(doc) {
-    const chunkIds = Array.isArray(doc?.chunk_ids) ? doc.chunk_ids : [];
-    const chunkPages = extractPageNumbers(chunkIds);
     const documentId = String(doc?.document_id || "Unknown Document");
     const documentTitle = String(doc?.title || doc?.file_name || documentId);
     const documentFileName = String(doc?.file_name || "");
@@ -460,9 +525,9 @@ function createDocumentEntry(doc) {
     ) {
         entry.appendChild(createDocumentMetaLine("file-earmark", documentFileName));
     }
-    if (chunkPages.length > 0) {
-        entry.appendChild(createDocumentMetaLine("file-earmark-text", `Pages: ${chunkPages.join(", ")}`));
-    }
+    getDocumentCitationLocationLines(doc).forEach(locationLine => {
+        entry.appendChild(createDocumentMetaLine("file-earmark-text", locationLine));
+    });
     entry.appendChild(createDocumentMetaLine(
         getScopeIcon(scopeType),
         `${scopeType} scope: ${scopeName}`
@@ -503,6 +568,7 @@ function renderConversationDocuments(documents) {
 
 async function refreshConversationDocuments(options = {}) {
     const conversationId = String(options.conversationId || getCurrentConversationId()).trim();
+    const conversationKind = String(options.conversationKind || "").trim();
     const requestToken = ++metadataRequestToken;
     const autoOpen = Boolean(options.autoOpen);
     const conversationChanged = conversationId !== activeDocumentConversationId;
@@ -510,6 +576,9 @@ async function refreshConversationDocuments(options = {}) {
     activeDocumentConversationId = conversationId;
     if (!conversationId) {
         documentLoadState = "idle";
+        documentUsageTrackingAvailable = false;
+        exactDocumentUsageAvailable = false;
+        legacyDocumentFallbackAvailable = false;
         renderConversationDocuments([]);
         return;
     }
@@ -527,18 +596,26 @@ async function refreshConversationDocuments(options = {}) {
     }
 
     try {
-        const metadata = await fetchConversationMetadata(conversationId);
+        const metadata = await fetchConversationMetadata(
+            conversationId,
+            { conversationKind }
+        );
         if (requestToken !== metadataRequestToken || conversationId !== activeDocumentConversationId) {
             return;
         }
 
         documentLoadState = "ready";
-        const documents = getConversationDocumentTags(metadata);
+        documentUsageTrackingAvailable = hasConversationUsedDocumentTracking(metadata);
+        const exactDocuments = getConversationExactUsedDocuments(metadata);
+        const legacyDocuments = getConversationLegacyUsedDocuments(metadata);
+        exactDocumentUsageAvailable = exactDocuments.length > 0;
+        legacyDocumentFallbackAvailable = legacyDocuments.length > 0;
+        const documents = getConversationUsedDocuments(metadata);
         renderConversationDocuments(documents);
 
         if (
             autoOpen
-            && documents.length > 0
+            && exactDocuments.length > 0
             && conversationId === getCurrentConversationId()
             && !autoOpenedDocumentConversationIds.has(conversationId)
         ) {
@@ -551,6 +628,9 @@ async function refreshConversationDocuments(options = {}) {
         }
 
         documentLoadState = "error";
+        documentUsageTrackingAvailable = false;
+        exactDocumentUsageAvailable = false;
+        legacyDocumentFallbackAvailable = false;
         documentEntries = [];
         documentsList?.replaceChildren();
         documentsEmptyState?.classList.add("d-none");
@@ -658,6 +738,7 @@ function initializeConversationContents() {
         void refreshConversationDocuments({
             conversationId: event.detail?.conversationId || "",
             autoOpen: false,
+            conversationKind: event.detail?.conversationKind || "",
         });
     });
     window.addEventListener("chat:conversation-documents-refresh", event => {
@@ -668,6 +749,7 @@ function initializeConversationContents() {
         void refreshConversationDocuments({
             conversationId,
             autoOpen: Boolean(event.detail?.autoOpen),
+            conversationKind: event.detail?.conversationKind || "",
         });
     });
 

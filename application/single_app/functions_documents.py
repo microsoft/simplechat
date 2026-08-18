@@ -26,6 +26,7 @@ from functions_data_management_search_write_fence import (
 )
 from functions_visio import build_visio_page_markdown, parse_vsdx_pages
 from functions_content import *
+from functions_content_understanding import analyze_image_with_content_understanding
 from functions_settings import *
 from functions_search import *
 from functions_logging import *
@@ -252,6 +253,10 @@ DI_SELECTION_MARK_PATTERNS = (
 )
 DI_MARKDOWN_TABLE_SEPARATOR_PATTERN = re.compile(r'(?m)^\s*\|(?:\s*:?-{3,}:?\s*\|)+\s*$')
 DI_MARKDOWN_TABLE_ROW_PATTERN = re.compile(r'(?m)^\s*\|.+\|\s*$')
+# Document Intelligence Layout emits figures as markdown <figure> blocks or image tags. Auto mode
+# treats them as a signal that Enhanced extraction is worth the extra cost, because Content
+# Understanding is the only engine that describes figures.
+DI_MARKDOWN_FIGURE_PATTERN = re.compile(r'(<figure\b|</figure>|!\[[^\]]*\]\()', re.IGNORECASE)
 
 
 def is_pdf_file_name(file_name):
@@ -288,12 +293,155 @@ def _get_document_intelligence_auto_layout_reason(sampled_pages):
         return 'selection marks or checkbox states detected in the sampled pages'
     if DI_MARKDOWN_TABLE_ROW_PATTERN.search(sampled_text) and DI_MARKDOWN_TABLE_SEPARATOR_PATTERN.search(sampled_text):
         return 'table structure detected in the sampled pages'
+    if DI_MARKDOWN_FIGURE_PATTERN.search(sampled_text):
+        return 'figures or images detected in the sampled pages'
     return ''
+
+
+def _analyze_single_embedded_image(image_path, extraction_engine, image_extraction_mode, settings):
+    """Analyze one extracted Office image with the active engine and return its text."""
+    if extraction_engine == EXTRACTION_ENGINE_CONTENT_UNDERSTANDING:
+        return analyze_image_with_content_understanding(image_path, settings=settings)
+
+    image_pages = extract_content_with_azure_di(image_path, extraction_mode=image_extraction_mode)
+    return "\n\n".join(
+        str(page.get('content', '') or '').strip()
+        for page in image_pages or []
+        if isinstance(page, dict) and str(page.get('content', '') or '').strip()
+    ).strip()
+
+
+def _build_office_embedded_image_chunks(
+    file_path,
+    settings,
+    update_callback,
+    starting_page_number=1,
+):
+    """Analyze images embedded in an Office file and return them as labelled content chunks.
+
+    Neither engine describes figures inside Office files, so the images are pulled out of the OOXML
+    package and analyzed individually with whichever engine backs the admin's selected mode.
+
+    Returns ``(chunks, analyzed_count, extraction_engine)``.
+    """
+    if not settings.get('enable_office_embedded_image_analysis', True):
+        return [], 0, EXTRACTION_ENGINE_DOCUMENT_INTELLIGENCE
+
+    min_pixels = normalize_office_embedded_image_min_pixels(
+        settings.get('office_embedded_image_min_pixels')
+    )
+    max_images = normalize_office_embedded_image_max_per_document(
+        settings.get('office_embedded_image_max_per_document')
+    )
+    if max_images <= 0:
+        return [], 0, EXTRACTION_ENGINE_DOCUMENT_INTELLIGENCE
+
+    # Embedded images are images, so they follow the image side of the admin's configured mode.
+    admin_extraction_mode = get_effective_document_intelligence_pdf_image_extraction_mode(settings)
+    image_extraction_mode = 'read' if admin_extraction_mode == 'read' else 'layout'
+    extraction_engine, _ = _resolve_extraction_engine_for_mode(image_extraction_mode, settings)
+
+    chunks = []
+    analyzed_count = 0
+    temp_image_dir = None
+
+    try:
+        temp_image_dir = tempfile.mkdtemp(prefix='office_images_')
+        embedded_images = extract_office_embedded_images(
+            file_path,
+            temp_image_dir,
+            min_pixels=min_pixels,
+            max_images=max_images,
+        )
+
+        if not embedded_images:
+            return [], 0, extraction_engine
+
+        engine_label = (
+            "Content Understanding"
+            if extraction_engine == EXTRACTION_ENGINE_CONTENT_UNDERSTANDING
+            else "Document Intelligence"
+        )
+        total_images = len(embedded_images)
+        update_callback(
+            status=f"Analyzing {total_images} embedded image(s) with {engine_label}..."
+        )
+
+        for image_index, embedded_image in enumerate(embedded_images, start=1):
+            try:
+                analysis_text = _analyze_single_embedded_image(
+                    embedded_image['path'],
+                    extraction_engine,
+                    image_extraction_mode,
+                    settings,
+                )
+            except Exception as image_error:
+                log_event(
+                    f"[OFFICE_EMBEDDED_IMAGES] Failed to analyze {embedded_image.get('name')}: {image_error}",
+                    level=logging.WARNING,
+                )
+                continue
+
+            if not analysis_text:
+                continue
+
+            location_label = ''
+            slide_number = embedded_image.get('slide_number')
+            if slide_number:
+                location_label = f" on slide {slide_number}"
+
+            heading = (
+                f"### Embedded image {image_index} of {total_images}: "
+                f"{embedded_image.get('name')}{location_label}"
+            )
+            chunks.append({
+                'page_number': starting_page_number + len(chunks),
+                'content': f"{heading}\n\n{analysis_text}",
+            })
+            analyzed_count += 1
+
+        if analyzed_count:
+            update_callback(
+                status=f"Analyzed {analyzed_count} embedded image(s) with {engine_label}."
+            )
+    except Exception as embedded_image_error:
+        log_event(
+            f"[OFFICE_EMBEDDED_IMAGES] Embedded image analysis failed for "
+            f"{os.path.basename(file_path)}: {embedded_image_error}",
+            level=logging.WARNING,
+        )
+    finally:
+        if temp_image_dir and os.path.isdir(temp_image_dir):
+            shutil.rmtree(temp_image_dir, ignore_errors=True)
+
+    return chunks, analyzed_count, extraction_engine
+
+
+def _resolve_extraction_engine_for_mode(extraction_mode, settings):
+    """Resolve which engine backs the given extraction mode, plus a human-readable reason."""
+    return resolve_extraction_engine_for_mode(extraction_mode, settings)
+
+
+def _extract_pages_with_extraction_engine(
+    file_path,
+    extraction_mode,
+    extraction_engine,
+    settings=None,
+    pages=None,
+):
+    """Extract page content with the resolved engine, falling back to Document Intelligence Layout."""
+    return extract_content_with_extraction_engine(
+        file_path,
+        extraction_mode=extraction_mode,
+        extraction_engine=extraction_engine,
+        settings=settings,
+        pages=pages,
+    )
 
 
 def _resolve_document_intelligence_auto_mode(temp_file_path, is_pdf, is_image, page_count, sample_pages, update_callback):
     if is_image:
-        return 'layout', 'image input benefits from Enhanced extraction for spatial structure and selection marks'
+        return 'layout', 'image input benefits from Enhanced extraction for figures, spatial structure, and selection marks'
 
     if not is_pdf:
         return 'read', 'Auto mode is only evaluated for PDFs and images'
@@ -7004,18 +7152,27 @@ def process_di_document(document_id, user_id, temp_file_path, original_filename,
         print(f"Warning: Failed to extract initial metadata for {original_filename}: {e}")
         # Continue processing even if metadata fails
 
-    # --- DI Processing Logic ---
+    # --- Extraction Engine Resolution ---
+    # Standard extraction is always Document Intelligence prebuilt-read. Enhanced prefers Content
+    # Understanding, falling back to Document Intelligence prebuilt-layout when it is unavailable.
     settings = get_settings() # Assuming get_settings is accessible
     chunk_config = get_chunk_size_config(settings)
+    enhanced_extraction_enabled = is_enhanced_extraction_enabled(settings)
     document_intelligence_extraction_mode = 'read'
     document_intelligence_requested_mode = 'read'
     document_intelligence_auto_sample_pages = get_document_intelligence_auto_sample_pages(settings)
     document_intelligence_auto_reason = ''
+    extraction_engine = EXTRACTION_ENGINE_DOCUMENT_INTELLIGENCE
+    extraction_engine_reason = ''
     if is_pdf or is_image:
         if extraction_mode_override:
             document_intelligence_requested_mode = normalize_document_intelligence_manual_extraction_mode(extraction_mode_override)
         else:
-            document_intelligence_requested_mode = get_document_intelligence_pdf_image_extraction_mode(settings)
+            document_intelligence_requested_mode = get_effective_document_intelligence_pdf_image_extraction_mode(settings)
+
+        if document_intelligence_requested_mode != 'read' and not enhanced_extraction_enabled:
+            document_intelligence_requested_mode = 'read'
+            extraction_engine_reason = 'Enhanced extraction is disabled, so Standard extraction was used'
 
         if document_intelligence_requested_mode == 'auto':
             document_intelligence_extraction_mode, document_intelligence_auto_reason = _resolve_document_intelligence_auto_mode(
@@ -7030,11 +7187,20 @@ def process_di_document(document_id, user_id, temp_file_path, original_filename,
             document_intelligence_extraction_mode = document_intelligence_requested_mode
             document_intelligence_auto_reason = ''
 
+        resolved_engine, resolved_engine_reason = _resolve_extraction_engine_for_mode(
+            document_intelligence_extraction_mode,
+            settings,
+        )
+        extraction_engine = resolved_engine
+        extraction_engine_reason = resolved_engine_reason or extraction_engine_reason
+
         update_callback(
             document_intelligence_extraction_mode=document_intelligence_extraction_mode,
             document_intelligence_extraction_mode_requested=document_intelligence_requested_mode,
             document_intelligence_auto_sample_pages=document_intelligence_auto_sample_pages,
             document_intelligence_auto_reason=document_intelligence_auto_reason,
+            extraction_engine=extraction_engine,
+            extraction_engine_reason=extraction_engine_reason,
         )
 
     di_limit_bytes = 500 * 1024 * 1024
@@ -7139,29 +7305,44 @@ def process_di_document(document_id, user_id, temp_file_path, original_filename,
             except Exception as e:
                 raise Exception(f"Error extracting content from {chunk_effective_filename} with the legacy PowerPoint extractor: {str(e)}")
         else:
-            # Send chunk to Azure DI
-            update_callback(status=f"Sending {chunk_effective_filename} to Azure Document Intelligence...")
+            # Send chunk to the resolved extraction engine
+            engine_label = (
+                "Azure AI Content Understanding"
+                if extraction_engine == EXTRACTION_ENGINE_CONTENT_UNDERSTANDING
+                else "Azure Document Intelligence"
+            )
+            update_callback(status=f"Sending {chunk_effective_filename} to {engine_label}...")
             try:
-                di_extracted_pages = extract_content_with_azure_di(
+                di_extracted_pages, engine_used, engine_fallback_reason = _extract_pages_with_extraction_engine(
                     chunk_path,
-                    extraction_mode=document_intelligence_extraction_mode
+                    extraction_mode=document_intelligence_extraction_mode,
+                    extraction_engine=extraction_engine,
+                    settings=settings,
                 )
+                if engine_fallback_reason:
+                    extraction_engine = engine_used
+                    extraction_engine_reason = engine_fallback_reason
+                    update_callback(
+                        extraction_engine=engine_used,
+                        extraction_engine_reason=engine_fallback_reason,
+                    )
+
                 num_di_pages = len(di_extracted_pages)
                 conceptual_pages = num_di_pages if not is_image else 1 # Image is one conceptual item
 
                 if not di_extracted_pages and not is_image:
-                    print(f"Warning: Azure DI returned no content pages for {chunk_effective_filename}.")
-                    status_msg = f"Azure DI found no content in {chunk_effective_filename}."
+                    print(f"Warning: {engine_label} returned no content pages for {chunk_effective_filename}.")
+                    status_msg = f"{engine_label} found no content in {chunk_effective_filename}."
                     # Update page count to 0 if nothing found, otherwise keep previous estimate or conceptual count
                     update_callback(number_of_pages=0 if idx == num_file_chunks else conceptual_pages, status=status_msg)
                 elif not di_extracted_pages and is_image:
-                    print(f"Info: Azure DI processed image {chunk_effective_filename}, but extracted no text.")
+                    print(f"Info: {engine_label} processed image {chunk_effective_filename}, but extracted no text.")
                     update_callback(number_of_pages=conceptual_pages, status=f"Processed image {chunk_effective_filename} (no text found).")
                 else:
-                     update_callback(number_of_pages=conceptual_pages, status=f"Received {num_di_pages} content page(s)/slide(s) from Azure DI for {chunk_effective_filename}.")
+                     update_callback(number_of_pages=conceptual_pages, status=f"Received {num_di_pages} content page(s)/slide(s) from {engine_label} for {chunk_effective_filename}.")
 
             except Exception as e:
-                raise Exception(f"Error extracting content from {chunk_effective_filename} with Azure DI: {str(e)}")
+                raise Exception(f"Error extracting content from {chunk_effective_filename} with {engine_label}: {str(e)}")
 
         # --- Multi-Modal Vision Analysis (for images only) - Must happen BEFORE save_chunks ---
         if is_image and enable_enhanced_citations and idx == 1:  # Only run once for first chunk
@@ -7249,6 +7430,30 @@ def process_di_document(document_id, user_id, temp_file_path, original_filename,
                  if 'page_number' not in di_extracted_pages[0]: di_extracted_pages[0]['page_number'] = 1
                  final_chunks_to_save = di_extracted_pages
             else: final_chunks_to_save = [] # No text extracted
+
+        # --- Embedded Office image analysis (DOCX/DOC/PPTX) ---
+        # Neither extraction engine describes figures inside Office files, so embedded images are
+        # analyzed separately and appended as their own citable chunks.
+        if (is_word or is_ppt) and not is_legacy_doc and not is_legacy_ppt:
+            next_chunk_page_number = max(
+                (int(chunk.get('page_number') or 0) for chunk in final_chunks_to_save),
+                default=0,
+            ) + 1
+
+            embedded_image_chunks, embedded_image_count, embedded_image_engine = _build_office_embedded_image_chunks(
+                chunk_path,
+                settings,
+                update_callback,
+                starting_page_number=next_chunk_page_number,
+            )
+
+            if embedded_image_chunks:
+                final_chunks_to_save = list(final_chunks_to_save) + embedded_image_chunks
+                update_callback(
+                    number_of_pages=len(final_chunks_to_save),
+                    office_embedded_image_count=embedded_image_count,
+                    office_embedded_image_engine=embedded_image_engine,
+                )
 
         # Save Final Chunks to Search Index
         num_final_chunks = len(final_chunks_to_save)
@@ -7355,12 +7560,12 @@ def process_di_document(document_id, user_id, temp_file_path, original_filename,
 
 
 def validate_document_reprocess_source(document_item, user_id=None, group_id=None, public_workspace_id=None):
-    """Validate that a PDF has a stored source blob available for DI extraction changes."""
+    """Validate that a PDF or image has a stored source blob available for extraction changes."""
     if not document_item:
         return False, "Document not found."
 
-    if not is_pdf_file_name(document_item.get('file_name')):
-        return False, "Only PDF documents can change extraction between Standard and Enhanced."
+    if not is_pdf_or_image_file_name(document_item.get('file_name')):
+        return False, "Only PDF and image documents can change extraction between Standard and Enhanced."
 
     container_name, blob_path = get_document_blob_storage_info(
         document_item,
@@ -7369,13 +7574,13 @@ def validate_document_reprocess_source(document_item, user_id=None, group_id=Non
         public_workspace_id=public_workspace_id,
     )
     if not container_name or not blob_path:
-        return False, "Source PDF is unavailable. Re-upload this PDF before changing extraction."
+        return False, "Source file is unavailable. Re-upload this document before changing extraction."
 
     try:
         if not _blob_exists(container_name, blob_path):
-            return False, "Stored source PDF was not found in Blob Storage. Re-upload this PDF before changing extraction."
+            return False, "Stored source file was not found in Blob Storage. Re-upload this document before changing extraction."
     except Exception as e:
-        return False, f"Unable to validate stored source PDF: {str(e)}"
+        return False, f"Unable to validate stored source file: {str(e)}"
 
     return True, ""
 
@@ -7388,14 +7593,16 @@ def _download_document_source_to_temp_file(document_item, user_id=None, group_id
         public_workspace_id=public_workspace_id,
     )
     if not container_name or not blob_path:
-        raise FileNotFoundError("Source PDF is unavailable.")
+        raise FileNotFoundError("Source file is unavailable.")
+
+    file_suffix = os.path.splitext(str(document_item.get('file_name') or ''))[-1].lower() or '.pdf'
 
     blob_service_client = _get_blob_service_client()
     blob_client = blob_service_client.get_blob_client(container=container_name, blob=blob_path)
     temp_file_path = None
 
     try:
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as temp_file:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=file_suffix) as temp_file:
             temp_file_path = temp_file.name
             download_stream = blob_client.download_blob()
             for chunk in download_stream.chunks():
@@ -7408,7 +7615,7 @@ def _download_document_source_to_temp_file(document_item, user_id=None, group_id
 
 
 def process_document_reprocess_extraction_background(document_id, user_id, target_extraction_mode, group_id=None, public_workspace_id=None):
-    """Extract a stored PDF again with an explicit Standard/Enhanced mode."""
+    """Extract a stored PDF or image again with an explicit Standard/Enhanced mode."""
     is_group = group_id is not None
     is_public_workspace = public_workspace_id is not None
     target_mode = normalize_document_intelligence_manual_extraction_mode(target_extraction_mode)
@@ -7444,6 +7651,13 @@ def process_document_reprocess_extraction_background(document_id, user_id, targe
             raise ValueError(validation_message)
 
         original_filename = document_item.get('file_name') or f'{document_id}.pdf'
+        source_file_ext = os.path.splitext(original_filename)[-1].lower() or '.pdf'
+        target_engine, target_engine_reason = _resolve_extraction_engine_for_mode(target_mode, get_settings())
+        target_engine_label = (
+            "Content Understanding"
+            if target_engine == EXTRACTION_ENGINE_CONTENT_UNDERSTANDING
+            else "Document Intelligence"
+        )
         update_doc_callback(
             status=f"Queued to extract again with {target_mode_label}",
             percentage_complete=0,
@@ -7454,6 +7668,8 @@ def process_document_reprocess_extraction_background(document_id, user_id, targe
             document_intelligence_extraction_mode_requested=target_mode,
             document_intelligence_auto_sample_pages=get_document_intelligence_auto_sample_pages(get_settings()),
             document_intelligence_auto_reason='Manual extraction change requested',
+            extraction_engine=target_engine,
+            extraction_engine_reason=target_engine_reason,
         )
 
         temp_file_path = _download_document_source_to_temp_file(
@@ -7466,13 +7682,13 @@ def process_document_reprocess_extraction_background(document_id, user_id, targe
         update_doc_callback(status=f"Deleting existing chunks before extracting again with {target_mode_label}...")
         delete_document_chunks(document_id, group_id=group_id, public_workspace_id=public_workspace_id)
 
-        update_doc_callback(status=f"Extracting PDF again with Document Intelligence {target_mode_label}...")
+        update_doc_callback(status=f"Extracting again with {target_engine_label} {target_mode_label}...")
         result = process_di_document(
             document_id=document_id,
             user_id=user_id,
             temp_file_path=temp_file_path,
             original_filename=original_filename,
-            file_ext='.pdf',
+            file_ext=source_file_ext,
             enable_enhanced_citations=bool(document_item.get('enhanced_citations')),
             update_callback=update_doc_callback,
             group_id=group_id,
@@ -7489,7 +7705,7 @@ def process_document_reprocess_extraction_background(document_id, user_id, targe
 
         final_update_args = {
             "number_of_pages": total_chunks_saved,
-            "status": _resolve_processing_complete_status(total_chunks_saved, '.pdf', tuple('.' + ext for ext in IMAGE_EXTENSIONS), tuple('.' + ext for ext in TABULAR_EXTENSIONS), 'disabled'),
+            "status": _resolve_processing_complete_status(total_chunks_saved, source_file_ext, tuple('.' + ext for ext in IMAGE_EXTENSIONS), tuple('.' + ext for ext in TABULAR_EXTENSIONS), 'disabled'),
             "percentage_complete": 100,
             "current_file_chunk": None,
         }
@@ -7499,7 +7715,7 @@ def process_document_reprocess_extraction_background(document_id, user_id, targe
             final_update_args["embedding_model_deployment_name"] = embedding_model_name
         update_doc_callback(**final_update_args)
 
-        print(f"Document {document_id} extracted again successfully with Document Intelligence {target_mode}.")
+        print(f"Document {document_id} extracted again successfully with {target_engine_label} {target_mode}.")
     except Exception as e:
         print(f"Error extracting document {document_id} again: {repr(e)}\nTraceback:\n{traceback.format_exc()}")
         try:

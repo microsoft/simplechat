@@ -6,11 +6,13 @@ order: 120
 category: Version History
 ---
 
+- [Chat Document Search File Name and Divider Artifact Fix](CHAT_DOCUMENT_SEARCH_FILENAME_AND_DIVIDER_FIX.md)
 - [Data Management Restore Route Endpoint Collision Fix](DATA_MANAGEMENT_RESTORE_ROUTE_ENDPOINT_COLLISION_FIX.md)
 - [Font Size and 200 Percent Zoom Fix](FONT_SIZE_AND_200_PERCENT_ZOOM_FIX.md)
 - [Public Workspace Prompt Migration Fix](PUBLIC_WORKSPACE_PROMPT_MIGRATION_FIX.md)
 - [Azure OpenAI Model Discovery Identity Fix](v0.250.001/AZURE_OPENAI_MODEL_DISCOVERY_IDENTITY_FIX.md)
 - [CosmosClient Import Binding CodeQL Fix](COSMOSCLIENT_IMPORT_BINDING_CODEQL_FIX.md)
+- [Log Credential Key Redaction Fix](LOG_CREDENTIAL_KEY_REDACTION_FIX.md)
 - [Conversation Cache Invalidation Authorization Fix](CONVERSATION_CACHE_INVALIDATION_AUTHORIZATION_FIX.md)
 - [Chat Completion Background Unread Guard Fix](CHAT_COMPLETION_BACKGROUND_UNREAD_GUARD_FIX.md)
 - [Settings Container RU Write Suppression Fix](SETTINGS_CONTAINER_RU_WRITE_SUPPRESSION_FIX.md)

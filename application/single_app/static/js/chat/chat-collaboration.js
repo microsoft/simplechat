@@ -1074,6 +1074,24 @@ function handleConversationEvent(eventEnvelope = {}) {
 
         const decoratedMessage = decorateReplyMessage(payload.message);
         cacheCollaborationMessage(payload.message);
+        if (String(payload.message.role || '').trim().toLowerCase() === 'assistant') {
+            const conversationId = (
+                eventEnvelope.conversation_id
+                || payload.message.conversation_id
+                || payload.conversation?.id
+                || ''
+            );
+            window.dispatchEvent(new CustomEvent(
+                'chat:conversation-documents-refresh',
+                {
+                    detail: {
+                        conversationId,
+                        autoOpen: false,
+                        conversationKind: 'collaborative',
+                    },
+                }
+            ));
+        }
         if (reconcilePendingCollaborativeUserMessage(payload.message)) {
             const messageKind = String(
                 payload.message.message_kind || payload.message.metadata?.message_kind || ''
@@ -1112,6 +1130,16 @@ function handleConversationEvent(eventEnvelope = {}) {
 
     if (eventEnvelope.event_type === 'collaboration.message.deleted' && payload.message_id) {
         removeCollaborationMessage(payload.message_id);
+        window.dispatchEvent(new CustomEvent(
+            'chat:conversation-documents-refresh',
+            {
+                detail: {
+                    conversationId: eventEnvelope.conversation_id || '',
+                    autoOpen: false,
+                    conversationKind: 'collaborative',
+                },
+            }
+        ));
         if (payload.deleted_by_user_id && payload.deleted_by_user_id !== getCurrentUserId()) {
             showToast('A shared message was deleted.', 'info');
         }
@@ -1323,7 +1351,7 @@ async function sendCollaborativeMessage(messageText, tempMessageId = null) {
     return payload;
 }
 
-async function sendCollaborativeAiMessage(messageText, tempMessageId = null, messageData = {}, pendingContext = null) {
+async function sendCollaborativeAiMessage(messageText, tempMessageId = null, messageData = {}, pendingContext = null, streamOptions = {}) {
     const conversationId = window.chatConversations?.getCurrentConversationId?.();
     if (!conversationId) {
         throw new Error('No collaborative conversation is active.');
@@ -1347,6 +1375,7 @@ async function sendCollaborativeAiMessage(messageText, tempMessageId = null, mes
             endpoint: `/api/collaboration/conversations/${encodeURIComponent(conversationId)}/stream`,
             cancelEndpoint: `/api/collaboration/conversations/${encodeURIComponent(conversationId)}/stream/cancel`,
             allowRecovery: false,
+            onDone: streamOptions.onDone || null,
             onError: (errorMessage, errorData = null) => {
                 if (errorData?.user_message_id && tempMessageId) {
                     updateUserMessageId(tempMessageId, errorData.user_message_id);
@@ -1936,6 +1965,7 @@ window.chatCollaboration = {
     deactivateConversation,
     fetchCollaborationConversationList,
     fetchConversationMetadata,
+    loadConversationMessages,
     getPendingMessageContext,
     handleComposerBlur,
     handleComposerInput,

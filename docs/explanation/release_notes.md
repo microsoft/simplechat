@@ -2,7 +2,7 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
-### **(v0.250.209)**
+### **(v0.250.222)**
 
 #### New Features
 
@@ -10,6 +10,335 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Added an opt-in `ENABLE_AUTO_LOGIN_ON_INDEX` setting that redirects unauthenticated home-page visits to the existing Microsoft Entra sign-in flow.
     *   Supports government tenant SSO scenarios where users already have a browser session and should enter SimpleChat without first clicking the sign-in link.
     *   (Ref: `app.py`, `config.py`, `INDEX_AUTO_LOGIN.md`, Microsoft Entra sign-in)
+
+### **(v0.250.221)**
+
+#### New Features
+
+*   **Enhanced Extraction Now Uses Azure AI Content Understanding**
+    *   Enhanced extraction for PDFs and images now uses Azure AI Content Understanding (`prebuilt-documentSearch`) instead of Document Intelligence Layout. In addition to tables, page structure, and checkbox states, it returns AI-generated descriptions of figures, charts, and diagrams — structure Document Intelligence never produced.
+    *   Standard extraction is unchanged and always uses Document Intelligence, which remains required for workspaces and chat file uploads.
+    *   A new **Enable Enhanced extraction** toggle in Admin Settings reveals the Content Understanding configuration. Turning it on defaults the extraction mode to **Auto**, so documents are only upgraded when the sample shows structure worth paying for.
+    *   Content Understanding supports both key and managed identity authentication, with a **Test Connection** button and an in-app setup guide covering Foundry resource creation, supported regions, required model deployment defaults, and the Cognitive Services User role.
+    *   Enhanced never becomes a hard dependency. Content Understanding is not offered in Azure Government, so Enhanced automatically uses Document Intelligence Layout in Government and custom clouds — the admin UI says so plainly and there is nothing to configure there. Enhanced also falls back when Content Understanding is unconfigured or a request fails, and the reason is recorded on the document and shown in workspace tooltips.
+    *   (Ref: #1277, `functions_content_understanding.py`, `functions_content.py`, `functions_settings.py`, `route_backend_settings.py`, `admin_settings.html`, `CONTENT_UNDERSTANDING_ENHANCED_EXTRACTION.md`)
+
+*   **Images Inside Word and PowerPoint Files Are Now Analyzed**
+    *   Neither extraction engine describes figures inside Office files, so SimpleChat now pulls embedded images out of DOCX and PPTX packages and analyzes them with whichever engine backs the selected extraction mode — Content Understanding when Enhanced is active, Document Intelligence otherwise. This works with Standard extraction too.
+    *   Each analyzed image is indexed as its own citable chunk, and PowerPoint images are attributed to the slide that references them.
+    *   Cost is bounded by design: icons, bullets, and spacer graphics are filtered out by a configurable minimum size, byte-identical images such as repeated header logos are analyzed once, and a per-document cap limits the total.
+    *   Uploaded Office files are treated as untrusted: extracted file names are generated rather than reused from the archive, entries are streamed with a hard byte ceiling instead of trusting the archive's declared size, compression methods and entry counts are bounded, and slide relationship parts are parsed with a hardened XML parser.
+    *   Can be turned off entirely with **Analyze images embedded in DOCX and PPTX files**. Image analysis failures never fail the document.
+    *   (Ref: #1277, `functions_office_media.py`, `functions_documents.py`, embedded Office image analysis)
+
+#### Upgrade Notes
+
+*   **Existing Enhanced and Auto Deployments Keep Their Setting**
+    *   The new **Enable Enhanced extraction** toggle defaults to off, so deployments already set to Enhanced or Auto are migrated automatically on first settings read: the toggle is switched on and persisted, preserving the previously selected mode.
+    *   Without this migration an upgrade would have silently downgraded those deployments to Standard and then overwritten the stored mode on the next settings save.
+    *   (Ref: #1277, `functions_settings.py`, `get_settings()` migration)
+
+#### User Interface Enhancements
+
+*   **Extraction Badges Name the Engine That Actually Ran**
+    *   Extraction tooltips in personal, group, and public workspaces now say whether a document was processed with Azure AI Content Understanding or Document Intelligence Layout, and explain any fallback that occurred.
+    *   The **Change Extraction** action now works for images as well as PDFs, and refuses a change to Enhanced while Enhanced extraction is disabled.
+    *   (Ref: #1277, `workspace-documents.js`, `public_workspace.js`, `group_workspaces.html`, `functions_documents.py`)
+
+*   **Auto Mode Also Upgrades for Figures**
+    *   Auto mode still samples the first pages with Document Intelligence Layout as the cheaper detector, but now upgrades to Enhanced when it finds figures or images, not just tables and selection marks. This matters because figure description is the main reason to use Enhanced.
+    *   (Ref: #1277, `functions_documents.py`, Auto mode detection)
+### **(v0.250.220)**
+
+#### Bug Fixes
+
+*   **Data Management History Failure Diagnostics**
+    *   Backup Inventory and Job History failures returned a generic 503 telling admins to review application logs, while the logs recorded only the exception class name. The provider status code and message were discarded, making the failure impossible to diagnose.
+    *   Failures now log the Cosmos status code and sanitized provider message. Provider text stays in operator logs and is never returned to the browser.
+    *   (Ref: #1275, `functions_data_management.py`, `route_backend_data_management.py`, Data Management history)
+
+*   **Data Management History Throttle Handling**
+    *   Throttled history reads previously produced the same opaque error as a permanent failure.
+    *   Cosmos throttling is now detected, retried up to three times with jittered backoff, and reported as temporary busy guidance with a retryable flag instead of a generic error.
+    *   (Ref: #1275, `functions_data_management.py`, Cosmos history query retry)
+
+*   **Data Management History Index Guidance**
+    *   Missing-index detection required the exact phrase "composite index", so equivalent provider wording fell through to the generic error.
+    *   Detection now also matches `ORDER BY` failures reported as having no corresponding index, keeping the Cosmos indexing maintenance guidance actionable.
+    *   (Ref: #1275, `functions_data_management.py`, Cosmos indexing maintenance)
+
+*   **Source Blob Backup ETag Failure**
+    *   Fixed every source blob failing backup with "Source blob changed while it was being backed up", which meant user documents, group documents, public documents, and chat attachments were never actually backed up.
+    *   Root cause was comparing an ETag from `list_blobs()` (unquoted XML element) against one from `get_blob_properties()` (RFC-quoted HTTP header); the two never matched, so the post-transfer consistency check always failed after the blob had already been downloaded and uploaded.
+    *   Both values are now normalized before comparison. The precondition sent to Azure is unchanged, and a genuine mid-transfer source change is still rejected.
+    *   (Ref: #1271, `functions_data_management.py`, source blob transfer verification)
+
+*   **Source Blob Backup Checkpoint Throughput**
+    *   Source blob backups previously wrote one Cosmos checkpoint per blob, capping throughput at roughly six items per second and stretching a single container to over an hour.
+    *   Checkpoints are now batched per 100 items or 15 seconds, whichever comes first, while still asserting the job lease on every item.
+    *   (Ref: #1271, `functions_data_management.py`, source blob checkpointing)
+
+*   **Functional Tests Silently Passing Under pytest**
+    *   Backup functional tests written with the try/except and `return False` template were reported as passed by pytest because they returned a value instead of raising.
+    *   The backup ETag and Cosmos pagination test files now assert directly, so real failures are reported by both pytest and standalone execution.
+    *   (Ref: #1271, `test_data_management_backup_source_blob_etag.py`, `test_data_management_backup_cosmos_pagination.py`)
+
+### **(v0.250.219)**
+
+#### Bug Fixes
+
+*   **Agent Document Search Now Produces Real Document Citations**
+    *   Documents an agent retrieved through the document search action are now recorded as document sources instead of only as an agent tool call. Previously they appeared solely as a raw JSON tool modal, so the documents were missing from the message Sources disclosure, were not clickable, never opened in the enhanced citation viewer, and could never reach the Used documents drawer.
+    *   Covers all three document search functions — relevance-ranked search, ordered chunk retrieval, and document summarization — across personal, group, and public workspaces.
+    *   Document search results now carry a ready-to-copy citation value, and the action instructs the model to reuse it verbatim. When the answer cites a document, it is correctly separated from the retrieved sources and recorded in the conversation's used documents.
+    *   Applies to streaming and non-streaming chat, document actions, cancelled and interrupted streams, and scheduled workflow runs.
+    *   Retrieved sources are deliberately not capped, so a search that sources hundreds of chunks records all of them. Chunks retrieved by both the document search toggle and an agent are listed once.
+    *   Cancelled and interrupted streams keep the documents the agent had already retrieved, and citation locations no longer relabel a valid page or sequence of `0` as page 1, which affected video chunks keyed by second.
+    *   Workspace capability metadata now reports document usage for agent-only document turns, which previously under-reported as unused.
+    *   (Ref: #1239, `functions_agent_document_citations.py`, `route_backend_chats.py`, `functions_workflow_runner.py`, `document_search_plugin.py`, `AGENT_DOCUMENT_SEARCH_CITATION_FIX.md`)
+
+#### User Interface Enhancements
+
+*   **Collapsed Long Source Lists**
+    *   The per-message Sources disclosure now shows the first 25 document sources and collapses the rest behind a **Show N more sources** control, so an agent that retrieves hundreds of chunks no longer floods the panel.
+    *   No source data is discarded — the full set is still stored, exported, and available for citation matching.
+    *   (Ref: #1239, `chat-messages.js`, `chat-citations.js`)
+
+### **(v0.250.218)**
+
+#### Bug Fixes
+
+*   **Credential Field Names Logged in Clear Text**
+    *   Fixed a gap where credential values could be written to application logs and Application Insights in clear text. The log redactor matched only a fixed list of key-name substrings, so field names this codebase actually uses for secrets were missed. The most significant were `auth_key`, used by the action connection-test routes for the caller-supplied secret, and the plugin manifest's `auth.key`, which holds connection strings and service principal passwords.
+    *   Eighteen credential key names were affected in total, including `pwd`, `key_pair`, `master_key`, `primary_key`, `secondary_key`, `encryption_key`, `signing_key`, `session_key`, and `storage_key`.
+    *   Benign configuration keys that merely contain the word "key", such as `key_encoding`, `key_prefix_hints`, and `partition_key_path`, deliberately stay visible so logs keep their diagnostic value.
+    *   (Ref: `functions_appinsights.py`, `test_log_credential_key_redaction.py`, `LOG_CREDENTIAL_KEY_REDACTION_FIX.md`)
+
+*   **CosmosClient Import Bindings in Helper Scripts**
+    *   Completed the v0.250.047 import-binding cleanup by updating the two remaining scripts that bound `CosmosClient` directly, so patching `azure.cosmos.CosmosClient` is observed consistently. No direct `CosmosClient` imports remain in the repository.
+    *   (Ref: `scripts/resolve_multiendpoint_gpt.py`, `deployers/bicep/postconfig.py`)
+
+*   **Privacy Logging Audit Test Restored**
+    *   The privacy logging and telemetry audit had been failing since v0.242.072 because it asserted an exact `config.py` version and never reached its assertions. It now asserts a version floor, per the repository's version-assertion guidance, so the audit runs again.
+    *   (Ref: `test_privacy_logging_telemetry_audit.py`)
+
+### **(v0.250.217)**
+
+#### New Features
+
+*   **Test Connection for Eight More Action Types**
+    *   Added a **Test Connection** button to the Step 3 configuration for OpenAPI, Azure Maps, Blob Storage, Databricks, Log Analytics, MCP, Snowflake, and Tableau actions. Previously only SQL, Cosmos DB, Yamcs, and RocksDB actions could be validated before saving.
+    *   Each test authenticates with the credentials entered in the modal and performs one lightweight read against the configured resource, so a wrong warehouse ID, container name, subscription key, personal access token, or MCP endpoint is caught immediately instead of failing later during a chat.
+    *   Failures name the cause — rejected credentials, a missing warehouse or container, an unreachable host, or a driver that is not installed — and successes report useful detail such as the Databricks warehouse state, the Snowflake version, the Tableau API version, or the MCP tool count.
+    *   Editing an existing action works without retyping credentials: masked secrets and reusable workspace identities are resolved server-side for the test only, and no credential value is ever returned to the browser.
+    *   The MCP test enforces the same stdio scope restriction and outbound destination policy as MCP tool discovery, and it does not overwrite discovered tool metadata.
+    *   (Ref: #1267, `functions_action_connection_tests.py`, `route_backend_plugins.py`, `_plugin_modal.html`, `plugin_modal_stepper.js`, `ACTION_TEST_CONNECTION.md`)
+
+#### User Interface Enhancements
+
+*   **Dedicated Log Analytics Configuration Section**
+    *   Log Analytics actions now have their own Step 3 configuration section instead of reusing the generic endpoint and authentication form.
+    *   Workspace ID, Cloud, API Endpoint, and the authentication method moved out of *Advanced → Additional Fields* and into the main configuration step, next to the new Test Connection button. Authority Host and Endpoint Override appear only when the Custom cloud is selected.
+    *   Existing Log Analytics actions are unaffected — the section reads and writes the same manifest fields and preserves stored values such as `query_history`.
+    *   (Ref: #1267, `_plugin_modal.html`, `plugin_modal_stepper.js`, Log Analytics action configuration)
+
+#### Bug Fixes
+
+*   **Action Secret References Now Resolved Only Within Their Own Scope**
+    *   Action connection tests resolve a stored Key Vault secret reference strictly against the scope of the action being tested, instead of resolving any reference name supplied in the request.
+    *   The unscoped resolver has been removed, and the existing MCP tool discovery, Cosmos DB, SQL, Yamcs, and RocksDB test paths now share the same scope-checked resolution used by the new connection tests. A reference that does not match the action's scope is rejected instead of resolved.
+    *   Loading a global action for a connection test now requires the Admin role at the shared loader, so every test route inherits the check rather than relying on each route to gate it.
+    *   Only affects deployments with Key Vault secret storage enabled. Normal editing is unchanged — testing an existing action still works without retyping stored credentials.
+    *   (Ref: #1267, `route_backend_plugins.py`, `functions_keyvault.py`, action secret scoping)
+
+### **(v0.250.216)**
+
+#### New Features
+
+*   **RocksDB Action**
+    *   Added a new `rocksdb` action type so agents can read an ordered [RocksDB](https://github.com/facebook/rocksdb) key-value store, with a dedicated configuration card and Test Connection button in the action modal.
+    *   RocksDB is an embedded library with no network protocol, so the action calls a RocksDB-backed HTTP/JSON service that you operate alongside your data. SimpleChat never runs RocksDB locally or opens a database directory on the application host.
+    *   Supports no-auth, bearer token, and API key header authentication with a configurable header name. TLS certificate validation is always enforced.
+    *   Exposes `get_value`, `get_values`, `key_exists`, `scan_prefix`, `scan_range`, `list_column_families`, and `get_database_stats` for reads, plus `put_value`, `delete_value`, and `write_batch` that stay blocked until an action explicitly allows writes.
+    *   Handles binary data through configurable UTF-8, base64, and JSON key and value encodings that are sent to the service on every request, caps returned records, and flags values truncated by the size limit.
+    *   The RocksDB HTTP service contract is fully documented so operators can implement a conforming service.
+    *   (Ref: `rocksdb_plugin.py`, `route_backend_plugins.py`, `plugin_health_checker.py`, `_plugin_modal.html`, `plugin_modal_stepper.js`, `rocksdb.definition.json`, `test_rocksdb_plugin.py`, `test_workspace_rocksdb_action_modal.py`, `docs/explanation/features/v0.250.216/ROCKSDB_ACTION.md`)
+
+### **(v0.250.215)**
+
+#### Bug Fixes
+
+*   **Retrieved Sources and Cited References**
+    *   Separated complete document/web retrieval results from the exact references used in final assistant responses, while preserving all returned results under **Sources**.
+    *   Used documents now follows active cited responses, conversation details marks cited items within the full source inventory, and conversation/message export references exclude retrieved-only sources.
+    *   Historical conversations retain their previous fallback without a migration or ordinary read-time history parsing.
+    *   (Ref: #1249, `functions_citation_tracking.py`, `route_backend_chats.py`, `route_backend_conversation_export.py`, `SOURCE_AND_CITED_REFERENCE_DISTINCTION_FIX.md`)
+
+### **(v0.250.214)**
+
+#### New Features
+
+*   **Agent Instruction Context References (`#action` and `#knowledge`)**
+    *   Instructions can now reference the exact actions, action capabilities, and assigned knowledge that were selected for the agent, so authors can spell out *when* and *why* each capability or document should be used.
+    *   Typing `#` in the Instruction Brief or the instructions editor opens an autocomplete that drills down from the `action` / `knowledge` namespace, to the actions selected in the Actions step, to that action's enabled capabilities. `#knowledge:` lists the assigned documents, workspaces, tag limits, and web sources with type badges.
+    *   Tokens such as `#action:"Simple Chat":create_group` and `#knowledge:doc:"Employee Handbook.pdf"` are stored literally with the instructions so they stay editable and round-trip unchanged when an agent is edited. Values containing a space or colon are quoted automatically.
+    *   Navigate with the arrow keys, insert with `Tab` or `Enter`, dismiss with `Esc`, or use the mouse. Document titles containing spaces stay searchable while typing.
+    *   Foundry agents manage their instructions and tools in Foundry, so the references stay inert for Classic Foundry, New Foundry, and Foundry Workflow agents.
+    *   (Ref: #1257, #1263, `agent_instruction_mentions.js`, `agent_modal_stepper.js`, `_agent_modal.html`)
+
+*   **Context-Aware Draft Instructions**
+    *   The **Draft Instructions** helper now receives the selected actions with their enabled capabilities and the assigned knowledge configuration, instead of only the agent name, description, and brief.
+    *   Drafts reference only real, selected actions and documents, and use the new `#action:` / `#knowledge:` token convention.
+    *   Client-supplied context is normalized, length-capped, count-capped, and bounded by a shared total character budget on the backend. It is used purely as prompt text and never affects authorization, and whitespace collapsing prevents newline-based prompt injection through action or document names.
+    *   (Ref: #1257, #1263, `route_backend_agents.py`, `POST /api/agents/draft-instructions`)
+
+#### User Interface Enhancements
+
+*   **Agent Modal Step Reorder: Instructions After Actions and Knowledge**
+    *   The agent modal now runs Basic Info → Model & Connection → **Actions** → **Knowledge** → **Instructions** → Advanced → Summary, so instructions are written once the agent's real capabilities are known.
+    *   Added a collapsible **Selected Actions & Knowledge** panel at the top of the Instructions step listing the selected actions with badges for their enabled capabilities, plus the assigned workspaces, documents, tags, and web sources, each with its reference token.
+    *   Step navigation, validation, and Foundry agent-type visibility now key off named steps rather than hard-coded step numbers.
+    *   (Ref: #1257, #1263, `_agent_modal.html`, `agent_modal_stepper.js`)
+
+#### Bug Fixes
+
+*   **Agent Summary Step Referenced the Wrong Step Number**
+    *   The Summary step's empty-actions message pointed authors at "step 4" to add actions. Actions is step 3 under the new order, and step 4 is now Assigned Knowledge.
+    *   (Ref: #1263, `_agent_modal.html`, agent modal summary step)
+
+### **(v0.250.213)**
+
+#### New Features
+
+*   **Workflow Alert Rules**
+    *   Workflow alerts are now conditional. Instead of a single Pop-up Alert Priority that notified on every run, a workflow can define rules that describe *why* it should notify you, and a run that matches nothing stays completely silent.
+    *   Conditions cover run status, task status, output text (contains, does not contain, or regex), File Sync results, empty output, an agent-raised signal, and a plain-English condition judged by a model, such as "any certificate expires within 14 days."
+    *   Each rule can be scoped to the final output, any task output, or one specific task.
+    *   Model-judged conditions are batched into a single call per run and skipped entirely when a deterministic rule already matched at a higher severity, so workflows that use only deterministic conditions add no model calls.
+    *   (Ref: `functions_workflow_alerts.py`, `functions_workflow_runner.py`, `functions_personal_workflows.py`, `functions_group_workflows.py`, `workspace_workflows.js`, `WORKFLOW_ALERT_RULES.md`)
+
+*   **Expanded Alert Severities and a Distinct Failure Style**
+    *   The severity ladder grew from low/medium/high to **info, low, medium, high and critical**.
+    *   Info and low alerts land quietly in the notification bell, while medium and above open the pop-up. Any rule can override this.
+    *   Runs that error now carry a separate *failure* category that changes the icon and wording independently of severity, so "the workflow broke" is visually distinct from "the workflow found something."
+    *   When several rules match the same run, the highest severity wins and the alert lists every matched rule with its reason under a new "Triggered by" section.
+    *   (Ref: `functions_notifications.py`, `notifications.js`, `base.html`, workflow alert modal)
+
+*   **Agent-Raised Workflow Alerts**
+    *   Agents running inside a workflow can now raise an alert signal mid-run with severity, title and reason through the new `raise_workflow_alert` SimpleChat capability, and an `agent_signal` rule decides whether it notifies anyone.
+    *   The rule's severity acts as a floor the agent can escalate above but never quiet below, and named signals can route to their own rules.
+    *   The capability is opt-in and refuses outside an active workflow run, so existing agents do not gain the ability to create notifications and a normal chat cannot fabricate one.
+    *   (Ref: `simplechat_plugin.py`, `functions_simplechat_operations.py`, `agent_modal_stepper.js`, `plugin_modal_stepper.js`)
+
+*   **Alert Decision Visibility**
+    *   Each run now records why it did or did not alert, including the winning severity and every matched rule, surfaced through the workflow activity view so noisy or silent workflows can be diagnosed.
+    *   (Ref: `functions_workflow_activity.py`, `functions_workflow_runner.py`)
+
+#### User Interface Enhancements
+
+*   **Workflow Alert Rules Editor**
+    *   The Review step of the personal and group workflow builders replaces the single Pop-up Alert Priority dropdown with an alert mode selector and a rule editor for adding, editing, enabling and removing alert rules.
+    *   Each rule row exposes its name, condition, severity, delivery and, where relevant, the task or output it should watch, with condition-specific fields appearing as the condition is chosen.
+    *   The workflow list now summarizes alerts as the number of active rules, and the Review summary names the rules that will notify you.
+    *   Invalid rules are caught before saving, such as a missing regex pattern, empty match values, an unwritten model condition, or a task-scoped rule with no task selected.
+    *   (Ref: `workspace.html`, `group_workspaces.html`, `workspace_workflows.js`, workflow builder review step)
+
+#### Breaking Changes
+
+*   **Workflow Alert Configuration Model**
+    *   The single `alert_priority` field is superseded by `alert_mode`, `alert_rules` and `alert_evaluation`. The old field is retained and still honored.
+    *   **Migration**: None required. Workflows that only carry `alert_priority` are migrated on read into two editable rules, `Run failed → high` and `Run completed → <previous priority>`, which reproduce the previous behavior exactly, including always opening the pop-up and staying silent on cancelled runs. Owners can then prune the noisy rule.
+
+### **(v0.250.212)**
+
+#### New Features
+
+*   **Yamcs Mission Control Action**
+    *   Added a first-class, read-only `yamcs` action type that connects agents to a Yamcs mission control server using the official `yamcs-client` Python package.
+    *   Exposes eleven read-only tools: instances, data links, mission database parameters and parameter detail, command *definitions*, live parameter values, parameter history, events, packets, alarms, and an optional guarded archive SQL query.
+    *   Strictly read-only by design. The action cannot issue commands, set parameter values, run scripts, or enable/disable data links, and command listing returns definitions only.
+    *   Archive SQL is disabled by default and, when enabled, is restricted to `SELECT`, `SHOW`, `DESC`, and `DESCRIBE` statements with a forbidden-keyword guard and an automatic row limit.
+    *   Every retrieval is bounded by a row limit, a serialized byte limit, and a request timeout so a broad query cannot walk an entire archive, and error text is scrubbed of credentials.
+    *   (Ref: `functions_yamcs_operations.py`, `semantic_kernel_plugins/yamcs_plugin.py`, `semantic_kernel_plugins/yamcs_plugin_factory.py`, `docs/explanation/features/YAMCS_ACTION.md`)
+
+*   **Yamcs Action Configuration Panel and Test Connection**
+    *   Added a dedicated Yamcs configuration section to the Add/Edit Action modal covering server URL, instance, processor, authentication, TLS verification, archive SQL opt-in, and retrieval limits.
+    *   Supports username/password, API key, bearer token, and unauthenticated Yamcs servers, plus reusable workspace identities using `api_key`, `bearer_token`, or `username_password`.
+    *   Added a **Test Yamcs Connection** button backed by `POST /api/plugins/test-yamcs-connection`, which verifies reachability and credentials and confirms the configured instance exists. Saved actions resolve their stored credential from Key Vault, so secrets do not need to be re-entered to run a test.
+    *   (Ref: `_plugin_modal.html`, `plugin_modal_stepper.js`, `route_backend_plugins.py`, `workspace/view-utils.js`)
+
+#### Breaking Changes
+
+*   **New `yamcs-client` Dependency**
+    *   Added `yamcs-client==2.1.0` to `application/single_app/requirements.txt`.
+    *   This package is licensed **LGPL-3.0**, the first LGPL dependency in this repository. It is used as an unmodified, dynamically linked pip dependency.
+    *   It vendorizes its own protobuf runtime, so it does not conflict with the pinned `protobuf==6.33.5`.
+    *   **Migration**: run `pip install -r requirements.txt` when upgrading. Deployments that do not install it can still run SimpleChat; Yamcs actions will return an actionable dependency error until the package is present.
+    *   (Ref: `requirements.txt`, `semantic_kernel_plugins/yamcs_plugin.py`)
+
+### **(v0.250.211)**
+
+#### User Interface Enhancements
+
+*   **Consistent Workspace Section Order**
+    *   Workspace sections now follow a single order of operations everywhere they are listed: Documents, Prompts, Identities, Sync, Endpoints, Actions, Agents, Workflows.
+    *   The order reflects how a workspace is actually built up, so it is clearer that Identities feed both Sync and Actions, that Actions belong to Agents, and that Workflows run Agents.
+    *   Applied to the tab strip, the collapsed Section dropdown, and the left-hand sidebar submenus for personal and group workspaces. Public workspaces already matched this order and were left unchanged.
+    *   Sections that an admin has disabled stay hidden; the remaining sections simply close up while keeping their relative positions.
+    *   (Ref: #1255, `workspace.html`, `group_workspaces.html`, `_sidebar_nav.html`, `WORKSPACE_SECTION_ORDER.md`)
+
+#### Bug Fixes
+
+*   **Group Workflows Missing From Sidebar Navigation**
+    *   Added the missing Group Workflows link to the left-hand group workspace submenu. Group workflows previously had a working tab but no way to reach it from the sidebar.
+    *   (Ref: #1255, `_sidebar_nav.html`, group workflows navigation)
+
+*   **Sidebar Links Pointing At Unrendered Workspace Tabs**
+    *   Fixed left-hand navigation links whose visibility rules did not match the tabs they opened, so a link could appear for a section that was never rendered.
+    *   Personal Agents and Actions links now respect the user agent and plugin permissions, group Agents and Actions links now respect per-user Semantic Kernel and group plugin permissions, and both Identities links now match their tab's File Sync and Semantic Kernel conditions.
+    *   (Ref: #1255, `_sidebar_nav.html`, `test_workspace_section_order.py`)
+
+### **(v0.250.210)**
+
+#### Bug Fixes
+
+*   **Chat Document Search Now Matches File Names**
+    *   Fixed the chat grounded-search document picker only matching on a document's title, which made file names completely unsearchable for any document that had extracted title metadata.
+    *   Typing any fragment of a file name now surfaces the document, anywhere in the name — searching `200` finds `Quarterly_Report_200_final.pdf`.
+    *   Multi-word queries are also supported, with `_`, `-`, and `.` treated as word breaks, so `report 200` matches `Quarterly_Report_200_final.pdf`. The same improvement applies to the scope, tags, prompt, model, and agent selectors.
+    *   (Ref: #1256, `chat-documents.js`, `chat-searchable-select.js`, chat grounded search, document picker)
+
+*   **Leftover Separator Lines in Filtered Dropdowns**
+    *   Fixed filtered dropdowns leaving orphaned workspace separator lines behind — commonly two stacked horizontal rules directly under the "Select All" / "Clear All" row — when a search removed the leading sections.
+    *   Divider visibility now follows the section it separates instead of the nearest visible row, and separator lines can no longer be leading, trailing, or stacked. Affects the Document, Scope, and Tags dropdowns, plus the Compare modal document picker.
+    *   (Ref: #1256, `chat-searchable-select.js`, dropdown filtering, section dividers)
+
+#### User Interface Enhancements
+
+*   **File Name Shown in Document Picker Rows**
+    *   Document rows in the chat grounded-search picker now show the file name as a smaller muted line beneath the title whenever the two differ, so it is clear which file a search matched.
+    *   Rows without distinct titles are unchanged, and the row tooltip carries both the title and the file name.
+    *   (Ref: #1256, `chat-documents.js`, `chats.css`, document picker rows)
+
+### **(v0.250.209)**
+
+#### Bug Fixes
+
+*   **Cosmos Backup Continuation Token Failure**
+    *   Fixed Data Management backups silently omitting every Cosmos container that held more than one page of documents, which in most deployments meant personal conversations and personal messages were never backed up.
+    *   Affected containers failed with `BadRequest: Invalid Continuation Token` and were dropped from the backup artifact set while the job still reported completion with warnings.
+    *   Root cause was rebuilding the cross-partition query for each page and replaying the previous pager's continuation token; the backup now drains a single pager so the SDK's cross-partition execution context is preserved.
+    *   (Ref: #1258, `functions_data_management.py`, Cosmos backup source paging)
+
+*   **Missing Backup Failure Diagnostics**
+    *   Source blob transfer failures previously produced no log output at all, so a run with nearly 20,000 failed blobs left no trace in App Service logs.
+    *   Backups now log the first failure for each resource plus a bounded rollup of distinct failure reasons and counts when the resource finishes.
+    *   (Ref: #1258, `functions_data_management.py`, source blob backup logging)
+
+*   **Application Insights Log Message Text**
+    *   Structured log events reached Application Insights as the constant `[SIMPLE_CHAT_LOG_EVENT]` with every string property reduced to a character count, making traces unusable for diagnosis.
+    *   Traces now carry the sanitized message text and an allowlist of non-sensitive diagnostic values such as job ID, resource, container, status code, and error. Sensitive keys still collapse to a presence flag and secret redaction is unchanged.
+    *   (Ref: #1258, `functions_appinsights.py`, log event properties)
 
 ### **(v0.250.208)**
 

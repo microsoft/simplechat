@@ -1,6 +1,6 @@
 # Index Auto-Login
 
-Implemented in version: **0.250.209**
+Implemented in version: **0.250.222**
 
 ## Overview
 

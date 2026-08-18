@@ -127,6 +127,12 @@ const workflowFileSyncContinueModeSelect = document.getElementById("workflow-fil
 const workflowFileSyncUseChangedDocumentsToggle = document.getElementById("workflow-file-sync-use-changed-documents");
 const workflowFileSyncHelp = document.getElementById("workflow-file-sync-help");
 const workflowAlertPrioritySelect = document.getElementById("workflow-alert-priority");
+const workflowAlertModeSelect = document.getElementById("workflow-alert-mode");
+const workflowAlertPriorityGroup = document.getElementById("workflow-alert-priority-group");
+const workflowAlertRulesGroup = document.getElementById("workflow-alert-rules-group");
+const workflowAlertRulesList = document.getElementById("workflow-alert-rules-list");
+const workflowAlertRuleAddBtn = document.getElementById("workflow-alert-rule-add-btn");
+const workflowAlertEvaluationOnErrorSelect = document.getElementById("workflow-alert-evaluation-on-error");
 const workflowErrorStrategyInputs = Array.from(document.querySelectorAll('input[name="workflow-error-strategy"]'));
 const workflowTaskRetryCountInput = document.getElementById("workflow-task-retry-count");
 const workflowReviewSummary = document.getElementById("workflow-review-summary");
@@ -152,6 +158,56 @@ function getWorkflowMaxTasks() {
     return Math.min(WORKFLOW_TASK_LIMIT_MAX, Math.max(WORKFLOW_TASK_LIMIT_MIN, configuredLimit));
 }
 const WORKFLOW_MAX_TASKS = getWorkflowMaxTasks();
+const WORKFLOW_ALERT_MAX_RULES = 20;
+const WORKFLOW_ALERT_SEVERITIES = [
+    { value: "info", label: "Info" },
+    { value: "low", label: "Low" },
+    { value: "medium", label: "Medium" },
+    { value: "high", label: "High" },
+    { value: "critical", label: "Critical" },
+];
+const WORKFLOW_ALERT_DELIVERIES = [
+    { value: "default", label: "Default for severity" },
+    { value: "notify_only", label: "Notification bell only" },
+    { value: "popup", label: "Pop-up alert" },
+];
+const WORKFLOW_ALERT_CONDITION_TYPES = [
+    { value: "run_status", label: "Run finished with a status" },
+    { value: "task_status", label: "A task finished with a status" },
+    { value: "text_match", label: "Output text matches" },
+    { value: "file_sync", label: "File Sync result" },
+    { value: "no_output", label: "The run produced no output" },
+    { value: "model_evaluation", label: "A model judges a condition" },
+    { value: "agent_signal", label: "The agent raised an alert" },
+];
+const WORKFLOW_ALERT_RUN_STATUSES = [
+    { value: "failed", label: "Failed" },
+    { value: "completed", label: "Completed" },
+    { value: "completed_with_task_errors", label: "Completed with task errors" },
+    { value: "cancelled", label: "Cancelled" },
+];
+const WORKFLOW_ALERT_TASK_STATUSES = [
+    { value: "failed", label: "Failed" },
+    { value: "succeeded", label: "Succeeded" },
+];
+const WORKFLOW_ALERT_TEXT_MATCH_MODES = [
+    { value: "contains_any", label: "Contains any of" },
+    { value: "contains_all", label: "Contains all of" },
+    { value: "not_contains", label: "Does not contain" },
+    { value: "regex", label: "Matches regex" },
+];
+const WORKFLOW_ALERT_FILE_SYNC_OUTCOMES = [
+    { value: "changes_found", label: "Changed documents were found" },
+    { value: "no_changes", label: "No changed documents were found" },
+    { value: "sync_failed", label: "File Sync failed" },
+];
+const WORKFLOW_ALERT_SCOPE_TYPES = [
+    { value: "final", label: "Final output" },
+    { value: "any_task", label: "Any task output" },
+    { value: "task", label: "A specific task" },
+];
+// Conditions that read run-level facts rather than a particular output.
+const WORKFLOW_ALERT_SCOPELESS_CONDITIONS = new Set(["run_status", "file_sync", "agent_signal"]);
 const DOCUMENT_ACTION_NONE = "none";
 const DOCUMENT_ACTION_SEARCH = "search";
 const DOCUMENT_ACTION_ANALYZE = "analyze";
@@ -339,6 +395,7 @@ let workflowPickerDocumentIds = [];
 let workflowSavedComparisonTargetIds = [];
 let workflowSavedComparisonPreferredLeftId = "";
 let workflowTasks = [];
+let workflowAlertRules = [];
 let activeWorkflowTaskId = "";
 let currentWorkflowStepIndex = 0;
 
@@ -838,6 +895,28 @@ function getWorkflowErrorStrategy() {
     return normalizeText(workflowErrorStrategyInputs.find((input) => input.checked)?.value) || "halt";
 }
 
+function getWorkflowAlertReviewSummary(legacyAlertLabel) {
+    const mode = getWorkflowAlertMode();
+    if (mode === "every_run") {
+        return `Every run - ${normalizeText(legacyAlertLabel)}`;
+    }
+    if (mode !== "rules") {
+        return "Never notify me";
+    }
+
+    const enabledRules = workflowAlertRules.filter((rule) => rule.enabled !== false);
+    if (!enabledRules.length) {
+        return "No alert rules yet";
+    }
+
+    const ruleNames = enabledRules
+        .map((rule, index) => normalizeText(rule.name) || `Alert rule ${index + 1}`)
+        .slice(0, 3)
+        .join(", ");
+    const suffix = enabledRules.length > 3 ? `, +${enabledRules.length - 3} more` : "";
+    return `${enabledRules.length} ${enabledRules.length === 1 ? "rule" : "rules"}: ${ruleNames}${suffix}`;
+}
+
 function addWorkflowReviewItem(labelText, valueText) {
     if (!workflowReviewSummary) {
         return;
@@ -874,7 +953,7 @@ function renderWorkflowReview() {
     addWorkflowReviewItem("Workspace documents", normalizeText(documentActionLabel));
     addWorkflowReviewItem("File Sync", workflowFileSyncEnabledToggle?.checked ? "Before each run" : "Not used");
     addWorkflowReviewItem("Failure handling", `${strategyLabel}; ${retryCount} ${retryCount === 1 ? "retry" : "retries"}`);
-    addWorkflowReviewItem("Completion alert", normalizeText(alertLabel));
+    addWorkflowReviewItem("Alerts", getWorkflowAlertReviewSummary(alertLabel));
     workflowTasks.forEach((task, index) => {
         addWorkflowReviewItem(
             `Task ${index + 1}`,
@@ -964,6 +1043,9 @@ function validateWorkflowStep(stepName) {
             workflowTaskRetryCountInput?.focus();
             return false;
         }
+    }
+    if (stepName === "review" && !validateWorkflowAlertRules()) {
+        return false;
     }
     return true;
 }
@@ -1141,12 +1223,500 @@ function getWorkflowTriggerLabel(workflow) {
 }
 
 function getWorkflowAlertLabel(workflow) {
+    const mode = normalizeText(workflow?.alert_mode).toLowerCase();
+    const rules = Array.isArray(workflow?.alert_rules) ? workflow.alert_rules : [];
     const priority = normalizeText(workflow?.alert_priority).toLowerCase();
-    if (!priority || priority === "none") {
-        return "Off";
+
+    if (mode === "rules" || (!mode && rules.length)) {
+        const enabledCount = rules.filter((rule) => rule?.enabled !== false).length;
+        if (!enabledCount) {
+            return "Off";
+        }
+        return `${enabledCount} ${enabledCount === 1 ? "rule" : "rules"}`;
     }
 
-    return `${priority.charAt(0).toUpperCase()}${priority.slice(1)} priority`;
+    if (mode === "every_run" || (!mode && priority && priority !== "none")) {
+        if (!priority || priority === "none") {
+            return "Off";
+        }
+        return `Every run (${priority})`;
+    }
+
+    return "Off";
+}
+
+function createWorkflowAlertRuleId() {
+    if (window.crypto?.randomUUID) {
+        return window.crypto.randomUUID();
+    }
+    return `alert-rule-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function normalizeWorkflowAlertRule(rawRule) {
+    const rule = rawRule && typeof rawRule === "object" ? rawRule : {};
+    const condition = rule.condition && typeof rule.condition === "object" ? rule.condition : {};
+    const scope = rule.scope && typeof rule.scope === "object" ? rule.scope : {};
+    const conditionType = normalizeText(condition.type).toLowerCase() || "run_status";
+    const statuses = Array.isArray(condition.statuses) ? condition.statuses.map(normalizeText).filter(Boolean) : [];
+
+    return {
+        id: normalizeText(rule.id) || createWorkflowAlertRuleId(),
+        name: normalizeText(rule.name),
+        enabled: rule.enabled !== false,
+        severity: normalizeText(rule.severity).toLowerCase() || "medium",
+        delivery: normalizeText(rule.delivery).toLowerCase() || "default",
+        scopeType: normalizeText(scope.type).toLowerCase() || "final",
+        scopeTaskId: normalizeText(scope.task_id),
+        conditionType,
+        status: statuses[0] || (conditionType === "task_status" ? "failed" : "failed"),
+        matchMode: normalizeText(condition.mode).toLowerCase() || "contains_any",
+        matchValues: Array.isArray(condition.values) ? joinCsvList(condition.values) : "",
+        matchPattern: normalizeText(condition.pattern),
+        caseSensitive: Boolean(condition.case_sensitive),
+        fileSyncOutcome: normalizeText(condition.outcome).toLowerCase() || "changes_found",
+        evaluationPrompt: normalizeText(condition.prompt),
+        signalName: normalizeText(condition.signal_name),
+        minSeverity: normalizeText(condition.min_severity).toLowerCase() || "info",
+    };
+}
+
+function createDefaultWorkflowAlertRule() {
+    return normalizeWorkflowAlertRule({
+        name: "Run failed",
+        severity: "high",
+        condition: { type: "run_status", statuses: ["failed"] },
+    });
+}
+
+function createWorkflowAlertSelect(options, selectedValue, onChange) {
+    const select = document.createElement("select");
+    select.className = "form-select form-select-sm";
+    options.forEach((option) => {
+        const optionElement = document.createElement("option");
+        optionElement.value = option.value;
+        optionElement.textContent = option.label;
+        select.appendChild(optionElement);
+    });
+    select.value = selectedValue;
+    select.addEventListener("change", (event) => onChange(normalizeText(event.target.value)));
+    return select;
+}
+
+function createWorkflowAlertInput(value, placeholder, onChange, multiline = false) {
+    const input = document.createElement(multiline ? "textarea" : "input");
+    input.className = "form-control form-control-sm";
+    if (multiline) {
+        input.rows = 2;
+    } else {
+        input.type = "text";
+    }
+    input.value = value;
+    input.placeholder = placeholder;
+    input.addEventListener("input", (event) => onChange(event.target.value));
+    return input;
+}
+
+function createWorkflowAlertField(labelText, controlElement, columnClass = "col-md-4") {
+    const column = document.createElement("div");
+    column.className = columnClass;
+    const label = document.createElement("label");
+    label.className = "form-label small mb-1";
+    label.textContent = labelText;
+    const controlId = `alert-field-${Math.random().toString(16).slice(2)}`;
+    label.setAttribute("for", controlId);
+    controlElement.id = controlId;
+    column.append(label, controlElement);
+    return column;
+}
+
+function getWorkflowAlertTaskOptions() {
+    return workflowTasks.map((task, index) => ({
+        value: task.id,
+        label: normalizeText(task.name) || `Task ${index + 1}`,
+    }));
+}
+
+function buildWorkflowAlertConditionFields(rule) {
+    const fields = [];
+
+    if (rule.conditionType === "run_status") {
+        fields.push(createWorkflowAlertField(
+            "Run status",
+            createWorkflowAlertSelect(WORKFLOW_ALERT_RUN_STATUSES, rule.status, (value) => {
+                rule.status = value;
+            }),
+        ));
+    } else if (rule.conditionType === "task_status") {
+        fields.push(createWorkflowAlertField(
+            "Task status",
+            createWorkflowAlertSelect(WORKFLOW_ALERT_TASK_STATUSES, rule.status, (value) => {
+                rule.status = value;
+            }),
+        ));
+    } else if (rule.conditionType === "text_match") {
+        fields.push(createWorkflowAlertField(
+            "Match type",
+            createWorkflowAlertSelect(WORKFLOW_ALERT_TEXT_MATCH_MODES, rule.matchMode, (value) => {
+                rule.matchMode = value;
+                renderWorkflowAlertRules();
+            }),
+        ));
+        if (rule.matchMode === "regex") {
+            fields.push(createWorkflowAlertField(
+                "Regex pattern",
+                createWorkflowAlertInput(rule.matchPattern, "expires in \\d+ days", (value) => {
+                    rule.matchPattern = value;
+                }),
+                "col-md-5",
+            ));
+        } else {
+            fields.push(createWorkflowAlertField(
+                "Text values (comma separated)",
+                createWorkflowAlertInput(rule.matchValues, "EXPIRING, CRITICAL", (value) => {
+                    rule.matchValues = value;
+                }),
+                "col-md-5",
+            ));
+        }
+    } else if (rule.conditionType === "file_sync") {
+        fields.push(createWorkflowAlertField(
+            "File Sync result",
+            createWorkflowAlertSelect(WORKFLOW_ALERT_FILE_SYNC_OUTCOMES, rule.fileSyncOutcome, (value) => {
+                rule.fileSyncOutcome = value;
+            }),
+            "col-md-5",
+        ));
+    } else if (rule.conditionType === "model_evaluation") {
+        fields.push(createWorkflowAlertField(
+            "Condition to judge",
+            createWorkflowAlertInput(
+                rule.evaluationPrompt,
+                "any certificate expires within 14 days",
+                (value) => {
+                    rule.evaluationPrompt = value;
+                },
+                true,
+            ),
+            "col-md-8",
+        ));
+    } else if (rule.conditionType === "agent_signal") {
+        fields.push(createWorkflowAlertField(
+            "Signal name (optional)",
+            createWorkflowAlertInput(rule.signalName, "expiring-certificates", (value) => {
+                rule.signalName = value;
+            }),
+        ));
+        fields.push(createWorkflowAlertField(
+            "Minimum signal severity",
+            createWorkflowAlertSelect(WORKFLOW_ALERT_SEVERITIES, rule.minSeverity, (value) => {
+                rule.minSeverity = value;
+            }),
+        ));
+    }
+
+    return fields;
+}
+
+function buildWorkflowAlertRuleRow(rule, index) {
+    const card = document.createElement("div");
+    card.className = "card p-2 mb-2 workflow-alert-rule";
+    card.dataset.ruleId = rule.id;
+
+    const primaryRow = document.createElement("div");
+    primaryRow.className = "row g-2";
+    primaryRow.append(
+        createWorkflowAlertField(
+            "Rule name",
+            createWorkflowAlertInput(rule.name, `Alert rule ${index + 1}`, (value) => {
+                rule.name = value;
+            }),
+        ),
+        createWorkflowAlertField(
+            "Condition",
+            createWorkflowAlertSelect(WORKFLOW_ALERT_CONDITION_TYPES, rule.conditionType, (value) => {
+                rule.conditionType = value;
+                renderWorkflowAlertRules();
+            }),
+        ),
+        createWorkflowAlertField(
+            "Severity",
+            createWorkflowAlertSelect(WORKFLOW_ALERT_SEVERITIES, rule.severity, (value) => {
+                rule.severity = value;
+            }),
+            "col-md-2",
+        ),
+        createWorkflowAlertField(
+            "Delivery",
+            createWorkflowAlertSelect(WORKFLOW_ALERT_DELIVERIES, rule.delivery, (value) => {
+                rule.delivery = value;
+            }),
+            "col-md-2",
+        ),
+    );
+    card.appendChild(primaryRow);
+
+    const conditionFields = buildWorkflowAlertConditionFields(rule);
+    if (!WORKFLOW_ALERT_SCOPELESS_CONDITIONS.has(rule.conditionType)) {
+        conditionFields.push(createWorkflowAlertField(
+            "Look at",
+            createWorkflowAlertSelect(WORKFLOW_ALERT_SCOPE_TYPES, rule.scopeType, (value) => {
+                rule.scopeType = value;
+                renderWorkflowAlertRules();
+            }),
+            "col-md-3",
+        ));
+        if (rule.scopeType === "task") {
+            const taskOptions = getWorkflowAlertTaskOptions();
+            conditionFields.push(createWorkflowAlertField(
+                "Task",
+                createWorkflowAlertSelect(
+                    taskOptions.length ? taskOptions : [{ value: "", label: "Add a task first" }],
+                    rule.scopeTaskId,
+                    (value) => {
+                        rule.scopeTaskId = value;
+                    },
+                ),
+                "col-md-3",
+            ));
+        }
+    }
+
+    if (conditionFields.length) {
+        const conditionRow = document.createElement("div");
+        conditionRow.className = "row g-2 mt-1";
+        conditionFields.forEach((field) => conditionRow.appendChild(field));
+        card.appendChild(conditionRow);
+    }
+
+    if (rule.conditionType === "text_match" && rule.matchMode !== "regex") {
+        const caseWrapper = document.createElement("div");
+        caseWrapper.className = "form-check mt-2";
+        const caseInput = document.createElement("input");
+        caseInput.className = "form-check-input";
+        caseInput.type = "checkbox";
+        caseInput.id = `alert-case-${rule.id}`;
+        caseInput.checked = Boolean(rule.caseSensitive);
+        caseInput.addEventListener("change", (event) => {
+            rule.caseSensitive = Boolean(event.target.checked);
+        });
+        const caseLabel = document.createElement("label");
+        caseLabel.className = "form-check-label small";
+        caseLabel.setAttribute("for", caseInput.id);
+        caseLabel.textContent = "Match upper and lower case exactly";
+        caseWrapper.append(caseInput, caseLabel);
+        card.appendChild(caseWrapper);
+    }
+
+    const footer = document.createElement("div");
+    footer.className = "d-flex justify-content-between align-items-center mt-2";
+
+    const enabledWrapper = document.createElement("div");
+    enabledWrapper.className = "form-check form-switch";
+    const enabledInput = document.createElement("input");
+    enabledInput.className = "form-check-input";
+    enabledInput.type = "checkbox";
+    enabledInput.id = `alert-enabled-${rule.id}`;
+    enabledInput.checked = rule.enabled !== false;
+    enabledInput.addEventListener("change", (event) => {
+        rule.enabled = Boolean(event.target.checked);
+    });
+    const enabledLabel = document.createElement("label");
+    enabledLabel.className = "form-check-label small ms-2";
+    enabledLabel.setAttribute("for", enabledInput.id);
+    enabledLabel.textContent = "Rule enabled";
+    enabledWrapper.append(enabledInput, enabledLabel);
+
+    const removeButton = document.createElement("button");
+    removeButton.type = "button";
+    removeButton.className = "btn btn-sm btn-outline-danger";
+    removeButton.textContent = "Remove";
+    removeButton.addEventListener("click", () => {
+        workflowAlertRules = workflowAlertRules.filter((item) => item.id !== rule.id);
+        renderWorkflowAlertRules();
+        renderWorkflowReview();
+    });
+
+    footer.append(enabledWrapper, removeButton);
+    card.appendChild(footer);
+    return card;
+}
+
+function renderWorkflowAlertRules() {
+    if (!workflowAlertRulesList) {
+        return;
+    }
+
+    clearElementChildren(workflowAlertRulesList);
+    if (!workflowAlertRules.length) {
+        const emptyState = document.createElement("div");
+        emptyState.className = "text-muted small";
+        emptyState.textContent = "No alert rules yet. Add a rule to choose what should notify you.";
+        workflowAlertRulesList.appendChild(emptyState);
+        return;
+    }
+
+    workflowAlertRules.forEach((rule, index) => {
+        workflowAlertRulesList.appendChild(buildWorkflowAlertRuleRow(rule, index));
+    });
+}
+
+function getWorkflowAlertMode() {
+    return normalizeText(workflowAlertModeSelect?.value).toLowerCase() || "off";
+}
+
+function updateWorkflowAlertModeVisibility() {
+    const mode = getWorkflowAlertMode();
+    setElementVisibility(workflowAlertPriorityGroup, mode === "every_run");
+    setElementVisibility(workflowAlertRulesGroup, mode === "rules");
+}
+
+function buildWorkflowAlertRulePayload(rule) {
+    const condition = { type: rule.conditionType };
+    if (rule.conditionType === "run_status" || rule.conditionType === "task_status") {
+        condition.statuses = [rule.status];
+    } else if (rule.conditionType === "text_match") {
+        condition.mode = rule.matchMode;
+        if (rule.matchMode === "regex") {
+            condition.pattern = normalizeText(rule.matchPattern);
+        } else {
+            condition.values = parseCsvList(rule.matchValues);
+            condition.case_sensitive = Boolean(rule.caseSensitive);
+        }
+    } else if (rule.conditionType === "file_sync") {
+        condition.outcome = rule.fileSyncOutcome;
+    } else if (rule.conditionType === "model_evaluation") {
+        condition.prompt = normalizeText(rule.evaluationPrompt);
+    } else if (rule.conditionType === "agent_signal") {
+        condition.signal_name = normalizeText(rule.signalName);
+        condition.min_severity = rule.minSeverity;
+    }
+
+    const scopeType = WORKFLOW_ALERT_SCOPELESS_CONDITIONS.has(rule.conditionType) ? "final" : rule.scopeType;
+    return {
+        id: rule.id,
+        name: normalizeText(rule.name),
+        enabled: rule.enabled !== false,
+        severity: rule.severity,
+        delivery: rule.delivery,
+        scope: {
+            type: scopeType,
+            task_id: scopeType === "task" ? normalizeText(rule.scopeTaskId) : "",
+        },
+        condition,
+    };
+}
+
+function collectWorkflowAlertRulesPayload() {
+    return workflowAlertRules.map((rule) => buildWorkflowAlertRulePayload(rule));
+}
+
+function buildLegacyWorkflowAlertRules(priority) {
+    if (!priority || priority === "none") {
+        return [];
+    }
+
+    // Mirrors build_legacy_alert_rules in functions_workflow_alerts.py so an
+    // unmigrated workflow shows the same rules the runner would apply.
+    return [
+        {
+            id: "legacy-run-failed",
+            name: "Run failed",
+            enabled: true,
+            severity: "high",
+            delivery: "popup",
+            scope: { type: "final", task_id: "" },
+            condition: { type: "run_status", statuses: ["failed"] },
+        },
+        {
+            id: "legacy-run-completed",
+            name: "Run completed",
+            enabled: true,
+            severity: priority,
+            delivery: "popup",
+            scope: { type: "final", task_id: "" },
+            condition: { type: "run_status", statuses: ["completed"] },
+        },
+    ];
+}
+
+function loadWorkflowAlertSettings(workflow) {
+    const source = workflow && typeof workflow === "object" ? workflow : {};
+    const storedRules = Array.isArray(source.alert_rules) ? source.alert_rules : [];
+    const storedMode = normalizeText(source.alert_mode).toLowerCase();
+    const priority = normalizeText(source.alert_priority).toLowerCase() || "none";
+
+    let mode = storedMode;
+    let rules = storedRules;
+    if (!mode) {
+        if (storedRules.length) {
+            mode = "rules";
+        } else if (priority !== "none") {
+            mode = "rules";
+            rules = buildLegacyWorkflowAlertRules(priority);
+        } else {
+            mode = "off";
+        }
+    }
+
+    workflowAlertRules = rules.map((rule) => normalizeWorkflowAlertRule(rule));
+    if (workflowAlertModeSelect) {
+        workflowAlertModeSelect.value = mode;
+    }
+
+    const evaluation = source.alert_evaluation && typeof source.alert_evaluation === "object"
+        ? source.alert_evaluation
+        : {};
+    if (workflowAlertEvaluationOnErrorSelect) {
+        workflowAlertEvaluationOnErrorSelect.value = normalizeText(evaluation.on_error).toLowerCase() || "skip";
+    }
+
+    renderWorkflowAlertRules();
+    updateWorkflowAlertModeVisibility();
+}
+
+function validateWorkflowAlertRules() {
+    if (getWorkflowAlertMode() !== "rules") {
+        return true;
+    }
+
+    if (!workflowAlertRules.length) {
+        showToast("Add at least one alert rule or choose a different alert mode.", "warning");
+        return false;
+    }
+
+    if (workflowAlertRules.length > WORKFLOW_ALERT_MAX_RULES) {
+        showToast(`Workflows support up to ${WORKFLOW_ALERT_MAX_RULES} alert rules.`, "warning");
+        return false;
+    }
+
+    for (let index = 0; index < workflowAlertRules.length; index += 1) {
+        const rule = workflowAlertRules[index];
+        const ruleLabel = normalizeText(rule.name) || `Alert rule ${index + 1}`;
+
+        if (rule.conditionType === "text_match") {
+            if (rule.matchMode === "regex" && !normalizeText(rule.matchPattern)) {
+                showToast(`Add a regex pattern for "${ruleLabel}".`, "warning");
+                return false;
+            }
+            if (rule.matchMode !== "regex" && !parseCsvList(rule.matchValues).length) {
+                showToast(`Add at least one text value for "${ruleLabel}".`, "warning");
+                return false;
+            }
+        }
+
+        if (rule.conditionType === "model_evaluation" && !normalizeText(rule.evaluationPrompt)) {
+            showToast(`Describe the condition a model should judge for "${ruleLabel}".`, "warning");
+            return false;
+        }
+
+        const usesScope = !WORKFLOW_ALERT_SCOPELESS_CONDITIONS.has(rule.conditionType);
+        if (usesScope && rule.scopeType === "task" && !normalizeText(rule.scopeTaskId)) {
+            showToast(`Select the task that "${ruleLabel}" should watch.`, "warning");
+            return false;
+        }
+    }
+
+    return true;
 }
 
 function parseCsvList(value) {
@@ -3027,6 +3597,15 @@ function resetWorkflowForm() {
     if (workflowAlertPrioritySelect) {
         workflowAlertPrioritySelect.value = "none";
     }
+    if (workflowAlertModeSelect) {
+        workflowAlertModeSelect.value = "off";
+    }
+    if (workflowAlertEvaluationOnErrorSelect) {
+        workflowAlertEvaluationOnErrorSelect.value = "skip";
+    }
+    workflowAlertRules = [];
+    renderWorkflowAlertRules();
+    updateWorkflowAlertModeVisibility();
     workflowErrorStrategyInputs.forEach((input) => {
         input.checked = input.value === "halt";
     });
@@ -3141,6 +3720,7 @@ async function openWorkflowModal(workflow = null) {
         if (workflowAlertPrioritySelect) {
             workflowAlertPrioritySelect.value = normalizeText(workflow.alert_priority).toLowerCase() || "none";
         }
+        loadWorkflowAlertSettings(workflow);
         const errorHandling = workflow.error_handling && typeof workflow.error_handling === "object"
             ? workflow.error_handling
             : {};
@@ -3304,6 +3884,11 @@ function buildWorkflowPayload() {
             : true,
         trigger_type: triggerType,
         alert_priority: normalizeText(workflowAlertPrioritySelect?.value).toLowerCase() || "none",
+        alert_mode: getWorkflowAlertMode(),
+        alert_rules: collectWorkflowAlertRulesPayload(),
+        alert_evaluation: {
+            on_error: normalizeText(workflowAlertEvaluationOnErrorSelect?.value).toLowerCase() || "skip",
+        },
         is_enabled: ["interval", "file_sync"].includes(triggerType) ? Boolean(workflowEnabledToggle?.checked) : true,
         schedule: {},
         file_sync: {
@@ -3544,6 +4129,10 @@ async function saveWorkflow(event) {
     }
 
     if (!workflowSaveBtn) {
+        return;
+    }
+
+    if (!validateWorkflowAlertRules()) {
         return;
     }
 
@@ -4100,6 +4689,23 @@ function initializeWorkflowEvents() {
         renderWorkflowTasks();
     });
     workflowAlertPrioritySelect?.addEventListener("change", renderWorkflowReview);
+    workflowAlertModeSelect?.addEventListener("change", () => {
+        updateWorkflowAlertModeVisibility();
+        if (getWorkflowAlertMode() === "rules" && !workflowAlertRules.length) {
+            workflowAlertRules.push(createDefaultWorkflowAlertRule());
+            renderWorkflowAlertRules();
+        }
+        renderWorkflowReview();
+    });
+    workflowAlertRuleAddBtn?.addEventListener("click", () => {
+        if (workflowAlertRules.length >= WORKFLOW_ALERT_MAX_RULES) {
+            showToast(`Workflows support up to ${WORKFLOW_ALERT_MAX_RULES} alert rules.`, "warning");
+            return;
+        }
+        workflowAlertRules.push(createDefaultWorkflowAlertRule());
+        renderWorkflowAlertRules();
+        renderWorkflowReview();
+    });
     workflowTriggerTypeSelect?.addEventListener("change", updateTriggerFields);
     workflowScheduleUnitSelect?.addEventListener("change", updateScheduleConstraints);
     workflowFileSyncEnabledToggle?.addEventListener("change", updateFileSyncFields);

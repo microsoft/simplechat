@@ -16,6 +16,10 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from test_support.versioning import assert_app_version_at_least  # noqa: E402
+
 
 def read_repo_file(relative_path):
     """Read a repository file as UTF-8 text."""
@@ -46,7 +50,7 @@ def test_document_intelligence_auto_reprocess_contract():
     public_html = read_repo_file("application/single_app/templates/public_workspaces.html")
     public_js = read_repo_file("application/single_app/static/js/public/public_workspace.js")
 
-    assert_contains(config, 'VERSION = "0.241.167"', "current version")
+    assert_app_version_at_least("0.241.167")
 
     assert_contains(settings, '"auto"', "Auto allowed mode")
     assert_contains(settings, "DOCUMENT_INTELLIGENCE_MANUAL_EXTRACTION_MODES", "manual extraction change modes")
@@ -60,7 +64,7 @@ def test_document_intelligence_auto_reprocess_contract():
     assert_contains(documents, "source_file_available", "source blob metadata")
     assert_contains(documents, '"mark_enhanced_citations": False', "source-only blob upload")
     assert_contains(documents, "def validate_document_reprocess_source", "extraction change source validation")
-    assert_contains(documents, "Only PDF documents can change extraction", "PDF-only validation message")
+    assert_contains(documents, "Only PDF and image documents can change extraction", "PDF/image validation message")
     assert_contains(documents, "def process_document_reprocess_extraction_background", "extraction change worker")
     assert_contains(documents, "delete_document_chunks(document_id", "chunk replacement before reindex")
     assert_contains(documents, "extraction_mode_override=target_mode", "forced extraction change mode")
