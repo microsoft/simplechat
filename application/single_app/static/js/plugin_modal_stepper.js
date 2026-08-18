@@ -4726,7 +4726,6 @@ export class PluginModalStepper {
   initializeRocksDbConfiguration() {
     const defaultValues = [
       ['rocksdb-auth-scheme', ROCKSDB_AUTH_SCHEME_NONE],
-      ['rocksdb-verify-tls', 'true'],
       ['rocksdb-read-only', 'true'],
       ['rocksdb-key-encoding', 'utf8'],
       ['rocksdb-value-encoding', 'utf8'],
@@ -4837,7 +4836,6 @@ export class PluginModalStepper {
     const additionalFields = {
       base_url: endpoint,
       auth_scheme: authScheme,
-      verify_tls: (document.getElementById('rocksdb-verify-tls')?.value || 'true') === 'true',
       column_family: (document.getElementById('rocksdb-column-family')?.value || '').trim() || ROCKSDB_DEFAULT_COLUMN_FAMILY,
       key_encoding: document.getElementById('rocksdb-key-encoding')?.value || 'utf8',
       value_encoding: document.getElementById('rocksdb-value-encoding')?.value || 'utf8',
@@ -4875,7 +4873,6 @@ export class PluginModalStepper {
     this.setRocksDbFieldValue('rocksdb-auth-scheme', additionalFields.auth_scheme || ROCKSDB_AUTH_SCHEME_NONE);
     this.setRocksDbFieldValue('rocksdb-auth-key', auth.key || '');
     this.setRocksDbFieldValue('rocksdb-api-key-header', additionalFields.api_key_header || ROCKSDB_DEFAULT_API_KEY_HEADER);
-    this.setRocksDbFieldValue('rocksdb-verify-tls', additionalFields.verify_tls === false ? 'false' : 'true');
     this.setRocksDbFieldValue('rocksdb-column-family', additionalFields.column_family || ROCKSDB_DEFAULT_COLUMN_FAMILY);
     this.setRocksDbFieldValue('rocksdb-read-only', additionalFields.read_only === false ? 'false' : 'true');
     this.setRocksDbFieldValue('rocksdb-key-encoding', additionalFields.key_encoding || 'utf8');
@@ -4955,7 +4952,6 @@ export class PluginModalStepper {
     const payload = {
       base_url: this.getRocksDbEndpointValue(),
       auth_scheme: authScheme,
-      verify_tls: (document.getElementById('rocksdb-verify-tls')?.value || 'true') === 'true',
       timeout: Math.min(parseInt(document.getElementById('rocksdb-timeout')?.value, 10) || 10, 30)
     };
 

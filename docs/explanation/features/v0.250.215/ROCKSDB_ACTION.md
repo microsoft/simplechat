@@ -37,7 +37,6 @@ allow them, matching the read-only default of the SQL action.
 | Service Base URL | `base_url` | Required. `http` or `https` only. |
 | Authentication Scheme | `auth_scheme` | `none`, `bearer`, or `api_key` |
 | API Key Header Name | `api_key_header` | Only for `api_key`. Defaults to `X-API-Key`. |
-| Verify TLS Certificate | `verify_tls` | Defaults to `true` |
 | Column Family | `column_family` | Defaults to `default` |
 | Read-Only | `read_only` | Defaults to `true` |
 | Key Encoding | `key_encoding` | `utf8` or `base64` |
@@ -78,7 +77,6 @@ flood the model context. The result reports the original `value_bytes` alongside
   "additionalFields": {
     "base_url": "https://rocksdb.example.com/api",
     "auth_scheme": "bearer",
-    "verify_tls": true,
     "column_family": "events",
     "key_encoding": "utf8",
     "value_encoding": "json",
@@ -168,6 +166,7 @@ Range semantics the service should honor:
 2. Choose the **RocksDB** action type and continue to the configuration step.
 3. Enter the **Service Base URL** for your RocksDB HTTP service.
 4. Pick an **Authentication Scheme** and supply the token when using bearer or API key auth.
+   TLS certificate validation is always enforced.
 5. Set the data-handling options: column family, read-only toggle, encodings, key prefix hints,
    and the result, value-size, and timeout caps.
 6. Click **Test RocksDB Connection** to verify the configuration before saving.
@@ -187,8 +186,9 @@ prefixes that organize the keyspace measurably improves how well the agent targe
   browser or the model.
 - Writes are off by default and are refused both client-side and server-side while `read_only`
   is true.
-- Disable **Verify TLS Certificate** only for trusted internal services using a private
-  certificate authority.
+- TLS certificate validation is always enforced and cannot be turned off. For a service using
+  a private certificate authority, install that CA in the application trust store or point
+  `REQUESTS_CA_BUNDLE` at it.
 
 ## Testing and validation
 

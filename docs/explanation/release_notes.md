@@ -9,7 +9,7 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 *   **RocksDB Action**
     *   Added a new `rocksdb` action type so agents can read an ordered [RocksDB](https://github.com/facebook/rocksdb) key-value store, with a dedicated configuration card and Test Connection button in the action modal.
     *   RocksDB is an embedded library with no network protocol, so the action calls a RocksDB-backed HTTP/JSON service that you operate alongside your data. SimpleChat never runs RocksDB locally or opens a database directory on the application host.
-    *   Supports no-auth, bearer token, and API key header authentication, with a configurable header name and a TLS verification toggle for trusted internal services.
+    *   Supports no-auth, bearer token, and API key header authentication with a configurable header name. TLS certificate validation is always enforced.
     *   Exposes `get_value`, `get_values`, `key_exists`, `scan_prefix`, `scan_range`, `list_column_families`, and `get_database_stats` for reads, plus `put_value`, `delete_value`, and `write_batch` that stay blocked until an action explicitly allows writes.
     *   Handles binary data through configurable UTF-8, base64, and JSON key and value encodings that are sent to the service on every request, caps returned records, and flags values truncated by the size limit.
     *   The RocksDB HTTP service contract is fully documented so operators can implement a conforming service.

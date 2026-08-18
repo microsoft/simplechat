@@ -127,7 +127,6 @@ def test_workspace_rocksdb_action_modal_configuration(playwright):
         assert captured_payload.get("auth_scheme") == "api_key"
         assert captured_payload.get("api_key_header") == "X-Rocks-Key"
         assert captured_payload.get("auth_key") == "service-token-value"
-        assert captured_payload.get("verify_tls") is True
 
         page.locator("#plugin-modal-skip").click()
 

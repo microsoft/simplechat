@@ -87,7 +87,6 @@ def build_manifest(auth_key="", **additional_overrides):
         "base_url": "https://rocksdb.example.com/api",
         "auth_scheme": "none",
         "api_key_header": "X-API-Key",
-        "verify_tls": True,
         "column_family": "default",
         "key_encoding": "utf8",
         "value_encoding": "utf8",
@@ -231,7 +230,8 @@ def test_module_has_no_local_database_support():
                 f"Embedded symbol '{removed_symbol}' must not exist in the remote-only module"
             )
 
-        module_source = open(rocksdb_module.__file__, encoding="utf-8").read()
+        with open(rocksdb_module.__file__, encoding="utf-8") as module_file:
+            module_source = module_file.read()
         assert "rocksdict" not in module_source, "The module must not reference the rocksdict binding"
         assert "ROCKSDB_ALLOWED_ROOTS" not in module_source, (
             "The module must not reference the removed path allowlist"
@@ -241,7 +241,8 @@ def test_module_has_no_local_database_support():
         requirements_path = os.path.join(
             os.path.dirname(os.path.abspath(__file__)), "..", "application", "single_app", "requirements.txt"
         )
-        requirements = open(requirements_path, encoding="utf-8").read()
+        with open(requirements_path, encoding="utf-8") as requirements_file:
+            requirements = requirements_file.read()
         assert "rocksdict" not in requirements, "rocksdict must not be pinned in requirements.txt"
 
         print("✅ RocksDB plugin contains no embedded database code or dependency.")
@@ -300,7 +301,9 @@ def test_read_request_shaping():
         assert call["payload"]["key_encoding"] == "utf8", "The service needs the key wire encoding"
         assert call["payload"]["value_encoding"] == "utf8", "The service needs the value wire encoding"
         assert call["timeout"] == 10
-        assert call["verify"] is True
+        assert call["verify"] is None, (
+            "The plugin must not pass a verify override that could disable TLS validation"
+        )
 
         # A column family override is forwarded per call.
         plugin.get_value("user:001", column_family="events")
@@ -396,12 +399,12 @@ def test_auth_header_shaping():
         assert api_key_headers["X-Rocks-Key"] == "header-token"
         assert "Authorization" not in api_key_headers
 
-        # TLS verification is forwarded to the transport.
-        insecure_plugin, insecure_session = make_plugin(
-            FakeResponse(payload={"found": False}), verify_tls=False
+        # Certificate validation is always on; the plugin never disables it.
+        strict_plugin, strict_session = make_plugin(FakeResponse(payload={"found": False}))
+        strict_plugin.get_value("user:001")
+        assert strict_session.calls[-1]["verify"] is None, (
+            "The plugin must not pass a verify override that could disable TLS validation"
         )
-        insecure_plugin.get_value("user:001")
-        assert insecure_session.calls[-1]["verify"] is False
 
         print("✅ RocksDB auth schemes send the expected headers.")
         return True

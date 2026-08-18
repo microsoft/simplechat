@@ -1385,21 +1385,12 @@
                 <div class="form-text">If this action already uses a Key Vault-backed token, leave the stored value unchanged to preserve the existing secret.</div>
               </div>
 
-              <div class="mb-3 d-none" id="rocksdb-api-key-header-group">
-                <label for="rocksdb-api-key-header" class="form-label">API Key Header Name</label>
-                <input type="text" class="form-control" id="rocksdb-api-key-header" placeholder="X-API-Key" />
-                <div class="form-text">Header used to send the API key. Defaults to <code>X-API-Key</code>.</div>
+                <div class="mb-0 d-none" id="rocksdb-api-key-header-group">
+                  <label for="rocksdb-api-key-header" class="form-label">API Key Header Name</label>
+                  <input type="text" class="form-control" id="rocksdb-api-key-header" placeholder="X-API-Key" />
+                  <div class="form-text">Header used to send the API key. Defaults to <code>X-API-Key</code>.</div>
+                </div>
               </div>
-
-              <div class="mb-0">
-                <label for="rocksdb-verify-tls" class="form-label">Verify TLS Certificate</label>
-                <select class="form-select" id="rocksdb-verify-tls">
-                  <option value="true">Yes (Recommended)</option>
-                  <option value="false">No</option>
-                </select>
-                <div class="form-text">Only disable verification for trusted internal services that use a private certificate authority.</div>
-              </div>
-            </div>
 
             <div class="rocksdb-config-card">
               <div class="config-section-label">

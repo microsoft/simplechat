@@ -27,7 +27,7 @@ from semantic_kernel_plugins.rocksdb_plugin import (
 )
 from functions_settings import get_settings, is_tabular_processing_enabled, update_settings
 from functions_authentication import *
-from functions_appinsights import log_event
+from functions_appinsights import log_event, sanitize_log_message
 from swagger_wrapper import swagger_route, get_auth_security
 import logging
 import os
@@ -2740,14 +2740,16 @@ def test_rocksdb_connection():
     user_id = get_current_user_id()
     auth_scheme = (data.get('auth_scheme') or AUTH_SCHEME_NONE).strip().lower()
     api_key_header = (data.get('api_key_header') or '').strip() or DEFAULT_API_KEY_HEADER
-    verify_tls = str(data.get('verify_tls', True)).strip().lower() not in ('false', '0', 'no', 'off')
     auth_key = (data.get('auth_key') or '').strip()
     timeout = min(max(int(data.get('timeout', 10) or 10), 1), 30)
 
     try:
         base_url = normalize_rocksdb_base_url(data.get('base_url') or '')
-    except ValueError as exc:
-        return jsonify({'success': False, 'error': str(exc)}), 400
+    except ValueError:
+        return jsonify({
+            'success': False,
+            'error': 'The RocksDB service base URL is invalid. Use an http or https URL that includes a host name.'
+        }), 400
 
     if not base_url:
         return jsonify({'success': False, 'error': 'A RocksDB service base URL is required.'}), 400
@@ -2756,12 +2758,12 @@ def test_rocksdb_connection():
 
     try:
         existing_plugin = _load_existing_plugin_for_test(data.get('existing_plugin'), user_id)
-    except PermissionError as exc:
-        return jsonify({'success': False, 'error': str(exc)}), 403
-    except LookupError as exc:
-        return jsonify({'success': False, 'error': str(exc)}), 404
-    except ValueError as exc:
-        return jsonify({'success': False, 'error': str(exc)}), 400
+    except PermissionError:
+        return jsonify({'success': False, 'error': 'You do not have access to the selected action.'}), 403
+    except LookupError:
+        return jsonify({'success': False, 'error': 'The selected action could not be found.'}), 404
+    except ValueError:
+        return jsonify({'success': False, 'error': 'The selected action reference is invalid.'}), 400
 
     if auth_scheme != AUTH_SCHEME_NONE:
         existing_auth = {}
@@ -2778,8 +2780,11 @@ def test_rocksdb_connection():
 
         try:
             auth_key = _resolve_secret_value_for_plugin_test(auth_key, 'auth.key', plugin_label='RocksDB')
-        except ValueError as exc:
-            return jsonify({'success': False, 'error': str(exc)}), 400
+        except ValueError:
+            return jsonify({
+                'success': False,
+                'error': 'The stored RocksDB service token could not be resolved. Re-enter the token.'
+            }), 400
 
         if not auth_key:
             return jsonify({
@@ -2798,7 +2803,6 @@ def test_rocksdb_connection():
             f'{base_url}/health',
             headers=headers,
             timeout=timeout,
-            verify=verify_tls,
         )
 
         if response.status_code == 404:
@@ -2808,7 +2812,6 @@ def test_rocksdb_connection():
                 json={'limit': 1},
                 headers=headers,
                 timeout=timeout,
-                verify=verify_tls,
             )
 
         if response.status_code in (401, 403):
@@ -2843,7 +2846,7 @@ def test_rocksdb_connection():
     except requests.exceptions.SSLError:
         return jsonify({
             'success': False,
-            'error': 'TLS verification failed for the RocksDB service. Check the certificate or disable TLS verification for trusted internal hosts.'
+            'error': 'TLS verification failed for the RocksDB service. Install the issuing certificate authority in the application trust store.'
         }), 400
     except requests.exceptions.Timeout:
         return jsonify({
@@ -2852,8 +2855,13 @@ def test_rocksdb_connection():
         }), 400
     except Exception as exc:
         log_event(
-            f'[PLUGINS] RocksDB connection test failed: {exc}',
-            extra={'user_id': user_id, 'auth_scheme': auth_scheme},
+            '[PLUGINS] RocksDB connection test failed',
+            extra={
+                'user_id': user_id,
+                'auth_scheme': auth_scheme,
+                'error_type': type(exc).__name__,
+                'error_detail': sanitize_log_message(exc),
+            },
             level=logging.WARNING,
             exceptionTraceback=True,
         )

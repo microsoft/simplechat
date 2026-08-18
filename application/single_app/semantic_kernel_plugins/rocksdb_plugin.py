@@ -19,7 +19,7 @@ from urllib.parse import urlparse
 import requests
 from semantic_kernel.functions import kernel_function
 
-from functions_appinsights import log_event
+from functions_appinsights import log_event, sanitize_log_message
 from semantic_kernel_plugins.base_plugin import BasePlugin
 from semantic_kernel_plugins.plugin_invocation_logger import plugin_function_logger
 
@@ -97,7 +97,6 @@ class RocksDbPlugin(BasePlugin):
         self.api_key_header = (
             str(additional_fields.get("api_key_header") or "").strip() or DEFAULT_API_KEY_HEADER
         )
-        self.verify_tls = self._coerce_bool(additional_fields.get("verify_tls"), True)
 
         self.column_family = (
             str(additional_fields.get("column_family") or "").strip() or DEFAULT_COLUMN_FAMILY
@@ -139,7 +138,6 @@ class RocksDbPlugin(BasePlugin):
                 "timeout": self.timeout,
                 "auth_scheme": self.auth_scheme,
                 "has_auth_key": bool(self.auth_key),
-                "verify_tls": self.verify_tls,
                 "prefix_hint_count": len(self.key_prefix_hints),
             },
             level=logging.INFO,
@@ -640,13 +638,20 @@ class RocksDbPlugin(BasePlugin):
         error: Exception,
         context: Optional[Dict[str, Any]] = None,
     ) -> RocksDbResult:
+        # Log the error type and a sanitized detail rather than interpolating the raw
+        # exception, because transport exceptions can embed request details.
         log_event(
-            f"[ROCKSDB_PLUGIN] {operation} failed: {error}",
-            extra={"operation": operation, "column_family": self.column_family},
+            f"[ROCKSDB_PLUGIN] {operation} failed",
+            extra={
+                "operation": operation,
+                "column_family": self.column_family,
+                "error_type": type(error).__name__,
+                "error_detail": sanitize_log_message(error),
+            },
             level=logging.ERROR,
             exceptionTraceback=True,
         )
-        payload = {"operation": operation, "error": str(error)}
+        payload = {"operation": operation, "error": sanitize_log_message(error)}
         if context:
             payload.update(context)
         return RocksDbResult(payload, self.metadata)
@@ -747,7 +752,6 @@ class RocksDbPlugin(BasePlugin):
             json=request_payload,
             headers=self._build_remote_headers(),
             timeout=self.timeout,
-            verify=self.verify_tls,
         )
 
         status_code = getattr(response, "status_code", None)
