@@ -1,6 +1,6 @@
 # Log Credential Key Redaction Fix
 
-Fixed/Implemented in version: **0.250.217**
+Fixed/Implemented in version: **0.250.218**
 
 ## Issue Description
 

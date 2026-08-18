@@ -2,9 +2,9 @@
 #!/usr/bin/env python3
 """
 Functional test for privacy logging and telemetry audit fixes.
-Version: 0.250.217
+Version: 0.250.218
 Implemented in: 0.242.058
-Credential key redaction coverage extended in: 0.250.217
+Credential key redaction coverage extended in: 0.250.218
 
 This test ensures logging, telemetry, and document-processing diagnostics redact
 secret-bearing fields and avoid raw agent or uploaded document content in audit

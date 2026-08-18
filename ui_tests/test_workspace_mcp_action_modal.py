@@ -302,6 +302,9 @@ def test_workspace_mcp_action_modal():
         modal.get_by_role("button", name="Next").click()
 
         expect(page.locator("#mcp-config-section")).to_be_visible()
+        expect(page.locator("#mcp-test-connection-btn")).to_be_visible()
+        expect(page.locator("#mcp-test-connection-result")).to_be_hidden()
+        expect(page.locator("#mcp-discover-tools-btn")).to_be_visible()
         expect(page.locator("#generic-config-section")).to_be_hidden()
         expect(page.locator("#sql-config-section")).to_be_hidden()
 

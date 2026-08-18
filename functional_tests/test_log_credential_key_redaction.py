@@ -2,8 +2,8 @@
 # test_log_credential_key_redaction.py
 """
 Functional test for credential key redaction in application logging.
-Version: 0.250.217
-Implemented in: 0.250.217
+Version: 0.250.218
+Implemented in: 0.250.218
 
 This test ensures that credential-bearing property names reach the logging sinks
 redacted. Before this fix, `_is_sensitive_log_key` matched only a fixed list of
@@ -279,7 +279,7 @@ def test_cosmos_client_imports_are_module_qualified():
     print("Testing CosmosClient import bindings...")
 
     try:
-        assert_app_version_at_least("0.250.217")
+        assert_app_version_at_least("0.250.218")
 
         root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         checked_files = (
