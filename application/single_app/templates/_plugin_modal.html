@@ -166,6 +166,17 @@
                 </div>
               </div>
             </div>
+
+            <div class="mt-3 pt-3 border-top" id="openapi-test-connection-section">
+              <div class="d-flex align-items-center gap-3">
+                <button type="button" class="btn btn-outline-primary" id="openapi-test-connection-btn">
+                  <i class="bi bi-plug me-2"></i>Test Connection
+                </button>
+              </div>
+              <div id="openapi-test-connection-result" class="mt-2 d-none">
+                <div class="alert mb-0 py-2 px-3 small" id="openapi-test-connection-alert" role="alert"></div>
+              </div>
+            </div>
           </div>
 
           <!-- Generic endpoint field for other plugin types -->
@@ -301,6 +312,17 @@
                 </div>
               </div>
             </div>
+
+            <div class="mt-3 pt-3 border-top" id="databricks-test-connection-section">
+              <div class="d-flex align-items-center gap-3">
+                <button type="button" class="btn btn-outline-primary" id="databricks-test-connection-btn">
+                  <i class="bi bi-plug me-2"></i>Test Connection
+                </button>
+              </div>
+              <div id="databricks-test-connection-result" class="mt-2 d-none">
+                <div class="alert mb-0 py-2 px-3 small" id="databricks-test-connection-alert" role="alert"></div>
+              </div>
+            </div>
           </div>
 
           <div id="snowflake-config-section" class="d-none">
@@ -397,6 +419,17 @@
                 </div>
               </div>
             </div>
+
+            <div class="mt-3 pt-3 border-top" id="snowflake-test-connection-section">
+              <div class="d-flex align-items-center gap-3">
+                <button type="button" class="btn btn-outline-primary" id="snowflake-test-connection-btn">
+                  <i class="bi bi-plug me-2"></i>Test Connection
+                </button>
+              </div>
+              <div id="snowflake-test-connection-result" class="mt-2 d-none">
+                <div class="alert mb-0 py-2 px-3 small" id="snowflake-test-connection-alert" role="alert"></div>
+              </div>
+            </div>
           </div>
 
           <div id="tableau-config-section" class="d-none">
@@ -481,6 +514,17 @@
                     <label class="form-check-label" for="tableau-use-server-version">Use Tableau server version negotiation</label>
                   </div>
                 </div>
+              </div>
+            </div>
+
+            <div class="mt-3 pt-3 border-top" id="tableau-test-connection-section">
+              <div class="d-flex align-items-center gap-3">
+                <button type="button" class="btn btn-outline-primary" id="tableau-test-connection-btn">
+                  <i class="bi bi-plug me-2"></i>Test Connection
+                </button>
+              </div>
+              <div id="tableau-test-connection-result" class="mt-2 d-none">
+                <div class="alert mb-0 py-2 px-3 small" id="tableau-test-connection-alert" role="alert"></div>
               </div>
             </div>
           </div>
@@ -824,6 +868,17 @@
                 </div>
               </div>
             </div>
+
+            <div class="mt-3 pt-3 border-top" id="mcp-test-connection-section">
+              <div class="d-flex align-items-center gap-3">
+                <button type="button" class="btn btn-outline-primary" id="mcp-test-connection-btn">
+                  <i class="bi bi-plug me-2"></i>Test Connection
+                </button>
+              </div>
+              <div id="mcp-test-connection-result" class="mt-2 d-none">
+                <div class="alert mb-0 py-2 px-3 small" id="mcp-test-connection-alert" role="alert"></div>
+              </div>
+            </div>
           </div>
 
           <div id="azure-maps-config-section" class="d-none">
@@ -842,6 +897,105 @@
                   <input type="password" class="form-control" id="azure-maps-key" placeholder="Azure Maps subscription key" autocomplete="new-password" data-bwignore="true" data-1p-ignore="true" data-lpignore="true" />
                   <div class="form-text">The browser receives only a short-lived proxy token. The raw subscription key stays in the stored action configuration.</div>
                 </div>
+              </div>
+            </div>
+
+            <div class="mt-3 pt-3 border-top" id="azure-maps-test-connection-section">
+              <div class="d-flex align-items-center gap-3">
+                <button type="button" class="btn btn-outline-primary" id="azure-maps-test-connection-btn">
+                  <i class="bi bi-plug me-2"></i>Test Connection
+                </button>
+              </div>
+              <div id="azure-maps-test-connection-result" class="mt-2 d-none">
+                <div class="alert mb-0 py-2 px-3 small" id="azure-maps-test-connection-alert" role="alert"></div>
+              </div>
+            </div>
+          </div>
+
+          <div id="log-analytics-config-section" class="d-none">
+            <div class="alert alert-info mb-3">
+              <strong>Log Analytics action:</strong> Configure one Azure Log Analytics workspace so agents can discover table schemas and run read-only KQL queries.
+            </div>
+
+            <div class="simplechat-config-card mb-3">
+              <div class="config-section-label">
+                <i class="bi bi-graph-up me-2"></i>Workspace
+              </div>
+              <div class="mb-3">
+                <label for="log-analytics-workspace-id" class="form-label">Workspace ID <span class="text-danger">*</span></label>
+                <input type="text" class="form-control" id="log-analytics-workspace-id" placeholder="00000000-0000-0000-0000-000000000000" />
+                <div class="form-text">The Log Analytics workspace ID (GUID), not the workspace resource ID.</div>
+              </div>
+              <div class="row g-3">
+                <div class="col-md-6">
+                  <label for="log-analytics-cloud" class="form-label">Cloud <span class="text-danger">*</span></label>
+                  <select class="form-select" id="log-analytics-cloud">
+                    <option value="public">Azure Commercial</option>
+                    <option value="usgovernment">Azure US Government</option>
+                    <option value="custom">Custom</option>
+                  </select>
+                </div>
+                <div class="col-md-6">
+                  <label for="log-analytics-endpoint" class="form-label">API Endpoint</label>
+                  <input type="text" class="form-control" id="log-analytics-endpoint" placeholder="https://api.loganalytics.io" />
+                  <div class="form-text">Optional. Leave blank to use the default endpoint for the selected cloud.</div>
+                </div>
+              </div>
+              <div class="row g-3 mt-1 d-none" id="log-analytics-custom-cloud-group">
+                <div class="col-md-6">
+                  <label for="log-analytics-authority-host" class="form-label">Authority Host <span class="text-danger">*</span></label>
+                  <input type="text" class="form-control" id="log-analytics-authority-host" placeholder="https://login.microsoftonline.com" />
+                </div>
+                <div class="col-md-6">
+                  <label for="log-analytics-endpoint-override" class="form-label">Endpoint Override <span class="text-danger">*</span></label>
+                  <input type="text" class="form-control" id="log-analytics-endpoint-override" placeholder="https://api.loganalytics.example" />
+                </div>
+              </div>
+            </div>
+
+            <div class="simplechat-config-card mb-0">
+              <div class="config-section-label">
+                <i class="bi bi-shield-lock me-2"></i>Authentication
+              </div>
+              <div class="mb-3 d-none" id="log-analytics-action-identity-group">
+                <label for="log-analytics-identity-select" class="form-label">Reusable Identity</label>
+                <select class="form-select" id="log-analytics-identity-select"></select>
+                <div class="form-text" id="log-analytics-identity-status"></div>
+              </div>
+              <div class="mb-3">
+                <label for="log-analytics-auth-method" class="form-label">Authentication Method</label>
+                <select class="form-select" id="log-analytics-auth-method">
+                  <option value="identity">Managed Identity</option>
+                  <option value="user">On-Behalf-Of User</option>
+                  <option value="servicePrincipal">Service Principal</option>
+                  <option value="key">Key</option>
+                </select>
+              </div>
+              <div class="mb-3 d-none" id="log-analytics-auth-identity-group">
+                <label for="log-analytics-auth-identity" class="form-label" id="log-analytics-auth-identity-label">Managed Identity Client ID</label>
+                <input type="text" class="form-control" id="log-analytics-auth-identity" placeholder="Leave blank to use the system-assigned identity" />
+              </div>
+              <div class="mb-3 d-none" id="log-analytics-auth-key-group">
+                <label for="log-analytics-auth-key" class="form-label" id="log-analytics-auth-key-label">Key</label>
+                <input type="password" class="form-control" id="log-analytics-auth-key" autocomplete="new-password" data-bwignore="true" data-1p-ignore="true" data-lpignore="true" />
+              </div>
+              <div class="mb-3 d-none" id="log-analytics-auth-tenant-id-group">
+                <label for="log-analytics-auth-tenant-id" class="form-label">Tenant ID <span class="text-danger">*</span></label>
+                <input type="text" class="form-control" id="log-analytics-auth-tenant-id" placeholder="00000000-0000-0000-0000-000000000000" />
+              </div>
+              <div class="alert alert-info mb-0 d-none" id="log-analytics-auth-info">
+                <small id="log-analytics-auth-info-text"></small>
+              </div>
+            </div>
+
+            <div class="mt-3 pt-3 border-top" id="log-analytics-test-connection-section">
+              <div class="d-flex align-items-center gap-3">
+                <button type="button" class="btn btn-outline-primary" id="log-analytics-test-connection-btn">
+                  <i class="bi bi-plug me-2"></i>Test Connection
+                </button>
+              </div>
+              <div id="log-analytics-test-connection-result" class="mt-2 d-none">
+                <div class="alert mb-0 py-2 px-3 small" id="log-analytics-test-connection-alert" role="alert"></div>
               </div>
             </div>
           </div>
@@ -992,6 +1146,17 @@
               <div id="blob-storage-upload-file-types-section">
                 <label class="form-label">Upload File Types</label>
                 <div id="blob-storage-upload-file-types-list" class="d-grid gap-2"></div>
+              </div>
+            </div>
+
+            <div class="mt-3 pt-3 border-top" id="blob-storage-test-connection-section">
+              <div class="d-flex align-items-center gap-3">
+                <button type="button" class="btn btn-outline-primary" id="blob-storage-test-connection-btn">
+                  <i class="bi bi-plug me-2"></i>Test Connection
+                </button>
+              </div>
+              <div id="blob-storage-test-connection-result" class="mt-2 d-none">
+                <div class="alert mb-0 py-2 px-3 small" id="blob-storage-test-connection-alert" role="alert"></div>
               </div>
             </div>
           </div>

@@ -13,6 +13,7 @@ const DATABRICKS_ACTION_IDENTITY_AUTH_TYPES = ['api_key', 'bearer_token', 'manag
 const SNOWFLAKE_ACTION_IDENTITY_AUTH_TYPES = ['api_key', 'bearer_token', 'username_password'];
 const TABLEAU_ACTION_IDENTITY_AUTH_TYPES = ['api_key', 'username_password'];
 const YAMCS_ACTION_IDENTITY_AUTH_TYPES = ['api_key', 'bearer_token', 'username_password'];
+const LOG_ANALYTICS_ACTION_IDENTITY_AUTH_TYPES = ['client_secret', 'managed_identity'];
 const BLOB_STORAGE_PLUGIN_TYPE = 'blob_storage';
 const DATABRICKS_PLUGIN_TYPE = 'databricks';
 const DATABRICKS_DEFAULT_CLOUD = 'azure_commercial';
@@ -62,6 +63,19 @@ const ROCKSDB_DEFAULT_COLUMN_FAMILY = 'default';
 const ROCKSDB_DEFAULT_MAX_RESULTS = 100;
 const ROCKSDB_DEFAULT_MAX_VALUE_BYTES = 32768;
 const ROCKSDB_DEFAULT_TIMEOUT = 30;
+const LOG_ANALYTICS_PLUGIN_TYPE = 'log_analytics';
+const LOG_ANALYTICS_DEFAULT_ENDPOINT = 'https://api.loganalytics.io';
+const LOG_ANALYTICS_DEFAULT_CLOUD = 'public';
+const ACTION_CONNECTION_TEST_CONFIG = {
+  openapi: { idPrefix: 'openapi', url: '/api/plugins/test-openapi-connection', label: 'OpenAPI' },
+  azureMaps: { idPrefix: 'azure-maps', url: '/api/plugins/test-azure-maps-connection', label: 'Azure Maps' },
+  blobStorage: { idPrefix: 'blob-storage', url: '/api/plugins/test-blob-storage-connection', label: 'Blob Storage' },
+  databricks: { idPrefix: 'databricks', url: '/api/plugins/test-databricks-connection', label: 'Databricks' },
+  logAnalytics: { idPrefix: 'log-analytics', url: '/api/plugins/test-log-analytics-connection', label: 'Log Analytics' },
+  mcp: { idPrefix: 'mcp', url: '/api/plugins/test-mcp-connection', label: 'MCP' },
+  snowflake: { idPrefix: 'snowflake', url: '/api/plugins/test-snowflake-connection', label: 'Snowflake' },
+  tableau: { idPrefix: 'tableau', url: '/api/plugins/test-tableau-connection', label: 'Tableau' }
+};
 const CHART_DEFAULT_ENDPOINT = 'chart://internal';
 const INTERNAL_DOCUMENT_SEARCH_ENDPOINT = 'internal://document-search';
 const MSGRAPH_DEFAULT_ENDPOINT = 'https://graph.microsoft.com';
@@ -524,6 +538,9 @@ export class PluginModalStepper {
     if (kind === 'yamcs') {
       return this.actionIdentities.filter(identity => YAMCS_ACTION_IDENTITY_AUTH_TYPES.includes(this.getIdentityAuthType(identity)));
     }
+    if (kind === 'logAnalytics') {
+      return this.actionIdentities.filter(identity => LOG_ANALYTICS_ACTION_IDENTITY_AUTH_TYPES.includes(this.getIdentityAuthType(identity)));
+    }
     return this.actionIdentities;
   }
 
@@ -534,6 +551,7 @@ export class PluginModalStepper {
     this.populateActionIdentitySelector('snowflake', 'snowflake-identity-select', 'snowflake-action-identity-group', 'snowflake-identity-status');
     this.populateActionIdentitySelector('tableau', 'tableau-identity-select', 'tableau-action-identity-group', 'tableau-identity-status');
     this.populateActionIdentitySelector('yamcs', 'yamcs-identity-select', 'yamcs-action-identity-group', 'yamcs-identity-status');
+    this.populateActionIdentitySelector('logAnalytics', 'log-analytics-identity-select', 'log-analytics-action-identity-group', 'log-analytics-identity-status');
     this.populateActionIdentitySelector('generic', 'plugin-auth-identity-select-generic', 'generic-action-identity-group', 'plugin-auth-identity-status-generic');
     this.populateActionIdentitySelector('sql', 'sql-identity-select', 'sql-action-identity-group', 'sql-identity-status');
   }
@@ -597,6 +615,7 @@ export class PluginModalStepper {
       snowflake: 'snowflake-identity-select',
       tableau: 'tableau-identity-select',
       yamcs: 'yamcs-identity-select',
+      logAnalytics: 'log-analytics-identity-select',
       generic: 'plugin-auth-identity-select-generic',
       sql: 'sql-identity-select'
     };
@@ -615,6 +634,7 @@ export class PluginModalStepper {
       snowflake: 'snowflake-identity-select',
       tableau: 'tableau-identity-select',
       yamcs: 'yamcs-identity-select',
+      logAnalytics: 'log-analytics-identity-select',
       generic: 'plugin-auth-identity-select-generic',
       sql: 'sql-identity-select'
     };
@@ -655,7 +675,8 @@ export class PluginModalStepper {
       databricks: 'databricks-auth-method',
       snowflake: 'snowflake-auth-method',
       tableau: 'tableau-auth-method',
-      yamcs: 'yamcs-auth-method'
+      yamcs: 'yamcs-auth-method',
+      logAnalytics: 'log-analytics-auth-method'
     };
     const authSelect = document.getElementById(authSelectIds[kind] || 'plugin-auth-type-generic');
     if (authSelect) {
@@ -673,6 +694,8 @@ export class PluginModalStepper {
       this.toggleTableauAuthFields();
     } else if (kind === 'yamcs') {
       this.toggleYamcsAuthFields();
+    } else if (kind === 'logAnalytics') {
+      this.toggleLogAnalyticsAuthFields();
     } else {
       this.toggleGenericAuthFields();
     }
@@ -705,6 +728,18 @@ export class PluginModalStepper {
     document.getElementById('tableau-identity-select').addEventListener('change', () => this.handleActionIdentityChange('tableau'));
     document.getElementById('yamcs-auth-method').addEventListener('change', () => this.toggleYamcsAuthFields());
     document.getElementById('yamcs-identity-select').addEventListener('change', () => this.handleActionIdentityChange('yamcs'));
+    const logAnalyticsCloud = document.getElementById('log-analytics-cloud');
+    if (logAnalyticsCloud) {
+      logAnalyticsCloud.addEventListener('change', () => this.handleLogAnalyticsCloudChange());
+    }
+    const logAnalyticsAuthMethod = document.getElementById('log-analytics-auth-method');
+    if (logAnalyticsAuthMethod) {
+      logAnalyticsAuthMethod.addEventListener('change', () => this.toggleLogAnalyticsAuthFields());
+    }
+    const logAnalyticsIdentitySelect = document.getElementById('log-analytics-identity-select');
+    if (logAnalyticsIdentitySelect) {
+      logAnalyticsIdentitySelect.addEventListener('change', () => this.handleActionIdentityChange('logAnalytics'));
+    }
     document.getElementById('plugin-auth-identity-select-generic').addEventListener('change', () => this.handleActionIdentityChange('generic'));
     const msGraphMailSendMode = document.getElementById('msgraph-mail-send-mode');
     if (msGraphMailSendMode) {
@@ -760,6 +795,14 @@ export class PluginModalStepper {
     if (testYamcsBtn) {
       testYamcsBtn.addEventListener('click', () => this.testYamcsConnection());
     }
+
+    // Test connection buttons for the remaining configurable action types
+    Object.keys(ACTION_CONNECTION_TEST_CONFIG).forEach(testKey => {
+      const button = document.getElementById(`${ACTION_CONNECTION_TEST_CONFIG[testKey].idPrefix}-test-connection-btn`);
+      if (button) {
+        button.addEventListener('click', () => this.runActionConnectionTest(testKey));
+      }
+    });
 
     const keyVaultReminderToggle = document.getElementById('plugin-key-vault-reminder-enabled');
     if (keyVaultReminderToggle) {
@@ -1329,6 +1372,10 @@ export class PluginModalStepper {
 
   isAzureMapsType(type = this.selectedType) {
     return !!(type && type.toLowerCase() === AZURE_MAPS_PLUGIN_TYPE);
+  }
+
+  isLogAnalyticsType(type = this.selectedType) {
+    return !!(type && type.toLowerCase() === LOG_ANALYTICS_PLUGIN_TYPE);
   }
 
   isChartType(type = this.selectedType) {
@@ -3437,7 +3484,7 @@ export class PluginModalStepper {
   }
 
   isStructuredConfigType(type = this.selectedType) {
-    return this.isSqlType(type) || this.isCosmosType(type) || this.isRocksDbType(type) || this.isDocumentSearchType(type) || this.isBlobStorageType(type) || this.isDatabricksType(type) || this.isSnowflakeType(type) || this.isTableauType(type) || this.isYamcsType(type) || this.isMcpType(type) || this.isSimpleChatType(type) || this.isMsGraphType(type) || this.isAzureMapsType(type) || this.isChartType(type);
+    return this.isSqlType(type) || this.isCosmosType(type) || this.isRocksDbType(type) || this.isDocumentSearchType(type) || this.isBlobStorageType(type) || this.isDatabricksType(type) || this.isSnowflakeType(type) || this.isTableauType(type) || this.isYamcsType(type) || this.isMcpType(type) || this.isSimpleChatType(type) || this.isMsGraphType(type) || this.isAzureMapsType(type) || this.isChartType(type) || this.isLogAnalyticsType(type);
   }
 
   showConfigSectionForType() {
@@ -3457,6 +3504,7 @@ export class PluginModalStepper {
       msGraph: document.getElementById('msgraph-config-section'),
       mcp: document.getElementById('mcp-config-section'),
       azureMaps: document.getElementById('azure-maps-config-section'),
+      logAnalytics: document.getElementById('log-analytics-config-section'),
       chart: document.getElementById('chart-config-section')
     };
 
@@ -3511,6 +3559,9 @@ export class PluginModalStepper {
       this.updateMsGraphCalendarDelayVisibility();
     } else if (this.isAzureMapsType()) {
       showOnly('azureMaps');
+    } else if (this.isLogAnalyticsType()) {
+      showOnly('logAnalytics');
+      this.initializeLogAnalyticsConfiguration();
     } else if (this.isChartType()) {
       showOnly('chart');
       this.renderChartConfiguration();
@@ -3579,6 +3630,8 @@ export class PluginModalStepper {
           titleEl.textContent = 'Microsoft Graph Configuration';
         } else if (isAzureMapsType) {
           titleEl.textContent = 'Azure Maps Configuration';
+        } else if (this.isLogAnalyticsType()) {
+          titleEl.textContent = 'Log Analytics Configuration';
         } else if (isChartType) {
           titleEl.textContent = 'Chart Configuration';
         } else {
@@ -3768,6 +3821,7 @@ export class PluginModalStepper {
         const msGraphSection = document.getElementById('msgraph-config-section');
         const azureMapsSection = document.getElementById('azure-maps-config-section');
         const chartSection = document.getElementById('chart-config-section');
+        const logAnalyticsSection = document.getElementById('log-analytics-config-section');
         const isOpenApiVisible = !openApiSection.classList.contains('d-none');
         const isSqlVisible = !sqlSection.classList.contains('d-none');
         const isCosmosVisible = !cosmosSection.classList.contains('d-none');
@@ -3783,6 +3837,7 @@ export class PluginModalStepper {
         const isMsGraphVisible = !msGraphSection.classList.contains('d-none');
         const isAzureMapsVisible = !azureMapsSection.classList.contains('d-none');
         const isChartVisible = !chartSection.classList.contains('d-none');
+        const isLogAnalyticsVisible = !!logAnalyticsSection && !logAnalyticsSection.classList.contains('d-none');
 
         if (isOpenApiVisible) {
           // Validate OpenAPI fields
@@ -4281,6 +4336,38 @@ export class PluginModalStepper {
           const azureMapsKey = document.getElementById('azure-maps-key').value.trim();
           if (!azureMapsKey) {
             this.showError('Azure Maps subscription key is required.');
+            return false;
+          }
+        } else if (isLogAnalyticsVisible) {
+          const workspaceId = document.getElementById('log-analytics-workspace-id').value.trim();
+          if (!workspaceId) {
+            this.showError('Log Analytics workspace ID is required.');
+            return false;
+          }
+
+          const cloud = document.getElementById('log-analytics-cloud').value;
+          if (cloud === 'custom') {
+            const authorityHost = document.getElementById('log-analytics-authority-host').value.trim();
+            const endpointOverride = document.getElementById('log-analytics-endpoint-override').value.trim();
+            if (!authorityHost || !endpointOverride) {
+              this.showError('Authority host and endpoint override are required for the custom cloud.');
+              return false;
+            }
+          }
+
+          const selectedLogAnalyticsIdentity = this.getSelectedActionIdentity('logAnalytics');
+          const logAnalyticsAuthMethod = document.getElementById('log-analytics-auth-method').value;
+          if (!selectedLogAnalyticsIdentity && logAnalyticsAuthMethod === 'servicePrincipal') {
+            const clientId = document.getElementById('log-analytics-auth-identity').value.trim();
+            const clientSecret = document.getElementById('log-analytics-auth-key').value.trim();
+            const tenantId = document.getElementById('log-analytics-auth-tenant-id').value.trim();
+            if (!clientId || !clientSecret || !tenantId) {
+              this.showError('Client ID, client secret, and tenant ID are required for service principal authentication.');
+              return false;
+            }
+          }
+          if (!selectedLogAnalyticsIdentity && logAnalyticsAuthMethod === 'key' && !document.getElementById('log-analytics-auth-key').value.trim()) {
+            this.showError('A key is required for key authentication.');
             return false;
           }
         } else if (isChartVisible) {
@@ -5095,6 +5182,506 @@ export class PluginModalStepper {
     }
   }
 
+  getOpenApiAuthConfiguration() {
+    const selectedIdentity = this.getSelectedActionIdentity('openapi');
+    const authType = document.getElementById('plugin-auth-type')?.value || 'none';
+    const auth = {};
+    const additionalFields = {};
+    let identityId = '';
+
+    if (selectedIdentity) {
+      identityId = selectedIdentity.id || selectedIdentity.identity_id || '';
+      auth.type = 'identity';
+      auth.identity = identityId;
+      additionalFields.identity_auth_type = this.getIdentityAuthType(selectedIdentity);
+      additionalFields.auth_method = 'identity';
+    } else if (authType === 'api_key') {
+      auth.type = 'key';
+      auth.key = document.getElementById('plugin-auth-api-key-value')?.value.trim() || '';
+      additionalFields.api_key_location = document.getElementById('plugin-auth-api-key-location')?.value || 'header';
+      additionalFields.api_key_name = document.getElementById('plugin-auth-api-key-name')?.value.trim() || '';
+    } else if (authType === 'bearer') {
+      auth.type = 'key';
+      auth.key = document.getElementById('plugin-auth-bearer-token')?.value.trim() || '';
+      additionalFields.auth_method = 'bearer';
+    } else if (authType === 'basic') {
+      auth.type = 'key';
+      const username = document.getElementById('plugin-auth-basic-username')?.value.trim() || '';
+      const password = document.getElementById('plugin-auth-basic-password')?.value.trim() || '';
+      auth.key = `${username}:${password}`;
+      additionalFields.auth_method = 'basic';
+    } else if (authType === 'oauth2') {
+      auth.type = 'key';
+      auth.key = document.getElementById('plugin-auth-oauth2-token')?.value.trim() || '';
+      additionalFields.auth_method = 'oauth2';
+    } else if (authType === 'none') {
+      auth.type = 'key';
+      auth.key = '';
+      additionalFields.auth_method = 'none';
+    }
+
+    return { auth, additionalFields, identityId };
+  }
+
+  getAzureMapsConfiguration() {
+    return {
+      endpoint: AZURE_MAPS_DEFAULT_ENDPOINT,
+      auth: {
+        type: 'key',
+        key: document.getElementById('azure-maps-key')?.value.trim() || ''
+      },
+      additionalFields: {},
+      identityId: ''
+    };
+  }
+
+  getBlobStorageConfiguration() {
+    const connectionString = document.getElementById('blob-storage-connection-string')?.value.trim() || '';
+    const containerName = document.getElementById('blob-storage-container-name')?.value.trim() || '';
+    const blobPrefix = this.normalizeBlobStoragePrefix(document.getElementById('blob-storage-blob-prefix')?.value || '');
+
+    const additionalFields = {
+      container_name: containerName,
+      blob_storage_capabilities: this.getSelectedBlobStorageCapabilities(),
+      blob_storage_read_file_types: this.getSelectedBlobStorageReadFileTypes(),
+      blob_storage_upload_file_types: this.getSelectedBlobStorageUploadFileTypes()
+    };
+    if (blobPrefix) {
+      additionalFields.blob_prefix = blobPrefix;
+    }
+
+    return {
+      endpoint: this.deriveBlobStorageEndpointFromConnectionString(connectionString) || this.originalPlugin?.endpoint || '',
+      auth: { type: 'connection_string', key: connectionString },
+      additionalFields,
+      identityId: ''
+    };
+  }
+
+  getLogAnalyticsIdentityAuthMethod(identity) {
+    return this.getIdentityAuthType(identity) === 'client_secret' ? 'servicePrincipal' : 'identity';
+  }
+
+  initializeLogAnalyticsConfiguration() {
+    const cloudField = document.getElementById('log-analytics-cloud');
+    if (cloudField && !cloudField.value) {
+      cloudField.value = LOG_ANALYTICS_DEFAULT_CLOUD;
+    }
+    const endpointField = document.getElementById('log-analytics-endpoint');
+    if (endpointField) {
+      endpointField.placeholder = LOG_ANALYTICS_DEFAULT_ENDPOINT;
+    }
+
+    this.clearActionConnectionTestResult('logAnalytics');
+    this.handleLogAnalyticsCloudChange();
+    this.toggleLogAnalyticsAuthFields();
+  }
+
+  handleLogAnalyticsCloudChange() {
+    const cloud = document.getElementById('log-analytics-cloud')?.value || LOG_ANALYTICS_DEFAULT_CLOUD;
+    const customGroup = document.getElementById('log-analytics-custom-cloud-group');
+    if (customGroup) {
+      customGroup.classList.toggle('d-none', cloud !== 'custom');
+    }
+  }
+
+  toggleLogAnalyticsAuthFields() {
+    const selectedIdentity = this.getSelectedActionIdentity('logAnalytics');
+    const authMethod = selectedIdentity
+      ? this.getLogAnalyticsIdentityAuthMethod(selectedIdentity)
+      : (document.getElementById('log-analytics-auth-method')?.value || 'identity');
+
+    const identityGroup = document.getElementById('log-analytics-auth-identity-group');
+    const keyGroup = document.getElementById('log-analytics-auth-key-group');
+    const tenantGroup = document.getElementById('log-analytics-auth-tenant-id-group');
+    const identityLabel = document.getElementById('log-analytics-auth-identity-label');
+    const keyLabel = document.getElementById('log-analytics-auth-key-label');
+
+    const showIdentity = !selectedIdentity && ['identity', 'servicePrincipal'].includes(authMethod);
+    const showKey = !selectedIdentity && ['servicePrincipal', 'key'].includes(authMethod);
+    const showTenant = !selectedIdentity && authMethod === 'servicePrincipal';
+
+    if (identityGroup) identityGroup.classList.toggle('d-none', !showIdentity);
+    if (keyGroup) keyGroup.classList.toggle('d-none', !showKey);
+    if (tenantGroup) tenantGroup.classList.toggle('d-none', !showTenant);
+
+    if (identityLabel) {
+      identityLabel.textContent = authMethod === 'servicePrincipal' ? 'Client ID' : 'Managed Identity Client ID';
+    }
+    if (keyLabel) {
+      keyLabel.textContent = authMethod === 'servicePrincipal' ? 'Client Secret' : 'Key';
+    }
+
+    this.updateLogAnalyticsAuthInfo(authMethod, selectedIdentity);
+  }
+
+  updateLogAnalyticsAuthInfo(authMethod, selectedIdentity) {
+    const infoDiv = document.getElementById('log-analytics-auth-info');
+    const infoText = document.getElementById('log-analytics-auth-info-text');
+    if (!infoDiv || !infoText) {
+      return;
+    }
+
+    let message = 'Managed Identity uses the application identity. Grant it the Log Analytics Reader role on the target workspace.';
+    if (selectedIdentity) {
+      message = 'Credentials come from the selected reusable identity. Action-specific fields are ignored.';
+    } else if (authMethod === 'servicePrincipal') {
+      message = 'Service Principal authentication needs a client ID, client secret, and tenant ID with Log Analytics Reader access to the workspace.';
+    } else if (authMethod === 'user') {
+      message = 'On-Behalf-Of User authentication runs queries as the signed-in user, so results respect that user\'s workspace permissions.';
+    } else if (authMethod === 'key') {
+      message = 'Key authentication is only supported by custom Log Analytics-compatible endpoints.';
+    }
+
+    infoText.textContent = message;
+    infoDiv.classList.remove('d-none');
+  }
+
+  getLogAnalyticsConfiguration() {
+    const selectedIdentity = this.getSelectedActionIdentity('logAnalytics');
+    const authMethod = selectedIdentity
+      ? this.getLogAnalyticsIdentityAuthMethod(selectedIdentity)
+      : (document.getElementById('log-analytics-auth-method')?.value || 'identity');
+    const cloud = document.getElementById('log-analytics-cloud')?.value || LOG_ANALYTICS_DEFAULT_CLOUD;
+
+    // Preserve stored fields such as query_history that Step 3 does not surface.
+    const storedFields = this.originalPlugin?.additionalFields;
+    const additionalFields = (storedFields && typeof storedFields === 'object' && !Array.isArray(storedFields))
+      ? { ...storedFields }
+      : {};
+    delete additionalFields.authorityHost;
+    delete additionalFields.endpointOverride;
+    delete additionalFields.identity_auth_type;
+
+    additionalFields.workspaceId = document.getElementById('log-analytics-workspace-id')?.value.trim() || '';
+    additionalFields.cloud = cloud;
+    if (!Array.isArray(additionalFields.query_history)) {
+      additionalFields.query_history = [];
+    }
+    if (cloud === 'custom') {
+      additionalFields.authorityHost = document.getElementById('log-analytics-authority-host')?.value.trim() || '';
+      additionalFields.endpointOverride = document.getElementById('log-analytics-endpoint-override')?.value.trim() || '';
+    }
+
+    const auth = {};
+    let identityId = '';
+
+    if (selectedIdentity) {
+      identityId = selectedIdentity.id || selectedIdentity.identity_id || '';
+      auth.type = 'identity';
+      auth.identity = identityId;
+      additionalFields.identity_auth_type = this.getIdentityAuthType(selectedIdentity);
+    } else if (authMethod === 'servicePrincipal') {
+      auth.type = 'servicePrincipal';
+      auth.identity = document.getElementById('log-analytics-auth-identity')?.value.trim() || '';
+      auth.key = document.getElementById('log-analytics-auth-key')?.value.trim() || '';
+      auth.tenantId = document.getElementById('log-analytics-auth-tenant-id')?.value.trim() || '';
+    } else if (authMethod === 'key') {
+      auth.type = 'key';
+      auth.key = document.getElementById('log-analytics-auth-key')?.value.trim() || '';
+    } else if (authMethod === 'user') {
+      auth.type = 'user';
+    } else {
+      auth.type = 'identity';
+      const managedIdentityClientId = document.getElementById('log-analytics-auth-identity')?.value.trim() || '';
+      if (managedIdentityClientId) {
+        auth.identity = managedIdentityClientId;
+      }
+    }
+
+    const endpoint = document.getElementById('log-analytics-endpoint')?.value.trim()
+      || (cloud === 'custom' ? additionalFields.endpointOverride : '')
+      || LOG_ANALYTICS_DEFAULT_ENDPOINT;
+
+    return { endpoint, auth, additionalFields, identityId };
+  }
+
+  populateLogAnalyticsConfiguration(plugin) {
+    const additionalFields = (plugin?.additionalFields && typeof plugin.additionalFields === 'object')
+      ? plugin.additionalFields
+      : {};
+    const auth = (plugin?.auth && typeof plugin.auth === 'object') ? plugin.auth : {};
+
+    const workspaceField = document.getElementById('log-analytics-workspace-id');
+    if (workspaceField) {
+      workspaceField.value = additionalFields.workspaceId || '';
+    }
+    const cloudField = document.getElementById('log-analytics-cloud');
+    if (cloudField) {
+      cloudField.value = additionalFields.cloud || LOG_ANALYTICS_DEFAULT_CLOUD;
+    }
+    const endpointField = document.getElementById('log-analytics-endpoint');
+    if (endpointField) {
+      endpointField.value = plugin?.endpoint && plugin.endpoint !== LOG_ANALYTICS_DEFAULT_ENDPOINT ? plugin.endpoint : '';
+    }
+    const authorityHostField = document.getElementById('log-analytics-authority-host');
+    if (authorityHostField) {
+      authorityHostField.value = additionalFields.authorityHost || '';
+    }
+    const endpointOverrideField = document.getElementById('log-analytics-endpoint-override');
+    if (endpointOverrideField) {
+      endpointOverrideField.value = additionalFields.endpointOverride || '';
+    }
+
+    const authType = String(auth.type || 'identity');
+    const authMethodField = document.getElementById('log-analytics-auth-method');
+    if (authMethodField && !plugin?.identity_id) {
+      authMethodField.value = ['identity', 'user', 'servicePrincipal', 'key'].includes(authType) ? authType : 'identity';
+    }
+
+    const authIdentityField = document.getElementById('log-analytics-auth-identity');
+    if (authIdentityField) {
+      authIdentityField.value = auth.identity && auth.identity !== 'managed_identity' ? auth.identity : '';
+    }
+    const authKeyField = document.getElementById('log-analytics-auth-key');
+    if (authKeyField) {
+      authKeyField.value = auth.key || '';
+    }
+    const authTenantField = document.getElementById('log-analytics-auth-tenant-id');
+    if (authTenantField) {
+      authTenantField.value = auth.tenantId || '';
+    }
+
+    if (plugin?.identity_id) {
+      this.setSelectedActionIdentity('logAnalytics', plugin.identity_id);
+    }
+
+    this.handleLogAnalyticsCloudChange();
+    this.toggleLogAnalyticsAuthFields();
+  }
+
+  getActionConnectionTestElements(testKey) {
+    const config = ACTION_CONNECTION_TEST_CONFIG[testKey];
+    if (!config) {
+      return null;
+    }
+    return {
+      config,
+      button: document.getElementById(`${config.idPrefix}-test-connection-btn`),
+      result: document.getElementById(`${config.idPrefix}-test-connection-result`),
+      alert: document.getElementById(`${config.idPrefix}-test-connection-alert`)
+    };
+  }
+
+  clearActionConnectionTestResult(testKey) {
+    const elements = this.getActionConnectionTestElements(testKey);
+    if (!elements) {
+      return;
+    }
+    if (elements.result) {
+      elements.result.classList.add('d-none');
+    }
+    if (elements.alert) {
+      elements.alert.replaceChildren();
+    }
+  }
+
+  showActionConnectionTestMessage(testKey, variant, message, iconClass = '') {
+    const elements = this.getActionConnectionTestElements(testKey);
+    if (!elements || !elements.result || !elements.alert) {
+      return;
+    }
+
+    elements.alert.className = `alert alert-${variant} mb-0 py-2 px-3 small`;
+    elements.alert.replaceChildren();
+    if (iconClass) {
+      const icon = document.createElement('i');
+      icon.className = `${iconClass} me-2`;
+      elements.alert.appendChild(icon);
+    }
+    elements.alert.appendChild(document.createTextNode(message));
+    elements.result.classList.remove('d-none');
+  }
+
+  buildActionConnectionTestConfig(testKey) {
+    if (testKey === 'openapi') {
+      const endpoint = document.getElementById('plugin-endpoint')?.value.trim() || '';
+      if (!endpoint) {
+        throw new Error('Enter the API base URL before testing the connection.');
+      }
+
+      const openApiAuthConfig = this.getOpenApiAuthConfiguration();
+      const additionalFields = { ...openApiAuthConfig.additionalFields, base_url: endpoint };
+      const specContent = document.getElementById('plugin-openapi-file')?.dataset.specContent || '';
+      if (specContent) {
+        try {
+          additionalFields.openapi_spec_content = JSON.parse(specContent);
+          additionalFields.openapi_source_type = 'content';
+        } catch (error) {
+          throw new Error('The uploaded OpenAPI specification could not be parsed.');
+        }
+      } else if (!this.isEditMode) {
+        throw new Error('Upload an OpenAPI specification file before testing the connection.');
+      }
+
+      return {
+        endpoint,
+        auth: openApiAuthConfig.auth,
+        additionalFields,
+        identityId: openApiAuthConfig.identityId
+      };
+    }
+
+    if (testKey === 'azureMaps') {
+      const azureMapsConfig = this.getAzureMapsConfiguration();
+      if (!azureMapsConfig.auth.key && !this.isEditMode) {
+        throw new Error('Enter the Azure Maps subscription key before testing the connection.');
+      }
+      return azureMapsConfig;
+    }
+
+    if (testKey === 'blobStorage') {
+      const blobStorageConfig = this.getBlobStorageConfiguration();
+      if (!blobStorageConfig.additionalFields.container_name) {
+        throw new Error('Enter the container name before testing the connection.');
+      }
+      if (!blobStorageConfig.auth.key && !this.isEditMode) {
+        throw new Error('Enter the storage connection string before testing the connection.');
+      }
+      return blobStorageConfig;
+    }
+
+    if (testKey === 'databricks') {
+      const databricksConfig = this.getDatabricksConfiguration();
+      if (!databricksConfig.endpoint) {
+        throw new Error('Enter the Databricks workspace URL before testing the connection.');
+      }
+      if (!databricksConfig.additionalFields.warehouse_id) {
+        throw new Error('Enter the SQL warehouse ID before testing the connection.');
+      }
+      return databricksConfig;
+    }
+
+    if (testKey === 'logAnalytics') {
+      const logAnalyticsConfig = this.getLogAnalyticsConfiguration();
+      if (!logAnalyticsConfig.additionalFields.workspaceId) {
+        throw new Error('Enter the Log Analytics workspace ID before testing the connection.');
+      }
+      return logAnalyticsConfig;
+    }
+
+    if (testKey === 'mcp') {
+      const mcpConfig = this.getMcpConfiguration();
+      const transport = mcpConfig.additionalFields?.transport;
+      if (transport !== 'stdio' && !mcpConfig.endpoint) {
+        throw new Error('Enter the MCP server endpoint before testing the connection.');
+      }
+      return mcpConfig;
+    }
+
+    if (testKey === 'snowflake') {
+      const snowflakeConfig = this.getSnowflakeConfiguration();
+      if (!snowflakeConfig.additionalFields.account) {
+        throw new Error('Enter the Snowflake account identifier before testing the connection.');
+      }
+      if (!snowflakeConfig.additionalFields.warehouse) {
+        throw new Error('Enter the Snowflake warehouse before testing the connection.');
+      }
+      return snowflakeConfig;
+    }
+
+    if (testKey === 'tableau') {
+      const tableauConfig = this.getTableauConfiguration();
+      if (!tableauConfig.endpoint) {
+        throw new Error('Enter the Tableau server URL before testing the connection.');
+      }
+      return tableauConfig;
+    }
+
+    throw new Error('This action type does not support connection testing.');
+  }
+
+  buildActionConnectionTestPayload(testKey) {
+    const typeConfig = this.buildActionConnectionTestConfig(testKey);
+    const payload = {
+      name: document.getElementById('plugin-name')?.value.trim() || '',
+      displayName: document.getElementById('plugin-display-name')?.value.trim() || '',
+      description: document.getElementById('plugin-description')?.value.trim() || '',
+      type: this.selectedType || '',
+      endpoint: typeConfig.endpoint || '',
+      auth: typeConfig.auth || {},
+      metadata: {},
+      additionalFields: typeConfig.additionalFields || {},
+      action_scope: this.actionIdentityScope?.scope || 'personal'
+    };
+
+    if (typeConfig.identityId) {
+      payload.identity_id = typeConfig.identityId;
+    }
+
+    const pluginContext = this.getTestPluginContext();
+    if (pluginContext) {
+      payload.plugin_context = pluginContext;
+    }
+
+    return payload;
+  }
+
+  async runActionConnectionTest(testKey) {
+    const elements = this.getActionConnectionTestElements(testKey);
+    if (!elements || !elements.button) {
+      return;
+    }
+
+    let payload;
+    try {
+      payload = this.buildActionConnectionTestPayload(testKey);
+    } catch (error) {
+      this.showActionConnectionTestMessage(
+        testKey,
+        'warning',
+        error.message || 'Complete the required configuration fields before testing the connection.',
+        'bi bi-exclamation-triangle'
+      );
+      return;
+    }
+
+    const originalChildNodes = Array.from(elements.button.childNodes);
+    elements.button.disabled = true;
+    elements.button.replaceChildren();
+    const spinner = document.createElement('span');
+    spinner.className = 'spinner-border spinner-border-sm me-2';
+    spinner.setAttribute('role', 'status');
+    spinner.setAttribute('aria-hidden', 'true');
+    elements.button.append(spinner, document.createTextNode('Testing...'));
+    this.clearActionConnectionTestResult(testKey);
+
+    try {
+      const response = await fetch(elements.config.url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const data = await response.json().catch(() => ({}));
+
+      if (response.ok && data.success) {
+        this.showActionConnectionTestMessage(
+          testKey,
+          'success',
+          data.message || 'Connection successful.',
+          'bi bi-check-circle'
+        );
+      } else {
+        this.showActionConnectionTestMessage(
+          testKey,
+          'danger',
+          data.error || `The ${elements.config.label} connection test failed.`,
+          'bi bi-x-circle'
+        );
+      }
+    } catch (error) {
+      this.showActionConnectionTestMessage(
+        testKey,
+        'danger',
+        `Test failed: ${error.message || 'Network error'}`,
+        'bi bi-x-circle'
+      );
+    } finally {
+      elements.button.replaceChildren(...originalChildNodes);
+      elements.button.disabled = false;
+    }
+  }
+
   initializeSqlConfiguration() {
     // Set default values
     document.getElementById('sql-read-only').value = 'true';
@@ -5692,6 +6279,8 @@ export class PluginModalStepper {
     } else if (this.isAzureMapsType(plugin.type)) {
       const auth = plugin.auth || {};
       document.getElementById('azure-maps-key').value = auth.key || '';
+    } else if (this.isLogAnalyticsType(plugin.type)) {
+      this.populateLogAnalyticsConfiguration(plugin);
     } else if (this.isChartType(plugin.type)) {
       const additionalFields = plugin.additionalFields || plugin.additional_fields || {};
       this.setChartCapabilities(additionalFields.chart_capabilities || plugin.chart_capabilities || null);
@@ -5740,6 +6329,7 @@ export class PluginModalStepper {
     const yamcsSection = document.getElementById('yamcs-config-section');
     const mcpSection = document.getElementById('mcp-config-section');
     const azureMapsSection = document.getElementById('azure-maps-config-section');
+    const logAnalyticsSection = document.getElementById('log-analytics-config-section');
     const isOpenApiVisible = !openApiSection.classList.contains('d-none');
     const isSqlVisible = !sqlSection.classList.contains('d-none');
     const isCosmosVisible = !cosmosSection.classList.contains('d-none');
@@ -5752,6 +6342,7 @@ export class PluginModalStepper {
     const isYamcsVisible = !yamcsSection.classList.contains('d-none');
     const isMcpVisible = !mcpSection.classList.contains('d-none');
     const isAzureMapsVisible = !azureMapsSection.classList.contains('d-none');
+    const isLogAnalyticsVisible = !!logAnalyticsSection && !logAnalyticsSection.classList.contains('d-none');
 
     let auth = {};
     let endpoint = '';
@@ -5778,45 +6369,10 @@ export class PluginModalStepper {
       additionalFields.openapi_source_type = 'content';  // Changed from 'file'
       additionalFields.base_url = endpoint;
 
-      const selectedIdentity = this.getSelectedActionIdentity('openapi');
-      const authType = document.getElementById('plugin-auth-type').value;
-
-      if (selectedIdentity) {
-        identityId = selectedIdentity.id || selectedIdentity.identity_id || '';
-        auth.type = 'identity';
-        auth.identity = identityId;
-        additionalFields.identity_auth_type = this.getIdentityAuthType(selectedIdentity);
-        additionalFields.auth_method = 'identity';
-      } else if (authType === 'api_key') {
-        // Map api_key to 'key' type for schema compliance
-        auth.type = 'key';
-        const apiKeyValue = document.getElementById('plugin-auth-api-key-value').value.trim();
-        auth.key = apiKeyValue;
-
-        // Store API key configuration details in additionalFields instead of auth object
-        const apiKeyLocation = document.getElementById('plugin-auth-api-key-location').value;
-        const apiKeyName = document.getElementById('plugin-auth-api-key-name').value.trim();
-        additionalFields.api_key_location = apiKeyLocation;
-        additionalFields.api_key_name = apiKeyName;
-      } else if (authType === 'bearer') {
-        auth.type = 'key';  // Bearer tokens are also 'key' type in the schema
-        auth.key = document.getElementById('plugin-auth-bearer-token').value.trim();
-        additionalFields.auth_method = 'bearer';
-      } else if (authType === 'basic') {
-        auth.type = 'key';  // Basic auth is also 'key' type in the schema
-        const username = document.getElementById('plugin-auth-basic-username').value.trim();
-        const password = document.getElementById('plugin-auth-basic-password').value.trim();
-        auth.key = `${username}:${password}`;  // Store as combined string
-        additionalFields.auth_method = 'basic';
-      } else if (authType === 'oauth2') {
-        auth.type = 'key';  // OAuth2 is also 'key' type in the schema
-        auth.key = document.getElementById('plugin-auth-oauth2-token').value.trim();
-        additionalFields.auth_method = 'oauth2';
-      } else if (authType === 'none') {
-        auth.type = 'key';
-        auth.key = '';  // Empty key for no auth
-        additionalFields.auth_method = 'none';
-      }
+      const openApiAuthConfig = this.getOpenApiAuthConfiguration();
+      auth = openApiAuthConfig.auth;
+      identityId = openApiAuthConfig.identityId;
+      Object.assign(additionalFields, openApiAuthConfig.additionalFields);
     } else if (isSqlVisible) {
       // Collect SQL plugin data
       const databaseType = document.querySelector('input[name="sql-database-type"]:checked')?.value;
@@ -5990,20 +6546,10 @@ export class PluginModalStepper {
       auth.type = 'NoAuth';
       additionalFields = this.getDocumentSearchAdditionalFields();
     } else if (isBlobStorageVisible) {
-      const connectionString = document.getElementById('blob-storage-connection-string').value.trim();
-      const containerName = document.getElementById('blob-storage-container-name').value.trim();
-      const blobPrefix = this.normalizeBlobStoragePrefix(document.getElementById('blob-storage-blob-prefix').value);
-
-      auth.type = 'connection_string';
-      auth.key = connectionString;
-      endpoint = this.deriveBlobStorageEndpointFromConnectionString(connectionString) || this.originalPlugin?.endpoint || '';
-      additionalFields.container_name = containerName;
-      if (blobPrefix) {
-        additionalFields.blob_prefix = blobPrefix;
-      }
-      additionalFields.blob_storage_capabilities = this.getSelectedBlobStorageCapabilities();
-      additionalFields.blob_storage_read_file_types = this.getSelectedBlobStorageReadFileTypes();
-      additionalFields.blob_storage_upload_file_types = this.getSelectedBlobStorageUploadFileTypes();
+      const blobStorageConfig = this.getBlobStorageConfiguration();
+      endpoint = blobStorageConfig.endpoint;
+      auth = blobStorageConfig.auth;
+      additionalFields = blobStorageConfig.additionalFields;
     } else if (isDatabricksVisible) {
       const databricksConfig = this.getDatabricksConfiguration();
       endpoint = databricksConfig.endpoint;
@@ -6045,9 +6591,15 @@ export class PluginModalStepper {
       Object.assign(additionalFields, this.getMsGraphMailSendConfiguration());
       Object.assign(additionalFields, this.getMsGraphCalendarSendConfiguration());
     } else if (isAzureMapsVisible) {
-      endpoint = AZURE_MAPS_DEFAULT_ENDPOINT;
-      auth.type = 'key';
-      auth.key = document.getElementById('azure-maps-key').value.trim();
+      const azureMapsConfig = this.getAzureMapsConfiguration();
+      endpoint = azureMapsConfig.endpoint;
+      auth = azureMapsConfig.auth;
+    } else if (isLogAnalyticsVisible) {
+      const logAnalyticsConfig = this.getLogAnalyticsConfiguration();
+      endpoint = logAnalyticsConfig.endpoint;
+      auth = logAnalyticsConfig.auth;
+      additionalFields = logAnalyticsConfig.additionalFields;
+      identityId = logAnalyticsConfig.identityId;
     } else if (this.isChartType()) {
       endpoint = CHART_DEFAULT_ENDPOINT;
       auth.type = 'user';
@@ -6157,6 +6709,7 @@ export class PluginModalStepper {
     const isMsGraphType = this.isMsGraphType();
     const isAzureMapsType = this.isAzureMapsType();
     const isChartType = this.isChartType();
+    const isLogAnalyticsType = this.isLogAnalyticsType();
 
     const endpointRow = document.getElementById('summary-plugin-endpoint-row');
     const databaseTypeRow = document.getElementById('summary-plugin-database-type-row');
@@ -6223,6 +6776,12 @@ export class PluginModalStepper {
       endpointRow.style.display = 'none';
       document.getElementById('summary-plugin-database-type').textContent = 'Azure Maps tile proxy';
       databaseTypeRow.style.display = '';
+    } else if (isLogAnalyticsType) {
+      const endpoint = this.getEndpointValue();
+      document.getElementById('summary-plugin-endpoint').textContent = endpoint || '-';
+      endpointRow.style.display = '';
+      document.getElementById('summary-plugin-database-type').textContent = 'Azure Log Analytics workspace';
+      databaseTypeRow.style.display = '';
     } else if (isChartType) {
       endpointRow.style.display = 'none';
       document.getElementById('summary-plugin-database-type').textContent = 'Built-in chart action';
@@ -6249,10 +6808,10 @@ export class PluginModalStepper {
     }
 
     const databaseType = this.getSqlDatabaseType();
-    if (!isSqlType && !isCosmosType && !isRocksDbType && !isDocumentSearchType && !isBlobStorageType && !isDatabricksType && !isSnowflakeType && !isTableauType && !isYamcsType && !isMcpType && !isSimpleChatType && !isMsGraphType && !isAzureMapsType && !isChartType && databaseType) {
+    if (!isSqlType && !isCosmosType && !isRocksDbType && !isDocumentSearchType && !isBlobStorageType && !isDatabricksType && !isSnowflakeType && !isTableauType && !isYamcsType && !isMcpType && !isSimpleChatType && !isMsGraphType && !isAzureMapsType && !isChartType && !isLogAnalyticsType && databaseType) {
       document.getElementById('summary-plugin-database-type').textContent = databaseType;
       databaseTypeRow.style.display = '';
-    } else if (!isSqlType && !isCosmosType && !isRocksDbType && !isDocumentSearchType && !isBlobStorageType && !isDatabricksType && !isSnowflakeType && !isTableauType && !isYamcsType && !isMcpType && !isSimpleChatType && !isMsGraphType && !isAzureMapsType && !isChartType) {
+    } else if (!isSqlType && !isCosmosType && !isRocksDbType && !isDocumentSearchType && !isBlobStorageType && !isDatabricksType && !isSnowflakeType && !isTableauType && !isYamcsType && !isMcpType && !isSimpleChatType && !isMsGraphType && !isAzureMapsType && !isChartType && !isLogAnalyticsType) {
       databaseTypeRow.style.display = 'none';
     }
 
@@ -6290,6 +6849,7 @@ export class PluginModalStepper {
     const isMsGraphType = this.isMsGraphType();
     const isAzureMapsType = this.isAzureMapsType();
     const isChartType = this.isChartType();
+    const isLogAnalyticsType = this.isLogAnalyticsType();
 
     if (isOpenApiType) {
       return document.getElementById('plugin-endpoint').value.trim();
@@ -6317,6 +6877,8 @@ export class PluginModalStepper {
       return transport === 'stdio' ? MCP_STDIO_ENDPOINT : document.getElementById('mcp-endpoint').value.trim();
     } else if (isAzureMapsType) {
       return AZURE_MAPS_DEFAULT_ENDPOINT;
+    } else if (isLogAnalyticsType) {
+      return this.getLogAnalyticsConfiguration().endpoint;
     } else if (isMsGraphType) {
       return MSGRAPH_DEFAULT_ENDPOINT;
     } else if (isChartType) {
@@ -6341,6 +6903,7 @@ export class PluginModalStepper {
     const isMsGraphType = this.isMsGraphType();
     const isAzureMapsType = this.isAzureMapsType();
     const isChartType = this.isChartType();
+    const isLogAnalyticsType = this.isLogAnalyticsType();
 
     if (isOpenApiType) {
       const authType = document.getElementById('plugin-auth-type').value;
@@ -6388,6 +6951,11 @@ export class PluginModalStepper {
       return 'User';
     } else if (isAzureMapsType) {
       return 'Subscription Key';
+    } else if (isLogAnalyticsType) {
+      if (this.getSelectedActionIdentity('logAnalytics')) {
+        return 'Reusable Identity';
+      }
+      return this.formatAuthType(document.getElementById('log-analytics-auth-method')?.value || 'identity');
     } else if (isChartType) {
       return 'User';
     } else {
@@ -6947,6 +7515,7 @@ export class PluginModalStepper {
       const isMsGraphType = this.isMsGraphType();
       const isAzureMapsType = this.isAzureMapsType();
       const isChartType = this.isChartType();
+      const isLogAnalyticsType = this.isLogAnalyticsType();
 
       if (isOpenApiType) {
         currentEndpoint = document.getElementById('plugin-endpoint')?.value || '';
@@ -6972,6 +7541,8 @@ export class PluginModalStepper {
         currentEndpoint = MSGRAPH_DEFAULT_ENDPOINT;
       } else if (isAzureMapsType) {
         currentEndpoint = AZURE_MAPS_DEFAULT_ENDPOINT;
+      } else if (isLogAnalyticsType) {
+        currentEndpoint = this.getLogAnalyticsConfiguration().endpoint;
       } else if (isChartType) {
         currentEndpoint = CHART_DEFAULT_ENDPOINT;
       } else {
@@ -7044,6 +7615,12 @@ export class PluginModalStepper {
       } else if (isAzureMapsType) {
         currentAuthType = 'key';
         currentAuthKey = document.getElementById('azure-maps-key')?.value || '';
+      } else if (isLogAnalyticsType) {
+        const selectedIdentity = this.getSelectedActionIdentity('logAnalytics');
+        currentAuthType = selectedIdentity ? 'identity' : (document.getElementById('log-analytics-auth-method')?.value || 'identity');
+        if (!selectedIdentity && ['servicePrincipal', 'key'].includes(currentAuthType)) {
+          currentAuthKey = document.getElementById('log-analytics-auth-key')?.value || '';
+        }
       } else if (isChartType) {
         currentAuthType = 'user';
       } else {
@@ -7086,6 +7663,8 @@ export class PluginModalStepper {
         }, null, 2);
       } else if (isAzureMapsType) {
         currentAdditionalFields = '{}';
+      } else if (isLogAnalyticsType) {
+        currentAdditionalFields = JSON.stringify(this.getLogAnalyticsConfiguration().additionalFields, null, 2);
       } else if (isChartType) {
         currentAdditionalFields = JSON.stringify({
           chart_capabilities: this.getSelectedChartCapabilities()
@@ -7367,6 +7946,18 @@ export class PluginModalStepper {
     safeSetValue('plugin-auth-basic-password-generic');
     safeSetValue('plugin-auth-oauth2-token-generic');
     safeSetValue('azure-maps-key');
+
+    // Step 3 fields - Log Analytics Plugin
+    safeSetValue('log-analytics-workspace-id');
+    safeSetValue('log-analytics-cloud', LOG_ANALYTICS_DEFAULT_CLOUD);
+    safeSetValue('log-analytics-endpoint');
+    safeSetValue('log-analytics-authority-host');
+    safeSetValue('log-analytics-endpoint-override');
+    safeSetValue('log-analytics-identity-select');
+    safeSetValue('log-analytics-auth-method', 'identity');
+    safeSetValue('log-analytics-auth-identity');
+    safeSetValue('log-analytics-auth-key');
+    safeSetValue('log-analytics-auth-tenant-id');
 
     // Step 3 fields - MCP Plugin
     safeSetValue('mcp-preconfiguration');

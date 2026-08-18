@@ -2,6 +2,35 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.217)**
+
+#### New Features
+
+*   **Test Connection for Eight More Action Types**
+    *   Added a **Test Connection** button to the Step 3 configuration for OpenAPI, Azure Maps, Blob Storage, Databricks, Log Analytics, MCP, Snowflake, and Tableau actions. Previously only SQL, Cosmos DB, Yamcs, and RocksDB actions could be validated before saving.
+    *   Each test authenticates with the credentials entered in the modal and performs one lightweight read against the configured resource, so a wrong warehouse ID, container name, subscription key, personal access token, or MCP endpoint is caught immediately instead of failing later during a chat.
+    *   Failures name the cause — rejected credentials, a missing warehouse or container, an unreachable host, or a driver that is not installed — and successes report useful detail such as the Databricks warehouse state, the Snowflake version, the Tableau API version, or the MCP tool count.
+    *   Editing an existing action works without retyping credentials: masked secrets and reusable workspace identities are resolved server-side for the test only, and no credential value is ever returned to the browser.
+    *   The MCP test enforces the same stdio scope restriction and outbound destination policy as MCP tool discovery, and it does not overwrite discovered tool metadata.
+    *   (Ref: #1267, `functions_action_connection_tests.py`, `route_backend_plugins.py`, `_plugin_modal.html`, `plugin_modal_stepper.js`, `ACTION_TEST_CONNECTION.md`)
+
+#### User Interface Enhancements
+
+*   **Dedicated Log Analytics Configuration Section**
+    *   Log Analytics actions now have their own Step 3 configuration section instead of reusing the generic endpoint and authentication form.
+    *   Workspace ID, Cloud, API Endpoint, and the authentication method moved out of *Advanced → Additional Fields* and into the main configuration step, next to the new Test Connection button. Authority Host and Endpoint Override appear only when the Custom cloud is selected.
+    *   Existing Log Analytics actions are unaffected — the section reads and writes the same manifest fields and preserves stored values such as `query_history`.
+    *   (Ref: #1267, `_plugin_modal.html`, `plugin_modal_stepper.js`, Log Analytics action configuration)
+
+#### Bug Fixes
+
+*   **Action Secret References Now Resolved Only Within Their Own Scope**
+    *   Action connection tests resolve a stored Key Vault secret reference strictly against the scope of the action being tested, instead of resolving any reference name supplied in the request.
+    *   The unscoped resolver has been removed, and the existing MCP tool discovery, Cosmos DB, SQL, Yamcs, and RocksDB test paths now share the same scope-checked resolution used by the new connection tests. A reference that does not match the action's scope is rejected instead of resolved.
+    *   Loading a global action for a connection test now requires the Admin role at the shared loader, so every test route inherits the check rather than relying on each route to gate it.
+    *   Only affects deployments with Key Vault secret storage enabled. Normal editing is unchanged — testing an existing action still works without retyping stored credentials.
+    *   (Ref: #1267, `route_backend_plugins.py`, `functions_keyvault.py`, action secret scoping)
+
 ### **(v0.250.216)**
 
 #### New Features

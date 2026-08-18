@@ -56,6 +56,9 @@ def test_tableau_action_modal_custom_workflow_renders():
         "tableau-max-results",
         "tableau-timeout",
         "tableau-use-server-version",
+        "tableau-test-connection-btn",
+        "tableau-test-connection-result",
+        "tableau-test-connection-alert",
         "summary-tableau-section",
         "summary-tableau-auth-method",
     ]
@@ -71,6 +74,8 @@ def test_tableau_action_modal_custom_workflow_renders():
         "getTableauConfiguration",
         "populateTableauSummary",
         "Tableau Configuration",
+        "url: '/api/plugins/test-tableau-connection'",
+        "runActionConnectionTest",
     ]:
         assert marker in modal_js
 
@@ -107,16 +112,18 @@ def test_tableau_action_modal_custom_workflow_renders():
         page.locator("#tableau-config-section").evaluate("element => element.classList.remove('d-none')")
         page.locator("#summary-tableau-section").evaluate("element => element.classList.remove('d-none')")
 
-        expect(page.get_by_label("Server URL")).to_be_visible()
-        expect(page.get_by_label("Site Content URL")).to_be_visible()
-        expect(page.get_by_label("Reusable Identity")).to_be_attached()
-        expect(page.get_by_label("Authentication Method")).to_be_visible()
-        expect(page.get_by_label("PAT Name")).to_be_visible()
-        expect(page.get_by_label("PAT Secret")).to_be_visible()
-        expect(page.get_by_label("Page Size")).to_be_visible()
-        expect(page.get_by_label("Max Results")).to_be_visible()
-        expect(page.get_by_label("Timeout (seconds)")).to_be_visible()
-        expect(page.get_by_label("Use Tableau server version negotiation")).to_be_checked()
+        # Scoped by id because several action sections now share the same field labels
+        # (for example Server URL, Reusable Identity, and Timeout (seconds)).
+        expect(page.locator("#tableau-server-url")).to_be_visible()
+        expect(page.locator("#tableau-site-content-url")).to_be_visible()
+        expect(page.locator("#tableau-identity-select")).to_be_attached()
+        expect(page.locator("#tableau-auth-method")).to_be_visible()
+        expect(page.locator("#tableau-pat-name")).to_be_visible()
+        expect(page.locator("#tableau-pat-secret")).to_be_visible()
+        expect(page.locator("#tableau-page-size")).to_be_visible()
+        expect(page.locator("#tableau-max-results")).to_be_visible()
+        expect(page.locator("#tableau-timeout")).to_be_visible()
+        expect(page.locator("#tableau-use-server-version")).to_be_checked()
         expect(page.locator("#summary-tableau-section")).to_contain_text("Tableau Configuration")
         expect(page.locator("#summary-tableau-section")).to_contain_text("Server Version Negotiation")
     finally:

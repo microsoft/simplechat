@@ -115,6 +115,8 @@ def test_workspace_blob_storage_action_modal(playwright):
         modal.get_by_role("button", name="Next").click()
 
         expect(page.locator("#blob-storage-config-section")).to_be_visible()
+        expect(page.locator("#blob-storage-test-connection-btn")).to_be_visible()
+        expect(page.locator("#blob-storage-test-connection-result")).to_be_hidden()
         expect(page.locator("#generic-config-section")).to_be_hidden()
         expect(page.locator("#sql-config-section")).to_be_hidden()
         expect(page.locator("#cosmos-config-section")).to_be_hidden()
