@@ -1,8 +1,8 @@
 # RocksDB Action
 
-Implemented in version: **0.250.214**
+Implemented in version: **0.250.215**
 
-Version reference: `application/single_app/config.py` was updated to `VERSION = "0.250.214"` for this feature.
+Version reference: `application/single_app/config.py` was updated to `VERSION = "0.250.215"` for this feature.
 
 Dependencies: `requests`, Semantic Kernel action loading, workspace actions, and Key Vault action secret handling. No RocksDB library is installed in the application.
 

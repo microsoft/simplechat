@@ -1,8 +1,8 @@
 # test_workspace_rocksdb_action_modal.py
 """
 UI test for the workspace RocksDB action modal.
-Version: 0.250.214
-Implemented in: 0.250.214
+Version: 0.250.215
+Implemented in: 0.250.215
 
 This test ensures users can select the RocksDB action type, complete the RocksDB HTTP
 service configuration, switch authentication schemes, run the browser-side connection

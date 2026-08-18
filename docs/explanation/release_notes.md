@@ -2,7 +2,7 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
-### **(v0.250.214)**
+### **(v0.250.215)**
 
 #### New Features
 
@@ -13,7 +13,39 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Exposes `get_value`, `get_values`, `key_exists`, `scan_prefix`, `scan_range`, `list_column_families`, and `get_database_stats` for reads, plus `put_value`, `delete_value`, and `write_batch` that stay blocked until an action explicitly allows writes.
     *   Handles binary data through configurable UTF-8, base64, and JSON key and value encodings that are sent to the service on every request, caps returned records, and flags values truncated by the size limit.
     *   The RocksDB HTTP service contract is fully documented so operators can implement a conforming service.
-    *   (Ref: `rocksdb_plugin.py`, `route_backend_plugins.py`, `plugin_health_checker.py`, `_plugin_modal.html`, `plugin_modal_stepper.js`, `rocksdb.definition.json`, `test_rocksdb_plugin.py`, `test_workspace_rocksdb_action_modal.py`, `docs/explanation/features/v0.250.214/ROCKSDB_ACTION.md`)
+    *   (Ref: `rocksdb_plugin.py`, `route_backend_plugins.py`, `plugin_health_checker.py`, `_plugin_modal.html`, `plugin_modal_stepper.js`, `rocksdb.definition.json`, `test_rocksdb_plugin.py`, `test_workspace_rocksdb_action_modal.py`, `docs/explanation/features/v0.250.215/ROCKSDB_ACTION.md`)
+
+### **(v0.250.214)**
+
+#### New Features
+
+*   **Agent Instruction Context References (`#action` and `#knowledge`)**
+    *   Instructions can now reference the exact actions, action capabilities, and assigned knowledge that were selected for the agent, so authors can spell out *when* and *why* each capability or document should be used.
+    *   Typing `#` in the Instruction Brief or the instructions editor opens an autocomplete that drills down from the `action` / `knowledge` namespace, to the actions selected in the Actions step, to that action's enabled capabilities. `#knowledge:` lists the assigned documents, workspaces, tag limits, and web sources with type badges.
+    *   Tokens such as `#action:"Simple Chat":create_group` and `#knowledge:doc:"Employee Handbook.pdf"` are stored literally with the instructions so they stay editable and round-trip unchanged when an agent is edited. Values containing a space or colon are quoted automatically.
+    *   Navigate with the arrow keys, insert with `Tab` or `Enter`, dismiss with `Esc`, or use the mouse. Document titles containing spaces stay searchable while typing.
+    *   Foundry agents manage their instructions and tools in Foundry, so the references stay inert for Classic Foundry, New Foundry, and Foundry Workflow agents.
+    *   (Ref: #1257, #1263, `agent_instruction_mentions.js`, `agent_modal_stepper.js`, `_agent_modal.html`)
+
+*   **Context-Aware Draft Instructions**
+    *   The **Draft Instructions** helper now receives the selected actions with their enabled capabilities and the assigned knowledge configuration, instead of only the agent name, description, and brief.
+    *   Drafts reference only real, selected actions and documents, and use the new `#action:` / `#knowledge:` token convention.
+    *   Client-supplied context is normalized, length-capped, count-capped, and bounded by a shared total character budget on the backend. It is used purely as prompt text and never affects authorization, and whitespace collapsing prevents newline-based prompt injection through action or document names.
+    *   (Ref: #1257, #1263, `route_backend_agents.py`, `POST /api/agents/draft-instructions`)
+
+#### User Interface Enhancements
+
+*   **Agent Modal Step Reorder: Instructions After Actions and Knowledge**
+    *   The agent modal now runs Basic Info → Model & Connection → **Actions** → **Knowledge** → **Instructions** → Advanced → Summary, so instructions are written once the agent's real capabilities are known.
+    *   Added a collapsible **Selected Actions & Knowledge** panel at the top of the Instructions step listing the selected actions with badges for their enabled capabilities, plus the assigned workspaces, documents, tags, and web sources, each with its reference token.
+    *   Step navigation, validation, and Foundry agent-type visibility now key off named steps rather than hard-coded step numbers.
+    *   (Ref: #1257, #1263, `_agent_modal.html`, `agent_modal_stepper.js`)
+
+#### Bug Fixes
+
+*   **Agent Summary Step Referenced the Wrong Step Number**
+    *   The Summary step's empty-actions message pointed authors at "step 4" to add actions. Actions is step 3 under the new order, and step 4 is now Assigned Knowledge.
+    *   (Ref: #1263, `_agent_modal.html`, agent modal summary step)
 
 ### **(v0.250.213)**
 
