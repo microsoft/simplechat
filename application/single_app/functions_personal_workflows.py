@@ -163,6 +163,8 @@ def _normalize_workflow_tasks(
     existing_workflow=None,
     task_runner_normalizer=None,
     max_tasks=WORKFLOW_MAX_TASKS,
+    task_document_action_normalizer=None,
+    default_document_action=None,
 ):
     workflow_data = workflow_data if isinstance(workflow_data, dict) else {}
     existing_workflow = existing_workflow if isinstance(existing_workflow, dict) else {}
@@ -214,14 +216,27 @@ def _normalize_workflow_tasks(
         else:
             raise ValueError(f'Workflow task {index + 1} runner could not be authorized.')
 
-        normalized_tasks.append({
+        normalized_task = {
             'id': task_id,
             'type': task_type,
             'name': name,
             'instructions': instructions,
             'order': index + 1,
             'runner': runner,
-        })
+        }
+
+        if callable(task_document_action_normalizer):
+            raw_document_action = raw_task.get('document_action')
+            if not isinstance(raw_document_action, dict) and index == 0:
+                # Workflows saved before per-task documents kept a single workflow-level
+                # action that only ever executed on the first task.
+                raw_document_action = default_document_action
+            try:
+                normalized_task['document_action'] = task_document_action_normalizer(raw_document_action)
+            except ValueError as exc:
+                raise ValueError(f'Workflow task {index + 1} ({name}): {exc}') from exc
+
+        normalized_tasks.append(normalized_task)
 
     return normalized_tasks
 
@@ -283,6 +298,37 @@ def _normalize_document_action_config(workflow_data, existing_workflow=None, all
             settings=settings,
         ),
         allowed_action_types=get_enabled_document_action_types(settings=settings),
+    )
+
+
+def _normalize_task_document_action_config(action_payload, allow_empty_file_sync_targets=False, settings=None):
+    """Normalize a single workflow task's document action payload."""
+    source_settings = settings if isinstance(settings, dict) else get_settings()
+    action_payload = action_payload if isinstance(action_payload, dict) else {'type': 'none'}
+    max_documents_by_type = get_document_action_max_documents_by_type(
+        DOCUMENT_ACTION_CONTEXT_WORKFLOW,
+        settings=source_settings,
+    )
+    allowed_action_types = get_enabled_document_action_types(settings=source_settings)
+
+    if allow_empty_file_sync_targets:
+        action_type = str(action_payload.get('type') or '').strip().lower()
+        document_ids = action_payload.get('document_ids') if isinstance(action_payload.get('document_ids'), list) else []
+        if action_type == DOCUMENT_ACTION_TYPE_ANALYZE and not document_ids:
+            placeholder_payload = dict(action_payload)
+            placeholder_payload['document_ids'] = ['__dynamic_file_sync_document__']
+            normalized_action = normalize_document_action_config(
+                action_payload=placeholder_payload,
+                max_documents_by_type=max_documents_by_type,
+                allowed_action_types=allowed_action_types,
+            )
+            normalized_action['document_ids'] = []
+            return normalized_action
+
+    return normalize_document_action_config(
+        action_payload=action_payload,
+        max_documents_by_type=max_documents_by_type,
+        allowed_action_types=allowed_action_types,
     )
 
 
@@ -683,6 +729,13 @@ def save_personal_workflow(user_id, workflow_data, actor_user_id=None):
 
     workflow_name = _normalize_text(workflow_data.get('name'), 'Workflow name', required=True)
     description = _normalize_text(workflow_data.get('description'), 'Description')
+    file_sync = _normalize_file_sync_config(user_id, workflow_data, existing_workflow=existing_workflow)
+    allow_empty_file_sync_targets = bool(file_sync.get('enabled') and file_sync.get('use_changed_documents'))
+    document_action = _normalize_document_action_config(
+        workflow_data,
+        existing_workflow=existing_workflow,
+        allow_empty_file_sync_targets=allow_empty_file_sync_targets,
+    )
     tasks = _normalize_workflow_tasks(
         workflow_data,
         existing_workflow=existing_workflow,
@@ -692,6 +745,12 @@ def save_personal_workflow(user_id, workflow_data, actor_user_id=None):
             settings=settings,
         ),
         max_tasks=get_workflow_max_tasks(settings),
+        task_document_action_normalizer=lambda action_payload: _normalize_task_document_action_config(
+            action_payload,
+            allow_empty_file_sync_targets=allow_empty_file_sync_targets,
+            settings=settings,
+        ),
+        default_document_action=document_action,
     )
     task_prompt = _normalize_text(
         workflow_data.get('task_prompt') or (tasks[0].get('instructions') if tasks else ''),
@@ -736,13 +795,6 @@ def save_personal_workflow(user_id, workflow_data, actor_user_id=None):
     chat_capabilities_enabled = _normalize_bool(
         workflow_data.get('chat_capabilities_enabled', default_chat_capabilities_enabled),
         default=default_chat_capabilities_enabled,
-    )
-    file_sync = _normalize_file_sync_config(user_id, workflow_data, existing_workflow=existing_workflow)
-    allow_empty_file_sync_targets = bool(file_sync.get('enabled') and file_sync.get('use_changed_documents'))
-    document_action = _normalize_document_action_config(
-        workflow_data,
-        existing_workflow=existing_workflow,
-        allow_empty_file_sync_targets=allow_empty_file_sync_targets,
     )
     if trigger_type == 'file_sync':
         if not file_sync.get('enabled'):

@@ -2122,7 +2122,12 @@ function initializeDocumentDropdown() {
    Load Tags for Selected Scope
 --------------------------------------------------------------------------- */
 export async function loadTagsForScope() {
-  if (!chatTagsFilter) return;
+  if (!chatTagsFilter) {
+    // Keep the tags control out of its initial loading state when the hidden
+    // filter select is absent, otherwise the button stays stuck on "Loading tags...".
+    hideTagsDropdown();
+    return;
+  }
 
   // Clear existing options in both hidden select and custom dropdown
   chatTagsFilter.innerHTML = '';
