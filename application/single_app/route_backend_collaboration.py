@@ -1507,7 +1507,13 @@ def register_route_backend_collaboration(bp):
                             except json.JSONDecodeError:
                                 return normalized_event_block + '\n\n'
 
-                            if stream_payload.get('error'):
+                            if (
+                                stream_payload.get('error')
+                                and not (
+                                    stream_payload.get('message_persisted')
+                                    and stream_payload.get('message_id')
+                                )
+                            ):
                                 return _serialize_stream_error(
                                     stream_payload.get('error'),
                                     partial_content=stream_payload.get('partial_content'),
@@ -1515,6 +1521,8 @@ def register_route_backend_collaboration(bp):
                                     message_persisted=True,
                                     conversation_id=conversation_id,
                                 )
+                            if stream_payload.get('error'):
+                                stream_payload['done'] = True
 
                             if stream_payload.get('type') == USER_MESSAGE_PERSISTED_EVENT_TYPE:
                                 return None
@@ -1627,6 +1635,7 @@ def register_route_backend_collaboration(bp):
                                 **stream_payload,
                                 'conversation_id': conversation_id,
                                 'conversation_title': serialized_final_conversation.get('title'),
+                                'conversation_kind': serialized_final_conversation.get('conversation_kind'),
                                 'chat_type': serialized_final_conversation.get('chat_type'),
                                 'classification': serialized_final_conversation.get('classification', []),
                                 'context': serialized_final_conversation.get('context', []),
@@ -1638,12 +1647,15 @@ def register_route_backend_collaboration(bp):
                                 'augmented': serialized_assistant_message.get('augmented', False),
                                 'hybrid_citations': serialized_assistant_message.get('hybrid_citations', []),
                                 'web_search_citations': serialized_assistant_message.get('web_search_citations', []),
+                                'citation_tracking_version': serialized_assistant_message.get('citation_tracking_version'),
+                                'cited_hybrid_citations': serialized_assistant_message.get('cited_hybrid_citations', []),
+                                'cited_web_search_citations': serialized_assistant_message.get('cited_web_search_citations', []),
                                 'agent_citations': serialized_assistant_message.get('agent_citations', []),
                                 'agent_display_name': serialized_assistant_message.get('agent_display_name'),
                                 'agent_name': serialized_assistant_message.get('agent_name'),
                                 'full_content': serialized_assistant_message.get('content') if serialized_assistant_message.get('role') != 'image' else stream_payload.get('full_content', ''),
                                 'image_url': serialized_assistant_message.get('content') if serialized_assistant_message.get('role') == 'image' else stream_payload.get('image_url'),
-                                'reload_messages': False,
+                                'reload_messages': bool(stream_payload.get('error')),
                             }
                             return f'data: {json.dumps(make_json_serializable(transformed_payload))}\n\n'
 

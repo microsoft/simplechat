@@ -1074,6 +1074,24 @@ function handleConversationEvent(eventEnvelope = {}) {
 
         const decoratedMessage = decorateReplyMessage(payload.message);
         cacheCollaborationMessage(payload.message);
+        if (String(payload.message.role || '').trim().toLowerCase() === 'assistant') {
+            const conversationId = (
+                eventEnvelope.conversation_id
+                || payload.message.conversation_id
+                || payload.conversation?.id
+                || ''
+            );
+            window.dispatchEvent(new CustomEvent(
+                'chat:conversation-documents-refresh',
+                {
+                    detail: {
+                        conversationId,
+                        autoOpen: false,
+                        conversationKind: 'collaborative',
+                    },
+                }
+            ));
+        }
         if (reconcilePendingCollaborativeUserMessage(payload.message)) {
             const messageKind = String(
                 payload.message.message_kind || payload.message.metadata?.message_kind || ''
@@ -1112,6 +1130,16 @@ function handleConversationEvent(eventEnvelope = {}) {
 
     if (eventEnvelope.event_type === 'collaboration.message.deleted' && payload.message_id) {
         removeCollaborationMessage(payload.message_id);
+        window.dispatchEvent(new CustomEvent(
+            'chat:conversation-documents-refresh',
+            {
+                detail: {
+                    conversationId: eventEnvelope.conversation_id || '',
+                    autoOpen: false,
+                    conversationKind: 'collaborative',
+                },
+            }
+        ));
         if (payload.deleted_by_user_id && payload.deleted_by_user_id !== getCurrentUserId()) {
             showToast('A shared message was deleted.', 'info');
         }
@@ -1937,6 +1965,7 @@ window.chatCollaboration = {
     deactivateConversation,
     fetchCollaborationConversationList,
     fetchConversationMetadata,
+    loadConversationMessages,
     getPendingMessageContext,
     handleComposerBlur,
     handleComposerInput,

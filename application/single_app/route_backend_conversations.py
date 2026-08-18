@@ -31,6 +31,7 @@ from functions_conversation_feed import (
     tag_conversation_feed_source,
 )
 from functions_conversation_metadata import get_conversation_metadata, update_conversation_with_metadata
+from functions_citation_tracking import rebuild_conversation_used_documents
 from functions_conversation_unread import clear_conversation_unread, normalize_conversation_unread_state
 from functions_conversation_cache import (
     build_conversation_cache_key,
@@ -820,6 +821,63 @@ def _authorize_personal_conversation_read(user_id, conversation_id):
         raise PermissionError('Forbidden')
 
     return conversation_item
+
+
+def _rebuild_authorized_personal_conversation_used_documents(
+    user_id,
+    conversation_id,
+):
+    """Persist exact used documents after an authorized message mutation."""
+    try:
+        conversation_item = _authorize_personal_conversation_read(
+            user_id,
+            conversation_id,
+        )
+        messages = list(cosmos_messages_container.query_items(
+            query=(
+                "SELECT * FROM c "
+                "WHERE c.conversation_id = @conversation_id"
+            ),
+            parameters=[
+                {
+                    "name": "@conversation_id",
+                    "value": conversation_id,
+                },
+            ],
+            partition_key=conversation_id,
+        ))
+        rebuild_conversation_used_documents(conversation_item, messages)
+        conversation_item.pop('used_documents_rebuild_required', None)
+        conversation_item['last_updated'] = datetime.utcnow().isoformat()
+        cosmos_conversations_container.upsert_item(conversation_item)
+        return conversation_item
+    except Exception as rebuild_error:
+        if 'conversation_item' in locals() and isinstance(conversation_item, dict):
+            conversation_item['used_documents_rebuild_required'] = True
+            try:
+                cosmos_conversations_container.upsert_item(conversation_item)
+            except Exception as marker_error:
+                log_event(
+                    "[CONVERSATION_METADATA] Failed to mark used documents for rebuild",
+                    extra={
+                        "conversation_id": conversation_id,
+                        "user_id": user_id,
+                        "error_type": type(marker_error).__name__,
+                    },
+                    level=logging.WARNING,
+                    exceptionTraceback=True,
+                )
+        log_event(
+            "[CONVERSATION_METADATA] Failed to rebuild used documents after message mutation",
+            extra={
+                "conversation_id": conversation_id,
+                "user_id": user_id,
+                "error_type": type(rebuild_error).__name__,
+            },
+            level=logging.WARNING,
+            exceptionTraceback=True,
+        )
+        return None
 
 
 def _invalidate_conversation_cache_after_message_mutation(conversation_id, user_id, reason):
@@ -1800,6 +1858,16 @@ def register_route_backend_conversations(bp):
             # Ensure that the conversation belongs to the current user
             if conversation_item.get('user_id') != user_id:
                 return jsonify({'error': 'Forbidden'}), 403
+
+            if conversation_item.get('used_documents_rebuild_required') is True:
+                rebuilt_conversation = (
+                    _rebuild_authorized_personal_conversation_used_documents(
+                        user_id,
+                        conversation_id,
+                    )
+                )
+                if rebuilt_conversation:
+                    conversation_item = rebuilt_conversation
             
             _, updated = normalize_chat_type(conversation_item)
             if updated:
@@ -1828,6 +1896,9 @@ def register_route_backend_conversations(bp):
                 "classification": conversation_item.get('classification', []),
                 "context": conversation_item.get('context', []),
                 "tags": conversation_item.get('tags', []),
+                "used_documents_tracking_version": conversation_item.get('used_documents_tracking_version'),
+                "legacy_used_documents": conversation_item.get('legacy_used_documents', []),
+                "used_documents": conversation_item.get('used_documents', []),
                 "strict": conversation_item.get('strict', False),
                 "is_pinned": conversation_item.get('is_pinned', False),
                 "is_hidden": conversation_item.get('is_hidden', False),
@@ -2609,6 +2680,10 @@ def register_route_backend_conversations(bp):
                 
                 deleted_message_ids.append(msg_id)
 
+            _rebuild_authorized_personal_conversation_used_documents(
+                user_id,
+                conversation_id,
+            )
             _invalidate_conversation_cache_after_message_mutation(
                 conversation_id,
                 user_id,
@@ -2787,6 +2862,10 @@ def register_route_backend_conversations(bp):
             }
             cosmos_messages_container.upsert_item(new_user_message)
 
+            _rebuild_authorized_personal_conversation_used_documents(
+                user_id,
+                conversation_id,
+            )
             _invalidate_conversation_cache_after_message_mutation(
                 conversation_id,
                 user_id,
@@ -3006,6 +3085,10 @@ def register_route_backend_conversations(bp):
             }
             cosmos_messages_container.upsert_item(new_user_message)
 
+            _rebuild_authorized_personal_conversation_used_documents(
+                user_id,
+                conversation_id,
+            )
             _invalidate_conversation_cache_after_message_mutation(
                 conversation_id,
                 user_id,
@@ -3170,6 +3253,10 @@ def register_route_backend_conversations(bp):
                 msg['metadata']['thread_info']['active_thread'] = (msg_attempt == target_attempt)
                 cosmos_messages_container.upsert_item(msg)
 
+            _rebuild_authorized_personal_conversation_used_documents(
+                user_id,
+                conversation_id,
+            )
             _invalidate_conversation_cache_after_message_mutation(
                 conversation_id,
                 user_id,
