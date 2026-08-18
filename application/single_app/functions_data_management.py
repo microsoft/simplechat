@@ -218,6 +218,7 @@ DATA_MANAGEMENT_MIGRATION_MANIFEST_BATCH_SIZE = 100
 DATA_MANAGEMENT_BACKUP_MANIFEST_BATCH_SIZE = 100
 DATA_MANAGEMENT_BACKUP_MAX_PUBLIC_ITEM_SUMMARIES = 50
 DATA_MANAGEMENT_BACKUP_MAX_LOGGED_FAILURE_REASONS = 10
+DATA_MANAGEMENT_BACKUP_CHECKPOINT_INTERVAL_SECONDS = 15
 DATA_MANAGEMENT_BACKUP_MAX_RECENT_CHECKPOINTS = 20
 DATA_MANAGEMENT_BACKUP_DEFAULT_PARALLEL_OPERATIONS = 4
 DATA_MANAGEMENT_BACKUP_MAX_PARALLEL_OPERATIONS = 16
@@ -13478,6 +13479,14 @@ def _get_backup_blob_property(properties, field_name, default=None):
     return getattr(properties, field_name, default)
 
 
+def _normalize_backup_etag(value):
+    """Strip transport quoting so list_blobs and get_blob_properties ETags compare equal."""
+    normalized = _safe_text(value).strip()
+    if normalized[:2].upper() == "W/":
+        normalized = normalized[2:].strip()
+    return normalized.strip('"')
+
+
 def _build_backup_blob_source_item(source_container_name, blob_name, properties):
     last_modified = _get_backup_blob_property(properties, "last_modified")
     source_size = _safe_int(
@@ -13743,6 +13752,7 @@ def _transfer_backup_source_blob(
         maximum=DATA_MANAGEMENT_BACKUP_MAX_RETRY_COUNT,
     )
     source_etag = _safe_text(source_item.get("source_etag"))
+    normalized_source_etag = _normalize_backup_etag(source_etag)
     total_chunks = max(
         1,
         (source_size + effective_chunk_size - 1) // effective_chunk_size,
@@ -13885,10 +13895,10 @@ def _transfer_backup_source_blob(
                     "Backup artifact length did not match the committed transfer."
                 )
             current_source_properties = source_blob_client.get_blob_properties()
-            current_source_etag = _safe_text(
+            current_source_etag = _normalize_backup_etag(
                 _get_backup_blob_property(current_source_properties, "etag")
             )
-            if source_etag and current_source_etag != source_etag:
+            if normalized_source_etag and current_source_etag != normalized_source_etag:
                 raise RuntimeError("Source blob changed while it was being backed up.")
             succeeded_metadata = _build_backup_blob_target_metadata(
                 backup_job,
@@ -16745,10 +16755,12 @@ def _execute_backup_source_blob_resource(
         resource_name,
     )
     pending_latest_state_updates = []
+    last_persist_at = time.monotonic()
 
     def persist(message):
-        nonlocal state, previous_checkpoint
+        nonlocal state, previous_checkpoint, last_persist_at
         _assert_backup_job_lease(job)
+        last_persist_at = time.monotonic()
         if manifest_buffer:
             flush_manifest()
         elapsed_seconds = max(0.001, time.perf_counter() - started_at)
@@ -16788,6 +16800,16 @@ def _execute_backup_source_blob_resource(
             resource_name,
             pending_latest_state_updates,
         )
+
+    def maybe_persist(message):
+        """Checkpoint on batch or interval so each transfer is not its own Cosmos write."""
+        if (
+            len(manifest_buffer) >= DATA_MANAGEMENT_BACKUP_MANIFEST_BATCH_SIZE or
+            time.monotonic() - last_persist_at >= DATA_MANAGEMENT_BACKUP_CHECKPOINT_INTERVAL_SECONDS
+        ):
+            persist(message)
+        else:
+            _assert_backup_job_lease(job)
 
     def record_skipped(source_item, latest_state):
         nonlocal skipped_count
@@ -17003,7 +17025,7 @@ def _execute_backup_source_blob_resource(
             artifact_path,
         )
         batch_number += 1
-        persist(f"Checkpointed source blob backup for {source_container_name}")
+        maybe_persist(f"Checkpointed source blob backup for {source_container_name}")
 
     try:
         source_iterator = iter(source_container_client.list_blobs())
