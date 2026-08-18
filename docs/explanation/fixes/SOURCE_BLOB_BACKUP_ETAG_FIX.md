@@ -4,7 +4,7 @@
 
 # Source Blob Backup ETag Fix
 
-Fixed in version: **0.250.218**
+Fixed in version: **0.250.219**
 Tracking issue: [#1271](https://github.com/microsoft/simplechat/issues/1271)
 
 ## Issue Description
@@ -63,7 +63,7 @@ The ranged reads also send that same unquoted ETag as an `If-Match` precondition
 | File | Change |
 |---|---|
 | `application/single_app/functions_data_management.py` | ETag normalization for the equality check; batched source blob checkpoints |
-| `application/single_app/config.py` | Version bump to `0.250.218` |
+| `application/single_app/config.py` | Version bump to `0.250.219` |
 | `functional_tests/test_data_management_backup_source_blob_etag.py` | New regression coverage |
 | `functional_tests/test_data_management_backup_cosmos_pagination.py` | Converted to real assertions so pytest reports failures |
 

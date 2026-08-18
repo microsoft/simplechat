@@ -20,18 +20,39 @@ SENSITIVE_LOG_KEY_FRAGMENTS = (
     "accesstoken",
     "accountkey",
     "apikey",
+    "authkey",
     "authorization",
     "clientsecret",
     "connectionstring",
     "cookie",
     "credential",
+    "encryptionkey",
+    "keypair",
+    "masterkey",
     "password",
+    "primarykey",
     "privatekey",
     "sas",
+    "secondarykey",
     "secret",
+    "sessionkey",
     "sharedaccesssignature",
+    "signingkey",
+    "storagekey",
     "subscriptionkey",
     "token",
+)
+# Names that carry a credential only when they are the whole key. Matching these as
+# substrings would redact benign configuration such as key_encoding or partition_key_path,
+# so they are compared against the fully normalized key instead.
+SENSITIVE_LOG_KEY_EXACT = (
+    "key",
+    "keys",
+    "pass",
+    "passphrase",
+    "pwd",
+    "sig",
+    "signature",
 )
 EXTERNAL_EVENT_SENSITIVE_KEY_FRAGMENTS = (
     "email",
@@ -120,6 +141,8 @@ def _is_sensitive_log_key(key: Any) -> bool:
     normalized_key = _normalize_log_key(key)
     if not normalized_key:
         return False
+    if normalized_key in SENSITIVE_LOG_KEY_EXACT:
+        return True
     return any(fragment in normalized_key for fragment in SENSITIVE_LOG_KEY_FRAGMENTS)
 
 
