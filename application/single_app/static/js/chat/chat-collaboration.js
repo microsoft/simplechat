@@ -2,15 +2,19 @@
 
 import {
     appendMessage,
+    applySearchHighlight,
+    clearSearchHighlight,
     getCollaborativeTagSuggestions,
     getGeneratedImageProposalSourceMessageId,
     groupGeneratedImageProposalMessages,
     setUserMessageStreamingActionsDisabled,
+    updateComparisonChatUploadCatalog,
     updateSendButtonVisibility,
     updateUserMessageId,
     userInput,
 } from './chat-messages.js';
 import { applyConversationMetadataUpdate } from './chat-conversations.js';
+import { updateConversationTaskDocumentsFromMessages } from './chat-documents.js';
 import { attachGeneratedImageProposalResults } from './chat-inline-image-proposals.js';
 import { loadUserSettings, saveUserSetting } from './chat-layout.js';
 import { showToast } from './chat-toast.js';
@@ -19,6 +23,7 @@ import { sendMessageWithStreaming } from './chat-streaming.js';
 const RECENT_COLLABORATORS_KEY = 'recentCollaborators';
 const MAX_RECENT_COLLABORATORS = 12;
 const DEFAULT_SUGGESTION_LIMIT = 8;
+const SEARCH_HIGHLIGHT_MAX_AGE_MS = 30000;
 
 const mentionMenu = document.getElementById('collaboration-mention-menu');
 const participantModalEl = document.getElementById('collaboration-participant-modal');
@@ -956,7 +961,22 @@ function applyCollaborationMessageMaskUpdate(message = {}) {
     }
 }
 
+function reapplyPendingSearchHighlight() {
+    const pendingHighlight = window.searchHighlight;
+    if (!pendingHighlight?.term) {
+        return;
+    }
+
+    if (Date.now() - pendingHighlight.timestamp >= SEARCH_HIGHLIGHT_MAX_AGE_MS) {
+        window.searchHighlight = null;
+        return;
+    }
+
+    window.setTimeout(() => applySearchHighlight(pendingHighlight.term), 100);
+}
+
 async function loadConversationMessages(conversationId) {
+    clearSearchHighlight();
     const payload = await fetchJson(`/api/collaboration/conversations/${conversationId}/messages`);
     const chatbox = document.getElementById('chatbox');
     if (!chatbox) {
@@ -968,6 +988,8 @@ async function loadConversationMessages(conversationId) {
     clearMessageCache();
 
     const messages = Array.isArray(payload.messages) ? payload.messages : [];
+    updateConversationTaskDocumentsFromMessages(messages, conversationId);
+    updateComparisonChatUploadCatalog(messages);
     const generatedImageProposalMessages = groupGeneratedImageProposalMessages(messages);
     const assistantMessageIds = new Set(
         messages
@@ -989,6 +1011,7 @@ async function loadConversationMessages(conversationId) {
         renderCollaborationMessage(decoratedMessage);
         cacheCollaborationMessage(message);
     });
+    reapplyPendingSearchHighlight();
     return messages;
 }
 

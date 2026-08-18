@@ -129,7 +129,7 @@ def test_all_streaming_paths_acknowledge_persistence_early() -> None:
         collaboration_stream_source,
         "persist_collaboration_message(",
         "yield build_user_message_persisted_stream_event(",
-        "current_app.view_functions.get('chat_stream_api')",
+        "_resolve_internal_view_function('chat_stream_api')",
     )
     assert "if stream_payload.get('type') == USER_MESSAGE_PERSISTED_EVENT_TYPE:" in collaboration_stream_source
 

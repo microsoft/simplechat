@@ -25,7 +25,9 @@ COLLABORATION_ROUTE = APP_DIR / "route_backend_collaboration.py"
 FEATURE_DOC = ROOT_DIR / "docs" / "explanation" / "features" / "MESSAGE_LAYERED_MASKING.md"
 
 sys.path.insert(0, str(APP_DIR))
+sys.path.insert(0, str(ROOT_DIR / "functional_tests"))
 
+from test_support.versioning import assert_app_version_at_least  # noqa: E402
 from functions_message_masking import (  # noqa: E402
     apply_message_mask_action,
     remove_masked_content,
@@ -307,7 +309,7 @@ def test_frontend_and_routes_use_layered_masking_contract() -> None:
 
 def test_documentation_and_version_are_in_sync() -> None:
     """Verify version tracking for layered message masking."""
-    assert read_version() == "0.250.029"
+    assert_app_version_at_least("0.250.029")
     assert FEATURE_DOC.exists(), f"Expected feature documentation at {FEATURE_DOC}"
     feature_doc = read_text(FEATURE_DOC)
     assert "Implemented in version: **0.241.098**" in feature_doc

@@ -1263,7 +1263,7 @@ function toggleComparisonDropzoneHighlight(dropzone, isHighlighted) {
   dropzone.classList.toggle('bg-primary-subtle', isHighlighted);
 }
 
-function updateComparisonChatUploadCatalog(messages = []) {
+export function updateComparisonChatUploadCatalog(messages = []) {
   const preferredLeftSelection = String(documentComparisonLeftSelect?.value || '').trim();
   comparisonChatUploadCatalog = buildComparisonChatUploadCatalog(messages);
   syncComparisonSelectionState(preferredLeftSelection);

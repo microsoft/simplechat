@@ -306,6 +306,26 @@ def _serialize_stream_error(error_message, **extra_fields):
     return f'data: {json.dumps(payload)}\n\n'
 
 
+def _resolve_internal_view_function(endpoint_name):
+    """Resolve a registered Flask view function, tolerating Blueprint endpoint prefixes.
+
+    Route modules are registered through Blueprints, so a view declared as ``chat_stream_api``
+    is stored in ``view_functions`` under its qualified endpoint (``backend_chats.chat_stream_api``).
+    Fall back to matching the final endpoint segment so internal bridges keep working whether the
+    route was registered on a Blueprint or directly on the application.
+    """
+    view_functions = getattr(current_app, 'view_functions', None) or {}
+    view_function = view_functions.get(endpoint_name)
+    if callable(view_function):
+        return view_function
+
+    for registered_endpoint, registered_view in view_functions.items():
+        if str(registered_endpoint).rsplit('.', 1)[-1] == endpoint_name and callable(registered_view):
+            return registered_view
+
+    return None
+
+
 def _build_collaboration_stream_request_payload(data, source_conversation_id, message_content):
     return {
         'message': message_content,
@@ -1457,8 +1477,16 @@ def register_route_backend_collaboration(bp):
                         conversation_id,
                         serialized_user_message.get('id'),
                     )
-                    internal_stream_view = current_app.view_functions.get('chat_stream_api')
+                    internal_stream_view = _resolve_internal_view_function('chat_stream_api')
                     if not callable(internal_stream_view):
+                        log_event(
+                            '[COLLABORATION] Chat streaming view function could not be resolved for the collaboration stream bridge',
+                            extra={
+                                'conversation_id': conversation_id,
+                                'endpoint_name': 'chat_stream_api',
+                            },
+                            level=logging.ERROR,
+                        )
                         yield _serialize_stream_error(
                             'Chat streaming endpoint is unavailable',
                             user_message_id=serialized_user_message.get('id'),

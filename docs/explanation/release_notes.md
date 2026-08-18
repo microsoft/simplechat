@@ -2,6 +2,25 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.224)**
+
+#### Bug Fixes
+
+*   **Shared Conversations Load and Answer Again**
+    *   Sharing a personal conversation left it unusable. Every reload or click on the shared conversation raised a "Conversation not found" error, because the chat page was still asking for its messages from the personal conversation endpoint — and a shared conversation is stored separately, under its own id.
+    *   Shared conversations now load their messages only from the collaboration endpoint, so the failed request and the error banner are gone.
+    *   (Ref: #1281, `chat-conversations.js`, `chat-collaboration.js`, shared conversation loading)
+
+*   **AI Responses Work Again in Shared Conversations**
+    *   Asking the AI anything in a shared conversation failed immediately with "Stream interrupted: Chat streaming endpoint is unavailable" and no answer was ever generated.
+    *   The recent Blueprint security hardening renamed the internal chat streaming endpoint, and the shared-conversation bridge was still looking for the old name. The bridge now resolves the endpoint correctly and logs a diagnostic if it ever cannot, so this fails loudly instead of silently. Group shared conversations are restored by the same fix.
+    *   (Ref: #1281, `route_backend_collaboration.py`, `app.py`, collaborative AI streaming)
+
+*   **Chat Uploads and Task Documents in Shared Conversations**
+    *   Files uploaded inside a shared conversation never showed up in the Analyze and Compare document pickers, and task documents from the previously opened conversation stayed attached after switching to a shared one.
+    *   Shared conversations now refresh both when their messages load, matching personal conversation behavior.
+    *   (Ref: #1281, `chat-collaboration.js`, `chat-messages.js`, Compare and Analyze document pickers)
+
 ### **(v0.250.223)**
 
 #### Bug Fixes
