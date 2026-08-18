@@ -2,6 +2,26 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.218)**
+
+#### Bug Fixes
+
+*   **Source Blob Backup ETag Failure**
+    *   Fixed every source blob failing backup with "Source blob changed while it was being backed up", which meant user documents, group documents, public documents, and chat attachments were never actually backed up.
+    *   Root cause was comparing an ETag from `list_blobs()` (unquoted XML element) against one from `get_blob_properties()` (RFC-quoted HTTP header); the two never matched, so the post-transfer consistency check always failed after the blob had already been downloaded and uploaded.
+    *   Both values are now normalized before comparison. The precondition sent to Azure is unchanged, and a genuine mid-transfer source change is still rejected.
+    *   (Ref: #1271, `functions_data_management.py`, source blob transfer verification)
+
+*   **Source Blob Backup Checkpoint Throughput**
+    *   Source blob backups previously wrote one Cosmos checkpoint per blob, capping throughput at roughly six items per second and stretching a single container to over an hour.
+    *   Checkpoints are now batched per 100 items or 15 seconds, whichever comes first, while still asserting the job lease on every item.
+    *   (Ref: #1271, `functions_data_management.py`, source blob checkpointing)
+
+*   **Functional Tests Silently Passing Under pytest**
+    *   Backup functional tests written with the try/except and `return False` template were reported as passed by pytest because they returned a value instead of raising.
+    *   The backup ETag and Cosmos pagination test files now assert directly, so real failures are reported by both pytest and standalone execution.
+    *   (Ref: #1271, `test_data_management_backup_source_blob_etag.py`, `test_data_management_backup_cosmos_pagination.py`)
+
 ### **(v0.250.217)**
 
 #### New Features
