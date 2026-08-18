@@ -1,8 +1,8 @@
 # Yamcs Action
 
-Implemented in version: **0.250.209**
+Implemented in version: **0.250.212**
 
-Related config.py version update: `application/single_app/config.py` is **0.250.209** for this implementation.
+Related config.py version update: `application/single_app/config.py` is **0.250.212** for this implementation.
 
 ## Overview
 
@@ -10,7 +10,7 @@ The Yamcs action lets users connect SimpleChat agents to a [Yamcs](https://yamcs
 
 The action has its own configuration workflow in the Add/Edit Action modal, including a **Test Yamcs Connection** button. It does not reuse the OpenAPI, Databricks, or generic action forms.
 
-Fixed/Implemented in version: **0.250.209**
+Fixed/Implemented in version: **0.250.212**
 
 ## Safety Model
 
@@ -125,7 +125,7 @@ After saving the action, assign it to agents that need Yamcs telemetry or archiv
 
 ## Known Limitations
 
-- The action is read-only in version 0.250.209. Commanding is intentionally out of scope.
+- The action is read-only in version 0.250.212. Commanding is intentionally out of scope.
 - Yamcs permissions are enforced by Yamcs for the configured credentials.
 - Streaming and subscription APIs (parameter, packet, event, and alarm subscriptions) are not exposed, because agent tool calls are request/response.
 - Testing a connection that uses a reusable identity requires saving the action first.

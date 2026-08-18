@@ -2,7 +2,7 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
-### **(v0.250.209)**
+### **(v0.250.212)**
 
 #### New Features
 
@@ -28,6 +28,70 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   It vendorizes its own protobuf runtime, so it does not conflict with the pinned `protobuf==6.33.5`.
     *   **Migration**: run `pip install -r requirements.txt` when upgrading. Deployments that do not install it can still run SimpleChat; Yamcs actions will return an actionable dependency error until the package is present.
     *   (Ref: `requirements.txt`, `semantic_kernel_plugins/yamcs_plugin.py`)
+
+### **(v0.250.211)**
+
+#### User Interface Enhancements
+
+*   **Consistent Workspace Section Order**
+    *   Workspace sections now follow a single order of operations everywhere they are listed: Documents, Prompts, Identities, Sync, Endpoints, Actions, Agents, Workflows.
+    *   The order reflects how a workspace is actually built up, so it is clearer that Identities feed both Sync and Actions, that Actions belong to Agents, and that Workflows run Agents.
+    *   Applied to the tab strip, the collapsed Section dropdown, and the left-hand sidebar submenus for personal and group workspaces. Public workspaces already matched this order and were left unchanged.
+    *   Sections that an admin has disabled stay hidden; the remaining sections simply close up while keeping their relative positions.
+    *   (Ref: #1255, `workspace.html`, `group_workspaces.html`, `_sidebar_nav.html`, `WORKSPACE_SECTION_ORDER.md`)
+
+#### Bug Fixes
+
+*   **Group Workflows Missing From Sidebar Navigation**
+    *   Added the missing Group Workflows link to the left-hand group workspace submenu. Group workflows previously had a working tab but no way to reach it from the sidebar.
+    *   (Ref: #1255, `_sidebar_nav.html`, group workflows navigation)
+
+*   **Sidebar Links Pointing At Unrendered Workspace Tabs**
+    *   Fixed left-hand navigation links whose visibility rules did not match the tabs they opened, so a link could appear for a section that was never rendered.
+    *   Personal Agents and Actions links now respect the user agent and plugin permissions, group Agents and Actions links now respect per-user Semantic Kernel and group plugin permissions, and both Identities links now match their tab's File Sync and Semantic Kernel conditions.
+    *   (Ref: #1255, `_sidebar_nav.html`, `test_workspace_section_order.py`)
+
+### **(v0.250.210)**
+
+#### Bug Fixes
+
+*   **Chat Document Search Now Matches File Names**
+    *   Fixed the chat grounded-search document picker only matching on a document's title, which made file names completely unsearchable for any document that had extracted title metadata.
+    *   Typing any fragment of a file name now surfaces the document, anywhere in the name — searching `200` finds `Quarterly_Report_200_final.pdf`.
+    *   Multi-word queries are also supported, with `_`, `-`, and `.` treated as word breaks, so `report 200` matches `Quarterly_Report_200_final.pdf`. The same improvement applies to the scope, tags, prompt, model, and agent selectors.
+    *   (Ref: #1256, `chat-documents.js`, `chat-searchable-select.js`, chat grounded search, document picker)
+
+*   **Leftover Separator Lines in Filtered Dropdowns**
+    *   Fixed filtered dropdowns leaving orphaned workspace separator lines behind — commonly two stacked horizontal rules directly under the "Select All" / "Clear All" row — when a search removed the leading sections.
+    *   Divider visibility now follows the section it separates instead of the nearest visible row, and separator lines can no longer be leading, trailing, or stacked. Affects the Document, Scope, and Tags dropdowns, plus the Compare modal document picker.
+    *   (Ref: #1256, `chat-searchable-select.js`, dropdown filtering, section dividers)
+
+#### User Interface Enhancements
+
+*   **File Name Shown in Document Picker Rows**
+    *   Document rows in the chat grounded-search picker now show the file name as a smaller muted line beneath the title whenever the two differ, so it is clear which file a search matched.
+    *   Rows without distinct titles are unchanged, and the row tooltip carries both the title and the file name.
+    *   (Ref: #1256, `chat-documents.js`, `chats.css`, document picker rows)
+
+### **(v0.250.209)**
+
+#### Bug Fixes
+
+*   **Cosmos Backup Continuation Token Failure**
+    *   Fixed Data Management backups silently omitting every Cosmos container that held more than one page of documents, which in most deployments meant personal conversations and personal messages were never backed up.
+    *   Affected containers failed with `BadRequest: Invalid Continuation Token` and were dropped from the backup artifact set while the job still reported completion with warnings.
+    *   Root cause was rebuilding the cross-partition query for each page and replaying the previous pager's continuation token; the backup now drains a single pager so the SDK's cross-partition execution context is preserved.
+    *   (Ref: #1258, `functions_data_management.py`, Cosmos backup source paging)
+
+*   **Missing Backup Failure Diagnostics**
+    *   Source blob transfer failures previously produced no log output at all, so a run with nearly 20,000 failed blobs left no trace in App Service logs.
+    *   Backups now log the first failure for each resource plus a bounded rollup of distinct failure reasons and counts when the resource finishes.
+    *   (Ref: #1258, `functions_data_management.py`, source blob backup logging)
+
+*   **Application Insights Log Message Text**
+    *   Structured log events reached Application Insights as the constant `[SIMPLE_CHAT_LOG_EVENT]` with every string property reduced to a character count, making traces unusable for diagnosis.
+    *   Traces now carry the sanitized message text and an allowlist of non-sensitive diagnostic values such as job ID, resource, container, status code, and error. Sensitive keys still collapse to a presence flag and secret redaction is unchanged.
+    *   (Ref: #1258, `functions_appinsights.py`, log event properties)
 
 ### **(v0.250.208)**
 

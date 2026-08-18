@@ -211,6 +211,7 @@ DATA_MANAGEMENT_MIGRATION_BATCH_SIZE = 500
 DATA_MANAGEMENT_MIGRATION_MANIFEST_BATCH_SIZE = 100
 DATA_MANAGEMENT_BACKUP_MANIFEST_BATCH_SIZE = 100
 DATA_MANAGEMENT_BACKUP_MAX_PUBLIC_ITEM_SUMMARIES = 50
+DATA_MANAGEMENT_BACKUP_MAX_LOGGED_FAILURE_REASONS = 10
 DATA_MANAGEMENT_BACKUP_MAX_RECENT_CHECKPOINTS = 20
 DATA_MANAGEMENT_BACKUP_DEFAULT_PARALLEL_OPERATIONS = 4
 DATA_MANAGEMENT_BACKUP_MAX_PARALLEL_OPERATIONS = 16
@@ -14408,6 +14409,29 @@ def _append_backup_state_summary(state, field_name, summary):
     del values[:-DATA_MANAGEMENT_BACKUP_MAX_PUBLIC_ITEM_SUMMARIES]
 
 
+def _record_backup_failure_reason(reason_counts, failure_summary):
+    """Tally distinct failure reasons so per-item faults log as one bounded rollup."""
+    if not isinstance(reason_counts, dict):
+        return
+    reason = _safe_text(failure_summary)[:200] or "Unspecified backup failure."
+    if reason in reason_counts:
+        reason_counts[reason] += 1
+    elif len(reason_counts) < DATA_MANAGEMENT_BACKUP_MAX_LOGGED_FAILURE_REASONS:
+        reason_counts[reason] = 1
+    else:
+        reason_counts["Other backup failures."] = (
+            reason_counts.get("Other backup failures.", 0) + 1
+        )
+
+
+def _summarize_backup_failure_reasons(reason_counts):
+    """Render the most frequent failure reasons as a single log-safe string."""
+    if not isinstance(reason_counts, dict) or not reason_counts:
+        return ""
+    ordered = sorted(reason_counts.items(), key=lambda entry: (-entry[1], entry[0]))
+    return "; ".join(f"{count}x {reason}" for reason, count in ordered)
+
+
 def _build_backup_checkpoint_id(job, resource_name, batch_number):
     return (
         f"{_safe_text(job.get('id'))}:"
@@ -14830,102 +14854,101 @@ def _iter_backup_cosmos_source_items(
             "source_version": source_version,
         }
 
-    continuation_token = None
-    while True:
+    def finalize_page(normalized_page):
+        normalized_page.sort(
+            key=lambda item: (item["source_identity"], item["source_version"]),
+        )
+        report_telemetry({"source_page_count": 1})
+        return normalized_page
+
+    def normalize_page(raw_page):
+        return finalize_page([
+            item for item in (normalize_item(raw_item) for raw_item in raw_page)
+            if item is not None
+        ])
+
+    def assert_not_canceled():
         if cancel_event is not None and cancel_event.is_set():
             raise DataManagementBackupCanceledError(
                 "Cosmos source export stopped after backup cancellation or lease loss."
             )
-        page_completed = False
-        for attempt in range(1, retry_count + 1):
-            try:
-                source_iterable = container.query_items(
-                    query=query,
-                    parameters=parameters,
-                    enable_cross_partition_query=True,
-                    max_item_count=DATA_MANAGEMENT_BACKUP_MANIFEST_BATCH_SIZE,
-                    populate_query_metrics=True,
-                    response_hook=response_hook,
-                )
-                if hasattr(source_iterable, "by_page"):
-                    page_iterator = source_iterable.by_page(
-                        continuation_token=continuation_token,
-                    )
-                    try:
-                        source_page = list(next(page_iterator))
-                    except StopIteration:
-                        return
-                    normalized_page = [
-                        item for item in (normalize_item(raw_item) for raw_item in source_page)
-                        if item is not None
-                    ]
-                    normalized_page.sort(
-                        key=lambda item: (item["source_identity"], item["source_version"]),
-                    )
-                    report_telemetry({"source_page_count": 1})
-                    for source_item in normalized_page:
-                        yield source_item
-                    continuation_token = getattr(page_iterator, "continuation_token", None)
-                    page_completed = True
-                    break
 
-                # Lightweight test doubles may not expose Cosmos paging. Keep their
-                # staging bounded even though production uses continuation pages.
-                buffered_items = []
-                for raw_item in source_iterable:
-                    normalized_item = normalize_item(raw_item)
-                    if normalized_item is None:
-                        continue
-                    buffered_items.append(normalized_item)
-                    if len(buffered_items) < DATA_MANAGEMENT_BACKUP_MANIFEST_BATCH_SIZE:
-                        continue
-                    buffered_items.sort(
-                        key=lambda item: (item["source_identity"], item["source_version"]),
-                    )
-                    report_telemetry({"source_page_count": 1})
-                    for source_item in buffered_items:
-                        yield source_item
-                    buffered_items = []
-                if buffered_items:
-                    buffered_items.sort(
-                        key=lambda item: (item["source_identity"], item["source_version"]),
-                    )
-                    report_telemetry({"source_page_count": 1})
-                    for source_item in buffered_items:
-                        yield source_item
-                return
-            except (DataManagementBackupCanceledError, DataManagementBackupLeaseLostError):
-                raise
-            except Exception as exc:
-                if not _is_retryable_backup_cosmos_error(exc) or attempt >= retry_count:
-                    log_event(
-                        "[DATA_MANAGEMENT] Cosmos backup source page read failed.",
-                        {
-                            "container": container_name,
-                            "status_code": _get_backup_exception_status_code(exc),
-                            "error": str(exc),
-                        },
-                        level=logging.WARNING,
-                    )
+    def wait_before_page_retry(exc, attempt):
+        if not _is_retryable_backup_cosmos_error(exc) or attempt >= retry_count:
+            log_event(
+                "[DATA_MANAGEMENT] Cosmos backup source page read failed.",
+                {
+                    "container": container_name,
+                    "status_code": _get_backup_exception_status_code(exc),
+                    "attempt": attempt,
+                    "error": str(exc),
+                },
+                level=logging.WARNING,
+            )
+            raise exc
+        status_code = _get_backup_exception_status_code(exc)
+        retry_delay = _get_backup_retry_delay(exc, attempt)
+        report_telemetry({
+            "source_retry_attempt_count": 1,
+            "source_throttle_count": 1 if status_code in {429, 449} else 0,
+            "last_retry_delay_seconds": round(retry_delay, 3),
+        })
+        if cancel_event is not None:
+            if cancel_event.wait(retry_delay):
+                raise DataManagementBackupCanceledError(
+                    "Cosmos source export stopped during retry backoff."
+                ) from exc
+        else:
+            time.sleep(retry_delay)
+
+    assert_not_canceled()
+    source_iterable = container.query_items(
+        query=query,
+        parameters=parameters,
+        enable_cross_partition_query=True,
+        max_item_count=DATA_MANAGEMENT_BACKUP_MANIFEST_BATCH_SIZE,
+        populate_query_metrics=True,
+        response_hook=response_hook,
+    )
+
+    if hasattr(source_iterable, "by_page"):
+        # Cross-partition results are merged client side, so the surfaced continuation
+        # token cannot be replayed against a rebuilt query. Drain a single pager.
+        page_iterator = source_iterable.by_page()
+        while True:
+            assert_not_canceled()
+            raw_page = None
+            for attempt in range(1, retry_count + 1):
+                try:
+                    raw_page = list(next(page_iterator))
+                    break
+                except StopIteration:
+                    return
+                except (DataManagementBackupCanceledError, DataManagementBackupLeaseLostError):
                     raise
-                status_code = _get_backup_exception_status_code(exc)
-                retry_delay = _get_backup_retry_delay(exc, attempt)
-                report_telemetry({
-                    "source_retry_attempt_count": 1,
-                    "source_throttle_count": 1 if status_code in {429, 449} else 0,
-                    "last_retry_delay_seconds": round(retry_delay, 3),
-                })
-                if cancel_event is not None:
-                    if cancel_event.wait(retry_delay):
-                        raise DataManagementBackupCanceledError(
-                            "Cosmos source export stopped during retry backoff."
-                        )
-                else:
-                    time.sleep(retry_delay)
-        if not page_completed:
-            return
-        if not continuation_token:
-            return
+                except Exception as exc:
+                    wait_before_page_retry(exc, attempt)
+            if raw_page is None:
+                return
+            for source_item in normalize_page(raw_page):
+                yield source_item
+
+    # Lightweight test doubles may not expose Cosmos paging. Keep their staging
+    # bounded even though production drains continuation pages.
+    buffered_items = []
+    for raw_item in source_iterable:
+        normalized_item = normalize_item(raw_item)
+        if normalized_item is None:
+            continue
+        buffered_items.append(normalized_item)
+        if len(buffered_items) < DATA_MANAGEMENT_BACKUP_MANIFEST_BATCH_SIZE:
+            continue
+        for source_item in finalize_page(buffered_items):
+            yield source_item
+        buffered_items = []
+    if buffered_items:
+        for source_item in finalize_page(buffered_items):
+            yield source_item
 
 
 def _escape_backup_search_filter_value(value):
@@ -16629,6 +16652,7 @@ def _execute_backup_source_blob_resource(
     retry_count = _get_backup_blob_retry_count(settings, backup_plan)
     clean_transfer_count = 0
     current_files = set()
+    failure_reason_counts = {}
     started_at = time.perf_counter()
     cancel_event = Event()
     append_manifest, flush_manifest, manifest_buffer = _create_backup_manifest_writer(
@@ -16846,6 +16870,20 @@ def _execute_backup_source_blob_resource(
                 ) or
                 "Source blob transfer failed."
             )
+            _record_backup_failure_reason(failure_reason_counts, failure_summary)
+            if failed_count == 1:
+                log_event(
+                    "[DATA_MANAGEMENT] Source blob backup item failed.",
+                    {
+                        "job_id": job.get("id"),
+                        "resource": resource_name,
+                        "container": source_container_name,
+                        "failure_summary": failure_summary,
+                        "retry_attempt_count": transfer_result.get("retry_attempt_count"),
+                        "throttle_count": transfer_result.get("throttle_count"),
+                    },
+                    level=logging.WARNING,
+                )
             _append_backup_state_summary(state, "failed_items", {
                 "service": "source_blobs",
                 "resource_name": resource_name,
@@ -16950,11 +16988,38 @@ def _execute_backup_source_blob_resource(
             _sanitize_data_management_backup_text(str(exc)) or
             "Source blob enumeration failed."
         )
+        _record_backup_failure_reason(failure_reason_counts, failure_summary)
+        log_event(
+            "[DATA_MANAGEMENT] Source blob backup enumeration failed.",
+            {
+                "job_id": job.get("id"),
+                "resource": resource_name,
+                "container": source_container_name,
+                "failure_summary": failure_summary,
+            },
+            level=logging.WARNING,
+        )
         _append_backup_state_summary(state, "failed_items", {
             "service": "source_blobs",
             "resource_name": resource_name,
             "failure_summary": failure_summary,
         })
+
+    if failed_count:
+        log_event(
+            "[DATA_MANAGEMENT] Source blob backup completed with failures.",
+            {
+                "job_id": job.get("id"),
+                "resource": resource_name,
+                "container": source_container_name,
+                "failed_count": failed_count,
+                "copied_count": copied_count,
+                "skipped_count": skipped_count,
+                "source_read_count": source_read_count,
+                "failure_reasons": _summarize_backup_failure_reasons(failure_reason_counts),
+            },
+            level=logging.WARNING,
+        )
 
     if manifest_buffer or pending_latest_state_updates:
         persist(f"Finalized source blob checkpoints for {source_container_name}")

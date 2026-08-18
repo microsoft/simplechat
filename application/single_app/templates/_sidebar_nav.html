@@ -120,7 +120,7 @@
           <li class="nav-item">
             {% if request.endpoint == 'workspace' %}
             <!-- Personal workspace with expandable sub-menu when on workspace page -->
-            <a class="nav-link d-flex align-items-center workspace-nav-toggle" href="#" data-target="personal-workspace-submenu" title="Open your personal workspace for private documents, prompts, agents, actions, workflows, endpoints, sync, and identities.">
+            <a class="nav-link d-flex align-items-center workspace-nav-toggle" href="#" data-target="personal-workspace-submenu" title="Open your personal workspace for private documents, prompts, identities, sync, endpoints, actions, agents, and workflows.">
               <i class="bi bi-folder me-2"></i><span class="nav-text"> Personal</span>
               <i class="bi bi-caret-right-fill ms-auto transition workspace-caret" style="font-size: 0.8em; transition: transform 0.2s;"></i>
             </a>
@@ -135,29 +135,10 @@
                   <i class="bi bi-lightbulb me-2" style="font-size: 0.8em;"></i><span class="nav-text">Your Prompts</span>
                 </a>
               </li>
-              {% if sidebar_settings.allow_user_workflows %}
+              {% if file_sync_enabled or sidebar_settings.enable_semantic_kernel %}
               <li class="nav-item">
-                <a class="nav-link d-flex align-items-center workspace-nav-tab" href="#" data-tab="workflows-tab" title="Save repeatable personal tasks that run manually or on a schedule using a selected model or agent, with optional document actions and run history.">
-                  <i class="bi bi-diagram-3 me-2" style="font-size: 0.8em;"></i><span class="nav-text">Your Workflows</span>
-                </a>
-              </li>
-              {% endif %}
-              {% if sidebar_settings.per_user_semantic_kernel and sidebar_settings.enable_semantic_kernel %}
-              <li class="nav-item">
-                <a class="nav-link d-flex align-items-center workspace-nav-tab" href="#" data-tab="agents-tab" title="Reusable, specialized AI assistants that combine instructions, approved knowledge, and optional actions. Actions are tasks an agent is allowed to perform.">
-                  <i class="bi bi-robot me-2" style="font-size: 0.8em;"></i><span class="nav-text">Your Agents</span>
-                </a>
-              </li>
-              <li class="nav-item">
-                <a class="nav-link d-flex align-items-center workspace-nav-tab" href="#" data-tab="plugins-tab" title="Configure governed tools that agents can call, such as APIs, databases, or other connected systems.">
-                  <i class="bi bi-plugin me-2" style="font-size: 0.8em;"></i><span class="nav-text">Your Actions</span>
-                </a>
-              </li>
-              {% endif %}
-              {% if sidebar_settings.allow_user_custom_endpoints and sidebar_settings.enable_multi_model_endpoints %}
-              <li class="nav-item">
-                <a class="nav-link d-flex align-items-center workspace-nav-tab" href="#" data-tab="endpoints-tab" title="Manage model endpoints available to personal agents and workflows alongside admin-managed global endpoints.">
-                  <i class="bi bi-hdd-network me-2" style="font-size: 0.8em;"></i><span class="nav-text">Your Endpoints</span>
+                <a class="nav-link d-flex align-items-center workspace-nav-tab" href="#" data-tab="identities-tab" title="Manage reusable authentication profiles for File Sync and Actions so credentials stay scoped and resolved server-side.">
+                  <i class="bi bi-person-badge me-2" style="font-size: 0.8em;"></i><span class="nav-text">Identities</span>
                 </a>
               </li>
               {% endif %}
@@ -168,17 +149,38 @@
                 </a>
               </li>
               {% endif %}
-              {% if file_sync_enabled or sidebar_settings.enable_semantic_kernel or sidebar_settings.enable_multi_model_endpoints %}
+              {% if sidebar_settings.allow_user_custom_endpoints and sidebar_settings.enable_multi_model_endpoints %}
               <li class="nav-item">
-                <a class="nav-link d-flex align-items-center workspace-nav-tab" href="#" data-tab="identities-tab" title="Manage reusable authentication profiles for File Sync and Actions so credentials stay scoped and resolved server-side.">
-                  <i class="bi bi-person-badge me-2" style="font-size: 0.8em;"></i><span class="nav-text">Identities</span>
+                <a class="nav-link d-flex align-items-center workspace-nav-tab" href="#" data-tab="endpoints-tab" title="Manage model endpoints available to personal agents and workflows alongside admin-managed global endpoints.">
+                  <i class="bi bi-hdd-network me-2" style="font-size: 0.8em;"></i><span class="nav-text">Your Endpoints</span>
+                </a>
+              </li>
+              {% endif %}
+              {% if sidebar_settings.per_user_semantic_kernel and sidebar_settings.enable_semantic_kernel and sidebar_settings.allow_user_agents %}
+              {% if sidebar_settings.allow_user_plugins %}
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center workspace-nav-tab" href="#" data-tab="plugins-tab" title="Configure governed tools that agents can call, such as APIs, databases, or other connected systems.">
+                  <i class="bi bi-plugin me-2" style="font-size: 0.8em;"></i><span class="nav-text">Your Actions</span>
+                </a>
+              </li>
+              {% endif %}
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center workspace-nav-tab" href="#" data-tab="agents-tab" title="Reusable, specialized AI assistants that combine instructions, approved knowledge, and optional actions. Actions are tasks an agent is allowed to perform.">
+                  <i class="bi bi-robot me-2" style="font-size: 0.8em;"></i><span class="nav-text">Your Agents</span>
+                </a>
+              </li>
+              {% endif %}
+              {% if sidebar_settings.allow_user_workflows %}
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center workspace-nav-tab" href="#" data-tab="workflows-tab" title="Save repeatable personal tasks that run manually or on a schedule using a selected model or agent, with optional document actions and run history.">
+                  <i class="bi bi-diagram-3 me-2" style="font-size: 0.8em;"></i><span class="nav-text">Your Workflows</span>
                 </a>
               </li>
               {% endif %}
             </ul>
             {% else %}
             <!-- Regular Personal workspace link when not on workspace page -->
-            <a class="nav-link d-flex align-items-center" href="{{ url_for('frontend_workspace.workspace') }}" title="Open your personal workspace for private documents, prompts, agents, actions, workflows, endpoints, sync, and identities.">
+            <a class="nav-link d-flex align-items-center" href="{{ url_for('frontend_workspace.workspace') }}" title="Open your personal workspace for private documents, prompts, identities, sync, endpoints, actions, agents, and workflows.">
               <i class="bi bi-folder me-2"></i><span class="nav-text"> Personal</span>
             </a>
             {% endif %}
@@ -188,7 +190,7 @@
           <li class="nav-item">
             {% if request.endpoint == 'group_workspaces' %}
             <!-- Group workspace with expandable sub-menu when on group workspace page -->
-            <a class="nav-link d-flex align-items-center workspace-nav-toggle" href="#" data-target="group-workspace-submenu" title="Open group workspaces for shared documents, prompts, agents, actions, workflows, endpoints, sync, and identities.">
+            <a class="nav-link d-flex align-items-center workspace-nav-toggle" href="#" data-target="group-workspace-submenu" title="Open group workspaces for shared documents, prompts, identities, sync, endpoints, actions, agents, and workflows.">
               <i class="bi bi-folder me-2"></i><span class="nav-text"> Groups</span>
               <i class="bi bi-caret-right-fill ms-auto transition workspace-caret" style="font-size: 0.8em; transition: transform 0.2s;"></i>
             </a>
@@ -203,22 +205,10 @@
                   <i class="bi bi-lightbulb me-2" style="font-size: 0.8em;"></i><span class="nav-text">Group Prompts</span>
                 </a>
               </li>
-              {% if sidebar_settings.allow_group_agents and sidebar_settings.enable_semantic_kernel %}
-                <li class="nav-item">
-                  <a class="nav-link d-flex align-items-center workspace-nav-tab" href="#" data-tab="group-agents-tab" title="Reusable, specialized AI assistants that combine instructions, approved knowledge, and optional actions. Actions are tasks an agent is allowed to perform.">
-                    <i class="bi bi-robot me-2" style="font-size: 0.8em;"></i><span class="nav-text">Group Agents</span>
-                  </a>
-                </li>
-                <li class="nav-item">
-                  <a class="nav-link d-flex align-items-center workspace-nav-tab" href="#" data-tab="group-plugins-tab" title="Configure governed group tools that agents can call, such as APIs, databases, or other connected systems.">
-                    <i class="bi bi-plugin me-2" style="font-size: 0.8em;"></i><span class="nav-text">Group Actions</span>
-                  </a>
-                </li>
-              {% endif %}
-              {% if sidebar_settings.per_user_semantic_kernel and sidebar_settings.enable_semantic_kernel and sidebar_settings.allow_group_custom_endpoints and sidebar_settings.enable_multi_model_endpoints %}
-                <li class="nav-item">
-                  <a class="nav-link d-flex align-items-center workspace-nav-tab" href="#" data-tab="group-endpoints-tab" title="Manage model endpoints available to group agents and workflows alongside admin-managed global endpoints.">
-                    <i class="bi bi-hdd-network me-2" style="font-size: 0.8em;"></i><span class="nav-text">Group Endpoints</span>
+              {% if file_sync_enabled or sidebar_settings.enable_semantic_kernel %}
+                <li class="nav-item d-none" data-group-identities-sidebar-nav>
+                  <a class="nav-link d-flex align-items-center workspace-nav-tab" href="#" data-tab="identities-tab" title="Manage reusable group authentication profiles for File Sync and Actions so credentials stay scoped and resolved server-side.">
+                    <i class="bi bi-person-badge me-2" style="font-size: 0.8em;"></i><span class="nav-text">Identities</span>
                   </a>
                 </li>
               {% endif %}
@@ -229,17 +219,38 @@
                   </a>
                 </li>
               {% endif %}
-              {% if file_sync_enabled or sidebar_settings.enable_semantic_kernel or sidebar_settings.enable_multi_model_endpoints %}
-                <li class="nav-item d-none" data-group-identities-sidebar-nav>
-                  <a class="nav-link d-flex align-items-center workspace-nav-tab" href="#" data-tab="identities-tab" title="Manage reusable group authentication profiles for File Sync and Actions so credentials stay scoped and resolved server-side.">
-                    <i class="bi bi-person-badge me-2" style="font-size: 0.8em;"></i><span class="nav-text">Identities</span>
+              {% if sidebar_settings.per_user_semantic_kernel and sidebar_settings.enable_semantic_kernel and sidebar_settings.allow_group_custom_endpoints and sidebar_settings.enable_multi_model_endpoints %}
+                <li class="nav-item">
+                  <a class="nav-link d-flex align-items-center workspace-nav-tab" href="#" data-tab="group-endpoints-tab" title="Manage model endpoints available to group agents and workflows alongside admin-managed global endpoints.">
+                    <i class="bi bi-hdd-network me-2" style="font-size: 0.8em;"></i><span class="nav-text">Group Endpoints</span>
+                  </a>
+                </li>
+              {% endif %}
+              {% if sidebar_settings.per_user_semantic_kernel and sidebar_settings.enable_semantic_kernel and sidebar_settings.allow_group_agents %}
+                {% if sidebar_settings.allow_group_plugins %}
+                  <li class="nav-item">
+                    <a class="nav-link d-flex align-items-center workspace-nav-tab" href="#" data-tab="group-plugins-tab" title="Configure governed group tools that agents can call, such as APIs, databases, or other connected systems.">
+                      <i class="bi bi-plugin me-2" style="font-size: 0.8em;"></i><span class="nav-text">Group Actions</span>
+                    </a>
+                  </li>
+                {% endif %}
+                <li class="nav-item">
+                  <a class="nav-link d-flex align-items-center workspace-nav-tab" href="#" data-tab="group-agents-tab" title="Reusable, specialized AI assistants that combine instructions, approved knowledge, and optional actions. Actions are tasks an agent is allowed to perform.">
+                    <i class="bi bi-robot me-2" style="font-size: 0.8em;"></i><span class="nav-text">Group Agents</span>
+                  </a>
+                </li>
+              {% endif %}
+              {% if sidebar_settings.allow_group_workflows %}
+                <li class="nav-item">
+                  <a class="nav-link d-flex align-items-center workspace-nav-tab" href="#" data-tab="workflows-tab" title="Create repeatable group tasks that run manually, on a schedule, or after File Sync changes using group agents, documents, or models.">
+                    <i class="bi bi-diagram-3 me-2" style="font-size: 0.8em;"></i><span class="nav-text">Group Workflows</span>
                   </a>
                 </li>
               {% endif %}
             </ul>
             {% else %}
             <!-- Regular Groups workspace link when not on group workspace page -->
-            <a class="nav-link d-flex align-items-center" href="{{ url_for('frontend_group_workspaces.group_workspaces') }}" title="Open group workspaces for shared documents, prompts, agents, actions, workflows, endpoints, sync, and identities.">
+            <a class="nav-link d-flex align-items-center" href="{{ url_for('frontend_group_workspaces.group_workspaces') }}" title="Open group workspaces for shared documents, prompts, identities, sync, endpoints, actions, agents, and workflows.">
               <i class="bi bi-folder me-2"></i><span class="nav-text"> Groups</span>
             </a>
             {% endif %}

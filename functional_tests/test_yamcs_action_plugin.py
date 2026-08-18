@@ -2,8 +2,8 @@
 #!/usr/bin/env python3
 """
 Functional test for the Yamcs mission control action plugin.
-Version: 0.250.209
-Implemented in: 0.250.209
+Version: 0.250.212
+Implemented in: 0.250.212
 
 This test ensures the Yamcs action operations helpers, factory, plugin metadata,
 manifest health validation, reusable identity contract, read-only archive SQL
@@ -803,7 +803,7 @@ def test_missing_client_library_is_reported():
 def test_app_version():
     """The Yamcs action ships in at least its implementation version."""
     print("Testing SimpleChat version floor...")
-    assert_app_version_at_least("0.250.209")
+    assert_app_version_at_least("0.250.212")
     print("SimpleChat version floor passed.")
     return True
 
