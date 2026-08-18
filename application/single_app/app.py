@@ -1099,6 +1099,9 @@ public_app_bp = Blueprint('public_app', __name__)
 @public_app_bp.route('/')
 @swagger_route(security=get_auth_security())
 def index():
+    if ENABLE_AUTO_LOGIN_ON_INDEX and "user" not in session:
+        return redirect(url_for('frontend_authentication.login'))
+
     settings = get_settings()
     public_settings = sanitize_settings_for_user(settings)
 

@@ -2,6 +2,15 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.222)**
+
+#### New Features
+
+*   **Index Auto-Login**
+    *   Added an opt-in `ENABLE_AUTO_LOGIN_ON_INDEX` setting that redirects unauthenticated home-page visits to the existing Microsoft Entra sign-in flow.
+    *   Supports government tenant SSO scenarios where users already have a browser session and should enter SimpleChat without first clicking the sign-in link.
+    *   (Ref: `app.py`, `config.py`, `INDEX_AUTO_LOGIN.md`, Microsoft Entra sign-in)
+
 ### **(v0.250.221)**
 
 #### New Features
