@@ -27,7 +27,7 @@ from semantic_kernel_plugins.rocksdb_plugin import (
 )
 from functions_settings import get_settings, is_tabular_processing_enabled, update_settings
 from functions_authentication import *
-from functions_appinsights import log_event, sanitize_log_message
+from functions_appinsights import log_event
 from swagger_wrapper import swagger_route, get_auth_security
 import logging
 import os
@@ -2860,7 +2860,6 @@ def test_rocksdb_connection():
                 'user_id': user_id,
                 'auth_scheme': auth_scheme,
                 'error_type': type(exc).__name__,
-                'error_detail': sanitize_log_message(exc),
             },
             level=logging.WARNING,
             exceptionTraceback=True,
