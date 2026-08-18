@@ -13,6 +13,8 @@ unconfigured, Enhanced automatically uses Document Intelligence `prebuilt-layout
 
 **Implemented in version: 0.250.218**
 
+**Tracking issue:** [#1277](https://github.com/microsoft/simplechat/issues/1277)
+
 ### Dependencies
 
 | Dependency | Purpose | Required |
