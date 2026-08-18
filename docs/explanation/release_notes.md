@@ -30,6 +30,15 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Each run now records why it did or did not alert, including the winning severity and every matched rule, surfaced through the workflow activity view so noisy or silent workflows can be diagnosed.
     *   (Ref: `functions_workflow_activity.py`, `functions_workflow_runner.py`)
 
+#### User Interface Enhancements
+
+*   **Workflow Alert Rules Editor**
+    *   The Review step of the personal and group workflow builders replaces the single Pop-up Alert Priority dropdown with an alert mode selector and a rule editor for adding, editing, enabling and removing alert rules.
+    *   Each rule row exposes its name, condition, severity, delivery and, where relevant, the task or output it should watch, with condition-specific fields appearing as the condition is chosen.
+    *   The workflow list now summarizes alerts as the number of active rules, and the Review summary names the rules that will notify you.
+    *   Invalid rules are caught before saving, such as a missing regex pattern, empty match values, an unwritten model condition, or a task-scoped rule with no task selected.
+    *   (Ref: `workspace.html`, `group_workspaces.html`, `workspace_workflows.js`, workflow builder review step)
+
 #### Breaking Changes
 
 *   **Workflow Alert Configuration Model**
