@@ -25,6 +25,8 @@ category: Version History
 - [Agents Page Customization](v0.241.229/AGENTS_PAGE_CUSTOMIZATION.md)
 - [Microsoft Graph Send Mail Action](MSGRAPH_SEND_MAIL_ACTION.md)
 - [Snowflake Action](v0.250.006/SNOWFLAKE_ACTION.md)
+- [Tableau Action](TABLEAU_ACTION.md)
+- [Yamcs Action](YAMCS_ACTION.md)
 
 ## MCP Features
 
