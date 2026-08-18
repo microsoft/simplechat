@@ -2,6 +2,22 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.223)**
+
+#### Bug Fixes
+
+*   **Diagrams in Word and PowerPoint Files Are Now Analyzed**
+    *   Images embedded in Office documents as EMF or WMF metafiles were silently skipped. Word stores pasted diagrams, SmartArt, Visio drawings, and charts in this format, so architecture diagrams — often the most information-dense figures in a document — were never analyzed or indexed.
+    *   Metafiles are now rasterized in-process and sent to the configured extraction engine like any other image. Text drawn inside the diagram is recovered as well, so figure labels such as service and resource names become searchable even when the vision engine returns no description.
+    *   The renderer is pure Python on top of Pillow, with no system packages or external converters, so it behaves the same in the Linux container as it does locally. Fidelity is intentionally a description aid rather than a pixel-accurate reproduction; unsupported drawing records are skipped rather than failing the document.
+    *   (Ref: #1277, `functions_emf_render.py`, `functions_office_media.py`, embedded Office image analysis)
+
+*   **Embedded Image Processing Is Now Visible in the Workspace Log**
+    *   A document whose images were all skipped looked exactly like a document with no images at all, so there was no way to tell whether embedded image analysis had run.
+    *   Processing now reports how many embedded images were found, how many were analyzed, and why any were skipped — too small, duplicates, unsupported format, or over the per-document cap. Progress is reported per image rather than only once at the start.
+    *   The found, analyzed, and skipped counts are stored on the document so the outcome can be confirmed after processing completes.
+    *   (Ref: #1277, `functions_documents.py`, `functions_office_media.py`, embedded image diagnostics)
+
 ### **(v0.250.222)**
 
 #### New Features

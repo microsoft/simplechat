@@ -11,7 +11,7 @@ does not produce.
 Enhanced extraction always degrades gracefully: when Content Understanding is unavailable or
 unconfigured, Enhanced automatically uses Document Intelligence `prebuilt-layout` instead.
 
-**Implemented in version: 0.250.221**
+**Implemented in version: 0.250.221** (EMF/WMF diagram support added in 0.250.223)
 
 **Tracking issue:** [#1277](https://github.com/microsoft/simplechat/issues/1277)
 
@@ -162,8 +162,10 @@ PDFs and images. SimpleChat therefore extracts embedded images from the OOXML pa
 them separately.
 
 - Sources scanned: `word/media/*`, `ppt/media/*`, `xl/media/*`.
-- Accepted formats: PNG, JPG/JPEG, BMP, TIF/TIFF, HEIF/HEIC. Vector formats such as EMF and WMF are
-  skipped because neither engine accepts them.
+- Accepted raster formats: PNG, JPG/JPEG, BMP, TIF/TIFF, HEIF/HEIC.
+- Accepted vector formats: **EMF and WMF**. Word stores pasted diagrams, SmartArt, Visio drawings,
+  and charts as metafiles, so these are frequently the most information-dense figures in a
+  document. Neither analysis engine accepts a metafile, so they are rasterized to PNG first.
 - Filtering: assets under 2 KB or smaller than `office_embedded_image_min_pixels` in either dimension
   are skipped as icons, bullets, or spacers. Byte-identical images are analyzed once, so a logo
   repeated in a header does not multiply cost. `office_embedded_image_max_per_document` caps the
@@ -176,6 +178,34 @@ them separately.
 - Legacy `.doc` and `.ppt` files are OLE containers rather than zip packages, so they are skipped.
 
 Embedded image analysis never fails a document. Individual image failures are logged and skipped.
+
+### Metafile rasterization
+
+`functions_emf_render.py` renders EMF and WMF in-process, on top of Pillow only. This matters
+because the application container is Linux distroless — no shell and no package manager — so an
+external converter such as LibreOffice or Inkscape is not an option, and Pillow's own metafile
+handler is Windows-only because it is backed by GDI.
+
+The renderer covers the record subset Office actually emits for diagrams: path construction,
+filled and stroked polygons, Bezier curves, rectangles and ellipses, pen and brush objects, world
+transforms, and text runs. Records outside that subset are skipped rather than failing the render,
+so output degrades in fidelity instead of disappearing. It is a description aid for search and
+citation, not a pixel-accurate GDI reimplementation.
+
+Text drawn inside a metafile is also recovered and attached to the chunk, so figure labels such as
+service and resource names stay searchable even when the vision engine returns no description.
+
+### Confirming that embedded images were processed
+
+Processing reports counts rather than staying silent, because a document whose images were all
+skipped otherwise looks identical to a document with no images:
+
+- `office_embedded_image_candidates` — image parts found in the package
+- `office_embedded_image_count` — images successfully analyzed
+- `office_embedded_image_skipped` — images skipped
+
+Status messages name the engine, report progress per image, and list skip reasons, for example
+`Analyzed 4 of 6 embedded image(s) with Content Understanding. Skipped: 2 too small.`
 
 ## API
 
@@ -207,6 +237,7 @@ Enhanced extraction is disabled.
 | --- | --- |
 | `application/single_app/functions_content_understanding.py` | Content Understanding REST client, page reconstruction, image analysis, connection test |
 | `application/single_app/functions_office_media.py` | Embedded image extraction from OOXML packages |
+| `application/single_app/functions_emf_render.py` | In-process EMF/WMF rasterizer, no system packages required |
 | `application/single_app/functions_content.py` | `extract_content_with_extraction_engine()` engine dispatch with fallback |
 | `application/single_app/functions_documents.py` | Ingestion pipeline, Auto-mode detection, embedded image chunks |
 | `application/single_app/functions_settings.py` | Settings, normalizers, engine resolution |
@@ -254,3 +285,8 @@ Enhanced extraction is disabled.
 - Content Understanding markdown is denser than Document Intelligence Read output because it
   includes HTML tables and figure descriptions, so chunks are larger.
 - Legacy `.doc` and `.ppt` files do not support embedded image analysis.
+- Metafile rasterization covers the drawing records Office emits for diagrams. Gradients, complex
+  clipping regions, and embedded bitmap blits inside a metafile are not reproduced, and text is
+  drawn with a default font rather than the original typeface, so a rasterized diagram is a
+  faithful-enough likeness rather than an exact reproduction. The text drawn inside the metafile is
+  extracted separately and attached to the chunk, so labels remain accurate regardless.
