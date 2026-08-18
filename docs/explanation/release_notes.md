@@ -6,6 +6,21 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 
 #### Bug Fixes
 
+*   **Data Management History Failure Diagnostics**
+    *   Backup Inventory and Job History failures returned a generic 503 telling admins to review application logs, while the logs recorded only the exception class name. The provider status code and message were discarded, making the failure impossible to diagnose.
+    *   Failures now log the Cosmos status code and sanitized provider message. Provider text stays in operator logs and is never returned to the browser.
+    *   (Ref: #1275, `functions_data_management.py`, `route_backend_data_management.py`, Data Management history)
+
+*   **Data Management History Throttle Handling**
+    *   Throttled history reads previously produced the same opaque error as a permanent failure.
+    *   Cosmos throttling is now detected, retried up to three times with jittered backoff, and reported as temporary busy guidance with a retryable flag instead of a generic error.
+    *   (Ref: #1275, `functions_data_management.py`, Cosmos history query retry)
+
+*   **Data Management History Index Guidance**
+    *   Missing-index detection required the exact phrase "composite index", so equivalent provider wording fell through to the generic error.
+    *   Detection now also matches `ORDER BY` failures reported as having no corresponding index, keeping the Cosmos indexing maintenance guidance actionable.
+    *   (Ref: #1275, `functions_data_management.py`, Cosmos indexing maintenance)
+
 *   **Source Blob Backup ETag Failure**
     *   Fixed every source blob failing backup with "Source blob changed while it was being backed up", which meant user documents, group documents, public documents, and chat attachments were never actually backed up.
     *   Root cause was comparing an ETag from `list_blobs()` (unquoted XML element) against one from `get_blob_properties()` (RFC-quoted HTTP header); the two never matched, so the post-transfer consistency check always failed after the blob had already been downloaded and uploaded.
