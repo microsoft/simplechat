@@ -2,7 +2,7 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
-### **(v0.250.215)**
+### **(v0.250.216)**
 
 #### New Features
 
@@ -13,7 +13,17 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Exposes `get_value`, `get_values`, `key_exists`, `scan_prefix`, `scan_range`, `list_column_families`, and `get_database_stats` for reads, plus `put_value`, `delete_value`, and `write_batch` that stay blocked until an action explicitly allows writes.
     *   Handles binary data through configurable UTF-8, base64, and JSON key and value encodings that are sent to the service on every request, caps returned records, and flags values truncated by the size limit.
     *   The RocksDB HTTP service contract is fully documented so operators can implement a conforming service.
-    *   (Ref: `rocksdb_plugin.py`, `route_backend_plugins.py`, `plugin_health_checker.py`, `_plugin_modal.html`, `plugin_modal_stepper.js`, `rocksdb.definition.json`, `test_rocksdb_plugin.py`, `test_workspace_rocksdb_action_modal.py`, `docs/explanation/features/v0.250.215/ROCKSDB_ACTION.md`)
+    *   (Ref: `rocksdb_plugin.py`, `route_backend_plugins.py`, `plugin_health_checker.py`, `_plugin_modal.html`, `plugin_modal_stepper.js`, `rocksdb.definition.json`, `test_rocksdb_plugin.py`, `test_workspace_rocksdb_action_modal.py`, `docs/explanation/features/v0.250.216/ROCKSDB_ACTION.md`)
+
+### **(v0.250.215)**
+
+#### Bug Fixes
+
+*   **Retrieved Sources and Cited References**
+    *   Separated complete document/web retrieval results from the exact references used in final assistant responses, while preserving all returned results under **Sources**.
+    *   Used documents now follows active cited responses, conversation details marks cited items within the full source inventory, and conversation/message export references exclude retrieved-only sources.
+    *   Historical conversations retain their previous fallback without a migration or ordinary read-time history parsing.
+    *   (Ref: #1249, `functions_citation_tracking.py`, `route_backend_chats.py`, `route_backend_conversation_export.py`, `SOURCE_AND_CITED_REFERENCE_DISTINCTION_FIX.md`)
 
 ### **(v0.250.214)**
 

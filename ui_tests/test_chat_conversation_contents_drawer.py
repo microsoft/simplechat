@@ -1,10 +1,11 @@
 # test_chat_conversation_contents_drawer.py
 """
 UI test for the conversation contents drawer.
-Version: 0.250.171
+Version: 0.250.215
 Implemented in: 0.250.074
 Documents mode added in: 0.250.159
 Compact overflow-safe layout added in: 0.250.171
+Source/cited distinction added in: 0.250.215
 
 This test validates user-message filtering, cited-document mode, safe labels,
 navigation, live updates, conversation replacement, keyboard closing, and
@@ -239,38 +240,53 @@ def test_chat_conversation_contents_drawer(playwright, viewport):
             "bank-treasury-operations-quarterly-reference-"
             "with-an-intentionally-long-filename.xlsx"
         )
+        source_document_tags = [
+            {
+                "category": "document",
+                "document_id": "doc-1",
+                "title": document_title,
+                "file_name": document_file_name,
+                "classification": "Confidential",
+                "chunk_ids": ["doc-1_1", "doc-1_2"],
+                "scope": {
+                    "type": "group",
+                    "id": "group-1",
+                    "name": "Product Documentation Workspace With A Long Display Name",
+                },
+            },
+            {
+                "category": "document",
+                "document_id": "doc-2",
+                "title": "Release Plan",
+                "file_name": "release-plan.pdf",
+                "classification": "None",
+                "chunk_ids": ["doc-2_4"],
+                "scope": {
+                    "type": "personal",
+                    "id": "user-1",
+                    "name": "Personal",
+                },
+            },
+        ]
         page.route(
             "**/api/conversations/conversation-documents-pane/metadata",
             lambda route: _fulfill_json(route, {
                 "title": "Documents pane conversation",
-                "tags": [
-                    {
-                        "category": "document",
-                        "document_id": "doc-1",
-                        "title": document_title,
-                        "file_name": document_file_name,
-                        "classification": "Confidential",
-                        "chunk_ids": ["doc-1_1", "doc-1_2"],
-                        "scope": {
-                            "type": "group",
-                            "id": "group-1",
-                            "name": "Product Documentation Workspace With A Long Display Name",
-                        },
-                    },
-                    {
-                        "category": "document",
-                        "document_id": "doc-2",
-                        "title": "Release Plan",
-                        "file_name": "release-plan.pdf",
-                        "classification": "None",
-                        "chunk_ids": ["doc-2_4"],
-                        "scope": {
-                            "type": "personal",
-                            "id": "user-1",
-                            "name": "Personal",
-                        },
-                    },
-                ],
+                "tags": source_document_tags,
+                "used_documents_tracking_version": 1,
+                "legacy_used_documents": [],
+                "used_documents": [{
+                    **source_document_tags[0],
+                    "chunk_ids": ["doc-1_99"],
+                    "citation_ids": ["doc-1_99"],
+                    "page_numbers": [2],
+                    "citation_locations": [{
+                        "citation_id": "doc-1_99",
+                        "page_number": 2,
+                        "location_label": "Page",
+                        "location_value": 2,
+                    }],
+                }],
             }),
         )
 
@@ -294,18 +310,20 @@ def test_chat_conversation_contents_drawer(playwright, viewport):
         expect(documents_toggle).to_be_visible()
         expect(page.locator("#conversation-contents-drawer")).to_be_visible()
         expect(page.locator("#conversation-contents-title")).to_have_text("Used documents")
-        expect(documents_entries).to_have_count(2)
+        expect(page.locator("#conversation-contents-subtitle")).to_have_text(
+            "Documents cited in active responses"
+        )
+        expect(documents_entries).to_have_count(1)
         expect(documents_entries.nth(0)).to_contain_text(document_title)
         expect(documents_entries.nth(0)).to_contain_text(document_file_name)
         expect(documents_entries.nth(0)).to_contain_text("Confidential")
-        expect(documents_entries.nth(0)).to_contain_text("Pages: 1, 2")
+        expect(documents_entries.nth(0)).to_contain_text("Pages: 2")
         expect(documents_entries.nth(0)).to_contain_text(
             "group scope: Product Documentation Workspace With A Long Display Name"
         )
         expect(documents_entries.nth(0)).not_to_contain_text("chunks")
         expect(documents_entries.nth(0)).not_to_contain_text("ID:")
-        expect(documents_entries.nth(1)).to_contain_text("Release Plan")
-        expect(page.locator("#conversation-documents-count")).to_have_text("2")
+        expect(page.locator("#conversation-documents-count")).to_have_text("1")
         expect(page.locator("#conversation-documents-panel img[src='x']")).to_have_count(0)
         assert page.evaluate("() => window.__documentsPaneXss") is False
         _assert_no_horizontal_overflow(
@@ -314,6 +332,39 @@ def test_chat_conversation_contents_drawer(playwright, viewport):
         )
         _assert_no_horizontal_overflow(documents_entries.nth(0), "document entry")
 
+        documents_toggle.click()
+        expect(page.locator("#conversation-contents-drawer")).to_be_hidden()
+
+        page.route(
+            "**/api/conversations/conversation-documents-legacy/metadata",
+            lambda route: _fulfill_json(route, {
+                "title": "Legacy documents pane conversation",
+                "tags": source_document_tags,
+            }),
+        )
+        page.evaluate(
+            """
+            () => {
+                window.currentConversationId = 'conversation-documents-legacy';
+                window.dispatchEvent(new CustomEvent('chat:conversation-documents-refresh', {
+                    detail: {
+                        conversationId: 'conversation-documents-legacy',
+                        autoOpen: true
+                    }
+                }));
+            }
+            """
+        )
+        expect(documents_entries).to_have_count(2)
+        expect(documents_entries.nth(1)).to_contain_text("Release Plan")
+        expect(page.locator("#conversation-documents-count")).to_have_text("2")
+        expect(page.locator("#conversation-contents-drawer")).to_be_hidden()
+        expect(page.locator("#conversation-contents-subtitle")).to_have_text(
+            "Documents associated with this historical conversation"
+        )
+
+        documents_toggle.click()
+        expect(page.locator("#conversation-contents-drawer")).to_be_visible()
         page.locator("#conversation-contents-mode-contents").click()
         expect(page.locator("#conversation-contents-title")).to_have_text("Conversation contents")
         expect(page.locator("#conversation-contents-panel")).to_be_visible()

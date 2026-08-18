@@ -1,6 +1,7 @@
 // chat-streaming.js
 import {
     appendMessage,
+    loadMessages,
     markUserMessageMetadataFinalizationUnconfirmed,
     markUserMessageMetadataUnconfirmed,
     refreshUserMessageMetadata,
@@ -374,6 +375,11 @@ function notifyConversationDocumentsMayHaveChanged(conversationId, autoOpen = fa
     }));
 }
 
+function hasCitedWorkspaceDocuments(payload) {
+    return Array.isArray(payload?.cited_hybrid_citations)
+        && payload.cited_hybrid_citations.length > 0;
+}
+
 async function requestStreamCancellation(streamContext = currentStreamContext) {
     if (!streamContext || streamContext.cancellationRequested) {
         return false;
@@ -697,6 +703,36 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
                     error_message: data.error,
                 });
                 handleStreamError(tempAiMessageId, data.partial_content || accumulatedContent, data.error, data);
+                if (
+                    data.message_persisted
+                    && data.message_id
+                    && data.conversation_id
+                ) {
+                    notifyConversationDocumentsMayHaveChanged(
+                        data.conversation_id,
+                        false
+                    );
+                    if (
+                        data.conversation_kind === 'collaborative'
+                        && typeof window.chatCollaboration?.loadConversationMessages === 'function'
+                    ) {
+                        void window.chatCollaboration
+                            .loadConversationMessages(data.conversation_id)
+                            .catch(error => {
+                                console.warn(
+                                    'Failed to reload persisted collaborative response:',
+                                    error
+                                );
+                            });
+                    } else {
+                        void loadMessages(data.conversation_id).catch(error => {
+                            console.warn(
+                                'Failed to reload persisted response:',
+                                error
+                            );
+                        });
+                    }
+                }
                 clearCurrentStreamController(abortController);
                 if (typeof onError === 'function') {
                     onError(data.error, data);
@@ -1276,6 +1312,10 @@ function finalizeCancelledStreamingMessage(messageId, userMessageId, finalData, 
             document.querySelector(`[data-message-id="${finalData.message_id}"]`),
             Boolean(String(partialContent || '').trim())
         );
+        notifyConversationDocumentsMayHaveChanged(
+            finalData.conversation_id,
+            false
+        );
     } else if (messageElement) {
         renderStoppedContent(messageElement, partialContent);
     }
@@ -1377,7 +1417,10 @@ function finalizeStreamingMessage(messageId, userMessageId, finalData, fallbackA
 
     if (existingFinalMessage) {
         markStreamingConversationReadIfActive(finalData.conversation_id, 'live streaming completion');
-        notifyConversationDocumentsMayHaveChanged(finalData.conversation_id, Boolean(finalData.augmented));
+        notifyConversationDocumentsMayHaveChanged(
+            finalData.conversation_id,
+            hasCitedWorkspaceDocuments(finalData)
+        );
         return;
     }
 
@@ -1406,7 +1449,10 @@ function finalizeStreamingMessage(messageId, userMessageId, finalData, fallbackA
         if (finalData.reload_messages && finalData.conversation_id && typeof window.chatMessages?.loadMessages === 'function') {
             window.chatMessages.loadMessages(finalData.conversation_id);
         }
-        notifyConversationDocumentsMayHaveChanged(finalData.conversation_id, Boolean(finalData.augmented));
+        notifyConversationDocumentsMayHaveChanged(
+            finalData.conversation_id,
+            hasCitedWorkspaceDocuments(finalData)
+        );
         return;
     }
 
@@ -1470,7 +1516,10 @@ function finalizeStreamingMessage(messageId, userMessageId, finalData, fallbackA
         window.chatMessages.loadMessages(finalData.conversation_id);
     }
 
-    notifyConversationDocumentsMayHaveChanged(finalData.conversation_id, Boolean(finalData.augmented));
+    notifyConversationDocumentsMayHaveChanged(
+        finalData.conversation_id,
+        hasCitedWorkspaceDocuments(finalData)
+    );
     markStreamingConversationReadIfActive(finalData.conversation_id, 'live streaming completion');
 }
 

@@ -42,7 +42,7 @@ export function parseDocIdAndPage(citationId) {
 
 export function parseCitations(message) {
   // ... (keep existing implementation)
-  const citationRegex = /\(Source:\s*([^,]+),\s*(Page(?:s)?|Sheet(?:s)?|Location):\s*([^)]+)\)\s*((?:\[#.*?\]\s*)+)/gi;
+  const citationRegex = /\(Source:\s*((?:(?!\(Source:).)+?),\s*(Page(?:s)?|Sheet(?:s)?|Location):\s*((?:(?!\(Source:).)+?)\)\s*((?:\[#.*?\]\s*)+)/gi;
 
   let result = message.replace(citationRegex, (whole, filename, locationLabel, locations, bracketSection) => {
     const trimmedFilename = filename.trim();
@@ -80,7 +80,12 @@ export function parseCitations(message) {
     }
 
     const normalizedLocationLabel = locationLabel.toLowerCase();
-    const locationTokens = locations.split(/,/).map(tok => tok.trim());
+    const locationTokens = (
+      normalizedLocationLabel === 'sheet'
+      || normalizedLocationLabel === 'location'
+    )
+      ? [locations.trim()]
+      : locations.split(/,/).map(tok => tok.trim());
     const linkedTokens = locationTokens.map((token, index) => {
       if (!normalizedLocationLabel.startsWith('page')) {
         const ref = orderedRefs[index] || orderedRefs[0];
