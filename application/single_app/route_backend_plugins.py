@@ -17,12 +17,28 @@ from semantic_kernel_plugins.sql_odbc_utils import (
     build_sql_server_odbc_connection_string,
     connect_with_sql_server_odbc_fallback,
 )
+from semantic_kernel_plugins.rocksdb_plugin import (
+    ACCESS_MODE_SECONDARY,
+    AUTH_SCHEME_API_KEY,
+    AUTH_SCHEME_BEARER,
+    AUTH_SCHEME_NONE,
+    CONNECTION_MODE_EMBEDDED,
+    CONNECTION_MODE_REMOTE,
+    DEFAULT_API_KEY_HEADER,
+    SUPPORTED_ACCESS_MODES,
+    SUPPORTED_AUTH_SCHEMES,
+    SUPPORTED_CONNECTION_MODES,
+    import_rocksdict,
+    normalize_rocksdb_base_url,
+    resolve_allowed_rocksdb_path,
+)
 from functions_settings import get_settings, is_tabular_processing_enabled, update_settings
 from functions_authentication import *
 from functions_appinsights import log_event
 from swagger_wrapper import swagger_route, get_auth_security
 import logging
 import os
+import requests
 from functions_debug import debug_print
 import importlib.util
 from functions_plugins import get_merged_plugin_settings
@@ -410,6 +426,24 @@ def get_plugin_types(allowed_type_filter=None):
                                     'timeout': 30,
                                 },
                                 'metadata': {'description': 'Example Cosmos query plugin'}
+                            }
+                        elif 'rocksdb' in module_name.lower():
+                            safe_manifest = {
+                                'endpoint': 'https://rocksdb.example.com/api',
+                                'auth': {'type': 'NoAuth'},
+                                'additionalFields': {
+                                    'connection_mode': CONNECTION_MODE_REMOTE,
+                                    'base_url': 'https://rocksdb.example.com/api',
+                                    'auth_scheme': AUTH_SCHEME_NONE,
+                                    'column_family': 'default',
+                                    'key_encoding': 'utf8',
+                                    'value_encoding': 'utf8',
+                                    'read_only': True,
+                                    'max_results': 100,
+                                    'max_value_bytes': 32768,
+                                    'timeout': 30,
+                                },
+                                'metadata': {'description': 'Example RocksDB key-value action'}
                             }
                         elif 'blob_storage' in module_name.lower():
                             safe_manifest = {
@@ -2482,3 +2516,261 @@ def test_cosmos_connection():
             'success': False,
             'error': 'Cosmos DB authentication failed or the account could not be reached. Verify the endpoint and the selected authentication settings.'
         }), 400
+
+
+@bpap.route('/api/plugins/test-rocksdb-connection', methods=['POST'])
+@swagger_route(security=get_auth_security())
+@login_required
+@user_required
+def test_rocksdb_connection():
+    """Test a RocksDB action connection in either embedded or remote HTTP mode."""
+    data = request.get_json(silent=True) or {}
+    user_id = get_current_user_id()
+    connection_mode = (data.get('connection_mode') or CONNECTION_MODE_EMBEDDED).strip().lower()
+    timeout = min(max(int(data.get('timeout', 10) or 10), 1), 30)
+
+    if connection_mode not in SUPPORTED_CONNECTION_MODES:
+        return jsonify({'success': False, 'error': "Connection mode must be either 'embedded' or 'remote'."}), 400
+
+    try:
+        existing_plugin = _load_existing_plugin_for_test(data.get('existing_plugin'), user_id)
+    except PermissionError as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 403
+    except LookupError as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 404
+    except ValueError as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 400
+
+    if connection_mode == CONNECTION_MODE_EMBEDDED:
+        return _test_rocksdb_embedded_connection(data, user_id)
+
+    return _test_rocksdb_remote_connection(data, user_id, existing_plugin, timeout)
+
+
+def _test_rocksdb_embedded_connection(data, user_id):
+    """Open a local RocksDB directory read-only and confirm it is readable."""
+    db_path = (data.get('db_path') or '').strip()
+    access_mode = (data.get('access_mode') or 'read_only').strip().lower()
+    secondary_path = (data.get('secondary_path') or '').strip()
+    column_family = (data.get('column_family') or 'default').strip() or 'default'
+
+    if access_mode not in SUPPORTED_ACCESS_MODES:
+        return jsonify({'success': False, 'error': "Access mode must be either 'read_only' or 'secondary'."}), 400
+    if access_mode == ACCESS_MODE_SECONDARY and not secondary_path:
+        return jsonify({'success': False, 'error': 'A secondary path is required when access mode is secondary.'}), 400
+
+    try:
+        resolved_path = resolve_allowed_rocksdb_path(db_path)
+    except ValueError as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 400
+
+    database = None
+    try:
+        rocksdict = import_rocksdict()
+    except RuntimeError as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 400
+
+    try:
+        options = rocksdict.Options(raw_mode=True)
+        column_families = list(rocksdict.Rdict.list_cf(resolved_path, options))
+
+        if column_family not in column_families:
+            return jsonify({
+                'success': False,
+                'error': f"Column family '{column_family}' was not found. Available column families: {', '.join(column_families) or 'none'}."
+            }), 404
+
+        if access_mode == ACCESS_MODE_SECONDARY:
+            access_type = rocksdict.AccessType.secondary(secondary_path)
+        else:
+            access_type = rocksdict.AccessType.read_only(False)
+
+        database = rocksdict.Rdict(resolved_path, options=options, access_type=access_type)
+        if access_mode == ACCESS_MODE_SECONDARY:
+            database.try_catch_up_with_primary()
+
+        target = database.get_column_family(column_family) if column_family != 'default' else database
+        iterator = target.iter()
+        iterator.seek_to_first()
+        has_data = iterator.valid()
+
+        try:
+            estimated_keys = target.property_value('rocksdb.estimate-num-keys')
+        except Exception:
+            estimated_keys = None
+
+        log_event(
+            '[PLUGINS] RocksDB embedded connection test succeeded',
+            extra={
+                'user_id': user_id,
+                'access_mode': access_mode,
+                'column_family': column_family,
+                'column_family_count': len(column_families),
+                'has_data': has_data,
+            },
+            level=logging.INFO,
+        )
+        return jsonify({
+            'success': True,
+            'message': (
+                f"Opened the RocksDB database in {access_mode} mode. "
+                f"Column families: {', '.join(column_families)}. "
+                f"Estimated keys in '{column_family}': {estimated_keys if estimated_keys is not None else 'unknown'}."
+            ),
+            'column_families': column_families,
+        })
+    except Exception as exc:
+        log_event(
+            f'[PLUGINS] RocksDB embedded connection test failed: {exc}',
+            extra={'user_id': user_id, 'access_mode': access_mode, 'column_family': column_family},
+            level=logging.WARNING,
+            exceptionTraceback=True,
+        )
+        return jsonify({
+            'success': False,
+            'error': _sanitize_rocksdb_error(exc, access_mode)
+        }), 400
+    finally:
+        if database is not None:
+            try:
+                database.close()
+            except Exception:
+                pass
+
+
+def _test_rocksdb_remote_connection(data, user_id, existing_plugin, timeout):
+    """Probe a remote RocksDB HTTP service and confirm it answers with the expected contract."""
+    auth_scheme = (data.get('auth_scheme') or AUTH_SCHEME_NONE).strip().lower()
+    api_key_header = (data.get('api_key_header') or '').strip() or DEFAULT_API_KEY_HEADER
+    verify_tls = str(data.get('verify_tls', True)).strip().lower() not in ('false', '0', 'no', 'off')
+    auth_key = (data.get('auth_key') or '').strip()
+
+    try:
+        base_url = normalize_rocksdb_base_url(data.get('base_url') or '')
+    except ValueError as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 400
+
+    if not base_url:
+        return jsonify({'success': False, 'error': 'A RocksDB service base URL is required.'}), 400
+    if auth_scheme not in SUPPORTED_AUTH_SCHEMES:
+        return jsonify({'success': False, 'error': "Auth scheme must be one of 'none', 'bearer', or 'api_key'."}), 400
+
+    if auth_scheme != AUTH_SCHEME_NONE:
+        existing_auth = {}
+        if isinstance(existing_plugin, dict) and isinstance(existing_plugin.get('auth'), dict):
+            existing_auth = existing_plugin['auth']
+
+        if auth_key == ui_trigger_word:
+            auth_key = existing_auth.get('key', '')
+        if auth_key == ui_trigger_word:
+            return jsonify({
+                'success': False,
+                'error': 'The stored RocksDB service token could not be resolved for testing. Re-enter the token.'
+            }), 400
+
+        try:
+            auth_key = _resolve_secret_value_for_plugin_test(auth_key, 'auth.key', plugin_label='RocksDB')
+        except ValueError as exc:
+            return jsonify({'success': False, 'error': str(exc)}), 400
+
+        if not auth_key:
+            return jsonify({
+                'success': False,
+                'error': 'A service token is required when the auth scheme is bearer or api_key.'
+            }), 400
+
+    headers = {'Accept': 'application/json'}
+    if auth_scheme == AUTH_SCHEME_BEARER:
+        headers['Authorization'] = f'Bearer {auth_key}'
+    elif auth_scheme == AUTH_SCHEME_API_KEY:
+        headers[api_key_header] = auth_key
+
+    try:
+        response = requests.get(
+            f'{base_url}/health',
+            headers=headers,
+            timeout=timeout,
+            verify=verify_tls,
+        )
+
+        if response.status_code == 404:
+            # Minimal services may not implement /health, so fall back to a single-item scan.
+            response = requests.post(
+                f'{base_url}/scan',
+                json={'limit': 1},
+                headers=headers,
+                timeout=timeout,
+                verify=verify_tls,
+            )
+
+        if response.status_code in (401, 403):
+            return jsonify({
+                'success': False,
+                'error': 'The RocksDB service rejected the supplied credentials. Verify the auth scheme and token.'
+            }), 403
+
+        if response.status_code >= 400:
+            return jsonify({
+                'success': False,
+                'error': f'The RocksDB service returned HTTP {response.status_code}.'
+            }), 400
+
+        try:
+            response.json()
+        except ValueError:
+            return jsonify({
+                'success': False,
+                'error': 'The RocksDB service returned a non-JSON response. Confirm the base URL points at the service API root.'
+            }), 400
+
+        log_event(
+            '[PLUGINS] RocksDB remote connection test succeeded',
+            extra={'user_id': user_id, 'auth_scheme': auth_scheme, 'status_code': response.status_code},
+            level=logging.INFO,
+        )
+        return jsonify({
+            'success': True,
+            'message': f'Successfully reached the RocksDB service at {base_url}.'
+        })
+    except requests.exceptions.SSLError:
+        return jsonify({
+            'success': False,
+            'error': 'TLS verification failed for the RocksDB service. Check the certificate or disable TLS verification for trusted internal hosts.'
+        }), 400
+    except requests.exceptions.Timeout:
+        return jsonify({
+            'success': False,
+            'error': f'The RocksDB service did not respond within {timeout} seconds.'
+        }), 400
+    except Exception as exc:
+        log_event(
+            f'[PLUGINS] RocksDB remote connection test failed: {exc}',
+            extra={'user_id': user_id, 'auth_scheme': auth_scheme},
+            level=logging.WARNING,
+            exceptionTraceback=True,
+        )
+        return jsonify({
+            'success': False,
+            'error': 'The RocksDB service could not be reached. Verify the base URL and that the service is running.'
+        }), 400
+
+
+def _sanitize_rocksdb_error(error, access_mode):
+    """Return a safe, actionable message for embedded RocksDB failures."""
+    error_text = str(error)
+    lowered_text = error_text.lower()
+
+    if 'corrupt' in lowered_text:
+        return 'The RocksDB database at the configured path appears to be corrupted or is not a RocksDB directory.'
+    if any(marker in lowered_text for marker in ('lock hold', 'lock file', 'resource temporarily unavailable', 'already held')):
+        return (
+            'The RocksDB database is locked by another process. Use secondary access mode to read a '
+            'database that has a live writer.'
+        )
+    if 'no such file' in lowered_text or 'does not exist' in lowered_text or 'not found' in lowered_text:
+        return 'No RocksDB database was found at the configured path.'
+    if 'permission' in lowered_text or 'access is denied' in lowered_text:
+        return 'The application does not have permission to read the configured RocksDB directory.'
+    if access_mode == ACCESS_MODE_SECONDARY:
+        return 'The RocksDB database could not be opened in secondary mode. Verify the database path and the secondary path.'
+    return 'The RocksDB database could not be opened in read-only mode. Verify the database path and file permissions.'

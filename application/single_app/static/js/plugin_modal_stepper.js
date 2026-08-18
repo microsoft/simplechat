@@ -46,6 +46,19 @@ const MCP_RESERVED_CUSTOM_HEADER_NAMES = new Set([
 ]);
 const AZURE_MAPS_PLUGIN_TYPE = 'azure_maps_openlayers';
 const AZURE_MAPS_DEFAULT_ENDPOINT = 'https://atlas.microsoft.com';
+const ROCKSDB_PLUGIN_TYPE = 'rocksdb';
+const ROCKSDB_EMBEDDED_ENDPOINT = 'rocksdb://embedded';
+const ROCKSDB_CONNECTION_MODE_EMBEDDED = 'embedded';
+const ROCKSDB_CONNECTION_MODE_REMOTE = 'remote';
+const ROCKSDB_ACCESS_MODE_SECONDARY = 'secondary';
+const ROCKSDB_AUTH_SCHEME_NONE = 'none';
+const ROCKSDB_AUTH_SCHEME_BEARER = 'bearer';
+const ROCKSDB_AUTH_SCHEME_API_KEY = 'api_key';
+const ROCKSDB_DEFAULT_API_KEY_HEADER = 'X-API-Key';
+const ROCKSDB_DEFAULT_COLUMN_FAMILY = 'default';
+const ROCKSDB_DEFAULT_MAX_RESULTS = 100;
+const ROCKSDB_DEFAULT_MAX_VALUE_BYTES = 32768;
+const ROCKSDB_DEFAULT_TIMEOUT = 30;
 const CHART_DEFAULT_ENDPOINT = 'chart://internal';
 const INTERNAL_DOCUMENT_SEARCH_ENDPOINT = 'internal://document-search';
 const MSGRAPH_DEFAULT_ENDPOINT = 'https://graph.microsoft.com';
@@ -697,6 +710,26 @@ export class PluginModalStepper {
     document.getElementById('sql-identity-select').addEventListener('change', () => this.handleActionIdentityChange('sql'));
     document.getElementById('cosmos-auth-type').addEventListener('change', () => this.handleCosmosAuthTypeChange());
 
+    const rocksDbModeSelect = document.getElementById('rocksdb-connection-mode');
+    if (rocksDbModeSelect) {
+      rocksDbModeSelect.addEventListener('change', () => this.handleRocksDbConnectionModeChange());
+    }
+
+    const rocksDbAccessModeSelect = document.getElementById('rocksdb-access-mode');
+    if (rocksDbAccessModeSelect) {
+      rocksDbAccessModeSelect.addEventListener('change', () => this.handleRocksDbConnectionModeChange());
+    }
+
+    const rocksDbReadOnlySelect = document.getElementById('rocksdb-read-only');
+    if (rocksDbReadOnlySelect) {
+      rocksDbReadOnlySelect.addEventListener('change', () => this.handleRocksDbConnectionModeChange());
+    }
+
+    const rocksDbAuthSchemeSelect = document.getElementById('rocksdb-auth-scheme');
+    if (rocksDbAuthSchemeSelect) {
+      rocksDbAuthSchemeSelect.addEventListener('change', () => this.handleRocksDbAuthSchemeChange());
+    }
+
     // Test SQL connection button
     const testConnBtn = document.getElementById('sql-test-connection-btn');
     if (testConnBtn) {
@@ -706,6 +739,11 @@ export class PluginModalStepper {
     const testCosmosBtn = document.getElementById('cosmos-test-connection-btn');
     if (testCosmosBtn) {
       testCosmosBtn.addEventListener('click', () => this.testCosmosConnection());
+    }
+
+    const testRocksDbBtn = document.getElementById('rocksdb-test-connection-btn');
+    if (testRocksDbBtn) {
+      testRocksDbBtn.addEventListener('click', () => this.testRocksDbConnection());
     }
 
     const keyVaultReminderToggle = document.getElementById('plugin-key-vault-reminder-enabled');
@@ -1232,6 +1270,10 @@ export class PluginModalStepper {
 
   isCosmosType(type = this.selectedType) {
     return !!(type && type.toLowerCase() === 'cosmos_query');
+  }
+
+  isRocksDbType(type = this.selectedType) {
+    return !!(type && type.toLowerCase() === ROCKSDB_PLUGIN_TYPE);
   }
 
   isDocumentSearchType(type = this.selectedType) {
@@ -3226,7 +3268,7 @@ export class PluginModalStepper {
   }
 
   isStructuredConfigType(type = this.selectedType) {
-    return this.isSqlType(type) || this.isCosmosType(type) || this.isDocumentSearchType(type) || this.isBlobStorageType(type) || this.isDatabricksType(type) || this.isSnowflakeType(type) || this.isTableauType(type) || this.isMcpType(type) || this.isSimpleChatType(type) || this.isMsGraphType(type) || this.isAzureMapsType(type) || this.isChartType(type);
+    return this.isSqlType(type) || this.isCosmosType(type) || this.isRocksDbType(type) || this.isDocumentSearchType(type) || this.isBlobStorageType(type) || this.isDatabricksType(type) || this.isSnowflakeType(type) || this.isTableauType(type) || this.isMcpType(type) || this.isSimpleChatType(type) || this.isMsGraphType(type) || this.isAzureMapsType(type) || this.isChartType(type);
   }
 
   showConfigSectionForType() {
@@ -3235,6 +3277,7 @@ export class PluginModalStepper {
       generic: document.getElementById('generic-config-section'),
       sql: document.getElementById('sql-config-section'),
       cosmos: document.getElementById('cosmos-config-section'),
+      rocksdb: document.getElementById('rocksdb-config-section'),
       documentSearch: document.getElementById('document-search-config-section'),
       blobStorage: document.getElementById('blob-storage-config-section'),
       databricks: document.getElementById('databricks-config-section'),
@@ -3264,6 +3307,9 @@ export class PluginModalStepper {
     } else if (this.isCosmosType()) {
       showOnly('cosmos');
       this.initializeCosmosConfiguration();
+    } else if (this.isRocksDbType()) {
+      showOnly('rocksdb');
+      this.initializeRocksDbConfiguration();
     } else if (this.isDocumentSearchType()) {
       showOnly('documentSearch');
       this.initializeDocumentSearchConfiguration();
@@ -3338,6 +3384,8 @@ export class PluginModalStepper {
           titleEl.textContent = 'Database Configuration';
         } else if (isCosmosType) {
           titleEl.textContent = 'Cosmos Configuration';
+        } else if (this.isRocksDbType()) {
+          titleEl.textContent = 'RocksDB Configuration';
         } else if (isDocumentSearchType) {
           titleEl.textContent = 'Document Search Configuration';
         } else if (isBlobStorageType) {
@@ -3533,6 +3581,7 @@ export class PluginModalStepper {
         const openApiSection = document.getElementById('openapi-config-section');
         const sqlSection = document.getElementById('sql-config-section');
         const cosmosSection = document.getElementById('cosmos-config-section');
+        const rocksDbSection = document.getElementById('rocksdb-config-section');
         const documentSearchSection = document.getElementById('document-search-config-section');
         const blobStorageSection = document.getElementById('blob-storage-config-section');
         const databricksSection = document.getElementById('databricks-config-section');
@@ -3546,6 +3595,7 @@ export class PluginModalStepper {
         const isOpenApiVisible = !openApiSection.classList.contains('d-none');
         const isSqlVisible = !sqlSection.classList.contains('d-none');
         const isCosmosVisible = !cosmosSection.classList.contains('d-none');
+        const isRocksDbVisible = !!rocksDbSection && !rocksDbSection.classList.contains('d-none');
         const isDocumentSearchVisible = !documentSearchSection.classList.contains('d-none');
         const isBlobStorageVisible = !blobStorageSection.classList.contains('d-none');
         const isDatabricksVisible = !databricksSection.classList.contains('d-none');
@@ -3703,6 +3753,12 @@ export class PluginModalStepper {
           }
           if (Number.isNaN(timeout) || timeout < 1 || timeout > 120) {
             this.showError('Timeout must be between 1 and 120 seconds.');
+            return false;
+          }
+        } else if (isRocksDbVisible) {
+          const rocksDbError = this.getRocksDbValidationError();
+          if (rocksDbError) {
+            this.showError(rocksDbError);
             return false;
           }
         } else if (isBlobStorageVisible) {
@@ -4446,6 +4502,406 @@ export class PluginModalStepper {
     }
   }
 
+  initializeRocksDbConfiguration() {
+    const defaultValues = [
+      ['rocksdb-connection-mode', ROCKSDB_CONNECTION_MODE_EMBEDDED],
+      ['rocksdb-access-mode', 'read_only'],
+      ['rocksdb-auth-scheme', ROCKSDB_AUTH_SCHEME_NONE],
+      ['rocksdb-verify-tls', 'true'],
+      ['rocksdb-read-only', 'true'],
+      ['rocksdb-key-encoding', 'utf8'],
+      ['rocksdb-value-encoding', 'utf8'],
+      ['rocksdb-column-family', ROCKSDB_DEFAULT_COLUMN_FAMILY],
+      ['rocksdb-api-key-header', ROCKSDB_DEFAULT_API_KEY_HEADER],
+      ['rocksdb-max-results', String(ROCKSDB_DEFAULT_MAX_RESULTS)],
+      ['rocksdb-max-value-bytes', String(ROCKSDB_DEFAULT_MAX_VALUE_BYTES)],
+      ['rocksdb-timeout', String(ROCKSDB_DEFAULT_TIMEOUT)]
+    ];
+
+    defaultValues.forEach(([fieldId, defaultValue]) => {
+      const field = document.getElementById(fieldId);
+      if (field && !field.value) {
+        field.value = defaultValue;
+      }
+    });
+
+    this.handleRocksDbConnectionModeChange();
+  }
+
+  setRocksDbFieldValue(fieldId, value) {
+    const field = document.getElementById(fieldId);
+    if (field) {
+      field.value = value === null || value === undefined ? '' : value;
+    }
+  }
+
+  handleRocksDbConnectionModeChange() {
+    const modeSelect = document.getElementById('rocksdb-connection-mode');
+    if (!modeSelect) {
+      return;
+    }
+
+    const connectionMode = modeSelect.value || ROCKSDB_CONNECTION_MODE_EMBEDDED;
+    const isEmbedded = connectionMode !== ROCKSDB_CONNECTION_MODE_REMOTE;
+    const readOnly = (document.getElementById('rocksdb-read-only')?.value || 'true') === 'true';
+    const accessModeSelect = document.getElementById('rocksdb-access-mode');
+
+    // Secondary access only exists for read-only connections, so drop it when writes are enabled.
+    if (!readOnly && accessModeSelect && accessModeSelect.value === ROCKSDB_ACCESS_MODE_SECONDARY) {
+      accessModeSelect.value = 'read_only';
+    }
+
+    const isSecondary = !!accessModeSelect && accessModeSelect.value === ROCKSDB_ACCESS_MODE_SECONDARY;
+
+    document.getElementById('rocksdb-embedded-group')?.classList.toggle('d-none', !isEmbedded);
+    document.getElementById('rocksdb-remote-group')?.classList.toggle('d-none', isEmbedded);
+    document.getElementById('rocksdb-access-mode-group')?.classList.toggle('d-none', !readOnly);
+    document.getElementById('rocksdb-secondary-path-group')?.classList.toggle(
+      'd-none',
+      !(isEmbedded && readOnly && isSecondary)
+    );
+
+    const embeddedInfoText = document.getElementById('rocksdb-embedded-info-text');
+    if (embeddedInfoText) {
+      embeddedInfoText.textContent = readOnly
+        ? 'Embedded connections stay disabled until an administrator sets ROCKSDB_ALLOWED_ROOTS to the directories that RocksDB actions may open. Read-only access cannot open a database that a running writer has locked, so choose Secondary for a live database.'
+        : 'Embedded connections stay disabled until an administrator sets ROCKSDB_ALLOWED_ROOTS to the directories that RocksDB actions may open. Allowing writes opens the database in read-write mode, which needs exclusive access to the directory.';
+    }
+
+    this.handleRocksDbAuthSchemeChange();
+
+    const resultDiv = document.getElementById('rocksdb-test-connection-result');
+    if (resultDiv) {
+      resultDiv.classList.add('d-none');
+    }
+  }
+
+  handleRocksDbAuthSchemeChange() {
+    const authScheme = document.getElementById('rocksdb-auth-scheme')?.value || ROCKSDB_AUTH_SCHEME_NONE;
+    const requiresToken = authScheme === ROCKSDB_AUTH_SCHEME_BEARER || authScheme === ROCKSDB_AUTH_SCHEME_API_KEY;
+
+    document.getElementById('rocksdb-auth-key-group')?.classList.toggle('d-none', !requiresToken);
+    document.getElementById('rocksdb-api-key-header-group')?.classList.toggle(
+      'd-none',
+      authScheme !== ROCKSDB_AUTH_SCHEME_API_KEY
+    );
+
+    const keyInput = document.getElementById('rocksdb-auth-key');
+    if (keyInput) {
+      keyInput.required = requiresToken;
+    }
+  }
+
+  getRocksDbKeyPrefixHints() {
+    const rawValue = document.getElementById('rocksdb-key-prefix-hints')?.value || '';
+    return rawValue
+      .split(/[,\n]/)
+      .map(value => value.trim())
+      .filter(Boolean);
+  }
+
+  isRocksDbRemoteMode() {
+    return (document.getElementById('rocksdb-connection-mode')?.value || ROCKSDB_CONNECTION_MODE_EMBEDDED)
+      === ROCKSDB_CONNECTION_MODE_REMOTE;
+  }
+
+  getRocksDbEndpointValue() {
+    if (this.isRocksDbRemoteMode()) {
+      return (document.getElementById('rocksdb-base-url')?.value || '').trim().replace(/\/+$/, '');
+    }
+    return ROCKSDB_EMBEDDED_ENDPOINT;
+  }
+
+  getRocksDbAuthLabel() {
+    if (!this.isRocksDbRemoteMode()) {
+      return 'Local file system access';
+    }
+
+    const authScheme = document.getElementById('rocksdb-auth-scheme')?.value || ROCKSDB_AUTH_SCHEME_NONE;
+    if (authScheme === ROCKSDB_AUTH_SCHEME_BEARER) {
+      return 'Bearer Token';
+    }
+    if (authScheme === ROCKSDB_AUTH_SCHEME_API_KEY) {
+      return 'API Key Header';
+    }
+    return 'No Authentication';
+  }
+
+  getRocksDbValidationError() {
+    const readOnly = (document.getElementById('rocksdb-read-only')?.value || 'true') === 'true';
+
+    if (this.isRocksDbRemoteMode()) {
+      const baseUrl = (document.getElementById('rocksdb-base-url')?.value || '').trim();
+      if (!baseUrl) {
+        return 'RocksDB service base URL is required for remote connections.';
+      }
+      if (!/^https?:\/\/.+/i.test(baseUrl)) {
+        return 'RocksDB service base URL must start with http:// or https://.';
+      }
+
+      const authScheme = document.getElementById('rocksdb-auth-scheme')?.value || ROCKSDB_AUTH_SCHEME_NONE;
+      if (authScheme !== ROCKSDB_AUTH_SCHEME_NONE && !(document.getElementById('rocksdb-auth-key')?.value || '').trim()) {
+        return 'A service token is required when the RocksDB authentication scheme is Bearer Token or API Key Header.';
+      }
+    } else {
+      if (!(document.getElementById('rocksdb-db-path')?.value || '').trim()) {
+        return 'RocksDB database path is required for embedded connections.';
+      }
+
+      const accessMode = document.getElementById('rocksdb-access-mode')?.value || 'read_only';
+      if (readOnly && accessMode === ROCKSDB_ACCESS_MODE_SECONDARY
+        && !(document.getElementById('rocksdb-secondary-path')?.value || '').trim()) {
+        return 'Secondary path is required when the RocksDB access mode is Secondary.';
+      }
+    }
+
+    const maxResults = parseInt(document.getElementById('rocksdb-max-results')?.value, 10);
+    if (Number.isNaN(maxResults) || maxResults < 1 || maxResults > 1000) {
+      return 'Max results must be between 1 and 1000.';
+    }
+
+    const maxValueBytes = parseInt(document.getElementById('rocksdb-max-value-bytes')?.value, 10);
+    if (Number.isNaN(maxValueBytes) || maxValueBytes < 1 || maxValueBytes > 1048576) {
+      return 'Max value bytes must be between 1 and 1048576.';
+    }
+
+    const timeout = parseInt(document.getElementById('rocksdb-timeout')?.value, 10);
+    if (Number.isNaN(timeout) || timeout < 1 || timeout > 300) {
+      return 'Timeout must be between 1 and 300 seconds.';
+    }
+
+    return null;
+  }
+
+  getRocksDbConfiguration() {
+    const isRemote = this.isRocksDbRemoteMode();
+    const readOnly = (document.getElementById('rocksdb-read-only')?.value || 'true') === 'true';
+
+    const additionalFields = {
+      connection_mode: isRemote ? ROCKSDB_CONNECTION_MODE_REMOTE : ROCKSDB_CONNECTION_MODE_EMBEDDED,
+      column_family: (document.getElementById('rocksdb-column-family')?.value || '').trim() || ROCKSDB_DEFAULT_COLUMN_FAMILY,
+      key_encoding: document.getElementById('rocksdb-key-encoding')?.value || 'utf8',
+      value_encoding: document.getElementById('rocksdb-value-encoding')?.value || 'utf8',
+      key_prefix_hints: this.getRocksDbKeyPrefixHints(),
+      read_only: readOnly,
+      max_results: parseInt(document.getElementById('rocksdb-max-results')?.value, 10) || ROCKSDB_DEFAULT_MAX_RESULTS,
+      max_value_bytes: parseInt(document.getElementById('rocksdb-max-value-bytes')?.value, 10) || ROCKSDB_DEFAULT_MAX_VALUE_BYTES,
+      timeout: parseInt(document.getElementById('rocksdb-timeout')?.value, 10) || ROCKSDB_DEFAULT_TIMEOUT
+    };
+
+    const auth = {};
+    let endpoint = ROCKSDB_EMBEDDED_ENDPOINT;
+
+    if (isRemote) {
+      endpoint = (document.getElementById('rocksdb-base-url')?.value || '').trim().replace(/\/+$/, '');
+      const authScheme = document.getElementById('rocksdb-auth-scheme')?.value || ROCKSDB_AUTH_SCHEME_NONE;
+
+      additionalFields.base_url = endpoint;
+      additionalFields.auth_scheme = authScheme;
+      additionalFields.verify_tls = (document.getElementById('rocksdb-verify-tls')?.value || 'true') === 'true';
+
+      if (authScheme === ROCKSDB_AUTH_SCHEME_API_KEY) {
+        additionalFields.api_key_header = (document.getElementById('rocksdb-api-key-header')?.value || '').trim()
+          || ROCKSDB_DEFAULT_API_KEY_HEADER;
+      }
+
+      if (authScheme === ROCKSDB_AUTH_SCHEME_NONE) {
+        auth.type = 'NoAuth';
+      } else {
+        auth.type = 'key';
+        auth.key = (document.getElementById('rocksdb-auth-key')?.value || '').trim();
+      }
+    } else {
+      auth.type = 'NoAuth';
+      additionalFields.db_path = (document.getElementById('rocksdb-db-path')?.value || '').trim();
+      additionalFields.access_mode = readOnly
+        ? (document.getElementById('rocksdb-access-mode')?.value || 'read_only')
+        : 'read_only';
+
+      if (additionalFields.access_mode === ROCKSDB_ACCESS_MODE_SECONDARY) {
+        additionalFields.secondary_path = (document.getElementById('rocksdb-secondary-path')?.value || '').trim();
+      }
+    }
+
+    return { endpoint, auth, additionalFields };
+  }
+
+  populateRocksDbForm(plugin) {
+    const additionalFields = plugin.additionalFields || plugin.additional_fields || {};
+    const auth = plugin.auth || {};
+    const connectionMode = additionalFields.connection_mode || ROCKSDB_CONNECTION_MODE_EMBEDDED;
+    const isRemote = connectionMode === ROCKSDB_CONNECTION_MODE_REMOTE;
+    const prefixHints = Array.isArray(additionalFields.key_prefix_hints)
+      ? additionalFields.key_prefix_hints.join('\n')
+      : (additionalFields.key_prefix_hints || '');
+
+    this.setRocksDbFieldValue('rocksdb-connection-mode', connectionMode);
+    this.setRocksDbFieldValue('rocksdb-db-path', additionalFields.db_path || '');
+    this.setRocksDbFieldValue('rocksdb-access-mode', additionalFields.access_mode || 'read_only');
+    this.setRocksDbFieldValue('rocksdb-secondary-path', additionalFields.secondary_path || '');
+    this.setRocksDbFieldValue('rocksdb-base-url', additionalFields.base_url || (isRemote ? (plugin.endpoint || '') : ''));
+    this.setRocksDbFieldValue('rocksdb-auth-scheme', additionalFields.auth_scheme || ROCKSDB_AUTH_SCHEME_NONE);
+    this.setRocksDbFieldValue('rocksdb-auth-key', auth.key || '');
+    this.setRocksDbFieldValue('rocksdb-api-key-header', additionalFields.api_key_header || ROCKSDB_DEFAULT_API_KEY_HEADER);
+    this.setRocksDbFieldValue('rocksdb-verify-tls', additionalFields.verify_tls === false ? 'false' : 'true');
+    this.setRocksDbFieldValue('rocksdb-column-family', additionalFields.column_family || ROCKSDB_DEFAULT_COLUMN_FAMILY);
+    this.setRocksDbFieldValue('rocksdb-read-only', additionalFields.read_only === false ? 'false' : 'true');
+    this.setRocksDbFieldValue('rocksdb-key-encoding', additionalFields.key_encoding || 'utf8');
+    this.setRocksDbFieldValue('rocksdb-value-encoding', additionalFields.value_encoding || 'utf8');
+    this.setRocksDbFieldValue('rocksdb-key-prefix-hints', prefixHints);
+    this.setRocksDbFieldValue('rocksdb-max-results', additionalFields.max_results || ROCKSDB_DEFAULT_MAX_RESULTS);
+    this.setRocksDbFieldValue('rocksdb-max-value-bytes', additionalFields.max_value_bytes || ROCKSDB_DEFAULT_MAX_VALUE_BYTES);
+    this.setRocksDbFieldValue('rocksdb-timeout', additionalFields.timeout || ROCKSDB_DEFAULT_TIMEOUT);
+
+    this.handleRocksDbConnectionModeChange();
+  }
+
+  setRocksDbSummaryText(elementId, value) {
+    const element = document.getElementById(elementId);
+    if (element) {
+      element.textContent = value;
+    }
+  }
+
+  populateRocksDbSummary() {
+    const rocksDbSection = document.getElementById('summary-rocksdb-section');
+    if (!rocksDbSection) {
+      return;
+    }
+
+    if (!this.isRocksDbType()) {
+      rocksDbSection.classList.add('d-none');
+      return;
+    }
+
+    const isRemote = this.isRocksDbRemoteMode();
+    const readOnly = (document.getElementById('rocksdb-read-only')?.value || 'true') === 'true';
+    const accessMode = document.getElementById('rocksdb-access-mode')?.value || 'read_only';
+    const prefixHints = this.getRocksDbKeyPrefixHints();
+    const timeoutValue = (document.getElementById('rocksdb-timeout')?.value || '').trim();
+
+    let accessLabel = 'Reads and writes';
+    if (readOnly) {
+      accessLabel = !isRemote && accessMode === ROCKSDB_ACCESS_MODE_SECONDARY
+        ? 'Read-only (secondary)'
+        : 'Read-only';
+    }
+
+    const targetValue = isRemote
+      ? this.getRocksDbEndpointValue()
+      : (document.getElementById('rocksdb-db-path')?.value || '').trim();
+
+    const keyEncoding = document.getElementById('rocksdb-key-encoding')?.value || 'utf8';
+    const valueEncoding = document.getElementById('rocksdb-value-encoding')?.value || 'utf8';
+
+    this.setRocksDbSummaryText('summary-rocksdb-connection-mode', isRemote ? 'Remote HTTP service' : 'Embedded database');
+    this.setRocksDbSummaryText('summary-rocksdb-target', targetValue || '-');
+    this.setRocksDbSummaryText('summary-rocksdb-access', accessLabel);
+    this.setRocksDbSummaryText(
+      'summary-rocksdb-column-family',
+      (document.getElementById('rocksdb-column-family')?.value || '').trim() || ROCKSDB_DEFAULT_COLUMN_FAMILY
+    );
+    this.setRocksDbSummaryText('summary-rocksdb-encoding', `Keys: ${keyEncoding}, Values: ${valueEncoding}`);
+    this.setRocksDbSummaryText(
+      'summary-rocksdb-max-results',
+      (document.getElementById('rocksdb-max-results')?.value || '').trim() || '-'
+    );
+    this.setRocksDbSummaryText(
+      'summary-rocksdb-max-value-bytes',
+      (document.getElementById('rocksdb-max-value-bytes')?.value || '').trim() || '-'
+    );
+    this.setRocksDbSummaryText('summary-rocksdb-timeout', timeoutValue ? `${timeoutValue} seconds` : '-');
+    this.setRocksDbSummaryText(
+      'summary-rocksdb-key-prefix-hints',
+      prefixHints.length ? prefixHints.join(', ') : 'None configured'
+    );
+
+    rocksDbSection.classList.remove('d-none');
+  }
+
+  async testRocksDbConnection() {
+    const btn = document.getElementById('rocksdb-test-connection-btn');
+    const resultDiv = document.getElementById('rocksdb-test-connection-result');
+    const alertDiv = document.getElementById('rocksdb-test-connection-alert');
+    if (!btn || !resultDiv || !alertDiv) return;
+
+    const validationError = this.getRocksDbValidationError();
+    if (validationError) {
+      resultDiv.classList.remove('d-none');
+      alertDiv.className = 'alert alert-warning mb-0 py-2 px-3 small';
+      alertDiv.textContent = validationError;
+      return;
+    }
+
+    const isRemote = this.isRocksDbRemoteMode();
+    const payload = {
+      connection_mode: isRemote ? ROCKSDB_CONNECTION_MODE_REMOTE : ROCKSDB_CONNECTION_MODE_EMBEDDED,
+      timeout: Math.min(parseInt(document.getElementById('rocksdb-timeout')?.value, 10) || 10, 30)
+    };
+
+    if (isRemote) {
+      const authScheme = document.getElementById('rocksdb-auth-scheme')?.value || ROCKSDB_AUTH_SCHEME_NONE;
+      payload.base_url = (document.getElementById('rocksdb-base-url')?.value || '').trim().replace(/\/+$/, '');
+      payload.auth_scheme = authScheme;
+      payload.verify_tls = (document.getElementById('rocksdb-verify-tls')?.value || 'true') === 'true';
+
+      if (authScheme === ROCKSDB_AUTH_SCHEME_API_KEY) {
+        payload.api_key_header = (document.getElementById('rocksdb-api-key-header')?.value || '').trim()
+          || ROCKSDB_DEFAULT_API_KEY_HEADER;
+      }
+      if (authScheme !== ROCKSDB_AUTH_SCHEME_NONE) {
+        payload.auth_key = (document.getElementById('rocksdb-auth-key')?.value || '').trim();
+      }
+    } else {
+      const readOnly = (document.getElementById('rocksdb-read-only')?.value || 'true') === 'true';
+      payload.db_path = (document.getElementById('rocksdb-db-path')?.value || '').trim();
+      payload.access_mode = readOnly
+        ? (document.getElementById('rocksdb-access-mode')?.value || 'read_only')
+        : 'read_only';
+      payload.column_family = (document.getElementById('rocksdb-column-family')?.value || '').trim()
+        || ROCKSDB_DEFAULT_COLUMN_FAMILY;
+
+      if (payload.access_mode === ROCKSDB_ACCESS_MODE_SECONDARY) {
+        payload.secondary_path = (document.getElementById('rocksdb-secondary-path')?.value || '').trim();
+      }
+    }
+
+    const existingPluginContext = this.getTestPluginContext();
+    if (existingPluginContext) {
+      payload.existing_plugin = existingPluginContext;
+    }
+
+    const originalText = btn.innerHTML;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>Testing...';
+    btn.disabled = true;
+    resultDiv.classList.add('d-none');
+
+    try {
+      const response = await fetch('/api/plugins/test-rocksdb-connection', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const data = await response.json();
+
+      resultDiv.classList.remove('d-none');
+      if (data.success) {
+        alertDiv.className = 'alert alert-success mb-0 py-2 px-3 small';
+        alertDiv.innerHTML = '<i class="bi bi-check-circle me-2"></i>' + this.escapeHtml(data.message || 'Connection successful!');
+      } else {
+        alertDiv.className = 'alert alert-danger mb-0 py-2 px-3 small';
+        alertDiv.innerHTML = '<i class="bi bi-x-circle me-2"></i>' + this.escapeHtml(data.error || 'Connection failed.');
+      }
+    } catch (error) {
+      resultDiv.classList.remove('d-none');
+      alertDiv.className = 'alert alert-danger mb-0 py-2 px-3 small';
+      alertDiv.innerHTML = '<i class="bi bi-x-circle me-2"></i>Test failed: ' + this.escapeHtml(error.message || 'Network error');
+    } finally {
+      btn.innerHTML = originalText;
+      btn.disabled = false;
+    }
+  }
+
   initializeSqlConfiguration() {
     // Set default values
     document.getElementById('sql-read-only').value = 'true';
@@ -5005,6 +5461,8 @@ export class PluginModalStepper {
       document.getElementById('cosmos-auth-type').value = auth.type || 'identity';
       document.getElementById('cosmos-auth-key').value = auth.key || '';
       this.initializeCosmosConfiguration();
+    } else if (this.isRocksDbType(plugin.type)) {
+      this.populateRocksDbForm(plugin);
     } else if (this.isDocumentSearchType(plugin.type)) {
       this.populateDocumentSearchForm(plugin.additionalFields || {});
       this.initializeDocumentSearchConfiguration();
@@ -5078,6 +5536,7 @@ export class PluginModalStepper {
     const openApiSection = document.getElementById('openapi-config-section');
     const sqlSection = document.getElementById('sql-config-section');
     const cosmosSection = document.getElementById('cosmos-config-section');
+    const rocksDbSection = document.getElementById('rocksdb-config-section');
     const documentSearchSection = document.getElementById('document-search-config-section');
     const blobStorageSection = document.getElementById('blob-storage-config-section');
     const databricksSection = document.getElementById('databricks-config-section');
@@ -5088,6 +5547,7 @@ export class PluginModalStepper {
     const isOpenApiVisible = !openApiSection.classList.contains('d-none');
     const isSqlVisible = !sqlSection.classList.contains('d-none');
     const isCosmosVisible = !cosmosSection.classList.contains('d-none');
+    const isRocksDbVisible = !!rocksDbSection && !rocksDbSection.classList.contains('d-none');
     const isDocumentSearchVisible = !documentSearchSection.classList.contains('d-none');
     const isBlobStorageVisible = !blobStorageSection.classList.contains('d-none');
     const isDatabricksVisible = !databricksSection.classList.contains('d-none');
@@ -5318,6 +5778,16 @@ export class PluginModalStepper {
       additionalFields.field_hints = this.getCosmosFieldHints();
       additionalFields.max_items = parseInt(document.getElementById('cosmos-max-items').value, 10) || 100;
       additionalFields.timeout = parseInt(document.getElementById('cosmos-timeout').value, 10) || 30;
+    } else if (isRocksDbVisible) {
+      const rocksDbError = this.getRocksDbValidationError();
+      if (rocksDbError) {
+        throw new Error(rocksDbError);
+      }
+
+      const rocksDbConfig = this.getRocksDbConfiguration();
+      endpoint = rocksDbConfig.endpoint;
+      auth = rocksDbConfig.auth;
+      additionalFields = rocksDbConfig.additionalFields;
     } else if (isDocumentSearchVisible) {
       endpoint = INTERNAL_DOCUMENT_SEARCH_ENDPOINT;
       auth.type = 'NoAuth';
@@ -5486,6 +5956,7 @@ export class PluginModalStepper {
 
     const endpointRow = document.getElementById('summary-plugin-endpoint-row');
     const databaseTypeRow = document.getElementById('summary-plugin-database-type-row');
+    const isRocksDbType = this.isRocksDbType();
 
     if (isSqlType) {
       // Hide endpoint for SQL plugins since they don't use endpoints
@@ -5497,6 +5968,14 @@ export class PluginModalStepper {
       document.getElementById('summary-plugin-endpoint').textContent = endpoint || '-';
       endpointRow.style.display = '';
       document.getElementById('summary-plugin-database-type').textContent = 'Cosmos DB for NoSQL';
+      databaseTypeRow.style.display = '';
+    } else if (isRocksDbType) {
+      const endpoint = this.getEndpointValue();
+      document.getElementById('summary-plugin-endpoint').textContent = endpoint || '-';
+      endpointRow.style.display = '';
+      document.getElementById('summary-plugin-database-type').textContent = this.isRocksDbRemoteMode()
+        ? 'RocksDB HTTP service'
+        : 'Embedded RocksDB database';
       databaseTypeRow.style.display = '';
     } else if (isDocumentSearchType) {
       endpointRow.style.display = 'none';
@@ -5568,10 +6047,10 @@ export class PluginModalStepper {
     }
 
     const databaseType = this.getSqlDatabaseType();
-    if (!isSqlType && !isCosmosType && !isDocumentSearchType && !isBlobStorageType && !isDatabricksType && !isSnowflakeType && !isTableauType && !isMcpType && !isSimpleChatType && !isMsGraphType && !isAzureMapsType && !isChartType && databaseType) {
+    if (!isSqlType && !isCosmosType && !isRocksDbType && !isDocumentSearchType && !isBlobStorageType && !isDatabricksType && !isSnowflakeType && !isTableauType && !isMcpType && !isSimpleChatType && !isMsGraphType && !isAzureMapsType && !isChartType && databaseType) {
       document.getElementById('summary-plugin-database-type').textContent = databaseType;
       databaseTypeRow.style.display = '';
-    } else if (!isSqlType && !isCosmosType && !isDocumentSearchType && !isBlobStorageType && !isDatabricksType && !isSnowflakeType && !isTableauType && !isMcpType && !isSimpleChatType && !isMsGraphType && !isAzureMapsType && !isChartType) {
+    } else if (!isSqlType && !isCosmosType && !isRocksDbType && !isDocumentSearchType && !isBlobStorageType && !isDatabricksType && !isSnowflakeType && !isTableauType && !isMcpType && !isSimpleChatType && !isMsGraphType && !isAzureMapsType && !isChartType) {
       databaseTypeRow.style.display = 'none';
     }
 
@@ -5579,6 +6058,7 @@ export class PluginModalStepper {
     this.populateOpenApiSummary();
     this.populateSqlSummary();
     this.populateCosmosSummary();
+    this.populateRocksDbSummary();
     this.populateDocumentSearchSummary();
     this.populateBlobStorageSummary();
     this.populateDatabricksSummary();
@@ -5614,6 +6094,8 @@ export class PluginModalStepper {
       return document.getElementById('sql-connection-string').value.trim();
     } else if (isCosmosType) {
       return document.getElementById('cosmos-endpoint').value.trim();
+    } else if (this.isRocksDbType()) {
+      return this.getRocksDbEndpointValue();
     } else if (isDocumentSearchType) {
       return INTERNAL_DOCUMENT_SEARCH_ENDPOINT;
     } else if (isBlobStorageType) {
@@ -5664,6 +6146,8 @@ export class PluginModalStepper {
     } else if (isCosmosType) {
       const authType = document.getElementById('cosmos-auth-type')?.value || 'identity';
       return authType === 'key' ? 'Account Key' : 'Managed Identity';
+    } else if (this.isRocksDbType()) {
+      return this.getRocksDbAuthLabel();
     } else if (isDocumentSearchType) {
       return 'Internal user context';
     } else if (isBlobStorageType) {
@@ -6231,6 +6715,8 @@ export class PluginModalStepper {
         currentEndpoint = document.getElementById('sql-connection-string')?.value || '';
       } else if (isCosmosType) {
         currentEndpoint = document.getElementById('cosmos-endpoint')?.value || '';
+      } else if (this.isRocksDbType()) {
+        currentEndpoint = this.getRocksDbEndpointValue();
       } else if (isDocumentSearchType) {
         currentEndpoint = INTERNAL_DOCUMENT_SEARCH_ENDPOINT;
       } else if (isDatabricksType) {
@@ -6272,6 +6758,13 @@ export class PluginModalStepper {
         currentAuthType = document.getElementById('cosmos-auth-type')?.value || 'identity';
         if (currentAuthType === 'key') {
           currentAuthKey = document.getElementById('cosmos-auth-key')?.value || '';
+        }
+      } else if (this.isRocksDbType()) {
+        const rocksDbAuthScheme = document.getElementById('rocksdb-auth-scheme')?.value || ROCKSDB_AUTH_SCHEME_NONE;
+        const isRemoteMode = (document.getElementById('rocksdb-connection-mode')?.value || ROCKSDB_CONNECTION_MODE_EMBEDDED) === ROCKSDB_CONNECTION_MODE_REMOTE;
+        currentAuthType = isRemoteMode && rocksDbAuthScheme !== ROCKSDB_AUTH_SCHEME_NONE ? 'key' : 'NoAuth';
+        if (currentAuthType === 'key') {
+          currentAuthKey = document.getElementById('rocksdb-auth-key')?.value || '';
         }
       } else if (isDocumentSearchType) {
         currentAuthType = 'NoAuth';
@@ -6320,6 +6813,8 @@ export class PluginModalStepper {
           max_items: parseInt(document.getElementById('cosmos-max-items')?.value, 10) || 100,
           timeout: parseInt(document.getElementById('cosmos-timeout')?.value, 10) || 30
         }, null, 2);
+      } else if (this.isRocksDbType()) {
+        currentAdditionalFields = JSON.stringify(this.getRocksDbConfiguration().additionalFields, null, 2);
       } else if (isDocumentSearchType) {
         currentAdditionalFields = JSON.stringify(this.getDocumentSearchAdditionalFields(), null, 2);
       } else if (isTableauType) {
