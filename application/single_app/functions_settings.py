@@ -866,6 +866,15 @@ def normalize_extraction_engine(value):
     return normalized_value
 
 
+def is_document_intelligence_formula_extraction_enabled(settings=None):
+    """Return whether the Document Intelligence formula add-on should be requested.
+
+    Formula extraction is a billed add-on, so it defaults to off and must be enabled explicitly.
+    """
+    resolved_settings = settings if settings is not None else get_settings()
+    return bool((resolved_settings or {}).get('enable_document_intelligence_formula_extraction', False))
+
+
 def normalize_app_role_claims(user_roles):
     """Normalize app role claims into a flat string list."""
     if not user_roles:
@@ -1727,6 +1736,8 @@ def get_settings(use_cosmos=False, include_source=False):
         'azure_document_intelligence_authentication_type': 'key',
         'document_intelligence_pdf_image_extraction_mode': 'read',
         'document_intelligence_auto_sample_pages': DOCUMENT_INTELLIGENCE_AUTO_SAMPLE_PAGES_DEFAULT,
+        # Formula extraction is a billed Document Intelligence add-on, so it stays off by default.
+        'enable_document_intelligence_formula_extraction': False,
         'enable_document_intelligence_apim': False,
         'azure_apim_document_intelligence_endpoint': '',
         'azure_apim_document_intelligence_subscription_key': '',
