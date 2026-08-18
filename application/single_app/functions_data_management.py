@@ -197,6 +197,12 @@ DATA_MANAGEMENT_HISTORY_INDEX_MAINTENANCE_MESSAGE = (
 DATA_MANAGEMENT_HISTORY_UNAVAILABLE_MESSAGE = (
     "Data Management history could not be loaded. Please try again later or review application logs."
 )
+DATA_MANAGEMENT_HISTORY_BUSY_MESSAGE = (
+    "Data Management history is temporarily busy because Cosmos DB throttled the request. "
+    "Wait a moment and refresh this page."
+)
+DATA_MANAGEMENT_HISTORY_QUERY_MAX_ATTEMPTS = 3
+DATA_MANAGEMENT_HISTORY_QUERY_MAX_RETRY_DELAY_SECONDS = 4.0
 DATA_MANAGEMENT_DEFAULT_RECOVERY_JOB_LIMIT = 25
 DATA_MANAGEMENT_RECOVERY_QUEUE_DELAY_SECONDS = 60
 DATA_MANAGEMENT_RECOVERY_RESUBMIT_DELAY_SECONDS = 120
@@ -377,12 +383,19 @@ class DataManagementHistoryUnavailableError(RuntimeError):
         reason="history_provider_unavailable",
         status_code=503,
         maintenance_required=False,
+        provider_status_code=None,
+        provider_message="",
+        retryable=False,
     ):
         super().__init__(safe_message)
         self.safe_message = safe_message
         self.reason = reason
         self.status_code = status_code
         self.maintenance_required = bool(maintenance_required)
+        # Provider detail is for operator logs only and never reaches the browser.
+        self.provider_status_code = provider_status_code
+        self.provider_message = provider_message
+        self.retryable = bool(retryable)
 
 
 class DataManagementMigrationLeaseLostError(RuntimeError):
@@ -9074,26 +9087,78 @@ def _get_data_management_provider_status_code(exc):
     return status_code
 
 
+def _get_data_management_provider_message(exc):
+    """Return provider error text for operator logs, never for the browser."""
+    return _safe_text(exc)[:1000]
+
+
 def _is_data_management_history_index_error(exc):
     if _get_data_management_provider_status_code(exc) != 400:
         return False
     error_text = _safe_text(exc).lower()
+    if "composite index" in error_text or "compositeindexes" in error_text:
+        return True
+    if "order by" not in error_text:
+        return False
     return (
-        "composite index" in error_text
-        or "compositeindexes" in error_text
-        or ("order by" in error_text and "index" in error_text)
+        "index" in error_text
+        or "does not have a corresponding" in error_text
+        or "not served" in error_text
     )
 
 
+def _is_data_management_history_throttle_error(exc):
+    if _get_data_management_provider_status_code(exc) in {429, 503}:
+        return True
+    error_text = _safe_text(exc).lower()
+    return "request rate is large" in error_text or "too many requests" in error_text
+
+
+def _is_data_management_history_transient_error(exc):
+    if isinstance(exc, (ServiceRequestError, ServiceResponseError)):
+        return True
+    status_code = _get_data_management_provider_status_code(exc)
+    return status_code in {408, 449} or (status_code is not None and 500 <= status_code <= 599)
+
+
 def _raise_data_management_history_unavailable(exc):
+    provider_status_code = _get_data_management_provider_status_code(exc)
+    provider_message = _get_data_management_provider_message(exc)
     if _is_data_management_history_index_error(exc):
         raise DataManagementHistoryUnavailableError(
             safe_message=DATA_MANAGEMENT_HISTORY_INDEX_MAINTENANCE_MESSAGE,
             reason="missing_history_index",
             status_code=503,
             maintenance_required=True,
+            provider_status_code=provider_status_code,
+            provider_message=provider_message,
         ) from exc
-    raise DataManagementHistoryUnavailableError() from exc
+    if _is_data_management_history_throttle_error(exc):
+        raise DataManagementHistoryUnavailableError(
+            safe_message=DATA_MANAGEMENT_HISTORY_BUSY_MESSAGE,
+            reason="history_provider_throttled",
+            status_code=503,
+            provider_status_code=provider_status_code,
+            provider_message=provider_message,
+            retryable=True,
+        ) from exc
+    raise DataManagementHistoryUnavailableError(
+        provider_status_code=provider_status_code,
+        provider_message=provider_message,
+        retryable=_is_data_management_history_transient_error(exc),
+    ) from exc
+
+
+def _get_data_management_history_retry_delay(exc, attempt):
+    retry_after = _get_backup_retry_after_seconds(exc) or 0.0
+    backoff = min(
+        DATA_MANAGEMENT_HISTORY_QUERY_MAX_RETRY_DELAY_SECONDS,
+        float(2 ** max(0, attempt - 1)) * 0.25,
+    )
+    return min(
+        DATA_MANAGEMENT_HISTORY_QUERY_MAX_RETRY_DELAY_SECONDS,
+        max(backoff, retry_after) + random.uniform(0.0, 0.1),
+    )
 
 
 def _query_data_management_history_items(query, parameters, max_item_count=None):
@@ -9104,10 +9169,30 @@ def _query_data_management_history_items(query, parameters, max_item_count=None)
     }
     if max_item_count is not None:
         query_kwargs["max_item_count"] = max_item_count
-    try:
-        return list(cosmos_data_management_jobs_container.query_items(**query_kwargs))
-    except (CosmosHttpResponseError, ServiceRequestError, ServiceResponseError) as exc:
-        _raise_data_management_history_unavailable(exc)
+    for attempt in range(1, DATA_MANAGEMENT_HISTORY_QUERY_MAX_ATTEMPTS + 1):
+        try:
+            return list(cosmos_data_management_jobs_container.query_items(**query_kwargs))
+        except (CosmosHttpResponseError, ServiceRequestError, ServiceResponseError) as exc:
+            is_last_attempt = attempt >= DATA_MANAGEMENT_HISTORY_QUERY_MAX_ATTEMPTS
+            should_retry = (
+                _is_data_management_history_throttle_error(exc)
+                or _is_data_management_history_transient_error(exc)
+            )
+            if is_last_attempt or not should_retry:
+                _raise_data_management_history_unavailable(exc)
+            retry_delay = _get_data_management_history_retry_delay(exc, attempt)
+            log_event(
+                "[DATA_MANAGEMENT] Retrying Data Management history query.",
+                {
+                    "attempt": attempt,
+                    "status_code": _get_data_management_provider_status_code(exc),
+                    "retry_delay_seconds": round(retry_delay, 3),
+                    "error": _get_data_management_provider_message(exc),
+                },
+                level=logging.WARNING,
+            )
+            time.sleep(retry_delay)
+
 
 
 def _query_data_management_history_page(
