@@ -94,12 +94,19 @@ def load_runner_helpers(dispatch, personal_runner_normalizer=None, group_runner_
         "_get_document_action_config": lambda source: dict(
             (source or {}).get("document_action") or {"type": "none"}
         ),
+        "WORKFLOW_FILE_SYNC_CONTEXT_MAX_CHARS": 8000,
+        "DOCUMENT_ACTION_TYPE_ANALYZE": "analyze",
+        "_get_workflow_file_sync_config": lambda workflow: (workflow or {}).get("file_sync") or {},
         "uuid": uuid,
     }
     helpers = load_functions(
         RUNNER_FILE,
         {
             "_truncate_workflow_task_context",
+            "_truncate_workflow_file_sync_context",
+            "_format_workflow_file_sync_context",
+            "_apply_file_sync_changed_documents_to_action",
+            "_apply_file_sync_context_to_workflow",
             "_resolve_workflow_task_document_action",
             "_build_workflow_task_execution_workflow",
             "_get_workflow_task_requested_runner_mode",
@@ -460,20 +467,38 @@ def test_ordered_tasks_chain_context_and_apply_documents_once() -> None:
         }
 
     helpers, saved_items = load_runner_helpers(dispatch)
-    result = helpers["_execute_workflow_task_sequence"](
+    # Build the File Sync context through the real producer instead of injecting
+    # file_sync_prompt_context by hand, so a missing producer cannot pass this test again.
+    execution_workflow = helpers["_apply_file_sync_context_to_workflow"](
         {
             "id": "workflow-1",
             "name": "Sequence",
             "user_id": "user-1",
             "runner_type": "model",
+            "task_prompt": "Run the sequence.",
             "document_action": {"type": "search", "document_ids": ["doc-1"]},
-            "file_sync_prompt_context": "File Sync context for this workflow run.",
+            "file_sync": {"use_changed_documents": False, "sources": []},
             "tasks": [
                 {"id": "collect", "name": "Collect", "instructions": "Collect facts."},
                 {"id": "summarize", "name": "Summarize", "instructions": "Write a summary."},
             ],
             "error_handling": {"strategy": "halt", "retry_count": 0},
         },
+        {
+            "enabled": True,
+            "counts": {"scanned": 3, "created": 1, "updated": 1, "unchanged": 1, "skipped": 0, "failed": 0},
+            "changed_documents": [
+                {"document_id": "doc-1", "relative_path": "reports/q3.pdf", "action": "created", "source_name": "Reports"},
+            ],
+            "changed_document_ids": ["doc-1"],
+        },
+    )
+    assert execution_workflow["file_sync_prompt_context"], (
+        "_apply_file_sync_context_to_workflow must publish file_sync_prompt_context for tasks."
+    )
+
+    result = helpers["_execute_workflow_task_sequence"](
+        execution_workflow,
         {},
         "conversation-1",
         "run-1",
@@ -485,7 +510,9 @@ def test_ordered_tasks_chain_context_and_apply_documents_once() -> None:
     assert [workflow["runner_type"] for workflow in dispatched_workflows] == ["model", "model"]
     assert dispatched_workflows[0]["document_action"]["type"] == "search"
     assert "[Workflow input context]" in dispatched_workflows[0]["task_prompt"]
-    assert "File Sync context for this workflow run." in dispatched_workflows[0]["task_prompt"]
+    assert "File Sync context for this workflow run" in dispatched_workflows[0]["task_prompt"]
+    assert "reports/q3.pdf" in dispatched_workflows[0]["task_prompt"]
+    assert "[Workflow input context]" not in dispatched_workflows[1]["task_prompt"]
     assert dispatched_workflows[1]["document_action"]["type"] == "none"
     assert "[Previous workflow task output]" in dispatched_workflows[1]["task_prompt"]
     assert "Result 1" in dispatched_workflows[1]["task_prompt"]

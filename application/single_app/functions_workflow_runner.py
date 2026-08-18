@@ -246,6 +246,7 @@ TABULAR_DOCUMENT_EXTENSIONS = {'.csv', '.xls', '.xlsx', '.xlsm'}
 WORKFLOW_CONVERSATION_ACCESS_ERROR = 'Workflow conversation not found or access denied.'
 WORKFLOW_RUN_CANCELLED_MESSAGE = 'Workflow cancellation was requested.'
 WORKFLOW_TASK_CONTEXT_MAX_CHARS = 12000
+WORKFLOW_FILE_SYNC_CONTEXT_MAX_CHARS = 8000
 
 
 class WorkflowRunCancelledError(BaseException):
@@ -6615,7 +6616,9 @@ def _prepare_workflow_search_context(
     if resolved_action.get('target_mode') != DOCUMENT_ACTION_TARGET_MODE_RECENT and not document_ids:
         return {'workflow': workflow, 'citations': [], 'result_count': 0, 'document_count': 0, 'query': None}
 
-    query = str(workflow.get('task_prompt') or '').strip()
+    # Prefer the task's own instructions. task_prompt also carries injected File Sync context and
+    # previous-task output, which would otherwise become part of the search query itself.
+    query = str(workflow.get('task_search_query') or workflow.get('task_prompt') or '').strip()
     if not query:
         return {'workflow': workflow, 'citations': [], 'result_count': 0, 'document_count': 0, 'query': None}
 
@@ -6995,6 +6998,21 @@ def _execute_workflow_file_sync(workflow, run_id, trigger_source):
     }
 
 
+def _truncate_workflow_file_sync_context(value, max_chars=WORKFLOW_FILE_SYNC_CONTEXT_MAX_CHARS):
+    """Bound the File Sync context block so a large sync cannot dominate the prompt."""
+    normalized = str(value or '').strip()
+    if len(normalized) <= max_chars:
+        return normalized
+
+    head_length = max_chars // 2
+    tail_length = max_chars - head_length
+    return (
+        f'{normalized[:head_length].rstrip()}\n\n'
+        '[File Sync context truncated]\n\n'
+        f'{normalized[-tail_length:].lstrip()}'
+    )
+
+
 def _format_workflow_file_sync_context(file_sync_result):
     if not isinstance(file_sync_result, dict) or not file_sync_result.get('enabled'):
         return ''
@@ -7027,7 +7045,9 @@ def _format_workflow_file_sync_context(file_sync_result):
         )
     if len(changed_documents) > 50:
         lines.append(f'Additional changed documents omitted from prompt context: {len(changed_documents) - 50}')
-    return '\n'.join(lines)
+    # Truncate here rather than at the injection site so the conversation transcript and the
+    # prompt the model actually receives stay identical.
+    return _truncate_workflow_file_sync_context('\n'.join(lines))
 
 
 def _apply_file_sync_changed_documents_to_action(action_config, changed_document_ids, group_ids, public_workspace_ids):
@@ -7057,6 +7077,12 @@ def _apply_file_sync_context_to_workflow(workflow, file_sync_result):
     file_sync_context = _format_workflow_file_sync_context(file_sync_result)
     if file_sync_context:
         prepared_workflow['task_prompt'] = f"{workflow.get('task_prompt', '')}\n\n{file_sync_context}".strip()
+        # Task-based workflows overwrite task_prompt per task, so the context has to travel on
+        # its own key for _build_workflow_task_execution_workflow() to inject it.
+        prepared_workflow['file_sync_prompt_context'] = file_sync_context
+        # Keep an un-augmented query source for the legacy no-tasks path, whose document search
+        # would otherwise use the whole changed-document manifest as its search query.
+        prepared_workflow.setdefault('task_search_query', str(workflow.get('task_prompt') or '').strip())
 
     config = _get_workflow_file_sync_config(workflow)
     changed_document_ids = list(file_sync_result.get('changed_document_ids') or [])
@@ -9103,17 +9129,26 @@ def _resolve_workflow_task_document_action(workflow, task, include_document_acti
     return {'type': DOCUMENT_ACTION_TYPE_NONE}
 
 
-def _build_workflow_task_execution_workflow(workflow, task, previous_reply='', include_document_action=False):
+def _build_workflow_task_execution_workflow(
+    workflow,
+    task,
+    previous_reply='',
+    include_document_action=False,
+    include_file_sync_context=False,
+):
     task = task if isinstance(task, dict) else {}
     prepared_workflow = dict(workflow or {})
     task_instructions = str(task.get('instructions') or '').strip()
+    # Captured before any context blocks are appended so document search queries stay scoped to
+    # what this task actually asks for.
+    task_search_query = task_instructions
     file_sync_context = str(workflow.get('file_sync_prompt_context') or '').strip()
     task_document_action = _resolve_workflow_task_document_action(
         workflow,
         task,
         include_document_action=include_document_action,
     )
-    if include_document_action and file_sync_context:
+    if include_file_sync_context and file_sync_context:
         task_instructions = (
             f'{task_instructions}\n\n'
             '[Workflow input context]\n'
@@ -9129,6 +9164,7 @@ def _build_workflow_task_execution_workflow(workflow, task, previous_reply='', i
         ).strip()
 
     prepared_workflow['task_prompt'] = task_instructions
+    prepared_workflow['task_search_query'] = task_search_query
     prepared_workflow['active_task'] = {
         'id': str(task.get('id') or '').strip(),
         'name': str(task.get('name') or '').strip(),
@@ -9541,6 +9577,7 @@ def _execute_workflow_task_sequence(
                     task,
                     previous_reply=previous_reply,
                     include_document_action=task_index == 0,
+                    include_file_sync_context=task_index == 0,
                 )
                 attempt_workflow, runner_audit = _resolve_workflow_task_runner(
                     prepared_workflow,
