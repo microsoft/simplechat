@@ -19,11 +19,22 @@ from defusedxml.ElementTree import ParseError as DefusedParseError
 from defusedxml.ElementTree import fromstring as defused_fromstring
 from PIL import Image
 
+from functions_emf_render import render_metafile_to_png
+
 
 OFFICE_EMBEDDED_IMAGE_MEDIA_PREFIXES = ('word/media/', 'ppt/media/', 'xl/media/')
-# Restricted to raster formats that both Document Intelligence and Content Understanding accept.
+# Raster formats that both Document Intelligence and Content Understanding accept directly.
 OFFICE_EMBEDDED_IMAGE_EXTENSIONS = ('.png', '.jpg', '.jpeg', '.bmp', '.tif', '.tiff', '.heif', '.heic')
+# Vector metafiles. Word stores pasted diagrams, SmartArt, and charts this way, so they are the most
+# interesting figures in many documents. Neither analysis engine accepts them, so they are
+# rasterized to PNG first when the platform can render them.
+OFFICE_EMBEDDED_IMAGE_VECTOR_EXTENSIONS = ('.emf', '.wmf')
+OFFICE_EMBEDDED_IMAGE_ALL_EXTENSIONS = (
+    OFFICE_EMBEDDED_IMAGE_EXTENSIONS + OFFICE_EMBEDDED_IMAGE_VECTOR_EXTENSIONS
+)
 OFFICE_EMBEDDED_IMAGE_MIN_BYTES = 2048
+# Rasterized metafiles are capped on the long edge to keep analysis payloads reasonable.
+OFFICE_EMBEDDED_IMAGE_RENDER_MAX_PIXELS = 1600
 # Uploaded Office files are untrusted, so refuse to decompress an oversized embedded image.
 OFFICE_EMBEDDED_IMAGE_MAX_BYTES = 64 * 1024 * 1024
 # Slide relationship parts are small XML documents; anything larger is not worth decompressing.
@@ -141,8 +152,35 @@ def _build_pptx_media_slide_map(archive):
     return media_slide_map
 
 
+def _rasterize_vector_image(image_bytes):
+    """Rasterize an EMF/WMF metafile to PNG bytes.
+
+    Pillow only installs a metafile renderer on Windows, where it is backed by GDI, and this
+    application runs in a Linux distroless container. Rendering therefore goes through the
+    in-process metafile rasterizer, which behaves identically on every platform and needs no
+    system packages.
+
+    Returns ``(png_bytes, width, height, text, reason)`` where ``png_bytes`` is None on failure.
+    """
+    return render_metafile_to_png(image_bytes, max_pixels=OFFICE_EMBEDDED_IMAGE_RENDER_MAX_PIXELS)
+
+
+def _new_diagnostics():
+    return {
+        'candidates': 0,
+        'analyzed': 0,
+        'skipped': 0,
+        'skipped_reasons': {},
+    }
+
+
+def _record_skip(diagnostics, reason):
+    diagnostics['skipped'] += 1
+    diagnostics['skipped_reasons'][reason] = diagnostics['skipped_reasons'].get(reason, 0) + 1
+
+
 def extract_office_embedded_images(file_path, output_dir, min_pixels=150, max_images=25):
-    """Extract analyzable raster images embedded in an OOXML Office file.
+    """Extract analyzable images embedded in an OOXML Office file.
 
     Args:
         file_path (str): Path to the DOCX/PPTX/XLSX file.
@@ -153,8 +191,30 @@ def extract_office_embedded_images(file_path, output_dir, min_pixels=150, max_im
     Returns:
         list: Dicts with ``name``, ``path``, ``width``, ``height``, and ``slide_number`` keys.
     """
+    extracted_images, _diagnostics = extract_office_embedded_images_with_diagnostics(
+        file_path,
+        output_dir,
+        min_pixels=min_pixels,
+        max_images=max_images,
+    )
+    return extracted_images
+
+
+def extract_office_embedded_images_with_diagnostics(file_path, output_dir, min_pixels=150, max_images=25):
+    """Extract embedded images and report what was skipped and why.
+
+    Without the diagnostics a document containing only unsupported figures is indistinguishable
+    from a document containing no figures at all, which makes "were my images analyzed?"
+    unanswerable from the workspace UI.
+
+    Returns:
+        tuple: ``(images, diagnostics)`` where diagnostics has ``candidates``, ``analyzed``,
+        ``skipped``, and ``skipped_reasons``.
+    """
+    diagnostics = _new_diagnostics()
+
     if max_images <= 0:
-        return []
+        return [], diagnostics
 
     extracted_images = []
     seen_digests = set()
@@ -164,20 +224,22 @@ def extract_office_embedded_images(file_path, output_dir, min_pixels=150, max_im
             entry_names = archive.namelist()
             if len(entry_names) > OFFICE_ZIP_MAX_ENTRIES:
                 # A real Office package never has this many parts; refuse to walk a crafted archive.
-                return []
+                return [], diagnostics
 
             media_slide_map = _build_pptx_media_slide_map(archive)
 
             candidate_names = [
                 entry_name for entry_name in entry_names
                 if entry_name.lower().startswith(OFFICE_EMBEDDED_IMAGE_MEDIA_PREFIXES)
-                and entry_name.lower().endswith(OFFICE_EMBEDDED_IMAGE_EXTENSIONS)
+                and entry_name.lower().endswith(OFFICE_EMBEDDED_IMAGE_ALL_EXTENSIONS)
             ]
+            diagnostics['candidates'] = len(candidate_names)
 
             inspected_media = 0
             for media_name in sorted(candidate_names, key=_office_media_sort_key):
                 if len(extracted_images) >= max_images:
-                    break
+                    _record_skip(diagnostics, 'per_document_cap_reached')
+                    continue
                 # Bound the work a malformed archive can cause, not just successful extractions.
                 if inspected_media >= max_images * 10:
                     break
@@ -185,6 +247,7 @@ def extract_office_embedded_images(file_path, output_dir, min_pixels=150, max_im
 
                 base_name = _safe_media_base_name(media_name)
                 if not base_name:
+                    _record_skip(diagnostics, 'unsafe_entry_name')
                     continue
 
                 image_bytes = _read_zip_entry_bounded(
@@ -193,31 +256,49 @@ def extract_office_embedded_images(file_path, output_dir, min_pixels=150, max_im
                     OFFICE_EMBEDDED_IMAGE_MAX_BYTES,
                 )
                 if image_bytes is None:
+                    _record_skip(diagnostics, 'unreadable_or_oversized')
                     continue
 
                 # Small assets are almost always icons, bullets, or spacer graphics.
                 if len(image_bytes) < OFFICE_EMBEDDED_IMAGE_MIN_BYTES:
+                    _record_skip(diagnostics, 'below_minimum_bytes')
                     continue
 
                 digest = hashlib.sha256(image_bytes).hexdigest()
                 if digest in seen_digests:
+                    _record_skip(diagnostics, 'duplicate_image')
                     continue
 
-                try:
-                    with Image.open(BytesIO(image_bytes)) as embedded_image:
-                        width, height = embedded_image.size
-                except Exception:
-                    continue
+                source_extension = os.path.splitext(base_name)[1].lower()
+                is_vector = source_extension in OFFICE_EMBEDDED_IMAGE_VECTOR_EXTENSIONS
+                embedded_text = ''
+
+                if is_vector:
+                    rasterized_bytes, width, height, embedded_text, rasterize_reason = _rasterize_vector_image(image_bytes)
+                    if rasterized_bytes is None:
+                        _record_skip(diagnostics, rasterize_reason or 'vector_not_rasterizable')
+                        continue
+                    image_bytes = rasterized_bytes
+                    output_extension = '.png'
+                else:
+                    if source_extension not in OFFICE_EMBEDDED_IMAGE_EXTENSIONS:
+                        _record_skip(diagnostics, 'unsupported_format')
+                        continue
+                    try:
+                        with Image.open(BytesIO(image_bytes)) as embedded_image:
+                            width, height = embedded_image.size
+                    except Exception:
+                        _record_skip(diagnostics, 'unreadable_image')
+                        continue
+                    output_extension = source_extension
 
                 if width < min_pixels or height < min_pixels:
+                    _record_skip(diagnostics, 'below_minimum_pixels')
                     continue
 
                 # The output name is generated rather than taken from the archive, so a crafted
                 # entry name can never influence where the file is written.
-                extension = os.path.splitext(base_name)[1].lower()
-                if extension not in OFFICE_EMBEDDED_IMAGE_EXTENSIONS:
-                    continue
-                output_path = os.path.join(output_dir, f"{len(extracted_images) + 1:03d}{extension}")
+                output_path = os.path.join(output_dir, f"{len(extracted_images) + 1:03d}{output_extension}")
 
                 seen_digests.add(digest)
 
@@ -225,16 +306,21 @@ def extract_office_embedded_images(file_path, output_dir, min_pixels=150, max_im
                     with open(output_path, 'wb') as output_file:
                         output_file.write(image_bytes)
                 except OSError:
+                    _record_skip(diagnostics, 'write_failed')
                     continue
 
+                diagnostics['analyzed'] += 1
                 extracted_images.append({
                     'name': base_name,
                     'path': output_path,
                     'width': width,
                     'height': height,
                     'slide_number': media_slide_map.get(media_name),
+                    'source_format': source_extension.lstrip('.'),
+                    'rasterized': is_vector,
+                    'embedded_text': embedded_text,
                 })
     except (zipfile.BadZipFile, FileNotFoundError, OSError):
-        return []
+        return [], diagnostics
 
-    return extracted_images
+    return extracted_images, diagnostics

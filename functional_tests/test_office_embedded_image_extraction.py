@@ -2,7 +2,7 @@
 # test_office_embedded_image_extraction.py
 """
 Functional test for embedded image extraction from Office files.
-Version: 0.250.221
+Version: 0.250.223
 Implemented in: 0.250.221
 
 This test ensures that images embedded in DOCX and PPTX packages are pulled out for analysis,
@@ -26,7 +26,11 @@ sys.path.insert(0, str(APP_ROOT))
 
 from PIL import Image  # noqa: E402
 
-from functions_office_media import extract_office_embedded_images  # noqa: E402
+from functions_office_media import (  # noqa: E402
+    OFFICE_EMBEDDED_IMAGE_VECTOR_EXTENSIONS,
+    OFFICE_ZIP_MAX_ENTRIES,
+    extract_office_embedded_images,
+)
 from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
 
@@ -476,8 +480,6 @@ def test_archive_entry_count_is_capped():
     """An archive with an absurd number of entries is refused outright."""
     print("Testing archive entry cap...")
 
-    import functions_office_media
-
     with tempfile.TemporaryDirectory() as work_dir:
         docx_path = os.path.join(work_dir, "many_entries.docx")
         output_dir = os.path.join(work_dir, "out")
@@ -486,7 +488,7 @@ def test_archive_entry_count_is_capped():
         with zipfile.ZipFile(docx_path, "w") as archive:
             archive.writestr("[Content_Types].xml", "<Types/>")
             archive.writestr("word/media/image1.png", build_png_bytes(300, 300, (10, 10, 200)))
-            for index in range(functions_office_media.OFFICE_ZIP_MAX_ENTRIES + 10):
+            for index in range(OFFICE_ZIP_MAX_ENTRIES + 10):
                 archive.writestr(f"word/junk/{index}.txt", "x")
 
         extracted = extract_office_embedded_images(docx_path, output_dir, min_pixels=150, max_images=25)
@@ -495,6 +497,128 @@ def test_archive_entry_count_is_capped():
         raise AssertionError("An archive exceeding the entry cap must be refused.")
 
     print("Archive entry cap test passed!")
+    return True
+
+
+def test_emf_metafiles_are_rasterized_and_text_recovered():
+    """EMF diagrams must rasterize to PNG and surface their text labels, with no OS dependency."""
+    print("Testing EMF rasterization...")
+
+    from functions_emf_render import render_metafile_to_png
+
+    # A minimal but valid EMF: header, a filled polygon, and EOF.
+    emf_bytes = _build_minimal_emf()
+
+    png, width, height, text, reason = render_metafile_to_png(emf_bytes)
+    if png is None:
+        raise AssertionError(f"Minimal EMF failed to render: {reason}")
+    if not png.startswith(b"\x89PNG"):
+        raise AssertionError("Rasterizer did not emit PNG bytes.")
+    if width <= 0 or height <= 0:
+        raise AssertionError(f"Unexpected raster size {width}x{height}")
+
+    if '.emf' not in OFFICE_EMBEDDED_IMAGE_VECTOR_EXTENSIONS:
+        raise AssertionError("EMF must be an accepted embedded image format.")
+    if '.wmf' not in OFFICE_EMBEDDED_IMAGE_VECTOR_EXTENSIONS:
+        raise AssertionError("WMF must be an accepted embedded image format.")
+
+    print(f"EMF rasterization test passed! ({width}x{height})")
+    return True
+
+
+def _build_minimal_emf():
+    """Build a small valid EMF containing one filled polygon."""
+    import struct
+
+    records = []
+
+    # EMR_POLYGON16: rclBounds(16), cpts(4), points
+    points = [(10, 10), (200, 10), (200, 150), (10, 150)]
+    poly_payload = struct.pack('<4i', 10, 10, 200, 150)
+    poly_payload += struct.pack('<I', len(points))
+    for x, y in points:
+        poly_payload += struct.pack('<2h', x, y)
+    poly_size = 8 + len(poly_payload)
+    records.append(struct.pack('<II', 86, poly_size) + poly_payload)
+
+    # EMR_EOF
+    records.append(struct.pack('<IIIII', 14, 20, 0, 16, 20))
+
+    body = b''.join(records)
+
+    # EMR_HEADER is 88 bytes: iType, nSize, rclBounds, rclFrame, signature, version, bytes,
+    # records, handles, reserved, description, palette entries, device, millimeters.
+    header = struct.pack('<II', 1, 88)
+    header += struct.pack('<4i', 0, 0, 220, 170)          # rclBounds
+    header += struct.pack('<4i', 0, 0, 5000, 4000)        # rclFrame
+    header += struct.pack('<I', 0x464D4520)               # " EMF"
+    header += struct.pack('<I', 0x00010000)               # version
+    header += struct.pack('<I', 88 + len(body))           # total bytes
+    header += struct.pack('<I', len(records) + 1)         # record count
+    header += struct.pack('<HH', 1, 0)                    # handles, reserved
+    header += struct.pack('<II', 0, 0)                    # description
+    header += struct.pack('<I', 0)                        # palette entries
+    header += struct.pack('<2i', 1920, 1080)              # device px
+    header += struct.pack('<2i', 508, 285)                # device mm
+    header += b'\x00' * (88 - len(header))
+
+    return header + body
+
+
+def test_unrenderable_metafile_reports_a_reason():
+    """A metafile that cannot be rendered must explain itself rather than vanish."""
+    print("Testing metafile failure reporting...")
+
+    from functions_emf_render import render_metafile_to_png
+
+    png, _width, _height, _text, reason = render_metafile_to_png(b"not a metafile at all")
+    if png is not None:
+        raise AssertionError("Garbage input should not produce a raster.")
+    if not reason:
+        raise AssertionError("A failed render must return a reason.")
+
+    print(f"Metafile failure reporting test passed! ({reason})")
+    return True
+
+
+def test_diagnostics_distinguish_no_images_from_all_skipped():
+    """Diagnostics must separate 'no images' from 'images found but skipped'."""
+    print("Testing embedded image diagnostics...")
+
+    from functions_office_media import extract_office_embedded_images_with_diagnostics
+
+    with tempfile.TemporaryDirectory() as work_dir:
+        output_dir = os.path.join(work_dir, "out")
+        os.makedirs(output_dir)
+
+        # A document with no media at all.
+        empty_path = os.path.join(work_dir, "empty.docx")
+        build_docx_package(empty_path, {})
+        _images, empty_diagnostics = extract_office_embedded_images_with_diagnostics(
+            empty_path, output_dir, min_pixels=150, max_images=25
+        )
+        if empty_diagnostics["candidates"] != 0:
+            raise AssertionError(f"Expected no candidates, got {empty_diagnostics}")
+
+        # A document whose only images are too small to be worth analyzing.
+        tiny_path = os.path.join(work_dir, "tiny.docx")
+        build_docx_package(tiny_path, {
+            "image1.png": build_png_bytes(40, 40, (10, 10, 10)),
+            "image2.png": build_png_bytes(30, 30, (20, 20, 20)),
+        })
+        _images, tiny_diagnostics = extract_office_embedded_images_with_diagnostics(
+            tiny_path, output_dir, min_pixels=150, max_images=25
+        )
+        if tiny_diagnostics["candidates"] != 2:
+            raise AssertionError(f"Expected 2 candidates, got {tiny_diagnostics}")
+        if tiny_diagnostics["analyzed"] != 0:
+            raise AssertionError(f"Expected 0 analyzed, got {tiny_diagnostics}")
+        if tiny_diagnostics["skipped"] != 2:
+            raise AssertionError(f"Expected 2 skipped, got {tiny_diagnostics}")
+        if not tiny_diagnostics["skipped_reasons"]:
+            raise AssertionError("Skipped images must carry a reason.")
+
+    print("Embedded image diagnostics test passed!")
     return True
 
 
@@ -520,6 +644,9 @@ if __name__ == "__main__":
         test_forged_declared_size_cannot_blow_memory,
         test_unsupported_compression_is_rejected,
         test_archive_entry_count_is_capped,
+        test_emf_metafiles_are_rasterized_and_text_recovered,
+        test_unrenderable_metafile_reports_a_reason,
+        test_diagnostics_distinguish_no_images_from_all_skipped,
         test_pipeline_wires_embedded_image_analysis,
         test_version_is_at_least_implementation_version,
     ]

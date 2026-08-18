@@ -26,6 +26,7 @@ from functions_data_management_search_write_fence import (
 )
 from functions_visio import build_visio_page_markdown, parse_vsdx_pages
 from functions_content import *
+from functions_office_media import extract_office_embedded_images_with_diagnostics
 from functions_content_understanding import analyze_image_with_content_understanding
 from functions_settings import *
 from functions_search import *
@@ -311,6 +312,29 @@ def _analyze_single_embedded_image(image_path, extraction_engine, image_extracti
     ).strip()
 
 
+def _describe_embedded_image_skips(diagnostics):
+    """Render skip counts as a short, admin-readable explanation."""
+    reasons = diagnostics.get('skipped_reasons') or {}
+    if not reasons:
+        return ''
+    friendly = {
+        'below_minimum_pixels': 'too small',
+        'below_minimum_bytes': 'too small',
+        'duplicate_image': 'duplicates',
+        'unsupported_format': 'unsupported format',
+        'unreadable_image': 'unreadable',
+        'unreadable_or_oversized': 'unreadable or oversized',
+        'per_document_cap_reached': 'over the per-document cap',
+        'write_failed': 'could not be written',
+        'unsafe_entry_name': 'unsafe file name',
+    }
+    parts = []
+    for reason, count in sorted(reasons.items(), key=lambda item: -item[1]):
+        label = friendly.get(reason, reason.replace('_', ' '))
+        parts.append(f"{count} {label}")
+    return ", ".join(parts)
+
+
 def _build_office_embedded_image_chunks(
     file_path,
     settings,
@@ -347,14 +371,39 @@ def _build_office_embedded_image_chunks(
 
     try:
         temp_image_dir = tempfile.mkdtemp(prefix='office_images_')
-        embedded_images = extract_office_embedded_images(
+        embedded_images, image_diagnostics = extract_office_embedded_images_with_diagnostics(
             file_path,
             temp_image_dir,
             min_pixels=min_pixels,
             max_images=max_images,
         )
 
+        candidate_count = image_diagnostics.get('candidates', 0)
         if not embedded_images:
+            # Say so explicitly. Otherwise "no images in this file" and "images found but all
+            # skipped" look identical in the workspace log, which is the common confusion.
+            if candidate_count:
+                skip_summary = _describe_embedded_image_skips(image_diagnostics)
+                update_callback(
+                    status=(
+                        f"Found {candidate_count} embedded image(s), none analyzable"
+                        + (f" ({skip_summary})" if skip_summary else "")
+                    ),
+                    office_embedded_image_count=0,
+                    office_embedded_image_candidates=candidate_count,
+                    office_embedded_image_skipped=image_diagnostics.get('skipped', 0),
+                )
+                log_event(
+                    f"[OFFICE_EMBEDDED_IMAGES] {os.path.basename(file_path)}: "
+                    f"{candidate_count} candidate(s), none analyzable. {image_diagnostics}",
+                    level=logging.WARNING,
+                )
+            else:
+                update_callback(
+                    status="No embedded images found in this document",
+                    office_embedded_image_count=0,
+                    office_embedded_image_candidates=0,
+                )
             return [], 0, extraction_engine
 
         engine_label = (
@@ -364,10 +413,13 @@ def _build_office_embedded_image_chunks(
         )
         total_images = len(embedded_images)
         update_callback(
-            status=f"Analyzing {total_images} embedded image(s) with {engine_label}..."
+            status=f"Analyzing {total_images} of {candidate_count} embedded image(s) with {engine_label}..."
         )
 
         for image_index, embedded_image in enumerate(embedded_images, start=1):
+            update_callback(
+                status=f"Analyzing embedded image {image_index} of {total_images} with {engine_label}..."
+            )
             try:
                 analysis_text = _analyze_single_embedded_image(
                     embedded_image['path'],
@@ -380,9 +432,18 @@ def _build_office_embedded_image_chunks(
                     f"[OFFICE_EMBEDDED_IMAGES] Failed to analyze {embedded_image.get('name')}: {image_error}",
                     level=logging.WARNING,
                 )
-                continue
+                analysis_text = ''
 
-            if not analysis_text:
+            # Text drawn inside a vector diagram is recovered during rasterization, so a figure
+            # still contributes searchable labels even when the engine returns nothing.
+            embedded_text = str(embedded_image.get('embedded_text') or '').strip()
+            body_parts = []
+            if analysis_text:
+                body_parts.append(analysis_text)
+            if embedded_text and embedded_text not in analysis_text:
+                body_parts.append(f"Text labels in this figure:\n{embedded_text}")
+
+            if not body_parts:
                 continue
 
             location_label = ''
@@ -396,13 +457,19 @@ def _build_office_embedded_image_chunks(
             )
             chunks.append({
                 'page_number': starting_page_number + len(chunks),
-                'content': f"{heading}\n\n{analysis_text}",
+                'content': f"{heading}\n\n" + "\n\n".join(body_parts),
             })
             analyzed_count += 1
 
         if analyzed_count:
+            skip_summary = _describe_embedded_image_skips(image_diagnostics)
             update_callback(
-                status=f"Analyzed {analyzed_count} embedded image(s) with {engine_label}."
+                status=(
+                    f"Analyzed {analyzed_count} of {candidate_count} embedded image(s) with {engine_label}."
+                    + (f" Skipped: {skip_summary}." if skip_summary else "")
+                ),
+                office_embedded_image_candidates=candidate_count,
+                office_embedded_image_skipped=image_diagnostics.get('skipped', 0),
             )
     except Exception as embedded_image_error:
         log_event(

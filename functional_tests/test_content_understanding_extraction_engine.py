@@ -2,7 +2,7 @@
 # test_content_understanding_extraction_engine.py
 """
 Functional test for Enhanced extraction backed by Azure AI Content Understanding.
-Version: 0.250.221
+Version: 0.250.223
 Implemented in: 0.250.221
 
 This test ensures that the Content Understanding client parses analyzer results into the same
