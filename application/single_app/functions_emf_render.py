@@ -605,7 +605,8 @@ class EmfRenderer:
             self.draw.text((pixel_x, pixel_y), text, fill=self.state.text_color, font=font)
             self.records_drawn += 1
         except (ValueError, OSError):
-            pass
+            # Best-effort renderer: ignore text draw failures and continue with remaining records.
+            return
 
 
 WMF_PLACEABLE_KEY = 0x9AC6CDD7
