@@ -568,10 +568,12 @@ function readWorkflowDocumentActionFromForm() {
         window_unit: normalizeText(workflowAnalysisWindowUnitSelect?.value) || "pages",
         window_size: normalizeText(workflowAnalysisWindowSizeInput?.value),
         window_percent: normalizeText(workflowAnalysisWindowPercentInput?.value),
-        max_retries_per_window: normalizeText(workflowAnalysisRetriesInput?.value) || "1",
+        max_retries_per_window: normalizeWorkflowNumericField(workflowAnalysisRetriesInput?.value, "1"),
         target_mode: targetMode,
-        recent_window_minutes: normalizeText(workflowAnalysisRecentMinutesInput?.value)
-            || String(DEFAULT_RECENT_DOCUMENT_WINDOW_MINUTES),
+        recent_window_minutes: normalizeWorkflowNumericField(
+            workflowAnalysisRecentMinutesInput?.value,
+            String(DEFAULT_RECENT_DOCUMENT_WINDOW_MINUTES),
+        ),
     };
 }
 
@@ -1003,6 +1005,7 @@ function removeWorkflowTask(taskId) {
         showToast("A workflow requires at least one task.", "warning");
         return;
     }
+    syncActiveWorkflowTaskFromEditor();
     const taskIndex = workflowTasks.findIndex((task) => task.id === taskId);
     if (taskIndex < 0) {
         return;
@@ -2183,14 +2186,16 @@ async function initializeWorkflowDocumentPicker(documentAction = {}, options = {
     }
 
     const actionType = normalizeText(documentAction.type || workflowDocumentActionTypeSelect?.value) || DOCUMENT_ACTION_NONE;
+    // Bump first so any in-flight load for a previous task cannot apply its scopes or
+    // selection to the picker after this call resolves.
+    const requestToken = workflowDocumentPickerLoadToken + 1;
+    workflowDocumentPickerLoadToken = requestToken;
+
     if (actionType === DOCUMENT_ACTION_NONE) {
         setWorkflowPickerError("");
         setWorkflowPickerLoadingState(false);
         return;
     }
-
-    const requestToken = workflowDocumentPickerLoadToken + 1;
-    workflowDocumentPickerLoadToken = requestToken;
 
     setWorkflowPickerError("");
     setWorkflowPickerLoadingState(true);
@@ -3995,6 +4000,16 @@ async function openWorkflowModal(workflow = null) {
     await ensureWorkflowDocumentPickerLoaded();
 }
 
+function normalizeWorkflowNumericField(value, fallback) {
+    // normalizeText() coerces a numeric 0 to "", so truthiness cannot be used here:
+    // 0 is a valid retries-per-window value and must survive serialization.
+    if (value === null || value === undefined) {
+        return fallback;
+    }
+    const normalizedValue = normalizeText(value);
+    return normalizedValue === "" ? fallback : normalizedValue;
+}
+
 function serializeWorkflowDocumentAction(rawAction) {
     const source = rawAction && typeof rawAction === "object" ? rawAction : createDefaultWorkflowTaskDocumentAction();
     const actionType = normalizeWorkflowDocumentActionType(source.type);
@@ -4005,8 +4020,11 @@ function serializeWorkflowDocumentAction(rawAction) {
     const isRecentMode = targetMode === DOCUMENT_ANALYSIS_TARGET_RECENT;
     const rawWindowSize = normalizeText(source.window_size);
     const rawWindowPercent = normalizeText(source.window_percent);
-    const rawRetries = normalizeText(source.max_retries_per_window) || "1";
-    const rawRecentMinutes = normalizeText(source.recent_window_minutes) || String(DEFAULT_RECENT_DOCUMENT_WINDOW_MINUTES);
+    const rawRetries = normalizeWorkflowNumericField(source.max_retries_per_window, "1");
+    const rawRecentMinutes = normalizeWorkflowNumericField(
+        source.recent_window_minutes,
+        String(DEFAULT_RECENT_DOCUMENT_WINDOW_MINUTES),
+    );
     const activeGroupId = getWorkflowActiveGroupId();
     const comparisonLeftDocumentId = actionType === DOCUMENT_ACTION_COMPARISON && !isRecentMode
         ? normalizeText(source.left_document_id)

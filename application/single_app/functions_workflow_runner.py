@@ -7105,8 +7105,18 @@ def _apply_file_sync_context_to_workflow(workflow, file_sync_result):
     return prepared_workflow
 
 
-def _document_run_item_id(run_id, document_id):
+def _get_workflow_active_task(workflow):
+    active_task = (workflow or {}).get('active_task')
+    return active_task if isinstance(active_task, dict) else {}
+
+
+def _document_run_item_id(run_id, document_id, task_id=''):
     normalized_document_id = re.sub(r'[^a-zA-Z0-9._-]+', '-', str(document_id or '').strip())
+    normalized_task_id = re.sub(r'[^a-zA-Z0-9._-]+', '-', str(task_id or '').strip())
+    if normalized_task_id:
+        # Per-task document actions let two tasks target the same document in one run,
+        # so the run item has to be scoped to the task or statuses overwrite each other.
+        return f'{run_id}:task:{normalized_task_id}:document:{normalized_document_id}'
     return f'{run_id}:document:{normalized_document_id}'
 
 
@@ -7130,8 +7140,10 @@ def _save_document_run_item(workflow, run_id, document_id, status, *, file_sync_
 
     now_iso = _utc_now_iso()
     file_sync_document = _file_sync_document_details(file_sync_result or {}, document_id)
+    active_task = _get_workflow_active_task(workflow)
+    task_id = str(active_task.get('id') or '').strip()
     item = {
-        'id': _document_run_item_id(run_id, document_id),
+        'id': _document_run_item_id(run_id, document_id, task_id=task_id),
         'type': 'workflow_run_item',
         'item_type': 'document',
         'run_id': run_id,
@@ -7139,6 +7151,8 @@ def _save_document_run_item(workflow, run_id, document_id, status, *, file_sync_
         'workflow_id': workflow.get('id'),
         'group_id': _get_workflow_group_id(workflow) or None,
         'workflow_name': workflow.get('name'),
+        'task_id': task_id or None,
+        'task_name': str(active_task.get('name') or '').strip() or None,
         'document_id': document_id,
         'label': _document_label_from_file_sync(file_sync_result or {}, document_id),
         'source': 'file_sync' if file_sync_document else 'workflow',
@@ -9513,13 +9527,6 @@ def _execute_workflow_task_sequence(
                 title=str(task.get('name') or f'Task {task_index + 1}'),
                 status='running',
             )
-        prepared_workflow = _build_workflow_task_execution_workflow(
-            workflow,
-            task,
-            previous_reply=previous_reply,
-            include_document_action=task_index == 0,
-        )
-
         task_result = None
         task_error = ''
         attempt_count = 0
@@ -9527,6 +9534,14 @@ def _execute_workflow_task_sequence(
             raise_if_cancelled()
             attempt_count = attempt_index + 1
             try:
+                # Built inside the attempt so an invalid task document action fails this
+                # task through the normal retry and error strategy instead of the whole run.
+                prepared_workflow = _build_workflow_task_execution_workflow(
+                    workflow,
+                    task,
+                    previous_reply=previous_reply,
+                    include_document_action=task_index == 0,
+                )
                 attempt_workflow, runner_audit = _resolve_workflow_task_runner(
                     prepared_workflow,
                     task,

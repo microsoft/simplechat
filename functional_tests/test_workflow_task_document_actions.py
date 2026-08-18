@@ -136,7 +136,9 @@ def load_runner_helpers():
     namespace = {
         "DOCUMENT_ACTION_TYPE_NONE": "none",
         "DOCUMENT_ACTION_TYPE_ANALYZE": "analyze",
+        "DOCUMENT_ACTION_TYPE_COMPARISON": "comparison",
         "WORKFLOW_TASK_CONTEXT_MAX_CHARS": 12000,
+        "re": __import__("re"),
         "build_analyze_config": lambda action: {"enabled": (action or {}).get("type") == "analyze"},
         "_get_document_action_config": lambda source: dict(
             (source or {}).get("document_action") or {"type": "none"}
@@ -148,12 +150,33 @@ def load_runner_helpers():
         RUNNER_FILE,
         {
             "_truncate_workflow_task_context",
+            "_get_workflow_active_task",
+            "_document_run_item_id",
             "_resolve_workflow_task_document_action",
             "_build_workflow_task_execution_workflow",
             "_apply_file_sync_changed_documents_to_action",
             "_apply_file_sync_context_to_workflow",
         },
         namespace,
+    )
+
+
+def load_resume_helpers():
+    return load_functions(
+        APP_ROOT / "route_backend_workflows.py",
+        {
+            "_narrow_analyze_action_to_documents",
+            "_force_group_document_action_scope",
+            "_build_resume_failed_workflow",
+        },
+        {
+            "DOCUMENT_ACTION_TYPE_ANALYZE": "analyze",
+            "DOCUMENT_ACTION_TYPE_NONE": "none",
+            "FILE_SYNC_SCOPE_GROUP": "group",
+            "FILE_SYNC_SCOPE_PUBLIC": "public",
+            "build_analyze_config": lambda action: {"enabled": (action or {}).get("type") == "analyze"},
+            "_normalize_identifier": lambda value: str(value or "").strip(),
+        },
     )
 
 
@@ -469,6 +492,121 @@ def test_file_sync_changed_documents_reach_task_actions() -> None:
     print("PASS: File Sync changed document propagation")
 
 
+def test_document_run_items_are_task_scoped() -> None:
+    """Two tasks targeting the same document must not overwrite each other's status."""
+    print("Testing task-scoped document run item ids...")
+    helpers = load_runner_helpers()
+    document_run_item_id = helpers["_document_run_item_id"]
+
+    first = document_run_item_id("run-1", "doc-a", task_id="task-1")
+    second = document_run_item_id("run-1", "doc-a", task_id="task-2")
+    legacy = document_run_item_id("run-1", "doc-a")
+
+    assert first != second, "Per-task document run items must have distinct ids."
+    assert legacy == "run-1:document:doc-a", legacy
+    assert "task-1" in first and "task-2" in second
+
+    runner_source = read_text(RUNNER_FILE)
+    assert "'id': _document_run_item_id(run_id, document_id, task_id=task_id)," in runner_source
+    assert "'task_id': task_id or None," in runner_source
+    print("PASS: task-scoped document run item ids")
+
+
+def test_task_document_action_failures_stay_inside_the_retry_loop() -> None:
+    """An invalid task document action must fail that task, not abort the whole run."""
+    print("Testing task document action failure containment...")
+    runner_source = read_text(RUNNER_FILE)
+
+    sequence_start = runner_source.index("def _execute_workflow_task_sequence(")
+    sequence_body = runner_source[sequence_start:sequence_start + 6000]
+    attempt_loop_index = sequence_body.index("for attempt_index in range(retry_count + 1):")
+    build_index = sequence_body.index("prepared_workflow = _build_workflow_task_execution_workflow(")
+    try_index = sequence_body.index("try:", attempt_loop_index)
+
+    assert build_index > attempt_loop_index, (
+        "The per-task workflow must be built inside the retry loop so document action "
+        "normalization errors are retried and recorded per task."
+    )
+    assert build_index > try_index, "The per-task workflow build must be inside the attempt try block."
+    print("PASS: task document action failure containment")
+
+
+def test_resume_failed_narrows_task_document_actions() -> None:
+    """Resuming failed documents must narrow task-level analyze actions, not just the workflow one."""
+    print("Testing resume-failed per-task narrowing...")
+    helpers = load_resume_helpers()
+    build_resume = helpers["_build_resume_failed_workflow"]
+    force_group_scope = helpers["_force_group_document_action_scope"]
+
+    workflow = {
+        "task_prompt": "Analyze everything.",
+        "document_action": build_document_action("analyze", document_ids=["doc-a", "doc-b", "doc-c"]),
+        "tasks": [
+            {"id": "task-1", "document_action": build_document_action("analyze", document_ids=["doc-a", "doc-b"])},
+            {"id": "task-2", "document_action": build_document_action("analyze", document_ids=["doc-c"])},
+            {"id": "task-3", "document_action": build_document_action()},
+        ],
+    }
+    failed_items = [
+        {"document_id": "doc-b", "task_id": "task-1", "status": "failed"},
+        {"document_id": "doc-c", "task_id": "task-2", "status": "failed"},
+    ]
+
+    resumed = build_resume(workflow, failed_items)
+    assert resumed["document_action"]["document_ids"] == ["doc-b", "doc-c"]
+    assert resumed["tasks"][0]["document_action"]["document_ids"] == ["doc-b"]
+    assert resumed["tasks"][1]["document_action"]["document_ids"] == ["doc-c"]
+    assert resumed["tasks"][2]["document_action"]["type"] == "none"
+    assert resumed["file_sync"]["enabled"] is False
+
+    # A task with an analyze action but no failed documents must not re-run its whole set.
+    partial = build_resume(workflow, [{"document_id": "doc-b", "task_id": "task-1", "status": "failed"}])
+    assert partial["tasks"][0]["document_action"]["document_ids"] == ["doc-b"]
+    assert partial["tasks"][1]["document_action"]["type"] == "none"
+
+    # Legacy run items without task attribution fall back to the full failed set.
+    legacy = build_resume(workflow, [{"document_id": "doc-b", "status": "failed"}])
+    assert legacy["tasks"][0]["document_action"]["document_ids"] == ["doc-b"]
+    assert legacy["tasks"][1]["document_action"]["document_ids"] == ["doc-b"]
+
+    # Group resumes stay inside the owning group workspace.
+    scoped = force_group_scope(build_document_action("analyze", doc_scope="all", active_public_workspace_id=["p1"]), "group-9")
+    assert scoped["doc_scope"] == "group"
+    assert scoped["active_group_ids"] == ["group-9"]
+    assert scoped["active_public_workspace_id"] == []
+    assert force_group_scope(build_document_action(), "group-9")["type"] == "none"
+    print("PASS: resume-failed per-task narrowing")
+
+
+def test_retries_per_window_zero_survives_serialization() -> None:
+    """A saved max_retries_per_window of 0 must not be silently rewritten to 1."""
+    print("Testing zero retries-per-window preservation...")
+    workflow_js = read_text(WORKFLOW_JS_FILE)
+
+    assert "function normalizeWorkflowNumericField(" in workflow_js
+    assert 'const rawRetries = normalizeWorkflowNumericField(source.max_retries_per_window, "1");' in workflow_js
+    assert 'const rawRetries = normalizeText(source.max_retries_per_window) || "1";' not in workflow_js
+    assert 'max_retries_per_window: normalizeWorkflowNumericField(workflowAnalysisRetriesInput?.value, "1"),' in workflow_js
+    print("PASS: zero retries-per-window preservation")
+
+
+def test_picker_load_token_guards_none_actions() -> None:
+    """Switching to a task with no document action must invalidate an in-flight load."""
+    print("Testing picker load token invalidation...")
+    workflow_js = read_text(WORKFLOW_JS_FILE)
+
+    picker_start = workflow_js.index("async function initializeWorkflowDocumentPicker(")
+    picker_body = workflow_js[picker_start:picker_start + 1800]
+    token_index = picker_body.index("workflowDocumentPickerLoadToken = requestToken;")
+    none_return_index = picker_body.index("if (actionType === DOCUMENT_ACTION_NONE) {")
+
+    assert token_index < none_return_index, (
+        "The load token must be bumped before the no-document-action early return so a "
+        "pending load for a previous task cannot apply its scopes or selection."
+    )
+    print("PASS: picker load token invalidation")
+
+
 def test_version_contract() -> None:
     """The fix ships at or after its implementation version."""
     print("Testing version contract...")
@@ -488,6 +626,11 @@ def run_tests() -> bool:
         test_runner_executes_each_task_with_its_own_action,
         test_runner_legacy_tasks_keep_first_task_only_behavior,
         test_file_sync_changed_documents_reach_task_actions,
+        test_document_run_items_are_task_scoped,
+        test_task_document_action_failures_stay_inside_the_retry_loop,
+        test_resume_failed_narrows_task_document_actions,
+        test_retries_per_window_zero_survives_serialization,
+        test_picker_load_token_guards_none_actions,
         test_version_contract,
     ]
     results = []
