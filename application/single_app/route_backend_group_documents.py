@@ -1300,6 +1300,8 @@ def register_route_backend_group_documents(bp):
         if raw_mode not in DOCUMENT_INTELLIGENCE_MANUAL_EXTRACTION_MODES:
             return jsonify({'error': 'Extraction mode must be Standard or Enhanced.'}), 400
         target_mode = normalize_document_intelligence_manual_extraction_mode(raw_mode)
+        if target_mode == 'layout' and not is_enhanced_extraction_enabled(get_settings()):
+            return jsonify({'error': 'Enhanced extraction is disabled. Enable it in Admin Settings first.'}), 400
 
         document_ids = payload.get('document_ids')
         if not isinstance(document_ids, list):

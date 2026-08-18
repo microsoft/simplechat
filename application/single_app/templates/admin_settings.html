@@ -11707,68 +11707,272 @@
                 <div class="card p-3 mb-3" id="document-intelligence-section">
                     <h5><i class="bi bi-file-earmark-text me-2"></i>Document Intelligence</h5>
                     <p class="text-muted">
-                        Configure Azure Document Intelligence settings.
+                        Configure Azure Document Intelligence settings. Document Intelligence always powers
+                        <strong>Standard</strong> extraction and is required for workspaces and chat file uploads.
                     </p>
-                    <div class="mb-3">
-                        <div class="d-flex align-items-center gap-2 flex-wrap">
+                    <div class="form-group form-check form-switch mb-3 d-flex align-items-center">
+                        <input
+                            type="checkbox"
+                            class="form-check-input me-2"
+                            id="enable_enhanced_extraction"
+                            name="enable_enhanced_extraction"
+                            {% if settings.enable_enhanced_extraction %}checked{% endif %}
+                        >
+                        <label class="form-check-label" for="enable_enhanced_extraction">
+                            Enable Enhanced extraction
+                        </label>
+                        <button
+                            type="button"
+                            class="btn btn-sm btn-outline-secondary rounded-circle ms-2"
+                            data-bs-toggle="modal"
+                            data-bs-target="#documentIntelligenceExtractionHelpModal"
+                            aria-label="Enhanced extraction guidance"
+                            title="Enhanced extraction guidance"
+                        >
+                            <i class="bi bi-question-lg" aria-hidden="true"></i>
+                        </button>
+                    </div>
+
+                    <div id="enhanced_extraction_settings" class="{% if not settings.enable_enhanced_extraction %}d-none{% endif %}">
+                        {% if content_understanding_supported %}
+                        <div class="alert alert-info small" role="note">
+                            Enhanced extraction uses <strong>Azure AI Content Understanding</strong>, which returns tables,
+                            page structure, checkbox states, and AI-generated descriptions of figures, charts, and images.
+                            Configure the connection below.
+                        </div>
+                        {% else %}
+                        <div class="alert alert-secondary small" id="enhanced_extraction_fallback_notice" role="note">
+                            Azure AI Content Understanding is not available in the
+                            <strong>{{ azure_environment }}</strong> cloud, so Enhanced extraction uses
+                            <strong>Document Intelligence Layout</strong> here. There is nothing more to configure —
+                            Enhanced still captures tables, page structure, forms, and checkbox states.
+                        </div>
+                        {% endif %}
+
+                        <div class="mb-3">
                             <label for="document_intelligence_pdf_image_extraction_mode" class="form-label mb-0">
                                 PDF and Image Extraction Mode
                             </label>
-                            <button
-                                type="button"
-                                class="btn btn-sm btn-outline-secondary rounded-circle"
-                                data-bs-toggle="modal"
-                                data-bs-target="#documentIntelligenceExtractionHelpModal"
-                                aria-label="Document Intelligence extraction guidance"
-                                title="Document Intelligence extraction guidance"
+                            <select
+                                class="form-select"
+                                id="document_intelligence_pdf_image_extraction_mode"
+                                name="document_intelligence_pdf_image_extraction_mode"
                             >
-                                <i class="bi bi-question-lg" aria-hidden="true"></i>
-                            </button>
-                        </div>
-                        <select
-                            class="form-select"
-                            id="document_intelligence_pdf_image_extraction_mode"
-                            name="document_intelligence_pdf_image_extraction_mode"
-                        >
-                            <option value="read" {% if settings.document_intelligence_pdf_image_extraction_mode|default('read') == 'read' %}selected{% endif %}>
-                                Standard - faster text extraction
-                            </option>
-                            <option value="layout" {% if settings.document_intelligence_pdf_image_extraction_mode|default('read') == 'layout' %}selected{% endif %}>
-                                Enhanced - richer structure, tables, and checkbox states
-                            </option>
-                            <option value="auto" {% if settings.document_intelligence_pdf_image_extraction_mode|default('read') == 'auto' %}selected{% endif %}>
-                                Auto - sample first pages, then choose Standard or Enhanced
-                            </option>
-                        </select>
-                        <div class="form-text">
-                            Enhanced captures more document detail for PDFs and images, including tables, page structure, and checked or unchecked marks. It adds latency and has a 6X increase for every 1000 pages when selected.
-                        </div>
-                        <div
-                            class="mt-3 {% if settings.document_intelligence_pdf_image_extraction_mode|default('read') != 'auto' %}d-none{% endif %}"
-                            id="document_intelligence_auto_sample_pages_group"
-                        >
-                            <label for="document_intelligence_auto_sample_pages" class="form-label">
-                                Auto Sample Pages
-                            </label>
-                            <input
-                                type="number"
-                                class="form-control"
-                                id="document_intelligence_auto_sample_pages"
-                                name="document_intelligence_auto_sample_pages"
-                                min="1"
-                                max="20"
-                                value="{{ settings.document_intelligence_auto_sample_pages|default(3) }}"
-                            >
+                                <option value="read" {% if settings.document_intelligence_pdf_image_extraction_mode|default('read') == 'read' %}selected{% endif %}>
+                                    Standard - faster text extraction
+                                </option>
+                                <option value="layout" {% if settings.document_intelligence_pdf_image_extraction_mode|default('read') == 'layout' %}selected{% endif %}>
+                                    Enhanced - richer structure, tables, and checkbox states
+                                </option>
+                                <option value="auto" {% if settings.document_intelligence_pdf_image_extraction_mode|default('read') == 'auto' %}selected{% endif %}>
+                                    Auto - sample first pages, then choose Standard or Enhanced
+                                </option>
+                            </select>
                             <div class="form-text">
-                                Auto samples this many first PDF pages with Enhanced extraction. If it detects tables or selection marks, the full PDF uses Enhanced; otherwise it finishes with Standard. Images use Enhanced in Auto mode.
+                                Enhanced captures more document detail for PDFs and images, including tables, page structure, and checked or unchecked marks. It adds latency and has a 6X increase for every 1000 pages when selected.
+                            </div>
+                            <div
+                                class="mt-3 {% if settings.document_intelligence_pdf_image_extraction_mode|default('read') != 'auto' %}d-none{% endif %}"
+                                id="document_intelligence_auto_sample_pages_group"
+                            >
+                                <label for="document_intelligence_auto_sample_pages" class="form-label">
+                                    Auto Sample Pages
+                                </label>
+                                <input
+                                    type="number"
+                                    class="form-control"
+                                    id="document_intelligence_auto_sample_pages"
+                                    name="document_intelligence_auto_sample_pages"
+                                    min="1"
+                                    max="20"
+                                    value="{{ settings.document_intelligence_auto_sample_pages|default(3) }}"
+                                >
+                                <div class="form-text">
+                                    Auto samples this many first PDF pages with Document Intelligence Layout. If it detects tables, selection marks, or figures, the full PDF uses Enhanced; otherwise it finishes with Standard. Images use Enhanced in Auto mode.
+                                </div>
+                            </div>
+                            <div class="alert alert-light border mt-3 mb-0 small" role="note">
+                                <div><strong>Standard:</strong> Document Intelligence Read. Fastest and lowest-cost path for plain text PDFs and images.</div>
+                                <div><strong>Enhanced:</strong> best for tables, section structure, page layout, forms, checkbox states, and figure descriptions. Expect more latency and higher cost.</div>
+                                <div><strong>Auto:</strong> samples the first pages with Document Intelligence Layout, then uses Enhanced only when the sample shows tables, selection marks, or figures.</div>
                             </div>
                         </div>
-                        <div class="alert alert-light border mt-3 mb-0 small" role="note">
-                            <div><strong>Standard:</strong> fastest and lowest-cost path for plain text PDFs and images.</div>
-                            <div><strong>Enhanced:</strong> best for tables, section structure, page layout, forms, and checkbox states. Expect more latency and a 6X increase for every 1000 pages.</div>
-                            <div><strong>Auto:</strong> samples the first pages, then uses Enhanced only when the sample shows tables or selection marks.</div>
+
+                        {% if content_understanding_supported %}
+                        <div class="card p-3 mb-3 bg-body-tertiary" id="content-understanding-section">
+                            <div class="d-flex align-items-center gap-2 flex-wrap mb-2">
+                                <h6 class="mb-0"><i class="bi bi-stars me-2"></i>Azure AI Content Understanding</h6>
+                                <button
+                                    type="button"
+                                    class="btn btn-sm btn-outline-secondary rounded-circle"
+                                    data-bs-toggle="modal"
+                                    data-bs-target="#contentUnderstandingSetupHelpModal"
+                                    aria-label="Content Understanding setup guide"
+                                    title="Content Understanding setup guide"
+                                >
+                                    <i class="bi bi-question-lg" aria-hidden="true"></i>
+                                </button>
+                            </div>
+                            <p class="text-muted small">
+                                Required for Enhanced extraction. Deployed from a Microsoft Foundry resource.
+                                If this is left blank, Enhanced falls back to Document Intelligence Layout.
+                            </p>
+
+                            <div class="mb-3">
+                                <label for="azure_content_understanding_endpoint" class="form-label">
+                                    Content Understanding Endpoint
+                                </label>
+                                <input
+                                    type="text"
+                                    class="form-control"
+                                    id="azure_content_understanding_endpoint"
+                                    name="azure_content_understanding_endpoint"
+                                    placeholder="https://your-resource.services.ai.azure.com"
+                                    value="{{ settings.azure_content_understanding_endpoint or '' }}"
+                                >
+                                <div class="form-text">
+                                    Your Microsoft Foundry resource endpoint, without a trailing path.
+                                </div>
+                            </div>
+
+                            <div class="mb-3">
+                                <label for="azure_content_understanding_authentication_type" class="form-label">
+                                    Authentication Type
+                                </label>
+                                <select class="form-select" id="azure_content_understanding_authentication_type" name="azure_content_understanding_authentication_type">
+                                    <option value="key" {% if settings.azure_content_understanding_authentication_type != 'managed_identity' %}selected{% endif %}>
+                                        Key
+                                    </option>
+                                    <option value="managed_identity" {% if settings.azure_content_understanding_authentication_type == 'managed_identity' %}selected{% endif %}>
+                                        Managed Identity
+                                    </option>
+                                </select>
+                                <div class="form-text">
+                                    Managed identity requires the <strong>Cognitive Services User</strong> role on the Foundry resource.
+                                </div>
+                            </div>
+
+                            <div class="mb-3 {% if settings.azure_content_understanding_authentication_type == 'managed_identity' %}d-none{% endif %}" id="azure_content_understanding_key_container">
+                                <label for="azure_content_understanding_key" class="form-label">
+                                    Content Understanding Key
+                                </label>
+                                <div class="input-group">
+                                    <input
+                                        type="password"
+                                        class="form-control"
+                                        id="azure_content_understanding_key"
+                                        name="azure_content_understanding_key"
+                                        value="{{ settings.azure_content_understanding_key or '' }}"
+                                    >
+                                    <button
+                                        type="button"
+                                        class="btn btn-outline-secondary"
+                                        id="toggle_content_understanding_key"
+                                    >
+                                        Show
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div class="row g-3 mb-3">
+                                <div class="col-md-4">
+                                    <label for="azure_content_understanding_api_version" class="form-label">API Version</label>
+                                    <input
+                                        type="text"
+                                        class="form-control"
+                                        id="azure_content_understanding_api_version"
+                                        name="azure_content_understanding_api_version"
+                                        value="{{ settings.azure_content_understanding_api_version or content_understanding_api_version_default }}"
+                                    >
+                                    <div class="form-text">Default: {{ content_understanding_api_version_default }}</div>
+                                </div>
+                                <div class="col-md-4">
+                                    <label for="azure_content_understanding_analyzer_id" class="form-label">Document Analyzer</label>
+                                    <input
+                                        type="text"
+                                        class="form-control"
+                                        id="azure_content_understanding_analyzer_id"
+                                        name="azure_content_understanding_analyzer_id"
+                                        value="{{ settings.azure_content_understanding_analyzer_id or content_understanding_document_analyzer_default }}"
+                                    >
+                                    <div class="form-text">Default: {{ content_understanding_document_analyzer_default }}</div>
+                                </div>
+                                <div class="col-md-4">
+                                    <label for="azure_content_understanding_image_analyzer_id" class="form-label">Image Analyzer</label>
+                                    <input
+                                        type="text"
+                                        class="form-control"
+                                        id="azure_content_understanding_image_analyzer_id"
+                                        name="azure_content_understanding_image_analyzer_id"
+                                        value="{{ settings.azure_content_understanding_image_analyzer_id or content_understanding_image_analyzer_default }}"
+                                    >
+                                    <div class="form-text">Default: {{ content_understanding_image_analyzer_default }}</div>
+                                </div>
+                            </div>
+
+                            <button
+                                type="button"
+                                class="btn btn-secondary"
+                                style="width: auto;"
+                                id="test_content_understanding_button"
+                            >
+                                Test Content Understanding Connection
+                            </button>
+                            <div id="test_content_understanding_result" class="mt-2"></div>
+                        </div>
+                        {% endif %}
+                    </div>
+
+                    <div class="card p-3 mb-3 bg-body-tertiary" id="office-embedded-image-section">
+                        <h6 class="mb-2"><i class="bi bi-images me-2"></i>Images Inside Office Files</h6>
+                        <p class="text-muted small">
+                            Neither extraction engine describes figures inside Word and PowerPoint files. When this is on,
+                            embedded images are pulled out of the file, analyzed with whichever engine backs the selected
+                            extraction mode, and indexed as their own citable chunks. This works with Standard extraction
+                            too, using Document Intelligence.
+                        </p>
+                        <div class="form-group form-check form-switch mb-3 d-flex align-items-center">
+                            <input
+                                type="checkbox"
+                                class="form-check-input me-2"
+                                id="enable_office_embedded_image_analysis"
+                                name="enable_office_embedded_image_analysis"
+                                {% if settings.enable_office_embedded_image_analysis %}checked{% endif %}
+                            >
+                            <label class="form-check-label" for="enable_office_embedded_image_analysis">
+                                Analyze images embedded in DOCX and PPTX files
+                            </label>
+                        </div>
+                        <div class="row g-3 {% if not settings.enable_office_embedded_image_analysis %}d-none{% endif %}" id="office_embedded_image_options">
+                            <div class="col-md-6">
+                                <label for="office_embedded_image_min_pixels" class="form-label">Minimum Image Size (pixels)</label>
+                                <input
+                                    type="number"
+                                    class="form-control"
+                                    id="office_embedded_image_min_pixels"
+                                    name="office_embedded_image_min_pixels"
+                                    min="1"
+                                    max="2000"
+                                    value="{{ settings.office_embedded_image_min_pixels|default(150) }}"
+                                >
+                                <div class="form-text">Images narrower or shorter than this are skipped as icons or spacers.</div>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="office_embedded_image_max_per_document" class="form-label">Maximum Images Per Document</label>
+                                <input
+                                    type="number"
+                                    class="form-control"
+                                    id="office_embedded_image_max_per_document"
+                                    name="office_embedded_image_max_per_document"
+                                    min="0"
+                                    max="200"
+                                    value="{{ settings.office_embedded_image_max_per_document|default(25) }}"
+                                >
+                                <div class="form-text">Caps per-document cost. Duplicate images are analyzed once.</div>
+                            </div>
                         </div>
                     </div>
+
                     <div class="modal fade" id="documentIntelligenceExtractionHelpModal" tabindex="-1" aria-labelledby="documentIntelligenceExtractionHelpModalLabel" aria-hidden="true">
                         <div class="modal-dialog modal-lg modal-dialog-scrollable">
                             <div class="modal-content">
@@ -11777,9 +11981,74 @@
                                     <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                                 </div>
                                 <div class="modal-body">
-                                    <p><strong>Choose Standard</strong> for mostly text-based PDFs and images when speed and cost matter most.</p>
-                                    <p><strong>Choose Enhanced</strong> when document structure matters: tables, page layout, headings, forms, checked or unchecked boxes, and selection marks. Enhanced is the better extraction path for those documents, but it adds latency and has a 6X increase for every 1000 pages.</p>
-                                    <p><strong>Choose Auto</strong> when admins want the platform to decide. Auto samples the configured number of first PDF pages with Enhanced extraction. If those pages contain tables or selection marks, the full PDF is extracted with Enhanced; otherwise it is extracted with Standard. Images are extracted with Enhanced in Auto mode because they are single-page inputs and benefit from spatial structure detection.</p>
+                                    <p><strong>Standard</strong> always uses Azure Document Intelligence Read. It is the fastest and lowest-cost path for mostly text-based PDFs and images, and it is what runs when Enhanced extraction is turned off.</p>
+                                    <p><strong>Enhanced</strong> is for documents where structure matters: tables, page layout, headings, forms, checked or unchecked boxes, and figures.</p>
+                                    <ul>
+                                        <li>In Azure commercial clouds, Enhanced uses <strong>Azure AI Content Understanding</strong>, which additionally generates natural-language descriptions of figures, charts, and diagrams.</li>
+                                        <li>In Azure Government and custom clouds, Content Understanding is unavailable, so Enhanced automatically uses <strong>Document Intelligence Layout</strong> instead. Tables and checkbox states still work; figure descriptions do not.</li>
+                                        <li>If Content Understanding is enabled but unreachable, the document falls back to Document Intelligence Layout and the reason is recorded on the document.</li>
+                                    </ul>
+                                    <p><strong>Auto</strong> lets the platform decide per document. It samples the configured number of first PDF pages with Document Intelligence Layout, which is the cheaper detector. If those pages contain tables, selection marks, or figures, the full document is extracted with Enhanced; otherwise it is extracted with Standard. Images always use Enhanced in Auto mode because they are single-page inputs that benefit from figure and spatial analysis.</p>
+                                    <p class="mb-0"><strong>Cost:</strong> Enhanced adds latency and cost on every document. Content Understanding also invokes a language model per document, so it is more expensive than Document Intelligence Layout. Auto is usually the best value.</p>
+                                </div>
+                                <div class="modal-footer">
+                                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="modal fade" id="contentUnderstandingSetupHelpModal" tabindex="-1" aria-labelledby="contentUnderstandingSetupHelpModalLabel" aria-hidden="true">
+                        <div class="modal-dialog modal-lg modal-dialog-scrollable">
+                            <div class="modal-content">
+                                <div class="modal-header">
+                                    <h5 class="modal-title" id="contentUnderstandingSetupHelpModalLabel">Set Up Azure AI Content Understanding</h5>
+                                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                                </div>
+                                <div class="modal-body">
+                                    <p>Content Understanding is part of Microsoft Foundry. Follow these steps, then paste the endpoint and key below.</p>
+                                    <h6>1. Create a Microsoft Foundry resource</h6>
+                                    <p>
+                                        In the Azure portal, create a <strong>Microsoft Foundry</strong> resource in one of the supported regions:
+                                        East US, East US 2, West US, West US 3, South Central US, North Europe, West Europe, Sweden Central,
+                                        UK South, Australia East, Japan East, or Southeast Asia. You need Contributor or higher on the subscription
+                                        or resource group.
+                                    </p>
+                                    <div class="alert alert-warning small">
+                                        Content Understanding is not offered in Azure Government or other sovereign clouds. In those clouds
+                                        SimpleChat automatically uses Document Intelligence Layout for Enhanced extraction.
+                                    </div>
+                                    <h6>2. Deploy the models Content Understanding needs</h6>
+                                    <p>
+                                        Analyzers that describe figures require a completion model and an embedding model to be deployed and set
+                                        as resource defaults. In the
+                                        <a href="https://contentunderstanding.ai.azure.com/settings" target="_blank" rel="noopener noreferrer">Content Understanding settings page</a>,
+                                        add your Foundry resource and leave
+                                        <em>Enable autodeployment for required models if no defaults are available</em> checked. Without this step,
+                                        analysis requests fail with a missing model deployment error.
+                                    </p>
+                                    <h6>3. Copy the endpoint and key</h6>
+                                    <p>
+                                        In the Azure portal, open the Foundry resource and go to
+                                        <strong>Resource Management &rarr; Keys and Endpoint</strong>. The endpoint looks like
+                                        <code>https://your-resource.services.ai.azure.com</code>. Paste it into
+                                        <strong>Content Understanding Endpoint</strong>, and paste either key into
+                                        <strong>Content Understanding Key</strong>.
+                                    </p>
+                                    <h6>4. Or use managed identity instead of a key</h6>
+                                    <p>
+                                        Set <strong>Authentication Type</strong> to Managed Identity and assign this application's identity the
+                                        <strong>Cognitive Services User</strong> role on the Foundry resource. That role assignment is required even
+                                        for resource owners.
+                                    </p>
+                                    <h6>5. Test the connection</h6>
+                                    <p class="mb-0">
+                                        Use <strong>Test Content Understanding Connection</strong> to confirm the endpoint, credentials, and analyzer
+                                        are reachable before saving.
+                                        See the
+                                        <a href="https://learn.microsoft.com/azure/ai-services/content-understanding/quickstart/use-rest-api" target="_blank" rel="noopener noreferrer">Content Understanding quickstart</a>
+                                        for more detail.
+                                    </p>
                                 </div>
                                 <div class="modal-footer">
                                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
