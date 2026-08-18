@@ -73,6 +73,17 @@ from functions_mcp_operations import (
     validate_mcp_endpoint_for_transport,
 )
 from functions_simplechat_operations import SIMPLECHAT_DEFAULT_ENDPOINT
+from semantic_kernel_plugins.rocksdb_plugin import (
+    AUTH_SCHEME_NONE,
+    MAX_RESULTS_CEILING,
+    MAX_TIMEOUT,
+    MAX_VALUE_BYTES_CEILING,
+    ROCKSDB_PLUGIN_TYPE,
+    SUPPORTED_AUTH_SCHEMES,
+    SUPPORTED_KEY_ENCODINGS,
+    SUPPORTED_VALUE_ENCODINGS,
+    normalize_rocksdb_base_url,
+)
 
 
 class PluginHealthChecker:
@@ -346,7 +357,10 @@ class PluginHealthChecker:
                 errors.append("Cosmos plugin only supports auth.type values 'identity' and 'key'")
             if auth_type == 'key' and not auth.get('key'):
                 errors.append("Cosmos plugin requires auth.key when auth.type='key'")
-        
+
+        elif plugin_type == ROCKSDB_PLUGIN_TYPE:
+            errors.extend(PluginHealthChecker._validate_rocksdb_manifest(manifest))
+
         elif plugin_type == 'log_analytics':
             additional_fields = manifest.get('additionalFields', {})
             if 'workspaceId' not in additional_fields:
@@ -441,7 +455,60 @@ class PluginHealthChecker:
                 errors.append("Azure Maps plugin requires auth.key with an Azure Maps subscription key")
         
         return len(errors) == 0, errors
-    
+
+    @staticmethod
+    def _validate_rocksdb_manifest(manifest: Dict[str, Any]) -> List[str]:
+        """Validate a RocksDB action manifest against the RocksDB HTTP service contract."""
+        errors: List[str] = []
+        additional_fields = manifest.get('additionalFields', {})
+        if not isinstance(additional_fields, dict):
+            additional_fields = {}
+
+        auth = manifest.get('auth', {}) if isinstance(manifest.get('auth'), dict) else {}
+
+        key_encoding = str(additional_fields.get('key_encoding') or 'utf8').strip().lower()
+        if key_encoding not in SUPPORTED_KEY_ENCODINGS:
+            errors.append("RocksDB plugin key_encoding must be either 'utf8' or 'base64'")
+
+        value_encoding = str(additional_fields.get('value_encoding') or 'utf8').strip().lower()
+        if value_encoding not in SUPPORTED_VALUE_ENCODINGS:
+            errors.append("RocksDB plugin value_encoding must be one of 'utf8', 'base64', or 'json'")
+
+        for field_name, minimum, maximum in (
+            ('max_results', 1, MAX_RESULTS_CEILING),
+            ('max_value_bytes', 1, MAX_VALUE_BYTES_CEILING),
+            ('timeout', 1, MAX_TIMEOUT),
+        ):
+            raw_value = additional_fields.get(field_name)
+            if raw_value in (None, ''):
+                continue
+            try:
+                parsed_value = int(raw_value)
+            except (TypeError, ValueError):
+                errors.append(f"RocksDB plugin additionalFields.{field_name} must be an integer")
+                continue
+            if parsed_value < minimum or parsed_value > maximum:
+                errors.append(
+                    f"RocksDB plugin additionalFields.{field_name} must be between {minimum} and {maximum}"
+                )
+
+        base_url = str(additional_fields.get('base_url') or manifest.get('endpoint') or '').strip()
+        if not base_url:
+            errors.append("RocksDB plugin requires 'base_url' in additionalFields")
+        else:
+            try:
+                normalize_rocksdb_base_url(base_url)
+            except ValueError as validation_error:
+                errors.append(f"RocksDB plugin base_url is invalid: {validation_error}")
+
+        auth_scheme = str(additional_fields.get('auth_scheme') or AUTH_SCHEME_NONE).strip().lower()
+        if auth_scheme not in SUPPORTED_AUTH_SCHEMES:
+            errors.append("RocksDB plugin auth_scheme must be one of 'none', 'bearer', or 'api_key'")
+        elif auth_scheme != AUTH_SCHEME_NONE and not auth.get('key'):
+            errors.append("RocksDB plugin requires auth.key when auth_scheme is 'bearer' or 'api_key'")
+
+        return errors
+
     @staticmethod
     def check_plugin_health(plugin_instance: BasePlugin, plugin_name: str) -> Dict[str, Any]:
         """

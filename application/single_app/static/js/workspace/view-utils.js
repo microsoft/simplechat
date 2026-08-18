@@ -53,6 +53,7 @@ export function getTypeIcon(type) {
     const t = type.toLowerCase();
     if (t.includes("sql")) return "bi-database";
     if (t.includes("cosmos")) return "bi-database-fill-gear";
+    if (t.includes("rocksdb")) return "bi-hdd-stack";
     if (t.includes("chart")) return "bi-bar-chart-line";
     if (t.includes("simplechat")) return "bi-chat-square-dots";
     if (t === "mcp" || t.includes("model_context_protocol")) return "bi-diagram-3";

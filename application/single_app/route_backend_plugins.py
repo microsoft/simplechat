@@ -17,12 +17,21 @@ from semantic_kernel_plugins.sql_odbc_utils import (
     build_sql_server_odbc_connection_string,
     connect_with_sql_server_odbc_fallback,
 )
+from semantic_kernel_plugins.rocksdb_plugin import (
+    AUTH_SCHEME_API_KEY,
+    AUTH_SCHEME_BEARER,
+    AUTH_SCHEME_NONE,
+    DEFAULT_API_KEY_HEADER,
+    SUPPORTED_AUTH_SCHEMES,
+    normalize_rocksdb_base_url,
+)
 from functions_settings import get_settings, is_tabular_processing_enabled, update_settings
 from functions_authentication import *
 from functions_appinsights import log_event
 from swagger_wrapper import swagger_route, get_auth_security
 import logging
 import os
+import requests
 from functions_debug import debug_print
 import importlib.util
 from functions_plugins import get_merged_plugin_settings
@@ -455,6 +464,23 @@ def get_plugin_types(allowed_type_filter=None):
                                     'timeout': 30,
                                 },
                                 'metadata': {'description': 'Example Cosmos query plugin'}
+                            }
+                        elif 'rocksdb' in module_name.lower():
+                            safe_manifest = {
+                                'endpoint': 'https://rocksdb.example.com/api',
+                                'auth': {'type': 'NoAuth'},
+                                'additionalFields': {
+                                    'base_url': 'https://rocksdb.example.com/api',
+                                    'auth_scheme': AUTH_SCHEME_NONE,
+                                    'column_family': 'default',
+                                    'key_encoding': 'utf8',
+                                    'value_encoding': 'utf8',
+                                    'read_only': True,
+                                    'max_results': 100,
+                                    'max_value_bytes': 32768,
+                                    'timeout': 30,
+                                },
+                                'metadata': {'description': 'Example RocksDB key-value action'}
                             }
                         elif 'blob_storage' in module_name.lower():
                             safe_manifest = {
@@ -2702,3 +2728,143 @@ def test_yamcs_connection():
                 client.close()
             except Exception:
                 pass
+
+
+@bpap.route('/api/plugins/test-rocksdb-connection', methods=['POST'])
+@swagger_route(security=get_auth_security())
+@login_required
+@user_required
+def test_rocksdb_connection():
+    """Probe a RocksDB HTTP service and confirm it answers with the expected contract."""
+    data = request.get_json(silent=True) or {}
+    user_id = get_current_user_id()
+    auth_scheme = (data.get('auth_scheme') or AUTH_SCHEME_NONE).strip().lower()
+    api_key_header = (data.get('api_key_header') or '').strip() or DEFAULT_API_KEY_HEADER
+    auth_key = (data.get('auth_key') or '').strip()
+    timeout = min(max(int(data.get('timeout', 10) or 10), 1), 30)
+
+    try:
+        base_url = normalize_rocksdb_base_url(data.get('base_url') or '')
+    except ValueError:
+        return jsonify({
+            'success': False,
+            'error': 'The RocksDB service base URL is invalid. Use an http or https URL that includes a host name.'
+        }), 400
+
+    if not base_url:
+        return jsonify({'success': False, 'error': 'A RocksDB service base URL is required.'}), 400
+    if auth_scheme not in SUPPORTED_AUTH_SCHEMES:
+        return jsonify({'success': False, 'error': "Auth scheme must be one of 'none', 'bearer', or 'api_key'."}), 400
+
+    try:
+        existing_plugin = _load_existing_plugin_for_test(data.get('existing_plugin'), user_id)
+    except PermissionError:
+        return jsonify({'success': False, 'error': 'You do not have access to the selected action.'}), 403
+    except LookupError:
+        return jsonify({'success': False, 'error': 'The selected action could not be found.'}), 404
+    except ValueError:
+        return jsonify({'success': False, 'error': 'The selected action reference is invalid.'}), 400
+
+    if auth_scheme != AUTH_SCHEME_NONE:
+        existing_auth = {}
+        if isinstance(existing_plugin, dict) and isinstance(existing_plugin.get('auth'), dict):
+            existing_auth = existing_plugin['auth']
+
+        if auth_key == ui_trigger_word:
+            auth_key = existing_auth.get('key', '')
+        if auth_key == ui_trigger_word:
+            return jsonify({
+                'success': False,
+                'error': 'The stored RocksDB service token could not be resolved for testing. Re-enter the token.'
+            }), 400
+
+        try:
+            auth_key = _resolve_secret_value_for_plugin_test(auth_key, 'auth.key', plugin_label='RocksDB')
+        except ValueError:
+            return jsonify({
+                'success': False,
+                'error': 'The stored RocksDB service token could not be resolved. Re-enter the token.'
+            }), 400
+
+        if not auth_key:
+            return jsonify({
+                'success': False,
+                'error': 'A service token is required when the auth scheme is bearer or api_key.'
+            }), 400
+
+    headers = {'Accept': 'application/json'}
+    if auth_scheme == AUTH_SCHEME_BEARER:
+        headers['Authorization'] = f'Bearer {auth_key}'
+    elif auth_scheme == AUTH_SCHEME_API_KEY:
+        headers[api_key_header] = auth_key
+
+    try:
+        response = requests.get(
+            f'{base_url}/health',
+            headers=headers,
+            timeout=timeout,
+        )
+
+        if response.status_code == 404:
+            # Minimal services may not implement /health, so fall back to a single-item scan.
+            response = requests.post(
+                f'{base_url}/scan',
+                json={'limit': 1},
+                headers=headers,
+                timeout=timeout,
+            )
+
+        if response.status_code in (401, 403):
+            return jsonify({
+                'success': False,
+                'error': 'The RocksDB service rejected the supplied credentials. Verify the auth scheme and token.'
+            }), 403
+
+        if response.status_code >= 400:
+            return jsonify({
+                'success': False,
+                'error': f'The RocksDB service returned HTTP {response.status_code}.'
+            }), 400
+
+        try:
+            response.json()
+        except ValueError:
+            return jsonify({
+                'success': False,
+                'error': 'The RocksDB service returned a non-JSON response. Confirm the base URL points at the service API root.'
+            }), 400
+
+        log_event(
+            '[PLUGINS] RocksDB connection test succeeded',
+            extra={'user_id': user_id, 'auth_scheme': auth_scheme, 'status_code': response.status_code},
+            level=logging.INFO,
+        )
+        return jsonify({
+            'success': True,
+            'message': f'Successfully reached the RocksDB service at {base_url}.'
+        })
+    except requests.exceptions.SSLError:
+        return jsonify({
+            'success': False,
+            'error': 'TLS verification failed for the RocksDB service. Install the issuing certificate authority in the application trust store.'
+        }), 400
+    except requests.exceptions.Timeout:
+        return jsonify({
+            'success': False,
+            'error': f'The RocksDB service did not respond within {timeout} seconds.'
+        }), 400
+    except Exception as exc:
+        log_event(
+            '[PLUGINS] RocksDB connection test failed',
+            extra={
+                'user_id': user_id,
+                'auth_scheme': auth_scheme,
+                'error_type': type(exc).__name__,
+            },
+            level=logging.WARNING,
+            exceptionTraceback=True,
+        )
+        return jsonify({
+            'success': False,
+            'error': 'The RocksDB service could not be reached. Verify the base URL and that the service is running.'
+        }), 400
