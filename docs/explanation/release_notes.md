@@ -2,6 +2,24 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.217)**
+
+#### Bug Fixes
+
+*   **Credential Field Names Logged in Clear Text**
+    *   Fixed a gap where credential values could be written to application logs and Application Insights in clear text. The log redactor matched only a fixed list of key-name substrings, so field names this codebase actually uses for secrets were missed. The most significant were `auth_key`, used by the action connection-test routes for the caller-supplied secret, and the plugin manifest's `auth.key`, which holds connection strings and service principal passwords.
+    *   Eighteen credential key names were affected in total, including `pwd`, `key_pair`, `master_key`, `primary_key`, `secondary_key`, `encryption_key`, `signing_key`, `session_key`, and `storage_key`.
+    *   Benign configuration keys that merely contain the word "key", such as `key_encoding`, `key_prefix_hints`, and `partition_key_path`, deliberately stay visible so logs keep their diagnostic value.
+    *   (Ref: `functions_appinsights.py`, `test_log_credential_key_redaction.py`, `LOG_CREDENTIAL_KEY_REDACTION_FIX.md`)
+
+*   **CosmosClient Import Bindings in Helper Scripts**
+    *   Completed the v0.250.047 import-binding cleanup by updating the two remaining scripts that bound `CosmosClient` directly, so patching `azure.cosmos.CosmosClient` is observed consistently. No direct `CosmosClient` imports remain in the repository.
+    *   (Ref: `scripts/resolve_multiendpoint_gpt.py`, `deployers/bicep/postconfig.py`)
+
+*   **Privacy Logging Audit Test Restored**
+    *   The privacy logging and telemetry audit had been failing since v0.242.072 because it asserted an exact `config.py` version and never reached its assertions. It now asserts a version floor, per the repository's version-assertion guidance, so the audit runs again.
+    *   (Ref: `test_privacy_logging_telemetry_audit.py`)
+
 ### **(v0.250.216)**
 
 #### New Features

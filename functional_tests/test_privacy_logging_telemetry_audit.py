@@ -2,8 +2,9 @@
 #!/usr/bin/env python3
 """
 Functional test for privacy logging and telemetry audit fixes.
-Version: 0.242.072
+Version: 0.250.217
 Implemented in: 0.242.058
+Credential key redaction coverage extended in: 0.250.217
 
 This test ensures logging, telemetry, and document-processing diagnostics redact
 secret-bearing fields and avoid raw agent or uploaded document content in audit
@@ -16,10 +17,13 @@ import sys
 import types
 import traceback
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from test_support.versioning import assert_app_version_at_least
+
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 APP_DIR = os.path.join(ROOT_DIR, 'application', 'single_app')
-CONFIG_FILE = os.path.join(APP_DIR, 'config.py')
 APPINSIGHTS_FILE = os.path.join(APP_DIR, 'functions_appinsights.py')
 PLUGIN_LOGGER_FILE = os.path.join(APP_DIR, 'semantic_kernel_plugins', 'plugin_invocation_logger.py')
 GROUPCHAT_ORCHESTRATOR_FILE = os.path.join(APP_DIR, 'agent_orchestrator_groupchat.py')
@@ -32,13 +36,6 @@ sys.path.insert(0, APP_DIR)
 def read_file_text(file_path):
     with open(file_path, 'r', encoding='utf-8') as file_handle:
         return file_handle.read()
-
-
-def read_config_version():
-    for line in read_file_text(CONFIG_FILE).splitlines():
-        if line.strip().startswith('VERSION = '):
-            return line.split('=', 1)[1].strip().strip('"')
-    raise AssertionError('VERSION assignment not found in config.py')
 
 
 def install_appinsights_import_stubs():
@@ -171,9 +168,9 @@ def test_document_processing_logs_avoid_raw_document_text():
 
 
 def main():
-    expected_version = '0.242.072'
-    actual_version = read_config_version()
-    assert actual_version == expected_version, f'Expected version {expected_version}, found {actual_version}'
+    # The audit must keep running as the app version advances, so assert a floor
+    # rather than an exact match. See .github/instructions version guidance.
+    assert_app_version_at_least('0.242.058')
 
     tests = [
         test_log_event_redaction_helpers_redact_secret_fields,
