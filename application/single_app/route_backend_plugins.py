@@ -52,7 +52,6 @@ from functions_keyvault import (
     resolve_secret_reference_for_context,
     SecretReturnType,
     redact_plugin_secret_values,
-    retrieve_secret_from_key_vault_by_full_name,
     ui_trigger_word,
     validate_secret_name_dynamic,
 )
@@ -66,6 +65,16 @@ from functions_activity_logging import (
     log_action_deletion,
 )
 from functions_azure_maps import AZURE_MAPS_DEFAULT_ENDPOINT, AZURE_MAPS_PLUGIN_TYPE
+from functions_action_connection_tests import (
+    test_azure_maps_connection,
+    test_blob_storage_connection,
+    test_databricks_connection,
+    test_log_analytics_connection,
+    test_mcp_connection,
+    test_openapi_connection,
+    test_snowflake_connection,
+    test_tableau_connection,
+)
 from functions_blob_storage_operations import (
     BLOB_STORAGE_PLUGIN_TYPE,
     derive_blob_endpoint_from_connection_string,
@@ -774,20 +783,45 @@ def _hydrate_sql_test_identity(data, existing_plugin, user_id):
     )
 
 
-def _resolve_secret_value_for_plugin_test(value, field_name, plugin_label='plugin'):
-    """Resolve a Key Vault reference for plugin test-connection flows."""
+ACTION_CONNECTION_TEST_AUTH_SECRET_FIELDS = ('key', 'identity', 'tenantId')
+ACTION_CONNECTION_TEST_ADDITIONAL_SECRET_FIELDS = ('private_key_passphrase',)
+# Secret reference sources must match how keyvault_plugin_get_helper stored each field.
+ACTION_AUTH_SECRET_SOURCES = {"action"}
+ACTION_ADDITIONAL_SECRET_SOURCES = {"action-addset"}
+
+
+def _resolve_secret_value_for_action_test(value, field_name, plugin_label, scope_value, scope, allowed_sources):
+    """Resolve a Key Vault reference for an action test, bound to the action's own scope.
+
+    Callers must pass an explicit scope and the allowed reference sources for the field being
+    resolved. A caller-supplied reference name is untrusted input, so resolving it without a
+    scope check would let an authenticated user read another user's, group's, or global
+    action's secret and forward it to a caller-controlled endpoint.
+
+    Sources mirror how the action was stored by ``keyvault_plugin_get_helper``: ``auth.*``
+    fields use ``action`` while ``additionalFields.*`` values and MCP custom headers use
+    ``action-addset``.
+    """
     if not isinstance(value, str) or not value:
         return value
     if not validate_secret_name_dynamic(value):
         return value
 
-    resolved_value = retrieve_secret_from_key_vault_by_full_name(value)
-    if validate_secret_name_dynamic(resolved_value):
-        raise ValueError(f"Unable to resolve stored Key Vault secret for {plugin_label} field '{field_name}'.")
-    return resolved_value
+    if not scope_value or not scope:
+        raise ValueError(
+            f"Unable to determine the Key Vault scope for {plugin_label} field '{field_name}'."
+        )
+
+    return resolve_secret_reference_for_context(
+        value,
+        scope_value=scope_value,
+        scope=scope,
+        allowed_sources=allowed_sources,
+        context_label=f"{plugin_label} field '{field_name}'",
+    )
 
 
-def _hydrate_mcp_custom_headers_for_test(discovery_manifest, existing_plugin):
+def _hydrate_mcp_custom_headers_for_test(discovery_manifest, existing_plugin, scope_value, scope):
     """Resolve or preserve MCP custom header values for transient discovery calls."""
     additional_fields = discovery_manifest.get('additionalFields') if isinstance(discovery_manifest.get('additionalFields'), dict) else {}
     custom_headers = additional_fields.get(MCP_CUSTOM_HEADERS_FIELD, {})
@@ -808,10 +842,13 @@ def _hydrate_mcp_custom_headers_for_test(discovery_manifest, existing_plugin):
             raise ValueError(f"Stored MCP custom header '{header_name}' could not be resolved. Re-enter the header value.")
         if not resolved_header_value:
             continue
-        hydrated_headers[header_name] = _resolve_secret_value_for_plugin_test(
+        hydrated_headers[header_name] = _resolve_secret_value_for_action_test(
             resolved_header_value,
             f"custom_headers.{header_name}",
-            plugin_label='MCP',
+            'MCP',
+            scope_value,
+            scope,
+            ACTION_ADDITIONAL_SECRET_SOURCES,
         )
 
     additional_fields[MCP_CUSTOM_HEADERS_FIELD] = hydrated_headers
@@ -819,21 +856,19 @@ def _hydrate_mcp_custom_headers_for_test(discovery_manifest, existing_plugin):
 
 
 def _resolve_secret_value_for_sql_test(value, field_name, scope_value=None, scope="user"):
-    """Resolve a Key Vault reference for SQL test-connection flows."""
-    if not isinstance(value, str) or not value:
-        return value
-    if not validate_secret_name_dynamic(value):
-        return value
+    """Resolve a Key Vault reference for SQL test-connection flows.
 
-    if scope_value is None:
-        return _resolve_secret_value_for_plugin_test(value, field_name, plugin_label='SQL')
-
-    return resolve_secret_reference_for_context(
+    SQL secrets live in additionalFields (connection_string, password), so they carry the
+    action-addset source. Routing through the shared action-test resolver keeps the
+    fail-closed behavior when a scope cannot be determined.
+    """
+    return _resolve_secret_value_for_action_test(
         value,
-        scope_value=scope_value,
-        scope=scope,
-        allowed_sources={"action-addset"},
-        context_label=f"SQL field '{field_name}'",
+        field_name,
+        'SQL',
+        scope_value,
+        scope,
+        ACTION_ADDITIONAL_SECRET_SOURCES,
     )
 
 
@@ -857,6 +892,10 @@ def _load_existing_plugin_for_test(plugin_context, user_id):
         return get_group_action(active_group, plugin_identifier, return_type=SecretReturnType.NAME)
 
     if plugin_scope == 'global':
+        # Global actions are admin-managed. Gate here so every test route inherits the check,
+        # including routes that do not otherwise resolve an action identity scope.
+        if "Admin" not in session.get("user", {}).get("roles", []):
+            raise PermissionError("Admin role required to load a global action for testing.")
         return get_global_action(plugin_identifier, return_type=SecretReturnType.NAME)
 
     return get_personal_action(user_id, plugin_identifier, return_type=SecretReturnType.NAME)
@@ -1936,6 +1975,7 @@ def discover_mcp_tools():
     try:
         existing_plugin = _load_existing_plugin_for_test(payload.get('plugin_context'), user_id)
         scope_type, scope_id = _resolve_action_identity_context(payload, existing_plugin, user_id)
+        plugin_scope_value, plugin_scope = _resolve_plugin_secret_context(existing_plugin, user_id)
 
         discovery_manifest = dict(payload)
         discovery_manifest['mcp_operation_id'] = mcp_operation_id
@@ -1988,10 +2028,17 @@ def discover_mcp_tools():
         else:
             auth = discovery_manifest.get('auth') if isinstance(discovery_manifest.get('auth'), dict) else {}
             if auth.get('key'):
-                auth['key'] = _resolve_secret_value_for_plugin_test(auth.get('key'), 'auth.key', plugin_label='MCP')
+                auth['key'] = _resolve_secret_value_for_action_test(
+                    auth.get('key'),
+                    'auth.key',
+                    'MCP',
+                    plugin_scope_value,
+                    plugin_scope,
+                    ACTION_AUTH_SECRET_SOURCES,
+                )
             discovery_manifest['auth'] = auth
 
-        _hydrate_mcp_custom_headers_for_test(discovery_manifest, existing_plugin)
+        _hydrate_mcp_custom_headers_for_test(discovery_manifest, existing_plugin, plugin_scope_value, plugin_scope)
 
         is_valid, validation_errors = PluginHealthChecker.validate_plugin_manifest(discovery_manifest, MCP_PLUGIN_TYPE)
         if not is_valid:
@@ -2456,7 +2503,15 @@ def test_cosmos_connection():
             return jsonify({'success': False, 'error': 'Stored Cosmos DB account key could not be resolved for testing. Re-enter the account key.'}), 400
 
         try:
-            auth_key = _resolve_secret_value_for_plugin_test(auth_key, 'auth.key', plugin_label='Cosmos DB')
+            plugin_scope_value, plugin_scope = _resolve_plugin_secret_context(existing_plugin, user_id)
+            auth_key = _resolve_secret_value_for_action_test(
+                auth_key,
+                'auth.key',
+                'Cosmos DB',
+                plugin_scope_value,
+                plugin_scope,
+                ACTION_AUTH_SECRET_SOURCES,
+            )
         except ValueError as exc:
             return jsonify({'success': False, 'error': str(exc)}), 400
 
@@ -2611,7 +2666,15 @@ def test_yamcs_connection():
             }), 400
 
         try:
-            auth_key = _resolve_secret_value_for_plugin_test(auth_key, 'auth.key', plugin_label='Yamcs')
+            plugin_scope_value, plugin_scope = _resolve_plugin_secret_context(existing_plugin, user_id)
+            auth_key = _resolve_secret_value_for_action_test(
+                auth_key,
+                'auth.key',
+                'Yamcs',
+                plugin_scope_value,
+                plugin_scope,
+                ACTION_AUTH_SECRET_SOURCES,
+            )
         except ValueError as exc:
             return jsonify({'success': False, 'error': str(exc)}), 400
 
@@ -2779,7 +2842,15 @@ def test_rocksdb_connection():
             }), 400
 
         try:
-            auth_key = _resolve_secret_value_for_plugin_test(auth_key, 'auth.key', plugin_label='RocksDB')
+            plugin_scope_value, plugin_scope = _resolve_plugin_secret_context(existing_plugin, user_id)
+            auth_key = _resolve_secret_value_for_action_test(
+                auth_key,
+                'auth.key',
+                'RocksDB',
+                plugin_scope_value,
+                plugin_scope,
+                ACTION_AUTH_SECRET_SOURCES,
+            )
         except ValueError:
             return jsonify({
                 'success': False,
@@ -2868,3 +2939,269 @@ def test_rocksdb_connection():
             'success': False,
             'error': 'The RocksDB service could not be reached. Verify the base URL and that the service is running.'
         }), 400
+
+
+def _rehydrate_action_test_secret(current_value, stored_value, plugin_label, field_label):
+    """Restore a masked action secret from the stored manifest for a transient test."""
+    resolved_value = current_value
+    if resolved_value in ('', None, ui_trigger_word) and stored_value:
+        resolved_value = stored_value
+    if resolved_value == ui_trigger_word:
+        raise ValueError(
+            f"The stored {plugin_label} value for '{field_label}' could not be resolved for testing. Re-enter the credential."
+        )
+    return resolved_value
+
+
+def _prepare_action_test_manifest(data, plugin_type, plugin_label):
+    """Build a hydrated, validated transient manifest for an action test-connection route."""
+    if not isinstance(data, dict):
+        raise ValueError('Invalid action connection test payload.')
+
+    user_id = get_current_user_id()
+    existing_plugin = _load_existing_plugin_for_test(data.get('plugin_context'), user_id)
+    scope_type, scope_id = _resolve_action_identity_context(data, existing_plugin, user_id)
+    # Secret references are resolved against the loaded action's own Key Vault scope, never
+    # against a scope derived from the request body.
+    plugin_scope_value, plugin_scope = _resolve_plugin_secret_context(existing_plugin, user_id)
+
+    default_name = f'{plugin_type}_connection_test'
+    manifest = {
+        'name': str(data.get('name') or '').strip() or default_name,
+        'displayName': str(data.get('displayName') or '').strip() or f'{plugin_label} connection test',
+        'description': str(data.get('description') or '').strip() or f'Transient {plugin_label} connection test manifest',
+        'type': plugin_type,
+        'endpoint': str(data.get('endpoint') or '').strip(),
+        'auth': dict(data.get('auth')) if isinstance(data.get('auth'), dict) else {},
+        'metadata': dict(data.get('metadata')) if isinstance(data.get('metadata'), dict) else {},
+        'additionalFields': dict(data.get('additionalFields')) if isinstance(data.get('additionalFields'), dict) else {},
+    }
+
+    identity_id = str(data.get('identity_id') or '').strip()
+    if identity_id:
+        manifest['identity_id'] = identity_id
+
+    _apply_plugin_runtime_defaults(manifest)
+
+    existing_auth = {}
+    existing_additional_fields = {}
+    if isinstance(existing_plugin, dict):
+        if isinstance(existing_plugin.get('auth'), dict):
+            existing_auth = existing_plugin['auth']
+        if isinstance(existing_plugin.get('additionalFields'), dict):
+            existing_additional_fields = existing_plugin['additionalFields']
+
+    auth = manifest.get('auth') if isinstance(manifest.get('auth'), dict) else {}
+    for auth_field in ACTION_CONNECTION_TEST_AUTH_SECRET_FIELDS:
+        # Only rehydrate fields the modal actually collected, so switching an action to a
+        # different authentication method never resurrects a credential the user removed.
+        if auth_field not in auth:
+            continue
+        resolved_value = _rehydrate_action_test_secret(
+            auth.get(auth_field),
+            existing_auth.get(auth_field),
+            plugin_label,
+            f'auth.{auth_field}',
+        )
+        if resolved_value not in ('', None):
+            auth[auth_field] = resolved_value
+    manifest['auth'] = auth
+
+    additional_fields = manifest.get('additionalFields') if isinstance(manifest.get('additionalFields'), dict) else {}
+    for additional_field in ACTION_CONNECTION_TEST_ADDITIONAL_SECRET_FIELDS:
+        if additional_field not in additional_fields:
+            continue
+        resolved_value = _rehydrate_action_test_secret(
+            additional_fields.get(additional_field),
+            existing_additional_fields.get(additional_field),
+            plugin_label,
+            f'additionalFields.{additional_field}',
+        )
+        if resolved_value not in ('', None):
+            additional_fields[additional_field] = resolved_value
+
+    if plugin_type == 'openapi' and not additional_fields.get('openapi_spec_content'):
+        stored_spec_content = existing_additional_fields.get('openapi_spec_content')
+        if stored_spec_content:
+            additional_fields['openapi_spec_content'] = stored_spec_content
+            additional_fields.setdefault(
+                'openapi_source_type',
+                existing_additional_fields.get('openapi_source_type') or 'content',
+            )
+    manifest['additionalFields'] = additional_fields
+
+    if plugin_type == MCP_PLUGIN_TYPE:
+        _hydrate_mcp_custom_headers_for_test(manifest, existing_plugin, plugin_scope_value, plugin_scope)
+
+    if manifest.get('identity_id'):
+        manifest = hydrate_action_identity_reference(
+            manifest,
+            scope_type,
+            scope_id,
+            return_type=SecretReturnType.VALUE,
+        )
+    else:
+        auth = manifest.get('auth') if isinstance(manifest.get('auth'), dict) else {}
+        if auth.get('key'):
+            auth['key'] = _resolve_secret_value_for_action_test(
+                auth.get('key'),
+                'auth.key',
+                plugin_label,
+                plugin_scope_value,
+                plugin_scope,
+                ACTION_AUTH_SECRET_SOURCES,
+            )
+        manifest['auth'] = auth
+        additional_fields = manifest.get('additionalFields') if isinstance(manifest.get('additionalFields'), dict) else {}
+        if additional_fields.get('private_key_passphrase'):
+            additional_fields['private_key_passphrase'] = _resolve_secret_value_for_action_test(
+                additional_fields.get('private_key_passphrase'),
+                'additionalFields.private_key_passphrase',
+                plugin_label,
+                plugin_scope_value,
+                plugin_scope,
+                ACTION_ADDITIONAL_SECRET_SOURCES,
+            )
+            manifest['additionalFields'] = additional_fields
+
+    is_valid, validation_errors = PluginHealthChecker.validate_plugin_manifest(manifest, plugin_type)
+    if not is_valid:
+        raise ValueError('; '.join(validation_errors) or f'The {plugin_label} action configuration is invalid.')
+
+    return manifest, scope_type, scope_id
+
+
+def _run_action_connection_test(plugin_type, plugin_label, tester, before_test=None):
+    """Prepare a transient manifest, run one action connection test, and jsonify the result."""
+    data = request.get_json(silent=True) or {}
+
+    try:
+        manifest, scope_type, scope_id = _prepare_action_test_manifest(data, plugin_type, plugin_label)
+        if callable(before_test):
+            before_test(manifest, scope_type, scope_id)
+    except PermissionError as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 403
+    except LookupError as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 404
+    except ValueError as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 400
+    except McpRuntimeError as exc:
+        return jsonify({'success': False, 'error': str(exc)}), get_mcp_error_http_status(exc)
+
+    try:
+        result = tester(manifest)
+    except Exception as exc:
+        log_event(
+            f'[ACTION_TEST] {plugin_label} connection test raised an unexpected error: {exc}',
+            extra={'plugin_type': plugin_type},
+            level=logging.ERROR,
+            exceptionTraceback=True,
+        )
+        return jsonify({
+            'success': False,
+            'error': f'The {plugin_label} connection test failed unexpectedly. Check the action configuration and try again.',
+        }), 500
+
+    status_code = int(result.get('status') or (200 if result.get('success') else 400))
+    response_payload = {'success': bool(result.get('success'))}
+    if result.get('success'):
+        response_payload['message'] = result.get('message') or 'Connection successful.'
+    else:
+        response_payload['error'] = result.get('error') or 'Connection failed.'
+    if result.get('details'):
+        response_payload['details'] = result['details']
+    if result.get('warnings'):
+        response_payload['warnings'] = result['warnings']
+
+    return jsonify(response_payload), status_code
+
+
+@bpap.route('/api/plugins/test-openapi-connection', methods=['POST'])
+@swagger_route(security=get_auth_security())
+@login_required
+@user_required
+def test_openapi_action_connection():
+    """Test an OpenAPI action by parsing its specification and probing the authenticated base URL."""
+    return _run_action_connection_test('openapi', 'OpenAPI', test_openapi_connection)
+
+
+@bpap.route('/api/plugins/test-azure-maps-connection', methods=['POST'])
+@swagger_route(security=get_auth_security())
+@login_required
+@user_required
+def test_azure_maps_action_connection():
+    """Test an Azure Maps action by retrieving a single base road tile."""
+    return _run_action_connection_test(AZURE_MAPS_PLUGIN_TYPE, 'Azure Maps', test_azure_maps_connection)
+
+
+@bpap.route('/api/plugins/test-blob-storage-connection', methods=['POST'])
+@swagger_route(security=get_auth_security())
+@login_required
+@user_required
+def test_blob_storage_action_connection():
+    """Test a Blob Storage action by reading container properties and listing one blob."""
+    return _run_action_connection_test(BLOB_STORAGE_PLUGIN_TYPE, 'Blob Storage', test_blob_storage_connection)
+
+
+@bpap.route('/api/plugins/test-databricks-connection', methods=['POST'])
+@swagger_route(security=get_auth_security())
+@login_required
+@user_required
+def test_databricks_action_connection():
+    """Test a Databricks action by reading the configured SQL warehouse."""
+    return _run_action_connection_test(DATABRICKS_PLUGIN_TYPE, 'Databricks', test_databricks_connection)
+
+
+@bpap.route('/api/plugins/test-log-analytics-connection', methods=['POST'])
+@swagger_route(security=get_auth_security())
+@login_required
+@user_required
+def test_log_analytics_action_connection():
+    """Test a Log Analytics action by running a trivial KQL query against the workspace."""
+    return _run_action_connection_test('log_analytics', 'Log Analytics', test_log_analytics_connection)
+
+
+@bpap.route('/api/plugins/test-mcp-connection', methods=['POST'])
+@swagger_route(security=get_auth_security())
+@login_required
+@user_required
+def test_mcp_action_connection():
+    """Test an MCP action by initializing a session and listing the server's tools."""
+
+    def enforce_mcp_test_policy(manifest, scope_type, scope_id):
+        if scope_type != WORKSPACE_IDENTITY_SCOPE_GLOBAL:
+            stdio_error = _reject_non_admin_mcp_stdio(manifest, scope_label='non-global')
+            if stdio_error:
+                raise PermissionError(stdio_error)
+        _enforce_mcp_destination_policy(
+            manifest,
+            scope_type,
+            scope_id,
+            operation='mcp_connection_test',
+            user_id=get_current_user_id(),
+        )
+
+    return _run_action_connection_test(
+        MCP_PLUGIN_TYPE,
+        'MCP',
+        test_mcp_connection,
+        before_test=enforce_mcp_test_policy,
+    )
+
+
+@bpap.route('/api/plugins/test-snowflake-connection', methods=['POST'])
+@swagger_route(security=get_auth_security())
+@login_required
+@user_required
+def test_snowflake_action_connection():
+    """Test a Snowflake action by opening a session and reading the account version."""
+    return _run_action_connection_test(SNOWFLAKE_PLUGIN_TYPE, 'Snowflake', test_snowflake_connection)
+
+
+@bpap.route('/api/plugins/test-tableau-connection', methods=['POST'])
+@swagger_route(security=get_auth_security())
+@login_required
+@user_required
+def test_tableau_action_connection():
+    """Test a Tableau action by signing in to the configured server and site."""
+    return _run_action_connection_test(TABLEAU_PLUGIN_TYPE, 'Tableau', test_tableau_connection)
