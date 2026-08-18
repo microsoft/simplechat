@@ -885,8 +885,9 @@ class WmfRenderer(EmfRenderer):
         try:
             self.draw.text((pixel_x, pixel_y), text, fill=self.state.text_color, font=font)
             self.records_drawn += 1
-        except (ValueError, OSError):
-            pass
+        except (ValueError, OSError) as draw_error:
+            # Best-effort renderer: keep going if a single WMF text run cannot be drawn.
+            self.skip_reasons.append(f'wmf_text_draw_failed:{type(draw_error).__name__}')
 
 
 def render_metafile_to_png(data, max_pixels=1600):
