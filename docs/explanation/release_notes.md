@@ -2,7 +2,7 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
-### **(v0.250.218)**
+### **(v0.250.221)**
 
 #### New Features
 
@@ -39,6 +39,79 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 *   **Auto Mode Also Upgrades for Figures**
     *   Auto mode still samples the first pages with Document Intelligence Layout as the cheaper detector, but now upgrades to Enhanced when it finds figures or images, not just tables and selection marks. This matters because figure description is the main reason to use Enhanced.
     *   (Ref: #1277, `functions_documents.py`, Auto mode detection)
+### **(v0.250.220)**
+
+#### Bug Fixes
+
+*   **Data Management History Failure Diagnostics**
+    *   Backup Inventory and Job History failures returned a generic 503 telling admins to review application logs, while the logs recorded only the exception class name. The provider status code and message were discarded, making the failure impossible to diagnose.
+    *   Failures now log the Cosmos status code and sanitized provider message. Provider text stays in operator logs and is never returned to the browser.
+    *   (Ref: #1275, `functions_data_management.py`, `route_backend_data_management.py`, Data Management history)
+
+*   **Data Management History Throttle Handling**
+    *   Throttled history reads previously produced the same opaque error as a permanent failure.
+    *   Cosmos throttling is now detected, retried up to three times with jittered backoff, and reported as temporary busy guidance with a retryable flag instead of a generic error.
+    *   (Ref: #1275, `functions_data_management.py`, Cosmos history query retry)
+
+*   **Data Management History Index Guidance**
+    *   Missing-index detection required the exact phrase "composite index", so equivalent provider wording fell through to the generic error.
+    *   Detection now also matches `ORDER BY` failures reported as having no corresponding index, keeping the Cosmos indexing maintenance guidance actionable.
+    *   (Ref: #1275, `functions_data_management.py`, Cosmos indexing maintenance)
+
+*   **Source Blob Backup ETag Failure**
+    *   Fixed every source blob failing backup with "Source blob changed while it was being backed up", which meant user documents, group documents, public documents, and chat attachments were never actually backed up.
+    *   Root cause was comparing an ETag from `list_blobs()` (unquoted XML element) against one from `get_blob_properties()` (RFC-quoted HTTP header); the two never matched, so the post-transfer consistency check always failed after the blob had already been downloaded and uploaded.
+    *   Both values are now normalized before comparison. The precondition sent to Azure is unchanged, and a genuine mid-transfer source change is still rejected.
+    *   (Ref: #1271, `functions_data_management.py`, source blob transfer verification)
+
+*   **Source Blob Backup Checkpoint Throughput**
+    *   Source blob backups previously wrote one Cosmos checkpoint per blob, capping throughput at roughly six items per second and stretching a single container to over an hour.
+    *   Checkpoints are now batched per 100 items or 15 seconds, whichever comes first, while still asserting the job lease on every item.
+    *   (Ref: #1271, `functions_data_management.py`, source blob checkpointing)
+
+*   **Functional Tests Silently Passing Under pytest**
+    *   Backup functional tests written with the try/except and `return False` template were reported as passed by pytest because they returned a value instead of raising.
+    *   The backup ETag and Cosmos pagination test files now assert directly, so real failures are reported by both pytest and standalone execution.
+    *   (Ref: #1271, `test_data_management_backup_source_blob_etag.py`, `test_data_management_backup_cosmos_pagination.py`)
+
+### **(v0.250.219)**
+
+#### Bug Fixes
+
+*   **Agent Document Search Now Produces Real Document Citations**
+    *   Documents an agent retrieved through the document search action are now recorded as document sources instead of only as an agent tool call. Previously they appeared solely as a raw JSON tool modal, so the documents were missing from the message Sources disclosure, were not clickable, never opened in the enhanced citation viewer, and could never reach the Used documents drawer.
+    *   Covers all three document search functions — relevance-ranked search, ordered chunk retrieval, and document summarization — across personal, group, and public workspaces.
+    *   Document search results now carry a ready-to-copy citation value, and the action instructs the model to reuse it verbatim. When the answer cites a document, it is correctly separated from the retrieved sources and recorded in the conversation's used documents.
+    *   Applies to streaming and non-streaming chat, document actions, cancelled and interrupted streams, and scheduled workflow runs.
+    *   Retrieved sources are deliberately not capped, so a search that sources hundreds of chunks records all of them. Chunks retrieved by both the document search toggle and an agent are listed once.
+    *   Cancelled and interrupted streams keep the documents the agent had already retrieved, and citation locations no longer relabel a valid page or sequence of `0` as page 1, which affected video chunks keyed by second.
+    *   Workspace capability metadata now reports document usage for agent-only document turns, which previously under-reported as unused.
+    *   (Ref: #1239, `functions_agent_document_citations.py`, `route_backend_chats.py`, `functions_workflow_runner.py`, `document_search_plugin.py`, `AGENT_DOCUMENT_SEARCH_CITATION_FIX.md`)
+
+#### User Interface Enhancements
+
+*   **Collapsed Long Source Lists**
+    *   The per-message Sources disclosure now shows the first 25 document sources and collapses the rest behind a **Show N more sources** control, so an agent that retrieves hundreds of chunks no longer floods the panel.
+    *   No source data is discarded — the full set is still stored, exported, and available for citation matching.
+    *   (Ref: #1239, `chat-messages.js`, `chat-citations.js`)
+
+### **(v0.250.218)**
+
+#### Bug Fixes
+
+*   **Credential Field Names Logged in Clear Text**
+    *   Fixed a gap where credential values could be written to application logs and Application Insights in clear text. The log redactor matched only a fixed list of key-name substrings, so field names this codebase actually uses for secrets were missed. The most significant were `auth_key`, used by the action connection-test routes for the caller-supplied secret, and the plugin manifest's `auth.key`, which holds connection strings and service principal passwords.
+    *   Eighteen credential key names were affected in total, including `pwd`, `key_pair`, `master_key`, `primary_key`, `secondary_key`, `encryption_key`, `signing_key`, `session_key`, and `storage_key`.
+    *   Benign configuration keys that merely contain the word "key", such as `key_encoding`, `key_prefix_hints`, and `partition_key_path`, deliberately stay visible so logs keep their diagnostic value.
+    *   (Ref: `functions_appinsights.py`, `test_log_credential_key_redaction.py`, `LOG_CREDENTIAL_KEY_REDACTION_FIX.md`)
+
+*   **CosmosClient Import Bindings in Helper Scripts**
+    *   Completed the v0.250.047 import-binding cleanup by updating the two remaining scripts that bound `CosmosClient` directly, so patching `azure.cosmos.CosmosClient` is observed consistently. No direct `CosmosClient` imports remain in the repository.
+    *   (Ref: `scripts/resolve_multiendpoint_gpt.py`, `deployers/bicep/postconfig.py`)
+
+*   **Privacy Logging Audit Test Restored**
+    *   The privacy logging and telemetry audit had been failing since v0.242.072 because it asserted an exact `config.py` version and never reached its assertions. It now asserts a version floor, per the repository's version-assertion guidance, so the audit runs again.
+    *   (Ref: `test_privacy_logging_telemetry_audit.py`)
 
 ### **(v0.250.217)**
 

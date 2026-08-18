@@ -2,8 +2,8 @@
 # test_content_understanding_extraction_engine.py
 """
 Functional test for Enhanced extraction backed by Azure AI Content Understanding.
-Version: 0.250.218
-Implemented in: 0.250.218
+Version: 0.250.221
+Implemented in: 0.250.221
 
 This test ensures that the Content Understanding client parses analyzer results into the same
 page shape Document Intelligence returns, that Enhanced extraction resolves to the right engine
@@ -762,7 +762,7 @@ def test_figures_survive_when_the_result_has_no_pages():
 def test_version_is_at_least_implementation_version():
     """The app version must be at or beyond the version this feature shipped in."""
     print("Testing application version...")
-    assert_app_version_at_least("0.250.218")
+    assert_app_version_at_least("0.250.221")
     print("Version test passed!")
     return True
 

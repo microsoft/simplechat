@@ -873,6 +873,38 @@ export function showPdfModal(docId, pageNumber, citationId) {
 }
 // --------------------------------------------------------------------
 
+function toggleCitationOverflowGroup(toggleButton) {
+  const citationsContainer = toggleButton.closest(".citations-container");
+  const overflowGroup = citationsContainer?.querySelector(".citation-overflow-group");
+  if (!overflowGroup) {
+    return;
+  }
+
+  const isCollapsed = overflowGroup.classList.contains("d-none");
+  overflowGroup.classList.toggle("d-none", !isCollapsed);
+  toggleButton.setAttribute("aria-expanded", String(isCollapsed));
+
+  const label = isCollapsed
+    ? toggleButton.dataset.expandedLabel || "Show fewer sources"
+    : toggleButton.dataset.collapsedLabel || "Show more sources";
+  const icon = document.createElement("i");
+  icon.className = `bi ${isCollapsed ? "bi-dash-circle" : "bi-plus-circle"} me-1`;
+
+  toggleButton.replaceChildren(icon, document.createTextNode(label));
+  toggleButton.title = label;
+}
+
+document.addEventListener("click", (event) => {
+  const eventTarget = event.target instanceof Element ? event.target : null;
+  const toggleButton = eventTarget?.closest("button.citation-overflow-toggle");
+  if (!toggleButton) {
+    return;
+  }
+
+  event.preventDefault();
+  toggleCitationOverflowGroup(toggleButton);
+});
+
 // --- MODIFIED: Event Listener Logic ---
 if (chatboxEl) {
   chatboxEl.addEventListener("click", (event) => {

@@ -11,7 +11,7 @@ does not produce.
 Enhanced extraction always degrades gracefully: when Content Understanding is unavailable or
 unconfigured, Enhanced automatically uses Document Intelligence `prebuilt-layout` instead.
 
-**Implemented in version: 0.250.218**
+**Implemented in version: 0.250.221**
 
 **Tracking issue:** [#1277](https://github.com/microsoft/simplechat/issues/1277)
 

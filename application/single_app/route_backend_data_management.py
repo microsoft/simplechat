@@ -77,7 +77,10 @@ def _data_management_history_unavailable_response(list_kind, exc):
             "history_list": list_kind,
             "reason": getattr(exc, "reason", "history_provider_unavailable"),
             "maintenance_required": bool(getattr(exc, "maintenance_required", False)),
+            "retryable": bool(getattr(exc, "retryable", False)),
             "error_type": type(original_error).__name__ if original_error else "",
+            "status_code": getattr(exc, "provider_status_code", None),
+            "error": getattr(exc, "provider_message", ""),
         },
         level=logging.WARNING if getattr(exc, "maintenance_required", False) else logging.ERROR,
         exceptionTraceback=True,
@@ -91,6 +94,8 @@ def _data_management_history_unavailable_response(list_kind, exc):
             "maintenance_required": True,
             "maintenance_action": "cosmos_indexing_policy_maintenance",
         })
+    if getattr(exc, "retryable", False):
+        payload["retryable"] = True
     return jsonify(payload), getattr(exc, "status_code", 503)
 
 

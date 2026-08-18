@@ -55,6 +55,7 @@ from functions_conversation_context import (
     build_conversation_context_system_message,
     serialize_conversation_context_snapshot,
 )
+from functions_agent_document_citations import apply_agent_document_citations
 from functions_citation_tracking import (
     build_cited_source_subsets,
     initialize_conversation_used_document_tracking,
@@ -5859,6 +5860,11 @@ def _create_assistant_message(conversation, workflow, result, trigger_source, ru
             generated_tabular_outputs.append(generated_file_output)
     web_search_citations = list(result.get('web_search_citations') or [])
     hybrid_citations = list(result.get('hybrid_citations') or [])
+    apply_agent_document_citations(
+        hybrid_citations,
+        raw_agent_citations,
+        conversation_id=conversation.get('id'),
+    )
     citation_tracking = build_cited_source_subsets(
         result.get('reply', ''),
         hybrid_citations=hybrid_citations,
