@@ -2,6 +2,22 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.226)**
+
+#### Bug Fixes
+
+*   **File Sync Now Tells the Workflow What Changed**
+    *   File Sync builds a summary of each run — the scan counts plus every new or changed document — but that summary never reached the model in any workflow that uses tasks, which is every workflow the builder creates.
+    *   The failure was silent and misleading: the summary *was* written into the conversation, so the transcript showed the changed-document list as though the model had received it. In practice the model saw only the raw task instructions and usually replied that it knew nothing about any documents.
+    *   This hit **Monitor File Sync Changes** workflows hardest, along with any workflow using Search or no document action, or with **Use changed documents** turned off. The first task in the sequence now receives the summary, and later tasks get it through the first task's response.
+    *   The summary is also bounded now, with a clear truncation notice, so a very large sync cannot crowd out the actual instructions.
+    *   (Ref: #1285, `functions_workflow_runner.py`, File Sync prompt context)
+
+*   **Document Search Queries Are No Longer Diluted by Injected Context**
+    *   A workflow's document search used the entire task prompt as its search query, including the File Sync summary and the previous task's full response. A search for "find the renewal clause" could end up querying 50 lines of file paths.
+    *   Search queries now use the task's own instructions. Retrieved content and context still reach the model exactly as before — only the query is scoped.
+    *   (Ref: #1285, `functions_workflow_runner.py`, workflow document search)
+
 ### **(v0.250.225)**
 
 #### New Features
