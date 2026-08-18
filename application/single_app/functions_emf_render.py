@@ -233,7 +233,9 @@ class EmfRenderer:
             self.draw.polygon(pixels, fill=self.state.brush_color)
             self.records_drawn += 1
         except (ValueError, TypeError):
-            pass
+            # Best-effort renderer: malformed/self-intersecting geometry can fail in Pillow.
+            # Skip this fill and continue processing remaining records.
+            self.fill_errors = getattr(self, 'fill_errors', 0) + 1
 
     def _flush_current_subpath(self):
         if len(self.current_subpath) >= 2:
