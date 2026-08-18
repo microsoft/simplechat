@@ -639,6 +639,126 @@ def test_enhanced_extraction_upgrade_migration_contract():
     return True
 
 
+def test_diagram_only_figure_renders_a_valid_fence():
+    """A diagram kept after its description is de-duplicated must still be valid markdown.
+
+    The opening code fence has to start at column zero, otherwise markdown renderers treat it as
+    ordinary paragraph text.
+    """
+    print("Testing diagram-only figure fence placement...")
+
+    content_understanding, _ = load_content_understanding_module()
+    description = "A flowchart showing the approval process."
+    markdown = f"# Process\n\n{description}\n"
+
+    result = {
+        "contents": [
+            {
+                "kind": "document",
+                "markdown": markdown,
+                "startPageNumber": 1,
+                "pages": [{"pageNumber": 1, "spans": [{"offset": 0, "length": len(markdown)}]}],
+                "figures": [
+                    {
+                        "id": "fig-1",
+                        "kind": "mermaid",
+                        "description": description,
+                        "content": "graph TD\n  A[Start] --> B{Decision}",
+                        "span": {"offset": 10, "length": 5},
+                    }
+                ],
+            }
+        ]
+    }
+
+    pages = content_understanding.build_pages_from_content_understanding_result(result)
+    page_content = pages[0]["content"]
+
+    fence_lines = [line for line in page_content.splitlines() if line.startswith("```mermaid")]
+    if not fence_lines:
+        raise AssertionError(
+            f"Opening mermaid fence must start at the beginning of a line: {page_content!r}"
+        )
+
+    # The fence must also close on its own line.
+    closing_lines = [line for line in page_content.splitlines() if line.strip() == "```"]
+    if not closing_lines:
+        raise AssertionError(f"Mermaid fence was not closed on its own line: {page_content!r}")
+
+    print("Diagram fence placement test passed!")
+    return True
+
+
+def test_caption_only_figure_is_not_dropped():
+    """Descriptions are optional in the API schema, so a captioned figure must survive."""
+    print("Testing caption-only figure retention...")
+
+    content_understanding, _ = load_content_understanding_module()
+    markdown = "# Report\n\nSome text.\n"
+
+    result = {
+        "contents": [
+            {
+                "kind": "document",
+                "markdown": markdown,
+                "startPageNumber": 1,
+                "pages": [{"pageNumber": 1, "spans": [{"offset": 0, "length": len(markdown)}]}],
+                "figures": [
+                    {
+                        "id": "fig-7",
+                        "kind": "image",
+                        "caption": {"content": "Figure 4: Site layout"},
+                        "span": {"offset": 5, "length": 3},
+                    }
+                ],
+            }
+        ]
+    }
+
+    pages = content_understanding.build_pages_from_content_understanding_result(result)
+    if "Figure 4: Site layout" not in pages[0]["content"]:
+        raise AssertionError(f"A caption-only figure was dropped: {pages[0]['content']!r}")
+
+    print("Caption-only figure test passed!")
+    return True
+
+
+def test_figures_survive_when_the_result_has_no_pages():
+    """Figure descriptions must not be lost when the response omits per-page spans."""
+    print("Testing figure retention in the no-pages fallback...")
+
+    content_understanding, _ = load_content_understanding_module()
+
+    result = {
+        "contents": [
+            {
+                "kind": "document",
+                "markdown": "Scanned page with a chart.",
+                "startPageNumber": 1,
+                "figures": [
+                    {
+                        "id": "fig-1",
+                        "kind": "chart",
+                        "description": "A pie chart of budget allocation by department.",
+                        "span": {"offset": 2, "length": 4},
+                    }
+                ],
+            }
+        ]
+    }
+
+    pages = content_understanding.build_pages_from_content_understanding_result(result)
+    if len(pages) != 1:
+        raise AssertionError(f"Expected a single fallback page, got {pages}")
+    if "pie chart of budget allocation" not in pages[0]["content"]:
+        raise AssertionError(
+            f"Figure description was lost in the no-pages fallback: {pages[0]['content']!r}"
+        )
+
+    print("No-pages figure retention test passed!")
+    return True
+
+
 def test_version_is_at_least_implementation_version():
     """The app version must be at or beyond the version this feature shipped in."""
     print("Testing application version...")
@@ -653,6 +773,9 @@ if __name__ == "__main__":
         test_figure_descriptions_attach_to_their_page,
         test_inline_figure_descriptions_are_not_duplicated,
         test_mermaid_content_survives_inlined_description,
+        test_diagram_only_figure_renders_a_valid_fence,
+        test_caption_only_figure_is_not_dropped,
+        test_figures_survive_when_the_result_has_no_pages,
         test_missing_pages_falls_back_to_whole_markdown,
         test_missing_model_deployment_error_is_explained,
         test_government_cloud_blocks_content_understanding,

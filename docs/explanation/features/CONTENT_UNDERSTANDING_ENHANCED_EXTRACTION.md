@@ -225,9 +225,12 @@ Enhanced extraction is disabled.
   everywhere it is rendered.
 - Uploaded Office files are untrusted input. `functions_office_media.py` generates its own output
   file names rather than reusing archive entry names, so a crafted entry cannot escape the
-  extraction directory; it checks each entry's declared size before decompressing to block zip
-  bombs; and it parses PowerPoint slide relationship parts with `defusedxml` so entity-expansion
-  payloads are rejected.
+  extraction directory. Entries are read by streaming in bounded chunks rather than trusting the
+  declared `ZipInfo.file_size`, which an archive can understate — CPython decompresses before
+  truncating to it, so a 64 KB entry claiming 4 KB can otherwise spike memory past 140 MB. The
+  module also whitelists the compression methods real OOXML packages use and caps how many archive
+  entries and relationship parts it will inspect. PowerPoint slide relationship parts are parsed
+  with `defusedxml` so entity-expansion payloads are rejected.
 
 ## Testing and Validation
 

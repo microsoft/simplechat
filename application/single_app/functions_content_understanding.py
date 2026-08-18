@@ -329,9 +329,11 @@ def _build_figure_summaries(content):
         diagram_block = ''
         if figure_kind == 'mermaid' and isinstance(figure_content, str) and figure_content.strip():
             diagram_block = f"```mermaid\n{figure_content.strip()}\n```"
-
-        if not description and not diagram_block:
-            continue
+        elif figure_kind == 'chart' and isinstance(figure_content, (dict, list)):
+            try:
+                diagram_block = f"```json\n{json.dumps(figure_content, ensure_ascii=False)}\n```"
+            except (TypeError, ValueError):
+                diagram_block = ''
 
         caption = figure.get('caption')
         caption_text = ''
@@ -339,6 +341,10 @@ def _build_figure_summaries(content):
             caption_text = str(caption.get('content') or '').strip()
         elif isinstance(caption, str):
             caption_text = caption.strip()
+
+        # Descriptions are optional in the API schema, so a caption alone is still worth indexing.
+        if not description and not diagram_block and not caption_text:
+            continue
 
         label = caption_text or str(figure.get('id') or '').strip() or 'Figure'
 
@@ -361,9 +367,10 @@ def _build_figure_summaries(content):
 
 
 def _render_figure_summary(summary, page_text=''):
-    """Render a figure summary block, omitting a description already present in the page markdown."""
+    """Render a figure summary block, omitting parts already present in the page markdown."""
     description = summary.get('description') or ''
     diagram_block = summary.get('diagram_block') or ''
+    label = summary.get('label') or 'Figure'
 
     lines = []
     # prebuilt-documentSearch already inlines most descriptions into the markdown.
@@ -373,9 +380,13 @@ def _render_figure_summary(summary, page_text=''):
         lines.append(diagram_block)
 
     if not lines:
+        # A caption-only figure still earns a line when nothing else survived de-duplication.
+        if label and label not in page_text:
+            return f"Figure ({label})"
         return ''
 
-    return f"Figure ({summary.get('label') or 'Figure'}): " + "\n".join(lines)
+    # The label goes on its own line so a leading code fence still starts at column zero.
+    return f"Figure ({label}):\n" + "\n".join(lines)
 
 
 def _assign_figures_to_pages(figure_summaries, page_ranges):
@@ -419,6 +430,16 @@ def build_pages_from_content_understanding_result(result):
 
         if not isinstance(pages, list) or not pages:
             fallback_content = markdown_text.strip()
+            # Figures still carry descriptions even when the response has no per-page spans.
+            fallback_blocks = []
+            for summary in _build_figure_summaries(content):
+                rendered_summary = _render_figure_summary(summary, fallback_content)
+                if rendered_summary:
+                    fallback_blocks.append(rendered_summary)
+            if fallback_blocks:
+                fallback_content = (
+                    f"{fallback_content.rstrip()}\n\n" + "\n\n".join(fallback_blocks)
+                ).strip()
             if fallback_content:
                 pages_data.append({
                     'page_number': start_page_number or 1,

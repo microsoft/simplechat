@@ -18,7 +18,7 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Neither extraction engine describes figures inside Office files, so SimpleChat now pulls embedded images out of DOCX and PPTX packages and analyzes them with whichever engine backs the selected extraction mode — Content Understanding when Enhanced is active, Document Intelligence otherwise. This works with Standard extraction too.
     *   Each analyzed image is indexed as its own citable chunk, and PowerPoint images are attributed to the slide that references them.
     *   Cost is bounded by design: icons, bullets, and spacer graphics are filtered out by a configurable minimum size, byte-identical images such as repeated header logos are analyzed once, and a per-document cap limits the total.
-    *   Uploaded Office files are treated as untrusted: extracted file names are generated rather than reused from the archive, oversized entries are skipped before decompression, and slide relationship parts are parsed with a hardened XML parser.
+    *   Uploaded Office files are treated as untrusted: extracted file names are generated rather than reused from the archive, entries are streamed with a hard byte ceiling instead of trusting the archive's declared size, compression methods and entry counts are bounded, and slide relationship parts are parsed with a hardened XML parser.
     *   Can be turned off entirely with **Analyze images embedded in DOCX and PPTX files**. Image analysis failures never fail the document.
     *   (Ref: `functions_office_media.py`, `functions_documents.py`, embedded Office image analysis)
 

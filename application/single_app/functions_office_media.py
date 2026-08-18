@@ -28,6 +28,13 @@ OFFICE_EMBEDDED_IMAGE_MIN_BYTES = 2048
 OFFICE_EMBEDDED_IMAGE_MAX_BYTES = 64 * 1024 * 1024
 # Slide relationship parts are small XML documents; anything larger is not worth decompressing.
 OFFICE_EMBEDDED_RELS_MAX_BYTES = 4 * 1024 * 1024
+# A zip header can understate the uncompressed size, so entries are streamed in bounded chunks.
+OFFICE_ZIP_READ_CHUNK_BYTES = 256 * 1024
+# Caps on how much of a crafted archive is inspected at all.
+OFFICE_ZIP_MAX_ENTRIES = 5000
+OFFICE_ZIP_MAX_RELS_ENTRIES = 500
+# Only the compression methods real OOXML packages use.
+OFFICE_ZIP_ALLOWED_COMPRESSION = (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED)
 
 _OFFICE_MEDIA_INDEX_PATTERN = re.compile(r'(\d+)')
 _PPTX_SLIDE_RELS_PATTERN = re.compile(r'^ppt/slides/_rels/slide(\d+)\.xml\.rels$', re.IGNORECASE)
@@ -47,6 +54,46 @@ def _safe_media_base_name(media_name):
     return base_name
 
 
+def _read_zip_entry_bounded(archive, entry_name, max_bytes):
+    """Read a zip entry without trusting its declared uncompressed size.
+
+    ``ZipInfo.file_size`` comes from the archive header and can be forged. CPython decompresses a
+    chunk before truncating it to the declared size, so a 64 KB entry claiming to be 4 KB can still
+    spike memory into the hundreds of megabytes. Streaming with a bounded per-chunk read keeps the
+    decompressor's output capped, so the only safe limit is enforced here rather than from the header.
+
+    Returns the entry bytes, or ``None`` when the entry is unreadable or exceeds ``max_bytes``.
+    """
+    try:
+        entry_info = archive.getinfo(entry_name)
+    except KeyError:
+        return None
+
+    if entry_info.compress_type not in OFFICE_ZIP_ALLOWED_COMPRESSION:
+        return None
+
+    # Cheap pre-filter for honest archives; never the only bound.
+    if entry_info.file_size > max_bytes:
+        return None
+
+    chunks = []
+    total_bytes = 0
+    try:
+        with archive.open(entry_name) as entry_file:
+            while True:
+                chunk = entry_file.read(OFFICE_ZIP_READ_CHUNK_BYTES)
+                if not chunk:
+                    break
+                total_bytes += len(chunk)
+                if total_bytes > max_bytes:
+                    return None
+                chunks.append(chunk)
+    except (KeyError, ValueError, EOFError, zipfile.BadZipFile, zipfile.LargeZipFile, NotImplementedError):
+        return None
+
+    return b''.join(chunks)
+
+
 def _office_media_sort_key(media_name):
     """Sort embedded media names naturally so image2 precedes image10."""
     base_name = media_name.rsplit('/', 1)[-1]
@@ -61,25 +108,26 @@ def _build_pptx_media_slide_map(archive):
     guard as media entries and are parsed with a hardened XML parser.
     """
     media_slide_map = {}
+    inspected_rels = 0
 
     for entry_name in archive.namelist():
+        if inspected_rels >= OFFICE_ZIP_MAX_RELS_ENTRIES:
+            break
+
         slide_match = _PPTX_SLIDE_RELS_PATTERN.match(entry_name)
         if not slide_match:
             continue
 
+        inspected_rels += 1
         slide_number = int(slide_match.group(1))
-        try:
-            entry_info = archive.getinfo(entry_name)
-        except KeyError:
-            continue
 
-        # Check the declared size before decompressing so a zip bomb cannot exhaust memory.
-        if entry_info.file_size > OFFICE_EMBEDDED_RELS_MAX_BYTES:
+        rels_bytes = _read_zip_entry_bounded(archive, entry_name, OFFICE_EMBEDDED_RELS_MAX_BYTES)
+        if rels_bytes is None:
             continue
 
         try:
-            rels_root = defused_fromstring(archive.read(entry_name))
-        except (KeyError, DefusedParseError, ValueError, zipfile.BadZipFile):
+            rels_root = defused_fromstring(rels_bytes)
+        except (DefusedParseError, ValueError):
             continue
 
         for relationship in rels_root:
@@ -113,36 +161,38 @@ def extract_office_embedded_images(file_path, output_dir, min_pixels=150, max_im
 
     try:
         with zipfile.ZipFile(file_path) as archive:
+            entry_names = archive.namelist()
+            if len(entry_names) > OFFICE_ZIP_MAX_ENTRIES:
+                # A real Office package never has this many parts; refuse to walk a crafted archive.
+                return []
+
             media_slide_map = _build_pptx_media_slide_map(archive)
 
             candidate_names = [
-                entry_name for entry_name in archive.namelist()
+                entry_name for entry_name in entry_names
                 if entry_name.lower().startswith(OFFICE_EMBEDDED_IMAGE_MEDIA_PREFIXES)
                 and entry_name.lower().endswith(OFFICE_EMBEDDED_IMAGE_EXTENSIONS)
             ]
 
+            inspected_media = 0
             for media_name in sorted(candidate_names, key=_office_media_sort_key):
                 if len(extracted_images) >= max_images:
                     break
+                # Bound the work a malformed archive can cause, not just successful extractions.
+                if inspected_media >= max_images * 10:
+                    break
+                inspected_media += 1
 
                 base_name = _safe_media_base_name(media_name)
                 if not base_name:
                     continue
 
-                try:
-                    entry_info = archive.getinfo(media_name)
-                except KeyError:
-                    continue
-
-                # Check the declared size before decompressing so a zip bomb cannot exhaust memory.
-                if entry_info.file_size > OFFICE_EMBEDDED_IMAGE_MAX_BYTES:
-                    continue
-                if entry_info.file_size < OFFICE_EMBEDDED_IMAGE_MIN_BYTES:
-                    continue
-
-                try:
-                    image_bytes = archive.read(media_name)
-                except (KeyError, zipfile.BadZipFile):
+                image_bytes = _read_zip_entry_bounded(
+                    archive,
+                    media_name,
+                    OFFICE_EMBEDDED_IMAGE_MAX_BYTES,
+                )
+                if image_bytes is None:
                     continue
 
                 # Small assets are almost always icons, bullets, or spacer graphics.

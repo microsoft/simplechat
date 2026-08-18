@@ -388,6 +388,116 @@ def test_oversized_rels_entry_is_skipped():
     return True
 
 
+def test_forged_declared_size_cannot_blow_memory():
+    """A zip header understating the uncompressed size must not cause a large decompression.
+
+    ``ZipInfo.file_size`` is attacker-controlled and CPython decompresses before truncating to it,
+    so a declared-size check alone is not a sound zip-bomb defense.
+    """
+    print("Testing forged declared-size defense...")
+
+    import struct
+    import tracemalloc
+
+    import functions_office_media
+
+    payload_bytes = 64 * 1024 * 1024
+    inner = BytesIO()
+    with zipfile.ZipFile(inner, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("word/media/bomb.png", b"\x00" * payload_bytes)
+        archive.writestr("[Content_Types].xml", "<Types/>")
+    raw = bytearray(inner.getvalue())
+    # Understate the uncompressed size everywhere it appears.
+    raw = raw.replace(struct.pack("<I", payload_bytes), struct.pack("<I", 4096))
+
+    with tempfile.TemporaryDirectory() as work_dir:
+        docx_path = os.path.join(work_dir, "forged.docx")
+        output_dir = os.path.join(work_dir, "out")
+        os.makedirs(output_dir)
+        with open(docx_path, "wb") as forged_file:
+            forged_file.write(bytes(raw))
+
+        tracemalloc.start()
+        extracted = extract_office_embedded_images(docx_path, output_dir, min_pixels=150, max_images=25)
+        _, peak_bytes = tracemalloc.get_traced_memory()
+        tracemalloc.stop()
+
+    if extracted:
+        raise AssertionError(f"A forged archive should yield no images, got {extracted}")
+
+    peak_mib = peak_bytes / 1024 / 1024
+    # The bounded reader keeps this near the chunk size; the old declared-size check peaked ~141 MiB.
+    if peak_bytes > 8 * 1024 * 1024:
+        raise AssertionError(
+            f"Extraction decompressed too much from a forged archive: peak {peak_mib:.2f} MiB"
+        )
+
+    print(f"Forged declared-size defense test passed! (peak {peak_mib:.2f} MiB)")
+    return True
+
+
+def test_unsupported_compression_is_rejected():
+    """Only the compression methods real OOXML packages use are accepted."""
+    print("Testing compression method whitelist...")
+
+    import functions_office_media
+
+    if zipfile.ZIP_STORED not in functions_office_media.OFFICE_ZIP_ALLOWED_COMPRESSION:
+        raise AssertionError("ZIP_STORED must be allowed.")
+    if zipfile.ZIP_DEFLATED not in functions_office_media.OFFICE_ZIP_ALLOWED_COMPRESSION:
+        raise AssertionError("ZIP_DEFLATED must be allowed.")
+    if zipfile.ZIP_BZIP2 in functions_office_media.OFFICE_ZIP_ALLOWED_COMPRESSION:
+        raise AssertionError("Unusual compression methods should not be allowed.")
+
+    payload = build_png_bytes(300, 300, (90, 30, 190))
+    with tempfile.TemporaryDirectory() as work_dir:
+        docx_path = os.path.join(work_dir, "bzip.docx")
+        output_dir = os.path.join(work_dir, "out")
+        os.makedirs(output_dir)
+
+        with zipfile.ZipFile(docx_path, "w") as archive:
+            archive.writestr("[Content_Types].xml", "<Types/>")
+            archive.writestr(
+                zipfile.ZipInfo("word/media/image1.png"),
+                payload,
+                compress_type=zipfile.ZIP_BZIP2,
+            )
+
+        extracted = extract_office_embedded_images(docx_path, output_dir, min_pixels=150, max_images=25)
+
+    if extracted:
+        raise AssertionError(f"Entries using an unsupported compression method must be skipped: {extracted}")
+
+    print("Compression whitelist test passed!")
+    return True
+
+
+def test_archive_entry_count_is_capped():
+    """An archive with an absurd number of entries is refused outright."""
+    print("Testing archive entry cap...")
+
+    import functions_office_media
+
+    with tempfile.TemporaryDirectory() as work_dir:
+        docx_path = os.path.join(work_dir, "many_entries.docx")
+        output_dir = os.path.join(work_dir, "out")
+        os.makedirs(output_dir)
+
+        with zipfile.ZipFile(docx_path, "w") as archive:
+            archive.writestr("[Content_Types].xml", "<Types/>")
+            archive.writestr("word/media/image1.png", build_png_bytes(300, 300, (10, 10, 200)))
+            for index in range(functions_office_media.OFFICE_ZIP_MAX_ENTRIES + 10):
+                archive.writestr(f"word/junk/{index}.txt", "x")
+
+        extracted = extract_office_embedded_images(docx_path, output_dir, min_pixels=150, max_images=25)
+
+    if extracted:
+        raise AssertionError("An archive exceeding the entry cap must be refused.")
+
+    print("Archive entry cap test passed!")
+    return True
+
+
 def test_version_is_at_least_implementation_version():
     """The app version must be at or beyond the version this feature shipped in."""
     print("Testing application version...")
@@ -407,6 +517,9 @@ if __name__ == "__main__":
         test_oversized_entries_are_skipped_without_decompressing,
         test_billion_laughs_rels_entry_is_rejected,
         test_oversized_rels_entry_is_skipped,
+        test_forged_declared_size_cannot_blow_memory,
+        test_unsupported_compression_is_rejected,
+        test_archive_entry_count_is_capped,
         test_pipeline_wires_embedded_image_analysis,
         test_version_is_at_least_implementation_version,
     ]
