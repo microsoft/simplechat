@@ -911,6 +911,27 @@ def get_document_chunks_payload(
     }
 
 
+def _build_summary_citation_chunk(chunks):
+    """Return identifying fields for the first chunk so summaries stay citable."""
+    first_chunk = next(
+        (chunk for chunk in chunks or [] if isinstance(chunk, dict)),
+        None,
+    )
+    if not first_chunk:
+        return None
+
+    return {
+        "id": first_chunk.get("id"),
+        "document_id": first_chunk.get("document_id"),
+        "file_name": first_chunk.get("file_name"),
+        "page_number": first_chunk.get("page_number"),
+        "chunk_id": first_chunk.get("chunk_id"),
+        "chunk_sequence": first_chunk.get("chunk_sequence"),
+        "version": first_chunk.get("version"),
+        "document_classification": first_chunk.get("document_classification"),
+    }
+
+
 def _render_window_source_text(window_payload):
     source_parts = []
     for chunk in window_payload.get("chunks", []):
@@ -1192,6 +1213,7 @@ def summarize_document_content(
 
     return {
         'document': chunk_payload.get('document'),
+        'citation_chunk': _build_summary_citation_chunk(chunk_payload.get('chunks')),
         'scope': chunk_payload.get('scope'),
         'scope_id': chunk_payload.get('scope_id'),
         'chunk_count': chunk_payload.get('chunk_count'),

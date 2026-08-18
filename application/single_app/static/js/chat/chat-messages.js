@@ -1862,6 +1862,23 @@ function resolveHybridCitationId(cite, index) {
   return `${cite?.chunk_id || ''}_${cite?.page_number || index}`;
 }
 
+// Agent document search can return hundreds of source chunks for one answer, so the
+// source list is collapsed past this many entries instead of being capped server-side.
+const DOCUMENT_CITATION_VISIBLE_LIMIT = 25;
+
+function buildDocumentCitationGroupHtml(citationParts) {
+  if (!Array.isArray(citationParts) || citationParts.length <= DOCUMENT_CITATION_VISIBLE_LIMIT) {
+    return Array.isArray(citationParts) ? citationParts.join("") : "";
+  }
+
+  const visibleParts = citationParts.slice(0, DOCUMENT_CITATION_VISIBLE_LIMIT);
+  const overflowParts = citationParts.slice(DOCUMENT_CITATION_VISIBLE_LIMIT);
+  const collapsedLabel = `Show ${overflowParts.length} more sources`;
+  const expandedLabel = "Show fewer sources";
+
+  return `${visibleParts.join("")}<span class="citation-overflow-group d-none">${overflowParts.join("")}</span><button type="button" class="btn btn-sm citation-button citation-overflow-toggle" data-collapsed-label="${escapeHtml(collapsedLabel)}" data-expanded-label="${escapeHtml(expandedLabel)}" aria-expanded="false" title="${escapeHtml(collapsedLabel)}"><i class="bi bi-plus-circle me-1"></i>${escapeHtml(collapsedLabel)}</button>`;
+}
+
 function createCitationsHtml(
   hybridCitations = [],
   webCitations = [],
@@ -1874,6 +1891,7 @@ function createCitationsHtml(
 
   if (hybridCitations && hybridCitations.length > 0) {
     hasCitations = true;
+    const documentCitationParts = [];
     hybridCitations.forEach((cite, index) => {
       const citationId = resolveHybridCitationId(cite, index);
       const fileName = cite.file_name || 'Document';
@@ -1907,7 +1925,7 @@ function createCitationsHtml(
 
       if (isMetadata && documentId) {
         const summaryText = `${escapeHtml(locationLabel)}: ${escapeHtml(locationValue)}`;
-        citationsHtml += `
+        documentCitationParts.push(`
               <a href="#"
                  class="btn btn-sm citation-button hybrid-citation-link"
                  data-citation-id="${escapeHtml(citationId)}"
@@ -1935,11 +1953,11 @@ function createCitationsHtml(
                  data-metadata-content="${escapeHtml(metadataContent)}"
                  title="View source summary: ${displayText}">
                   <i class="bi bi-tags me-1"></i>${summaryText}
-              </a>`;
+              </a>`);
         return;
       }
 
-      citationsHtml += `
+      documentCitationParts.push(`
               <a href="#"
                  class="btn btn-sm citation-button hybrid-citation-link ${isMetadata ? 'metadata-citation' : ''}"
                  data-citation-id="${escapeHtml(citationId)}"
@@ -1954,8 +1972,9 @@ function createCitationsHtml(
                  data-metadata-content="${escapeHtml(metadataContent)}"
                  title="View source: ${displayText}">
                   <i class="bi ${isMetadata ? 'bi-tags' : 'bi-file-earmark-text'} me-1"></i>${displayText}
-              </a>`;
+              </a>`);
     });
+    citationsHtml += buildDocumentCitationGroupHtml(documentCitationParts);
   }
 
   if (webCitations && webCitations.length > 0) {
