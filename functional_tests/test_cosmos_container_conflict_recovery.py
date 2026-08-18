@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Functional test for Cosmos container startup conflict recovery.
-Version: 0.250.060
-Implemented in: 0.250.060
+Version: 0.250.058
+Implemented in: 0.250.058
 
 This test ensures local Docker gunicorn workers recover when concurrent startup
 creates the same Cosmos container between the SDK's read and create calls.
