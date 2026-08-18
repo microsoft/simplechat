@@ -312,13 +312,13 @@ def test_support_menu_navigation_and_routes():
     assert top_nav_content.index('id="supportMenuDropdown"') < top_nav_content.index('id="externalLinksDropdown"'), 'Support menu should render before external links in top navigation'
 
     route_markers = [
-        "@app.route('/support/latest-features')",
+        "@bp.route('/support/latest-features')",
         "def support_latest_features():",
         'get_visible_support_latest_feature_groups',
         'support_previous_release_feature_groups',
         "render_template(",
         "'latest_features.html'",
-        "@app.route('/support/send-feedback')",
+        "@bp.route('/support/send-feedback')",
         "def support_send_feedback():",
         "render_template('support_send_feedback.html')",
         "@enabled_required('enable_support_menu')",
@@ -341,7 +341,7 @@ def test_support_menu_feedback_backend_and_templates():
     support_js_content = read_text(SUPPORT_JS)
 
     backend_markers = [
-        "@app.route('/api/support/send_feedback_email', methods=['POST'])",
+        "@bp.route('/api/support/send_feedback_email', methods=['POST'])",
         'def send_support_feedback_email():',
         "return jsonify({'error': 'Support menu is available to signed-in app users only'}), 403",
         "application_title = str(settings.get('app_title') or '').strip() or 'Simple Chat'",

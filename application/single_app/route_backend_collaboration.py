@@ -8,7 +8,7 @@ import app_settings_cache
 from flask import Response, current_app, jsonify, redirect, request, session, stream_with_context
 
 from config import *
-from collaboration_models import MEMBERSHIP_STATUS_PENDING, MESSAGE_KIND_AI_REQUEST, add_seconds_to_iso, normalize_collaboration_user, utc_now_iso
+from collaboration_models import COLLABORATION_KIND, MEMBERSHIP_STATUS_PENDING, MESSAGE_KIND_AI_REQUEST, add_seconds_to_iso, normalize_collaboration_user, utc_now_iso
 from functions_appinsights import log_event
 from functions_authentication import *
 from functions_collaboration import (
@@ -1471,6 +1471,23 @@ def register_route_backend_collaboration(bp):
                 message_content,
             )
 
+            def collaboration_stream_error(error_message, **extra_fields):
+                """Serialize a stream error that stays attributed to this shared conversation.
+
+                Every failure in this bridge belongs to the collaboration conversation, not the
+                hidden source conversation, so ``conversation_kind`` is always included. The
+                browser recovery path keys off it to reload through the collaboration endpoint
+                instead of the personal one, which does not know this conversation id.
+                """
+                return _serialize_stream_error(
+                    error_message,
+                    user_message_id=serialized_user_message.get('id'),
+                    message_persisted=True,
+                    conversation_id=conversation_id,
+                    conversation_kind=COLLABORATION_KIND,
+                    **extra_fields,
+                )
+
             def generate_stream():
                 try:
                     yield build_user_message_persisted_stream_event(
@@ -1487,12 +1504,7 @@ def register_route_backend_collaboration(bp):
                             },
                             level=logging.ERROR,
                         )
-                        yield _serialize_stream_error(
-                            'Chat streaming endpoint is unavailable',
-                            user_message_id=serialized_user_message.get('id'),
-                            message_persisted=True,
-                            conversation_id=conversation_id,
-                        )
+                        yield collaboration_stream_error('Chat streaming endpoint is unavailable')
                         return
 
                     buffer = ''
@@ -1506,11 +1518,8 @@ def register_route_backend_collaboration(bp):
                                 error_payload = internal_response.get_json(silent=True) or {}
                             except Exception:
                                 error_payload = {}
-                            yield _serialize_stream_error(
+                            yield collaboration_stream_error(
                                 error_payload.get('error') or error_payload.get('message') or 'Failed to start collaboration AI workflow',
-                                user_message_id=serialized_user_message.get('id'),
-                                message_persisted=True,
-                                conversation_id=conversation_id,
                             )
                             return
 
@@ -1542,12 +1551,9 @@ def register_route_backend_collaboration(bp):
                                     and stream_payload.get('message_id')
                                 )
                             ):
-                                return _serialize_stream_error(
+                                return collaboration_stream_error(
                                     stream_payload.get('error'),
                                     partial_content=stream_payload.get('partial_content'),
-                                    user_message_id=serialized_user_message.get('id'),
-                                    message_persisted=True,
-                                    conversation_id=conversation_id,
                                 )
                             if stream_payload.get('error'):
                                 stream_payload['done'] = True
@@ -1572,11 +1578,8 @@ def register_route_backend_collaboration(bp):
                                     return f'data: {json.dumps(make_json_serializable(transformed_payload))}\n\n'
 
                             if not source_message_id:
-                                return _serialize_stream_error(
+                                return collaboration_stream_error(
                                     'AI workflow completed without a source assistant message',
-                                    user_message_id=serialized_user_message.get('id'),
-                                    message_persisted=True,
-                                    conversation_id=conversation_id,
                                 )
 
                             source_user_message_id = str(stream_payload.get('user_message_id') or '').strip()
@@ -1599,11 +1602,8 @@ def register_route_backend_collaboration(bp):
                             try:
                                 source_message_doc = _read_source_message_doc(source_conversation_id, source_message_id)
                             except CosmosResourceNotFoundError:
-                                return _serialize_stream_error(
+                                return collaboration_stream_error(
                                     'Failed to load the generated assistant response',
-                                    user_message_id=serialized_user_message.get('id'),
-                                    message_persisted=True,
-                                    conversation_id=conversation_id,
                                 )
 
                             collaboration_conversation_doc = updated_conversation_doc
@@ -1633,11 +1633,8 @@ def register_route_backend_collaboration(bp):
                                 },
                             )
                             if not mirrored_message_doc:
-                                return _serialize_stream_error(
+                                return collaboration_stream_error(
                                     'Failed to mirror the assistant response into the collaboration conversation',
-                                    user_message_id=serialized_user_message.get('id'),
-                                    message_persisted=True,
-                                    conversation_id=conversation_id,
                                 )
 
                             create_collaboration_message_notifications(final_conversation_doc, mirrored_message_doc)
@@ -1710,12 +1707,7 @@ def register_route_backend_collaboration(bp):
                         level=logging.ERROR,
                         exceptionTraceback=True,
                     )
-                    yield _serialize_stream_error(
-                        'Failed to stream collaborative AI response',
-                        user_message_id=serialized_user_message.get('id'),
-                        message_persisted=True,
-                        conversation_id=conversation_id,
-                    )
+                    yield collaboration_stream_error('Failed to stream collaborative AI response')
 
             return Response(stream_with_context(generate_stream()), mimetype='text/event-stream')
         except CosmosResourceNotFoundError:

@@ -298,7 +298,7 @@ def test_frontend_and_routes_use_layered_masking_contract() -> None:
     assert_contains(
         collaboration_route_source,
         [
-            "@app.route('/api/collaboration/conversations/<conversation_id>/messages/<message_id>/mask', methods=['POST'])",
+            "@bp.route('/api/collaboration/conversations/<conversation_id>/messages/<message_id>/mask', methods=['POST'])",
             "_assert_user_can_mask_collaboration_message(current_user['user_id'], message_doc)",
             "_sync_collaboration_mask_metadata_to_source(message_doc)",
             "'collaboration.message.masked'",

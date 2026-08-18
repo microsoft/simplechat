@@ -2,7 +2,7 @@
 # test_collaboration_multi_user_reload_and_stream_fix.py
 """
 Functional test for shared (multi-user) conversation reload and AI streaming.
-Version: 0.250.224
+Version: 0.250.227
 Implemented in: 0.250.224
 
 This test ensures that:
@@ -16,6 +16,8 @@ This test ensures that:
 3. loadConversationMessages() performs the search-highlight, task-document, and
    comparison-catalog side effects that the personal loader used to provide, so shared
    conversations keep parity instead of silently losing them.
+4. Every shared stream error is tagged with conversation_kind, so the browser recovery
+   path can never fall back to the personal messages endpoint (added in 0.250.227).
 """
 
 import ast
@@ -250,6 +252,71 @@ def test_collaboration_loader_keeps_personal_loader_side_effects():
     return True
 
 
+def test_collaboration_stream_errors_always_carry_conversation_kind():
+    """Every shared stream error must be tagged as collaborative for browser recovery."""
+    print("Testing collaboration stream error attribution...")
+
+    route_source = read_repo_file("application", "single_app", "route_backend_collaboration.py")
+    module_ast = ast.parse(route_source)
+
+    stream_route_nodes = [
+        node for node in ast.walk(module_ast)
+        if isinstance(node, ast.FunctionDef) and node.name == "stream_collaboration_message_api"
+    ]
+    assert len(stream_route_nodes) == 1, "Expected exactly one stream_collaboration_message_api definition."
+    stream_route_node = stream_route_nodes[0]
+
+    raw_error_calls = [
+        node for node in ast.walk(stream_route_node)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_serialize_stream_error"
+    ]
+    assert len(raw_error_calls) == 1, (
+        "Shared stream errors must funnel through a single serializer so conversation_kind "
+        f"can never be omitted, found {len(raw_error_calls)} raw _serialize_stream_error calls."
+    )
+
+    raw_error_call = raw_error_calls[0]
+    keyword_names = {keyword.arg for keyword in raw_error_call.keywords if keyword.arg}
+    assert "conversation_kind" in keyword_names, (
+        "The shared stream error serializer must set conversation_kind."
+    )
+    assert "conversation_id" in keyword_names, (
+        "The shared stream error serializer must set conversation_id."
+    )
+
+    conversation_kind_value = next(
+        keyword.value for keyword in raw_error_call.keywords if keyword.arg == "conversation_kind"
+    )
+    assert isinstance(conversation_kind_value, ast.Name) and conversation_kind_value.id == "COLLABORATION_KIND", (
+        "conversation_kind must use the shared COLLABORATION_KIND constant."
+    )
+
+    helper_nodes = [
+        node for node in ast.walk(stream_route_node)
+        if isinstance(node, ast.FunctionDef) and node.name == "collaboration_stream_error"
+    ]
+    assert len(helper_nodes) == 1, "Expected a single collaboration_stream_error helper."
+
+    helper_call_count = sum(
+        1 for node in ast.walk(stream_route_node)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "collaboration_stream_error"
+    )
+    assert helper_call_count >= 7, (
+        f"Expected every shared stream failure path to use the helper, found {helper_call_count}."
+    )
+
+    assert "from collaboration_models import COLLABORATION_KIND" in route_source, (
+        "Expected COLLABORATION_KIND to be imported from collaboration_models."
+    )
+
+    print("Collaboration stream error attribution passed!")
+    return True
+
+
 def test_version_supports_fix():
     """The application version must be at least the fix implementation version."""
     print("Testing application version...")
@@ -266,6 +333,7 @@ if __name__ == "__main__":
         test_stream_view_resolves_through_blueprint_endpoint,
         test_stream_view_resolves_unprefixed_and_rejects_unknown,
         test_collaboration_route_uses_resolver_and_logs_failures,
+        test_collaboration_stream_errors_always_carry_conversation_kind,
         test_select_conversation_skips_personal_messages_endpoint,
         test_collaboration_loader_keeps_personal_loader_side_effects,
         test_version_supports_fix,

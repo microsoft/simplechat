@@ -33,7 +33,7 @@ def test_backend_control_center_approvals_swagger():
     try:
         content = read_file_contents('application', 'single_app', 'route_backend_control_center.py')
         required_block = (
-            "@app.route('/api/approvals', methods=['GET'])\n"
+            "@bp.route('/api/approvals', methods=['GET'])\n"
             "    @swagger_route(security=get_auth_security())\n"
             "    @login_required\n"
             "    def api_get_approvals():"
@@ -64,7 +64,7 @@ def test_backend_speech_swagger():
             return False
 
         required_block = (
-            "@app.route('/api/speech/transcribe-chat', methods=['POST'])\n"
+            "@bp.route('/api/speech/transcribe-chat', methods=['POST'])\n"
             "    @swagger_route(security=get_auth_security())\n"
             "    @login_required\n"
             "    def transcribe_chat_audio():"
@@ -90,7 +90,7 @@ def test_frontend_approvals_swagger():
     try:
         content = read_file_contents('application', 'single_app', 'route_frontend_control_center.py')
         required_block = (
-            "@app.route('/approvals', methods=['GET'])\n"
+            "@bp.route('/approvals', methods=['GET'])\n"
             "    @swagger_route(security=get_auth_security())\n"
             "    @login_required\n"
             "    @user_required\n"
