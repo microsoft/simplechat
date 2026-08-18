@@ -2,6 +2,43 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.221)**
+
+#### New Features
+
+*   **Enhanced Extraction Now Uses Azure AI Content Understanding**
+    *   Enhanced extraction for PDFs and images now uses Azure AI Content Understanding (`prebuilt-documentSearch`) instead of Document Intelligence Layout. In addition to tables, page structure, and checkbox states, it returns AI-generated descriptions of figures, charts, and diagrams — structure Document Intelligence never produced.
+    *   Standard extraction is unchanged and always uses Document Intelligence, which remains required for workspaces and chat file uploads.
+    *   A new **Enable Enhanced extraction** toggle in Admin Settings reveals the Content Understanding configuration. Turning it on defaults the extraction mode to **Auto**, so documents are only upgraded when the sample shows structure worth paying for.
+    *   Content Understanding supports both key and managed identity authentication, with a **Test Connection** button and an in-app setup guide covering Foundry resource creation, supported regions, required model deployment defaults, and the Cognitive Services User role.
+    *   Enhanced never becomes a hard dependency. Content Understanding is not offered in Azure Government, so Enhanced automatically uses Document Intelligence Layout in Government and custom clouds — the admin UI says so plainly and there is nothing to configure there. Enhanced also falls back when Content Understanding is unconfigured or a request fails, and the reason is recorded on the document and shown in workspace tooltips.
+    *   (Ref: #1277, `functions_content_understanding.py`, `functions_content.py`, `functions_settings.py`, `route_backend_settings.py`, `admin_settings.html`, `CONTENT_UNDERSTANDING_ENHANCED_EXTRACTION.md`)
+
+*   **Images Inside Word and PowerPoint Files Are Now Analyzed**
+    *   Neither extraction engine describes figures inside Office files, so SimpleChat now pulls embedded images out of DOCX and PPTX packages and analyzes them with whichever engine backs the selected extraction mode — Content Understanding when Enhanced is active, Document Intelligence otherwise. This works with Standard extraction too.
+    *   Each analyzed image is indexed as its own citable chunk, and PowerPoint images are attributed to the slide that references them.
+    *   Cost is bounded by design: icons, bullets, and spacer graphics are filtered out by a configurable minimum size, byte-identical images such as repeated header logos are analyzed once, and a per-document cap limits the total.
+    *   Uploaded Office files are treated as untrusted: extracted file names are generated rather than reused from the archive, entries are streamed with a hard byte ceiling instead of trusting the archive's declared size, compression methods and entry counts are bounded, and slide relationship parts are parsed with a hardened XML parser.
+    *   Can be turned off entirely with **Analyze images embedded in DOCX and PPTX files**. Image analysis failures never fail the document.
+    *   (Ref: #1277, `functions_office_media.py`, `functions_documents.py`, embedded Office image analysis)
+
+#### Upgrade Notes
+
+*   **Existing Enhanced and Auto Deployments Keep Their Setting**
+    *   The new **Enable Enhanced extraction** toggle defaults to off, so deployments already set to Enhanced or Auto are migrated automatically on first settings read: the toggle is switched on and persisted, preserving the previously selected mode.
+    *   Without this migration an upgrade would have silently downgraded those deployments to Standard and then overwritten the stored mode on the next settings save.
+    *   (Ref: #1277, `functions_settings.py`, `get_settings()` migration)
+
+#### User Interface Enhancements
+
+*   **Extraction Badges Name the Engine That Actually Ran**
+    *   Extraction tooltips in personal, group, and public workspaces now say whether a document was processed with Azure AI Content Understanding or Document Intelligence Layout, and explain any fallback that occurred.
+    *   The **Change Extraction** action now works for images as well as PDFs, and refuses a change to Enhanced while Enhanced extraction is disabled.
+    *   (Ref: #1277, `workspace-documents.js`, `public_workspace.js`, `group_workspaces.html`, `functions_documents.py`)
+
+*   **Auto Mode Also Upgrades for Figures**
+    *   Auto mode still samples the first pages with Document Intelligence Layout as the cheaper detector, but now upgrades to Enhanced when it finds figures or images, not just tables and selection marks. This matters because figure description is the main reason to use Enhanced.
+    *   (Ref: #1277, `functions_documents.py`, Auto mode detection)
 ### **(v0.250.220)**
 
 #### Bug Fixes

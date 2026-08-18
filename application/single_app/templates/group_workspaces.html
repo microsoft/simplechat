@@ -3718,7 +3718,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
     if (doc.number_of_pages) {
       pills.push(`<span class="document-meta-pill"><i class="bi bi-file-earmark-text"></i>${escapeGroupHtml(String(doc.number_of_pages))} pages</span>`);
     }
-    if (isGroupPdfDocument(doc)) {
+    if (supportsGroupExtractionModeChange(doc)) {
       pills.push(`<span class="document-meta-pill"><i class="bi bi-file-earmark-richtext"></i>${escapeGroupHtml(getGroupDocumentExtractionModeLabel(doc))}</span>`);
     }
     if (authors.length) {
@@ -3734,8 +3734,32 @@ app_settings.app_title }} {% endblock %} {% block head %}
     return pills.join('');
   }
 
+  const GROUP_EXTRACTION_MODE_CHANGE_IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif', '.heif', '.heic'];
+  const GROUP_EXTRACTION_STANDARD_TOOLTIP = 'Standard extraction uses Document Intelligence Read for faster, lower-cost text extraction. Best for plain text PDFs and images.';
+  const GROUP_EXTRACTION_ENHANCED_CONTENT_UNDERSTANDING_TOOLTIP = 'Enhanced extraction uses Azure AI Content Understanding to preserve tables, page structure, and checkbox states, and to describe figures, charts, and images. Adds latency and higher cost.';
+  const GROUP_EXTRACTION_ENHANCED_DOCUMENT_INTELLIGENCE_TOOLTIP = 'Enhanced extraction uses Document Intelligence Layout to preserve tables, page structure, forms, and checkbox states. Adds latency and higher cost.';
+
   function isGroupPdfDocument(doc) {
     return String(doc?.file_name || '').toLowerCase().endsWith('.pdf');
+  }
+
+  function isGroupImageDocument(doc) {
+    const fileName = String(doc?.file_name || '').toLowerCase();
+    return GROUP_EXTRACTION_MODE_CHANGE_IMAGE_EXTENSIONS.some((extension) => fileName.endsWith(extension));
+  }
+
+  function supportsGroupExtractionModeChange(doc) {
+    return isGroupPdfDocument(doc) || isGroupImageDocument(doc);
+  }
+
+  function getGroupDocumentExtractionEngine(doc) {
+    return String(doc?.extraction_engine || '').trim().toLowerCase();
+  }
+
+  function getGroupDocumentEnhancedTooltipForEngine(engine) {
+    return engine === 'content_understanding'
+      ? GROUP_EXTRACTION_ENHANCED_CONTENT_UNDERSTANDING_TOOLTIP
+      : GROUP_EXTRACTION_ENHANCED_DOCUMENT_INTELLIGENCE_TOOLTIP;
   }
 
   function getGroupDocumentExtractionModeLabel(doc) {
@@ -3756,17 +3780,19 @@ app_settings.app_title }} {% endblock %} {% block head %}
     return mode === 'layout' ? 'Enhanced' : 'Standard';
   }
 
-  function getGroupDocumentExtractionChangeTooltip(targetMode) {
+  function getGroupDocumentExtractionChangeTooltip(targetMode, engine) {
     return targetMode === 'layout'
-      ? 'Extract again with Enhanced extraction. Enhanced extraction uses Document Intelligence Layout to preserve tables, page structure, forms, and checkbox states. Adds latency and higher cost.'
-      : 'Extract again with Standard extraction. Standard extraction uses Document Intelligence Read for faster text extraction. Best for plain text PDFs and images.';
+      ? `Extract again with Enhanced extraction. ${getGroupDocumentEnhancedTooltipForEngine(engine)}`
+      : `Extract again with Standard extraction. ${GROUP_EXTRACTION_STANDARD_TOOLTIP}`;
   }
 
   function getGroupDocumentExtractionModeTooltip(doc) {
     const mode = String(doc?.document_intelligence_extraction_mode || '').trim().toLowerCase();
-    return mode === 'layout'
-      ? 'Enhanced extraction uses Document Intelligence Layout to preserve tables, page structure, forms, and checkbox states. Adds latency and higher cost.'
-      : 'Standard extraction uses Document Intelligence Read for faster text extraction. Best for plain text PDFs and images.';
+    const tooltip = mode === 'layout'
+      ? getGroupDocumentEnhancedTooltipForEngine(getGroupDocumentExtractionEngine(doc))
+      : GROUP_EXTRACTION_STANDARD_TOOLTIP;
+    const reason = String(doc?.extraction_engine_reason || '').trim();
+    return reason ? `${tooltip} ${reason}.` : tooltip;
   }
 
   function getGroupDocumentCitationTooltip(doc) {
@@ -3776,7 +3802,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
   }
 
   function getGroupDocumentExtractionModeBadge(doc) {
-    if (!isGroupPdfDocument(doc)) {
+    if (!supportsGroupExtractionModeChange(doc)) {
       return '';
     }
 
@@ -3787,7 +3813,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
   }
 
   function getGroupDocumentReprocessDropdownItems(doc) {
-    if (!isGroupPdfDocument(doc)) {
+    if (!supportsGroupExtractionModeChange(doc)) {
       return '';
     }
 
@@ -3795,7 +3821,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
     const targetMode = getGroupDocumentTargetExtractionMode(doc);
     const targetLabel = getGroupDocumentExtractionModeLabelFromMode(targetMode);
     const targetIcon = getGroupDocumentExtractionModeIcon(targetMode);
-    const targetTooltip = getGroupDocumentExtractionChangeTooltip(targetMode);
+    const targetTooltip = getGroupDocumentExtractionChangeTooltip(targetMode, getGroupDocumentExtractionEngine(doc));
 
     return `
       <li><hr class="dropdown-divider"></li>
@@ -6307,7 +6333,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
                 <p class="mb-1"><strong>Pages/Chunks:</strong> ${escapeHtml(
                   doc.number_of_pages || "N/A"
                 )}</p> <!-- Assuming number_of_pages stores chunk count -->
-                ${isGroupPdfDocument(doc) ? `<p class="mb-1"><strong>Extraction:</strong> ${getGroupDocumentExtractionModeBadge(doc)}</p>` : ''}
+                ${supportsGroupExtractionModeChange(doc) ? `<p class="mb-1"><strong>Extraction:</strong> ${getGroupDocumentExtractionModeBadge(doc)}</p>` : ''}
                 <p class="mb-1"><strong>Citations:</strong> ${
                   doc.enhanced_citations
                     ? `<span class="badge bg-success" title="${escapeHtml(getGroupDocumentCitationTooltip(doc))}">Enhanced</span>`
@@ -6342,12 +6368,12 @@ app_settings.app_title }} {% endblock %} {% block head %}
           detailsHtml += `
                       <button class="btn btn-sm btn-warning" onclick="onExtractGroupMetadata('${docId}', event)" title="Re-run Metadata Extraction"> <i class="bi bi-magic"></i> Extract Metadata </button>`;
         }
-        if (isGroupPdfDocument(doc)) {
+        if (supportsGroupExtractionModeChange(doc)) {
           const reprocessDocId = escapeHtml(String(docId || ''));
           const extractionActionMode = getGroupDocumentTargetExtractionMode(doc);
           const extractionActionLabel = getGroupDocumentExtractionModeLabelFromMode(extractionActionMode);
           const extractionActionIcon = getGroupDocumentExtractionModeIcon(extractionActionMode);
-          const extractionActionTooltip = getGroupDocumentExtractionChangeTooltip(extractionActionMode);
+          const extractionActionTooltip = getGroupDocumentExtractionChangeTooltip(extractionActionMode, getGroupDocumentExtractionEngine(doc));
           detailsHtml += `
                       <button class="btn btn-sm btn-outline-secondary" onclick="reprocessGroupDocumentExtraction('${reprocessDocId}', '${extractionActionMode}', event)" title="${escapeHtml(extractionActionTooltip)}"> <i class="bi ${extractionActionIcon}"></i> Change to ${extractionActionLabel} </button>`;
         }

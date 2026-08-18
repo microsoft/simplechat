@@ -1739,6 +1739,8 @@ def _build_base_row(document_item, source_scope, scope_type, scope_id, access_ro
         'publication_date': document_item.get('publication_date'),
         'enhanced_citations': _has_persisted_blob_reference(document_item),
         'document_intelligence_extraction_mode': document_item.get('document_intelligence_extraction_mode'),
+        'extraction_engine': document_item.get('extraction_engine'),
+        'extraction_engine_reason': document_item.get('extraction_engine_reason'),
         'generated_artifact_promotion_status': document_item.get('generated_artifact_promotion_status'),
         'generated_artifact_requested_by_user_id': document_item.get('generated_artifact_requested_by_user_id'),
         'file_sync': document_item.get('file_sync'),
@@ -2153,6 +2155,7 @@ def _query_candidate_projection_rows_for_scope(scope_key, source_scope):
         'c.shared_user_ids, c.shared_group_ids, c.file_name, c.title, c.document_classification, c.tags, c.authors, c.keywords, '
         'c.abstract, c.status, c.percentage_complete, c.number_of_pages, c.publication_date, '
         'c.enhanced_citations, c.document_intelligence_extraction_mode, '
+        'c.extraction_engine, c.extraction_engine_reason, '
         'c.generated_artifact_promotion_status, c.generated_artifact_requested_by_user_id, '
         'c.file_sync, c.created_from_chat_upload, '
         'c.conversation_id, c.conversation_title_at_upload, c.upload_date, c.last_updated, '
@@ -2407,6 +2410,8 @@ def _projection_row_to_document(row, source_scope):
         'publication_date': row.get('publication_date'),
         'enhanced_citations': row.get('enhanced_citations'),
         'document_intelligence_extraction_mode': row.get('document_intelligence_extraction_mode'),
+        'extraction_engine': row.get('extraction_engine'),
+        'extraction_engine_reason': row.get('extraction_engine_reason'),
         'generated_artifact_promotion_status': row.get('generated_artifact_promotion_status'),
         'generated_artifact_requested_by_user_id': row.get('generated_artifact_requested_by_user_id'),
         'file_sync': row.get('file_sync'),

@@ -90,6 +90,8 @@ def _resolve_admin_settings_test_secrets(payload):
             _resolve_test_payload_secret(payload, ('apim', 'subscription_key'), settings, 'azure_apim_document_intelligence_subscription_key')
         else:
             _resolve_test_payload_secret(payload, ('direct', 'key'), settings, 'azure_document_intelligence_key')
+    elif test_type == 'content_understanding':
+        _resolve_test_payload_secret(payload, ('key',), settings, 'azure_content_understanding_key')
     elif test_type == 'redis':
         _resolve_test_payload_secret(payload, ('key',), settings, 'redis_key')
     elif test_type == 'web_search':
@@ -745,6 +747,9 @@ def register_route_backend_settings(bp):
 
             elif test_type == 'azure_doc_intelligence':
                 return _test_azure_doc_intelligence_connection(data)
+
+            elif test_type == 'content_understanding':
+                return _test_content_understanding_connection(data)
 
             elif test_type == 'multimodal_vision':
                 return _test_multimodal_vision_connection(data)
@@ -1997,12 +2002,46 @@ def _test_azure_doc_intelligence_connection(payload):
         time.sleep(10)
 
     if status == "succeeded":
-        if extraction_mode == "auto":
-            return jsonify({'message': 'Azure document intelligence Auto connection successful. Auto samples PDFs with Enhanced extraction during ingestion, then finishes with Standard or Enhanced.'}), 200
-        extraction_mode_label = "Enhanced" if extraction_mode == "layout" else "Standard"
-        return jsonify({'message': f'Azure document intelligence {extraction_mode_label} connection successful'}), 200
+        if test_extraction_mode == "layout":
+            return jsonify({'message': (
+                'Azure document intelligence connection successful. Standard extraction and the '
+                'Layout model used for Auto sampling and Enhanced fallback are both reachable.'
+            )}), 200
+        return jsonify({'message': 'Azure document intelligence Standard connection successful'}), 200
     else:
         return jsonify({'error': f"Document Intelligence error: {status}"}), 500
+
+def _test_content_understanding_connection(payload):
+    """Attempt to reach Azure AI Content Understanding using ephemeral settings."""
+    from functions_content_understanding import test_content_understanding_connection
+
+    config_override = {
+        'endpoint': payload.get('endpoint'),
+        'key': payload.get('key'),
+        'authentication_type': payload.get('authentication_type'),
+        'api_version': payload.get('api_version'),
+        'analyzer_id': payload.get('analyzer_id'),
+        'image_analyzer_id': payload.get('image_analyzer_id'),
+    }
+
+    sample_file_path = None
+    if payload.get('run_sample_analysis'):
+        candidate_path = os.path.join(current_app.root_path, 'static', 'test_files', 'test_document.pdf')
+        if os.path.exists(candidate_path):
+            sample_file_path = candidate_path
+
+    try:
+        is_ok, message = test_content_understanding_connection(
+            config_override,
+            sample_file_path=sample_file_path,
+        )
+    except Exception as e:
+        return jsonify({'error': f'Content Understanding connection error: {str(e)}'}), 500
+
+    if is_ok:
+        return jsonify({'message': message}), 200
+    return jsonify({'error': message}), 400
+
 
 def _test_key_vault_connection(payload):
     """Attempt to connect to Azure Key Vault using ephemeral settings."""

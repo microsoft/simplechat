@@ -1002,6 +1002,10 @@ def register_route_frontend_admin_settings(bp):
                 app_settings=settings_for_template,
                 settings=settings_for_template,
                 azure_environment=AZURE_ENVIRONMENT,
+                content_understanding_supported=is_content_understanding_supported_environment(),
+                content_understanding_api_version_default=CONTENT_UNDERSTANDING_API_VERSION_DEFAULT,
+                content_understanding_document_analyzer_default=CONTENT_UNDERSTANDING_DOCUMENT_ANALYZER_DEFAULT,
+                content_understanding_image_analyzer_default=CONTENT_UNDERSTANDING_IMAGE_ANALYZER_DEFAULT,
                 default_video_indexer_endpoint=video_indexer_endpoint,
                 default_video_indexer_arm_api_version=DEFAULT_VIDEO_INDEXER_ARM_API_VERSION,
                 user_settings=user_settings,
@@ -2328,6 +2332,39 @@ def register_route_frontend_admin_settings(bp):
                 form_data.get('document_intelligence_auto_sample_pages')
             )
 
+            enable_enhanced_extraction = form_data.get('enable_enhanced_extraction') == 'on'
+            enhanced_extraction_was_enabled = is_enhanced_extraction_enabled(settings)
+            if not enable_enhanced_extraction:
+                # Standard is the only mode available while Enhanced is off.
+                document_intelligence_pdf_image_extraction_mode = 'read'
+            elif not enhanced_extraction_was_enabled and document_intelligence_pdf_image_extraction_mode == 'read':
+                # Turning Enhanced on defaults to Auto so it upgrades only when structure is detected.
+                document_intelligence_pdf_image_extraction_mode = 'auto'
+
+            azure_content_understanding_endpoint = normalize_content_understanding_endpoint(
+                form_data.get('azure_content_understanding_endpoint')
+            )
+            azure_content_understanding_authentication_type = normalize_content_understanding_authentication_type(
+                form_data.get('azure_content_understanding_authentication_type')
+            )
+            azure_content_understanding_api_version = normalize_content_understanding_api_version(
+                form_data.get('azure_content_understanding_api_version')
+            )
+            azure_content_understanding_analyzer_id = normalize_content_understanding_analyzer_id(
+                form_data.get('azure_content_understanding_analyzer_id'),
+                CONTENT_UNDERSTANDING_DOCUMENT_ANALYZER_DEFAULT,
+            )
+            azure_content_understanding_image_analyzer_id = normalize_content_understanding_analyzer_id(
+                form_data.get('azure_content_understanding_image_analyzer_id'),
+                CONTENT_UNDERSTANDING_IMAGE_ANALYZER_DEFAULT,
+            )
+            office_embedded_image_min_pixels = normalize_office_embedded_image_min_pixels(
+                form_data.get('office_embedded_image_min_pixels')
+            )
+            office_embedded_image_max_per_document = normalize_office_embedded_image_max_per_document(
+                form_data.get('office_embedded_image_max_per_document')
+            )
+
             # --- Construct new_settings Dictionary ---
             new_settings = {
                 # Logging
@@ -2727,6 +2764,18 @@ def register_route_frontend_admin_settings(bp):
                 'enable_document_intelligence_apim': form_data.get('enable_document_intelligence_apim') == 'on',
                 'azure_apim_document_intelligence_endpoint': form_data.get('azure_apim_document_intelligence_endpoint', '').strip(),
                 'azure_apim_document_intelligence_subscription_key': admin_secret('azure_apim_document_intelligence_subscription_key'),
+
+                # Enhanced extraction (Azure AI Content Understanding, with Doc Intelligence Layout fallback)
+                'enable_enhanced_extraction': enable_enhanced_extraction,
+                'azure_content_understanding_endpoint': azure_content_understanding_endpoint,
+                'azure_content_understanding_key': admin_secret('azure_content_understanding_key'),
+                'azure_content_understanding_authentication_type': azure_content_understanding_authentication_type,
+                'azure_content_understanding_api_version': azure_content_understanding_api_version,
+                'azure_content_understanding_analyzer_id': azure_content_understanding_analyzer_id,
+                'azure_content_understanding_image_analyzer_id': azure_content_understanding_image_analyzer_id,
+                'enable_office_embedded_image_analysis': form_data.get('enable_office_embedded_image_analysis') == 'on',
+                'office_embedded_image_min_pixels': office_embedded_image_min_pixels,
+                'office_embedded_image_max_per_document': office_embedded_image_max_per_document,
 
                 'enable_key_vault_secret_storage': form_data.get('enable_key_vault_secret_storage') == 'on',
                 'key_vault_name': form_data.get('key_vault_name', '').strip(),

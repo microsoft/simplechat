@@ -90,6 +90,7 @@ ADMIN_SETTINGS_FORM_SECRET_FIELDS = (
     "azure_apim_ai_search_subscription_key",
     "azure_document_intelligence_key",
     "azure_apim_document_intelligence_subscription_key",
+    "azure_content_understanding_key",
     "speech_service_key",
     "model_endpoint_identity_header_hmac_secret",
 )
@@ -530,6 +531,23 @@ DOCUMENT_INTELLIGENCE_PDF_IMAGE_EXTRACTION_MODES = {"read", "layout", "auto"}
 DOCUMENT_INTELLIGENCE_MANUAL_EXTRACTION_MODES = {"read", "layout"}
 DOCUMENT_INTELLIGENCE_AUTO_SAMPLE_PAGES_DEFAULT = 3
 DOCUMENT_INTELLIGENCE_AUTO_SAMPLE_PAGES_MAX = 20
+
+# Enhanced extraction engines. Standard extraction is always Document Intelligence prebuilt-read.
+EXTRACTION_ENGINE_DOCUMENT_INTELLIGENCE = "document_intelligence"
+EXTRACTION_ENGINE_CONTENT_UNDERSTANDING = "content_understanding"
+EXTRACTION_ENGINES = {EXTRACTION_ENGINE_DOCUMENT_INTELLIGENCE, EXTRACTION_ENGINE_CONTENT_UNDERSTANDING}
+
+CONTENT_UNDERSTANDING_AUTHENTICATION_TYPES = {"key", "managed_identity"}
+CONTENT_UNDERSTANDING_API_VERSION_DEFAULT = "2025-11-01"
+CONTENT_UNDERSTANDING_DOCUMENT_ANALYZER_DEFAULT = "prebuilt-documentSearch"
+CONTENT_UNDERSTANDING_IMAGE_ANALYZER_DEFAULT = "prebuilt-imageSearch"
+# Azure AI Content Understanding is only offered in Azure commercial regions today.
+CONTENT_UNDERSTANDING_SUPPORTED_AZURE_ENVIRONMENTS = {"public"}
+
+OFFICE_EMBEDDED_IMAGE_MIN_PIXELS_DEFAULT = 150
+OFFICE_EMBEDDED_IMAGE_MIN_PIXELS_MAX = 2000
+OFFICE_EMBEDDED_IMAGE_MAX_PER_DOCUMENT_DEFAULT = 25
+OFFICE_EMBEDDED_IMAGE_MAX_PER_DOCUMENT_MAX = 200
 AGENTS_PAGE_PROMOTED_POPULAR_ORDER_OPTIONS = {"before", "after", "mixed"}
 AGENTS_PAGE_PROMOTED_POPULAR_WINDOW_OPTIONS = {"all_time", "30_days", "both"}
 AGENTS_PAGE_PROMOTED_POPULAR_TAG_LABEL_DEFAULT = "Promoted"
@@ -698,6 +716,153 @@ def normalize_document_intelligence_manual_extraction_mode(value):
     normalized_value = str(value or "read").strip().lower()
     if normalized_value not in DOCUMENT_INTELLIGENCE_MANUAL_EXTRACTION_MODES:
         return "read"
+    return normalized_value
+
+
+def normalize_enhanced_extraction_enabled(value):
+    """Normalize the Enhanced extraction master toggle into a strict boolean."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized_value = value.strip().lower()
+        if normalized_value in {"false", "0", "no", "off", ""}:
+            return False
+        if normalized_value in {"true", "1", "yes", "on"}:
+            return True
+    return bool(value)
+
+
+def is_enhanced_extraction_enabled(settings):
+    """Return whether admins have enabled Enhanced extraction beyond Document Intelligence Standard."""
+    return normalize_enhanced_extraction_enabled((settings or {}).get('enable_enhanced_extraction'))
+
+
+def get_effective_document_intelligence_pdf_image_extraction_mode(settings):
+    """Return the extraction mode actually used, forcing Standard when Enhanced is disabled."""
+    if not is_enhanced_extraction_enabled(settings):
+        return "read"
+    return get_document_intelligence_pdf_image_extraction_mode(settings)
+
+
+def normalize_content_understanding_authentication_type(value):
+    """Normalize the Content Understanding authentication type to key or managed identity."""
+    normalized_value = str(value or "key").strip().lower()
+    if normalized_value not in CONTENT_UNDERSTANDING_AUTHENTICATION_TYPES:
+        return "key"
+    return normalized_value
+
+
+def normalize_content_understanding_endpoint(value):
+    """Normalize the Content Understanding endpoint by trimming whitespace and trailing slashes."""
+    return str(value or "").strip().rstrip("/")
+
+
+def normalize_content_understanding_api_version(value):
+    """Normalize the Content Understanding API version, falling back to the GA version."""
+    normalized_value = str(value or "").strip()
+    return normalized_value or CONTENT_UNDERSTANDING_API_VERSION_DEFAULT
+
+
+def normalize_content_understanding_analyzer_id(value, default_analyzer_id=None):
+    """Normalize a Content Understanding analyzer id, falling back to the supplied prebuilt default."""
+    fallback_analyzer_id = default_analyzer_id or CONTENT_UNDERSTANDING_DOCUMENT_ANALYZER_DEFAULT
+    normalized_value = str(value or "").strip()
+    return normalized_value or fallback_analyzer_id
+
+
+def normalize_office_embedded_image_min_pixels(value):
+    """Normalize the minimum width/height an embedded Office image must have to be analyzed."""
+    try:
+        normalized_value = int(value)
+    except (TypeError, ValueError):
+        normalized_value = OFFICE_EMBEDDED_IMAGE_MIN_PIXELS_DEFAULT
+
+    return max(1, min(normalized_value, OFFICE_EMBEDDED_IMAGE_MIN_PIXELS_MAX))
+
+
+def normalize_office_embedded_image_max_per_document(value):
+    """Normalize how many embedded Office images may be analyzed for a single document."""
+    try:
+        normalized_value = int(value)
+    except (TypeError, ValueError):
+        normalized_value = OFFICE_EMBEDDED_IMAGE_MAX_PER_DOCUMENT_DEFAULT
+
+    return max(0, min(normalized_value, OFFICE_EMBEDDED_IMAGE_MAX_PER_DOCUMENT_MAX))
+
+
+def is_content_understanding_supported_environment(azure_environment=None):
+    """Return whether the running Azure cloud offers Azure AI Content Understanding."""
+    resolved_environment = str(
+        azure_environment if azure_environment is not None else AZURE_ENVIRONMENT
+    ).strip().lower()
+    return resolved_environment in CONTENT_UNDERSTANDING_SUPPORTED_AZURE_ENVIRONMENTS
+
+
+def get_content_understanding_config(settings):
+    """Return the normalized Content Understanding connection settings."""
+    resolved_settings = settings or {}
+    return {
+        'endpoint': normalize_content_understanding_endpoint(
+            resolved_settings.get('azure_content_understanding_endpoint')
+        ),
+        'key': str(resolved_settings.get('azure_content_understanding_key') or '').strip(),
+        'authentication_type': normalize_content_understanding_authentication_type(
+            resolved_settings.get('azure_content_understanding_authentication_type')
+        ),
+        'api_version': normalize_content_understanding_api_version(
+            resolved_settings.get('azure_content_understanding_api_version')
+        ),
+        'analyzer_id': normalize_content_understanding_analyzer_id(
+            resolved_settings.get('azure_content_understanding_analyzer_id'),
+            CONTENT_UNDERSTANDING_DOCUMENT_ANALYZER_DEFAULT,
+        ),
+        'image_analyzer_id': normalize_content_understanding_analyzer_id(
+            resolved_settings.get('azure_content_understanding_image_analyzer_id'),
+            CONTENT_UNDERSTANDING_IMAGE_ANALYZER_DEFAULT,
+        ),
+    }
+
+
+def is_content_understanding_configured(settings):
+    """Return whether Content Understanding has enough configuration to be called."""
+    config = get_content_understanding_config(settings)
+    if not config['endpoint']:
+        return False
+    if config['authentication_type'] == 'key' and not config['key']:
+        return False
+    return True
+
+
+def resolve_enhanced_extraction_engine(settings, azure_environment=None):
+    """Resolve which engine backs Enhanced extraction, plus a human-readable reason.
+
+    Enhanced always falls back to Document Intelligence Layout so Enhanced stays usable in
+    clouds where Content Understanding is unavailable, or before it has been configured.
+    """
+    if not is_content_understanding_supported_environment(azure_environment):
+        resolved_environment = str(
+            azure_environment if azure_environment is not None else AZURE_ENVIRONMENT
+        ).strip().lower()
+        return (
+            EXTRACTION_ENGINE_DOCUMENT_INTELLIGENCE,
+            f"Content Understanding is not available in the {resolved_environment} cloud, "
+            "so Enhanced used Document Intelligence Layout",
+        )
+
+    if not is_content_understanding_configured(settings):
+        return (
+            EXTRACTION_ENGINE_DOCUMENT_INTELLIGENCE,
+            "Content Understanding is not configured, so Enhanced used Document Intelligence Layout",
+        )
+
+    return (EXTRACTION_ENGINE_CONTENT_UNDERSTANDING, '')
+
+
+def normalize_extraction_engine(value):
+    """Normalize a persisted extraction engine value, defaulting to Document Intelligence."""
+    normalized_value = str(value or "").strip().lower()
+    if normalized_value not in EXTRACTION_ENGINES:
+        return EXTRACTION_ENGINE_DOCUMENT_INTELLIGENCE
     return normalized_value
 
 
@@ -1566,6 +1731,20 @@ def get_settings(use_cosmos=False, include_source=False):
         'azure_apim_document_intelligence_endpoint': '',
         'azure_apim_document_intelligence_subscription_key': '',
 
+        # Enhanced extraction. Standard is always Document Intelligence prebuilt-read; Enhanced uses
+        # Azure AI Content Understanding in Azure commercial clouds and falls back to Document
+        # Intelligence prebuilt-layout everywhere else.
+        'enable_enhanced_extraction': False,
+        'azure_content_understanding_endpoint': '',
+        'azure_content_understanding_key': '',
+        'azure_content_understanding_authentication_type': 'key',
+        'azure_content_understanding_api_version': CONTENT_UNDERSTANDING_API_VERSION_DEFAULT,
+        'azure_content_understanding_analyzer_id': CONTENT_UNDERSTANDING_DOCUMENT_ANALYZER_DEFAULT,
+        'azure_content_understanding_image_analyzer_id': CONTENT_UNDERSTANDING_IMAGE_ANALYZER_DEFAULT,
+        'enable_office_embedded_image_analysis': True,
+        'office_embedded_image_min_pixels': OFFICE_EMBEDDED_IMAGE_MIN_PIXELS_DEFAULT,
+        'office_embedded_image_max_per_document': OFFICE_EMBEDDED_IMAGE_MAX_PER_DOCUMENT_DEFAULT,
+
         # Web search (via Azure AI Foundry agent)
         'enable_web_search': False,
         'web_search_consent_accepted': False,
@@ -1798,6 +1977,13 @@ def get_settings(use_cosmos=False, include_source=False):
         legacy_control_center_schedule = (
             'control_center_auto_refresh_timezone' not in settings_item
         )
+        # Enhanced extraction gained an explicit enable toggle. Deployments that already selected
+        # Enhanced or Auto must keep it, otherwise they would silently downgrade to Standard and
+        # then lose the stored mode on the next admin settings save.
+        legacy_enhanced_extraction = 'enable_enhanced_extraction' not in settings_item
+        legacy_enhanced_extraction_mode = normalize_document_intelligence_pdf_image_extraction_mode(
+            settings_item.get('document_intelligence_pdf_image_extraction_mode')
+        )
         legacy_control_center_time = settings_item.get('control_center_auto_refresh_time')
         if not isinstance(legacy_control_center_time, str):
             legacy_hour = settings_item.get('control_center_auto_refresh_hour', 6)
@@ -1822,6 +2008,10 @@ def get_settings(use_cosmos=False, include_source=False):
                 merged['control_center_auto_refresh_timezone'] = 'UTC'
             merged['control_center_auto_refresh_next_run'] = None
             control_center_schedule_migration_updated = True
+        enhanced_extraction_migration_updated = False
+        if legacy_enhanced_extraction and legacy_enhanced_extraction_mode in ('layout', 'auto'):
+            merged['enable_enhanced_extraction'] = True
+            enhanced_extraction_migration_updated = True
         migration_updated = apply_custom_endpoint_setting_migration(merged)
         assignment_settings_updated = normalize_group_workflow_assignment_settings(merged)
         promoted_popular_settings_updated = normalize_agents_page_promoted_popular_settings(merged)
@@ -1838,6 +2028,7 @@ def get_settings(use_cosmos=False, include_source=False):
         if (
             merge_changed
             or control_center_schedule_migration_updated
+            or enhanced_extraction_migration_updated
             or migration_updated
             or assignment_settings_updated
             or promoted_popular_settings_updated
