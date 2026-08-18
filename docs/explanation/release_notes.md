@@ -2,7 +2,7 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
-### **(v0.250.225)**
+### **(v0.250.227)**
 
 #### Bug Fixes
 
@@ -15,6 +15,67 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   The recent Blueprint security hardening renamed how routes are declared, but 82 assertions across 40 test files still checked for the old form. Those tests were failing on the rename before they ever reached the behavior they were written to protect.
     *   This is how the shared conversation streaming bug reached users: the test guarding that exact code path was already red for an unrelated reason. 59 assertions across 32 files were corrected, each verified against a real route first. 14 were deliberately left alone because they point at routes that no longer exist, which is a separate issue worth investigating rather than hiding.
     *   (Ref: #1281, `functional_tests/`, Blueprint route registration)
+
+### **(v0.250.226)**
+
+#### Bug Fixes
+
+*   **File Sync Now Tells the Workflow What Changed**
+    *   File Sync builds a summary of each run — the scan counts plus every new or changed document — but that summary never reached the model in any workflow that uses tasks, which is every workflow the builder creates.
+    *   The failure was silent and misleading: the summary *was* written into the conversation, so the transcript showed the changed-document list as though the model had received it. In practice the model saw only the raw task instructions and usually replied that it knew nothing about any documents.
+    *   This hit **Monitor File Sync Changes** workflows hardest, along with any workflow using Search or no document action, or with **Use changed documents** turned off. The first task in the sequence now receives the summary, and later tasks get it through the first task's response.
+    *   The summary is also bounded now, with a clear truncation notice, so a very large sync cannot crowd out the actual instructions.
+    *   (Ref: #1285, `functions_workflow_runner.py`, File Sync prompt context)
+
+*   **Document Search Queries Are No Longer Diluted by Injected Context**
+    *   A workflow's document search used the entire task prompt as its search query, including the File Sync summary and the previous task's full response. A search for "find the renewal clause" could end up querying 50 lines of file paths.
+    *   Search queries now use the task's own instructions. Retrieved content and context still reach the model exactly as before — only the query is scoped.
+    *   (Ref: #1285, `functions_workflow_runner.py`, workflow document search)
+
+### **(v0.250.225)**
+
+#### New Features
+
+*   **Workspace Documents Are Now Configured Per Workflow Task**
+    *   Each task in a workflow now owns its own **Workspace documents** setup — document action, document target, selected documents, Compare source and targets, per-document analysis, and windowing — instead of sharing one configuration across the whole workflow.
+    *   Adding a task resets the document fields, and returning to a previously configured task restores that task's setup, so tasks are self-contained.
+    *   Every task now executes with its own document action at run time. Previously the single workflow-level action only ever applied to task 1, and every later task ran with no document context.
+    *   Existing workflows keep working: their saved document action is inherited by task 1 only, matching how they actually ran. Group workflows still force every task into the owning group workspace.
+    *   Task cards and the Review step now summarize which documents each task uses.
+    *   (Ref: #1282, `workspace_workflows.js`, `functions_personal_workflows.py`, `functions_group_workflows.py`, `functions_workflow_runner.py`, per-task document actions)
+
+#### Bug Fixes
+
+*   **Workflow Document Picker No Longer Hangs on "Loading tags..."**
+    *   Choosing a Document action of Search, Analyze, or Compare in the workflow builder revealed the document picker but never loaded it. Tags stayed disabled showing `Loading tags...` forever, the document list stayed empty, and no console error appeared.
+    *   The picker was only ever loaded when the modal opened, and that path returned early whenever the action was `No document action` — which is always true for a new workflow. The Document action dropdown's change handler only toggled visibility and never triggered a load.
+    *   Changing the Document action or Document Target now loads the picker, and the tags control always resolves to the available tags or `No tags available for this scope`.
+    *   (Ref: #1282, `workspace_workflows.js`, `chat-documents.js`, workflow document picker)
+
+*   **Workflow Run History No Longer Masks a Failed Document**
+    *   When two tasks in the same run process the same document, the later task's status used to overwrite the earlier one's, so a document that failed in one task could be shown as succeeded.
+    *   Document run items are now recorded per task, and each item records which task produced it.
+    *   (Ref: #1282, `functions_workflow_runner.py`, workflow run history)
+
+*   **Resume Failed Items Respects Per-Task Documents**
+    *   Resuming failed documents narrowed only the workflow-level document action. Now that tasks own their own documents, it also narrows each task's analyze action to the documents that failed in that task, and group resumes keep every task inside the owning group workspace.
+    *   (Ref: #1282, `route_backend_workflows.py`, resume failed items)
+
+*   **A Workflow Task Configured for Zero Retries Per Window Stays at Zero**
+    *   Saving a multi-task workflow rewrote a stored `Retries Per Window` of `0` to `1` on any task other than the one being edited.
+    *   (Ref: #1282, `workspace_workflows.js`, retries per window)
+
+*   **An Invalid Task Document Action No Longer Aborts the Whole Run**
+    *   If a workflow's document action stopped validating between runs — for example an administrator disabled Analyze or Compare, or lowered the workflow document limit — the run failed outright with no task-level error recorded.
+    *   The failure is now contained to that task and follows the workflow's retry and failure-handling settings.
+    *   (Ref: #1282, `functions_workflow_runner.py`, workflow task error handling)
+
+#### User Interface Enhancements
+
+*   **"Refresh documents" Now Actually Refreshes**
+    *   The **Refresh selected documents** button previously warned `Select one or more workspace documents in the picker first.` even though the picker was empty and nothing could be selected.
+    *   It is now labeled **Refresh documents**, reloads the document list while preserving the current selection, and reports what it found — including a clear message when the selected scope has no documents.
+    *   (Ref: #1282, `workspace.html`, `group_workspaces.html`, `workspace_workflows.js`)
 
 ### **(v0.250.224)**
 

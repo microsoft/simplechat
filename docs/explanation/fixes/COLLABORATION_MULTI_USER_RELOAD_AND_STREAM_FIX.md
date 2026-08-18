@@ -1,7 +1,7 @@
 # Shared (Multi-User) Conversation Reload and Streaming Fix
 
 **Fixed in version: 0.250.224**
-**Hardening added in version: 0.250.225**
+**Hardening added in version: 0.250.227**
 **Tracking issue: [#1281](https://github.com/microsoft/simplechat/issues/1281)**
 
 ## Issue Description
@@ -185,7 +185,7 @@ The resolver is loaded by compiling just its AST node out of `route_backend_coll
 * Fix note: this also restores group collaborative conversations, which use the same stream bridge.
 * Feature documentation: `docs/explanation/features/COLLABORATIVE_CONVERSATIONS_FOUNDATION.md`
 
-## Follow-up Hardening (0.250.225)
+## Follow-up Hardening (0.250.227)
 
 Three further defects were found while tracing this bug. None of them caused the reported symptoms, so they were kept out of the original fix.
 

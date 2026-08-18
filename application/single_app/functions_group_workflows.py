@@ -38,6 +38,7 @@ from functions_personal_workflows import (
     _normalize_bool,
     _normalize_document_action_config,
     _normalize_schedule,
+    _normalize_task_document_action_config,
     _normalize_text,
     _normalize_workflow_error_handling,
     _normalize_workflow_tasks,
@@ -54,12 +55,9 @@ GROUP_WORKFLOW_MEMBER_ROLES = ("Owner", "Admin", "DocumentManager", "User")
 WORKFLOW_CONVERSATION_ACCESS_ERROR = 'Workflow conversation not found or access denied.'
 
 
-def _normalize_group_document_action_config(group_id, workflow_data, existing_workflow=None, allow_empty_file_sync_targets=False):
-    action_config = _normalize_document_action_config(
-        workflow_data,
-        existing_workflow=existing_workflow,
-        allow_empty_file_sync_targets=allow_empty_file_sync_targets,
-    )
+def _apply_group_document_action_scope(group_id, action_config):
+    """Force a normalized document action to stay inside the owning group workspace."""
+    action_config = action_config if isinstance(action_config, dict) else {'type': 'none'}
     if action_config.get('type') == 'none':
         return action_config
 
@@ -67,6 +65,15 @@ def _normalize_group_document_action_config(group_id, workflow_data, existing_wo
     action_config['active_group_ids'] = [group_id]
     action_config['active_public_workspace_id'] = []
     return action_config
+
+
+def _normalize_group_document_action_config(group_id, workflow_data, existing_workflow=None, allow_empty_file_sync_targets=False):
+    action_config = _normalize_document_action_config(
+        workflow_data,
+        existing_workflow=existing_workflow,
+        allow_empty_file_sync_targets=allow_empty_file_sync_targets,
+    )
+    return _apply_group_document_action_scope(group_id, action_config)
 
 
 def _normalize_group_workflow_conversation_id(group_id, workflow_data, existing_workflow=None):
@@ -440,6 +447,20 @@ def save_group_workflow(group_id, workflow_data, actor_user_id, user_info=None):
 
     workflow_name = _normalize_text(workflow_data.get('name'), 'Workflow name', required=True)
     description = _normalize_text(workflow_data.get('description'), 'Description')
+    file_sync = _normalize_file_sync_config(
+        actor_user_id,
+        group_id,
+        workflow_data,
+        existing_workflow=existing_workflow,
+        user_info=user_info,
+    )
+    allow_empty_file_sync_targets = bool(file_sync.get('enabled') and file_sync.get('use_changed_documents'))
+    document_action = _normalize_group_document_action_config(
+        group_id,
+        workflow_data,
+        existing_workflow=existing_workflow,
+        allow_empty_file_sync_targets=allow_empty_file_sync_targets,
+    )
     tasks = _normalize_workflow_tasks(
         workflow_data,
         existing_workflow=existing_workflow,
@@ -450,6 +471,15 @@ def save_group_workflow(group_id, workflow_data, actor_user_id, user_info=None):
             settings=settings,
         ),
         max_tasks=get_workflow_max_tasks(settings),
+        task_document_action_normalizer=lambda action_payload: _apply_group_document_action_scope(
+            group_id,
+            _normalize_task_document_action_config(
+                action_payload,
+                allow_empty_file_sync_targets=allow_empty_file_sync_targets,
+                settings=settings,
+            ),
+        ),
+        default_document_action=document_action,
     )
     task_prompt = _normalize_text(
         workflow_data.get('task_prompt') or (tasks[0].get('instructions') if tasks else ''),
@@ -494,20 +524,6 @@ def save_group_workflow(group_id, workflow_data, actor_user_id, user_info=None):
     chat_capabilities_enabled = _normalize_bool(
         workflow_data.get('chat_capabilities_enabled', default_chat_capabilities_enabled),
         default=default_chat_capabilities_enabled,
-    )
-    file_sync = _normalize_file_sync_config(
-        actor_user_id,
-        group_id,
-        workflow_data,
-        existing_workflow=existing_workflow,
-        user_info=user_info,
-    )
-    allow_empty_file_sync_targets = bool(file_sync.get('enabled') and file_sync.get('use_changed_documents'))
-    document_action = _normalize_group_document_action_config(
-        group_id,
-        workflow_data,
-        existing_workflow=existing_workflow,
-        allow_empty_file_sync_targets=allow_empty_file_sync_targets,
     )
     if trigger_type == 'file_sync':
         if not file_sync.get('enabled'):

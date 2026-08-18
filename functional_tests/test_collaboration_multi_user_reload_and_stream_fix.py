@@ -2,7 +2,7 @@
 # test_collaboration_multi_user_reload_and_stream_fix.py
 """
 Functional test for shared (multi-user) conversation reload and AI streaming.
-Version: 0.250.225
+Version: 0.250.227
 Implemented in: 0.250.224
 
 This test ensures that:
@@ -17,7 +17,7 @@ This test ensures that:
    comparison-catalog side effects that the personal loader used to provide, so shared
    conversations keep parity instead of silently losing them.
 4. Every shared stream error is tagged with conversation_kind, so the browser recovery
-   path can never fall back to the personal messages endpoint (added in 0.250.225).
+   path can never fall back to the personal messages endpoint (added in 0.250.227).
 """
 
 import ast

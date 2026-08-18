@@ -1,18 +1,25 @@
 # test_workflow_task_sequence.py
 """
 Functional test for ordered workflow task sequences.
-Version: 0.250.129
+Version: 0.250.225
 Implemented in: 0.250.064
 Enhanced in: 0.250.065
 Enhanced in: 0.250.129
+Enhanced in: 0.250.225
 
 This test ensures workflow tasks are normalized in order, execute with bounded
 prior-task context, retry safely, and honor halt or continue error strategies.
 """
 
 import ast
+import os
+import sys
 import uuid
 from pathlib import Path
+
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
+from test_support.versioning import assert_app_version_at_least
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -20,7 +27,7 @@ APP_ROOT = ROOT / "application" / "single_app"
 STORE_FILE = APP_ROOT / "functions_personal_workflows.py"
 GROUP_STORE_FILE = APP_ROOT / "functions_group_workflows.py"
 RUNNER_FILE = APP_ROOT / "functions_workflow_runner.py"
-EXPECTED_VERSION = "0.250.129"
+MINIMUM_VERSION = "0.250.225"
 
 
 def read_text(path: Path) -> str:
@@ -84,12 +91,23 @@ def load_runner_helpers(dispatch, personal_runner_normalizer=None, group_runner_
         "_save_workflow_run_item_record": lambda workflow, item: saved_items.append(dict(item)) or item,
         "_utc_now_iso": lambda: next(timestamps),
         "build_analyze_config": lambda action: {"enabled": action.get("type") == "analyze"},
+        "_get_document_action_config": lambda source: dict(
+            (source or {}).get("document_action") or {"type": "none"}
+        ),
+        "WORKFLOW_FILE_SYNC_CONTEXT_MAX_CHARS": 8000,
+        "DOCUMENT_ACTION_TYPE_ANALYZE": "analyze",
+        "_get_workflow_file_sync_config": lambda workflow: (workflow or {}).get("file_sync") or {},
         "uuid": uuid,
     }
     helpers = load_functions(
         RUNNER_FILE,
         {
             "_truncate_workflow_task_context",
+            "_truncate_workflow_file_sync_context",
+            "_format_workflow_file_sync_context",
+            "_apply_file_sync_changed_documents_to_action",
+            "_apply_file_sync_context_to_workflow",
+            "_resolve_workflow_task_document_action",
             "_build_workflow_task_execution_workflow",
             "_get_workflow_task_requested_runner_mode",
             "_build_workflow_task_runner_audit",
@@ -449,20 +467,38 @@ def test_ordered_tasks_chain_context_and_apply_documents_once() -> None:
         }
 
     helpers, saved_items = load_runner_helpers(dispatch)
-    result = helpers["_execute_workflow_task_sequence"](
+    # Build the File Sync context through the real producer instead of injecting
+    # file_sync_prompt_context by hand, so a missing producer cannot pass this test again.
+    execution_workflow = helpers["_apply_file_sync_context_to_workflow"](
         {
             "id": "workflow-1",
             "name": "Sequence",
             "user_id": "user-1",
             "runner_type": "model",
+            "task_prompt": "Run the sequence.",
             "document_action": {"type": "search", "document_ids": ["doc-1"]},
-            "file_sync_prompt_context": "File Sync context for this workflow run.",
+            "file_sync": {"use_changed_documents": False, "sources": []},
             "tasks": [
                 {"id": "collect", "name": "Collect", "instructions": "Collect facts."},
                 {"id": "summarize", "name": "Summarize", "instructions": "Write a summary."},
             ],
             "error_handling": {"strategy": "halt", "retry_count": 0},
         },
+        {
+            "enabled": True,
+            "counts": {"scanned": 3, "created": 1, "updated": 1, "unchanged": 1, "skipped": 0, "failed": 0},
+            "changed_documents": [
+                {"document_id": "doc-1", "relative_path": "reports/q3.pdf", "action": "created", "source_name": "Reports"},
+            ],
+            "changed_document_ids": ["doc-1"],
+        },
+    )
+    assert execution_workflow["file_sync_prompt_context"], (
+        "_apply_file_sync_context_to_workflow must publish file_sync_prompt_context for tasks."
+    )
+
+    result = helpers["_execute_workflow_task_sequence"](
+        execution_workflow,
         {},
         "conversation-1",
         "run-1",
@@ -474,7 +510,9 @@ def test_ordered_tasks_chain_context_and_apply_documents_once() -> None:
     assert [workflow["runner_type"] for workflow in dispatched_workflows] == ["model", "model"]
     assert dispatched_workflows[0]["document_action"]["type"] == "search"
     assert "[Workflow input context]" in dispatched_workflows[0]["task_prompt"]
-    assert "File Sync context for this workflow run." in dispatched_workflows[0]["task_prompt"]
+    assert "File Sync context for this workflow run" in dispatched_workflows[0]["task_prompt"]
+    assert "reports/q3.pdf" in dispatched_workflows[0]["task_prompt"]
+    assert "[Workflow input context]" not in dispatched_workflows[1]["task_prompt"]
     assert dispatched_workflows[1]["document_action"]["type"] == "none"
     assert "[Previous workflow task output]" in dispatched_workflows[1]["task_prompt"]
     assert "Result 1" in dispatched_workflows[1]["task_prompt"]
@@ -797,9 +835,8 @@ def test_execution_revalidation_rejects_deleted_agent_and_disabled_model() -> No
 
 def test_version_and_legacy_dispatch_contract() -> None:
     """Keep the version and legacy no-task dispatch branch explicit."""
-    config_content = read_text(APP_ROOT / "config.py")
     runner_content = read_text(RUNNER_FILE)
-    assert f'VERSION = "{EXPECTED_VERSION}"' in config_content
+    assert_app_version_at_least(MINIMUM_VERSION)
     assert "if execution_workflow.get('tasks'):" in runner_content
     assert "execution_result = _execute_workflow_dispatch(" in runner_content
 
