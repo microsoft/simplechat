@@ -152,8 +152,8 @@ def test_workspace_models_and_routes_include_branding_fields():
             '"heroColor": normalize_workspace_hero_color',
             'logo_metadata = get_workspace_logo_metadata(g)',
             '**logo_metadata,',
-            '@app.route("/api/groups/<group_id>/logo", methods=["GET"])',
-            '@app.route("/api/groups/<group_id>/logo", methods=["POST"])',
+            '@bp.route("/api/groups/<group_id>/logo", methods=["GET"])',
+            '@bp.route("/api/groups/<group_id>/logo", methods=["POST"])',
         ],
         "group route",
     )
@@ -163,8 +163,8 @@ def test_workspace_models_and_routes_include_branding_fields():
             '"heroColor": normalize_workspace_hero_color',
             'logo_metadata = get_workspace_logo_metadata(ws)',
             '**logo_metadata,',
-            '@app.route("/api/public_workspaces/<ws_id>/logo", methods=["GET"])',
-            '@app.route("/api/public_workspaces/<ws_id>/logo", methods=["POST"])',
+            '@bp.route("/api/public_workspaces/<ws_id>/logo", methods=["GET"])',
+            '@bp.route("/api/public_workspaces/<ws_id>/logo", methods=["POST"])',
         ],
         "public workspace route",
     )

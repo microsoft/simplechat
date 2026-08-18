@@ -69,7 +69,7 @@ def test_agents_catalog_routes_and_navigation():
     sidebar = read_repo_file("application/single_app/templates/_sidebar_nav.html")
     short_sidebar = read_repo_file("application/single_app/templates/_sidebar_short_nav.html")
 
-    assert_contains(app_route, "@app.route('/agents'", "Agents page route")
+    assert_contains(app_route, "@bp.route('/agents'", "Agents page route")
     assert_contains(app_route, "@swagger_route(security=get_auth_security())", "Agents route swagger security")
     assert_contains(app_route, "@login_required", "Agents route login guard")
     assert_contains(app_route, "@user_required", "Agents route user guard")

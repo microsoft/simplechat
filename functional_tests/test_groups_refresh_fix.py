@@ -77,7 +77,7 @@ def test_groups_refresh_functionality():
             with open(backend_file_path, 'r', encoding='utf-8') as f:
                 backend_content = f.read()
             
-            if "@app.route('/api/admin/control-center/groups', methods=['GET'])" not in backend_content:
+            if "@bp.route('/api/admin/control-center/groups', methods=['GET'])" not in backend_content:
                 print("❌ Backend groups endpoint not found")
                 return False
         

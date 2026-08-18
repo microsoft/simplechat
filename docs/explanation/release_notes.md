@@ -2,6 +2,20 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.225)**
+
+#### Bug Fixes
+
+*   **Shared Conversation Stream Errors Stay Attached to the Shared Conversation**
+    *   Follow-up hardening to the v0.250.224 shared conversation fix. When an AI request in a shared conversation failed, the error the browser received did not say which kind of conversation it belonged to, so the recovery path could have reloaded from the personal endpoint and produced the same "Conversation not found" error that was just fixed.
+    *   It could not actually happen yet because of an unrelated guard, but it would have come back the moment anyone added a message id to those errors. All shared stream failures now go through a single serializer that always tags the conversation, and a test walks the code to prove no failure path can skip it.
+    *   (Ref: #1281, `route_backend_collaboration.py`, `chat-streaming.js`, collaborative AI streaming)
+
+*   **Repaired Route Assertions Across the Test Suite**
+    *   The recent Blueprint security hardening renamed how routes are declared, but 82 assertions across 40 test files still checked for the old form. Those tests were failing on the rename before they ever reached the behavior they were written to protect.
+    *   This is how the shared conversation streaming bug reached users: the test guarding that exact code path was already red for an unrelated reason. 59 assertions across 32 files were corrected, each verified against a real route first. 14 were deliberately left alone because they point at routes that no longer exist, which is a separate issue worth investigating rather than hiding.
+    *   (Ref: #1281, `functional_tests/`, Blueprint route registration)
+
 ### **(v0.250.224)**
 
 #### Bug Fixes

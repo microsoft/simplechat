@@ -80,7 +80,7 @@ def test_comprehensive_groups_refresh():
             backend_content = f.read()
         
         # Check groups endpoint exists
-        if "@app.route('/api/admin/control-center/groups', methods=['GET'])" in backend_content:
+        if "@bp.route('/api/admin/control-center/groups', methods=['GET'])" in backend_content:
             print("   ✅ Groups API endpoint exists")
         else:
             print("   ❌ Groups API endpoint missing")
