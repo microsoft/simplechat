@@ -160,7 +160,12 @@ def resolve_citation_location(
     ):
         return "Location", "Workbook Schema"
 
-    return "Page", str(page_number or 1)
+    # Preserve a valid page or sequence of 0. Video chunks are keyed by second and
+    # legitimately start at zero, so truthiness would relabel them as page 1.
+    if page_number is None or page_number == "":
+        return "Page", "1"
+
+    return "Page", str(page_number)
 
 
 def _source_reference_matches_citation(

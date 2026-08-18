@@ -2,6 +2,27 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.218)**
+
+#### Bug Fixes
+
+*   **Agent Document Search Now Produces Real Document Citations**
+    *   Documents an agent retrieved through the document search action are now recorded as document sources instead of only as an agent tool call. Previously they appeared solely as a raw JSON tool modal, so the documents were missing from the message Sources disclosure, were not clickable, never opened in the enhanced citation viewer, and could never reach the Used documents drawer.
+    *   Covers all three document search functions — relevance-ranked search, ordered chunk retrieval, and document summarization — across personal, group, and public workspaces.
+    *   Document search results now carry a ready-to-copy citation value, and the action instructs the model to reuse it verbatim. When the answer cites a document, it is correctly separated from the retrieved sources and recorded in the conversation's used documents.
+    *   Applies to streaming and non-streaming chat, document actions, cancelled and interrupted streams, and scheduled workflow runs.
+    *   Retrieved sources are deliberately not capped, so a search that sources hundreds of chunks records all of them. Chunks retrieved by both the document search toggle and an agent are listed once.
+    *   Cancelled and interrupted streams keep the documents the agent had already retrieved, and citation locations no longer relabel a valid page or sequence of `0` as page 1, which affected video chunks keyed by second.
+    *   Workspace capability metadata now reports document usage for agent-only document turns, which previously under-reported as unused.
+    *   (Ref: #1239, `functions_agent_document_citations.py`, `route_backend_chats.py`, `functions_workflow_runner.py`, `document_search_plugin.py`, `AGENT_DOCUMENT_SEARCH_CITATION_FIX.md`)
+
+#### User Interface Enhancements
+
+*   **Collapsed Long Source Lists**
+    *   The per-message Sources disclosure now shows the first 25 document sources and collapses the rest behind a **Show N more sources** control, so an agent that retrieves hundreds of chunks no longer floods the panel.
+    *   No source data is discarded — the full set is still stored, exported, and available for citation matching.
+    *   (Ref: #1239, `chat-messages.js`, `chat-citations.js`)
+
 ### **(v0.250.217)**
 
 #### New Features
