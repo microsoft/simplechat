@@ -26,7 +26,11 @@ sys.path.insert(0, str(APP_ROOT))
 
 from PIL import Image  # noqa: E402
 
-from functions_office_media import extract_office_embedded_images  # noqa: E402
+from functions_office_media import (  # noqa: E402
+    OFFICE_EMBEDDED_IMAGE_VECTOR_EXTENSIONS,
+    OFFICE_ZIP_MAX_ENTRIES,
+    extract_office_embedded_images,
+)
 from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
 
@@ -476,8 +480,6 @@ def test_archive_entry_count_is_capped():
     """An archive with an absurd number of entries is refused outright."""
     print("Testing archive entry cap...")
 
-    import functions_office_media
-
     with tempfile.TemporaryDirectory() as work_dir:
         docx_path = os.path.join(work_dir, "many_entries.docx")
         output_dir = os.path.join(work_dir, "out")
@@ -486,7 +488,7 @@ def test_archive_entry_count_is_capped():
         with zipfile.ZipFile(docx_path, "w") as archive:
             archive.writestr("[Content_Types].xml", "<Types/>")
             archive.writestr("word/media/image1.png", build_png_bytes(300, 300, (10, 10, 200)))
-            for index in range(functions_office_media.OFFICE_ZIP_MAX_ENTRIES + 10):
+            for index in range(OFFICE_ZIP_MAX_ENTRIES + 10):
                 archive.writestr(f"word/junk/{index}.txt", "x")
 
         extracted = extract_office_embedded_images(docx_path, output_dir, min_pixels=150, max_images=25)
@@ -502,7 +504,6 @@ def test_emf_metafiles_are_rasterized_and_text_recovered():
     """EMF diagrams must rasterize to PNG and surface their text labels, with no OS dependency."""
     print("Testing EMF rasterization...")
 
-    import functions_office_media
     from functions_emf_render import render_metafile_to_png
 
     # A minimal but valid EMF: header, a filled polygon, and EOF.
@@ -516,9 +517,9 @@ def test_emf_metafiles_are_rasterized_and_text_recovered():
     if width <= 0 or height <= 0:
         raise AssertionError(f"Unexpected raster size {width}x{height}")
 
-    if '.emf' not in functions_office_media.OFFICE_EMBEDDED_IMAGE_VECTOR_EXTENSIONS:
+    if '.emf' not in OFFICE_EMBEDDED_IMAGE_VECTOR_EXTENSIONS:
         raise AssertionError("EMF must be an accepted embedded image format.")
-    if '.wmf' not in functions_office_media.OFFICE_EMBEDDED_IMAGE_VECTOR_EXTENSIONS:
+    if '.wmf' not in OFFICE_EMBEDDED_IMAGE_VECTOR_EXTENSIONS:
         raise AssertionError("WMF must be an accepted embedded image format.")
 
     print(f"EMF rasterization test passed! ({width}x{height})")
