@@ -69,3 +69,4 @@ category: Version History
 - [MCP Action Configuration](v0.241.103/MCP_ACTION_CONFIGURATION.md)
 - [Chat Comparison Modal Summary](v0.241.104/CHAT_COMPARISON_MODAL_SUMMARY.md)
 - [Databricks Action Configuration](v0.241.104/DATABRICKS_ACTION_CONFIGURATION.md)
+- [Workflow Per-Task Workspace Documents](WORKFLOW_PER_TASK_WORKSPACE_DOCUMENTS.md)

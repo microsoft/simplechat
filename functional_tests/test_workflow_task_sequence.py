@@ -1,18 +1,25 @@
 # test_workflow_task_sequence.py
 """
 Functional test for ordered workflow task sequences.
-Version: 0.250.129
+Version: 0.250.225
 Implemented in: 0.250.064
 Enhanced in: 0.250.065
 Enhanced in: 0.250.129
+Enhanced in: 0.250.225
 
 This test ensures workflow tasks are normalized in order, execute with bounded
 prior-task context, retry safely, and honor halt or continue error strategies.
 """
 
 import ast
+import os
+import sys
 import uuid
 from pathlib import Path
+
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
+from test_support.versioning import assert_app_version_at_least
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -20,7 +27,7 @@ APP_ROOT = ROOT / "application" / "single_app"
 STORE_FILE = APP_ROOT / "functions_personal_workflows.py"
 GROUP_STORE_FILE = APP_ROOT / "functions_group_workflows.py"
 RUNNER_FILE = APP_ROOT / "functions_workflow_runner.py"
-EXPECTED_VERSION = "0.250.129"
+MINIMUM_VERSION = "0.250.225"
 
 
 def read_text(path: Path) -> str:
@@ -84,12 +91,16 @@ def load_runner_helpers(dispatch, personal_runner_normalizer=None, group_runner_
         "_save_workflow_run_item_record": lambda workflow, item: saved_items.append(dict(item)) or item,
         "_utc_now_iso": lambda: next(timestamps),
         "build_analyze_config": lambda action: {"enabled": action.get("type") == "analyze"},
+        "_get_document_action_config": lambda source: dict(
+            (source or {}).get("document_action") or {"type": "none"}
+        ),
         "uuid": uuid,
     }
     helpers = load_functions(
         RUNNER_FILE,
         {
             "_truncate_workflow_task_context",
+            "_resolve_workflow_task_document_action",
             "_build_workflow_task_execution_workflow",
             "_get_workflow_task_requested_runner_mode",
             "_build_workflow_task_runner_audit",
@@ -797,9 +808,8 @@ def test_execution_revalidation_rejects_deleted_agent_and_disabled_model() -> No
 
 def test_version_and_legacy_dispatch_contract() -> None:
     """Keep the version and legacy no-task dispatch branch explicit."""
-    config_content = read_text(APP_ROOT / "config.py")
     runner_content = read_text(RUNNER_FILE)
-    assert f'VERSION = "{EXPECTED_VERSION}"' in config_content
+    assert_app_version_at_least(MINIMUM_VERSION)
     assert "if execution_workflow.get('tasks'):" in runner_content
     assert "execution_result = _execute_workflow_dispatch(" in runner_content
 

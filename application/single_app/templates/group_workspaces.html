@@ -2146,7 +2146,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
 
         <div class="card p-3 mb-3 workflow-step-block" data-workflow-step="tasks">
           <h6 class="mb-1">Workspace documents</h6>
-          <div class="form-text mb-3">Optional. Use a document action only when this workflow needs workspace document context.</div>
+          <div class="form-text mb-3">Optional and saved with the selected task. Use a document action only when this task needs workspace document context.</div>
           <div class="row g-3 mb-2">
             <div class="col-md-6">
               <label for="workflow-document-action-type" class="form-label">Document action</label>
@@ -2200,7 +2200,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
             <div id="workflow-document-picker-card" class="border rounded-3 p-3 mb-3">
               <div class="d-flex flex-wrap gap-2 justify-content-between align-items-center mb-3">
                 <div class="form-text mb-0" id="workflow-selected-documents-summary">No group documents selected in the picker.</div>
-                <button type="button" class="btn btn-sm btn-outline-secondary" id="workflow-use-selected-documents-btn">Refresh selected documents</button>
+                <button type="button" class="btn btn-sm btn-outline-secondary" id="workflow-use-selected-documents-btn">Refresh documents</button>
               </div>
               <div id="workflow-document-picker-loading" class="text-muted small mb-2 d-none">
                 <span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>Loading documents...

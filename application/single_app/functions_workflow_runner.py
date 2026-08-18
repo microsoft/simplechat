@@ -7030,6 +7030,25 @@ def _format_workflow_file_sync_context(file_sync_result):
     return '\n'.join(lines)
 
 
+def _apply_file_sync_changed_documents_to_action(action_config, changed_document_ids, group_ids, public_workspace_ids):
+    """Point an analyze document action at the documents File Sync just changed."""
+    action_config = action_config if isinstance(action_config, dict) else {}
+    if action_config.get('type') != DOCUMENT_ACTION_TYPE_ANALYZE:
+        return None
+
+    if not changed_document_ids:
+        return {'type': DOCUMENT_ACTION_TYPE_NONE}
+
+    updated_action_config = dict(action_config)
+    updated_action_config.update({
+        'document_ids': list(changed_document_ids),
+        'doc_scope': 'all',
+        'active_group_ids': list(group_ids),
+        'active_public_workspace_id': list(public_workspace_ids),
+    })
+    return updated_action_config
+
+
 def _apply_file_sync_context_to_workflow(workflow, file_sync_result):
     if not isinstance(file_sync_result, dict) or not file_sync_result.get('enabled'):
         return workflow
@@ -7044,15 +7063,6 @@ def _apply_file_sync_context_to_workflow(workflow, file_sync_result):
     if not config.get('use_changed_documents'):
         return prepared_workflow
 
-    action_config = _get_document_action_config(workflow)
-    if action_config.get('type') != DOCUMENT_ACTION_TYPE_ANALYZE:
-        return prepared_workflow
-
-    if not changed_document_ids:
-        prepared_workflow['document_action'] = {'type': DOCUMENT_ACTION_TYPE_NONE}
-        prepared_workflow['analyze'] = build_analyze_config(prepared_workflow['document_action'])
-        return prepared_workflow
-
     group_ids = []
     public_workspace_ids = []
     for source_config in config.get('sources') or []:
@@ -7063,20 +7073,50 @@ def _apply_file_sync_context_to_workflow(workflow, file_sync_result):
         elif scope_type == 'public' and scope_id and scope_id not in public_workspace_ids:
             public_workspace_ids.append(scope_id)
 
-    updated_action_config = dict(action_config)
-    updated_action_config.update({
-        'document_ids': changed_document_ids,
-        'doc_scope': 'all',
-        'active_group_ids': group_ids,
-        'active_public_workspace_id': public_workspace_ids,
-    })
+    updated_tasks = []
+    tasks_changed = False
+    for raw_task in prepared_workflow.get('tasks') or []:
+        task = dict(raw_task or {})
+        if isinstance(task.get('document_action'), dict):
+            updated_task_action = _apply_file_sync_changed_documents_to_action(
+                task.get('document_action'),
+                changed_document_ids,
+                group_ids,
+                public_workspace_ids,
+            )
+            if updated_task_action is not None:
+                task['document_action'] = updated_task_action
+                tasks_changed = True
+        updated_tasks.append(task)
+    if tasks_changed:
+        prepared_workflow['tasks'] = updated_tasks
+
+    updated_action_config = _apply_file_sync_changed_documents_to_action(
+        _get_document_action_config(workflow),
+        changed_document_ids,
+        group_ids,
+        public_workspace_ids,
+    )
+    if updated_action_config is None:
+        return prepared_workflow
+
     prepared_workflow['document_action'] = updated_action_config
     prepared_workflow['analyze'] = build_analyze_config(updated_action_config)
     return prepared_workflow
 
 
-def _document_run_item_id(run_id, document_id):
+def _get_workflow_active_task(workflow):
+    active_task = (workflow or {}).get('active_task')
+    return active_task if isinstance(active_task, dict) else {}
+
+
+def _document_run_item_id(run_id, document_id, task_id=''):
     normalized_document_id = re.sub(r'[^a-zA-Z0-9._-]+', '-', str(document_id or '').strip())
+    normalized_task_id = re.sub(r'[^a-zA-Z0-9._-]+', '-', str(task_id or '').strip())
+    if normalized_task_id:
+        # Per-task document actions let two tasks target the same document in one run,
+        # so the run item has to be scoped to the task or statuses overwrite each other.
+        return f'{run_id}:task:{normalized_task_id}:document:{normalized_document_id}'
     return f'{run_id}:document:{normalized_document_id}'
 
 
@@ -7100,8 +7140,10 @@ def _save_document_run_item(workflow, run_id, document_id, status, *, file_sync_
 
     now_iso = _utc_now_iso()
     file_sync_document = _file_sync_document_details(file_sync_result or {}, document_id)
+    active_task = _get_workflow_active_task(workflow)
+    task_id = str(active_task.get('id') or '').strip()
     item = {
-        'id': _document_run_item_id(run_id, document_id),
+        'id': _document_run_item_id(run_id, document_id, task_id=task_id),
         'type': 'workflow_run_item',
         'item_type': 'document',
         'run_id': run_id,
@@ -7109,6 +7151,8 @@ def _save_document_run_item(workflow, run_id, document_id, status, *, file_sync_
         'workflow_id': workflow.get('id'),
         'group_id': _get_workflow_group_id(workflow) or None,
         'workflow_name': workflow.get('name'),
+        'task_id': task_id or None,
+        'task_name': str(active_task.get('name') or '').strip() or None,
         'document_id': document_id,
         'label': _document_label_from_file_sync(file_sync_result or {}, document_id),
         'source': 'file_sync' if file_sync_document else 'workflow',
@@ -9045,11 +9089,30 @@ def _truncate_workflow_task_context(value, max_chars=WORKFLOW_TASK_CONTEXT_MAX_C
     )
 
 
+def _resolve_workflow_task_document_action(workflow, task, include_document_action=False):
+    """Resolve the document action a workflow task should execute with.
+
+    Tasks own their document action. Workflows saved before per-task documents have no
+    task-level key, so the workflow-level action still applies to the first task only.
+    """
+    task = task if isinstance(task, dict) else {}
+    if isinstance(task.get('document_action'), dict):
+        return _get_document_action_config({'document_action': task.get('document_action')})
+    if include_document_action:
+        return _get_document_action_config(workflow)
+    return {'type': DOCUMENT_ACTION_TYPE_NONE}
+
+
 def _build_workflow_task_execution_workflow(workflow, task, previous_reply='', include_document_action=False):
     task = task if isinstance(task, dict) else {}
     prepared_workflow = dict(workflow or {})
     task_instructions = str(task.get('instructions') or '').strip()
     file_sync_context = str(workflow.get('file_sync_prompt_context') or '').strip()
+    task_document_action = _resolve_workflow_task_document_action(
+        workflow,
+        task,
+        include_document_action=include_document_action,
+    )
     if include_document_action and file_sync_context:
         task_instructions = (
             f'{task_instructions}\n\n'
@@ -9071,9 +9134,8 @@ def _build_workflow_task_execution_workflow(workflow, task, previous_reply='', i
         'name': str(task.get('name') or '').strip(),
         'order': int(task.get('order') or 0),
     }
-    if not include_document_action:
-        prepared_workflow['document_action'] = {'type': DOCUMENT_ACTION_TYPE_NONE}
-        prepared_workflow['analyze'] = build_analyze_config(prepared_workflow['document_action'])
+    prepared_workflow['document_action'] = dict(task_document_action)
+    prepared_workflow['analyze'] = build_analyze_config(prepared_workflow['document_action'])
     return prepared_workflow
 
 
@@ -9465,13 +9527,6 @@ def _execute_workflow_task_sequence(
                 title=str(task.get('name') or f'Task {task_index + 1}'),
                 status='running',
             )
-        prepared_workflow = _build_workflow_task_execution_workflow(
-            workflow,
-            task,
-            previous_reply=previous_reply,
-            include_document_action=task_index == 0,
-        )
-
         task_result = None
         task_error = ''
         attempt_count = 0
@@ -9479,6 +9534,14 @@ def _execute_workflow_task_sequence(
             raise_if_cancelled()
             attempt_count = attempt_index + 1
             try:
+                # Built inside the attempt so an invalid task document action fails this
+                # task through the normal retry and error strategy instead of the whole run.
+                prepared_workflow = _build_workflow_task_execution_workflow(
+                    workflow,
+                    task,
+                    previous_reply=previous_reply,
+                    include_document_action=task_index == 0,
+                )
                 attempt_workflow, runner_audit = _resolve_workflow_task_runner(
                     prepared_workflow,
                     task,
