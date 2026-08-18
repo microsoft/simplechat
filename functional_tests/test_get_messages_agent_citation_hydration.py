@@ -9,12 +9,17 @@ payloads before it filters those child records from the visible message list,
 so externalized agent citations still hydrate to their full frontend payload.
 """
 
+import sys
 from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ROUTE_FILE = REPO_ROOT / 'application' / 'single_app' / 'route_backend_conversations.py'
 CONFIG_FILE = REPO_ROOT / 'application' / 'single_app' / 'config.py'
+
+sys.path.insert(0, str(REPO_ROOT / 'functional_tests'))
+
+from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
 
 def read_text(path):
@@ -58,7 +63,7 @@ def test_get_messages_route_rehydrates_agent_citation_artifacts():
 
 def test_version_alignment():
     print('🔍 Testing version alignment...')
-    assert read_version() == '0.241.116'
+    assert_app_version_at_least('0.241.116')
     print('✅ Version alignment passed')
     return True
 
