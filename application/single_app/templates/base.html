@@ -332,6 +332,15 @@
       background: var(--workflow-alert-accent, var(--bs-primary));
     }
 
+    .workflow-alert-modal-content[data-priority="critical"] {
+      --workflow-alert-accent: var(--bs-danger);
+      --workflow-alert-accent-rgb: var(--bs-danger-rgb);
+    }
+
+    .workflow-alert-modal-content[data-priority="critical"]::before {
+      width: 10px;
+    }
+
     .workflow-alert-modal-content[data-priority="high"] {
       --workflow-alert-accent: var(--bs-danger);
       --workflow-alert-accent-rgb: var(--bs-danger-rgb);
@@ -342,9 +351,15 @@
       --workflow-alert-accent-rgb: var(--bs-warning-rgb);
     }
 
-    .workflow-alert-modal-content[data-priority="low"] {
+    .workflow-alert-modal-content[data-priority="low"],
+    .workflow-alert-modal-content[data-priority="info"] {
       --workflow-alert-accent: var(--bs-info);
       --workflow-alert-accent-rgb: var(--bs-info-rgb);
+    }
+
+    .workflow-alert-modal-content[data-category="failure"] {
+      --workflow-alert-accent: var(--bs-danger);
+      --workflow-alert-accent-rgb: var(--bs-danger-rgb);
     }
 
     .workflow-alert-modal-header {

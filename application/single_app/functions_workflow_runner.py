@@ -13,6 +13,7 @@ import re
 import time
 import uuid
 from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import datetime, timezone
 
 from azure.cosmos.exceptions import CosmosResourceNotFoundError
@@ -155,6 +156,14 @@ from functions_model_endpoint_runtime import (
     build_semantic_kernel_chat_service_for_model,
 )
 from functions_notifications import create_workflow_priority_notification
+from functions_workflow_alerts import (
+    build_workflow_alert_facts,
+    evaluate_workflow_alert_rules,
+    normalize_agent_alert_signal,
+    normalize_alert_severity,
+    resolve_workflow_alert_config,
+    summarize_alert_decision,
+)
 from functions_personal_workflows import (
     get_personal_workflow,
     get_personal_workflow_run,
@@ -4550,12 +4559,98 @@ def _mirror_workflow_visualizations_to_created_conversations(workflow, source_as
 
 WORKFLOW_ALERT_PRIORITIES = {'low', 'medium', 'high'}
 
+# Alert signals raised by an agent during a run are collected per run through a
+# context variable so the SimpleChat plugin can hand them to the rule engine
+# without threading the run through every kernel invocation.
+_workflow_alert_signal_context = ContextVar('workflow_alert_signals', default=None)
 
-def _normalize_workflow_alert_priority(priority):
-    normalized = str(priority or '').strip().lower()
-    if normalized not in WORKFLOW_ALERT_PRIORITIES:
-        return 'none'
-    return normalized
+
+@contextmanager
+def workflow_alert_signal_scope(workflow=None, run_id=None):
+    """Collect agent raised alert signals for the duration of a workflow run."""
+    scope = {
+        'workflow_id': str((workflow or {}).get('id') or '').strip(),
+        'run_id': str(run_id or '').strip(),
+        'signals': [],
+    }
+    token = _workflow_alert_signal_context.set(scope)
+    try:
+        yield scope
+    finally:
+        _workflow_alert_signal_context.reset(token)
+
+
+def is_workflow_alert_signal_scope_active():
+    """Return True when the caller is running inside a workflow run."""
+    return isinstance(_workflow_alert_signal_context.get(), dict)
+
+
+def record_workflow_alert_signal(severity, title='', reason='', signal_name=''):
+    """Record an agent raised alert signal for the active workflow run.
+
+    Returns the normalized signal, or None when no workflow run is active so the
+    caller can refuse instead of fabricating a notification.
+    """
+    scope = _workflow_alert_signal_context.get()
+    if not isinstance(scope, dict):
+        return None
+
+    signal = normalize_agent_alert_signal({
+        'severity': severity,
+        'title': title,
+        'reason': reason,
+        'signal_name': signal_name,
+    })
+    scope['signals'].append(signal)
+    return signal
+
+
+def get_workflow_alert_signals():
+    """Return the alert signals raised so far during the active workflow run."""
+    scope = _workflow_alert_signal_context.get()
+    if not isinstance(scope, dict):
+        return []
+    return list(scope.get('signals') or [])
+
+
+def _build_workflow_alert_model_evaluator(workflow, settings=None):
+    """Build the callable the rule engine uses to judge model evaluated conditions.
+
+    Returns None when no model can be resolved, in which case model evaluated
+    rules are reported as unevaluated instead of silently matching.
+    """
+    try:
+        evaluation_settings = settings if isinstance(settings, dict) else get_settings()
+        client, deployment_name, _provider = _resolve_model_workflow_client(workflow, evaluation_settings)
+    except Exception as exc:
+        log_event(
+            f'[WORKFLOW_RUNNER] Alert condition evaluator unavailable: {exc}',
+            extra={'workflow_id': str((workflow or {}).get('id') or '').strip()},
+            level=logging.WARNING,
+            exceptionTraceback=True,
+        )
+        return None
+
+    def evaluate(prompt):
+        completion = client.chat.completions.create(
+            model=deployment_name,
+            messages=[
+                {
+                    'role': 'system',
+                    'content': (
+                        'You evaluate automated workflow output against alert conditions. '
+                        'You always reply with a single JSON object and never with markdown or commentary.'
+                    ),
+                },
+                {'role': 'user', 'content': prompt},
+            ],
+            temperature=0,
+        )
+        if not getattr(completion, 'choices', None):
+            return ''
+        return _extract_message_text(completion.choices[0].message.content)
+
+    return evaluate
 
 
 def _dedupe_workflow_alert_targets(targets):
@@ -4969,25 +5064,53 @@ def _build_workflow_alert_success_detail(alert_title, action_plan, response_prev
     )
 
 
-def _build_workflow_alert_content(workflow, run_record, execution_result, priority):
+def _build_workflow_alert_trigger_section(decision):
+    """Render the "Triggered by" section listing every rule that matched the run."""
+    decision = decision if isinstance(decision, dict) else {}
+    matched_rules = decision.get('matched_rules') or []
+    if not matched_rules:
+        return ''
+
+    trigger_lines = []
+    for match in matched_rules:
+        rule_name = _normalize_workflow_alert_text(match.get('rule_name') or 'Alert rule')
+        severity = str(match.get('severity') or '').strip().lower()
+        reason = _normalize_workflow_alert_text(match.get('reason'))
+        line = f'- {rule_name}'
+        if severity:
+            line = f'{line} ({severity})'
+        if reason:
+            line = f'{line}: {reason}'
+        trigger_lines.append(line)
+
+    return 'Triggered by\n' + '\n'.join(trigger_lines)
+
+
+def _build_workflow_alert_content(workflow, run_record, execution_result, priority, decision=None):
     execution_result = execution_result if isinstance(execution_result, dict) else {}
+    decision = decision if isinstance(decision, dict) else {}
     workflow_name = _normalize_workflow_alert_title_text(workflow.get('name') or 'Workflow') or 'Workflow'
     trigger_source = str(run_record.get('trigger_source') or 'manual').strip() or 'manual'
     success = bool(run_record.get('success'))
+    is_failure_alert = str(decision.get('category') or '').strip().lower() == 'failure' or not success
     response_preview = _strip_workflow_alert_markdown(run_record.get('response_preview') or '')
     reply_text = _strip_workflow_alert_markdown(execution_result.get('reply') or '')
     error_text = _strip_workflow_alert_markdown(run_record.get('error') or '')
     agent_citations = list(execution_result.get('agent_citations') or [])
     enrichment_labels = _build_workflow_alert_enrichment_labels(agent_citations)
     action_plan = _build_workflow_alert_action_plan(agent_citations)
+    trigger_section = _build_workflow_alert_trigger_section(decision)
+    winning_rule_name = _normalize_workflow_alert_title_text(decision.get('winning_rule_name') or '')
 
     alert_title = _extract_workflow_alert_title_from_citations(agent_citations)
     if not alert_title:
         alert_title = _extract_workflow_alert_event_title(reply_text or response_preview)
     if not alert_title:
-        alert_title = workflow_name
+        alert_title = winning_rule_name or workflow_name
 
-    if success:
+    severity_label = str(decision.get('severity') or priority or '').strip().lower() or 'medium'
+
+    if not is_failure_alert:
         alert_summary = _build_workflow_alert_success_summary(
             alert_title,
             action_plan,
@@ -5002,14 +5125,17 @@ def _build_workflow_alert_content(workflow, run_record, execution_result, priori
             workflow_name,
             trigger_source,
         )
-        notification_title = f'{priority.capitalize()} priority workflow alert: {alert_title}'
+        notification_title = f'{severity_label.capitalize()} priority workflow alert: {alert_title}'
     else:
         failure_text = error_text or response_preview or reply_text or (
             f'{workflow_name} failed from the {trigger_source} trigger.'
         )
         alert_summary = _summarize_workflow_alert_text(failure_text)
         alert_detail = _normalize_workflow_alert_text(failure_text)
-        notification_title = f'{priority.capitalize()} priority workflow alert: {workflow_name} failed'
+        notification_title = f'{severity_label.capitalize()} priority workflow alert: {workflow_name} failed'
+
+    if trigger_section:
+        alert_detail = f'{trigger_section}\n\n{alert_detail}' if alert_detail else trigger_section
 
     return {
         'notification_title': notification_title,
@@ -5090,11 +5216,105 @@ def _collect_agent_alert_targets(user_id, conversation_id):
     return _select_preferred_workflow_alert_targets(alert_targets)
 
 
-def _create_workflow_priority_alert(workflow, run_record, conversation, execution_result=None):
-    execution_result = execution_result if isinstance(execution_result, dict) else {}
-    priority = _normalize_workflow_alert_priority(workflow.get('alert_priority'))
-    if priority == 'none':
+def _record_workflow_alert_decision(workflow, run_record, decision):
+    """Persist a compact record of the alert decision so a run can explain itself."""
+    if not isinstance(run_record, dict):
+        return
+
+    decision = decision if isinstance(decision, dict) else {}
+    run_record['alert_decision'] = {
+        'should_alert': bool(decision.get('should_alert')),
+        'severity': decision.get('severity') or '',
+        'category': decision.get('category') or '',
+        'delivery': decision.get('delivery') or '',
+        'mode': decision.get('mode') or '',
+        'summary': summarize_alert_decision(decision),
+        'matched_rules': [
+            {
+                'rule_id': match.get('rule_id'),
+                'rule_name': match.get('rule_name'),
+                'severity': match.get('severity'),
+                'condition_type': match.get('condition_type'),
+                'reason': match.get('reason'),
+            }
+            for match in decision.get('matched_rules') or []
+        ],
+    }
+
+    try:
+        _save_workflow_run_record(workflow, run_record)
+    except Exception as exc:
+        log_event(
+            f'[WORKFLOW_RUNNER] Failed to persist workflow alert decision: {exc}',
+            extra={
+                'workflow_id': str((workflow or {}).get('id') or '').strip(),
+                'run_id': str(run_record.get('id') or '').strip(),
+            },
+            level=logging.WARNING,
+            exceptionTraceback=True,
+        )
+
+
+def _workflow_alert_rules_need_model_evaluation(alert_config, facts):
+    """Return True when at least one enabled model evaluated rule could still change the outcome.
+
+    Building the evaluator resolves a model client, so it is only worth doing when
+    a model evaluated rule outranks every deterministic rule that could match.
+    """
+    alert_config = alert_config if isinstance(alert_config, dict) else {}
+    if alert_config.get('alert_mode') != 'rules':
+        return False
+
+    for rule in alert_config.get('alert_rules') or []:
+        if not isinstance(rule, dict) or not rule.get('enabled', True):
+            continue
+        condition = rule.get('condition') if isinstance(rule.get('condition'), dict) else {}
+        if str(condition.get('type') or '').strip().lower() == 'model_evaluation':
+            return True
+    return False
+
+
+def _create_workflow_priority_alert(workflow, run_record, conversation, execution_result=None, settings=None):
+    execution_result = dict(execution_result) if isinstance(execution_result, dict) else {}
+    if not execution_result.get('agent_alert_signals'):
+        execution_result['agent_alert_signals'] = get_workflow_alert_signals()
+    alert_config = resolve_workflow_alert_config(workflow)
+    if alert_config.get('alert_mode') == 'off':
         return None
+
+    try:
+        facts = build_workflow_alert_facts(workflow, run_record, execution_result)
+        model_evaluator = None
+        if _workflow_alert_rules_need_model_evaluation(alert_config, facts):
+            model_evaluator = _build_workflow_alert_model_evaluator(workflow, settings)
+        decision = evaluate_workflow_alert_rules(workflow, facts, model_evaluator=model_evaluator)
+    except Exception as exc:
+        log_event(
+            f'[WORKFLOW_RUNNER] Failed to evaluate workflow alert rules: {exc}',
+            extra={
+                'workflow_id': str(workflow.get('id') or '').strip(),
+                'user_id': str(workflow.get('user_id') or '').strip(),
+            },
+            level=logging.WARNING,
+            exceptionTraceback=True,
+        )
+        return None
+
+    if not decision.get('should_alert'):
+        _record_workflow_alert_decision(workflow, run_record, decision)
+        log_event(
+            f'[WORKFLOW_RUNNER] {summarize_alert_decision(decision)}',
+            extra={
+                'workflow_id': str(workflow.get('id') or '').strip(),
+                'run_id': str(run_record.get('id') or '').strip(),
+                'alert_mode': decision.get('mode'),
+            },
+            level=logging.INFO,
+        )
+        return None
+
+    _record_workflow_alert_decision(workflow, run_record, decision)
+    priority = normalize_alert_severity(decision.get('severity'))
 
     try:
         user_id = str(workflow.get('user_id') or '').strip()
@@ -5118,12 +5338,27 @@ def _create_workflow_priority_alert(workflow, run_record, conversation, executio
             run_record,
             execution_result,
             priority,
+            decision=decision,
         )
 
         metadata = {
             'workflow_id': workflow_id,
             'workflow_name': workflow_name,
             'priority': priority,
+            'category': decision.get('category') or 'alert',
+            'delivery': decision.get('delivery') or 'popup',
+            'alert_mode': decision.get('mode') or 'rules',
+            'matched_rules': [
+                {
+                    'rule_id': match.get('rule_id'),
+                    'rule_name': match.get('rule_name'),
+                    'severity': match.get('severity'),
+                    'condition_type': match.get('condition_type'),
+                    'reason': match.get('reason'),
+                }
+                for match in decision.get('matched_rules') or []
+            ],
+            'trigger_reason': summarize_alert_decision(decision),
             'trigger_source': trigger_source,
             'run_id': str(run_record.get('id') or '').strip(),
             'runner_type': str(workflow.get('runner_type') or '').strip(),
@@ -9304,6 +9539,20 @@ def _execute_workflow_task_sequence(
     return _merge_workflow_task_execution_results(task_results)
 
 
+def _get_workflow_conversation_for_alert(run_record):
+    """Build a minimal conversation stub so alerts can link to the run's conversation."""
+    run_record = run_record if isinstance(run_record, dict) else {}
+    conversation_id = str(run_record.get('conversation_id') or '').strip()
+    if not conversation_id:
+        return None
+
+    return {
+        'id': conversation_id,
+        'chat_type': 'workflow',
+        'group_id': str(run_record.get('group_id') or '').strip(),
+    }
+
+
 def _finalize_cancelled_workflow_run(
     workflow,
     run_record,
@@ -9368,10 +9617,15 @@ def _finalize_cancelled_workflow_run(
         workspace_type=workspace_type,
         group_id=group_id or None,
     )
+    alert_notification = _create_workflow_priority_alert(
+        execution_workflow if isinstance(execution_workflow, dict) else workflow,
+        run_record,
+        _get_workflow_conversation_for_alert(run_record),
+    )
     return {
         'success': True,
         'run': run_record,
-        'notification': None,
+        'notification': alert_notification,
         'workflow_updates': {
             'last_run_started_at': started_at,
             'last_run_at': completed_at,
@@ -9389,6 +9643,20 @@ def _finalize_cancelled_workflow_run(
 
 
 def run_personal_workflow(workflow, trigger_source='manual', user_roles=None, actor_user_id=None, run_id=None):
+    """Execute a workflow and persist a run record."""
+    workflow = workflow if isinstance(workflow, dict) else {}
+    resolved_run_id = str(run_id or create_workflow_run_id())
+    with workflow_alert_signal_scope(workflow, resolved_run_id):
+        return _run_personal_workflow_impl(
+            workflow,
+            trigger_source=trigger_source,
+            user_roles=user_roles,
+            actor_user_id=actor_user_id,
+            run_id=resolved_run_id,
+        )
+
+
+def _run_personal_workflow_impl(workflow, trigger_source='manual', user_roles=None, actor_user_id=None, run_id=None):
     """Execute a workflow and persist a run record."""
     workflow = workflow if isinstance(workflow, dict) else {}
     user_id = str(workflow.get('user_id') or '').strip()
@@ -9630,6 +9898,7 @@ def run_personal_workflow(workflow, trigger_source='manual', user_roles=None, ac
                 run_record,
                 conversation,
                 execution_result=execution_result,
+                settings=settings,
             ),
         )
 
@@ -9736,6 +10005,7 @@ def run_personal_workflow(workflow, trigger_source='manual', user_roles=None, ac
             execution_workflow,
             run_record,
             conversation,
+            settings=settings,
         )
         return {
             'success': False,
