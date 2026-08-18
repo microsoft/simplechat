@@ -165,177 +165,128 @@ def build_pages(page_count, page_size):
 
 def test_multi_page_cosmos_source_drains_a_single_pager():
     """Containers larger than one page must stream fully without a token replay."""
-    print("Testing Cosmos backup multi-page source reads...")
-    try:
-        module = load_data_management_module()
-        page_size = module.DATA_MANAGEMENT_BACKUP_MANIFEST_BATCH_SIZE
-        pages = build_pages(3, page_size)
-        container = FakePagedContainer(pages)
+    module = load_data_management_module()
+    page_size = module.DATA_MANAGEMENT_BACKUP_MANIFEST_BATCH_SIZE
+    pages = build_pages(3, page_size)
+    container = FakePagedContainer(pages)
 
-        items = list(module._iter_backup_cosmos_source_items(
-            container,
-            ARTIFACT,
-            {"cosmos_source_cutoff_epoch": 0},
-        ))
+    items = list(module._iter_backup_cosmos_source_items(
+        container,
+        ARTIFACT,
+        {"cosmos_source_cutoff_epoch": 0},
+    ))
 
-        expected_count = 3 * page_size
-        assert len(items) == expected_count, (
-            f"Expected {expected_count} streamed items, got {len(items)}"
-        )
-        assert container.query_calls == 1, (
-            f"Query must be built once, was built {container.query_calls} times"
-        )
-        assert container.by_page_tokens == [None], (
-            f"by_page must never receive a continuation token, got {container.by_page_tokens}"
-        )
+    expected_count = 3 * page_size
+    assert len(items) == expected_count, (
+        f"Expected {expected_count} streamed items, got {len(items)}"
+    )
+    assert container.query_calls == 1, (
+        f"Query must be built once, was built {container.query_calls} times"
+    )
+    assert container.by_page_tokens == [None], (
+        f"by_page must never receive a continuation token, got {container.by_page_tokens}"
+    )
 
-        identities = {item["source_identity"] for item in items}
-        assert len(identities) == expected_count, "Streamed items must be unique"
-
-        print("Test passed!")
-        return True
-    except Exception as exc:
-        print(f"Test failed: {exc}")
-        import traceback
-        traceback.print_exc()
-        return False
+    identities = {item["source_identity"] for item in items}
+    assert len(identities) == expected_count, "Streamed items must be unique"
 
 
 def test_cutoff_and_unpaged_fallback_still_stream():
     """The cutoff filter and non-paged test-double path must keep working."""
-    print("Testing Cosmos backup cutoff filtering and unpaged fallback...")
-    try:
-        module = load_data_management_module()
-        page_size = module.DATA_MANAGEMENT_BACKUP_MANIFEST_BATCH_SIZE
+    module = load_data_management_module()
+    page_size = module.DATA_MANAGEMENT_BACKUP_MANIFEST_BATCH_SIZE
 
-        pages = build_pages(2, page_size)
-        pages[1][0]["_ts"] = 1900000000
-        container = FakePagedContainer(pages)
-        items = list(module._iter_backup_cosmos_source_items(
-            container,
-            ARTIFACT,
-            {"cosmos_source_cutoff_epoch": 1800000000},
-        ))
-        assert len(items) == (2 * page_size) - 1, (
-            f"Cutoff must drop exactly one item, got {len(items)}"
-        )
+    pages = build_pages(2, page_size)
+    pages[1][0]["_ts"] = 1900000000
+    container = FakePagedContainer(pages)
+    items = list(module._iter_backup_cosmos_source_items(
+        container,
+        ARTIFACT,
+        {"cosmos_source_cutoff_epoch": 1800000000},
+    ))
+    assert len(items) == (2 * page_size) - 1, (
+        f"Cutoff must drop exactly one item, got {len(items)}"
+    )
 
-        flat_items = [item for page in build_pages(2, page_size) for item in page]
-        unpaged = FakeUnpagedContainer(flat_items)
-        unpaged_items = list(module._iter_backup_cosmos_source_items(
-            unpaged,
-            ARTIFACT,
-            {"cosmos_source_cutoff_epoch": 0},
-        ))
-        assert len(unpaged_items) == 2 * page_size, (
-            f"Unpaged fallback must stream every item, got {len(unpaged_items)}"
-        )
-
-        print("Test passed!")
-        return True
-    except Exception as exc:
-        print(f"Test failed: {exc}")
-        import traceback
-        traceback.print_exc()
-        return False
+    flat_items = [item for page in build_pages(2, page_size) for item in page]
+    unpaged = FakeUnpagedContainer(flat_items)
+    unpaged_items = list(module._iter_backup_cosmos_source_items(
+        unpaged,
+        ARTIFACT,
+        {"cosmos_source_cutoff_epoch": 0},
+    ))
+    assert len(unpaged_items) == 2 * page_size, (
+        f"Unpaged fallback must stream every item, got {len(unpaged_items)}"
+    )
 
 
 def test_failure_reason_rollup_is_bounded():
     """Per-item failures must collapse into a bounded, ordered log summary."""
-    print("Testing backup failure reason rollup...")
-    try:
-        module = load_data_management_module()
-        limit = module.DATA_MANAGEMENT_BACKUP_MAX_LOGGED_FAILURE_REASONS
+    module = load_data_management_module()
+    limit = module.DATA_MANAGEMENT_BACKUP_MAX_LOGGED_FAILURE_REASONS
 
-        counts = {}
-        for index in range(limit + 25):
-            module._record_backup_failure_reason(counts, f"Failure kind {index}")
-        for _ in range(5):
-            module._record_backup_failure_reason(counts, "Failure kind 0")
+    counts = {}
+    for index in range(limit + 25):
+        module._record_backup_failure_reason(counts, f"Failure kind {index}")
+    for _ in range(5):
+        module._record_backup_failure_reason(counts, "Failure kind 0")
 
-        assert len(counts) <= limit + 1, (
-            f"Distinct reasons must stay bounded, got {len(counts)}"
-        )
-        assert "Other backup failures." in counts, "Overflow reasons must be aggregated"
-        assert counts["Failure kind 0"] == 6, (
-            f"Repeat reasons must accumulate, got {counts['Failure kind 0']}"
-        )
+    assert len(counts) <= limit + 1, (
+        f"Distinct reasons must stay bounded, got {len(counts)}"
+    )
+    assert "Other backup failures." in counts, "Overflow reasons must be aggregated"
+    assert counts["Failure kind 0"] == 6, (
+        f"Repeat reasons must accumulate, got {counts['Failure kind 0']}"
+    )
 
-        summary = module._summarize_backup_failure_reasons(counts)
-        rendered_counts = [int(entry.split("x ", 1)[0]) for entry in summary.split("; ")]
-        assert rendered_counts == sorted(rendered_counts, reverse=True), (
-            f"Summary must be ordered by frequency, got {summary!r}"
-        )
-        assert "25x Other backup failures." in summary, (
-            f"Overflow bucket must be reported, got {summary!r}"
-        )
-        assert "6x Failure kind 0" in summary, (
-            f"Repeat reason counts must be reported, got {summary!r}"
-        )
-        assert module._summarize_backup_failure_reasons({}) == "", (
-            "Empty rollups must render as an empty string"
-        )
-
-        print("Test passed!")
-        return True
-    except Exception as exc:
-        print(f"Test failed: {exc}")
-        import traceback
-        traceback.print_exc()
-        return False
+    summary = module._summarize_backup_failure_reasons(counts)
+    rendered_counts = [int(entry.split("x ", 1)[0]) for entry in summary.split("; ")]
+    assert rendered_counts == sorted(rendered_counts, reverse=True), (
+        f"Summary must be ordered by frequency, got {summary!r}"
+    )
+    assert "25x Other backup failures." in summary, (
+        f"Overflow bucket must be reported, got {summary!r}"
+    )
+    assert "6x Failure kind 0" in summary, (
+        f"Repeat reason counts must be reported, got {summary!r}"
+    )
+    assert module._summarize_backup_failure_reasons({}) == "", (
+        "Empty rollups must render as an empty string"
+    )
 
 
 def test_logger_extra_retains_sanitized_diagnostics():
     """App Insights properties must carry message text without leaking secrets."""
-    print("Testing App Insights logger extras...")
-    try:
-        sys.modules.pop("functions_appinsights", None)
-        sys.modules.setdefault("app_settings_cache", types.ModuleType("app_settings_cache"))
-        import functions_appinsights
+    sys.modules.pop("functions_appinsights", None)
+    sys.modules.setdefault("app_settings_cache", types.ModuleType("app_settings_cache"))
+    import functions_appinsights
 
-        extra = functions_appinsights._build_logger_extra(
-            "[DATA_MANAGEMENT] Cosmos backup source page read failed.",
-            {
-                "job_id": "data_management_partial_20260817T0300Z",
-                "container": "conversations",
-                "status_code": 400,
-                "error": "(BadRequest) Invalid Continuation Token",
-                "api_key": "super-secret-value",
-            },
-        )
+    extra = functions_appinsights._build_logger_extra(
+        "[DATA_MANAGEMENT] Cosmos backup source page read failed.",
+        {
+            "job_id": "data_management_partial_20260817T0300Z",
+            "container": "conversations",
+            "status_code": 400,
+            "error": "(BadRequest) Invalid Continuation Token",
+            "api_key": "super-secret-value",
+        },
+    )
 
-        assert "Cosmos backup source page read failed" in extra["sc_message"], (
-            "Sanitized message text must reach App Insights"
-        )
-        assert extra["sc_error"] == "(BadRequest) Invalid Continuation Token", (
-            f"Allowlisted diagnostics must retain text, got {extra.get('sc_error')!r}"
-        )
-        assert extra["sc_container"] == "conversations"
-        assert extra["sc_status_code"] == 400
-        assert extra["sc_api_key_present"] is True, "Sensitive keys must collapse to presence"
-        assert "super-secret-value" not in str(extra), "Secret values must never be emitted"
-
-        print("Test passed!")
-        return True
-    except Exception as exc:
-        print(f"Test failed: {exc}")
-        import traceback
-        traceback.print_exc()
-        return False
+    assert "Cosmos backup source page read failed" in extra["sc_message"], (
+        "Sanitized message text must reach App Insights"
+    )
+    assert extra["sc_error"] == "(BadRequest) Invalid Continuation Token", (
+        f"Allowlisted diagnostics must retain text, got {extra.get('sc_error')!r}"
+    )
+    assert extra["sc_container"] == "conversations"
+    assert extra["sc_status_code"] == 400
+    assert extra["sc_api_key_present"] is True, "Sensitive keys must collapse to presence"
+    assert "super-secret-value" not in str(extra), "Secret values must never be emitted"
 
 
 def test_version_is_at_least_fix_version():
     """The shipped app version must include this fix."""
-    print("Testing config version floor...")
-    try:
-        assert_app_version_at_least("0.250.209")
-        print("Test passed!")
-        return True
-    except Exception as exc:
-        print(f"Test failed: {exc}")
-        import traceback
-        traceback.print_exc()
-        return False
+    assert_app_version_at_least("0.250.209")
 
 
 if __name__ == "__main__":
@@ -346,10 +297,17 @@ if __name__ == "__main__":
         test_logger_extra_retains_sanitized_diagnostics,
         test_version_is_at_least_fix_version,
     ]
-    results = []
+    failures = 0
     for test in tests:
         print(f"\nRunning {test.__name__}...")
-        results.append(test())
+        try:
+            test()
+            print("Test passed!")
+        except Exception as exc:
+            failures += 1
+            print(f"Test failed: {exc}")
+            import traceback
+            traceback.print_exc()
 
-    print(f"\nResults: {sum(results)}/{len(results)} tests passed")
-    sys.exit(0 if all(results) else 1)
+    print(f"\nResults: {len(tests) - failures}/{len(tests)} tests passed")
+    sys.exit(1 if failures else 0)
