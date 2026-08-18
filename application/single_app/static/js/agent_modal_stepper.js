@@ -114,6 +114,12 @@ const SIMPLECHAT_CAPABILITY_DEFINITIONS = [
     key: 'create_personal_collaboration_conversation',
     label: 'Create personal collaborative conversations',
     description: 'Allow the agent to create personal collaborative conversations and invite participants.'
+  },
+  {
+    key: 'raise_workflow_alert',
+    label: 'Raise workflow alerts',
+    description: 'Allow the agent to raise an alert signal while a workflow run is executing, so the workflow\'s alert rules can notify the owner.',
+    defaultEnabled: false
   }
 ];
 const MSGRAPH_CAPABILITY_DEFINITIONS = [
@@ -3551,7 +3557,7 @@ export class AgentModalStepper {
   getDefaultSimpleChatCapabilities(actionId = '', actionName = '') {
     const defaults = {};
     SIMPLECHAT_CAPABILITY_DEFINITIONS.forEach(definition => {
-      defaults[definition.key] = true;
+      defaults[definition.key] = definition.defaultEnabled !== false;
     });
 
     const action = (this.availableActions || []).find(candidate => {

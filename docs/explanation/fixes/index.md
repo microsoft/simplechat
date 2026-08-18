@@ -6,6 +6,7 @@ order: 120
 category: Version History
 ---
 
+- [Chat Document Search File Name and Divider Artifact Fix](CHAT_DOCUMENT_SEARCH_FILENAME_AND_DIVIDER_FIX.md)
 - [Data Management Restore Route Endpoint Collision Fix](DATA_MANAGEMENT_RESTORE_ROUTE_ENDPOINT_COLLISION_FIX.md)
 - [Font Size and 200 Percent Zoom Fix](FONT_SIZE_AND_200_PERCENT_ZOOM_FIX.md)
 - [Public Workspace Prompt Migration Fix](PUBLIC_WORKSPACE_PROMPT_MIGRATION_FIX.md)

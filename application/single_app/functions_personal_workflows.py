@@ -36,6 +36,7 @@ from functions_file_sync import (
 from functions_global_agents import get_global_agents
 from functions_personal_agents import get_personal_agents
 from functions_settings import get_settings, get_user_settings, normalize_model_endpoints
+from functions_workflow_alerts import normalize_workflow_alert_settings
 
 
 WORKFLOW_TRIGGER_TYPES = {'manual', 'interval', 'file_sync'}
@@ -720,9 +721,12 @@ def save_personal_workflow(user_id, workflow_data, actor_user_id=None):
         ),
         default=False,
     ) if url_access_enabled else False
-    alert_priority = _normalize_alert_priority(
-        workflow_data.get('alert_priority', (existing_workflow or {}).get('alert_priority', 'none'))
+    alert_settings = normalize_workflow_alert_settings(
+        workflow_data,
+        existing_workflow=existing_workflow,
+        task_ids=[task.get('id') for task in tasks],
     )
+    alert_priority = alert_settings['alert_priority']
     error_handling = _normalize_workflow_error_handling(workflow_data, existing_workflow=existing_workflow)
     default_chat_capabilities_enabled = (
         (existing_workflow or {}).get('chat_capabilities_enabled', False)
@@ -798,6 +802,9 @@ def save_personal_workflow(user_id, workflow_data, actor_user_id=None):
             'URL Access authorized at',
         ) if url_access_authorized else '',
         'alert_priority': alert_priority,
+        'alert_mode': alert_settings['alert_mode'],
+        'alert_rules': alert_settings['alert_rules'],
+        'alert_evaluation': alert_settings['alert_evaluation'],
         'schedule': schedule,
         'document_action': document_action,
         'analyze': analyze,

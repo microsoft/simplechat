@@ -6,7 +6,7 @@ Agent instructions are now authored **after** the agent's actions and assigned k
 
 Previously the agent modal asked for instructions at step 3 — before Actions (step 4) and Assigned Knowledge (step 5). Authors had to describe behaviour for tools and documents they had not selected yet, and the AI **Draft Instructions** helper had no idea what the agent would actually be able to do.
 
-**Version implemented:** `0.250.209`
+**Version implemented:** `0.250.214`
 **Issue:** [#1257](https://github.com/microsoft/simplechat/issues/1257)
 
 ### Dependencies
@@ -240,6 +240,6 @@ pytest test_agent_modal_instruction_references.py
 
 ## Cross-References
 
-- Release notes: `docs/explanation/release_notes.md` (v0.250.209)
+- Release notes: `docs/explanation/release_notes.md` (v0.250.214)
 - Assigned knowledge catalog: `application/single_app/functions_assigned_knowledge.py`
 - Agent modal stepper: `application/single_app/static/js/agent_modal_stepper.js`

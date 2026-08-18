@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Functional test for the agent modal Instructions step reorder.
-Version: 0.250.209
-Implemented in: 0.250.209
+Version: 0.250.214
+Implemented in: 0.250.214
 
 This test ensures that the agent configuration modal presents Instructions
 after Actions and Assigned Knowledge, and that the stepper drives navigation
@@ -273,8 +273,8 @@ def test_draft_instructions_sends_context():
 
 if __name__ == "__main__":
     assert_app_version_at_least(
-        "0.250.209",
-        reason="Agent modal Instructions step reorder landed in 0.250.209.",
+        "0.250.214",
+        reason="Agent modal Instructions step reorder landed in 0.250.214.",
     )
 
     tests = [

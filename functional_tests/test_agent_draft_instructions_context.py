@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Functional test for context-aware agent draft instructions.
-Version: 0.250.209
-Implemented in: 0.250.209
+Version: 0.250.214
+Implemented in: 0.250.214
 
 This test ensures that POST /api/agents/draft-instructions renders the selected
 actions, their enabled capabilities, and the assigned knowledge into the model
@@ -447,8 +447,8 @@ def test_route_passes_context_through():
 
 if __name__ == "__main__":
     assert_app_version_at_least(
-        "0.250.209",
-        reason="Context-aware draft instructions landed in 0.250.209.",
+        "0.250.214",
+        reason="Context-aware draft instructions landed in 0.250.214.",
     )
 
     tests = [

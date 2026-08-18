@@ -1,5 +1,28 @@
 // chat-searchable-select.js
 
+const SEARCH_ROLE_ACTION = 'action';
+const SEARCH_SEPARATOR_PATTERN = /[_\-.]+/g;
+const SEARCH_WHITESPACE_PATTERN = /\s+/g;
+
+export function normalizeSearchText(value) {
+    return String(value ?? '')
+        .toLowerCase()
+        .replace(SEARCH_SEPARATOR_PATTERN, ' ')
+        .replace(SEARCH_WHITESPACE_PATTERN, ' ')
+        .trim();
+}
+
+export function matchesSearchTokens(searchText, searchTerm) {
+    const normalizedTerm = normalizeSearchText(searchTerm);
+
+    if (!normalizedTerm) {
+        return true;
+    }
+
+    const normalizedText = normalizeSearchText(searchText);
+    return normalizedTerm.split(' ').every(token => normalizedText.includes(token));
+}
+
 function createNoMatchesElement(message) {
     const noMatchesEl = document.createElement('div');
     noMatchesEl.className = 'no-matches text-center text-muted py-2';
@@ -14,12 +37,89 @@ function removeNoMatchesElement(itemsContainerEl) {
     }
 }
 
+function isHiddenElement(el) {
+    return Boolean(el && el.classList.contains('d-none'));
+}
+
+function isDividerElement(el) {
+    return Boolean(el && el.classList.contains('dropdown-divider'));
+}
+
+function isHeaderElement(el) {
+    return Boolean(el && el.classList.contains('dropdown-header'));
+}
+
 function isVisibleItem(el) {
-    return Boolean(
-        el &&
-        !el.classList.contains('d-none') &&
-        !el.classList.contains('dropdown-divider')
-    );
+    return Boolean(el && !isHiddenElement(el) && !isDividerElement(el));
+}
+
+// Section content is what a divider is allowed to separate. Always-visible action rows
+// are excluded so an orphaned divider cannot anchor itself to the "Select All" row.
+function isVisibleSectionContent(el) {
+    if (!el || isHiddenElement(el) || isDividerElement(el)) {
+        return false;
+    }
+
+    if (isHeaderElement(el)) {
+        return true;
+    }
+
+    return el.classList.contains('dropdown-item')
+        && el.getAttribute('data-search-role') !== SEARCH_ROLE_ACTION;
+}
+
+// A divider is "bound" when it introduces a section header, so its visibility follows
+// that header instead of whatever unrelated row happens to still be visible above it.
+function findDividerBoundHeader(children, dividerIndex) {
+    for (let index = dividerIndex + 1; index < children.length; index += 1) {
+        const candidate = children[index];
+
+        if (isDividerElement(candidate)) {
+            continue;
+        }
+
+        return isHeaderElement(candidate) ? candidate : null;
+    }
+
+    return null;
+}
+
+function collapseRedundantDividers(children) {
+    let sawVisibleContent = false;
+
+    children.forEach(child => {
+        if (isDividerElement(child)) {
+            if (isHiddenElement(child)) {
+                return;
+            }
+
+            if (!sawVisibleContent) {
+                child.classList.add('d-none');
+                return;
+            }
+
+            sawVisibleContent = false;
+            return;
+        }
+
+        if (!isHiddenElement(child)) {
+            sawVisibleContent = true;
+        }
+    });
+
+    for (let index = children.length - 1; index >= 0; index -= 1) {
+        const child = children[index];
+
+        if (isHiddenElement(child)) {
+            continue;
+        }
+
+        if (!isDividerElement(child)) {
+            break;
+        }
+
+        child.classList.add('d-none');
+    }
 }
 
 function updateDropdownStructure(itemsContainerEl) {
@@ -30,14 +130,14 @@ function updateDropdownStructure(itemsContainerEl) {
     const children = Array.from(itemsContainerEl.children).filter(child => !child.classList.contains('no-matches'));
 
     children.forEach(child => {
-        if (!child.classList.contains('dropdown-header')) {
+        if (!isHeaderElement(child)) {
             return;
         }
 
         let hasVisibleItem = false;
         let next = child.nextElementSibling;
 
-        while (next && !next.classList.contains('dropdown-header')) {
+        while (next && !isHeaderElement(next)) {
             if (next.classList.contains('dropdown-item') && isVisibleItem(next)) {
                 hasVisibleItem = true;
                 break;
@@ -48,33 +148,27 @@ function updateDropdownStructure(itemsContainerEl) {
         child.classList.toggle('d-none', !hasVisibleItem);
     });
 
-    children.forEach(child => {
-        if (!child.classList.contains('dropdown-divider')) {
+    children.forEach((child, index) => {
+        if (!isDividerElement(child)) {
             return;
         }
 
-        let previousVisible = null;
-        let previous = child.previousElementSibling;
-        while (previous) {
-            if (!previous.classList.contains('no-matches') && isVisibleItem(previous)) {
-                previousVisible = previous;
-                break;
-            }
-            previous = previous.previousElementSibling;
+        const boundHeader = findDividerBoundHeader(children, index);
+        const hasSectionContentBefore = children.slice(0, index).some(sibling => isVisibleSectionContent(sibling));
+        let keepDivider;
+
+        if (boundHeader) {
+            keepDivider = !isHiddenElement(boundHeader) && hasSectionContentBefore;
+        } else {
+            const hasVisibleContentBefore = children.slice(0, index).some(sibling => isVisibleItem(sibling));
+            const hasSectionContentAfter = children.slice(index + 1).some(sibling => isVisibleSectionContent(sibling));
+            keepDivider = hasVisibleContentBefore && hasSectionContentAfter;
         }
 
-        let nextVisible = null;
-        let next = child.nextElementSibling;
-        while (next) {
-            if (!next.classList.contains('no-matches') && isVisibleItem(next)) {
-                nextVisible = next;
-                break;
-            }
-            next = next.nextElementSibling;
-        }
-
-        child.classList.toggle('d-none', !(previousVisible && nextVisible));
+        child.classList.toggle('d-none', !keepDivider);
     });
+
+    collapseRedundantDividers(children);
 }
 
 function createDropdownHeader(label) {
@@ -160,14 +254,13 @@ export function initializeFilterableDropdownSearch({
     const isAlwaysVisible = isAlwaysVisibleItem || (() => false);
 
     const applyFilter = (rawSearchTerm = '') => {
-        const searchTerm = rawSearchTerm.toLowerCase().trim();
+        const searchTerm = normalizeSearchText(rawSearchTerm);
         const items = Array.from(itemsContainerEl.querySelectorAll(itemSelector));
         let visibleMatchCount = 0;
 
         items.forEach(item => {
             const keepVisible = isAlwaysVisible(item);
-            const searchText = String(readSearchText(item) || '').toLowerCase();
-            const matches = !searchTerm || keepVisible || searchText.includes(searchTerm);
+            const matches = keepVisible || matchesSearchTokens(readSearchText(item), searchTerm);
 
             item.classList.toggle('d-none', !matches);
 
@@ -289,7 +382,7 @@ export function createSearchableSingleSelect({
     };
 
     const renderOptions = () => {
-        const searchTerm = searchInputEl.value.toLowerCase().trim();
+        const searchTerm = normalizeSearchText(searchInputEl.value);
         const options = Array.from(selectEl.options);
         const optionIndexMap = new Map(options.map((option, index) => [option, index]));
         const selectedIndex = selectEl.selectedIndex;
@@ -311,7 +404,7 @@ export function createSearchableSingleSelect({
             const index = optionIndexMap.get(option);
             const optionLabel = readOptionLabel(option);
             const optionSearchText = String(readOptionSearchText(option) || optionLabel).toLowerCase();
-            const matches = !searchTerm || optionSearchText.includes(searchTerm);
+            const matches = matchesSearchTokens(optionSearchText, searchTerm);
 
             const item = document.createElement('button');
             item.type = 'button';

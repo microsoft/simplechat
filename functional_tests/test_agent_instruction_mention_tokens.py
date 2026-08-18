@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Functional test for the agent instruction "#" reference tokens.
-Version: 0.250.209
-Implemented in: 0.250.209
+Version: 0.250.214
+Implemented in: 0.250.214
 
 This test ensures that the agent instructions autocomplete produces the
 namespaced #action: / #knowledge: token grammar, resolves only the actions and
@@ -640,8 +640,8 @@ def test_module_parses_with_node():
 
 if __name__ == "__main__":
     assert_app_version_at_least(
-        "0.250.209",
-        reason="Agent instruction reference tokens landed in 0.250.209.",
+        "0.250.214",
+        reason="Agent instruction reference tokens landed in 0.250.214.",
     )
 
     tests = [
