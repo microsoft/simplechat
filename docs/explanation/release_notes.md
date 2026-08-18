@@ -2,6 +2,28 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.210)**
+
+#### Bug Fixes
+
+*   **Chat Document Search Now Matches File Names**
+    *   Fixed the chat grounded-search document picker only matching on a document's title, which made file names completely unsearchable for any document that had extracted title metadata.
+    *   Typing any fragment of a file name now surfaces the document, anywhere in the name — searching `200` finds `Quarterly_Report_200_final.pdf`.
+    *   Multi-word queries are also supported, with `_`, `-`, and `.` treated as word breaks, so `report 200` matches `Quarterly_Report_200_final.pdf`. The same improvement applies to the scope, tags, prompt, model, and agent selectors.
+    *   (Ref: #1256, `chat-documents.js`, `chat-searchable-select.js`, chat grounded search, document picker)
+
+*   **Leftover Separator Lines in Filtered Dropdowns**
+    *   Fixed filtered dropdowns leaving orphaned workspace separator lines behind — commonly two stacked horizontal rules directly under the "Select All" / "Clear All" row — when a search removed the leading sections.
+    *   Divider visibility now follows the section it separates instead of the nearest visible row, and separator lines can no longer be leading, trailing, or stacked. Affects the Document, Scope, and Tags dropdowns, plus the Compare modal document picker.
+    *   (Ref: #1256, `chat-searchable-select.js`, dropdown filtering, section dividers)
+
+#### User Interface Enhancements
+
+*   **File Name Shown in Document Picker Rows**
+    *   Document rows in the chat grounded-search picker now show the file name as a smaller muted line beneath the title whenever the two differ, so it is clear which file a search matched.
+    *   Rows without distinct titles are unchanged, and the row tooltip carries both the title and the file name.
+    *   (Ref: #1256, `chat-documents.js`, `chats.css`, document picker rows)
+
 ### **(v0.250.209)**
 
 #### Bug Fixes
