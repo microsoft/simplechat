@@ -42,6 +42,21 @@ from functions_tableau_operations import (
     normalize_tableau_additional_fields,
     normalize_tableau_server_url,
 )
+from functions_yamcs_operations import (
+    YAMCS_AUTH_METHOD_API_KEY,
+    YAMCS_AUTH_METHOD_BEARER_TOKEN,
+    YAMCS_AUTH_METHOD_NONE,
+    YAMCS_AUTH_METHOD_USERNAME_PASSWORD,
+    YAMCS_MAX_MAX_ROWS,
+    YAMCS_MAX_TIMEOUT,
+    YAMCS_MIN_MAX_ROWS,
+    YAMCS_MIN_TIMEOUT,
+    YAMCS_PLUGIN_TYPE,
+    YAMCS_SUPPORTED_AUTH_METHODS,
+    YAMCS_SUPPORTED_AUTH_TYPES,
+    normalize_yamcs_additional_fields,
+    normalize_yamcs_server_url,
+)
 from functions_mcp_operations import (
     MCP_CUSTOM_HEADERS_FIELD,
     MCP_MAX_RETRY_BACKOFF_SECONDS,
@@ -237,7 +252,57 @@ class PluginHealthChecker:
                     continue
                 if parsed_value < minimum or parsed_value > maximum:
                     errors.append(f"Tableau additionalFields.{field_name} must be between {minimum} and {maximum}")
-        
+
+        elif plugin_type == YAMCS_PLUGIN_TYPE:
+            auth = manifest.get('auth', {}) if isinstance(manifest.get('auth'), dict) else {}
+            auth_type = str(auth.get('type') or 'username_password').strip()
+            raw_additional_fields = manifest.get('additionalFields', {})
+            if not isinstance(raw_additional_fields, dict):
+                raw_additional_fields = {}
+            additional_fields = normalize_yamcs_additional_fields(raw_additional_fields, auth_type=auth_type)
+            endpoint = normalize_yamcs_server_url(
+                manifest.get('endpoint') or additional_fields.get('server_url') or ''
+            )
+            parsed_endpoint = urlparse(endpoint)
+            identity_id = str(manifest.get('identity_id') or '').strip()
+            raw_auth_method = str(raw_additional_fields.get('auth_method') or '').strip().lower()
+            auth_method = additional_fields.get('auth_method')
+
+            if parsed_endpoint.scheme not in {'http', 'https'} or not parsed_endpoint.netloc:
+                errors.append("Yamcs plugin requires an http(s) Yamcs server URL")
+            if not additional_fields.get('instance'):
+                errors.append("Yamcs plugin requires additionalFields.instance")
+            if auth_type not in YAMCS_SUPPORTED_AUTH_TYPES:
+                errors.append("Yamcs plugin supports auth.type values 'NoAuth', 'key', 'identity', or 'username_password'")
+            if raw_auth_method and raw_auth_method not in YAMCS_SUPPORTED_AUTH_METHODS:
+                errors.append("Yamcs plugin supports additionalFields.auth_method values 'username_password', 'api_key', 'bearer_token', or 'none'")
+            if auth_type == 'identity' and not auth.get('identity') and not identity_id:
+                errors.append("Yamcs reusable identity auth requires auth.identity or identity_id")
+            elif auth_method == YAMCS_AUTH_METHOD_USERNAME_PASSWORD:
+                if auth_type == 'username_password' and (not auth.get('identity') or not auth.get('key')):
+                    errors.append("Yamcs username/password auth requires auth.identity and auth.key")
+            elif auth_method in {YAMCS_AUTH_METHOD_API_KEY, YAMCS_AUTH_METHOD_BEARER_TOKEN}:
+                if auth_type == 'key' and not auth.get('key'):
+                    errors.append("Yamcs API key and bearer token auth require auth.key")
+            elif auth_method == YAMCS_AUTH_METHOD_NONE and auth_type not in {'NoAuth', 'identity'}:
+                errors.append("Yamcs unauthenticated access requires auth.type='NoAuth'")
+
+            yamcs_range_fields = {
+                'max_rows': (YAMCS_MIN_MAX_ROWS, YAMCS_MAX_MAX_ROWS),
+                'timeout': (YAMCS_MIN_TIMEOUT, YAMCS_MAX_TIMEOUT),
+            }
+            for field_name, (minimum, maximum) in yamcs_range_fields.items():
+                raw_value = raw_additional_fields.get(field_name)
+                if raw_value in [None, '']:
+                    continue
+                try:
+                    parsed_value = int(raw_value)
+                except (TypeError, ValueError):
+                    errors.append(f"Yamcs additionalFields.{field_name} must be an integer")
+                    continue
+                if parsed_value < minimum or parsed_value > maximum:
+                    errors.append(f"Yamcs additionalFields.{field_name} must be between {minimum} and {maximum}")
+
         elif plugin_type in ['sql_query', 'sql_schema']:
             additional_fields = manifest.get('additionalFields', {})
             if not isinstance(additional_fields, dict):
