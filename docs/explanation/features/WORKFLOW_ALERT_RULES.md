@@ -2,7 +2,7 @@
 
 Conditional, severity-graded notifications for personal and group workflows.
 
-- **Implemented in version:** `0.250.209`
+- **Implemented in version:** `0.250.213`
 - **Applies to:** personal workflows and group workflows
 - **Dependencies:** existing workflow runner, notification center, Semantic Kernel SimpleChat plugin
 
@@ -260,4 +260,4 @@ a run did or did not alert. The decision is also written to App Insights through
 ## Related documentation
 
 - `docs/explanation/features/WORKFLOW_PRIORITY_ALERTS.md` — the original alert modal and deep links
-- `docs/explanation/release_notes.md` — release entry for `0.250.209`
+- `docs/explanation/release_notes.md` — release entry for `0.250.213`

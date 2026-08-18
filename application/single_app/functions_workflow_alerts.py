@@ -3,8 +3,8 @@
 """
 Workflow alert rule evaluation.
 
-Version: 0.250.209
-Implemented in: 0.250.209
+Version: 0.250.213
+Implemented in: 0.250.213
 
 Workflow alerts used to fire on every run because a workflow carried a single
 ``alert_priority`` value. This module adds a rule engine so a workflow only

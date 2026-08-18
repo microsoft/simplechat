@@ -12,6 +12,7 @@ const MCP_ACTION_IDENTITY_AUTH_TYPES = ['api_key', 'bearer_token', 'managed_iden
 const DATABRICKS_ACTION_IDENTITY_AUTH_TYPES = ['api_key', 'bearer_token', 'managed_identity'];
 const SNOWFLAKE_ACTION_IDENTITY_AUTH_TYPES = ['api_key', 'bearer_token', 'username_password'];
 const TABLEAU_ACTION_IDENTITY_AUTH_TYPES = ['api_key', 'username_password'];
+const YAMCS_ACTION_IDENTITY_AUTH_TYPES = ['api_key', 'bearer_token', 'username_password'];
 const BLOB_STORAGE_PLUGIN_TYPE = 'blob_storage';
 const DATABRICKS_PLUGIN_TYPE = 'databricks';
 const DATABRICKS_DEFAULT_CLOUD = 'azure_commercial';
@@ -23,6 +24,12 @@ const SNOWFLAKE_AUTH_METHOD_OAUTH = 'oauth';
 const TABLEAU_PLUGIN_TYPE = 'tableau';
 const TABLEAU_AUTH_METHOD_PAT = 'personal_access_token';
 const TABLEAU_AUTH_METHOD_USERNAME_PASSWORD = 'username_password';
+const YAMCS_PLUGIN_TYPE = 'yamcs';
+const YAMCS_DEFAULT_PROCESSOR = 'realtime';
+const YAMCS_AUTH_METHOD_USERNAME_PASSWORD = 'username_password';
+const YAMCS_AUTH_METHOD_API_KEY = 'api_key';
+const YAMCS_AUTH_METHOD_BEARER_TOKEN = 'bearer_token';
+const YAMCS_AUTH_METHOD_NONE = 'none';
 const publicWorkspacePlural = window.getPublicWorkspaceLabel ? window.getPublicWorkspaceLabel('plural') : 'Public Workspaces';
 const MCP_PLUGIN_TYPE = 'mcp';
 const KEY_VAULT_SECRET_REMINDERS_METADATA_FIELD = 'key_vault_secret_reminders';
@@ -505,6 +512,9 @@ export class PluginModalStepper {
     if (kind === 'tableau') {
       return this.actionIdentities.filter(identity => TABLEAU_ACTION_IDENTITY_AUTH_TYPES.includes(this.getIdentityAuthType(identity)));
     }
+    if (kind === 'yamcs') {
+      return this.actionIdentities.filter(identity => YAMCS_ACTION_IDENTITY_AUTH_TYPES.includes(this.getIdentityAuthType(identity)));
+    }
     return this.actionIdentities;
   }
 
@@ -514,6 +524,7 @@ export class PluginModalStepper {
     this.populateActionIdentitySelector('databricks', 'databricks-identity-select', 'databricks-action-identity-group', 'databricks-identity-status');
     this.populateActionIdentitySelector('snowflake', 'snowflake-identity-select', 'snowflake-action-identity-group', 'snowflake-identity-status');
     this.populateActionIdentitySelector('tableau', 'tableau-identity-select', 'tableau-action-identity-group', 'tableau-identity-status');
+    this.populateActionIdentitySelector('yamcs', 'yamcs-identity-select', 'yamcs-action-identity-group', 'yamcs-identity-status');
     this.populateActionIdentitySelector('generic', 'plugin-auth-identity-select-generic', 'generic-action-identity-group', 'plugin-auth-identity-status-generic');
     this.populateActionIdentitySelector('sql', 'sql-identity-select', 'sql-action-identity-group', 'sql-identity-status');
   }
@@ -576,6 +587,7 @@ export class PluginModalStepper {
       databricks: 'databricks-identity-select',
       snowflake: 'snowflake-identity-select',
       tableau: 'tableau-identity-select',
+      yamcs: 'yamcs-identity-select',
       generic: 'plugin-auth-identity-select-generic',
       sql: 'sql-identity-select'
     };
@@ -593,6 +605,7 @@ export class PluginModalStepper {
       databricks: 'databricks-identity-select',
       snowflake: 'snowflake-identity-select',
       tableau: 'tableau-identity-select',
+      yamcs: 'yamcs-identity-select',
       generic: 'plugin-auth-identity-select-generic',
       sql: 'sql-identity-select'
     };
@@ -627,9 +640,15 @@ export class PluginModalStepper {
       return;
     }
 
-    const authSelect = document.getElementById(kind === 'openapi'
-      ? 'plugin-auth-type'
-      : (kind === 'mcp' ? 'mcp-auth-method' : (kind === 'databricks' ? 'databricks-auth-method' : (kind === 'snowflake' ? 'snowflake-auth-method' : (kind === 'tableau' ? 'tableau-auth-method' : 'plugin-auth-type-generic')))));
+    const authSelectIds = {
+      openapi: 'plugin-auth-type',
+      mcp: 'mcp-auth-method',
+      databricks: 'databricks-auth-method',
+      snowflake: 'snowflake-auth-method',
+      tableau: 'tableau-auth-method',
+      yamcs: 'yamcs-auth-method'
+    };
+    const authSelect = document.getElementById(authSelectIds[kind] || 'plugin-auth-type-generic');
     if (authSelect) {
       authSelect.disabled = !!selectedIdentity;
     }
@@ -643,6 +662,8 @@ export class PluginModalStepper {
       this.toggleSnowflakeAuthFields();
     } else if (kind === 'tableau') {
       this.toggleTableauAuthFields();
+    } else if (kind === 'yamcs') {
+      this.toggleYamcsAuthFields();
     } else {
       this.toggleGenericAuthFields();
     }
@@ -673,6 +694,8 @@ export class PluginModalStepper {
     document.getElementById('snowflake-identity-select').addEventListener('change', () => this.handleActionIdentityChange('snowflake'));
     document.getElementById('tableau-auth-method').addEventListener('change', () => this.toggleTableauAuthFields());
     document.getElementById('tableau-identity-select').addEventListener('change', () => this.handleActionIdentityChange('tableau'));
+    document.getElementById('yamcs-auth-method').addEventListener('change', () => this.toggleYamcsAuthFields());
+    document.getElementById('yamcs-identity-select').addEventListener('change', () => this.handleActionIdentityChange('yamcs'));
     document.getElementById('plugin-auth-identity-select-generic').addEventListener('change', () => this.handleActionIdentityChange('generic'));
     const msGraphMailSendMode = document.getElementById('msgraph-mail-send-mode');
     if (msGraphMailSendMode) {
@@ -712,6 +735,11 @@ export class PluginModalStepper {
     const testCosmosBtn = document.getElementById('cosmos-test-connection-btn');
     if (testCosmosBtn) {
       testCosmosBtn.addEventListener('click', () => this.testCosmosConnection());
+    }
+
+    const testYamcsBtn = document.getElementById('yamcs-test-connection-btn');
+    if (testYamcsBtn) {
+      testYamcsBtn.addEventListener('click', () => this.testYamcsConnection());
     }
 
     const keyVaultReminderToggle = document.getElementById('plugin-key-vault-reminder-enabled');
@@ -1258,6 +1286,10 @@ export class PluginModalStepper {
 
   isTableauType(type = this.selectedType) {
     return !!(type && type.toLowerCase() === TABLEAU_PLUGIN_TYPE);
+  }
+
+  isYamcsType(type = this.selectedType) {
+    return !!(type && type.toLowerCase() === YAMCS_PLUGIN_TYPE);
   }
 
   isMcpType(type = this.selectedType) {
@@ -2375,6 +2407,156 @@ export class PluginModalStepper {
     };
   }
 
+  normalizeYamcsServerUrl(serverUrl = '') {
+    const value = String(serverUrl || '').trim().replace(/\/+$/, '');
+    if (!value) {
+      return '';
+    }
+    if (!/^https?:\/\//i.test(value)) {
+      return `https://${value}`;
+    }
+    return value;
+  }
+
+  getYamcsIdentityAuthMethod(identity) {
+    const authType = this.getIdentityAuthType(identity);
+    if (authType === 'api_key') {
+      return YAMCS_AUTH_METHOD_API_KEY;
+    }
+    if (authType === 'bearer_token') {
+      return YAMCS_AUTH_METHOD_BEARER_TOKEN;
+    }
+    return YAMCS_AUTH_METHOD_USERNAME_PASSWORD;
+  }
+
+  formatYamcsAuthMethod(authMethod) {
+    if (authMethod === YAMCS_AUTH_METHOD_API_KEY) {
+      return 'API Key';
+    }
+    if (authMethod === YAMCS_AUTH_METHOD_BEARER_TOKEN) {
+      return 'Bearer Token';
+    }
+    if (authMethod === YAMCS_AUTH_METHOD_NONE) {
+      return 'No Authentication';
+    }
+    return 'Username and Password';
+  }
+
+  toggleYamcsAuthFields() {
+    const selectedIdentity = this.getSelectedActionIdentity('yamcs');
+    const authMethodSelect = document.getElementById('yamcs-auth-method');
+    const usernamePasswordGroup = document.getElementById('yamcs-username-password-group');
+    const apiKeyGroup = document.getElementById('yamcs-api-key-group');
+    const bearerTokenGroup = document.getElementById('yamcs-bearer-token-group');
+
+    if (authMethodSelect) {
+      authMethodSelect.disabled = Boolean(selectedIdentity);
+      if (selectedIdentity) {
+        authMethodSelect.value = this.getYamcsIdentityAuthMethod(selectedIdentity);
+      }
+    }
+
+    [usernamePasswordGroup, apiKeyGroup, bearerTokenGroup].forEach(group => {
+      if (group) {
+        group.classList.add('d-none');
+      }
+    });
+
+    if (selectedIdentity) {
+      return;
+    }
+
+    const authMethod = authMethodSelect?.value || YAMCS_AUTH_METHOD_USERNAME_PASSWORD;
+    if (authMethod === YAMCS_AUTH_METHOD_USERNAME_PASSWORD) {
+      usernamePasswordGroup?.classList.remove('d-none');
+    } else if (authMethod === YAMCS_AUTH_METHOD_API_KEY) {
+      apiKeyGroup?.classList.remove('d-none');
+    } else if (authMethod === YAMCS_AUTH_METHOD_BEARER_TOKEN) {
+      bearerTokenGroup?.classList.remove('d-none');
+    }
+  }
+
+  populateYamcsForm(plugin) {
+    const additionalFields = plugin.additionalFields || plugin.additional_fields || {};
+    const auth = plugin.auth || {};
+    const serverUrl = this.normalizeYamcsServerUrl(plugin.endpoint || additionalFields.server_url || '');
+
+    document.getElementById('yamcs-server-url').value = serverUrl;
+    document.getElementById('yamcs-instance').value = additionalFields.instance || '';
+    document.getElementById('yamcs-processor').value = additionalFields.processor || YAMCS_DEFAULT_PROCESSOR;
+    document.getElementById('yamcs-max-rows').value = additionalFields.max_rows || 500;
+    document.getElementById('yamcs-timeout').value = additionalFields.timeout || 30;
+    document.getElementById('yamcs-tls-verify').checked = additionalFields.tls_verify !== false;
+    document.getElementById('yamcs-enable-archive-sql').checked = additionalFields.enable_archive_sql === true;
+
+    let authMethod = additionalFields.auth_method || YAMCS_AUTH_METHOD_USERNAME_PASSWORD;
+    if (auth.type === 'NoAuth') {
+      authMethod = YAMCS_AUTH_METHOD_NONE;
+    } else if (auth.type === 'username_password') {
+      authMethod = YAMCS_AUTH_METHOD_USERNAME_PASSWORD;
+      document.getElementById('yamcs-username').value = auth.identity || '';
+      document.getElementById('yamcs-password').value = auth.key || '';
+    } else if (auth.type === 'key') {
+      if (authMethod === YAMCS_AUTH_METHOD_BEARER_TOKEN) {
+        document.getElementById('yamcs-bearer-token').value = auth.key || '';
+      } else {
+        authMethod = YAMCS_AUTH_METHOD_API_KEY;
+        document.getElementById('yamcs-api-key').value = auth.key || '';
+      }
+    }
+
+    document.getElementById('yamcs-auth-method').value = authMethod;
+    this.setSelectedActionIdentity('yamcs', plugin.identity_id || '');
+    this.handleActionIdentityChange('yamcs');
+  }
+
+  getYamcsConfiguration() {
+    const serverUrl = this.normalizeYamcsServerUrl(document.getElementById('yamcs-server-url')?.value || '');
+    const selectedIdentity = this.getSelectedActionIdentity('yamcs');
+    const authMethod = selectedIdentity
+      ? this.getYamcsIdentityAuthMethod(selectedIdentity)
+      : (document.getElementById('yamcs-auth-method')?.value || YAMCS_AUTH_METHOD_USERNAME_PASSWORD);
+    const additionalFields = {
+      server_url: serverUrl,
+      instance: document.getElementById('yamcs-instance')?.value.trim() || '',
+      processor: document.getElementById('yamcs-processor')?.value.trim() || YAMCS_DEFAULT_PROCESSOR,
+      auth_method: authMethod,
+      tls_verify: document.getElementById('yamcs-tls-verify')?.checked !== false,
+      read_only: true,
+      enable_archive_sql: document.getElementById('yamcs-enable-archive-sql')?.checked === true,
+      max_rows: parseInt(document.getElementById('yamcs-max-rows')?.value, 10) || 500,
+      timeout: parseInt(document.getElementById('yamcs-timeout')?.value, 10) || 30
+    };
+    const auth = {};
+    let identityId = '';
+
+    if (selectedIdentity) {
+      identityId = selectedIdentity.id || selectedIdentity.identity_id || '';
+      auth.type = 'identity';
+      auth.identity = identityId;
+      additionalFields.identity_auth_type = this.getIdentityAuthType(selectedIdentity);
+    } else if (authMethod === YAMCS_AUTH_METHOD_USERNAME_PASSWORD) {
+      auth.type = 'username_password';
+      auth.identity = document.getElementById('yamcs-username')?.value.trim() || '';
+      auth.key = document.getElementById('yamcs-password')?.value.trim() || '';
+    } else if (authMethod === YAMCS_AUTH_METHOD_API_KEY) {
+      auth.type = 'key';
+      auth.key = document.getElementById('yamcs-api-key')?.value.trim() || '';
+    } else if (authMethod === YAMCS_AUTH_METHOD_BEARER_TOKEN) {
+      auth.type = 'key';
+      auth.key = document.getElementById('yamcs-bearer-token')?.value.trim() || '';
+    } else {
+      auth.type = 'NoAuth';
+    }
+
+    return {
+      endpoint: serverUrl,
+      auth,
+      additionalFields,
+      identityId
+    };
+  }
+
   initializeDocumentSearchConfiguration() {
     const defaults = {
       'document-search-scope': 'all',
@@ -3232,7 +3414,7 @@ export class PluginModalStepper {
   }
 
   isStructuredConfigType(type = this.selectedType) {
-    return this.isSqlType(type) || this.isCosmosType(type) || this.isDocumentSearchType(type) || this.isBlobStorageType(type) || this.isDatabricksType(type) || this.isSnowflakeType(type) || this.isTableauType(type) || this.isMcpType(type) || this.isSimpleChatType(type) || this.isMsGraphType(type) || this.isAzureMapsType(type) || this.isChartType(type);
+    return this.isSqlType(type) || this.isCosmosType(type) || this.isDocumentSearchType(type) || this.isBlobStorageType(type) || this.isDatabricksType(type) || this.isSnowflakeType(type) || this.isTableauType(type) || this.isYamcsType(type) || this.isMcpType(type) || this.isSimpleChatType(type) || this.isMsGraphType(type) || this.isAzureMapsType(type) || this.isChartType(type);
   }
 
   showConfigSectionForType() {
@@ -3246,6 +3428,7 @@ export class PluginModalStepper {
       databricks: document.getElementById('databricks-config-section'),
       snowflake: document.getElementById('snowflake-config-section'),
       tableau: document.getElementById('tableau-config-section'),
+      yamcs: document.getElementById('yamcs-config-section'),
       simpleChat: document.getElementById('simplechat-config-section'),
       msGraph: document.getElementById('msgraph-config-section'),
       mcp: document.getElementById('mcp-config-section'),
@@ -3285,6 +3468,9 @@ export class PluginModalStepper {
     } else if (this.isTableauType()) {
       showOnly('tableau');
       this.toggleTableauAuthFields();
+    } else if (this.isYamcsType()) {
+      showOnly('yamcs');
+      this.toggleYamcsAuthFields();
     } else if (this.isMcpType()) {
       showOnly('mcp');
       this.initializeMcpConfiguration();
@@ -3354,6 +3540,8 @@ export class PluginModalStepper {
           titleEl.textContent = 'Snowflake Configuration';
         } else if (isTableauType) {
           titleEl.textContent = 'Tableau Configuration';
+        } else if (this.isYamcsType()) {
+          titleEl.textContent = 'Yamcs Configuration';
         } else if (isMcpType) {
           titleEl.textContent = 'MCP Server Configuration';
         } else if (this.isSimpleChatType()) {
@@ -3544,6 +3732,7 @@ export class PluginModalStepper {
         const databricksSection = document.getElementById('databricks-config-section');
         const snowflakeSection = document.getElementById('snowflake-config-section');
         const tableauSection = document.getElementById('tableau-config-section');
+        const yamcsSection = document.getElementById('yamcs-config-section');
         const mcpSection = document.getElementById('mcp-config-section');
         const simpleChatSection = document.getElementById('simplechat-config-section');
         const msGraphSection = document.getElementById('msgraph-config-section');
@@ -3557,6 +3746,7 @@ export class PluginModalStepper {
         const isDatabricksVisible = !databricksSection.classList.contains('d-none');
         const isSnowflakeVisible = !snowflakeSection.classList.contains('d-none');
         const isTableauVisible = !tableauSection.classList.contains('d-none');
+        const isYamcsVisible = !yamcsSection.classList.contains('d-none');
         const isMcpVisible = !mcpSection.classList.contains('d-none');
         const isSimpleChatVisible = !simpleChatSection.classList.contains('d-none');
         const isMsGraphVisible = !msGraphSection.classList.contains('d-none');
@@ -3874,6 +4064,50 @@ export class PluginModalStepper {
           }
           if (Number.isNaN(timeout) || timeout < 1 || timeout > 300) {
             this.showError('Tableau timeout must be between 1 and 300 seconds.');
+            return false;
+          }
+        } else if (isYamcsVisible) {
+          const serverUrl = this.normalizeYamcsServerUrl(document.getElementById('yamcs-server-url').value);
+          const instance = document.getElementById('yamcs-instance').value.trim();
+          const selectedIdentity = this.getSelectedActionIdentity('yamcs');
+          const authMethod = document.getElementById('yamcs-auth-method').value;
+          const username = document.getElementById('yamcs-username').value.trim();
+          const password = document.getElementById('yamcs-password').value.trim();
+          const apiKey = document.getElementById('yamcs-api-key').value.trim();
+          const bearerToken = document.getElementById('yamcs-bearer-token').value.trim();
+          const maxRows = parseInt(document.getElementById('yamcs-max-rows').value, 10);
+          const timeout = parseInt(document.getElementById('yamcs-timeout').value, 10);
+
+          if (!serverUrl || !/^https?:\/\//i.test(serverUrl)) {
+            this.showError('Yamcs server URL must be an http or https URL.');
+            return false;
+          }
+          if (!instance) {
+            this.showError('Yamcs instance is required.');
+            return false;
+          }
+          if (![YAMCS_AUTH_METHOD_USERNAME_PASSWORD, YAMCS_AUTH_METHOD_API_KEY, YAMCS_AUTH_METHOD_BEARER_TOKEN, YAMCS_AUTH_METHOD_NONE].includes(authMethod)) {
+            this.showError('Select a supported Yamcs authentication method.');
+            return false;
+          }
+          if (!selectedIdentity && authMethod === YAMCS_AUTH_METHOD_USERNAME_PASSWORD && (!username || !password)) {
+            this.showError('Yamcs username and password are required for username/password authentication.');
+            return false;
+          }
+          if (!selectedIdentity && authMethod === YAMCS_AUTH_METHOD_API_KEY && !apiKey) {
+            this.showError('Yamcs API key is required for API key authentication.');
+            return false;
+          }
+          if (!selectedIdentity && authMethod === YAMCS_AUTH_METHOD_BEARER_TOKEN && !bearerToken) {
+            this.showError('Yamcs bearer token is required for bearer token authentication.');
+            return false;
+          }
+          if (Number.isNaN(maxRows) || maxRows < 1 || maxRows > 5000) {
+            this.showError('Yamcs max rows must be between 1 and 5000.');
+            return false;
+          }
+          if (Number.isNaN(timeout) || timeout < 1 || timeout > 300) {
+            this.showError('Yamcs timeout must be between 1 and 300 seconds.');
             return false;
           }
         } else if (isMcpVisible) {
@@ -4428,6 +4662,102 @@ export class PluginModalStepper {
       }
 
       const response = await fetch('/api/plugins/test-cosmos-connection', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const data = await response.json();
+
+      resultDiv.classList.remove('d-none');
+      if (data.success) {
+        alertDiv.className = 'alert alert-success mb-0 py-2 px-3 small';
+        alertDiv.innerHTML = '<i class="bi bi-check-circle me-2"></i>' + this.escapeHtml(data.message || 'Connection successful!');
+      } else {
+        alertDiv.className = 'alert alert-danger mb-0 py-2 px-3 small';
+        alertDiv.innerHTML = '<i class="bi bi-x-circle me-2"></i>' + this.escapeHtml(data.error || 'Connection failed.');
+      }
+    } catch (error) {
+      resultDiv.classList.remove('d-none');
+      alertDiv.className = 'alert alert-danger mb-0 py-2 px-3 small';
+      alertDiv.innerHTML = '<i class="bi bi-x-circle me-2"></i>Test failed: ' + this.escapeHtml(error.message || 'Network error');
+    } finally {
+      btn.innerHTML = originalText;
+      btn.disabled = false;
+    }
+  }
+
+  async testYamcsConnection() {
+    const btn = document.getElementById('yamcs-test-connection-btn');
+    const resultDiv = document.getElementById('yamcs-test-connection-result');
+    const alertDiv = document.getElementById('yamcs-test-connection-alert');
+    if (!btn || !resultDiv || !alertDiv) return;
+
+    const serverUrl = this.normalizeYamcsServerUrl(document.getElementById('yamcs-server-url')?.value || '');
+    const instance = document.getElementById('yamcs-instance')?.value?.trim() || '';
+    const selectedIdentity = this.getSelectedActionIdentity('yamcs');
+    const authMethod = selectedIdentity
+      ? this.getYamcsIdentityAuthMethod(selectedIdentity)
+      : (document.getElementById('yamcs-auth-method')?.value || YAMCS_AUTH_METHOD_USERNAME_PASSWORD);
+    const tlsVerify = document.getElementById('yamcs-tls-verify')?.checked !== false;
+    const timeout = parseInt(document.getElementById('yamcs-timeout')?.value, 10) || 10;
+
+    if (!serverUrl || !instance) {
+      resultDiv.classList.remove('d-none');
+      alertDiv.className = 'alert alert-warning mb-0 py-2 px-3 small';
+      alertDiv.textContent = 'Server URL and instance are required before testing the Yamcs connection.';
+      return;
+    }
+    if (selectedIdentity) {
+      resultDiv.classList.remove('d-none');
+      alertDiv.className = 'alert alert-warning mb-0 py-2 px-3 small';
+      alertDiv.textContent = 'Save the action first to test a connection that uses a reusable identity.';
+      return;
+    }
+
+    let authKey = '';
+    let username = '';
+    if (authMethod === YAMCS_AUTH_METHOD_USERNAME_PASSWORD) {
+      username = document.getElementById('yamcs-username')?.value?.trim() || '';
+      authKey = document.getElementById('yamcs-password')?.value?.trim() || '';
+    } else if (authMethod === YAMCS_AUTH_METHOD_API_KEY) {
+      authKey = document.getElementById('yamcs-api-key')?.value?.trim() || '';
+    } else if (authMethod === YAMCS_AUTH_METHOD_BEARER_TOKEN) {
+      authKey = document.getElementById('yamcs-bearer-token')?.value?.trim() || '';
+    }
+
+    const existingPluginContext = this.getTestPluginContext();
+    if (authMethod !== YAMCS_AUTH_METHOD_NONE && !authKey && !existingPluginContext) {
+      resultDiv.classList.remove('d-none');
+      alertDiv.className = 'alert alert-warning mb-0 py-2 px-3 small';
+      alertDiv.textContent = 'A credential is required before testing an authenticated Yamcs connection.';
+      return;
+    }
+
+    const originalText = btn.innerHTML;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>Testing...';
+    btn.disabled = true;
+    resultDiv.classList.add('d-none');
+
+    try {
+      const payload = {
+        server_url: serverUrl,
+        instance,
+        auth_method: authMethod,
+        tls_verify: tlsVerify,
+        timeout
+      };
+
+      if (authMethod === YAMCS_AUTH_METHOD_USERNAME_PASSWORD) {
+        payload.username = username;
+      }
+      if (authMethod !== YAMCS_AUTH_METHOD_NONE) {
+        payload.auth_key = authKey;
+      }
+      if (existingPluginContext) {
+        payload.existing_plugin = existingPluginContext;
+      }
+
+      const response = await fetch('/api/plugins/test-yamcs-connection', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
@@ -5032,6 +5362,8 @@ export class PluginModalStepper {
       this.populateSnowflakeForm(plugin);
     } else if (this.isTableauType(plugin.type)) {
       this.populateTableauForm(plugin);
+    } else if (this.isYamcsType(plugin.type)) {
+      this.populateYamcsForm(plugin);
     } else if (this.isMcpType(plugin.type)) {
       this.populateMcpForm(plugin);
     } else if (this.isSimpleChatType(plugin.type)) {
@@ -5089,6 +5421,7 @@ export class PluginModalStepper {
     const databricksSection = document.getElementById('databricks-config-section');
     const snowflakeSection = document.getElementById('snowflake-config-section');
     const tableauSection = document.getElementById('tableau-config-section');
+    const yamcsSection = document.getElementById('yamcs-config-section');
     const mcpSection = document.getElementById('mcp-config-section');
     const azureMapsSection = document.getElementById('azure-maps-config-section');
     const isOpenApiVisible = !openApiSection.classList.contains('d-none');
@@ -5099,6 +5432,7 @@ export class PluginModalStepper {
     const isDatabricksVisible = !databricksSection.classList.contains('d-none');
     const isSnowflakeVisible = !snowflakeSection.classList.contains('d-none');
     const isTableauVisible = !tableauSection.classList.contains('d-none');
+    const isYamcsVisible = !yamcsSection.classList.contains('d-none');
     const isMcpVisible = !mcpSection.classList.contains('d-none');
     const isAzureMapsVisible = !azureMapsSection.classList.contains('d-none');
 
@@ -5361,6 +5695,12 @@ export class PluginModalStepper {
       auth = tableauConfig.auth;
       additionalFields = tableauConfig.additionalFields;
       identityId = tableauConfig.identityId;
+    } else if (isYamcsVisible) {
+      const yamcsConfig = this.getYamcsConfiguration();
+      endpoint = yamcsConfig.endpoint;
+      auth = yamcsConfig.auth;
+      additionalFields = yamcsConfig.additionalFields;
+      identityId = yamcsConfig.identityId;
     } else if (isMcpVisible) {
       const mcpConfig = this.getMcpConfiguration();
       endpoint = mcpConfig.endpoint;
@@ -5484,6 +5824,7 @@ export class PluginModalStepper {
     const isDatabricksType = this.isDatabricksType();
     const isSnowflakeType = this.isSnowflakeType();
     const isTableauType = this.isTableauType();
+    const isYamcsType = this.isYamcsType();
     const isMcpType = this.isMcpType();
     const isSimpleChatType = this.isSimpleChatType();
     const isMsGraphType = this.isMsGraphType();
@@ -5574,10 +5915,10 @@ export class PluginModalStepper {
     }
 
     const databaseType = this.getSqlDatabaseType();
-    if (!isSqlType && !isCosmosType && !isDocumentSearchType && !isBlobStorageType && !isDatabricksType && !isSnowflakeType && !isTableauType && !isMcpType && !isSimpleChatType && !isMsGraphType && !isAzureMapsType && !isChartType && databaseType) {
+    if (!isSqlType && !isCosmosType && !isDocumentSearchType && !isBlobStorageType && !isDatabricksType && !isSnowflakeType && !isTableauType && !isYamcsType && !isMcpType && !isSimpleChatType && !isMsGraphType && !isAzureMapsType && !isChartType && databaseType) {
       document.getElementById('summary-plugin-database-type').textContent = databaseType;
       databaseTypeRow.style.display = '';
-    } else if (!isSqlType && !isCosmosType && !isDocumentSearchType && !isBlobStorageType && !isDatabricksType && !isSnowflakeType && !isTableauType && !isMcpType && !isSimpleChatType && !isMsGraphType && !isAzureMapsType && !isChartType) {
+    } else if (!isSqlType && !isCosmosType && !isDocumentSearchType && !isBlobStorageType && !isDatabricksType && !isSnowflakeType && !isTableauType && !isYamcsType && !isMcpType && !isSimpleChatType && !isMsGraphType && !isAzureMapsType && !isChartType) {
       databaseTypeRow.style.display = 'none';
     }
 
@@ -5590,6 +5931,7 @@ export class PluginModalStepper {
     this.populateDatabricksSummary();
     this.populateSnowflakeSummary();
     this.populateTableauSummary();
+    this.populateYamcsSummary();
     this.populateMcpSummary();
     this.populateSimpleChatSummary();
     this.populateMsGraphSummary();
@@ -5631,6 +5973,8 @@ export class PluginModalStepper {
       return SNOWFLAKE_DEFAULT_ENDPOINT;
     } else if (isTableauType) {
       return this.normalizeTableauServerUrl(document.getElementById('tableau-server-url')?.value || '');
+    } else if (this.isYamcsType()) {
+      return this.normalizeYamcsServerUrl(document.getElementById('yamcs-server-url')?.value || '');
     } else if (isMcpType) {
       const transport = document.getElementById('mcp-transport')?.value || 'streamable_http';
       return transport === 'stdio' ? MCP_STDIO_ENDPOINT : document.getElementById('mcp-endpoint').value.trim();
@@ -5689,6 +6033,11 @@ export class PluginModalStepper {
         return 'Reusable Identity';
       }
       return this.formatTableauAuthMethod(document.getElementById('tableau-auth-method')?.value || TABLEAU_AUTH_METHOD_PAT);
+    } else if (this.isYamcsType()) {
+      if (this.getSelectedActionIdentity('yamcs')) {
+        return 'Reusable Identity';
+      }
+      return this.formatYamcsAuthMethod(document.getElementById('yamcs-auth-method')?.value || YAMCS_AUTH_METHOD_USERNAME_PASSWORD);
     } else if (isMcpType) {
       if (this.getSelectedActionIdentity('mcp')) {
         return 'Reusable Identity';
@@ -5985,6 +6334,34 @@ export class PluginModalStepper {
     tableauSection.classList.remove('d-none');
   }
 
+  populateYamcsSummary() {
+    const yamcsSection = document.getElementById('summary-yamcs-section');
+    if (!yamcsSection) {
+      return;
+    }
+
+    if (!this.isYamcsType()) {
+      yamcsSection.classList.add('d-none');
+      return;
+    }
+
+    const selectedIdentity = this.getSelectedActionIdentity('yamcs');
+    const authMethod = selectedIdentity
+      ? this.getYamcsIdentityAuthMethod(selectedIdentity)
+      : (document.getElementById('yamcs-auth-method')?.value || YAMCS_AUTH_METHOD_USERNAME_PASSWORD);
+
+    document.getElementById('summary-yamcs-instance').textContent = document.getElementById('yamcs-instance')?.value.trim() || '-';
+    document.getElementById('summary-yamcs-processor').textContent = document.getElementById('yamcs-processor')?.value.trim() || YAMCS_DEFAULT_PROCESSOR;
+    document.getElementById('summary-yamcs-auth-method').textContent = selectedIdentity
+      ? `Reusable Identity (${this.formatYamcsAuthMethod(authMethod)})`
+      : this.formatYamcsAuthMethod(authMethod);
+    document.getElementById('summary-yamcs-tls-verify').textContent = document.getElementById('yamcs-tls-verify')?.checked === false ? 'Disabled' : 'Enabled';
+    document.getElementById('summary-yamcs-max-rows').textContent = document.getElementById('yamcs-max-rows')?.value.trim() || '500';
+    document.getElementById('summary-yamcs-timeout').textContent = `${document.getElementById('yamcs-timeout')?.value || '30'} seconds`;
+    document.getElementById('summary-yamcs-archive-sql').textContent = document.getElementById('yamcs-enable-archive-sql')?.checked === true ? 'Enabled (read-only)' : 'Disabled';
+    yamcsSection.classList.remove('d-none');
+  }
+
   populateMcpSummary() {
     const mcpSection = document.getElementById('summary-mcp-section');
     if (!mcpSection) {
@@ -6225,6 +6602,7 @@ export class PluginModalStepper {
       const isDocumentSearchType = this.isDocumentSearchType();
       const isDatabricksType = this.isDatabricksType();
       const isTableauType = this.isTableauType();
+      const isYamcsType = this.isYamcsType();
       const isMcpType = this.isMcpType();
       const isSimpleChatType = this.isSimpleChatType();
       const isMsGraphType = this.isMsGraphType();
@@ -6243,6 +6621,8 @@ export class PluginModalStepper {
         currentEndpoint = this.normalizeDatabricksWorkspaceUrl(document.getElementById('databricks-workspace-url')?.value || '');
       } else if (isTableauType) {
         currentEndpoint = this.normalizeTableauServerUrl(document.getElementById('tableau-server-url')?.value || '');
+      } else if (isYamcsType) {
+        currentEndpoint = this.normalizeYamcsServerUrl(document.getElementById('yamcs-server-url')?.value || '');
       } else if (isMcpType) {
         currentEndpoint = this.getEndpointValue();
       } else if (isSimpleChatType) {
@@ -6289,6 +6669,17 @@ export class PluginModalStepper {
         } else if (!selectedIdentity && currentAuthType === TABLEAU_AUTH_METHOD_USERNAME_PASSWORD) {
           currentAuthKey = document.getElementById('tableau-password')?.value || '';
         }
+      } else if (isYamcsType) {
+        const selectedIdentity = this.getSelectedActionIdentity('yamcs');
+        const yamcsAuthMethod = document.getElementById('yamcs-auth-method')?.value || YAMCS_AUTH_METHOD_USERNAME_PASSWORD;
+        currentAuthType = selectedIdentity ? 'identity' : yamcsAuthMethod;
+        if (!selectedIdentity && yamcsAuthMethod === YAMCS_AUTH_METHOD_USERNAME_PASSWORD) {
+          currentAuthKey = document.getElementById('yamcs-password')?.value || '';
+        } else if (!selectedIdentity && yamcsAuthMethod === YAMCS_AUTH_METHOD_API_KEY) {
+          currentAuthKey = document.getElementById('yamcs-api-key')?.value || '';
+        } else if (!selectedIdentity && yamcsAuthMethod === YAMCS_AUTH_METHOD_BEARER_TOKEN) {
+          currentAuthKey = document.getElementById('yamcs-bearer-token')?.value || '';
+        }
       } else if (isMcpType) {
         const selectedIdentity = this.getSelectedActionIdentity('mcp');
         currentAuthType = selectedIdentity ? 'identity' : (document.getElementById('mcp-auth-method')?.value || 'none');
@@ -6330,6 +6721,8 @@ export class PluginModalStepper {
         currentAdditionalFields = JSON.stringify(this.getDocumentSearchAdditionalFields(), null, 2);
       } else if (isTableauType) {
         currentAdditionalFields = JSON.stringify(this.getTableauConfiguration().additionalFields, null, 2);
+      } else if (isYamcsType) {
+        currentAdditionalFields = JSON.stringify(this.getYamcsConfiguration().additionalFields, null, 2);
       } else if (isMcpType) {
         currentAdditionalFields = JSON.stringify(this.getMcpConfiguration().additionalFields, null, 2);
       } else if (isSimpleChatType) {

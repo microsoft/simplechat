@@ -2,8 +2,8 @@
 # test_workflow_alert_rules.py
 """
 Functional test for conditional workflow alert rules.
-Version: 0.250.209
-Implemented in: 0.250.209
+Version: 0.250.213
+Implemented in: 0.250.213
 
 This test ensures workflow alerts only fire when a declared condition is met,
 that the highest matching severity wins while every matched rule is reported,
@@ -489,7 +489,7 @@ def test_save_settings_keeps_legacy_clients_alerting():
 def test_alert_rule_contracts_are_wired_through_the_stack():
     """The rule engine is referenced by the save paths, runner, UI and notifications."""
     print("Testing stack wiring contracts...")
-    assert_app_version_at_least("0.250.209")
+    assert_app_version_at_least("0.250.213")
 
     personal_content = read_text("application/single_app/functions_personal_workflows.py")
     group_content = read_text("application/single_app/functions_group_workflows.py")

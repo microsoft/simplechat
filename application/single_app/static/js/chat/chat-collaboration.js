@@ -1323,7 +1323,7 @@ async function sendCollaborativeMessage(messageText, tempMessageId = null) {
     return payload;
 }
 
-async function sendCollaborativeAiMessage(messageText, tempMessageId = null, messageData = {}, pendingContext = null) {
+async function sendCollaborativeAiMessage(messageText, tempMessageId = null, messageData = {}, pendingContext = null, streamOptions = {}) {
     const conversationId = window.chatConversations?.getCurrentConversationId?.();
     if (!conversationId) {
         throw new Error('No collaborative conversation is active.');
@@ -1347,6 +1347,7 @@ async function sendCollaborativeAiMessage(messageText, tempMessageId = null, mes
             endpoint: `/api/collaboration/conversations/${encodeURIComponent(conversationId)}/stream`,
             cancelEndpoint: `/api/collaboration/conversations/${encodeURIComponent(conversationId)}/stream/cancel`,
             allowRecovery: false,
+            onDone: streamOptions.onDone || null,
             onError: (errorMessage, errorData = null) => {
                 if (errorData?.user_message_id && tempMessageId) {
                     updateUserMessageId(tempMessageId, errorData.user_message_id);

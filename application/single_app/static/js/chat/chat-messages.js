@@ -17,7 +17,7 @@ import { updateSidebarConversationTitle } from "./chat-sidebar-conversations.js"
 import { getActiveConversationContext, getActiveConversationScope } from "./chat-conversation-scope.js";
 import { escapeHtml, isColorLight, addTargetBlankToExternalLinks, sanitizeHttpUrl } from "./chat-utils.js";
 import { showToast } from "./chat-toast.js";
-import { autoplayTTSIfEnabled } from "./chat-tts.js";
+import { autoplayTTSIfEnabled, isTTSAutoplayEnabled, playTTS } from "./chat-tts.js";
 import { saveUserSetting } from "./chat-layout.js";
 import { sendMessageWithStreaming } from "./chat-streaming.js";
 import { getCurrentReasoningEffort, isReasoningEffortEnabled } from './chat-reasoning.js';
@@ -6608,7 +6608,7 @@ export function appendMessage(
   } // End of the large 'else' block for non-AI messages
 }
 
-export async function sendMessage() {
+export async function sendMessage(turnOptions = {}) {
   if (!userInput) {
     console.error("User input element not found.");
     return;
@@ -6660,10 +6660,10 @@ export async function sendMessage() {
 
   if (!currentConversationId) {
     createNewConversation(() => {
-      actuallySendMessage(combinedMessage);
+      actuallySendMessage(combinedMessage, turnOptions);
     }, { preserveSelections: true, initialMessage: combinedMessage });
   } else {
-    actuallySendMessage(combinedMessage);
+    actuallySendMessage(combinedMessage, turnOptions);
   }
 
   userInput.value = "";
@@ -7320,7 +7320,32 @@ export function shouldUseCollaborativeAiWorkflow(messageData = {}, explicitInvoc
   return Boolean(buildCollaborativeInvocationTarget(messageData, explicitInvocationTarget));
 }
 
-export function actuallySendMessage(finalMessageToSend) {
+function buildVoiceResponseCompletionHandler(responseModality) {
+  if (responseModality !== "voice" || !window.appSettings?.enable_text_to_speech) {
+    return null;
+  }
+
+  return (finalData = {}) => {
+    if (isTTSAutoplayEnabled()) {
+      return;
+    }
+
+    const messageId = String(finalData.message_id || "").trim();
+    const responseText = String(finalData.full_content || finalData.content || "").trim();
+    if (!messageId || !responseText || finalData.cancelled || finalData.canceled) {
+      return;
+    }
+
+    void playTTS(messageId, responseText);
+  };
+}
+
+export function actuallySendMessage(finalMessageToSend, turnOptions = {}) {
+  const inputModality = turnOptions.inputModality === "voice" ? "voice" : "text";
+  const responseModality = inputModality === "voice" && turnOptions.responseModality === "voice"
+    ? "voice"
+    : "text";
+  const onVoiceResponseDone = buildVoiceResponseCompletionHandler(responseModality);
   const isCollaborativeConversation = Boolean(
     currentConversationId
     && window.chatCollaboration?.isCollaborationConversation?.(currentConversationId)
@@ -7334,6 +7359,8 @@ export function actuallySendMessage(finalMessageToSend) {
       explicitInvocationTarget,
       displayMessageText,
     } = buildCollaborativeSendContext(finalMessageToSend, currentConversationId);
+    collaborativeMessageData.input_modality = inputModality;
+    collaborativeMessageData.response_modality = responseModality;
     if (invocationTarget && !String(displayMessageText || '').trim()) {
       showToast('Add a message after the selected @agent or @model tag.', 'warning');
       return;
@@ -7351,6 +7378,7 @@ export function actuallySendMessage(finalMessageToSend) {
         tempUserMessageId,
         collaborativeMessageData,
         pendingCollaborativeContext,
+        { onDone: onVoiceResponseDone },
       )
       : window.chatCollaboration.sendCollaborativeMessage(displayMessageText, tempUserMessageId);
 
@@ -7367,6 +7395,8 @@ export function actuallySendMessage(finalMessageToSend) {
   // Generate a temporary message ID for the user message
   const tempUserMessageId = `temp_user_${Date.now()}`;
   const messageData = buildChatRequestPayload(finalMessageToSend, currentConversationId);
+  messageData.input_modality = inputModality;
+  messageData.response_modality = responseModality;
   const actionType = String(messageData.document_action?.type || DOCUMENT_ACTION_NONE).trim() || DOCUMENT_ACTION_NONE;
   const useDocumentAction = actionType !== DOCUMENT_ACTION_NONE;
   const totalSelectedDocuments = actionType === DOCUMENT_ACTION_COMPARISON
@@ -7422,6 +7452,7 @@ export function actuallySendMessage(finalMessageToSend) {
     {
       endpoint: useDocumentAction ? '/api/chat/document-action/stream' : '/api/chat/stream',
       fallbackAgentInfo: messageData.agent_info || null,
+      onDone: onVoiceResponseDone,
     }
   );
 
@@ -7474,7 +7505,7 @@ function attachCodeBlockCopyButtons(parentElement) {
 }
 
 if (sendBtn) {
-  sendBtn.addEventListener("click", sendMessage);
+  sendBtn.addEventListener("click", () => sendMessage());
 }
 
 if (userInput) {

@@ -2,8 +2,8 @@
 # test_workflow_alert_agent_signal.py
 """
 Functional test for agent raised workflow alert signals.
-Version: 0.250.209
-Implemented in: 0.250.209
+Version: 0.250.213
+Implemented in: 0.250.213
 
 This test ensures an agent can raise an alert signal during a workflow run, that
 the signal is normalized and matched by agent_signal rules, that a signal can
@@ -138,7 +138,7 @@ def test_named_signals_route_to_their_own_rules():
 def test_plugin_function_is_registered_and_gated():
     """raise_workflow_alert is exposed as a capability and refuses outside a run."""
     print("Testing plugin registration and gating...")
-    assert_app_version_at_least("0.250.209")
+    assert_app_version_at_least("0.250.213")
 
     operations_content = read_text("application/single_app/functions_simplechat_operations.py")
     plugin_content = read_text("application/single_app/semantic_kernel_plugins/simplechat_plugin.py")

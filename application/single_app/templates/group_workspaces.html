@@ -491,26 +491,26 @@ app_settings.app_title }} {% endblock %} {% block head %}
       <label class="form-label" for="group-workspace-section-select">Section</label>
       <select class="form-select" id="group-workspace-section-select" data-workspace-section-select aria-label="Select group workspace section">
         <option value="documents-tab-btn">Group Documents</option>
-        {% if file_sync_enabled %}
-          <option value="sync-tab-btn">Sync</option>
-        {% endif %}
+        <option value="prompts-tab-btn">Group Prompts</option>
         {% if group_workspace_identities_enabled %}
           <option value="identities-tab-btn" data-group-identities-section-option hidden disabled>Identities</option>
         {% endif %}
-        <option value="prompts-tab-btn">Group Prompts</option>
-        {% if settings.allow_group_workflows %}
-          <option value="workflows-tab-btn">Workflows</option>
+        {% if file_sync_enabled %}
+          <option value="sync-tab-btn">Sync</option>
         {% endif %}
         {% if settings.per_user_semantic_kernel and settings.enable_semantic_kernel %}
-          {% if settings.allow_group_agents %}
-            <option value="group-agents-tab-btn">Group Agents</option>
-            {% if settings.enable_semantic_kernel and settings.allow_group_plugins %}
-              <option value="group-plugins-tab-btn">Group Actions</option>
-            {% endif %}
-          {% endif %}
           {% if settings.enable_semantic_kernel and settings.allow_group_custom_endpoints and settings.enable_multi_model_endpoints %}
             <option value="group-endpoints-tab-btn">Group Endpoints</option>
           {% endif %}
+          {% if settings.allow_group_agents %}
+            {% if settings.enable_semantic_kernel and settings.allow_group_plugins %}
+              <option value="group-plugins-tab-btn">Group Actions</option>
+            {% endif %}
+            <option value="group-agents-tab-btn">Group Agents</option>
+          {% endif %}
+        {% endif %}
+        {% if settings.allow_group_workflows %}
+          <option value="workflows-tab-btn">Workflows</option>
         {% endif %}
       </select>
     </div>
@@ -533,23 +533,21 @@ app_settings.app_title }} {% endblock %} {% block head %}
         Documents
       </button>
     </li>
-    {% if file_sync_enabled %}
     <li class="nav-item" role="presentation">
       <button
         class="nav-link"
-        id="sync-tab-btn"
+        id="prompts-tab-btn"
         data-bs-toggle="tab"
-        data-bs-target="#sync-tab"
-        title="Configure group-scoped file sources that bring approved files into this workspace and run them through the document processing pipeline."
+        data-bs-target="#prompts-tab"
+        title="Create and manage reusable prompts shared within the active group, with role-based editing."
         type="button"
         role="tab"
-        aria-controls="sync-tab"
+        aria-controls="prompts-tab"
         aria-selected="false"
       >
-        Sync
+        Prompts
       </button>
     </li>
-    {% endif %}
     {% if group_workspace_identities_enabled %}
     <li class="nav-item d-none" role="presentation" data-group-identities-tab-nav>
       <button
@@ -567,74 +565,24 @@ app_settings.app_title }} {% endblock %} {% block head %}
       </button>
     </li>
     {% endif %}
+    {% if file_sync_enabled %}
     <li class="nav-item" role="presentation">
       <button
         class="nav-link"
-        id="prompts-tab-btn"
+        id="sync-tab-btn"
         data-bs-toggle="tab"
-        data-bs-target="#prompts-tab"
-        title="Create and manage reusable prompts shared within the active group, with role-based editing."
+        data-bs-target="#sync-tab"
+        title="Configure group-scoped file sources that bring approved files into this workspace and run them through the document processing pipeline."
         type="button"
         role="tab"
-        aria-controls="prompts-tab"
+        aria-controls="sync-tab"
         aria-selected="false"
       >
-        Prompts
-      </button>
-    </li>
-    {% if settings.allow_group_workflows %}
-    <li class="nav-item" role="presentation">
-      <button
-        class="nav-link"
-        id="workflows-tab-btn"
-        data-bs-toggle="tab"
-        data-bs-target="#workflows-tab"
-        title="Create repeatable group tasks that run manually, on a schedule, or after File Sync changes using group agents, documents, or models."
-        type="button"
-        role="tab"
-        aria-controls="workflows-tab"
-        aria-selected="false"
-      >
-        Workflows
+        Sync
       </button>
     </li>
     {% endif %}
     {% if settings.per_user_semantic_kernel and settings.enable_semantic_kernel %}
-      {% if settings.allow_group_agents %}
-        <li class="nav-item" role="presentation">
-          <button
-            class="nav-link"
-            id="group-agents-tab-btn"
-            data-bs-toggle="tab"
-            data-bs-target="#group-agents-tab"
-            title="Reusable, specialized AI assistants that combine instructions, approved knowledge, and optional actions. Actions are tasks an agent is allowed to perform."
-            type="button"
-            role="tab"
-            aria-controls="group-agents-tab"
-            aria-selected="false"
-          >
-            Agents
-          </button>
-        </li>
-
-        {% if settings.enable_semantic_kernel and settings.allow_group_plugins %}
-          <li class="nav-item" role="presentation">
-            <button
-              class="nav-link"
-              id="group-plugins-tab-btn"
-              data-bs-toggle="tab"
-              data-bs-target="#group-plugins-tab"
-              title="Configure governed group tools that agents can call, such as APIs, databases, or other connected systems."
-              type="button"
-              role="tab"
-              aria-controls="group-plugins-tab"
-              aria-selected="false"
-            >
-              Actions
-            </button>
-          </li>
-        {% endif %}
-      {% endif %}
       {% if settings.enable_semantic_kernel and settings.allow_group_custom_endpoints and settings.enable_multi_model_endpoints %}
         <li class="nav-item" role="presentation">
           <button
@@ -652,6 +600,58 @@ app_settings.app_title }} {% endblock %} {% block head %}
           </button>
         </li>
       {% endif %}
+      {% if settings.allow_group_agents %}
+        {% if settings.enable_semantic_kernel and settings.allow_group_plugins %}
+          <li class="nav-item" role="presentation">
+            <button
+              class="nav-link"
+              id="group-plugins-tab-btn"
+              data-bs-toggle="tab"
+              data-bs-target="#group-plugins-tab"
+              title="Configure governed group tools that agents can call, such as APIs, databases, or other connected systems."
+              type="button"
+              role="tab"
+              aria-controls="group-plugins-tab"
+              aria-selected="false"
+            >
+              Actions
+            </button>
+          </li>
+        {% endif %}
+
+        <li class="nav-item" role="presentation">
+          <button
+            class="nav-link"
+            id="group-agents-tab-btn"
+            data-bs-toggle="tab"
+            data-bs-target="#group-agents-tab"
+            title="Reusable, specialized AI assistants that combine instructions, approved knowledge, and optional actions. Actions are tasks an agent is allowed to perform."
+            type="button"
+            role="tab"
+            aria-controls="group-agents-tab"
+            aria-selected="false"
+          >
+            Agents
+          </button>
+        </li>
+      {% endif %}
+    {% endif %}
+    {% if settings.allow_group_workflows %}
+    <li class="nav-item" role="presentation">
+      <button
+        class="nav-link"
+        id="workflows-tab-btn"
+        data-bs-toggle="tab"
+        data-bs-target="#workflows-tab"
+        title="Create repeatable group tasks that run manually, on a schedule, or after File Sync changes using group agents, documents, or models."
+        type="button"
+        role="tab"
+        aria-controls="workflows-tab"
+        aria-selected="false"
+      >
+        Workflows
+      </button>
+    </li>
     {% endif %}
   </ul>
 

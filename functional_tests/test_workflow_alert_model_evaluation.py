@@ -2,8 +2,8 @@
 # test_workflow_alert_model_evaluation.py
 """
 Functional test for model evaluated workflow alert conditions.
-Version: 0.250.209
-Implemented in: 0.250.209
+Version: 0.250.213
+Implemented in: 0.250.213
 
 This test ensures plain-English alert conditions are judged in a single batched
 model call, that the call is skipped entirely when a deterministic rule already
@@ -313,7 +313,7 @@ def test_prompt_includes_scoped_output_and_is_truncated():
 def test_runner_supplies_the_model_evaluator():
     """The runner builds the evaluator only when a model evaluated rule is present."""
     print("Testing runner evaluator wiring...")
-    assert_app_version_at_least("0.250.209")
+    assert_app_version_at_least("0.250.213")
     runner_content = read_text("application/single_app/functions_workflow_runner.py")
 
     assert 'def _build_workflow_alert_model_evaluator(workflow, settings=None):' in runner_content

@@ -1,8 +1,8 @@
 # test_workspace_workflow_alert_rules.py
 """
 UI test for the workflow alert rules editor.
-Version: 0.250.209
-Implemented in: 0.250.209
+Version: 0.250.213
+Implemented in: 0.250.213
 
 This test ensures the workflow modal exposes the alert mode selector, shows the
 rules editor only in rules mode, lets an owner build a condition-based rule, and
