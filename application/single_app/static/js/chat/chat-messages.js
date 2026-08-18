@@ -9571,6 +9571,17 @@ function executeMessageDeletion(deleteThread = false) {
       if (typeof loadConversations === 'function') {
         loadConversations();
       }
+      if (window.currentConversationId) {
+        window.dispatchEvent(new CustomEvent(
+          'chat:conversation-documents-refresh',
+          {
+            detail: {
+              conversationId: window.currentConversationId,
+              autoOpen: false,
+            },
+          }
+        ));
+      }
     } else {
       showToast('Failed to delete message', 'error');
     }

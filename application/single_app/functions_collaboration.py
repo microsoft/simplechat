@@ -40,6 +40,11 @@ from functions_activity_logging import (
     log_conversation_deletion,
 )
 from functions_appinsights import log_event
+from functions_citation_tracking import (
+    initialize_conversation_used_document_tracking,
+    merge_cited_documents_into_conversation,
+    rebuild_conversation_used_documents,
+)
 from functions_conversation_cache import bump_conversation_cache_version, invalidate_conversation_cache_for_item
 from functions_documents import sync_chat_upload_workspace_document_sharing_for_collaboration
 from functions_group import (
@@ -63,6 +68,21 @@ PERSONAL_COLLABORATION_MANAGER_ROLES = {
 }
 
 COLLABORATION_EVENT_PUBLISHERS = []
+
+CITATION_TRACKING_CONVERSATION_FIELDS = (
+    'used_documents_tracking_version',
+    'legacy_used_documents',
+    'used_documents',
+)
+
+
+def _copy_citation_tracking_conversation_fields(target, source):
+    if not isinstance(target, dict) or not isinstance(source, dict):
+        return target
+    for field_name in CITATION_TRACKING_CONVERSATION_FIELDS:
+        if field_name in source:
+            target[field_name] = deepcopy(source.get(field_name))
+    return target
 
 
 def register_collaboration_event_publisher(event_publisher):
@@ -355,7 +375,7 @@ def serialize_collaboration_message(message_doc):
             message_doc.get('id'),
         ) or serialized_content
 
-    return {
+    payload = {
         'id': message_doc.get('id'),
         'conversation_id': message_doc.get('conversation_id'),
         'role': serialized_role,
@@ -382,6 +402,14 @@ def serialize_collaboration_message(message_doc):
         'extracted_text': message_doc.get('extracted_text'),
         'vision_analysis': message_doc.get('vision_analysis'),
     }
+    for field_name in (
+        'citation_tracking_version',
+        'cited_hybrid_citations',
+        'cited_web_search_citations',
+    ):
+        if field_name in message_doc:
+            payload[field_name] = deepcopy(message_doc.get(field_name))
+    return payload
 
 
 def _get_collaboration_source_message(message_doc):
@@ -729,6 +757,15 @@ def build_collaboration_message_metadata_payload(message_doc, conversation_doc):
         'extracted_text': message_doc.get('extracted_text') or payload.get('extracted_text'),
         'vision_analysis': message_doc.get('vision_analysis') or payload.get('vision_analysis'),
     })
+    for field_name in (
+        'citation_tracking_version',
+        'cited_hybrid_citations',
+        'cited_web_search_citations',
+    ):
+        if field_name in message_doc:
+            payload[field_name] = deepcopy(message_doc.get(field_name))
+        elif field_name in (source_message_doc or {}):
+            payload[field_name] = deepcopy(source_message_doc.get(field_name))
     payload['metadata'] = merged_metadata
     return payload
 
@@ -820,6 +857,9 @@ def serialize_collaboration_conversation(conversation_doc, current_user_id, user
         'is_hidden': bool((user_state or {}).get('is_hidden', False)),
         'classification': list(conversation_doc.get('classification', []) or []),
         'tags': list(conversation_doc.get('tags', []) or []),
+        'used_documents_tracking_version': conversation_doc.get('used_documents_tracking_version'),
+        'legacy_used_documents': deepcopy(list(conversation_doc.get('legacy_used_documents', []) or [])),
+        'used_documents': deepcopy(list(conversation_doc.get('used_documents', []) or [])),
         'strict': bool(conversation_doc.get('strict', False)),
         'summary': conversation_doc.get('summary'),
         'has_unread_assistant_response': False,
@@ -959,6 +999,10 @@ def ensure_personal_collaboration_for_legacy_conversation(source_conversation_id
     collaboration_conversation_doc['source_conversation_id'] = source_conversation_id
     collaboration_conversation_doc['classification'] = list(source_conversation_doc.get('classification', []) or [])
     collaboration_conversation_doc['tags'] = list(source_conversation_doc.get('tags', []) or [])
+    _copy_citation_tracking_conversation_fields(
+        collaboration_conversation_doc,
+        source_conversation_doc,
+    )
     collaboration_conversation_doc['strict'] = bool(source_conversation_doc.get('strict', False))
     collaboration_conversation_doc['summary'] = source_conversation_doc.get('summary')
 
@@ -1145,6 +1189,10 @@ def ensure_group_collaboration_for_legacy_conversation(source_conversation_id, o
 
     collaboration_conversation_doc['classification'] = list(source_conversation_doc.get('classification', []) or [])
     collaboration_conversation_doc['tags'] = list(source_conversation_doc.get('tags', []) or [])
+    _copy_citation_tracking_conversation_fields(
+        collaboration_conversation_doc,
+        source_conversation_doc,
+    )
     collaboration_conversation_doc['strict'] = bool(source_conversation_doc.get('strict', False))
     collaboration_conversation_doc['summary'] = source_conversation_doc.get('summary')
     collaboration_conversation_doc['legacy_source_conversation_id'] = source_conversation_id
@@ -1749,6 +1797,19 @@ def _save_collaboration_message_doc(conversation_doc, message_doc):
 
     cosmos_collaboration_messages_container.upsert_item(message_doc)
 
+    if (
+        str(message_doc.get('role') or '').strip().lower() == 'assistant'
+        and (
+            message_doc.get('citation_tracking_version') is not None
+            or 'cited_hybrid_citations' in message_doc
+        )
+    ):
+        initialize_conversation_used_document_tracking(conversation_doc)
+        merge_cited_documents_into_conversation(
+            conversation_doc,
+            message_doc.get('cited_hybrid_citations'),
+        )
+
     conversation_doc['last_message_at'] = message_doc.get('timestamp')
     conversation_doc['last_message_preview'] = (
         message_doc.get('metadata', {}).get('last_message_preview', '')
@@ -1814,6 +1875,11 @@ def sync_collaboration_conversation_metadata_from_source(conversation_doc, sourc
         'classification': deepcopy(list(source_conversation_doc.get('classification', []) or [])),
         'summary': deepcopy(source_conversation_doc.get('summary')),
     }
+    for field_name in CITATION_TRACKING_CONVERSATION_FIELDS:
+        if field_name in source_conversation_doc:
+            metadata_fields[field_name] = deepcopy(
+                source_conversation_doc.get(field_name)
+            )
 
     updated = False
     for field_name, field_value in metadata_fields.items():
@@ -1868,6 +1934,10 @@ def ensure_collaboration_source_conversation(conversation_doc, current_user):
             'collaboration_conversation_id': (conversation_doc or {}).get('id'),
             'is_hidden': True,
         }
+        _copy_citation_tracking_conversation_fields(
+            source_conversation_doc,
+            conversation_doc,
+        )
         source_updated = True
     else:
         synchronized_values = {
@@ -1884,6 +1954,11 @@ def ensure_collaboration_source_conversation(conversation_doc, current_user):
             'collaboration_conversation_id': (conversation_doc or {}).get('id'),
             'is_hidden': True,
         }
+        for field_name in CITATION_TRACKING_CONVERSATION_FIELDS:
+            if field_name in (conversation_doc or {}):
+                synchronized_values[field_name] = deepcopy(
+                    conversation_doc.get(field_name)
+                )
         for field_name, field_value in synchronized_values.items():
             if source_conversation_doc.get(field_name) != field_value:
                 source_conversation_doc[field_name] = field_value
@@ -1952,6 +2027,7 @@ def _refresh_collaboration_conversation_message_summary(conversation_doc):
         raise ValueError('conversation_id is required')
 
     remaining_messages = list_collaboration_messages(conversation_id)
+    rebuild_conversation_used_documents(conversation_doc, remaining_messages)
     conversation_doc['message_count'] = len(remaining_messages)
 
     if remaining_messages:

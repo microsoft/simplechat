@@ -35,6 +35,7 @@ from functions_activity_logging import (
     log_workflow_creation,
 )
 from functions_appinsights import log_event
+from functions_citation_tracking import rebuild_conversation_used_documents
 from functions_authentication import (
     get_current_user_info,
     get_graph_endpoint,
@@ -93,6 +94,8 @@ FORKABLE_PERSONAL_CONTEXT_SCOPES = {
 PERSONAL_FORK_CONVERSATION_FIELDS = (
     "context",
     "tags",
+    "used_documents_tracking_version",
+    "legacy_used_documents",
     "strict",
     "classification",
     "scope_locked",
@@ -807,6 +810,11 @@ def fork_personal_conversation_for_user(
         fork_conversation_id,
         normalized_user_id,
         destination_chat_type,
+    )
+    rebuild_conversation_used_documents(
+        fork_conversation,
+        fork_documents,
+        rebuild_legacy=True,
     )
     written_message_ids = []
     created_blob_targets: List[Tuple[str, str]] = []

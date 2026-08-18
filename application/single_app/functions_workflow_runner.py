@@ -39,6 +39,7 @@ from collaboration_models import (
 )
 from config import (
     SECRET_KEY,
+    TABULAR_EXTENSIONS,
     VERSION,
     cognitive_services_scope,
     cosmos_conversations_container,
@@ -53,6 +54,12 @@ from functions_conversation_context import (
     build_conversation_context_snapshot,
     build_conversation_context_system_message,
     serialize_conversation_context_snapshot,
+)
+from functions_citation_tracking import (
+    build_cited_source_subsets,
+    initialize_conversation_used_document_tracking,
+    merge_cited_documents_into_conversation,
+    resolve_citation_location,
 )
 from functions_activity_logging import log_conversation_creation, log_token_usage, log_workflow_run
 from functions_appinsights import log_event
@@ -4470,8 +4477,26 @@ def _mirror_assistant_message_to_personal_conversation(
             previous_thread_id,
         ),
     }
+    for field_name in (
+        'citation_tracking_version',
+        'cited_hybrid_citations',
+        'cited_web_search_citations',
+    ):
+        if field_name in source_assistant_doc:
+            if field_name == 'citation_tracking_version':
+                mirrored_assistant_doc[field_name] = source_assistant_doc.get(field_name)
+            else:
+                mirrored_assistant_doc[field_name] = list(
+                    source_assistant_doc.get(field_name) or []
+                )
     cosmos_messages_container.upsert_item(mirrored_assistant_doc)
 
+    if 'citation_tracking_version' in mirrored_assistant_doc:
+        initialize_conversation_used_document_tracking(conversation_doc)
+        merge_cited_documents_into_conversation(
+            conversation_doc,
+            mirrored_assistant_doc.get('cited_hybrid_citations'),
+        )
     conversation_doc['last_updated'] = timestamp
     conversation_doc['has_unread_assistant_response'] = True
     conversation_doc['last_unread_assistant_message_id'] = mirrored_message_id
@@ -5833,6 +5858,12 @@ def _create_assistant_message(conversation, workflow, result, trigger_source, ru
         if generated_file_output.get('output_format') == 'csv':
             generated_tabular_outputs.append(generated_file_output)
     web_search_citations = list(result.get('web_search_citations') or [])
+    hybrid_citations = list(result.get('hybrid_citations') or [])
+    citation_tracking = build_cited_source_subsets(
+        result.get('reply', ''),
+        hybrid_citations=hybrid_citations,
+        web_search_citations=web_search_citations,
+    )
     source_review_metadata = result.get('source_review') if isinstance(result.get('source_review'), dict) else {}
     url_access_metadata = result.get('url_access') if isinstance(result.get('url_access'), dict) else {}
     prepared_agent_citations = _persist_agent_citation_artifacts(
@@ -5851,10 +5882,11 @@ def _create_assistant_message(conversation, workflow, result, trigger_source, ru
         'content': result.get('reply', ''),
         'timestamp': timestamp,
         'model_deployment_name': result.get('model_deployment_name'),
-        'augmented': bool(result.get('augmented') or result.get('hybrid_citations')),
-        'hybrid_citations': list(result.get('hybrid_citations') or []),
+        'augmented': bool(result.get('augmented') or hybrid_citations),
+        'hybrid_citations': hybrid_citations,
         'agent_citations': prepared_agent_citations,
         'web_search_citations': web_search_citations,
+        **citation_tracking,
         'agent_display_name': result.get('agent_display_name'),
         'agent_name': result.get('agent_name'),
         'workspace_type': workspace_type,
@@ -5927,6 +5959,11 @@ def _create_assistant_message(conversation, workflow, result, trigger_source, ru
     conversation['has_unread_assistant_response'] = True
     conversation['last_unread_assistant_message_id'] = assistant_message_id
     conversation['last_unread_assistant_at'] = timestamp
+    initialize_conversation_used_document_tracking(conversation)
+    merge_cited_documents_into_conversation(
+        conversation,
+        citation_tracking['cited_hybrid_citations'],
+    )
     cosmos_conversations_container.upsert_item(conversation)
 
     return assistant_doc
@@ -6418,12 +6455,25 @@ def _build_workflow_search_citation(result):
     document_id = str(result.get('document_id') or '').strip()
     if not document_id:
         document_id = '_'.join(str(citation_id).split('_')[:-1]) if '_' in str(citation_id) else str(citation_id)
+    sheet_name = result.get('sheet_name')
+    page_number = result.get('page_number') or result.get('chunk_sequence') or 1
+    file_name = result.get('file_name') or result.get('title') or 'Unknown document'
+    _, extension = os.path.splitext(str(file_name).strip().lower())
+    location_label, location_value = resolve_citation_location(
+        page_number=page_number,
+        chunk_text=result.get('chunk_text'),
+        sheet_name=sheet_name,
+        is_tabular=extension.lstrip('.') in TABULAR_EXTENSIONS,
+    )
 
     return {
-        'file_name': result.get('file_name') or result.get('title') or 'Unknown document',
+        'file_name': file_name,
         'document_id': document_id,
         'citation_id': citation_id,
-        'page_number': result.get('page_number'),
+        'page_number': page_number,
+        'sheet_name': sheet_name,
+        'location_label': location_label,
+        'location_value': location_value,
         'chunk_id': result.get('chunk_id'),
         'chunk_sequence': result.get('chunk_sequence'),
         'score': result.get('score'),
@@ -6445,9 +6495,18 @@ def _format_workflow_search_results(results):
 
         file_name = str(result.get('file_name') or result.get('title') or 'Unknown document').strip() or 'Unknown document'
         page_number = result.get('page_number') or result.get('chunk_sequence') or 1
+        sheet_name = result.get('sheet_name')
+        _, extension = os.path.splitext(file_name.lower())
+        location_label, location_value = resolve_citation_location(
+            page_number=page_number,
+            chunk_text=chunk_text,
+            sheet_name=sheet_name,
+            is_tabular=extension.lstrip('.') in TABULAR_EXTENSIONS,
+        )
         citation_id = result.get('id') or result.get('chunk_id') or f'workflow-search-{index}'
         result_lines.append(
-            f'[{index}] {file_name}, page {page_number}, citation #{citation_id}\n{chunk_text}'
+            f'[{index}] {chunk_text}\n'
+            f'(Source: {file_name}, {location_label}: {location_value}) [#{citation_id}]'
         )
         citations.append(_build_workflow_search_citation(result))
 
@@ -6468,7 +6527,8 @@ def _build_workflow_search_prompt(task_prompt, search_context):
     prompt_sections = [
         '[Workflow document search context]\n'
         'Use the bounded native-engine evidence below as grounding for the workflow task. '
-        'When the evidence is insufficient or source coverage is partial, say what is missing instead of guessing.'
+        'When the evidence is insufficient or source coverage is partial, say what is missing instead of guessing. '
+        'Preserve the exact (Source: ...) [#citation-id] reference for every excerpt used in the response.'
     ]
     if retrieved_content:
         prompt_sections.append(

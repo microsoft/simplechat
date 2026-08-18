@@ -2,6 +2,16 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.215)**
+
+#### Bug Fixes
+
+*   **Retrieved Sources and Cited References**
+    *   Separated complete document/web retrieval results from the exact references used in final assistant responses, while preserving all returned results under **Sources**.
+    *   Used documents now follows active cited responses, conversation details marks cited items within the full source inventory, and conversation/message export references exclude retrieved-only sources.
+    *   Historical conversations retain their previous fallback without a migration or ordinary read-time history parsing.
+    *   (Ref: #1249, `functions_citation_tracking.py`, `route_backend_chats.py`, `route_backend_conversation_export.py`, `SOURCE_AND_CITED_REFERENCE_DISTINCTION_FIX.md`)
+
 ### **(v0.250.214)**
 
 #### New Features
