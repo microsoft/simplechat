@@ -10,6 +10,7 @@ from bs4 import BeautifulSoup
 
 from functions_debug import debug_print
 from config import *
+from azure.ai.documentintelligence.models import DocumentAnalysisFeature
 from functions_office_media import extract_office_embedded_images
 import functions_settings
 from functions_settings import *
@@ -453,6 +454,11 @@ def extract_content_with_azure_di(file_path, extraction_mode='read', pages=None)
             analyze_options["output_content_format"] = "markdown"
         if pages:
             analyze_options["pages"] = str(pages)
+
+        # Formula extraction is a billed Document Intelligence add-on, so it is opt-in and only
+        # applies to Layout, which is the model that supports it.
+        if normalized_extraction_mode == "layout" and functions_settings.is_document_intelligence_formula_extraction_enabled():
+            analyze_options["features"] = [DocumentAnalysisFeature.FORMULAS]
         
         # Debug logging for troubleshooting
         debug_print(f"Starting Azure DI extraction for: {os.path.basename(file_path)}")

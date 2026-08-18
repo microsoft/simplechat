@@ -2,7 +2,7 @@
 # test_content_understanding_extraction_engine.py
 """
 Functional test for Enhanced extraction backed by Azure AI Content Understanding.
-Version: 0.250.223
+Version: 0.250.224
 Implemented in: 0.250.221
 
 This test ensures that the Content Understanding client parses analyzer results into the same
@@ -759,6 +759,32 @@ def test_figures_survive_when_the_result_has_no_pages():
     return True
 
 
+def test_formula_extraction_is_opt_in_and_layout_only():
+    """The Document Intelligence formula add-on is billed, so it must default off and be opt-in."""
+    print("Testing formula extraction opt-in contract...")
+
+    settings = read_repo_file("application/single_app/functions_settings.py")
+    content = read_repo_file("application/single_app/functions_content.py")
+    admin_route = read_repo_file("application/single_app/route_frontend_admin_settings.py")
+    admin_html = read_repo_file("application/single_app/templates/admin_settings.html")
+
+    assert_contains(settings, "'enable_document_intelligence_formula_extraction': False", "formula add-on defaults to off")
+    assert_contains(settings, "def is_document_intelligence_formula_extraction_enabled", "formula gate helper")
+    assert_contains(content, "DocumentAnalysisFeature.FORMULAS", "formula add-on requested")
+    assert_contains(admin_route, "'enable_document_intelligence_formula_extraction': form_data.get(", "formula toggle persisted")
+    assert_contains(admin_html, 'id="enable_document_intelligence_formula_extraction"', "formula toggle input")
+    assert_contains(admin_html, "billed Document Intelligence add-on", "cost warning shown to admins")
+
+    # The add-on only applies to Layout, so it must sit behind the layout branch.
+    formula_index = content.index("DocumentAnalysisFeature.FORMULAS")
+    guard_index = content.index('if normalized_extraction_mode == "layout" and functions_settings.is_document_intelligence_formula_extraction_enabled()')
+    if guard_index > formula_index:
+        raise AssertionError("Formula feature must be guarded by the layout-mode check.")
+
+    print("Formula extraction opt-in test passed!")
+    return True
+
+
 def test_version_is_at_least_implementation_version():
     """The app version must be at or beyond the version this feature shipped in."""
     print("Testing application version...")
@@ -786,6 +812,7 @@ if __name__ == "__main__":
         test_settings_and_admin_surface_contract,
         test_auto_mode_detects_figures,
         test_enhanced_extraction_upgrade_migration_contract,
+        test_formula_extraction_is_opt_in_and_layout_only,
         test_version_is_at_least_implementation_version,
     ]
 

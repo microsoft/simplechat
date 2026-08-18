@@ -2761,6 +2761,7 @@ def register_route_frontend_admin_settings(bp):
                 'azure_document_intelligence_authentication_type': form_data.get('azure_document_intelligence_authentication_type', 'key'),
                 'document_intelligence_pdf_image_extraction_mode': document_intelligence_pdf_image_extraction_mode,
                 'document_intelligence_auto_sample_pages': document_intelligence_auto_sample_pages,
+                'enable_document_intelligence_formula_extraction': form_data.get('enable_document_intelligence_formula_extraction') == 'on',
                 'enable_document_intelligence_apim': form_data.get('enable_document_intelligence_apim') == 'on',
                 'azure_apim_document_intelligence_endpoint': form_data.get('azure_apim_document_intelligence_endpoint', '').strip(),
                 'azure_apim_document_intelligence_subscription_key': admin_secret('azure_apim_document_intelligence_subscription_key'),

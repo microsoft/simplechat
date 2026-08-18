@@ -10552,6 +10552,7 @@ function setupWalkthroughFieldListeners() {
             {selector: '#azure_content_understanding_analyzer_id', event: 'input'},
             {selector: '#azure_content_understanding_image_analyzer_id', event: 'input'},
             {selector: '#enable_office_embedded_image_analysis', event: 'change'},
+            {selector: '#enable_document_intelligence_formula_extraction', event: 'change'},
             {selector: '#office_embedded_image_min_pixels', event: 'input'},
             {selector: '#office_embedded_image_max_per_document', event: 'input'}
         ],

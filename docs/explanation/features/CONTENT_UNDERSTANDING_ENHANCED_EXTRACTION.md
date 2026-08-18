@@ -94,6 +94,7 @@ All settings live in **Admin Settings → Extract**.
 | Enable Enhanced extraction | `enable_enhanced_extraction` | `False` |
 | PDF and Image Extraction Mode | `document_intelligence_pdf_image_extraction_mode` | `read` |
 | Auto Sample Pages | `document_intelligence_auto_sample_pages` | `3` |
+| Extract mathematical formulas | `enable_document_intelligence_formula_extraction` | `False` |
 | Content Understanding Endpoint | `azure_content_understanding_endpoint` | `""` |
 | Authentication Type | `azure_content_understanding_authentication_type` | `key` |
 | Content Understanding Key | `azure_content_understanding_key` | `""` |
@@ -175,7 +176,10 @@ them separately.
   `ppt/slides/_rels/slideN.xml.rels`.
 - Each analyzed image becomes its own citable chunk with a heading such as
   `### Embedded image 2 of 5: image2.png on slide 3`.
-- Legacy `.doc` and `.ppt` files are OLE containers rather than zip packages, so they are skipped.
+- Legacy `.doc` and `.ppt` files are OLE compound documents rather than zip packages, so their
+  pictures are carved out by metafile signature instead of being enumerated from media parts. The
+  carve validates the record type, signature position, and declared length before accepting a blob,
+  so a coincidental byte sequence is not mistaken for an image.
 
 Embedded image analysis never fails a document. Individual image failures are logged and skipped.
 
@@ -284,9 +288,13 @@ Enhanced extraction is disabled.
 - There is no APIM passthrough option for Content Understanding yet.
 - Content Understanding markdown is denser than Document Intelligence Read output because it
   includes HTML tables and figure descriptions, so chunks are larger.
-- Legacy `.doc` and `.ppt` files do not support embedded image analysis.
 - Metafile rasterization covers the drawing records Office emits for diagrams. Gradients, complex
   clipping regions, and embedded bitmap blits inside a metafile are not reproduced, and text is
   drawn with a default font rather than the original typeface, so a rasterized diagram is a
   faithful-enough likeness rather than an exact reproduction. The text drawn inside the metafile is
   extracted separately and attached to the chunk, so labels remain accurate regardless.
+- Equations authored in modern Word are stored as OMML markup rather than images, so they are not
+  covered by embedded image analysis. Legacy Equation Editor and MathType objects are stored with a
+  metafile preview and are covered.
+- Formula extraction requires the billed Document Intelligence add-on and applies to the Layout
+  model only, so it has no effect while extraction is set to Standard.

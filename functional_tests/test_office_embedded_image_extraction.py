@@ -2,7 +2,7 @@
 # test_office_embedded_image_extraction.py
 """
 Functional test for embedded image extraction from Office files.
-Version: 0.250.223
+Version: 0.250.224
 Implemented in: 0.250.221
 
 This test ensures that images embedded in DOCX and PPTX packages are pulled out for analysis,
@@ -526,8 +526,12 @@ def test_emf_metafiles_are_rasterized_and_text_recovered():
     return True
 
 
-def _build_minimal_emf():
-    """Build a small valid EMF containing one filled polygon."""
+def _build_minimal_emf(min_total_bytes=4096):
+    """Build a small valid EMF containing one filled polygon.
+
+    Padded past the minimum-bytes filter with a comment record, because real diagrams are far
+    larger than the floor and the filter exists to drop icons and spacers.
+    """
     import struct
 
     records = []
@@ -540,6 +544,14 @@ def _build_minimal_emf():
         poly_payload += struct.pack('<2h', x, y)
     poly_size = 8 + len(poly_payload)
     records.append(struct.pack('<II', 86, poly_size) + poly_payload)
+
+    # EMR_COMMENT padding so the file clears the minimum-bytes filter.
+    body_so_far = sum(len(record) for record in records)
+    padding_needed = max(0, min_total_bytes - (88 + body_so_far + 20))
+    if padding_needed:
+        comment_data = b'\x00' * padding_needed
+        comment_size = 12 + len(comment_data)
+        records.append(struct.pack('<III', 70, comment_size, len(comment_data)) + comment_data)
 
     # EMR_EOF
     records.append(struct.pack('<IIIII', 14, 20, 0, 16, 20))
@@ -622,6 +634,102 @@ def test_diagnostics_distinguish_no_images_from_all_skipped():
     return True
 
 
+def _build_fake_ole_document(path, payloads, filler=2048):
+    """Write an OLE-signature file containing intact metafile blobs, like a legacy .doc."""
+    with open(path, "wb") as handle:
+        handle.write(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1")
+        handle.write(b"\x00" * filler)
+        for payload in payloads:
+            handle.write(payload)
+            handle.write(b"\x00" * 256)
+
+
+def test_legacy_binary_office_metafiles_are_carved():
+    """Legacy .doc/.ppt are OLE containers, so images are carved by signature rather than unzipped."""
+    print("Testing legacy binary Office metafile carving...")
+
+    from functions_office_media import extract_office_embedded_images_with_diagnostics
+
+    emf_bytes = _build_minimal_emf()
+
+    with tempfile.TemporaryDirectory() as work_dir:
+        doc_path = os.path.join(work_dir, "legacy.doc")
+        output_dir = os.path.join(work_dir, "out")
+        os.makedirs(output_dir)
+
+        # Two copies of the same metafile: the duplicate must be collapsed.
+        _build_fake_ole_document(doc_path, [emf_bytes, emf_bytes])
+
+        images, diagnostics = extract_office_embedded_images_with_diagnostics(
+            doc_path, output_dir, min_pixels=100, max_images=25
+        )
+
+        # Checked inside the context manager, while the output directory still exists.
+        if images and not os.path.exists(images[0]["path"]):
+            raise AssertionError("Carved image was not written to disk.")
+
+    if diagnostics["candidates"] != 2:
+        raise AssertionError(f"Expected 2 carved candidates, got {diagnostics}")
+    if len(images) != 1:
+        raise AssertionError(f"Expected the duplicate to be collapsed, got {len(images)} images")
+    if images[0]["source_format"] != "emf":
+        raise AssertionError(f"Unexpected source format: {images[0]}")
+    if not images[0]["rasterized"]:
+        raise AssertionError("Carved metafiles must be rasterized.")
+
+    print("Legacy binary carving test passed!")
+    return True
+
+
+def test_non_office_binary_is_ignored_safely():
+    """A binary that is neither zip nor OLE must yield nothing instead of raising."""
+    print("Testing non-Office binary handling...")
+
+    from functions_office_media import extract_office_embedded_images_with_diagnostics
+
+    with tempfile.TemporaryDirectory() as work_dir:
+        junk_path = os.path.join(work_dir, "junk.doc")
+        output_dir = os.path.join(work_dir, "out")
+        os.makedirs(output_dir)
+        with open(junk_path, "wb") as handle:
+            handle.write(b"definitely not an office document" * 500)
+
+        images, diagnostics = extract_office_embedded_images_with_diagnostics(
+            junk_path, output_dir, min_pixels=150, max_images=25
+        )
+
+    if images or diagnostics["candidates"]:
+        raise AssertionError(f"Non-Office binary should yield nothing, got {diagnostics}")
+
+    print("Non-Office binary test passed!")
+    return True
+
+
+def test_carving_rejects_false_signature_matches():
+    """A stray ' EMF' byte sequence must not be mistaken for an image."""
+    print("Testing carving signature validation...")
+
+    from functions_office_media import _carve_metafiles_from_binary
+
+    # ' EMF' present, but no valid record header or length in front of it.
+    decoy = b"\x00" * 100 + b" EMF" + b"\x00" * 100
+    carved = _carve_metafiles_from_binary(decoy, 10)
+    if carved:
+        raise AssertionError(f"A decoy signature must not be carved, got {len(carved)} blob(s)")
+
+    # A real metafile in the same buffer is still found.
+    emf_bytes = _build_minimal_emf()
+    mixed = decoy + emf_bytes + decoy
+    carved = _carve_metafiles_from_binary(mixed, 10)
+    if len(carved) != 1:
+        raise AssertionError(f"Expected exactly one carved metafile, got {len(carved)}")
+    if carved[0][1] != emf_bytes:
+        raise AssertionError("Carved bytes did not match the embedded metafile exactly.")
+
+    print("Carving signature validation test passed!")
+    return True
+
+
 def test_version_is_at_least_implementation_version():
     """The app version must be at or beyond the version this feature shipped in."""
     print("Testing application version...")
@@ -647,6 +755,9 @@ if __name__ == "__main__":
         test_emf_metafiles_are_rasterized_and_text_recovered,
         test_unrenderable_metafile_reports_a_reason,
         test_diagnostics_distinguish_no_images_from_all_skipped,
+        test_legacy_binary_office_metafiles_are_carved,
+        test_non_office_binary_is_ignored_safely,
+        test_carving_rejects_false_signature_matches,
         test_pipeline_wires_embedded_image_analysis,
         test_version_is_at_least_implementation_version,
     ]
