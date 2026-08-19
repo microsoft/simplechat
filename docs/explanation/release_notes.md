@@ -2,6 +2,31 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.260.008)**
+
+#### New Features
+
+*   **Settings That Need Another Setting Now Say So**
+    *   Some Admin Settings options only work when a different option is enabled, and the two often live in different tabs. That was previously explained only in prose, in a tooltip, or in a warning after saving, so you could switch something on and have nothing happen with no visible reason.
+    *   Affected cards now show an inline notice naming what they need, with a switch to enable the prerequisite without leaving the tab and a link straight to its full configuration.
+    *   **File Sync** announces its **Redis Cache** requirement live, and keeps its save-your-intent behaviour: settings can still be saved and activate once Redis is ready.
+    *   The **FeedbackAdmin** role control is disabled until **User Feedback** is enabled, since the role only governs access to the User Feedback report. The unrelated SafetyViolationAdmin control in the same card stays usable.
+    *   These notices are guidance only. The server still validates every prerequisite.
+    *   (Ref: `admin_settings_dependencies.js`, `data-requires`, File Sync, Permissions)
+
+#### Bug Fixes
+
+*   **Cross-Tab Links In Admin Settings Now Point At The Right Place**
+    *   Links that send you from one Admin Settings tab to a related setting used to name a tab button directly, so they broke silently whenever a tab was renamed or reorganised: no tab opened, and the address bar was left pointing at nothing.
+    *   Two were already wrong. The **Video File Support** and **Audio File Support** references in Citations sent you to the **Workspaces** tab, but those settings live under **Search and Extract**. Both now open the correct card.
+    *   All twelve cross-tab links now name the card they want, and the owning tab is worked out when you click. The destination card is briefly highlighted so it is obvious where you landed.
+    *   (Ref: `admin_card_links.js`, `data-admin-link`, `openAdminCard`, `test_admin_card_links.py`)
+
+*   **User Agreement Preview Sanitized At The Sink**
+    *   The User Agreement preview rendered Markdown through a guarded reassignment, which reads as unsanitized to static analysis and matched the pattern already corrected for the Home Page Text preview.
+    *   Now sanitized inline with `DOMPurify.sanitize(...)` at the point of rendering. `marked` and DOMPurify are both loaded globally, so the availability guards were redundant.
+    *   (Ref: User Agreement, `admin_settings.html` preview handler, DOMPurify)
+
 ### **(v0.260.007)**
 
 #### User Interface Enhancements

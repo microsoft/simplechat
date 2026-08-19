@@ -39,6 +39,14 @@
             vertical-align: middle;
         }
 
+        /* Brief highlight when a data-admin-link jumps to a card, so the
+           destination is obvious after the tab switch and scroll. */
+        .admin-card-link-target {
+            outline: 2px solid var(--bs-primary, #0d6efd);
+            outline-offset: 3px;
+            transition: outline-color 0.4s ease-out;
+        }
+
         /* Floating Save Button */
         .floating-save-btn {
             position: fixed;
@@ -1847,6 +1855,8 @@
 <script type="module" src="{{ url_for('static', filename='js/admin/admin_model_endpoints.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/admin/admin_governance.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/admin/admin_sidebar_nav.js') }}"></script>
+<script type="module" src="{{ url_for('static', filename='js/admin/admin_card_links.js') }}?v={{ config['VERSION'] }}"></script>
+<script type="module" src="{{ url_for('static', filename='js/admin/admin_settings_dependencies.js') }}?v={{ config['VERSION'] }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/admin/admin_custom_pages.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/plugin_modal_stepper.js') }}"></script>
 {% if settings.enable_semantic_kernel %}
@@ -2532,14 +2542,11 @@
             // Render markdown to HTML
             const previewContent = document.getElementById('userAgreementPreviewContent');
             if (previewContent) {
-                // Use marked if available, otherwise show raw text
+                // marked and DOMPurify are both loaded globally from base.html,
+                // so sanitize inline at the sink rather than through a guarded
+                // reassignment, which reads as unsanitized to static analysis.
                 if (typeof marked !== 'undefined') {
-                    let html = marked.parse(agreementText);
-                    // Sanitize if DOMPurify is available
-                    if (typeof DOMPurify !== 'undefined') {
-                        html = DOMPurify.sanitize(html);
-                    }
-                    previewContent.innerHTML = html;
+                    previewContent.innerHTML = DOMPurify.sanitize(marked.parse(agreementText));
                 } else {
                     previewContent.textContent = agreementText;
                 }

@@ -9227,31 +9227,6 @@ function clearStatusAlert(statusAlert) {
 }
 
 
-function switchTab(event, tabButtonId) {
-    event.preventDefault();
-    const triggerEl = document.getElementById(tabButtonId);
-    if (triggerEl) {
-        const tabObj = new bootstrap.Tab(triggerEl);
-        tabObj.show();
-        return;
-    }
-
-    const inferredTabId = tabButtonId.replace(/-tab$/, '');
-    if (typeof window.showAdminTab === 'function') {
-        window.showAdminTab(inferredTabId);
-
-        const navLink = document.querySelector(`.admin-nav-tab[data-tab="${inferredTabId}"]`);
-        if (navLink) {
-            document.querySelectorAll('.admin-nav-tab, .admin-nav-section').forEach(link => {
-                link.classList.remove('active');
-            });
-            navLink.classList.add('active');
-        }
-    }
-}
-
-window.switchTab = switchTab;
-
 function togglePassword(btnId, inputId) {
     const btn = document.getElementById(btnId);
     const inp = document.getElementById(inputId);
