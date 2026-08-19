@@ -1,0 +1,283 @@
+# test_generated_csv_uses_authorized_action_rows.py
+#!/usr/bin/env python3
+"""
+Functional test for CSV artifacts built from authorized action rows.
+Version: 0.260.007
+Implemented in: 0.260.007
+
+Two customer conversations asked a telemetry agent to retrieve BatteryVoltage1
+and create a CSV. The agent retrieved 900 authorized samples, but the published
+artifact held 3 rows in one conversation and 2 rows of server discovery metadata
+in the other.
+
+Three defects combined:
+  1. build_generated_file_export() let any assistant-rendered table outrank the
+     authorized action rows, so an illustrative excerpt replaced the dataset.
+  2. CSV never received the publication contract JSON/XML already had, so the
+     model said it could not attach files and pasted a sample instead.
+  3. A turn whose reply was the schema clarification still published a CSV,
+     built from whatever incidental discovery rows the turn happened to produce.
+
+This test ensures the authorized rows win over an excerpt, a deliberate
+assistant table still wins, and a clarification turn publishes nothing.
+"""
+
+import sys
+import traceback
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+APP_DIR = ROOT / 'application' / 'single_app'
+if str(APP_DIR) not in sys.path:
+    sys.path.insert(0, str(APP_DIR))
+if str(Path(__file__).resolve().parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from test_support.versioning import assert_app_version_at_least  # noqa: E402
+
+from functions_generated_file_exports import (  # noqa: E402
+    build_generated_file_export,
+    build_generated_file_output_guidance,
+)
+
+IMPLEMENTED_VERSION = '0.260.007'
+
+TELEMETRY_COLUMNS = (
+    'generation_time_utc',
+    'reception_time_utc',
+    'battery_voltage_1_v',
+    'raw_value',
+    'monitoring_result',
+    'validity_status',
+)
+TELEMETRY_ROWS = [
+    {
+        'generation_time_utc': f'2026-08-19T15:37:{index % 60:02d}.371000+00:00',
+        'reception_time_utc': f'2026-08-19T15:37:{index % 60:02d}.372000+00:00',
+        'battery_voltage_1_v': 27 + (index % 5),
+        'raw_value': 27 + (index % 5),
+        'monitoring_result': 'CRITICAL',
+        'validity_status': 'ACQUIRED',
+    }
+    for index in range(900)
+]
+TELEMETRY_FUNCTION_RESULTS = [{
+    'plugin_name': 'YamcsPlugin',
+    'function_name': 'list_parameter_history',
+    'success': True,
+    'function_result': {'row_count': 900, 'rows': TELEMETRY_ROWS},
+}]
+TELEMETRY_QUESTION = (
+    'grab BatteryVoltage1 over the last 15 minutes, provide high granularity and create a csv'
+)
+
+DISCOVERY_FUNCTION_RESULTS = [
+    {
+        'plugin_name': 'YamcsPlugin',
+        'function_name': 'list_instances',
+        'success': True,
+        'function_result': {'rows': [{'name': 'simulator', 'state': 'RUNNING'}]},
+    },
+    {
+        'plugin_name': 'YamcsPlugin',
+        'function_name': 'list_parameters',
+        'success': True,
+        'function_result': {'rows': [{'qualified_name': '/YSS/SIMULATOR/BatteryVoltage1', 'units': 'V'}]},
+    },
+]
+CLARIFICATION_REPLY = (
+    'Paul, should each CSV row represent an extracted BatteryVoltage1 telemetry sample, '
+    'and which columns should it include, for example: generation time, voltage (V), '
+    'monitoring result, and validity status?'
+)
+
+
+def assert_true(condition, message):
+    if not condition:
+        raise AssertionError(message)
+
+
+def build_sample_excerpt_reply(excerpt_row_count=3):
+    """Rebuild the assistant reply that pasted real rows as an illustrative sample."""
+    sample_lines = [','.join(TELEMETRY_COLUMNS)]
+    for row in TELEMETRY_ROWS[:excerpt_row_count]:
+        sample_lines.append(','.join(str(row[column]) for column in TELEMETRY_COLUMNS))
+    rendered_sample = '\n'.join(sample_lines)
+    return (
+        'Paul, I retrieved **BatteryVoltage1** at 1 Hz. Samples: 900. Observed range 27 to 31 V.\n\n'
+        'I do not have a file-creation or attachment capability in this session, so I cannot '
+        'deliver a downloadable CSV artifact. The CSV schema is:\n\n'
+        f'```\n{rendered_sample}\n```\n\n'
+        'The archive response establishes the full 900-row dataset.\n'
+    )
+
+
+def test_pasted_sample_does_not_replace_authorized_rows():
+    """An excerpt of the authorized rows must not shrink the published artifact."""
+    print('Testing pasted-sample precedence...')
+    assert_app_version_at_least(IMPLEMENTED_VERSION)
+
+    export_payload = build_generated_file_export(
+        TELEMETRY_QUESTION,
+        build_sample_excerpt_reply(),
+        function_results=TELEMETRY_FUNCTION_RESULTS,
+    )
+
+    assert_true(export_payload is not None, 'Expected the telemetry request to publish a CSV artifact.')
+    assert_true(
+        export_payload['row_count'] == len(TELEMETRY_ROWS),
+        f"Expected all {len(TELEMETRY_ROWS)} authorized rows; got {export_payload['row_count']}.",
+    )
+    assert_true(
+        export_payload['row_source'] == 'structured function result',
+        'Expected the authorized action rows to supply the artifact.',
+    )
+    assert_true(
+        list(export_payload['preview_rows'][0]) == list(TELEMETRY_COLUMNS),
+        'Expected the artifact to keep the telemetry column schema.',
+    )
+
+
+def test_deliberate_assistant_table_still_wins():
+    """A table the model composed itself is not an excerpt and must stay authoritative."""
+    print('Testing deliberate assistant table precedence...')
+    assert_app_version_at_least(IMPLEMENTED_VERSION)
+
+    directory_results = [
+        {
+            'plugin_name': 'DirectoryPlugin',
+            'function_name': 'list_people',
+            'success': True,
+            'function_result': {'value': [{'Name': 'Ada', 'Department': 'Engineering'}]},
+        },
+        {
+            'plugin_name': 'DirectoryPlugin',
+            'function_name': 'list_contractors',
+            'success': True,
+            'function_result': {'items': [{'Name': 'Grace', 'Department': 'Operations'}]},
+        },
+    ]
+    export_payload = build_generated_file_export(
+        'create a combined CSV',
+        '| Name | Department |\n| --- | --- |\n| Assistant-selected | Finance |\n',
+        function_results=directory_results,
+    )
+
+    assert_true(export_payload is not None, 'Expected the combined CSV request to publish an artifact.')
+    assert_true(
+        export_payload['row_source'] == 'assistant response',
+        'Expected a model-composed table to remain authoritative over action rows.',
+    )
+    assert_true(export_payload['row_count'] == 1, 'Expected the model-composed row to be preserved.')
+
+
+def test_partial_excerpt_of_larger_result_is_still_replaced():
+    """A longer excerpt is still an excerpt, not a derived answer."""
+    print('Testing multi-row excerpt precedence...')
+    assert_app_version_at_least(IMPLEMENTED_VERSION)
+
+    export_payload = build_generated_file_export(
+        TELEMETRY_QUESTION,
+        build_sample_excerpt_reply(excerpt_row_count=25),
+        function_results=TELEMETRY_FUNCTION_RESULTS,
+    )
+
+    assert_true(export_payload is not None, 'Expected the telemetry request to publish a CSV artifact.')
+    assert_true(
+        export_payload['row_count'] == len(TELEMETRY_ROWS),
+        'Expected a 25-row excerpt to be replaced by the full authorized result set.',
+    )
+
+
+def test_clarification_turn_publishes_no_artifact():
+    """The turn that asks the schema clarification must not publish a CSV."""
+    print('Testing clarification-turn suppression...')
+    assert_app_version_at_least(IMPLEMENTED_VERSION)
+
+    export_payload = build_generated_file_export(
+        'create a csv',
+        CLARIFICATION_REPLY,
+        function_results=DISCOVERY_FUNCTION_RESULTS,
+    )
+
+    assert_true(
+        export_payload is None,
+        'Expected a clarifying question to publish no artifact instead of discovery metadata.',
+    )
+
+
+def test_answered_turn_still_publishes_action_rows():
+    """Suppression must be limited to clarification replies, not ordinary summaries."""
+    print('Testing normal reply still publishes action rows...')
+    assert_app_version_at_least(IMPLEMENTED_VERSION)
+
+    export_payload = build_generated_file_export(
+        'create a csv',
+        'Retrieved the BatteryVoltage1 archive window and prepared the export.',
+        function_results=TELEMETRY_FUNCTION_RESULTS,
+    )
+
+    assert_true(export_payload is not None, 'Expected an ordinary reply to still publish the artifact.')
+    assert_true(
+        export_payload['row_count'] == len(TELEMETRY_ROWS),
+        'Expected the full authorized result set for an ordinary reply.',
+    )
+
+
+def test_csv_guidance_states_the_publication_contract():
+    """CSV must receive the same publication contract JSON and XML already state."""
+    print('Testing CSV publication guidance parity...')
+    assert_app_version_at_least(IMPLEMENTED_VERSION)
+
+    csv_guidance = build_generated_file_output_guidance('create a csv')
+    assert_true(
+        'attaches the file after generation' in csv_guidance,
+        'Expected CSV guidance to state that the server attaches the artifact.',
+    )
+    assert_true(
+        'cannot create or attach files' in csv_guidance,
+        'Expected CSV guidance to forbid claiming files cannot be attached.',
+    )
+    assert_true(
+        'do not paste a sample of the rows' in csv_guidance,
+        'Expected CSV guidance to forbid pasting a row sample instead of the artifact.',
+    )
+    assert_true(
+        'ask exactly one concise clarification' in csv_guidance,
+        'Expected the existing one-clarification rule to survive.',
+    )
+    assert_true(
+        build_generated_file_output_guidance('summarize the selected sources') == '',
+        'Expected non-artifact requests to receive no generated-file guidance.',
+    )
+
+
+def run_tests() -> bool:
+    tests = [
+        test_pasted_sample_does_not_replace_authorized_rows,
+        test_deliberate_assistant_table_still_wins,
+        test_partial_excerpt_of_larger_result_is_still_replaced,
+        test_clarification_turn_publishes_no_artifact,
+        test_answered_turn_still_publishes_action_rows,
+        test_csv_guidance_states_the_publication_contract,
+    ]
+
+    results = []
+    for test in tests:
+        print(f'\nRunning {test.__name__}...')
+        try:
+            test()
+            print(f'{test.__name__} passed')
+            results.append(True)
+        except Exception as exc:
+            print(f'{test.__name__} failed: {exc}')
+            traceback.print_exc()
+            results.append(False)
+
+    passed = sum(1 for result in results if result)
+    print(f'\nResults: {passed}/{len(tests)} tests passed')
+    return all(results)
+
+
+if __name__ == '__main__':
+    sys.exit(0 if run_tests() else 1)

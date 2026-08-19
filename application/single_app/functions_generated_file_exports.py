@@ -195,6 +195,20 @@ PASSTHROUGH_SERIALIZE_PATTERNS = (
     re.compile(r'\b(?:csv|json|xml|docx|word|pdf|spreadsheet)\b[\w\s,.:;\-/]{0,100}\b(?:export|download|file|format|copy)\b'),
 )
 
+# The one schema clarification build_csv_output_clarification_guidance() asks the model to send.
+CSV_CLARIFICATION_REPLY_PATTERNS = (
+    re.compile(r'\b(?:should|shall|does|do)\s+(?:each|every|the)\s+(?:csv\s+)?(?:row|record|line|entry)\b'),
+    re.compile(r'\b(?:which|what)\s+(?:columns?|fields?)\b'),
+    re.compile(r'\b(?:columns?|fields?)\s+(?:should|would|do)\s+(?:it|they|the\s+\w+)\s+include\b'),
+)
+CSV_CLARIFICATION_REPLY_MAX_CHARS = 500
+CSV_PUBLICATION_GUIDANCE = (
+    'The server serializes the authorized action results into the requested CSV artifact and '
+    'attaches the file after generation. Do not claim that you cannot create or attach files, '
+    'do not tell the user to copy or save rows manually, and do not paste a sample of the rows '
+    'in place of the artifact.'
+)
+
 
 def _normalize_question_for_artifact_detection(user_question: str) -> str:
     return re.sub(r'\s+', ' ', str(user_question or '').strip().casefold())
@@ -436,7 +450,12 @@ def build_generated_file_output_guidance(
         or get_requested_structured_artifact_format(user_question)
     )
     if output_format == GENERATED_FILE_FORMAT_CSV:
-        return build_csv_output_clarification_guidance(user_question)
+        clarification_guidance = build_csv_output_clarification_guidance(user_question)
+        return ' '.join(
+            guidance_part
+            for guidance_part in (clarification_guidance, CSV_PUBLICATION_GUIDANCE)
+            if guidance_part
+        )
     if output_format == 'json':
         return (
             'The user requested a downloadable JSON artifact. The server will validate and attach the file after '
@@ -494,17 +513,23 @@ def build_generated_file_export(
     ) if function_rows else {'allowed': False, 'reason_code': 'source_result_incomplete'}
 
     if output_format == GENERATED_FILE_FORMAT_CSV:
-        rows = assistant_rows or (function_rows if function_passthrough.get('allowed') else [])
+        if not assistant_rows and _assistant_reply_requests_clarification(assistant_text):
+            return None
+        use_function_rows = bool(function_rows) and bool(function_passthrough.get('allowed')) and (
+            not assistant_rows
+            or _assistant_rows_sample_function_rows(assistant_rows, function_rows)
+        )
+        rows = function_rows if use_function_rows else assistant_rows
         if not rows:
             return None
-        row_source = 'assistant response' if assistant_rows else 'structured function result'
+        row_source = 'structured function result' if use_function_rows else 'assistant response'
         return _build_generated_file_payload(
             output_format=output_format,
             file_content=build_assistant_table_csv(rows),
             rows=rows,
             row_source=row_source,
             assistant_content=assistant_text,
-            passthrough_reason_code=(None if assistant_rows else function_passthrough.get('reason_code')),
+            passthrough_reason_code=(function_passthrough.get('reason_code') if use_function_rows else None),
         )
 
     if not assistant_text and not assistant_rows and not function_rows:
@@ -561,6 +586,61 @@ def extract_authorized_function_result_rows(function_results: Optional[List[Dict
             normalized_row[source_column] = function_label
             combined_rows.append(normalized_row)
     return combined_rows
+
+
+def _assistant_reply_requests_clarification(assistant_content: str) -> bool:
+    """Return whether the reply is the schema clarification rather than the answer."""
+    normalized_content = _normalize_question_for_artifact_detection(assistant_content)
+    if '?' not in normalized_content or len(normalized_content) > CSV_CLARIFICATION_REPLY_MAX_CHARS:
+        return False
+    return any(pattern.search(normalized_content) for pattern in CSV_CLARIFICATION_REPLY_PATTERNS)
+
+
+def _normalized_row_text_map(row: Dict[str, Any]) -> Dict[str, str]:
+    return {
+        _normalize_function_result_key(column_name): (
+            '' if value is None else str(value).strip()
+        )
+        for column_name, value in row.items()
+    }
+
+
+def _assistant_rows_sample_function_rows(
+    assistant_rows: Sequence[Dict[str, Any]],
+    function_rows: Sequence[Dict[str, Any]],
+) -> bool:
+    """Return whether the assistant table is an excerpt of the same authorized rows."""
+    if not assistant_rows or len(assistant_rows) >= len(function_rows):
+        return False
+
+    assistant_row_maps = []
+    assistant_columns = []
+    seen_columns = set()
+    for assistant_row in assistant_rows:
+        if not isinstance(assistant_row, dict):
+            return False
+        row_map = _normalized_row_text_map(assistant_row)
+        assistant_row_maps.append(row_map)
+        for column_name in row_map:
+            if column_name and column_name not in seen_columns:
+                seen_columns.add(column_name)
+                assistant_columns.append(column_name)
+    if not assistant_columns:
+        return False
+
+    function_projections = set()
+    for function_row in function_rows:
+        if not isinstance(function_row, dict):
+            return False
+        row_map = _normalized_row_text_map(function_row)
+        if not seen_columns.issubset(row_map):
+            return False
+        function_projections.add(tuple(row_map[column_name] for column_name in assistant_columns))
+
+    return all(
+        tuple(row_map.get(column_name, '') for column_name in assistant_columns) in function_projections
+        for row_map in assistant_row_maps
+    )
 
 
 def has_generated_file_output(existing_outputs: Optional[List[Dict[str, Any]]], output_format: str) -> bool:
