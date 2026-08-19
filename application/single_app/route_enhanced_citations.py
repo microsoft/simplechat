@@ -624,16 +624,15 @@ def register_enhanced_citations_routes(bp):
                 force_download=True,
             )
         except PermissionError as exc:
-            # Surface the specific reason (for example a file awaiting approval) instead of a
-            # bare Forbidden, which is what made the original failure so hard to act on.
-            return jsonify({"error": str(exc) or "Forbidden"}), 403
+            debug_print(f"Forbidden chat artifact download attempt: {exc}")
+            return jsonify({"error": "Forbidden"}), 403
         except LookupError as exc:
             return jsonify({"error": str(exc)}), 404
         except ValueError as exc:
             return jsonify({"error": str(exc)}), 400
         except Exception as e:
             debug_print(f"Error serving chat artifact download: {e}")
-            return jsonify({"error": str(e)}), 500
+            return jsonify({"error": "An internal error has occurred"}), 500
 
     @bp.route("/api/chat_artifacts/promote", methods=["POST"])
     @swagger_route(security=get_auth_security())
