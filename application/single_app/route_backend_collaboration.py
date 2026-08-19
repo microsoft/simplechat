@@ -482,9 +482,19 @@ def register_route_backend_collaboration(bp):
         except LookupError:
             return jsonify({'error': 'Generated file approval not found'}), 404
         except PermissionError as exc:
-            return jsonify({'error': str(exc)}), 403
+            log_event(
+                f'[GENERATED_FILE_APPROVALS] Permission denied while resolving file approval: {exc}',
+                level=logging.WARNING,
+                exceptionTraceback=True,
+            )
+            return jsonify({'error': 'Permission denied'}), 403
         except ValueError as exc:
-            return jsonify({'error': str(exc)}), 400
+            log_event(
+                f'[GENERATED_FILE_APPROVALS] Invalid request while resolving file approval: {exc}',
+                level=logging.WARNING,
+                exceptionTraceback=True,
+            )
+            return jsonify({'error': 'Invalid request'}), 400
         except Exception as exc:
             log_event(
                 f'[GENERATED_FILE_APPROVALS] Failed to resolve file approval: {exc}',
