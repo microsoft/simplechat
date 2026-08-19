@@ -101,6 +101,15 @@ FUNCTION_RESULT_ROW_KEYS = (
     'output',
     'payload',
 )
+FUNCTION_RESULT_ROW_COUNT_KEYS = (
+    'row_count',
+    'returned_rows',
+    'total_rows',
+    'total_count',
+    'record_count',
+)
+# Below this a stored action reads as a lookup, not the dataset a request is asking for.
+PRIOR_TURN_SUBSTANTIVE_ROW_COUNT = 10
 FUNCTION_RESULT_CONTROL_KEYS = {
     'count',
     'detail',
@@ -641,6 +650,100 @@ def _select_dominant_function_row_group(
     if len(dominant_rows) < supporting_row_count * DOMINANT_FUNCTION_RESULT_RATIO:
         return None
     return dominant_rows
+
+
+def select_prior_turn_action_citations(
+    assistant_messages: Optional[Sequence[Dict[str, Any]]],
+    substantive_row_count: int = PRIOR_TURN_SUBSTANTIVE_ROW_COUNT,
+) -> List[Dict[str, Any]]:
+    """Pick the newest stored action group holding a dataset, reading compact citations only.
+
+    Callers pass assistant messages newest first and hydrate only the returned citations.
+    """
+    fallback_citations: List[Dict[str, Any]] = []
+    for assistant_message in assistant_messages or []:
+        if not isinstance(assistant_message, dict):
+            continue
+        compact_citations = assistant_message.get('agent_citations')
+        if not isinstance(compact_citations, list):
+            continue
+
+        grouped_citations: Dict[str, Dict[str, Any]] = {}
+        for citation in compact_citations:
+            if not isinstance(citation, dict):
+                continue
+            estimated_rows = estimate_function_result_row_count(citation)
+            if not estimated_rows:
+                continue
+            action_label = str(
+                citation.get('function_name') or citation.get('plugin_name') or '',
+            ).strip()
+            action_group = grouped_citations.setdefault(
+                action_label,
+                {'citations': [], 'estimated_rows': 0},
+            )
+            action_group['citations'].append(citation)
+            action_group['estimated_rows'] += estimated_rows
+
+        if not grouped_citations:
+            continue
+        best_group = max(grouped_citations.values(), key=lambda group: group['estimated_rows'])
+        if best_group['estimated_rows'] >= substantive_row_count:
+            return list(best_group['citations'])
+        if not fallback_citations:
+            fallback_citations = list(best_group['citations'])
+    return fallback_citations
+
+
+def estimate_function_result_row_count(function_result: Optional[Dict[str, Any]]) -> int:
+    """Estimate an action's stored rows from its compacted citation, reading no payload."""
+    if not isinstance(function_result, dict):
+        return 0
+    if function_result.get('success') is False or _is_tabular_function_result(function_result):
+        return 0
+    return _estimate_payload_row_count(
+        _parse_function_result_payload(function_result.get('function_result')),
+    )
+
+
+def _estimate_payload_row_count(payload: Any, depth: int = 0) -> int:
+    if depth > 4:
+        return 0
+    if isinstance(payload, list):
+        estimated_rows = 0
+        for item in payload:
+            # Compaction replaces the dropped tail of a list with this marker.
+            if isinstance(item, dict) and set(item) == {'remaining_items'}:
+                estimated_rows += _coerce_row_count(item.get('remaining_items'))
+            else:
+                estimated_rows += 1
+        return estimated_rows
+    if not isinstance(payload, dict):
+        return 0
+
+    normalized_keys = {_normalize_function_result_key(key): key for key in payload}
+    for count_key in FUNCTION_RESULT_ROW_COUNT_KEYS:
+        matching_key = normalized_keys.get(_normalize_function_result_key(count_key))
+        declared_row_count = _coerce_row_count(payload.get(matching_key)) if matching_key else 0
+        if declared_row_count:
+            return declared_row_count
+
+    for row_key in FUNCTION_RESULT_ROW_KEYS:
+        matching_key = normalized_keys.get(_normalize_function_result_key(row_key))
+        if matching_key is None:
+            continue
+        estimated_rows = _estimate_payload_row_count(payload.get(matching_key), depth + 1)
+        if estimated_rows:
+            return estimated_rows
+    return 1 if _normalize_function_result_row(payload, is_data_row=False) else 0
+
+
+def _coerce_row_count(value: Any) -> int:
+    try:
+        row_count = int(value)
+    except (TypeError, ValueError):
+        return 0
+    return row_count if row_count > 0 else 0
 
 
 def _normalize_pending_output_format(pending_output_format: Optional[str]) -> Optional[str]:

@@ -2,8 +2,8 @@
 #!/usr/bin/env python3
 """
 Functional test for CSV artifacts built from authorized action rows.
-Version: 0.260.008
-Implemented in: 0.260.007; earlier-turn reach-back and clarification carry-forward in 0.260.008
+Version: 0.260.009
+Implemented in: 0.260.007; earlier-turn reach-back and clarification carry-forward in 0.260.008; history-limit window and compact-citation scan in 0.260.009
 
 Two customer conversations asked a telemetry agent to retrieve BatteryVoltage1
 and create a CSV. The agent retrieved 900 authorized samples, but the published
@@ -27,6 +27,7 @@ assistant table still wins, a clarification turn publishes nothing, and an
 answered clarification resumes the original request using the earlier rows.
 """
 
+import json
 import sys
 import traceback
 from pathlib import Path
@@ -43,8 +44,10 @@ from test_support.versioning import assert_app_version_at_least  # noqa: E402
 from functions_generated_file_exports import (  # noqa: E402
     build_generated_file_export,
     build_generated_file_output_guidance,
+    estimate_function_result_row_count,
     extract_authorized_function_result_rows,
     resolve_pending_generated_file_format,
+    select_prior_turn_action_citations,
 )
 
 IMPLEMENTED_VERSION = '0.260.007'
@@ -394,6 +397,141 @@ def test_pending_clarification_does_not_override_a_new_request():
     )
 
 
+def _build_compact_citation(artifact_id, plugin_name, function_name, function_result):
+    """Compact a citation exactly the way the chat pipeline stores it on a message."""
+    import types
+
+    if 'functions_azure_maps' not in sys.modules:
+        # functions_message_artifacts only needs this for map payloads, and importing the real
+        # module pulls in config.py and a live Cosmos client.
+        azure_maps_stub = types.ModuleType('functions_azure_maps')
+        azure_maps_stub.refresh_azure_maps_citation_payload = lambda payload: payload
+        sys.modules['functions_azure_maps'] = azure_maps_stub
+
+    from functions_message_artifacts import build_compact_agent_citation
+
+    return build_compact_agent_citation(
+        {
+            'plugin_name': plugin_name,
+            'function_name': function_name,
+            'success': True,
+            'function_result': function_result,
+        },
+        artifact_id=artifact_id,
+    )
+
+
+def test_row_count_estimate_survives_citation_compaction():
+    """The cheap scan depends on compaction keeping a usable row signal on the message."""
+    print('Testing compacted row-count estimate...')
+    assert_app_version_at_least(IMPLEMENTED_VERSION)
+
+    compact_citation = _build_compact_citation(
+        'm1_artifact_2',
+        'YamcsPlugin',
+        'list_parameter_history',
+        {'instance': 'simulator', 'row_count': 900, 'rows': TELEMETRY_ROWS},
+    )
+
+    assert_true(
+        len(json.dumps(compact_citation)) < 4000,
+        'Expected the stored citation to stay compact.',
+    )
+    assert_true(
+        estimate_function_result_row_count(compact_citation) == len(TELEMETRY_ROWS),
+        'Expected the compacted citation to still report its full row count.',
+    )
+
+    unlabeled_citation = _build_compact_citation(
+        'm1_artifact_3',
+        'YamcsPlugin',
+        'list_parameter_history',
+        {'rows': TELEMETRY_ROWS},
+    )
+    assert_true(
+        estimate_function_result_row_count(unlabeled_citation) == len(TELEMETRY_ROWS),
+        'Expected the truncated row list marker to restore the full count.',
+    )
+
+
+def test_reach_back_prefers_the_dataset_over_newer_lookups():
+    """A newer memory or discovery call must not outrank the dataset a request means."""
+    print('Testing prior-turn action selection...')
+    assert_app_version_at_least(IMPLEMENTED_VERSION)
+
+    assistant_messages = [
+        {
+            'id': 'm3',
+            'agent_citations': [_build_compact_citation(
+                'm3_artifact_1', 'FactMemoryPlugin', 'get_facts',
+                {'facts': [{'key': 'name', 'value': 'Paul'}]},
+            )],
+        },
+        {
+            'id': 'm2',
+            'agent_citations': [_build_compact_citation(
+                'm2_artifact_1', 'YamcsPlugin', 'list_instances',
+                {'rows': [{'name': 'simulator', 'state': 'RUNNING'}]},
+            )],
+        },
+        {
+            'id': 'm1',
+            'agent_citations': [
+                _build_compact_citation(
+                    'm1_artifact_1', 'YamcsPlugin', 'list_instances',
+                    {'rows': [{'name': 'simulator', 'state': 'RUNNING'}]},
+                ),
+                _build_compact_citation(
+                    'm1_artifact_2', 'YamcsPlugin', 'list_parameter_history',
+                    {'row_count': 450, 'rows': TELEMETRY_ROWS[:450]},
+                ),
+                _build_compact_citation(
+                    'm1_artifact_3', 'YamcsPlugin', 'list_parameter_history',
+                    {'row_count': 450, 'rows': TELEMETRY_ROWS[450:]},
+                ),
+            ],
+        },
+    ]
+
+    selected_citations = select_prior_turn_action_citations(assistant_messages)
+
+    assert_true(len(selected_citations) == 2, 'Expected both pages of the dataset action.')
+    assert_true(
+        [citation['artifact_id'] for citation in selected_citations] == ['m1_artifact_2', 'm1_artifact_3'],
+        'Expected only the dataset artifacts to be selected for hydration.',
+    )
+    assert_true(
+        all(citation['function_name'] == 'list_parameter_history' for citation in selected_citations),
+        'Expected discovery and memory lookups to be skipped.',
+    )
+
+
+def test_reach_back_falls_back_to_the_only_rows_available():
+    """When no turn holds a dataset, the most recent rows are still better than nothing."""
+    print('Testing prior-turn fallback selection...')
+    assert_app_version_at_least(IMPLEMENTED_VERSION)
+
+    assistant_messages = [
+        {'id': 'm2', 'agent_citations': [_build_compact_citation(
+            'm2_artifact_1', 'DirectoryPlugin', 'list_people',
+            {'rows': [{'Name': 'Ada'}, {'Name': 'Grace'}]},
+        )]},
+        {'id': 'm1', 'agent_citations': []},
+    ]
+
+    selected_citations = select_prior_turn_action_citations(assistant_messages)
+
+    assert_true(len(selected_citations) == 1, 'Expected the only available action to be selected.')
+    assert_true(
+        selected_citations[0]['artifact_id'] == 'm2_artifact_1',
+        'Expected the most recent available rows to be used.',
+    )
+    assert_true(
+        select_prior_turn_action_citations([]) == [],
+        'Expected an empty history to select nothing.',
+    )
+
+
 def test_csv_guidance_states_the_publication_contract():
     """CSV must receive the same publication contract JSON and XML already state."""
     print('Testing CSV publication guidance parity...')
@@ -435,6 +573,9 @@ def run_tests() -> bool:
         test_current_turn_rows_are_never_double_counted,
         test_answering_the_clarification_publishes_the_csv,
         test_pending_clarification_does_not_override_a_new_request,
+        test_row_count_estimate_survives_citation_compaction,
+        test_reach_back_prefers_the_dataset_over_newer_lookups,
+        test_reach_back_falls_back_to_the_only_rows_available,
         test_csv_guidance_states_the_publication_contract,
     ]
 

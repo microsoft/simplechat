@@ -151,6 +151,7 @@ from functions_generated_file_exports import (
     build_generated_file_export,
     build_generated_file_output_guidance,
     evaluate_generated_file_passthrough_eligibility,
+    estimate_function_result_row_count,
     get_generated_file_export_content,
     get_requested_generated_file_format,
     get_requested_structured_artifact_format,
@@ -159,6 +160,7 @@ from functions_generated_file_exports import (
     normalize_generated_output_format,
     normalize_xml_artifact_payload,
     resolve_pending_generated_file_format,
+    select_prior_turn_action_citations,
     serialize_generated_json,
     serialize_generated_xml,
 )
@@ -2258,8 +2260,19 @@ def _has_generated_tabular_csv_output(generated_outputs):
     return has_generated_tabular_csv_output(generated_outputs)
 
 
-PRIOR_TURN_ACTION_RESULT_MESSAGE_LIMIT = 5
+PRIOR_TURN_ACTION_RESULT_MAX_MESSAGES = 40
 PRIOR_TURN_ACTION_RESULT_ARTIFACT_LIMIT = 25
+
+
+def _resolve_prior_turn_history_window(settings=None):
+    """Reach back as far as the history the model itself can still see."""
+    resolved_settings = settings if isinstance(settings, dict) else get_settings()
+    return _bounded_int(
+        resolved_settings.get('conversation_history_limit', 10),
+        default=10,
+        minimum=1,
+        maximum=PRIOR_TURN_ACTION_RESULT_MAX_MESSAGES,
+    )
 
 
 def _read_recent_assistant_messages(conversation_id, message_limit):
@@ -2278,25 +2291,9 @@ def _read_recent_assistant_messages(conversation_id, message_limit):
     ))
 
 
-def _hydrate_assistant_message_agent_citations(conversation_id, assistant_message):
-    """Inflate one assistant turn's compact citations back to their full stored payloads."""
-    compact_citations = assistant_message.get('agent_citations')
-    if not isinstance(compact_citations, list) or not compact_citations:
-        return []
-
-    artifact_ids = []
-    for citation in compact_citations:
-        if not isinstance(citation, dict):
-            continue
-        artifact_id = str(citation.get('artifact_id') or '').strip()
-        if artifact_id and artifact_id not in artifact_ids:
-            artifact_ids.append(artifact_id)
-        if len(artifact_ids) >= PRIOR_TURN_ACTION_RESULT_ARTIFACT_LIMIT:
-            break
-
+def _read_agent_citation_artifact_payloads(conversation_id, artifact_ids):
     if not artifact_ids:
-        return [citation for citation in compact_citations if isinstance(citation, dict)]
-
+        return {}
     artifact_documents = list(cosmos_messages_container.query_items(
         query=(
             'SELECT * FROM c WHERE c.conversation_id = @conversation_id '
@@ -2309,19 +2306,11 @@ def _hydrate_assistant_message_agent_citations(conversation_id, assistant_messag
         ],
         partition_key=conversation_id,
     ))
-    hydrated_messages = hydrate_agent_citations_from_artifacts(
-        [assistant_message],
-        build_message_artifact_payload_map(artifact_documents),
-    )
-    return [
-        citation
-        for citation in (hydrated_messages[0].get('agent_citations') or [])
-        if isinstance(citation, dict)
-    ]
+    return build_message_artifact_payload_map(artifact_documents)
 
 
-def _load_prior_turn_function_results(user_id, conversation_id):
-    """Return full action results from the most recent earlier turn that gathered rows."""
+def _load_prior_turn_function_results(user_id, conversation_id, settings=None):
+    """Return the full action results an earlier turn already gathered in this conversation."""
     normalized_user_id = str(user_id or '').strip()
     normalized_conversation_id = str(conversation_id or '').strip()
     if not normalized_user_id or not normalized_conversation_id:
@@ -2331,15 +2320,29 @@ def _load_prior_turn_function_results(user_id, conversation_id):
         _authorize_personal_conversation_access(normalized_user_id, normalized_conversation_id)
         assistant_messages = _read_recent_assistant_messages(
             normalized_conversation_id,
-            PRIOR_TURN_ACTION_RESULT_MESSAGE_LIMIT,
+            _resolve_prior_turn_history_window(settings),
         )
-        for assistant_message in assistant_messages:
-            hydrated_citations = _hydrate_assistant_message_agent_citations(
-                normalized_conversation_id,
-                assistant_message,
-            )
-            if hydrated_citations:
-                return hydrated_citations
+        selected_citations = select_prior_turn_action_citations(
+            assistant_messages,
+        )[:PRIOR_TURN_ACTION_RESULT_ARTIFACT_LIMIT]
+        if not selected_citations:
+            return []
+
+        artifact_payload_map = _read_agent_citation_artifact_payloads(
+            normalized_conversation_id,
+            [
+                str(citation.get('artifact_id') or '').strip()
+                for citation in selected_citations
+                if str(citation.get('artifact_id') or '').strip()
+            ],
+        )
+
+        resolved_citations = []
+        for citation in selected_citations:
+            artifact_payload = artifact_payload_map.get(str(citation.get('artifact_id') or ''))
+            stored_citation = artifact_payload.get('citation') if isinstance(artifact_payload, dict) else None
+            resolved_citations.append(stored_citation if isinstance(stored_citation, dict) else citation)
+        return resolved_citations
     except Exception as exc:
         log_event(
             '[GENERATED_FILE_EXPORT] Could not reuse earlier action results',
@@ -2403,6 +2406,7 @@ def maybe_create_generated_file_output(
         prior_function_results_loader=lambda: _load_prior_turn_function_results(
             get_current_user_id(),
             conversation_id,
+            settings=get_settings(),
         ),
         pending_output_format=output_format,
     )
