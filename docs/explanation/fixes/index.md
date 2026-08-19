@@ -32,3 +32,4 @@ category: Version History
 - [Workflow Task Document Picker Fix](WORKFLOW_TASK_DOCUMENT_PICKER_FIX.md)
 - [Workflow File Sync Prompt Context Fix](WORKFLOW_FILE_SYNC_PROMPT_CONTEXT_FIX.md)
 - [Chat Citation Whitespace Collapse Fix](CHAT_CITATION_WHITESPACE_COLLAPSE_FIX.md)
+- [Collaboration Mention Tab Autocomplete Fix](COLLABORATION_MENTION_TAB_AUTOCOMPLETE_FIX.md)
