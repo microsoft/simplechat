@@ -215,8 +215,15 @@ This page includes the latest release notes inline. Older release sections are s
 
 *   **Simpler Documentation Pages**
     *   Landing pages were rewritten from hand-written HTML card markup into plain markdown. The home page previously had 82 blocks of card markup and zero markdown headings, and the features page 119 blocks and zero headings, which meant neither page had a working "On this page" table of contents or heading anchors.
+    *   The FAQ was rebuilt so every question is its own heading with a linkable anchor.
+    *   The decorative page hero, with its gradient banner, pill row, and icon orb, was replaced with a plain documentation header across the 38 pages that used it.
     *   Split the 452 KB release notes page into per-version-series pages while keeping the existing release notes URL working.
-    *   (Ref: `docs/index.md`, `docs/features.md`, `scripts/build_release_notes_pages.py`)
+    *   (Ref: `docs/index.md`, `docs/features.md`, `docs/start/faqs.md`, `scripts/build_release_notes_pages.py`)
+
+*   **Documentation URLs Now Match Their Section**
+    *   Guides previously lived under three different URL spaces that all meant the same thing. Tutorials and how-to guides are consolidated under `/guides/`, orientation pages moved under `/start/`, deployment scenarios under `/deploy/`, and reference pages under `/reference/`.
+    *   **Existing links and bookmarks continue to work.** Every moved page redirects from its old URL, and the URLs the application itself links to were deliberately left unchanged.
+    *   (Ref: documentation navigation, `jekyll-redirect-from`, `ui_tests/check_docs_links.js`)
 
 #### Bug Fixes
 
