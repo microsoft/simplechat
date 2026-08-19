@@ -260,9 +260,6 @@ navigation:
         - title: Enterprise networking
           url: /how-to/enterprise_networking/
           icon: bi bi-diagram-2
-        - title: Application scaling
-          url: /application_scaling/
-          icon: bi bi-speedometer2
         - title: Scale on Azure
           url: /how-to/scaling_on_azure/
           icon: bi bi-graph-up-arrow
@@ -297,7 +294,7 @@ navigation:
           match: /reference/actions/
           icon: bi bi-lightning-charge
         - title: Admin configuration reference
-          url: /reference/admin_configuration/
+          url: /admin_configuration/
           icon: bi bi-card-list
         - title: External applications
           url: /external_apps_overview/

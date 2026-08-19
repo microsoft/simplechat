@@ -10,6 +10,16 @@ audience: user
 
 These guides focus on what you are trying to accomplish, why the task is useful, and what to verify when you are done. Use them when you know the outcome you want but need the exact SimpleChat surface and controls.
 
+## Admin journeys
+
+| Guide | What you will do | Audience |
+| --- | --- | --- |
+| [Deploy SimpleChat as an administrator]({{ '/guides/admin-deploy-simplechat/' | relative_url }}) | Choose a deployment path, prepare Azure resources, run the rollout, and verify first boot. | Admins |
+| [Configure SimpleChat for the first time]({{ '/guides/admin-first-configuration/' | relative_url }}) | Walk Admin Settings in dependency order after a successful deployment. | Admins |
+| [Update an existing SimpleChat deployment]({{ '/guides/admin-update-simplechat/' | relative_url }}) | Back up, choose the right upgrade path, validate, and plan rollback. | Admins |
+| [Operate SimpleChat day to day]({{ '/guides/admin-operate-simplechat/' | relative_url }}) | Monitor, scale, review safety and feedback, manage data, and troubleshoot. | Admins |
+| [Enable a SimpleChat capability safely]({{ '/guides/admin-enable-a-capability/' | relative_url }}) | Turn on optional features with dependencies, role checks, validation, and rollback. | Admins |
+
 ## Chat
 
 | Guide | What you will do | Audience |
