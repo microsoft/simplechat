@@ -2,8 +2,8 @@
 # test_shared_conversation_file_approval_fix.py
 """
 Functional test for shared conversation file generation and owner approvals.
-Version: 0.260.004
-Implemented in: 0.260.004
+Version: 0.260.006
+Implemented in: 0.260.006
 
 This test ensures that a non-owner participant of a shared (collaborative) conversation can
 invoke the AI without a "Forbidden" stream interruption, that downloadable files they generate
@@ -646,8 +646,8 @@ def test_version_supports_shared_conversation_file_approvals():
     """The fix must be present in at least its implementation version."""
     print('Testing application version...')
     assert_app_version_at_least(
-        '0.260.004',
-        reason='Shared conversation file approvals were implemented in 0.260.004',
+        '0.260.006',
+        reason='Shared conversation file approvals were implemented in 0.260.006',
     )
     print('Application version verified.')
     return True

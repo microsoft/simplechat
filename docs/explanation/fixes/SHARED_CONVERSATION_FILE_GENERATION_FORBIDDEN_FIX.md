@@ -12,7 +12,7 @@ Stream interrupted: Forbidden
 The reported case was a participant asking `@Telemetry generate a csv of the 900 samples` in a
 conversation shared from a personal chat. No content was returned at all.
 
-- **Fixed in version:** **0.260.004**
+- **Fixed in version:** **0.260.006**
 - **Related feature:** `docs/explanation/features/SHARED_CONVERSATION_FILE_APPROVALS.md`
 
 ## Root Cause Analysis

@@ -24,6 +24,7 @@ const RECENT_COLLABORATORS_KEY = 'recentCollaborators';
 const MAX_RECENT_COLLABORATORS = 12;
 const DEFAULT_SUGGESTION_LIMIT = 8;
 const SEARCH_HIGHLIGHT_MAX_AGE_MS = 30000;
+const MENTION_OPTION_ID_PREFIX = 'collaboration-mention-option-';
 
 const mentionMenu = document.getElementById('collaboration-mention-menu');
 const participantModalEl = document.getElementById('collaboration-participant-modal');
@@ -1509,7 +1510,32 @@ function buildSuggestionItemHtml(suggestion) {
     `;
 }
 
+function applyMentionComboboxState(activeItemId) {
+    if (!userInput || !mentionMenu) {
+        return;
+    }
+
+    // ARIA 1.2 lets a focused textbox point aria-activedescendant at a descendant
+    // of the element named by aria-controls, which is how the composer announces
+    // the highlighted suggestion without moving focus out of the message box.
+    userInput.setAttribute('aria-controls', mentionMenu.id);
+    userInput.setAttribute('aria-autocomplete', 'list');
+    userInput.setAttribute('aria-activedescendant', activeItemId);
+}
+
+function clearMentionComboboxState() {
+    if (!userInput) {
+        return;
+    }
+
+    userInput.removeAttribute('aria-activedescendant');
+    userInput.removeAttribute('aria-autocomplete');
+    userInput.removeAttribute('aria-controls');
+}
+
 function hideMentionMenu() {
+    clearMentionComboboxState();
+
     if (!mentionMenu) {
         return;
     }
@@ -1525,13 +1551,14 @@ function renderMentionMenu(results, mentionState) {
     }
 
     if (!Array.isArray(results) || results.length === 0) {
-        mentionMenu.innerHTML = '<div class="list-group-item text-muted small">No matching participants, agents, models, or collaborators found.</div>';
+        mentionMenu.innerHTML = '<div class="list-group-item text-muted small" role="option" aria-disabled="true" aria-selected="false">No matching participants, agents, models, or collaborators found.</div>';
         mentionMenu.classList.remove('d-none');
         activeMentionState = {
             ...mentionState,
             results: [],
             activeIndex: -1,
         };
+        clearMentionComboboxState();
         return;
     }
 
@@ -1545,7 +1572,10 @@ function renderMentionMenu(results, mentionState) {
     results.forEach((result, index) => {
         const button = document.createElement('button');
         button.type = 'button';
+        button.id = `${MENTION_OPTION_ID_PREFIX}${index}`;
         button.className = `list-group-item list-group-item-action collaboration-mention-item${index === 0 ? ' active' : ''}`;
+        button.setAttribute('role', 'option');
+        button.setAttribute('aria-selected', index === 0 ? 'true' : 'false');
         button.innerHTML = buildSuggestionItemHtml(result);
         button.setAttribute('data-index', String(index));
         button.addEventListener('mousedown', event => {
@@ -1569,17 +1599,39 @@ function renderMentionMenu(results, mentionState) {
         mentionMenu.appendChild(button);
     });
     mentionMenu.classList.remove('d-none');
+    updateMentionMenuActiveItem({ scrollActiveIntoView: false });
 }
 
-function updateMentionMenuActiveItem() {
+function updateMentionMenuActiveItem({ scrollActiveIntoView = true } = {}) {
     if (!mentionMenu || !activeMentionState) {
         return;
     }
 
     const items = mentionMenu.querySelectorAll('.collaboration-mention-item');
+    let activeItemId = '';
     items.forEach((item, index) => {
-        item.classList.toggle('active', index === activeMentionState.activeIndex);
+        const isActive = index === activeMentionState.activeIndex;
+        item.classList.toggle('active', isActive);
+        item.setAttribute('aria-selected', isActive ? 'true' : 'false');
+        if (isActive) {
+            activeItemId = item.id || '';
+            // The menu is height-capped and scrollable, so keep the highlighted
+            // suggestion visible while the user arrows through the list.
+            if (scrollActiveIntoView && typeof item.scrollIntoView === 'function') {
+                item.scrollIntoView({ block: 'nearest' });
+            }
+        }
     });
+
+    if (!userInput) {
+        return;
+    }
+
+    if (activeItemId) {
+        applyMentionComboboxState(activeItemId);
+    } else {
+        clearMentionComboboxState();
+    }
 }
 
 async function refreshMentionSuggestions() {
@@ -1885,6 +1937,42 @@ function handleComposerInput() {
     void refreshMentionSuggestions();
 }
 
+function selectActiveMentionSuggestion() {
+    if (!activeMentionState || !Array.isArray(activeMentionState.results)) {
+        return false;
+    }
+
+    const mentionState = activeMentionState;
+    const collaborator = mentionState.results[mentionState.activeIndex];
+    if (!collaborator) {
+        return false;
+    }
+
+    if (collaborator.action === 'tag') {
+        insertParticipantMention(collaborator, mentionState);
+    } else if (collaborator.action === 'ai_tag') {
+        insertInvocationTargetMention(collaborator, mentionState);
+    } else {
+        openParticipantConfirmation(collaborator, {
+            conversationId: window.chatConversations?.getCurrentConversationId?.(),
+            source: 'mention',
+            mentionState,
+        });
+    }
+
+    return true;
+}
+
+function hasActiveMentionSuggestion() {
+    return Boolean(
+        activeMentionState
+        && Array.isArray(activeMentionState.results)
+        && activeMentionState.results.length > 0
+        && activeMentionState.activeIndex >= 0
+        && activeMentionState.results[activeMentionState.activeIndex],
+    );
+}
+
 function handleComposerKeydown(event) {
     if (!activeMentionState || mentionMenu?.classList.contains('d-none')) {
         if (event.key === 'Escape' && activeReplyContext) {
@@ -1908,22 +1996,22 @@ function handleComposerKeydown(event) {
         return true;
     }
 
+    // Tab accepts the highlighted suggestion the same way Enter does. Shift+Tab is
+    // deliberately left alone so it keeps moving focus backwards, and Tab falls
+    // through whenever there is nothing highlighted to accept.
+    if (event.key === 'Tab' && !event.shiftKey) {
+        if (!hasActiveMentionSuggestion()) {
+            return false;
+        }
+
+        event.preventDefault();
+        selectActiveMentionSuggestion();
+        return true;
+    }
+
     if (event.key === 'Enter' && activeMentionState.activeIndex >= 0) {
         event.preventDefault();
-        const collaborator = activeMentionState.results[activeMentionState.activeIndex];
-        if (collaborator) {
-            if (collaborator.action === 'tag') {
-                insertParticipantMention(collaborator, activeMentionState);
-            } else if (collaborator.action === 'ai_tag') {
-                insertInvocationTargetMention(collaborator, activeMentionState);
-            } else {
-                openParticipantConfirmation(collaborator, {
-                    conversationId: window.chatConversations?.getCurrentConversationId?.(),
-                    source: 'mention',
-                    mentionState: activeMentionState,
-                });
-            }
-        }
+        selectActiveMentionSuggestion();
         return true;
     }
 

@@ -7,7 +7,7 @@ conversation are saved into the conversation owner's storage scope. This feature
 requests succeed by creating the file immediately and holding it in a `pending_approval` state
 until an authorized approver releases it, instead of refusing the request outright.
 
-- **Implemented in version:** **0.260.004**
+- **Implemented in version:** **0.260.006**
 - **Depends on:** Collaborative conversations (`enable_collaborative_conversations`), generated
   chat artifacts, notifications
 - **Related fix:** `docs/explanation/fixes/SHARED_CONVERSATION_FILE_GENERATION_FORBIDDEN_FIX.md`
