@@ -11,7 +11,7 @@ does not produce.
 Enhanced extraction always degrades gracefully: when Content Understanding is unavailable or
 unconfigured, Enhanced automatically uses Document Intelligence `prebuilt-layout` instead.
 
-**Implemented in version: 0.250.221** (EMF/WMF diagram support added in 0.250.223)
+**Implemented in version: 0.250.221** (EMF/WMF diagram support added in 0.250.223; figure chunk association fixed in 0.250.228)
 
 **Tracking issue:** [#1277](https://github.com/microsoft/simplechat/issues/1277)
 
@@ -50,7 +50,7 @@ flowchart TD
     K --> L{Active engine}
     L -->|Enhanced| M[Content Understanding prebuilt-imageSearch]
     L -->|Standard| N[Document Intelligence]
-    M --> O[Append as citable chunks]
+    M --> O[Merge into the chunk the image came from]
     N --> O
 ```
 
@@ -174,8 +174,10 @@ them separately.
 - Ordering is natural, so `image2.png` precedes `image10.png`.
 - For PPTX, each image is attributed to the slide that references it via
   `ppt/slides/_rels/slideN.xml.rels`.
-- Each analyzed image becomes its own citable chunk with a heading such as
-  `### Embedded image 2 of 5: image2.png on slide 3`.
+- Each analyzed image is merged into the chunk containing the text it appears with, under a heading
+  such as `### Embedded image 2 of 5: image2.png on slide 3`, so a figure stays searchable and
+  citable alongside its surrounding content instead of becoming a separate chunk at the end of the
+  document.
 - Legacy `.doc` and `.ppt` files are OLE compound documents rather than zip packages, so their
   pictures are carved out by metafile signature instead of being enumerated from media parts. The
   carve validates the record type, signature position, and declared length before accepting a blob,
@@ -198,6 +200,31 @@ citation, not a pixel-accurate GDI reimplementation.
 
 Text drawn inside a metafile is also recovered and attached to the chunk, so figure labels such as
 service and resource names stay searchable even when the vision engine returns no description.
+
+### Where a figure ends up
+
+Figures, equations, and tables stay in the chunk containing the text they appear with. Chunk ids are
+derived from the page number (`{document_id}_{page_number}`), so two chunks sharing a page number
+would overwrite each other in the search index; image content is therefore merged into the existing
+chunk rather than emitted as an additional one.
+
+| Source | How placement is resolved |
+| --- | --- |
+| PDF via Content Understanding | The service reports a span for each figure, which is matched against the per-page spans. Already page-accurate. |
+| PDF via Document Intelligence Layout | Tables and figures are inlined into that page's markdown by the service. |
+| Equations | Returned inline in the page markdown by both engines, so they inherit the right page. |
+| PPTX | The slide that references the image, mapped onto the chunk covering that slide. |
+| DOCX | The image's position in reading order, taken from `word/document.xml`, mapped proportionally onto the word-count chunks. |
+| Legacy `.doc` / `.ppt` | No position is recoverable from a carved metafile, so the image anchors to the final chunk rather than creating a page beyond the document. |
+
+Word has no fixed pages until it is rendered, so DOCX placement is a best-effort mapping onto the
+word-count chunks rather than an exact paragraph match. Position is mapped proportionally because the
+extractor's word count will not match the raw document body exactly, and an absolute offset would
+drift and cluster every image toward the front of the document.
+
+Merged chunks are held under a size budget derived from the chunk size cap. In the rare case where a
+figure-dense chunk would exceed it, the remaining images for that chunk are appended instead, which
+keeps chunks from growing unbounded.
 
 ### Confirming that embedded images were processed
 
