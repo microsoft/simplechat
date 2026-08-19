@@ -4585,8 +4585,10 @@
                 </div>
 
                 {% for release_group in support_latest_feature_release_groups_preview %}
-                {% if release_group.id == 'previous_release' %}
-                <div class="card p-3 mb-3 latest-feature-card" id="latest-features-previous-release-card">
+                {% if release_group.id != 'current_release' %}
+                {% set preview_card_id = 'latest-features-' ~ release_group.id|replace('_', '-') ~ '-card' %}
+                {% set preview_collapse_id = 'latestFeatures' ~ release_group.id|replace('_', ' ')|title|replace(' ', '') %}
+                <div class="card p-3 mb-3 latest-feature-card" id="{{ preview_card_id }}">
                     <div class="latest-feature-header">
                         <div class="latest-feature-copy">
                             <h5 class="mb-1">
@@ -4594,11 +4596,11 @@
                             </h5>
                             <p class="text-muted mb-0">{{ release_group.description }}</p>
                         </div>
-                        <a href="#latestFeaturesPreviousRelease" class="fw-bold latest-feature-toggle" data-bs-toggle="collapse" aria-expanded="false" aria-controls="latestFeaturesPreviousRelease">
+                        <a href="#{{ preview_collapse_id }}" class="fw-bold latest-feature-toggle" data-bs-toggle="collapse" aria-expanded="false" aria-controls="{{ preview_collapse_id }}">
                             Show Details
                         </a>
                     </div>
-                    <div class="collapse mt-3" id="latestFeaturesPreviousRelease">
+                    <div class="collapse mt-3" id="{{ preview_collapse_id }}">
                         <div class="card card-body">
                             <div class="alert alert-secondary mb-3" role="alert">
                                 These were the headline user-facing items in the earlier v{{ release_group.release_version }} release set. Keeping them here gives admins a simple N and N-1 view without mixing older items into the current release list.
@@ -4664,7 +4666,7 @@
                                 </div>
                                 {% endfor %}
                             </div>
-                            <p class="text-muted small mb-0 mt-3">Visibility still comes from <strong>General &gt; User-Facing Latest Features</strong>, so admins can keep previous release content available without promoting every item forever.</p>
+                            <p class="text-muted small mb-0 mt-3">Visibility still comes from <strong>General &gt; User-Facing Latest Features</strong>, so admins can keep previous and archived release content available without promoting every item forever.</p>
                         </div>
                     </div>
                 </div>
