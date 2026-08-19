@@ -433,7 +433,12 @@ def register_route_backend_collaboration(bp):
             approvals = list_pending_generated_file_approvals_for_user(current_user['user_id'])
             return jsonify({'approvals': approvals})
         except PermissionError as exc:
-            return jsonify({'error': str(exc)}), 403
+            log_event(
+                f'[GENERATED_FILE_APPROVALS] Permission denied while listing pending file approvals: {exc}',
+                level=logging.WARNING,
+                exceptionTraceback=True,
+            )
+            return jsonify({'error': 'Permission denied'}), 403
         except Exception as exc:
             log_event(
                 f'[GENERATED_FILE_APPROVALS] Failed to list pending file approvals: {exc}',
