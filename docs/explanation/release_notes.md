@@ -2,6 +2,36 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.260.014)**
+
+#### User Interface Enhancements
+
+*   **Knowledge Settings Split By What They Actually Do**
+    *   Search & Extract held eight cards spanning four unrelated jobs, from Bing consent to voice transcription.
+    *   Knowledge now has **Web & Research** (web search, URL access, deep research), **Search Index** (Azure AI Search), **Document Extraction** (document intelligence, chunk sizes, plus metadata extraction and multi-modal vision brought over from Workspaces) and **Audio & Video** (video intelligence, voice conversations), alongside the existing File Sync.
+    *   Voice and video sit under Knowledge rather than Chat because they are extraction pipelines that turn recordings into searchable content.
+    *   (Ref: `web-research`, `search-index`, `extraction`, `audio-video`)
+
+*   **Workspaces Focused On Workspaces**
+    *   Workspaces mixed workspace types with file rules, workflow and extraction settings.
+    *   It is now **Workspace Types** (personal, group, public), **Files & Sharing** (downloads, sharing, and shared conversation file approvals brought over from AI Models) and the existing Global Identities.
+    *   (Ref: `workspace-types`, `files-sharing`)
+
+*   **Workflow Is Its Own Area**
+    *   Workflow drives approvals and assignment across every workspace type and was too large to sit as one card inside Workspaces. It now has its own group.
+    *   (Ref: `workflow`, `workflow-settings-section`)
+
+#### Bug Fixes
+
+*   **Group Workflow Assignment Dialog Could Not Open**
+    *   The Group Workflow Assignment dialog ended up in a different tab from the button that opens it. Because an inactive tab is hidden, the dialog would not have appeared at all.
+    *   The dialog now sits with its button, and a new check verifies this for every dialog in Admin Settings so it cannot happen again.
+    *   (Ref: `groupWorkflowAssignmentModal`, `test_admin_settings_modal_placement.py`)
+
+*   **Misplaced Section Comments In AI Models**
+    *   Two section comments had drifted onto the wrong cards while settings were being regrouped, labelling the embeddings card as processing thoughts.
+    *   (Ref: `ai-models` pane)
+
 ### **(v0.260.013)**
 
 #### User Interface Enhancements

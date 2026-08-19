@@ -1020,7 +1020,9 @@
 
             {% include "admin/_panes/file-sync.html" %}
 
-            {% include "admin/_panes/workspaces.html" %}
+            {% include "admin/_panes/workspace-types.html" %}
+            {% include "admin/_panes/files-sharing.html" %}
+            {% include "admin/_panes/workflow.html" %}
 
             {# Data Lifecycle: what happens to user data over time #}
             {% include "admin/_panes/retention.html" %}
@@ -1037,7 +1039,10 @@
 
 
 
-            {% include "admin/_panes/search-extract.html" %}
+            {% include "admin/_panes/web-research.html" %}
+            {% include "admin/_panes/search-index.html" %}
+            {% include "admin/_panes/extraction.html" %}
+            {% include "admin/_panes/audio-video.html" %}
 
             {% include "admin/_panes/support-menu.html" %}
             {% include "admin/_panes/send-feedback.html" %}
