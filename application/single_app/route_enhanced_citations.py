@@ -531,7 +531,8 @@ def register_enhanced_citations_routes(bp):
             )
 
         except PermissionError as exc:
-            return jsonify({"error": str(exc) or "Forbidden"}), 403
+            debug_print(f"Forbidden serving tabular citation: {exc}")
+            return jsonify({"error": "Forbidden"}), 403
         except Exception as e:
             debug_print(f"Error serving tabular citation: {e}")
             return jsonify({"error": str(e)}), 500
