@@ -8,7 +8,7 @@ import os
 import re
 import tempfile
 from datetime import datetime
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 from xml.etree import ElementTree
 
 from defusedxml import ElementTree as DefusedElementTree
@@ -101,6 +101,15 @@ FUNCTION_RESULT_ROW_KEYS = (
     'output',
     'payload',
 )
+FUNCTION_RESULT_ROW_COUNT_KEYS = (
+    'row_count',
+    'returned_rows',
+    'total_rows',
+    'total_count',
+    'record_count',
+)
+# Below this a stored action reads as a lookup, not the dataset a request is asking for.
+PRIOR_TURN_SUBSTANTIVE_ROW_COUNT = 10
 FUNCTION_RESULT_CONTROL_KEYS = {
     'count',
     'detail',
@@ -193,6 +202,27 @@ PASSTHROUGH_COPY_PATTERNS = (
 PASSTHROUGH_SERIALIZE_PATTERNS = (
     re.compile(r'\b(?:build|create|download|export|format|generate|make|prepare|save|serialize|convert)\b[\w\s,.:;\-/]{0,100}\b(?:csv|json|xml|docx|word|pdf|spreadsheet)\b'),
     re.compile(r'\b(?:csv|json|xml|docx|word|pdf|spreadsheet)\b[\w\s,.:;\-/]{0,100}\b(?:export|download|file|format|copy)\b'),
+)
+
+# The one schema clarification build_csv_output_clarification_guidance() asks the model to send.
+CSV_CLARIFICATION_REPLY_PATTERNS = (
+    re.compile(r'\b(?:should|shall|does|do)\s+(?:each|every|the)\s+(?:csv\s+)?(?:row|record|line|entry)\b'),
+    re.compile(r'\b(?:which|what)\s+(?:columns?|fields?)\b'),
+    re.compile(r'\b(?:columns?|fields?)\s+(?:should|would|do)\s+(?:it|they|the\s+\w+)\s+include\b'),
+)
+CSV_CLARIFICATION_REPLY_MAX_CHARS = 500
+# A retrieval action that dwarfs the turn's other calls is the payload; the rest are lookups.
+DOMINANT_FUNCTION_RESULT_MIN_ROWS = 10
+DOMINANT_FUNCTION_RESULT_RATIO = 5
+ROW_SOURCE_ASSISTANT = 'assistant response'
+ROW_SOURCE_CURRENT_ACTION = 'structured function result'
+ROW_SOURCE_EARLIER_ACTION = 'earlier action result'
+FUNCTION_RESULT_ROW_SOURCES = frozenset({ROW_SOURCE_CURRENT_ACTION, ROW_SOURCE_EARLIER_ACTION})
+CSV_PUBLICATION_GUIDANCE = (
+    'The server serializes the authorized action results into the requested CSV artifact and '
+    'attaches the file after generation. Do not claim that you cannot create or attach files, '
+    'do not tell the user to copy or save rows manually, and do not paste a sample of the rows '
+    'in place of the artifact.'
 )
 
 
@@ -397,6 +427,7 @@ def evaluate_generated_file_passthrough_eligibility(
     user_question: str,
     rows: Optional[Sequence[Dict[str, Any]]] = None,
     public_output_schema: Optional[Sequence[str]] = None,
+    carried_output_format: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Return whether raw rows can satisfy a requested generated file contract."""
     normalized_question = _normalize_question_for_artifact_detection(user_question)
@@ -422,6 +453,9 @@ def evaluate_generated_file_passthrough_eligibility(
         return {'allowed': False, 'reason_code': 'derived_output_requires_transform'}
     if _question_requests_serialization(normalized_question):
         return {'allowed': True, 'reason_code': 'explicit_format_conversion'}
+    if carried_output_format:
+        # The format contract came from the earlier request this reply answers.
+        return {'allowed': True, 'reason_code': 'pending_format_clarification'}
     return {'allowed': False, 'reason_code': 'no_explicit_passthrough_contract'}
 
 
@@ -436,7 +470,12 @@ def build_generated_file_output_guidance(
         or get_requested_structured_artifact_format(user_question)
     )
     if output_format == GENERATED_FILE_FORMAT_CSV:
-        return build_csv_output_clarification_guidance(user_question)
+        clarification_guidance = build_csv_output_clarification_guidance(user_question)
+        return ' '.join(
+            guidance_part
+            for guidance_part in (clarification_guidance, CSV_PUBLICATION_GUIDANCE)
+            if guidance_part
+        )
     if output_format == 'json':
         return (
             'The user requested a downloadable JSON artifact. The server will validate and attach the file after '
@@ -479,32 +518,52 @@ def build_generated_file_export(
     user_question: str,
     assistant_content: str,
     function_results: Optional[List[Dict[str, Any]]] = None,
+    prior_function_results_loader: Optional[Callable[[], Optional[List[Dict[str, Any]]]]] = None,
+    pending_output_format: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
     """Build a generated file payload from final assistant content and function-result evidence."""
-    output_format = get_requested_generated_file_format(user_question)
+    output_format = get_requested_generated_file_format(user_question) or _normalize_pending_output_format(
+        pending_output_format,
+    )
     if output_format not in GENERATED_FILE_FORMATS:
         return None
+    carried_output_format = (
+        output_format if not get_requested_generated_file_format(user_question) else None
+    )
 
     assistant_text = str(assistant_content or '').strip()
     assistant_rows = extract_assistant_table_entries(assistant_text)
     function_rows = extract_authorized_function_result_rows(function_results)
+    row_provenance = ROW_SOURCE_CURRENT_ACTION
+    if not assistant_rows and not function_rows and prior_function_results_loader is not None:
+        # This turn answered from evidence gathered earlier, so reuse those rows instead of none.
+        function_rows = extract_authorized_function_result_rows(prior_function_results_loader())
+        if function_rows:
+            row_provenance = ROW_SOURCE_EARLIER_ACTION
     function_passthrough = evaluate_generated_file_passthrough_eligibility(
         user_question,
         rows=function_rows,
+        carried_output_format=carried_output_format,
     ) if function_rows else {'allowed': False, 'reason_code': 'source_result_incomplete'}
 
     if output_format == GENERATED_FILE_FORMAT_CSV:
-        rows = assistant_rows or (function_rows if function_passthrough.get('allowed') else [])
+        if not assistant_rows and _assistant_reply_requests_clarification(assistant_text):
+            return None
+        use_function_rows = bool(function_rows) and bool(function_passthrough.get('allowed')) and (
+            not assistant_rows
+            or _assistant_rows_sample_function_rows(assistant_rows, function_rows)
+        )
+        rows = function_rows if use_function_rows else assistant_rows
         if not rows:
             return None
-        row_source = 'assistant response' if assistant_rows else 'structured function result'
+        row_source = row_provenance if use_function_rows else ROW_SOURCE_ASSISTANT
         return _build_generated_file_payload(
             output_format=output_format,
             file_content=build_assistant_table_csv(rows),
             rows=rows,
             row_source=row_source,
             assistant_content=assistant_text,
-            passthrough_reason_code=(None if assistant_rows else function_passthrough.get('reason_code')),
+            passthrough_reason_code=(function_passthrough.get('reason_code') if use_function_rows else None),
         )
 
     if not assistant_text and not assistant_rows and not function_rows:
@@ -512,7 +571,7 @@ def build_generated_file_export(
     rows = function_rows if function_rows and function_passthrough.get('allowed') else assistant_rows
     if not assistant_text and not rows:
         return None
-    row_source = 'structured function result' if rows and rows is function_rows else 'assistant response'
+    row_source = row_provenance if rows and rows is function_rows else ROW_SOURCE_ASSISTANT
     title = _build_generated_file_title(output_format)
     if output_format == GENERATED_FILE_FORMAT_DOCX:
         file_content = _render_docx_file_export(title, assistant_text, rows, row_source)
@@ -530,26 +589,14 @@ def build_generated_file_export(
 
 
 def extract_authorized_function_result_rows(function_results: Optional[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
-    """Return structured rows from successful current-turn non-tabular function results."""
-    function_row_groups: List[Tuple[str, List[Dict[str, Any]]]] = []
-    for function_result in function_results or []:
-        if not isinstance(function_result, dict):
-            continue
-        if function_result.get('success') is False or _is_tabular_function_result(function_result):
-            continue
-
-        structured_rows = _extract_function_result_rows(
-            _parse_function_result_payload(function_result.get('function_result')),
-        )
-        if not structured_rows:
-            continue
-        function_row_groups.append((
-            _get_function_result_label(function_result),
-            structured_rows,
-        ))
-
+    """Return structured rows from successful non-tabular action results."""
+    function_row_groups = _collect_authorized_function_row_groups(function_results)
     if not function_row_groups:
         return []
+
+    dominant_rows = _select_dominant_function_row_group(function_row_groups)
+    if dominant_rows is not None:
+        return dominant_rows
     if len(function_row_groups) == 1:
         return function_row_groups[0][1]
 
@@ -561,6 +608,216 @@ def extract_authorized_function_result_rows(function_results: Optional[List[Dict
             normalized_row[source_column] = function_label
             combined_rows.append(normalized_row)
     return combined_rows
+
+
+def _collect_authorized_function_row_groups(
+    function_results: Optional[List[Dict[str, Any]]],
+) -> List[Tuple[str, List[Dict[str, Any]]]]:
+    """Group authorized rows by action, so paged calls to one action stay one dataset."""
+    grouped_rows: Dict[str, List[Dict[str, Any]]] = {}
+    for function_result in function_results or []:
+        if not isinstance(function_result, dict):
+            continue
+        if function_result.get('success') is False or _is_tabular_function_result(function_result):
+            continue
+
+        structured_rows = _extract_function_result_rows(
+            _parse_function_result_payload(function_result.get('function_result')),
+        )
+        if not structured_rows:
+            continue
+        grouped_rows.setdefault(
+            _get_function_result_label(function_result),
+            [],
+        ).extend(structured_rows)
+    return list(grouped_rows.items())
+
+
+def _select_dominant_function_row_group(
+    function_row_groups: Sequence[Tuple[str, List[Dict[str, Any]]]],
+) -> Optional[List[Dict[str, Any]]]:
+    """Return the retrieval result set when the turn's other actions are only lookups."""
+    if len(function_row_groups) < 2:
+        return None
+
+    dominant_label, dominant_rows = max(function_row_groups, key=lambda group: len(group[1]))
+    if len(dominant_rows) < DOMINANT_FUNCTION_RESULT_MIN_ROWS:
+        return None
+
+    supporting_row_count = sum(
+        len(rows) for label, rows in function_row_groups if label != dominant_label
+    )
+    if len(dominant_rows) < supporting_row_count * DOMINANT_FUNCTION_RESULT_RATIO:
+        return None
+    return dominant_rows
+
+
+def select_prior_turn_action_citations(
+    assistant_messages: Optional[Sequence[Dict[str, Any]]],
+    substantive_row_count: int = PRIOR_TURN_SUBSTANTIVE_ROW_COUNT,
+) -> List[Dict[str, Any]]:
+    """Pick the newest stored action group holding a dataset, reading compact citations only.
+
+    Callers pass assistant messages newest first and hydrate only the returned citations.
+    """
+    fallback_citations: List[Dict[str, Any]] = []
+    for assistant_message in assistant_messages or []:
+        if not isinstance(assistant_message, dict):
+            continue
+        compact_citations = assistant_message.get('agent_citations')
+        if not isinstance(compact_citations, list):
+            continue
+
+        grouped_citations: Dict[str, Dict[str, Any]] = {}
+        for citation in compact_citations:
+            if not isinstance(citation, dict):
+                continue
+            estimated_rows = estimate_function_result_row_count(citation)
+            if not estimated_rows:
+                continue
+            action_label = str(
+                citation.get('function_name') or citation.get('plugin_name') or '',
+            ).strip()
+            action_group = grouped_citations.setdefault(
+                action_label,
+                {'citations': [], 'estimated_rows': 0},
+            )
+            action_group['citations'].append(citation)
+            action_group['estimated_rows'] += estimated_rows
+
+        if not grouped_citations:
+            continue
+        best_group = max(grouped_citations.values(), key=lambda group: group['estimated_rows'])
+        if best_group['estimated_rows'] >= substantive_row_count:
+            return list(best_group['citations'])
+        if not fallback_citations:
+            fallback_citations = list(best_group['citations'])
+    return fallback_citations
+
+
+def estimate_function_result_row_count(function_result: Optional[Dict[str, Any]]) -> int:
+    """Estimate an action's stored rows from its compacted citation, reading no payload."""
+    if not isinstance(function_result, dict):
+        return 0
+    if function_result.get('success') is False or _is_tabular_function_result(function_result):
+        return 0
+    return _estimate_payload_row_count(
+        _parse_function_result_payload(function_result.get('function_result')),
+    )
+
+
+def _estimate_payload_row_count(payload: Any, depth: int = 0) -> int:
+    if depth > 4:
+        return 0
+    if isinstance(payload, list):
+        estimated_rows = 0
+        for item in payload:
+            # Compaction replaces the dropped tail of a list with this marker.
+            if isinstance(item, dict) and set(item) == {'remaining_items'}:
+                estimated_rows += _coerce_row_count(item.get('remaining_items'))
+            else:
+                estimated_rows += 1
+        return estimated_rows
+    if not isinstance(payload, dict):
+        return 0
+
+    normalized_keys = {_normalize_function_result_key(key): key for key in payload}
+    for count_key in FUNCTION_RESULT_ROW_COUNT_KEYS:
+        matching_key = normalized_keys.get(_normalize_function_result_key(count_key))
+        declared_row_count = _coerce_row_count(payload.get(matching_key)) if matching_key else 0
+        if declared_row_count:
+            return declared_row_count
+
+    for row_key in FUNCTION_RESULT_ROW_KEYS:
+        matching_key = normalized_keys.get(_normalize_function_result_key(row_key))
+        if matching_key is None:
+            continue
+        estimated_rows = _estimate_payload_row_count(payload.get(matching_key), depth + 1)
+        if estimated_rows:
+            return estimated_rows
+    return 1 if _normalize_function_result_row(payload, is_data_row=False) else 0
+
+
+def _coerce_row_count(value: Any) -> int:
+    try:
+        row_count = int(value)
+    except (TypeError, ValueError):
+        return 0
+    return row_count if row_count > 0 else 0
+
+
+def _normalize_pending_output_format(pending_output_format: Optional[str]) -> Optional[str]:
+    normalized_format = str(pending_output_format or '').strip().lower()
+    return normalized_format if normalized_format in GENERATED_FILE_FORMATS else None
+
+
+def resolve_pending_generated_file_format(
+    user_question: str,
+    previous_assistant_content: str,
+) -> Optional[str]:
+    """Carry one unanswered CSV schema clarification forward to the reply that answers it."""
+    if not str(user_question or '').strip():
+        return None
+    if get_requested_artifact_formats(user_question):
+        return None
+    if not _assistant_reply_requests_clarification(previous_assistant_content):
+        return None
+    return GENERATED_FILE_FORMAT_CSV
+
+
+def _assistant_reply_requests_clarification(assistant_content: str) -> bool:
+    """Return whether the reply is the schema clarification rather than the answer."""
+    normalized_content = _normalize_question_for_artifact_detection(assistant_content)
+    if '?' not in normalized_content or len(normalized_content) > CSV_CLARIFICATION_REPLY_MAX_CHARS:
+        return False
+    return any(pattern.search(normalized_content) for pattern in CSV_CLARIFICATION_REPLY_PATTERNS)
+
+
+def _normalized_row_text_map(row: Dict[str, Any]) -> Dict[str, str]:
+    return {
+        _normalize_function_result_key(column_name): (
+            '' if value is None else str(value).strip()
+        )
+        for column_name, value in row.items()
+    }
+
+
+def _assistant_rows_sample_function_rows(
+    assistant_rows: Sequence[Dict[str, Any]],
+    function_rows: Sequence[Dict[str, Any]],
+) -> bool:
+    """Return whether the assistant table is an excerpt of the same authorized rows."""
+    if not assistant_rows or len(assistant_rows) >= len(function_rows):
+        return False
+
+    assistant_row_maps = []
+    assistant_columns = []
+    seen_columns = set()
+    for assistant_row in assistant_rows:
+        if not isinstance(assistant_row, dict):
+            return False
+        row_map = _normalized_row_text_map(assistant_row)
+        assistant_row_maps.append(row_map)
+        for column_name in row_map:
+            if column_name and column_name not in seen_columns:
+                seen_columns.add(column_name)
+                assistant_columns.append(column_name)
+    if not assistant_columns:
+        return False
+
+    function_projections = set()
+    for function_row in function_rows:
+        if not isinstance(function_row, dict):
+            return False
+        row_map = _normalized_row_text_map(function_row)
+        if not seen_columns.issubset(row_map):
+            return False
+        function_projections.add(tuple(row_map[column_name] for column_name in assistant_columns))
+
+    return all(
+        tuple(row_map.get(column_name, '') for column_name in assistant_columns) in function_projections
+        for row_map in assistant_row_maps
+    )
 
 
 def has_generated_file_output(existing_outputs: Optional[List[Dict[str, Any]]], output_format: str) -> bool:
@@ -950,7 +1207,7 @@ def _format_structured_cell(value: Any) -> str:
 
 
 def _build_structured_rows_heading(row_source: str) -> str:
-    if row_source == 'structured function result':
+    if row_source in FUNCTION_RESULT_ROW_SOURCES:
         return 'Structured function results'
     return 'Structured response rows'
 
