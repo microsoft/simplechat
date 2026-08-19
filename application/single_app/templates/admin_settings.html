@@ -976,6 +976,9 @@
         </ul>
         {% endif %}
 
+        {# Governance status is rendered outside the panes so a message stays
+           visible whichever governance tab is active. #}
+        <div id="governance-status" class="alert d-none" role="alert"></div>
         <div class="tab-content mt-3" id="adminSettingsTabContent">
             {% include "admin/_panes/security.html" %}
 
@@ -984,7 +987,9 @@
 
 
             <!-- Governance Tab Content -->
-            {% include "admin/_panes/governance.html" %}
+            {% include "admin/_panes/feature-governance.html" %}
+            {% include "admin/_panes/governance-policies.html" %}
+            {% include "admin/_panes/mcp-governance.html" %}
 
             <!-- Logging Tab Content -->
             {% include "admin/_panes/logging.html" %}
@@ -1001,7 +1006,9 @@
 
             {% include "admin/_panes/data-management.html" %}
 
-            {% include "admin/_panes/scale.html" %}
+            {% include "admin/_panes/redis-caching.html" %}
+            {% include "admin/_panes/cosmos.html" %}
+            {% include "admin/_panes/network.html" %}
 
 
             {% include "admin/_panes/workspace-identities.html" %}

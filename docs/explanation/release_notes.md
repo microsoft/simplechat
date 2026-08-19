@@ -2,6 +2,25 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.260.011)**
+
+#### User Interface Enhancements
+
+*   **Governance And Scale Split Into Focused Tabs**
+    *   Governance held five cards covering three different jobs. It is now **Feature Governance** (which features are governed), **Policies** (the policies themselves), and **MCP Governance**.
+    *   Scale mixed cache configuration with Cosmos capacity, and is now **Redis & Caching** and **Cosmos**.
+    *   **Azure Front Door** moved out of Scale into Security, under a new **Network** tab. It configures authentication and redirect flows rather than throughput, so it never belonged with capacity settings.
+    *   Existing links and bookmarks to `#governance` and `#scale` still work and land on the first tab of each group.
+    *   No settings changed. Every option keeps its name and its saved value.
+    *   (Ref: navigation map, `feature-governance`, `governance-policies`, `mcp-governance`, `redis-caching`, `cosmos`, `network`)
+
+#### Bug Fixes
+
+*   **Governance Status Messages No Longer Get Stuck On One Tab**
+    *   The inline governance status message lived inside the Governance pane, so a message raised while working in one area could end up rendered on a tab you were not looking at.
+    *   It now sits outside the tabs and is visible wherever you are in Governance.
+    *   (Ref: `governance-status`, `admin_governance.js`)
+
 ### **(v0.260.010)**
 
 #### New Features

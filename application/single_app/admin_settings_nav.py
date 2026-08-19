@@ -193,6 +193,16 @@ ADMIN_NAV = [
                     {"id": "conversation-archiving-section", "label": "Conversation Archiving", "icon": "bi-archive"},
                 ],
             },
+            {
+                # Front Door configures authentication and redirect flows, so it
+                # belongs with Security rather than with throughput settings.
+                "id": "network",
+                "label": "Network",
+                "icon": "bi-door-open",
+                "sections": [
+                    {"id": "front-door-section", "label": "Azure Front Door", "icon": "bi-door-open"},
+                ],
+            },
         ],
     },
     {
@@ -201,15 +211,29 @@ ADMIN_NAV = [
         "icon": "bi-clipboard-check",
         "tabs": [
             {
-                "id": "governance",
-                "label": "Governance",
+                "id": "feature-governance",
+                "label": "Feature Governance",
                 "icon": "bi-braces-asterisk",
                 "sections": [
                     {"id": "governance-feature-toggles-section", "label": "Governance Feature Toggles", "icon": "bi-braces-asterisk"},
-                    {"id": "governance-mcp-destination-section", "label": "MCP Action Destination Governance", "icon": "bi-diagram-3"},
-                    {"id": "governance-inbound-mcp-section", "label": "Inbound MCP Source Governance", "icon": "bi-box-arrow-in-down-right"},
+                ],
+            },
+            {
+                "id": "governance-policies",
+                "label": "Policies",
+                "icon": "bi-sliders2",
+                "sections": [
                     {"id": "governance-feature-policies-section", "label": "Feature Policies", "icon": "bi-sliders2"},
                     {"id": "governance-item-policies-section", "label": "Delegated Item Policies", "icon": "bi-list-check"},
+                ],
+            },
+            {
+                "id": "mcp-governance",
+                "label": "MCP Governance",
+                "icon": "bi-diagram-3",
+                "sections": [
+                    {"id": "governance-mcp-destination-section", "label": "MCP Action Destination Governance", "icon": "bi-diagram-3"},
+                    {"id": "governance-inbound-mcp-section", "label": "Inbound MCP Source Governance", "icon": "bi-box-arrow-in-down-right"},
                 ],
             },
         ],
@@ -243,18 +267,24 @@ ADMIN_NAV = [
         "icon": "bi-speedometer2",
         "tabs": [
             {
-                "id": "scale",
-                "label": "Scale",
-                "icon": "bi-diagram-3",
+                "id": "redis-caching",
+                "label": "Redis & Caching",
+                "icon": "bi-database",
                 "sections": [
                     {"id": "redis-cache-section", "label": "Redis Cache", "icon": "bi-database"},
                     {"id": "redis-monitoring-section", "label": "Redis Metrics", "icon": "bi-activity"},
                     {"id": "conversation-cache-section", "label": "Conversation Cache", "icon": "bi-chat-square-text"},
+                ],
+            },
+            {
+                "id": "cosmos",
+                "label": "Cosmos",
+                "icon": "bi-diagram-3",
+                "sections": [
                     {"id": "document-access-index-section", "label": "DAI Metrics", "icon": "bi-diagram-3"},
                     {"id": "cosmos-maintenance-section", "label": "Cosmos Maintenance", "icon": "bi-tools"},
                     {"id": "cosmos-throughput-section", "label": "Cosmos DB Throughput", "icon": "bi-speedometer2"},
                     {"id": "cosmos-throughput-metrics-table-section", "label": "Cosmos Metrics", "icon": "bi-table"},
-                    {"id": "front-door-section", "label": "Azure Front Door", "icon": "bi-door-open"},
                 ],
             },
         ],
