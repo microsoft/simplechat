@@ -180,91 +180,17 @@ function showAdminTab(tabId) {
 window.showAdminTab = showAdminTab;
 
 function scrollToSection(sectionId) {
-    // Map section IDs to actual element IDs/classes in the admin settings
+    // Resolve a sidebar data-section value to the element it should scroll to.
     const sectionMap = {
+        // Only genuine aliases belong here. Any sidebar data-section value
+        // that already matches its element id resolves through the
+        // `sectionMap[sectionId] || sectionId` fallback below.
         'gpt-config': 'gpt-configuration',
-        'embeddings-config': 'embeddings-configuration', 
+        'embeddings-config': 'embeddings-configuration',
         'image-config': 'image-generation-configuration',
-        'multi-endpoint-configuration': 'multi-endpoint-configuration',
-        'document-action-capabilities-card': 'document-action-capabilities-card',
         'agents-config': 'agents-configuration',
-        'agent-template-approvals-section': 'agent-template-approvals-section',
         'actions-config': 'actions-configuration',
-        // Governance tab sections
-        'governance-feature-toggles-section': 'governance-feature-toggles-section',
-        'governance-mcp-destination-section': 'governance-mcp-destination-section',
-        'governance-inbound-mcp-section': 'governance-inbound-mcp-section',
-        'governance-feature-policies-section': 'governance-feature-policies-section',
-        'governance-item-policies-section': 'governance-item-policies-section',
-        // General tab sections
-        'branding-section': 'branding-section',
-        'home-page-text-section': 'home-page-text-section',
-        'appearance-section': 'appearance-section',
-        'classification-banner-section': 'classification-banner-section',
-        'ai-notice-section': 'ai-notice-section',
-        'terms-of-use-section': 'terms-of-use-section',
-        'custom-pages-section': 'custom-pages-section',
-        'external-links-section': 'external-links-section',
-        'health-check-section': 'health-check-section',
-        'system-settings-section': 'system-settings-section',
-        'control-center-admin-section': 'control-center-admin-section',
-        // Control Center tab sections
-        'control-center-auto-refresh-section': 'control-center-auto-refresh-section',
-        'control-center-overview-section': 'control-center-overview-section',
-        // Logging tab sections
-        'application-insights-section': 'application-insights-section',
-        'debug-logging-section': 'debug-logging-section',
-        'file-processing-logs-section': 'file-processing-logs-section',
-        // Scale tab sections
-        'redis-cache-section': 'redis-cache-section',
-        'redis-monitoring-section': 'redis-monitoring-section',
-        'conversation-cache-section': 'conversation-cache-section',
-        'document-access-index-section': 'document-access-index-section',
-        'cosmos-maintenance-section': 'cosmos-maintenance-section',
-        'cosmos-throughput-section': 'cosmos-throughput-section',
-        'cosmos-throughput-metrics-table-section': 'cosmos-throughput-metrics-table-section',
-        'front-door-section': 'front-door-section',
-        // Workspaces tab sections
-        'personal-workspaces-section': 'personal-workspaces-section',
-        'group-workspaces-section': 'group-workspaces-section',
-        'public-workspaces-section': 'public-workspaces-section',
-        'file-sharing-section': 'file-sharing-section',
-        'file-download-settings-section': 'file-download-settings-section',
-        'chat-file-uploads-section': 'chat-file-uploads-section',
-        'metadata-extraction-section': 'metadata-extraction-section',
-        'multimodal-vision-section': 'multimodal-vision-section',
-        'document-classification-section': 'document-classification-section',
-        'workspace-scope-lock-section': 'workspace-scope-lock-section',
-        // Citations tab sections
-        'standard-citations-section': 'standard-citations-section',
-        'enhanced-citations-section': 'enhanced-citations-section',
-        // Safety tab sections
-        'content-safety-section': 'content-safety-section',
-        'user-feedback-section': 'user-feedback-section',
-        'desktop-notifications-section': 'desktop-notifications-section',
-        'permissions-section': 'permissions-section',
-        'conversation-archiving-section': 'conversation-archiving-section',
-        // Security tab sections
-        'keyvault-section': 'keyvault-section',
-        // Data Management tab sections
-        'data-management-readiness-section': 'data-management-readiness-section',
-        'data-management-backup-section': 'data-management-backup-section',
-        'data-management-schedule-section': 'data-management-schedule-section',
-        'data-management-storage-section': 'data-management-storage-section',
-        'data-management-encryption-section': 'data-management-encryption-section',
-        'data-management-migration-section': 'data-management-migration-section',
-        'data-management-target-cosmos-section': 'data-management-target-cosmos-section',
-        'data-management-backup-inventory-section': 'data-management-backup-inventory-section',
-        'data-management-jobs-section': 'data-management-jobs-section',
-        // Search & Extract tab sections
         'web-search-section': 'web-search-foundry-section',
-        'url-access-section': 'url-access-section',
-        'source-review-section': 'source-review-section',
-        'azure-ai-search-section': 'azure-ai-search-section',
-        'document-intelligence-section': 'document-intelligence-section',
-        'chunk-size-section': 'chunk-size-section',
-        'video-intelligence-section': 'video-intelligence-section',
-        'ai-voice-chat-section': 'ai-voice-chat-section'
     };
     
     const targetElementId = sectionMap[sectionId] || sectionId;

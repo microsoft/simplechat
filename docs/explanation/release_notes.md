@@ -29,6 +29,11 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   The preview now responds to banner text, background colour, and text colour changes.
     *   (Ref: Classification Banner, `admin_settings.html` `{% block scripts %}`)
 
+*   **Admin Sidebar Section Map Cleaned Up**
+    *   The sidebar's `sectionMap` had grown to 72 entries, but 66 of them mapped a key to itself, which the existing fallback already handled, and one pointed at an element that no longer exists.
+    *   Reduced to the 6 entries that are genuine aliases. A new test now fails if a redundant, dangling, or unreferenced entry is reintroduced.
+    *   (Ref: `admin_sidebar_nav.js`, `scrollToSection`, `test_admin_settings_sidebar_card_parity.py`)
+
 #### Breaking Changes
 
 *   **Admin Settings Template Split Into Per-Tab Partials**

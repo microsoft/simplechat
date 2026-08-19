@@ -43,6 +43,20 @@ child template. Jinja discards content outside blocks in a child template, so
 the script was never rendered and the banner preview never updated as an admin
 typed.
 
+### 6. The sidebar `sectionMap` had rotted
+
+`scrollToSection` resolves a sidebar target with
+`sectionMap[sectionId] || sectionId`, so any entry mapping a key to itself is a
+no-op. The map had grown to 72 entries:
+
+- 66 were self-referencing no-ops
+- 1 (`control-center-admin-section`) pointed at an element that does not exist
+  anywhere in the template
+- 2 were never referenced by any sidebar link
+
+Every new section had been added twice, once in the sidebar and once in a map
+that did not need it.
+
 ## Root causes
 
 Issues 1, 3, and 4 come from incremental growth: tabs were added over time
@@ -77,6 +91,9 @@ changes. The parent dropped from 13,526 lines to about 2,200.
   per-workspace-type areas, which required adding `id` attributes to those
   areas. Existing `data-testid` hooks were left untouched.
 - Global Identities gained a heading and description.
+- The sidebar `sectionMap` was reduced from 72 entries to the 6 that are real
+  aliases, removing the dead `control-center-admin-section` target. A new test
+  fails if a no-op, dangling, or unreferenced entry is added back.
 
 ### Test support
 
@@ -103,7 +120,7 @@ Settings panes.
 | `application/single_app/templates/admin_settings.html` | Split into partials, nav reordered, banner script moved into `{% block scripts %}` |
 | `application/single_app/templates/admin/_panes/*.html` | 18 new pane partials |
 | `application/single_app/templates/_sidebar_nav.html` | Latest Features moved last, File Sync submenu added |
-| `application/single_app/static/js/admin/admin_sidebar_nav.js` | Default tab is General, not Latest Features |
+| `application/single_app/static/js/admin/admin_sidebar_nav.js` | Default tab is General, not Latest Features; `sectionMap` pruned to real aliases |
 | `functional_tests/test_support/templates.py` | New composed-template helpers |
 | `functional_tests/test_admin_settings_template_composition.py` | New contract test |
 | 40 functional test files | Read the composed template through the shared helper |

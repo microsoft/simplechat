@@ -15,7 +15,10 @@ from pathlib import Path
 
 from bs4 import BeautifulSoup
 
-from test_support.templates import resolve_template_includes
+from test_support.templates import (
+    read_admin_settings_template,
+    resolve_template_includes,
+)
 from test_support.versioning import assert_app_version_at_least
 
 
@@ -195,6 +198,50 @@ def test_every_static_sidebar_section_target_resolves():
             errors.append(f"Sidebar target '{raw_target}' has no search label")
 
     assert not errors, "\n".join(errors)
+
+
+def test_sidebar_section_map_contains_only_real_aliases():
+    """Keep the sidebar sectionMap free of dead and redundant entries.
+
+    scrollToSection resolves a target with `sectionMap[sectionId] || sectionId`,
+    so an entry that maps a key to itself is a no-op that still has to be
+    maintained. The map had grown to 72 entries, 66 of them no-ops, and one
+    pointing at an element that does not exist anywhere in the template.
+    """
+    print("Testing admin sidebar sectionMap hygiene...")
+
+    script = SIDEBAR_SCRIPT.read_text(encoding="utf-8")
+    sidebar = SIDEBAR_TEMPLATE.read_text(encoding="utf-8")
+    composed = read_admin_settings_template()
+
+    section_map = _parse_section_map(script)
+    template_ids = set(re.findall(r'\sid="([^"]+)"', composed))
+    linked_sections = set(re.findall(r'data-section="([^"]+)"', sidebar))
+
+    identity = sorted(key for key, value in section_map.items() if key == value)
+    assert not identity, (
+        "sectionMap entries that map a key to itself are redundant because "
+        f"scrollToSection already falls back to the raw id: {identity}"
+    )
+
+    dangling = sorted(
+        f"{key} -> {value}"
+        for key, value in section_map.items()
+        if value not in template_ids
+    )
+    assert not dangling, (
+        f"sectionMap targets resolve to elements that do not exist: {dangling}"
+    )
+
+    unreferenced = sorted(
+        key for key in section_map if key not in linked_sections
+    )
+    assert not unreferenced, (
+        "sectionMap aliases that no sidebar link uses should be removed: "
+        f"{unreferenced}"
+    )
+
+    print(f"sectionMap holds {len(section_map)} real alias(es), all resolving.")
 
 
 def test_conditional_agent_template_destination_matches_card():
