@@ -563,6 +563,62 @@ v0.260.001 consolidates all work released after v0.250.001 into one major releas
     *   Added 76 branded "Screenshot pending" placeholders so every v0.260.001 Latest Features card renders a valid local image while final captures are pending.
     *   Placeholders can be replaced in place with real screenshots without changing the catalog configuration.
     *   (Ref: `application/single_app/static/images/features/`, Latest Features image galleries)
+### **(v0.250.230)**
+
+#### New Features
+
+*   **Documentation Site Redesign**
+    *   The documentation site was rebuilt for search, navigation, page simplicity, mobile support, and content coverage.
+    *   Search now indexes page content instead of titles only. Previously 84% of the 986 indexed pages were internal engineering notes, 88% of entries had no description, and no page body text was indexed at all, so a search for "agent" returned mostly internal fix notes. The index is now 165 entries with a description on every one and no engineering notes.
+    *   Added a dedicated search results page with section filters and highlighted excerpts, a `Ctrl+K` shortcut, keyboard navigation, and a full-screen mobile search sheet. Search was previously hidden entirely on phones.
+    *   Navigation was rebuilt so the top bar and sidebar expose the same six sections: Start, Guides, Features, Administration, Deploy and operate, and Reference. Coverage went from 27 links to 74, all verified to resolve.
+    *   (Ref: `docs/search-index.json`, `docs/assets/js/search.js`, `docs/_config.yml` navigation, `docs/search.md`)
+
+*   **Screenshot and Video Placeholders for Documentation**
+    *   Documentation pages can now declare a screenshot or video slot. When the asset does not exist yet the page renders a visible card naming the exact file path to create; adding the file at that path replaces the placeholder automatically on the next build with no configuration or code change.
+    *   Videos render as a local poster card that links out to YouTube or Microsoft Stream, so no video files are committed to the repository and no third-party embed scripts are loaded.
+    *   Added a media status page listing every slot and whether it is filled, as a capture worklist for contributors.
+    *   (Ref: `docs/_includes/media.html`, `docs/_data/media.yml`, `docs/contributing/media-status.md`)
+
+*   **Complete Documentation Coverage of the Application**
+    *   Added one page per admin settings tab covering what the tab controls, why it matters, every setting with its default and governing settings key, prerequisites, and the common tasks admins perform there.
+    *   Added task guides for creating actions, agents, agents with actions, multi-task workflows, triggering workflows, file sync connectors, tags, tags in chat, tags on conversations, and exporting conversations, plus further guides derived from the application surface. Each guide explains what the task does and why before the steps.
+    *   Added a chat interface reference covering all 47 chat controls and an action reference covering all 27 actions.
+    *   Added a feature catalog in which every one of the 111 capability toggles is claimed by exactly one capability entry.
+    *   (Ref: `docs/admin/`, `docs/guides/`, `docs/reference/chat-controls.md`, `docs/reference/actions/`, `docs/_data/features.yml`)
+
+*   **Documentation Coverage Enforcement**
+    *   Added a generated inventory of the application surface and functional tests that fail when a new capability toggle, admin settings tab, action plugin, or chat control ships without documentation, so coverage stays complete as changes land.
+    *   (Ref: `scripts/build_docs_inventory.py`, `functional_tests/test_docs_app_surface_coverage.py`, `functional_tests/test_docs_site_quality.py`)
+
+#### User Interface Enhancements
+
+*   **Documentation Site Works on Phones and Tablets**
+    *   Standardized the responsive breakpoints, which previously mixed `768px` and `767.98px` and left gaps, and exported the desktop breakpoint to JavaScript so it is no longer duplicated by hand.
+    *   Wide tables and long code blocks are now contained in horizontal scroll regions instead of widening the page, images are lazy-loaded with intrinsic sizing, touch targets meet a 44px minimum, and the mobile navigation drawer and search sheet trap and restore focus.
+    *   Verified with browser tests at 360x640, 390x844, 768x1024, 1280x800, and 1920x1080.
+    *   (Ref: `docs/assets/css/main.scss`, `docs/assets/js/sidebar.js`, `ui_tests/test_docs_site_responsive.js`)
+
+*   **Simpler Documentation Pages**
+    *   Landing pages were rewritten from hand-written HTML card markup into plain markdown. The home page previously had 82 blocks of card markup and zero markdown headings, and the features page 119 blocks and zero headings, which meant neither page had a working "On this page" table of contents or heading anchors.
+    *   Split the 452 KB release notes page into per-version-series pages while keeping the existing release notes URL working.
+    *   (Ref: `docs/index.md`, `docs/features.md`, `scripts/build_release_notes_pages.py`)
+
+#### Bug Fixes
+
+*   **Documentation Site No Longer Overflows Horizontally on Desktop**
+    *   The main content region combined a full-width rule with a sidebar offset, so every desktop viewport scrolled sideways by exactly the sidebar width. This was a long-standing defect on the published site.
+    *   (Ref: `.docs-main-content`, `docs/assets/css/main.scss`)
+
+*   **Documentation Section Labels and Page Titles**
+    *   Path-scoped Jekyll defaults used collection names as their type and therefore never applied, so nearly every page fell back to a generic "Docs" section and search facets were meaningless. Three scenario index pages also had a comment above their front matter, so it was never parsed and they were titled with their own file path and rendered through an empty layout.
+    *   (Ref: `docs/_config.yml` defaults, `docs/explanation/scenarios/`)
+
+*   **Documentation Site Loads No Third-Party Assets**
+    *   Removed jQuery, DataTables, marked, DOMPurify, and split.js, none of which the site used, and vendored Bootstrap, Bootstrap Icons, Prism, Lunr, and the site fonts locally with their licenses. The site now makes zero external requests.
+    *   (Ref: `docs/assets/vendor/`, `docs/_layouts/default.html`, local browser asset policy)
+
+### **(v0.250.229)**
 
 #### Bug Fixes
 

@@ -350,6 +350,9 @@ tabular-analysis:
     - enable_tabular_processing_plugin
     - enable_tabular_rolling_worker_pool
     - enable_tabular_search_shared_preflight
+  reference:
+    - title: "Tabular processing action"
+      url: /reference/actions/tabular-processing/
 document-compare:
   name: "Cross-format document compare"
   area: "Media and ingestion"
@@ -417,6 +420,11 @@ core-actions:
     - enable_text_plugin
     - enable_time_plugin
     - enable_wait_plugin
+  reference:
+    - title: "Smart HTTP action"
+      url: /reference/actions/smart-http/
+    - title: "All actions"
+      url: /reference/actions/
   guides:
     - title: "Create an action"
       url: /guides/create-an-action/
