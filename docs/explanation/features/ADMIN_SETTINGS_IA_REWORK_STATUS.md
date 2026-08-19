@@ -22,7 +22,7 @@ Development ─── feature/admin-settings-ia ──┬── #1297 stage 1   
                                                       └──► final PR ──► Development
 ```
 
-Current version: **0.260.010**. Fingerprint: **462 field names / 110 card ids**.
+Current version: **0.260.011**. Fingerprint: **462 field names / 110 card ids**.
 
 ### Shipped
 
@@ -33,6 +33,7 @@ Current version: **0.260.010**. Fingerprint: **462 field names / 110 card ids**.
 | B | `data-requires` dependency announcements with inline mirror and link; File Sync and Permissions wired |
 | — | Form field contract enforced in CI |
 | C | Navigation moved into `admin_settings_nav.py` as groups → tabs → sections; both navigations render from it; group level with persisted collapse state and group pills; three-level search |
+| D (part 1) | Governance split into three tabs; Scale split into two; Front Door moved to Security; legacy tab redirects added |
 
 ---
 
@@ -79,15 +80,40 @@ template uncomposed while referencing a partial-backed card or field.
 
 ---
 
-## Next: Stage D — the risky one
+## Next: Stage D — the risky one, in progress
 
-Re-home cards into the 14 target groups, **one group per commit**, running the
-field contract test on each. The nav map now makes this a two-part edit: move
-the card markup between partials, and move its entry between tabs in
-`admin_settings_nav.py`. The parity test fails if the two disagree.
+Re-home cards into the target groups, **one group per commit**, running the
+field contract test on each.
 
-The interim grouping in the map has 12 groups, because Workflow and Data
-Lifecycle have no tabs until their cards move out of Workspaces and Safety.
+### Proven pattern
+
+1. Split the source pane with the split tool. It works line by line and
+   **refuses to write unless every source line lands in exactly one output**.
+2. Update `admin_settings_nav.py`: the tab entries and their sections.
+3. Update the `{% include %}` list in `admin_settings.html`.
+4. Add the old tab id to `LEGACY_TAB_REDIRECTS` in `admin_sidebar_nav.js`.
+5. Verify: field contract, nav map test, parity test, Jinja compile, full
+   regression set.
+
+**Moving a whole tab between groups needs no markup change** — panes are
+independent files and groups are entries in the map, so it is a one-line map
+edit. Only moving a *card* between tabs requires markup surgery. Front Door
+moved from Scale to Security that way.
+
+### Done
+
+| Group | Result |
+|---|---|
+| Governance | → Feature Governance, Policies, MCP Governance |
+| Scale | → Redis & Caching, Cosmos; Front Door moved to Security as Network |
+
+### Remaining, and the gap to close first
+
+The remaining groups pull cards from **several** source panes, for example Data
+Lifecycle wants Retention and Classification out of Workspaces and Archiving
+out of Safety. The split tool only splits one pane at a time, so a
+**move-card-between-panes** operation is needed next, with the same
+every-line-accounted-for guarantee.
 
 Three complications found while splitting:
 
