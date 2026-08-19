@@ -58,7 +58,14 @@ from functions_keyvault import (
 #from functions_personal_actions import delete_personal_action
 
 from functions_debug import debug_print
-from json_schema_validation import PLUGIN_STORAGE_MANAGED_FIELDS, apply_plugin_validation_defaults, validate_plugin
+from functions_azure_endpoint_validation import validate_azure_cosmos_endpoint
+from json_schema_validation import (
+    PLUGIN_STORAGE_MANAGED_FIELDS,
+    apply_plugin_validation_defaults,
+    get_allowed_auth_types_for_plugin_type,
+    normalize_plugin_definition_type,
+    validate_plugin,
+)
 from functions_activity_logging import (
     log_action_creation,
     log_action_update,
@@ -1868,41 +1875,14 @@ def get_plugin_auth_types(plugin_type):
     otherwise falls back to AuthType enum in plugin.schema.json.
     """
     schema_dir = os.path.join(current_app.root_path, 'static', 'json', 'schemas')
-    safe_type = re.sub(r'[^a-zA-Z0-9_]', '_', plugin_type).lower()
+    safe_type = normalize_plugin_definition_type(plugin_type)
 
     definition_path = os.path.join(schema_dir, f'{safe_type}.definition.json')
-    schema_path = os.path.join(schema_dir, 'plugin.schema.json')
 
-    allowed_auth_types = []
-    source = "schema"
-
-    try:
-        with open(schema_path, 'r', encoding='utf-8') as schema_file:
-            schema = json.load(schema_file)
-        allowed_auth_types = (
-            schema
-            .get('definitions', {})
-            .get('AuthType', {})
-            .get('enum', [])
-        )
-    except Exception as exc:
-        debug_print(f"Failed to read plugin.schema.json: {exc}")
-        allowed_auth_types = []
-
-    if os.path.exists(definition_path):
-        try:
-            with open(definition_path, 'r', encoding='utf-8') as definition_file:
-                definition = json.load(definition_file)
-            allowed_from_definition = definition.get('allowedAuthTypes')
-            if isinstance(allowed_from_definition, list) and allowed_from_definition:
-                allowed_auth_types = allowed_from_definition
-                source = "definition"
-        except Exception as exc:
-            debug_print(f"Failed to read {definition_path}: {exc}")
-
-    if not allowed_auth_types:
-        allowed_auth_types = []
-        source = "schema"
+    # Resolved through the same helper the save paths enforce, so the modal cannot offer an
+    # auth type the backend will later reject.
+    allowed_auth_types = sorted(get_allowed_auth_types_for_plugin_type(plugin_type))
+    source = "definition" if os.path.exists(definition_path) else "schema"
 
     return jsonify({
         "allowedAuthTypes": allowed_auth_types,
@@ -2477,6 +2457,12 @@ def test_cosmos_connection():
 
     if not endpoint:
         return jsonify({'success': False, 'error': 'Cosmos DB account endpoint is required.'}), 400
+    try:
+        # This route builds a Cosmos client directly, so the endpoint is validated here as well
+        # as in the action manifest and plugin paths.
+        endpoint = validate_azure_cosmos_endpoint(endpoint)
+    except ValueError as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 400
     if not database_name:
         return jsonify({'success': False, 'error': 'Database name is required.'}), 400
     if not container_name:

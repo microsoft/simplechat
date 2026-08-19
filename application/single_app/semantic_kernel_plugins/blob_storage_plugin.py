@@ -11,6 +11,7 @@ from semantic_kernel.functions import kernel_function
 
 from functions_appinsights import log_event
 from functions_debug import debug_print
+from functions_azure_endpoint_validation import validate_azure_blob_endpoint
 from functions_blob_storage_operations import (
     BLOB_STORAGE_CAPABILITY_DEFINITIONS,
     BLOB_STORAGE_PLUGIN_TYPE,
@@ -201,10 +202,19 @@ class BlobStoragePlugin(BasePlugin):
             f"container={self.container_name} auth_type={self.auth_type} prefix={self.blob_prefix or '<none>'}"
         )
         if self.auth_type == "connection_string":
+            # Revalidate the derived endpoint so a stored connection string cannot point the
+            # SDK at a non-Storage origin.
+            validate_azure_blob_endpoint(
+                derive_blob_endpoint_from_connection_string(self.connection_string) or self.endpoint
+            )
             return BlobServiceClient.from_connection_string(self.connection_string)
+
+        # Revalidated immediately before client construction so actions stored before this
+        # check, or mutated afterwards, cannot receive application credentials.
+        validated_endpoint = validate_azure_blob_endpoint(self.endpoint)
         if self.auth_type == "identity":
-            return BlobServiceClient(account_url=self.endpoint, credential=DefaultAzureCredential())
-        return BlobServiceClient(account_url=self.endpoint, credential=self.auth_key)
+            return BlobServiceClient(account_url=validated_endpoint, credential=DefaultAzureCredential())
+        return BlobServiceClient(account_url=validated_endpoint, credential=self.auth_key)
 
     def _resolve_effective_prefix(self, prefix: str = "") -> str:
         default_prefix = self.blob_prefix

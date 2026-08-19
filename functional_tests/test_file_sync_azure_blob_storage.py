@@ -30,6 +30,11 @@ from test_support.versioning import assert_app_version_at_least
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT / "application" / "single_app"))
+
+from functions_azure_endpoint_validation import (  # noqa: E402  Imported after sys.path setup.
+    azure_storage_endpoint_suffix_for_hostname,
+)
 
 
 def read_text(relative_path):
@@ -76,6 +81,7 @@ def load_functions(relative_path, names, additional_globals=None):
         "timezone": timezone,
         "unquote": unquote,
         "urlparse": urlparse,
+        "azure_storage_endpoint_suffix_for_hostname": azure_storage_endpoint_suffix_for_hostname,
     }
     namespace.update(additional_globals or {})
     exec(compile(module, relative_path, "exec"), namespace)

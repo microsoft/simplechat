@@ -2,6 +2,32 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.260.006)**
+
+#### Bug Fixes
+
+*   **Actions Using the Application Identity Are Now Restricted to Azure Endpoints**
+    *   Actions that authenticate with the application's own managed identity can no longer be pointed at an arbitrary endpoint. Blob Storage, Queue Storage, Cosmos, Databricks, and Log Analytics actions now accept only canonical Azure service hostnames for the public, US Government, China, and Germany clouds.
+    *   Previously a caller holding only the normal **User** role could save a personal action with an attacker-controlled endpoint and application managed-identity authentication, causing the application to send a token minted for its own workload identity to that destination.
+    *   Endpoints are validated when the action is saved and again immediately before the client is built, so actions stored before this release stop working rather than continuing to send credentials.
+    *   Log Analytics custom clouds can no longer choose the Microsoft Entra token authority or the OAuth resource used for delegated tokens.
+    *   Existing actions using standard Azure hostnames are unaffected. Custom domains, development storage, Azure Stack, and direct private-link hostnames are intentionally rejected, matching the Azure Blob File Sync hardening in v0.250.068.
+    *   (Ref: `functions_azure_endpoint_validation.py`, `plugin_health_checker.py`, `blob_storage_plugin.py`, `queue_storage_plugin.py`, `cosmos_query_plugin.py`, `databricks_plugin.py`, `log_analytics_plugin.py`, [Action App-Identity Endpoint Hardening Fix](fixes/ACTION_APP_IDENTITY_ENDPOINT_HARDENING_FIX.md))
+
+*   **Action Authentication Types Are Now Enforced on the Server**
+    *   Each action type's supported authentication methods, declared in its schema definition file, are now enforced when an action is saved or tested. Previously the list was only used to populate the action modal and was never checked by the backend.
+    *   This prevents an action type from being configured with an authentication method it was never designed to support, such as requesting application-identity authentication for an OpenAPI or Microsoft Graph action.
+    *   The auth-types API now resolves through the same helper the save paths use, so the modal and the backend cannot drift apart.
+    *   (Ref: `json_schema_validation.py`, `get_allowed_auth_types_for_plugin_type`, `validate_plugin_auth_type_allowed`, `route_backend_plugins.py`)
+
+#### User Interface Enhancements
+
+*   **Blob Storage Actions Can Now Use Managed Identity or an Account Key**
+    *   The Blob Storage action modal gained an authentication selector offering **Connection String**, **Managed Identity**, and **Account Key**, along with blob service endpoint and account key fields.
+    *   Previously the modal only collected a connection string even though the backend accepted other methods, so managed identity was not reachable through the UI.
+    *   The endpoint field is validated against the Azure Blob hostname allowlist before the action is saved.
+    *   (Ref: `_plugin_modal.html`, `plugin_modal_stepper.js`, `blob_storage.definition.json`)
+
 ### **(v0.260.005)**
 
 #### User Interface Enhancements
