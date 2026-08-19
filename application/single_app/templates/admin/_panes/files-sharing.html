@@ -1,0 +1,223 @@
+            <div class="tab-pane fade{% if admin_landing_tab == 'files-sharing' %} show active{% endif %}" id="files-sharing" role="tabpanel" aria-labelledby="files-sharing-tab">
+                <div class="card mb-3 p-3" id="file-download-settings-section">
+                    <h5>
+                        <i class="bi bi-download me-2"></i>File Downloads
+                    </h5>
+                    <p class="text-muted">
+                        Control when users can download original workspace document files from personal, group, and public workspaces.
+                    </p>
+                    <div class="form-group form-check form-switch mb-3">
+                        <input type="checkbox"
+                            class="form-check-input"
+                            id="allow_personal_workspace_file_downloads"
+                            name="allow_personal_workspace_file_downloads"
+                            {% if settings.allow_personal_workspace_file_downloads %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="allow_personal_workspace_file_downloads">
+                            Enable Personal Workspace Downloads
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to download original files from their personal workspace document menus and bulk selection bar."></i>
+                    </div>
+                    <hr>
+                    <div class="form-group form-check form-switch mb-3">
+                        <input type="checkbox"
+                            class="form-check-input"
+                            id="allow_group_workspace_file_downloads"
+                            name="allow_group_workspace_file_downloads"
+                            {% if settings.allow_group_workspace_file_downloads %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="allow_group_workspace_file_downloads">
+                            Enable Group Workspace Downloads
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow group workspace document downloads when global policy and each group's local setting allow it."></i>
+                    </div>
+                    <div class="form-group form-check form-switch mb-2">
+                        <input type="checkbox"
+                            class="form-check-input"
+                            id="require_group_assignment_for_file_downloads"
+                            name="require_group_assignment_for_file_downloads"
+                            {% if settings.require_group_assignment_for_file_downloads %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="require_group_assignment_for_file_downloads">
+                            Require Group Assignment for Downloads
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="When enabled, only groups selected in Manage Groups can offer document downloads, unless a group owner or admin disables downloads locally."></i>
+                    </div>
+                    <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+                        <button type="button" class="btn btn-sm btn-outline-primary" id="manage-file-download-groups-btn" data-bs-toggle="modal" data-bs-target="#fileDownloadGroupAssignmentModal">
+                            <i class="bi bi-people me-1"></i>Manage Groups
+                        </button>
+                        <span class="text-muted small" id="file-download-group-assignment-summary">No groups assigned.</span>
+                    </div>
+                    <textarea class="d-none" id="file_download_allowed_group_ids" name="file_download_allowed_group_ids">{{ settings.file_download_allowed_group_ids|default([], true)|tojson }}</textarea>
+                    <hr>
+                    <div class="form-group form-check form-switch mb-3">
+                        <input type="checkbox"
+                            class="form-check-input"
+                            id="allow_public_workspace_file_downloads"
+                            name="allow_public_workspace_file_downloads"
+                            {% if settings.allow_public_workspace_file_downloads %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="allow_public_workspace_file_downloads">
+                            Enable Public Workspace Downloads
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow public workspace document downloads when global policy and each workspace's local setting allow it."></i>
+                    </div>
+                    <div class="form-group form-check form-switch mb-2">
+                        <input type="checkbox"
+                            class="form-check-input"
+                            id="require_public_workspace_assignment_for_file_downloads"
+                            name="require_public_workspace_assignment_for_file_downloads"
+                            {% if settings.require_public_workspace_assignment_for_file_downloads %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="require_public_workspace_assignment_for_file_downloads">
+                            Require Public Workspace Assignment for Downloads
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="When enabled, only selected public workspaces can offer document downloads, unless a workspace owner or admin disables downloads locally."></i>
+                    </div>
+                    <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+                        <button type="button" class="btn btn-sm btn-outline-primary" id="manage-file-download-public-workspaces-btn" data-bs-toggle="modal" data-bs-target="#fileDownloadPublicWorkspaceAssignmentModal">
+                            <i class="bi bi-globe me-1"></i>Manage Public Workspaces
+                        </button>
+                        <span class="text-muted small" id="file-download-public-workspace-assignment-summary">No public workspaces assigned.</span>
+                    </div>
+                    <textarea class="d-none" id="file_download_allowed_public_workspace_ids" name="file_download_allowed_public_workspace_ids">{{ settings.file_download_allowed_public_workspace_ids|default([], true)|tojson }}</textarea>
+                </div>
+
+                <div class="modal fade" id="fileDownloadGroupAssignmentModal" tabindex="-1" aria-labelledby="fileDownloadGroupAssignmentModalLabel" aria-hidden="true">
+                    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+                        <div class="modal-content">
+                            <div class="modal-header">
+                                <div>
+                                    <h5 class="modal-title mb-0" id="fileDownloadGroupAssignmentModalLabel">File Download Group Assignments</h5>
+                                    <small class="text-muted">Choose which groups can download files when group assignment is required.</small>
+                                </div>
+                                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                            </div>
+                            <div class="modal-body">
+                                <div class="row g-2 align-items-end mb-3">
+                                    <div class="col">
+                                        <label for="file-download-group-assignment-search" class="form-label">Search Groups</label>
+                                        <input type="search" class="form-control" id="file-download-group-assignment-search" placeholder="Search by group name or description" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true">
+                                    </div>
+                                    <div class="col-auto">
+                                        <button type="button" class="btn btn-outline-primary" id="file-download-group-assignment-search-btn">
+                                            <i class="bi bi-search me-1"></i>Search
+                                        </button>
+                                    </div>
+                                </div>
+                                <div class="alert alert-danger d-none" id="file-download-group-assignment-error"></div>
+                                <div class="small text-muted mb-2" id="file-download-group-assignment-status">No groups loaded.</div>
+                                <div class="table-responsive">
+                                    <table class="table table-sm align-middle">
+                                        <thead>
+                                            <tr>
+                                                <th scope="col">Group</th>
+                                                <th scope="col">Description</th>
+                                                <th scope="col" class="text-end">Assignment</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="file-download-group-assignment-body">
+                                            <tr>
+                                                <td colspan="3" class="text-center text-muted py-3">Search for groups to assign.</td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                            <div class="modal-footer">
+                                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Done</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="modal fade" id="fileDownloadPublicWorkspaceAssignmentModal" tabindex="-1" aria-labelledby="fileDownloadPublicWorkspaceAssignmentModalLabel" aria-hidden="true">
+                    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+                        <div class="modal-content">
+                            <div class="modal-header">
+                                <div>
+                                    <h5 class="modal-title mb-0" id="fileDownloadPublicWorkspaceAssignmentModalLabel">File Download Public Workspace Assignments</h5>
+                                    <small class="text-muted">Choose which public workspaces can download files when public workspace assignment is required.</small>
+                                </div>
+                                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                            </div>
+                            <div class="modal-body">
+                                <div class="row g-2 align-items-end mb-3">
+                                    <div class="col">
+                                        <label for="file-download-public-workspace-assignment-search" class="form-label">Search Public Workspaces</label>
+                                        <input type="search" class="form-control" id="file-download-public-workspace-assignment-search" placeholder="Search by public workspace name or description" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true">
+                                    </div>
+                                    <div class="col-auto">
+                                        <button type="button" class="btn btn-outline-primary" id="file-download-public-workspace-assignment-search-btn">
+                                            <i class="bi bi-search me-1"></i>Search
+                                        </button>
+                                    </div>
+                                </div>
+                                <div class="alert alert-danger d-none" id="file-download-public-workspace-assignment-error"></div>
+                                <div class="small text-muted mb-2" id="file-download-public-workspace-assignment-status">Enter at least 2 characters to search.</div>
+                                <div class="table-responsive">
+                                    <table class="table table-sm align-middle">
+                                        <thead>
+                                            <tr>
+                                                <th scope="col">Public Workspace</th>
+                                                <th scope="col">Description</th>
+                                                <th scope="col" class="text-end">Assignment</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="file-download-public-workspace-assignment-body">
+                                            <tr>
+                                                <td colspan="3" class="text-center text-muted py-3">Search for public workspaces to assign.</td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                            <div class="modal-footer">
+                                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Done</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+
+                <div class="card mb-3 p-3" id="file-sharing-section">
+                    <h5>
+                        <i class="bi bi-share me-2"></i>File Sharing
+                    </h5>
+                    <p class="text-muted">
+                        Turn this on to enable file sharing capabilities between users and workspaces.
+                    </p>
+                    <div class="form-group form-check form-switch mb-3">
+                        <input type="checkbox"
+                            class="form-check-input"
+                            id="enable_file_sharing"
+                            name="enable_file_sharing"
+                            {% if settings.enable_file_sharing %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="enable_file_sharing">
+                            Enable File Sharing
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to upload, share, and manage files within workspaces for document-based AI interactions and collaboration."></i>
+                    </div>
+                </div>
+
+
+
+
+
+                <div class="card p-3 mb-4" id="shared-conversation-file-approvals-section">
+                    <h5>
+                        <i class="bi bi-file-earmark-lock me-2"></i>Shared Conversation File Approvals
+                    </h5>
+                    <p class="text-muted">Files generated by participants in a shared conversation are saved into the conversation owner's storage. When enabled, those files are held until an approver releases them.</p>
+                    <div class="form-group form-check form-switch mb-3">
+                        <input
+                            type="checkbox"
+                            class="form-check-input"
+                            id="require_shared_conversation_file_approval"
+                            name="require_shared_conversation_file_approval"
+                            {% if settings.require_shared_conversation_file_approval %}checked{% endif %}
+                        >
+                        <label class="form-check-label ms-2" for="require_shared_conversation_file_approval">
+                            Require approval for participant-generated files
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="When a participant who does not own a shared conversation generates a downloadable file (CSV, XLSX, DOCX, PDF, JSON, XML), the file is created but withheld until the conversation owner approves it. In group conversations, any group Owner, Admin, or Document Manager can approve. Unapproved files are automatically declined and deleted after 3 days. Generated images and charts are never gated."></i>
+                    </div>
+                </div>
+
+            </div>

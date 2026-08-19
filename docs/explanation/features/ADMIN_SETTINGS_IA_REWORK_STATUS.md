@@ -22,8 +22,8 @@ Development ─── feature/admin-settings-ia ──┬── #1297 stage 1   
                                                       └──► final PR ──► Development
 ```
 
-Current version: **0.260.013**. Fingerprint: **462 field names / 110 card ids**.
-Navigation: **13 groups / 31 tabs / 88 sections**.
+Current version: **0.260.014**. Fingerprint: **462 field names / 110 card ids**.
+Navigation: **14 groups / 36 tabs / 88 sections**.
 
 ### Shipped
 
@@ -113,6 +113,34 @@ moved from Scale to Security that way.
 | Security | **Safety dismantled.** → Access & Roles, Secrets, Content Safety, Session, Network |
 | Operations | Logging is now Logging & Health, gaining health check and API documentation from General |
 | Help | Gains Support Menu from General |
+| Knowledge | **Search & Extract dismantled.** → Web & Research, Search Index, Document Extraction (+ metadata extraction and multi-modal vision from Workspaces), Audio & Video |
+| Workspaces | → Workspace Types, Files & Sharing (+ shared conversation file approvals from AI Models), Global Identities |
+| Workflow | **New group**, split out of Workspaces |
+
+### Card container ids are not the nav section ids
+
+Several cards are wrapped in a container whose id differs from the nav map's
+section id, which is an inner anchor:
+
+| Nav section id | Card container id |
+|---|---|
+| `web-search-section` | `web-search-foundry-section` |
+| `embeddings-config` | `embeddings-configuration` |
+| `image-config` | `image-generation-configuration` |
+| `gpt-config` | `gpt-configuration` |
+| `agents-config` | `agents-configuration` |
+| `actions-config` | `actions-configuration` |
+
+**The move and split tools take container ids**; the nav map keeps its own.
+Run `list_pane_cards.py` for the real container id rather than assuming.
+
+### Trap: gpt-configuration is inside a modal
+
+`gpt-configuration` is **not** a top-level card. It lives inside
+`legacyModelSettingsModal` in the AI Models pane. Splitting AI Models means
+moving a modal, not a card, which is why AI Models and Agents are deliberately
+left for their own change rather than bundled with Knowledge and Workspaces.
+
 
 ### Two hardcoded-id traps found and closed
 

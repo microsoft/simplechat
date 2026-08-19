@@ -1,0 +1,159 @@
+            <div class="tab-pane fade{% if admin_landing_tab == 'workspace-types' %} show active{% endif %}" id="workspace-types" role="tabpanel" aria-labelledby="workspace-types-tab">
+                <p class="text-muted">
+                    Configure workspace settings like personal/group access, multimedia support, metadata, and document classification.
+                </p>
+
+
+                <div class="card mb-3 p-3" id="personal-workspaces-section">
+                    <h5>
+                        <i class="bi bi-person me-2"></i>Personal Workspaces
+                    </h5>
+                    <p class="text-muted">
+                        Turn this on to allow access and management of your personal workspace.
+                    </p>
+                    <div class="form-group form-check form-switch mb-3">
+                        <input type="checkbox"
+                            class="form-check-input"
+                            id="enable_user_workspace"
+                            name="enable_user_workspace"
+                            {% if settings.enable_user_workspace %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="enable_user_workspace">
+                            Enable Personal Workspaces
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to create and manage their own private workspaces for document storage, knowledge bases, and personal AI interactions."></i>
+                    </div>
+                </div>
+
+               <div class="card mb-3 p-3" id="group-workspaces-section">
+                    <h5>
+                        <i class="bi bi-people me-2"></i>Group Workspaces
+                    </h5>
+                    <p class="text-muted">
+                        Turn this on to allow access and management of group workspaces, as well as group collaboration features.
+                    </p>
+                    <div class="form-group form-check form-switch mb-3">
+                        <input type="checkbox"
+                            class="form-check-input"
+                            id="enable_group_workspaces"
+                            name="enable_group_workspaces"
+                            {% if settings.enable_group_workspaces %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="enable_group_workspaces">
+                            Enable Group Workspaces
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to create and participate in shared group workspaces for team collaboration, document sharing, and collective knowledge building."></i>
+                    </div>
+
+
+                    <div id="create_group_permission_setting" {% if not settings.enable_group_workspaces %}style="display: none;"{% endif %}>
+                        <hr>
+
+                        <!-- Disable Group Creation Setting -->
+                        <div class="form-group form-check form-switch mb-3">
+                            <input type="checkbox"
+                                class="form-check-input"
+                                id="disable_group_creation"
+                                name="disable_group_creation"
+                                {% if not settings.enable_group_creation %}checked{% endif %}>
+                            <label class="form-check-label ms-2" for="disable_group_creation">
+                                Disable Group Creation
+                            </label>
+                            <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Prevent all users from creating new groups system-wide, regardless of app role assignment."></i>
+                        </div>
+                        <p class="text-muted small mb-3">
+                            When enabled, no users will be able to create new groups, regardless of app role assignment. This global setting overrides the <strong>Require CreateGroups App Role</strong> setting below.
+                        </p>
+
+                        <div class="form-group form-check form-switch mb-2">
+                            <input type="checkbox"
+                                class="form-check-input"
+                                id="require_member_of_create_group"
+                                name="require_member_of_create_group"
+                                {% if settings.require_member_of_create_group %}checked{% endif %}>
+                            <label class="form-check-label ms-2" for="require_member_of_create_group">
+                                Require CreateGroups App Role
+                            </label>
+                            <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="When enabled, only users assigned the CreateGroups Enterprise App role can create new groups."></i>
+                        </div>
+                        <p class="text-muted small mb-0">
+                            Required app role value: <code>CreateGroups</code>. Assign this role to users or groups in the Enterprise App before enabling the requirement. If disabled, any authenticated user can create groups while group workspaces and group creation are enabled.
+                        </p>
+
+                        <hr>
+
+                        <!-- Require Owner to Manage Group Agents, Actions and Workflows -->
+                        <div class="form-group form-check form-switch mb-2">
+                            <input type="checkbox"
+                                class="form-check-input"
+                                id="require_owner_for_group_agent_management"
+                                name="require_owner_for_group_agent_management"
+                                {% if settings.require_owner_for_group_agent_management %}checked{% endif %}>
+                            <label class="form-check-label ms-2" for="require_owner_for_group_agent_management">
+                                Require Owner to Manage Group Agents, Actions and Workflows
+                            </label>
+                            <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="When enabled, only the group Owner can create, edit, and delete group agents, actions, and workflows. Group Admins will have read-only access."></i>
+                        </div>
+                        <p class="text-muted small mb-0">
+                            If enabled, only the group Owner can create, edit, and delete group agents, group actions, and group workflows. Admins and other roles will only be able to view them.
+                        </p>
+                    </div>
+
+                </div>
+
+                <div class="card mb-3 p-3" id="public-workspaces-section">
+                    <h5>
+                        <i class="bi bi-globe me-2"></i>Public Workspaces
+                    </h5>
+                    <p class="text-muted">
+                        Turn this on to enable public workspaces that are visible to everyone in the organization.
+                    </p>
+                    <div class="form-group form-check form-switch mb-3">
+                        <input type="checkbox"
+                            class="form-check-input"
+                            id="enable_public_workspaces"
+                            name="enable_public_workspaces"
+                            {% if settings.enable_public_workspaces %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="enable_public_workspaces">
+                            Enable Public Workspaces
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow creation of public workspaces that are visible and accessible to all users in the organization for broad knowledge sharing."></i>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label" for="public_workspace_display_name">End-user display name</label>
+                        <input
+                            type="text"
+                            class="form-control"
+                            id="public_workspace_display_name"
+                            name="public_workspace_display_name"
+                            maxlength="{{ settings.public_workspace_labels.max_length }}"
+                            value="{{ settings.public_workspace_display_name }}"
+                            placeholder="Public Workspace"
+                            aria-describedby="public-workspace-display-name-help"
+                        >
+                        <div class="form-text" id="public-workspace-display-name-help">
+                            Optional. End users will see this label instead of Public Workspace. Admin settings and internal references continue to use Public Workspace.
+                        </div>
+                    </div>
+
+                    <div id="create_public_workspace_permission_setting" {% if not settings.enable_public_workspaces %}style="display: none;"{% endif %}>
+                        <hr>
+                        <div class="form-group form-check form-switch mb-2">
+                            <input type="checkbox"
+                                class="form-check-input"
+                                id="require_member_of_create_public_workspace"
+                                name="require_member_of_create_public_workspace"
+                                {% if settings.require_member_of_create_public_workspace %}checked{% endif %}>
+                            <label class="form-check-label ms-2" for="require_member_of_create_public_workspace">
+                                Require CreatePublicWorkspaces App Role
+                            </label>
+                            <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="When enabled, only users assigned the CreatePublicWorkspaces Enterprise App role can create public workspaces."></i>
+                        </div>
+                        <p class="text-muted small mb-0">
+                            Required app role value: <code>CreatePublicWorkspaces</code>. Assign this role to users or groups in the Enterprise App before enabling the requirement. If disabled, any authenticated user can create public workspaces while public workspaces are enabled.
+                        </p>
+                    </div>
+
+                </div>
+
+
+            </div>

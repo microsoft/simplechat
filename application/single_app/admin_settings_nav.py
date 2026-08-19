@@ -99,7 +99,6 @@ ADMIN_NAV = [
                 "icon": "bi-cpu",
                 "sections": [
                     {"id": "multi-endpoint-configuration", "label": "Model Endpoints", "icon": "bi-hdd-network"},
-                    {"id": "shared-conversation-file-approvals-section", "label": "Shared Conversation File Approvals", "icon": "bi-file-earmark-lock"},
                     {"id": "embeddings-config", "label": "Embeddings", "icon": "bi-vector-pen"},
                     {"id": "image-config", "label": "Image Generation", "icon": "bi-image"},
                     {"id": "gpt-config", "label": "Chat Model", "icon": "bi-chat-square-text"},
@@ -132,18 +131,25 @@ ADMIN_NAV = [
         "icon": "bi-folder",
         "tabs": [
             {
-                "id": "workspaces",
-                "label": "Workspaces",
+                "id": "workspace-types",
+                "label": "Workspace Types",
                 "icon": "bi-folder",
                 "sections": [
                     {"id": "personal-workspaces-section", "label": "Personal Workspaces", "icon": "bi-person"},
-                    {"id": "workflow-settings-section", "label": "Workflow", "icon": "bi-diagram-3"},
-                    {"id": "file-download-settings-section", "label": "File Downloads", "icon": "bi-download"},
                     {"id": "group-workspaces-section", "label": "Group Workspaces", "icon": "bi-people"},
                     {"id": "public-workspaces-section", "label": "Public Workspaces", "icon": "bi-globe"},
+                ],
+            },
+            {
+                # Who may take a file out of a workspace, and who must approve
+                # it first.
+                "id": "files-sharing",
+                "label": "Files & Sharing",
+                "icon": "bi-share",
+                "sections": [
+                    {"id": "file-download-settings-section", "label": "File Downloads", "icon": "bi-download"},
                     {"id": "file-sharing-section", "label": "File Sharing", "icon": "bi-share"},
-                    {"id": "metadata-extraction-section", "label": "Metadata Extraction", "icon": "bi-file-earmark-code"},
-                    {"id": "multimodal-vision-section", "label": "Multi-Modal Vision Analysis", "icon": "bi-eye"},
+                    {"id": "shared-conversation-file-approvals-section", "label": "Shared Conversation File Approvals", "icon": "bi-check2-square"},
                 ],
             },
             {
@@ -155,21 +161,64 @@ ADMIN_NAV = [
         ],
     },
     {
+        # Workflow drives approvals and assignment across workspaces and is
+        # large enough to stand on its own rather than sit inside Workspaces.
+        "id": "workflow",
+        "label": "Workflow",
+        "icon": "bi-diagram-3",
+        "tabs": [
+            {
+                "id": "workflow",
+                "label": "Workflow",
+                "icon": "bi-diagram-3",
+                "sections": [
+                    {"id": "workflow-settings-section", "label": "Workflow", "icon": "bi-diagram-3"},
+                ],
+            },
+        ],
+    },
+    {
         "id": "knowledge",
         "label": "Knowledge",
         "icon": "bi-search",
         "tabs": [
             {
-                "id": "search-extract",
-                "label": "Search & Extract",
-                "icon": "bi-search",
+                # Reaching outside the tenant for material.
+                "id": "web-research",
+                "label": "Web & Research",
+                "icon": "bi-globe",
                 "sections": [
                     {"id": "web-search-section", "label": "Web Search", "icon": "bi-globe"},
                     {"id": "url-access-section", "label": "URL Access", "icon": "bi-link-45deg"},
                     {"id": "source-review-section", "label": "Deep Research", "icon": "bi-binoculars"},
+                ],
+            },
+            {
+                "id": "search-index",
+                "label": "Search Index",
+                "icon": "bi-search",
+                "sections": [
                     {"id": "azure-ai-search-section", "label": "Azure AI Search", "icon": "bi-search"},
+                ],
+            },
+            {
+                # Turning a document into something searchable.
+                "id": "extraction",
+                "label": "Document Extraction",
+                "icon": "bi-file-earmark-text",
+                "sections": [
                     {"id": "document-intelligence-section", "label": "Document Intelligence", "icon": "bi-file-earmark-text"},
                     {"id": "chunk-size-section", "label": "Chunk Sizes", "icon": "bi-collection"},
+                    {"id": "metadata-extraction-section", "label": "Metadata Extraction", "icon": "bi-file-earmark-code"},
+                    {"id": "multimodal-vision-section", "label": "Multi-Modal Vision Analysis", "icon": "bi-eye"},
+                ],
+            },
+            {
+                # Voice and video are extraction pipelines, not chat features.
+                "id": "audio-video",
+                "label": "Audio & Video",
+                "icon": "bi-play-circle",
+                "sections": [
                     {"id": "video-intelligence-section", "label": "AI Video Intelligence", "icon": "bi-play-circle"},
                     {"id": "ai-voice-chat-section", "label": "AI Voice Conversations", "icon": "bi-mic"},
                 ],

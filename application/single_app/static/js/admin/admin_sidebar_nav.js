@@ -294,6 +294,8 @@ const LEGACY_TAB_REDIRECTS = {
     'general': 'branding',
     'safety': 'access-roles',
     'security': 'secrets',
+    'workspaces': 'workspace-types',
+    'search-extract': 'web-research',
 };
 
 function resolveAdminTabId(tabId) {
