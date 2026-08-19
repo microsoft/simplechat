@@ -931,14 +931,8 @@
         <ul class="nav nav-tabs" id="adminSettingsTab" role="tablist">
             <!-- Core Settings -->
             <li class="nav-item" role="presentation">
-                <button class="nav-link active" id="latest-features-tab" data-bs-toggle="tab" data-bs-target="#latest-features"
-                    type="button" role="tab" aria-controls="latest-features" aria-selected="true">
-                    Latest Features <span class="badge bg-warning text-dark text-uppercase ms-2 latest-feature-nav-badge">New</span>
-                </button>
-            </li>
-            <li class="nav-item" role="presentation">
-                <button class="nav-link" id="general-tab" data-bs-toggle="tab" data-bs-target="#general"
-                    type="button" role="tab" aria-controls="general" aria-selected="false">
+                <button class="nav-link active" id="general-tab" data-bs-toggle="tab" data-bs-target="#general"
+                    type="button" role="tab" aria-controls="general" aria-selected="true">
                     General
                 </button>
             </li>
@@ -1048,6 +1042,13 @@
                     Send Feedback
                 </button>
             </li>
+            <!-- Latest Features stays last so it never opens by default -->
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="latest-features-tab" data-bs-toggle="tab" data-bs-target="#latest-features"
+                    type="button" role="tab" aria-controls="latest-features" aria-selected="false">
+                    Latest Features <span class="badge bg-warning text-dark text-uppercase ms-2 latest-feature-nav-badge">New</span>
+                </button>
+            </li>
         </ul>
         {% endif %}
 
@@ -1065,8 +1066,6 @@
             {% include "admin/_panes/logging.html" %}
 
             {% include "admin/_panes/general.html" %}
-
-            {% include "admin/_panes/latest-features.html" %}
 
             {% include "admin/_panes/custom-pages.html" %}
 
@@ -1098,6 +1097,9 @@
             {% include "admin/_panes/search-extract.html" %}
 
             {% include "admin/_panes/send-feedback.html" %}
+
+            {# Latest Features stays last so it never opens by default #}
+            {% include "admin/_panes/latest-features.html" %}
         </div>
         <!-- End of Admin tab content -->
     </form>

@@ -107,7 +107,9 @@ def test_send_feedback_navigation_order():
 
     send_feedback_sidebar_index = sidebar_content.index('data-tab="send-feedback"')
     search_extract_sidebar_index = sidebar_content.index('data-tab="search-extract"')
-    assert send_feedback_sidebar_index > search_extract_sidebar_index, 'Send Feedback should be the last admin sidebar item'
+    latest_features_sidebar_index = sidebar_content.index('data-tab="latest-features"')
+    assert send_feedback_sidebar_index > search_extract_sidebar_index, 'Send Feedback should come after Search and Extract in the admin sidebar'
+    assert send_feedback_sidebar_index < latest_features_sidebar_index, 'Send Feedback should come before Latest Features, which is pinned last'
 
     assert 'data-section="latest-features-send-feedback-card"' in sidebar_content, 'Latest Features submenu should expose the Send Feedback callout'
 

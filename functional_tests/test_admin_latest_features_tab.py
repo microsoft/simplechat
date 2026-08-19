@@ -337,7 +337,9 @@ def test_latest_features_sidebar_navigation():
 
     latest_features_index = sidebar_content.index('data-tab="latest-features"')
     general_index = sidebar_content.index('data-tab="general"')
-    assert latest_features_index < general_index, 'Latest Features should appear before General in the admin sidebar'
+    send_feedback_index = sidebar_content.index('data-tab="send-feedback"')
+    assert latest_features_index > general_index, 'Latest Features should appear after General in the admin sidebar'
+    assert latest_features_index > send_feedback_index, 'Latest Features should be the last admin sidebar destination, after Send Feedback'
     assert '<span class="badge bg-warning text-dark text-uppercase ms-2">New</span>' in sidebar_content, 'Sidebar Latest Features item should include a New badge'
 
     print('Latest Features sidebar navigation is present')
@@ -345,20 +347,26 @@ def test_latest_features_sidebar_navigation():
 
 
 def test_latest_features_top_nav_priority():
-    """Latest Features should be the first top-nav tab and default active pane."""
-    print('Testing Latest Features top-nav priority...')
+    """Latest Features should be the last top-nav tab and never default active."""
+    print('Testing Latest Features top-nav placement...')
 
     template_content = read_text(ADMIN_TEMPLATE)
 
     latest_features_tab_index = template_content.index('id="latest-features-tab"')
     general_tab_index = template_content.index('id="general-tab"')
-    assert latest_features_tab_index < general_tab_index, 'Latest Features tab should appear before General in top nav'
+    send_feedback_tab_index = template_content.index('id="send-feedback-tab"')
+    assert latest_features_tab_index > general_tab_index, 'Latest Features tab should appear after General in top nav'
+    assert latest_features_tab_index > send_feedback_tab_index, 'Latest Features tab should be the last top-nav tab, after Send Feedback'
 
     assert 'id="latest-features-tab" data-bs-toggle="tab" data-bs-target="#latest-features"' in template_content, 'Latest Features top-nav tab missing'
     assert 'Latest Features <span class="badge bg-warning text-dark text-uppercase ms-2 latest-feature-nav-badge">New</span>' in template_content, 'Latest Features top-nav tab should include a New badge'
-    assert 'class="tab-pane fade show active" id="latest-features" role="tabpanel" aria-labelledby="latest-features-tab"' in template_content, 'Latest Features pane should be the default active tab'
 
-    print('Latest Features is prioritized in top navigation')
+    # Latest Features opened on every visit to Admin Settings, which is why it
+    # now sits last and General is the landing tab instead.
+    assert 'class="tab-pane fade" id="latest-features" role="tabpanel" aria-labelledby="latest-features-tab"' in template_content, 'Latest Features pane should not be the default active tab'
+    assert 'class="tab-pane fade show active" id="general" role="tabpanel" aria-labelledby="general-tab"' in template_content, 'General pane should be the default active tab'
+
+    print('Latest Features is last in top navigation and not default active')
     return True
 
 

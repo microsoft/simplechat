@@ -135,13 +135,14 @@ function initAdminSidebarNav() {
         });
     });
     
-    // Set the initial active tab (General) - but only if no tab is already active
+    // Set the initial active tab - but only if no tab is already active.
+    // Latest Features is deliberately excluded so it never opens by default.
     const activeTab = document.querySelector('.admin-nav-tab.active, .admin-nav-section.active');
     if (!activeTab) {
-        const firstTab = document.querySelector('.admin-nav-tab[data-tab="latest-features"]');
+        const firstTab = document.querySelector('.admin-nav-tab[data-tab="general"]');
         if (firstTab) {
             firstTab.classList.add('active');
-            showAdminTab('latest-features');
+            showAdminTab('general');
         }
     } else {
         console.log('initAdminSidebarNav - Found existing active tab, preserving current state:', activeTab.getAttribute('data-tab'));
