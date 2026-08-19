@@ -2,7 +2,7 @@
 # test_admin_settings_template_composition.py
 """
 Functional test for the Admin Settings composed-template contract.
-Version: 0.260.004
+Version: 0.260.005
 Implemented in: 0.260.004
 
 Admin Settings is assembled from per-tab partials under templates/admin/, so
@@ -24,7 +24,6 @@ from test_support.templates import (
     ADMIN_SETTINGS_TEMPLATE,
     TEMPLATE_DIR,
     read_admin_settings_template,
-    resolve_template_includes,
 )
 from test_support.versioning import assert_app_version_at_least
 

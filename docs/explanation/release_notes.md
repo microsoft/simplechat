@@ -34,6 +34,11 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Reduced to the 6 entries that are genuine aliases. A new test now fails if a redundant, dangling, or unreferenced entry is reintroduced.
     *   (Ref: `admin_sidebar_nav.js`, `scrollToSection`, `test_admin_settings_sidebar_card_parity.py`)
 
+*   **Home Page Text Preview No Longer Reinterprets Editor Text As HTML**
+    *   The Home Page Text preview in Admin Settings assigned the raw editor contents to `innerHTML` when the Markdown editor had not initialized, so text typed into the editor was reinterpreted as HTML. CodeQL flagged this as `js/xss-through-dom` (high severity).
+    *   The raw fallback now uses `textContent`, which is what the code intended by "just show raw text", and the Markdown path is sanitized inline with `DOMPurify.sanitize(...)` at the sink. DOMPurify is loaded globally from the local vendored bundle, so no external asset is introduced.
+    *   (Ref: Home Page Text, `admin_settings.html` `showPreview`, DOMPurify)
+
 #### Breaking Changes
 
 *   **Admin Settings Template Split Into Per-Tab Partials**

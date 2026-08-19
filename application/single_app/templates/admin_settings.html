@@ -1678,11 +1678,17 @@
 
         // Render the markdown inside the preview container
         if (simplemde) {
-            landingPageMarkdownPreview.innerHTML = simplemde.markdown(simplemde.value());
+            let html = simplemde.markdown(simplemde.value());
+            // Sanitize if DOMPurify is available
+            if (typeof DOMPurify !== 'undefined') {
+                html = DOMPurify.sanitize(html);
+            }
+            landingPageMarkdownPreview.innerHTML = html;
         } else {
             // If for some reason simplemde is null (e.g., user never toggled on?),
-            // just show raw text
-            landingPageMarkdownPreview.innerHTML = document.getElementById("landing_page_text_editor").value;
+            // just show raw text. textContent keeps it as text rather than
+            // reinterpreting the editor contents as HTML.
+            landingPageMarkdownPreview.textContent = document.getElementById("landing_page_text_editor").value;
         }
     }
 

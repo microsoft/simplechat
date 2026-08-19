@@ -57,6 +57,17 @@ no-op. The map had grown to 72 entries:
 Every new section had been added twice, once in the sidebar and once in a map
 that did not need it.
 
+### 7. Home Page Text preview reinterpreted editor text as HTML
+
+`showPreview` fell back to assigning the raw editor contents to `innerHTML`
+when the Markdown editor had not initialized, despite the comment stating the
+intent was to "just show raw text". CodeQL reported this as `js/xss-through-dom`
+at high severity: DOM text read from a textarea and written back as HTML.
+
+The Markdown branch also wrote rendered HTML to `innerHTML` without
+sanitization, even though the same template already sanitizes the User
+Agreement preview with DOMPurify.
+
 ## Root causes
 
 Issues 1, 3, and 4 come from incremental growth: tabs were added over time
@@ -94,6 +105,11 @@ changes. The parent dropped from 13,526 lines to about 2,200.
 - The sidebar `sectionMap` was reduced from 72 entries to the 6 that are real
   aliases, removing the dead `control-center-admin-section` target. A new test
   fails if a no-op, dangling, or unreferenced entry is added back.
+- The Home Page Text preview raw fallback now uses `textContent`, and its
+  Markdown branch is sanitized with DOMPurify, following the pattern already
+  used for the User Agreement preview in the same template. DOMPurify is served
+  from the local `static/js/chat/purify.min.js` bundle, so no external asset is
+  introduced.
 
 ### Test support
 
