@@ -50,7 +50,7 @@
                                 <button type="button" class="btn btn-outline-secondary" id="toggle_redis_key">Show</button>
                             </div>
                             <div id="redis_key_vault_hint" class="form-text text-muted {% if settings.redis_auth_type != 'key_vault' %}d-none{% endif %}">
-                                Enter the full Key Vault secret name. <a href="#security" onclick="switchTab(event, 'security-tab')">
+                                Enter the full Key Vault secret name. <a href="#keyvault-section" data-admin-link="keyvault-section">
                                 Enable Key Vault for Agent and Action Secrets
                             </a> must be enabled and configured.
                             </div>
