@@ -168,8 +168,18 @@ def test_latest_features_user_media_overrides_admin_preview():
     print('🔍 Testing user-facing Latest Features current-release media split...')
 
     support_config = load_module(SUPPORT_CONFIG, 'support_menu_config_user_media_test')
+
+    # The v0.260.001 cards ship hidden until their placeholder screenshots are
+    # replaced, so opt them in explicitly to assert their card structure.
+    current_ids = [
+        feature['id']
+        for group in support_config.get_support_latest_feature_release_groups()
+        if group['id'] == 'current_release'
+        for feature in group['features']
+    ]
     visible_groups = support_config.get_visible_support_latest_feature_groups({
         'enable_user_workspace': True,
+        'support_latest_features_visibility': {feature_id: True for feature_id in current_ids},
     })
     visible_current = next(group for group in visible_groups if group['id'] == 'current_release')
 

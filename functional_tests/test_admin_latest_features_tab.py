@@ -169,7 +169,7 @@ def test_user_latest_features_catalog_release_groups():
     assert default_visibility['deployment'] is False
     assert default_visibility['redis_key_vault'] is False
     assert default_visibility['release_250_ai_access'] is True
-    assert all(default_visibility[feature_id] is True for feature_id in USER_CURRENT_FEATURE_IDS), 'New release cards should default to visible'
+    assert all(default_visibility[feature_id] is False for feature_id in USER_CURRENT_FEATURE_IDS), 'v0.260.001 cards ship hidden until their placeholder screenshots are replaced'
 
     first_feature = release_groups[0]['features'][0]
     assert first_feature['id'] == 'release_260_enhanced_extraction'

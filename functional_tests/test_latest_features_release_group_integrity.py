@@ -193,11 +193,14 @@ def test_visibility_defaults_cover_every_user_feature():
     assert not extra, f'Visibility defaults reference unknown feature ids: {extra}'
 
     current_ids = [feature['id'] for feature in user_groups[0]['features']]
-    assert all(defaults[feature_id] is True for feature_id in current_ids), 'Current release features should default to visible'
+    assert all(defaults[feature_id] is False for feature_id in current_ids), 'Current release features ship hidden until their placeholder screenshots are replaced'
 
-    normalized = support_config.normalize_support_latest_features_visibility({current_ids[0]: False})
-    assert normalized[current_ids[0]] is False, 'Stored visibility choices must be preserved'
-    assert normalized[current_ids[1]] is True, 'Unstored features must fall back to their default'
+    previous_ids = [feature['id'] for feature in user_groups[1]['features']]
+    assert any(defaults[feature_id] is True for feature_id in previous_ids), 'Previously published features should remain visible by default'
+
+    normalized = support_config.normalize_support_latest_features_visibility({current_ids[0]: True})
+    assert normalized[current_ids[0]] is True, 'Stored visibility choices must be preserved'
+    assert normalized[current_ids[1]] is False, 'Unstored features must fall back to their default'
 
     print('Latest Features visibility defaults cover every feature')
     return True

@@ -83,7 +83,7 @@ v0.260.001 consolidates all work released after v0.250.001 into one major releas
 
 *   **Latest Features Release Tiers for v0.260.001**
     *   Shifted the end-user Latest Features page and Admin Settings tab into current, previous, and archive release tiers for the v0.260.001 rollout.
-    *   Preserved per-tenant visibility choices across the shift while defaulting the new v0.260.001 user-facing cards to visible.
+    *   Preserved per-tenant visibility choices across the shift. The new v0.260.001 user-facing cards ship hidden until their placeholder screenshots are replaced, so admins publish each card once its real capture is in place.
     *   (Ref: Latest Features release groups, support catalog, admin catalog, visibility normalization)
 *   **Deeper End-User Feature Cards**
     *   Added 20 v0.260.001 end-user cards with seven concrete How To Try It steps and a three-image gallery each.

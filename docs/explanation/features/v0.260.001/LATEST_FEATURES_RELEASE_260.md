@@ -102,7 +102,7 @@ _latest_feature_card(
 
 ### Visibility Toggle Model
 
-End-user card visibility is stored under `support_latest_features_visibility`. Admin choices are not reset when release tiers shift: `normalize_support_latest_features_visibility(raw_visibility)` starts from current defaults, then overlays saved values only for feature IDs that still exist. That means existing v0.250.001 and archived preferences remain honored, while the 20 new v0.260.001 cards default to visible.
+End-user card visibility is stored under `support_latest_features_visibility`. Admin choices are not reset when release tiers shift: `normalize_support_latest_features_visibility(raw_visibility)` starts from current defaults, then overlays saved values only for feature IDs that still exist. That means existing v0.250.001 and archived preferences remain honored, while the 20 new v0.260.001 cards default to **hidden** until their placeholder screenshots are replaced with real captures.
 
 Admin-only cards are not controlled by user-facing visibility toggles. They are always available in the Admin Settings Latest Features tab as tenant rollout guidance.
 
@@ -125,7 +125,17 @@ Admin-only cards are not controlled by user-facing visibility toggles. They are 
 4. Toggle individual user-facing cards on or off for the tenant.
 5. Save settings, then open **Support > Latest Features** as an end user to verify the visible cards.
 
-Stored choices are merged over defaults, so disabling an older card remains honored after the v0.260.001 tier shift. New v0.260.001 cards start visible unless an admin turns them off.
+Stored choices are merged over defaults, so disabling an older card remains honored after the v0.260.001 tier shift.
+
+The 20 new v0.260.001 cards ship **hidden**. Their screenshots are still placeholders, so publishing them immediately would show end users a page full of "Screenshot pending" tiles. The intended rollout is:
+
+1. Replace `release_260_<slug>_1.png`, `_2.png`, and `_3.png` for a card with real captures.
+2. Open **Admin Settings > General > User-Facing Latest Features** and tick that card.
+3. Save, then confirm it on **Support > Latest Features** as an end user.
+
+Until a card is enabled, end users continue to see the previous and archive tiers, which carry real screenshots. Admins still see all 16 v0.260.001 admin cards in the Latest Features tab, since admins are the ones capturing the screenshots.
+
+Once every card is published, the `for item in _SUPPORT_RELEASE_260_FEATURE_CATALOG` loop in `get_default_support_latest_features_visibility()` can be dropped so future tenants get the cards on by default.
 
 The **Latest Features** admin tab also carries a read-only preview of the user-facing catalog. Each non-current tier renders as a collapsible panel whose cards show a **Shared with Users** or **Hidden from Users** badge, so an admin can review exactly what the previous and archive tiers look like without leaving Admin Settings. Its element ids are namespaced `latest-features-user-preview-*` and `latestFeaturesUserPreview*` so they never collide with the admin-facing release-group cards.
 

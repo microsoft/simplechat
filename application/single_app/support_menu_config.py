@@ -2517,6 +2517,14 @@ def get_default_support_latest_features_visibility():
     }
     defaults['deployment'] = False
     defaults['redis_key_vault'] = False
+
+    # The v0.260.001 cards ship hidden because their screenshots are still
+    # placeholders. Admins enable each card from Admin Settings once the real
+    # capture replaces the placeholder image, so end users never see a
+    # "Screenshot pending" tile.
+    for item in _SUPPORT_RELEASE_260_FEATURE_CATALOG:
+        defaults[item['id']] = False
+
     return defaults
 
 
