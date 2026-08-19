@@ -106,10 +106,11 @@ changes. The parent dropped from 13,526 lines to about 2,200.
   aliases, removing the dead `control-center-admin-section` target. A new test
   fails if a no-op, dangling, or unreferenced entry is added back.
 - The Home Page Text preview raw fallback now uses `textContent`, and its
-  Markdown branch is sanitized with DOMPurify, following the pattern already
-  used for the User Agreement preview in the same template. DOMPurify is served
-  from the local `static/js/chat/purify.min.js` bundle, so no external asset is
-  introduced.
+  Markdown branch is sanitized inline with `DOMPurify.sanitize(...)` at the
+  sink, following the pattern used elsewhere in the app. DOMPurify is loaded
+  globally from the local `static/js/chat/purify.min.js` bundle in `base.html`,
+  before the page's script block, so no external asset is introduced and no
+  availability guard is needed.
 
 ### Test support
 

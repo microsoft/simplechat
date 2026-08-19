@@ -1678,12 +1678,9 @@
 
         // Render the markdown inside the preview container
         if (simplemde) {
-            let html = simplemde.markdown(simplemde.value());
-            // Sanitize if DOMPurify is available
-            if (typeof DOMPurify !== 'undefined') {
-                html = DOMPurify.sanitize(html);
-            }
-            landingPageMarkdownPreview.innerHTML = html;
+            // DOMPurify is loaded globally from base.html, so sanitize inline
+            // rather than assigning rendered HTML straight to the sink.
+            landingPageMarkdownPreview.innerHTML = DOMPurify.sanitize(simplemde.markdown(simplemde.value()));
         } else {
             // If for some reason simplemde is null (e.g., user never toggled on?),
             // just show raw text. textContent keeps it as text rather than
