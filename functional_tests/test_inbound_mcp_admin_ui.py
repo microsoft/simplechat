@@ -39,6 +39,7 @@ server-side endpoint check.
 import sys
 from pathlib import Path
 from test_support.versioning import assert_app_version_at_least
+from test_support.templates import compose_if_admin_settings
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -46,7 +47,10 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 
 def read_repo_file(relative_path):
     """Read a repository file for source-level contract validation."""
-    return (ROOT_DIR / relative_path).read_text(encoding="utf-8")
+    _path = ROOT_DIR / relative_path
+    return compose_if_admin_settings(
+        _path, _path.read_text(encoding="utf-8")
+    )
 
 
 def test_inbound_mcp_runtime_settings_are_app_settings():

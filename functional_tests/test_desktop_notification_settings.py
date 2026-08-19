@@ -9,13 +9,17 @@ bootstrap values, and successful stream completion hook remain connected.
 """
 
 from pathlib import Path
+from test_support.templates import compose_if_admin_settings
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 def _read(relative_path):
-    return (REPO_ROOT / relative_path).read_text(encoding="utf-8")
+    _path = REPO_ROOT / relative_path
+    return compose_if_admin_settings(
+        _path, _path.read_text(encoding="utf-8")
+    )
 
 
 def test_desktop_notification_settings_are_wired_end_to_end():

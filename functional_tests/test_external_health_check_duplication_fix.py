@@ -11,6 +11,7 @@ and prevents regression of duplicate UI elements.
 import sys
 import os
 import re
+from test_support.templates import compose_if_admin_settings
 
 def test_external_health_check_duplication():
     """Test that there is only one External Health Check section in admin settings."""
@@ -27,7 +28,7 @@ def test_external_health_check_duplication():
             raise FileNotFoundError(f"Template file not found: {template_path}")
         
         with open(template_path, 'r', encoding='utf-8') as f:
-            content = f.read()
+            content = compose_if_admin_settings(template_path, f.read())
         
         # Count occurrences of "External Health Check" headers
         header_pattern = r'<h5>External Health Check</h5>'
@@ -81,7 +82,7 @@ def test_ui_structure_integrity():
         )
         
         with open(template_path, 'r', encoding='utf-8') as f:
-            content = f.read()
+            content = compose_if_admin_settings(template_path, f.read())
         
         # Check for proper card structure
         card_open_count = len(re.findall(r'<div class="card[^"]*">', content))

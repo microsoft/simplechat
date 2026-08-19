@@ -1,0 +1,1621 @@
+            <div class="tab-pane fade" id="data-management" role="tabpanel" aria-labelledby="data-management-tab" data-testid="data-management-tab-pane" data-ignore-settings-change="true">
+                <div class="d-flex align-items-center justify-content-between gap-3 mb-2">
+                    <div>
+                        <h3 class="mb-1">Backup, Migrate &amp; Restore</h3>
+                        <p class="text-muted mb-0">Protect SimpleChat data, move selected workspaces to another environment, and stage restore decisions with guided checks.</p>
+                    </div>
+                    <button type="button" class="btn btn-secondary" id="data-management-save-settings-btn" disabled aria-disabled="true">
+                        <i class="bi bi-save me-1"></i>Saved
+                    </button>
+                </div>
+
+                <div class="alert alert-warning" id="data-management-operational-warning" role="alert">
+                    We suggest not running backups, restores, or migrations during your operational business hours. These jobs run inside the App Service environment and can affect application performance.
+                </div>
+
+                <div class="alert d-none" id="data-management-status" role="status" aria-live="polite"></div>
+
+                <div class="card p-4 mb-4 border-info shadow-sm" id="data-management-readiness-section">
+                    <div class="d-flex flex-column flex-xl-row justify-content-between gap-3 mb-3">
+                        <div>
+                            <h4 class="mb-1"><i class="bi bi-compass me-2"></i>Start Here</h4>
+                            <p class="text-muted mb-0 small">Use these checkpoints before running backup, migration, restore, or advanced repair actions.</p>
+                        </div>
+                        <button type="button" class="btn btn-outline-info align-self-start" data-bs-toggle="modal" data-bs-target="#data-management-setup-guide-modal">
+                            <i class="bi bi-info-circle me-1"></i>Configuration Guide
+                        </button>
+                    </div>
+                    <div class="row g-3">
+                        <div class="col-xl-3 col-md-6">
+                            <div class="border rounded-3 p-3 h-100">
+                                <h5 class="h6 mb-2"><i class="bi bi-archive me-1"></i>Back up</h5>
+                                <p class="small text-muted mb-2">Configure dedicated storage, encryption, schedule, and backup scope before queueing jobs.</p>
+                                <button type="button" class="btn btn-link btn-sm p-0" data-bs-toggle="modal" data-bs-target="#data-management-backup-guide-modal">Backup setup details</button>
+                            </div>
+                        </div>
+                        <div class="col-xl-3 col-md-6">
+                            <div class="border rounded-3 p-3 h-100">
+                                <h5 class="h6 mb-2"><i class="bi bi-arrow-left-right me-1"></i>Migrate</h5>
+                                <p class="small text-muted mb-2">Connect a destination, choose who moves, run preflight, then execute a recoverable transfer.</p>
+                                <button type="button" class="btn btn-link btn-sm p-0" data-bs-toggle="modal" data-bs-target="#data-management-migration-guide-modal">Migration guide</button>
+                            </div>
+                        </div>
+                        <div class="col-xl-3 col-md-6">
+                            <div class="border rounded-3 p-3 h-100">
+                                <h5 class="h6 mb-2"><i class="bi bi-arrow-counterclockwise me-1"></i>Restore</h5>
+                                <p class="small text-muted mb-2">Review backup readiness and stage restore decisions from Backup Inventory.</p>
+                                <button type="button" class="btn btn-link btn-sm p-0" data-bs-toggle="modal" data-bs-target="#data-management-restore-guide-modal">Restore guide</button>
+                            </div>
+                        </div>
+                        <div class="col-xl-3 col-md-6">
+                            <div class="border rounded-3 p-3 h-100">
+                                <h5 class="h6 mb-2"><i class="bi bi-speedometer me-1"></i>RU Boost</h5>
+                                <p class="small text-muted mb-2">Temporarily raise eligible Cosmos capacity during approved backup or migration windows.</p>
+                                <button type="button" class="btn btn-link btn-sm p-0" data-bs-toggle="modal" data-bs-target="#data-management-ru-boost-guide-modal">RU Boost permissions</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card p-4 mb-4 border-primary shadow-sm" id="data-management-backup-section">
+                    <div class="d-flex align-items-center mb-3">
+                        <div class="bg-primary text-white rounded-circle p-3 me-3" style="width: 50px; height: 50px; display: flex; align-items: center; justify-content: center;">
+                            <i class="bi bi-archive fs-4"></i>
+                        </div>
+                        <div>
+                            <h4 class="mb-1">Backup</h4>
+                            <p class="text-muted mb-0 small">Configure when backups run, where artifacts are stored, and how backup files are encrypted.</p>
+                        </div>
+                    </div>
+
+                    <div class="card p-3 mb-3 border-primary-subtle" id="data-management-schedule-section">
+                        <div class="d-flex align-items-center justify-content-between mb-3">
+                            <div>
+                                <h5 class="mb-1">Schedule</h5>
+                                <p class="text-muted mb-0 small">Full backups run on the selected cadence; partial backups run daily only.</p>
+                            </div>
+                        </div>
+                        <div class="form-check form-switch mb-3">
+                            <input class="form-check-input" type="checkbox" role="switch" id="data_management_enabled">
+                            <label class="form-check-label ms-2 fw-bold" for="data_management_enabled">Enable scheduled backups</label>
+                        </div>
+                        <div class="row g-3">
+                            <div class="col-md-4">
+                                <label class="form-label" for="data_management_full_frequency">Full backup frequency</label>
+                                <select class="form-select" id="data_management_full_frequency">
+                                    <option value="daily">Daily</option>
+                                    <option value="weekly">Weekly</option>
+                                    <option value="14_days">Every 14 days</option>
+                                    <option value="30_days">Every 30 days</option>
+                                </select>
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label" for="data_management_scheduled_time_utc">Scheduled time (UTC)</label>
+                                <input class="form-control" type="time" id="data_management_scheduled_time_utc" value="03:00">
+                                <div class="form-text">Default is 03:00 UTC.</div>
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label" for="data_management_retention_value">Delete backups after</label>
+                                <div class="input-group">
+                                    <input class="form-control" type="number" id="data_management_retention_value" min="1" max="3650" value="30" aria-describedby="data-management-retention-help">
+                                    <label class="visually-hidden" for="data_management_retention_unit">Retention unit</label>
+                                    <select class="form-select" id="data_management_retention_unit" aria-label="Retention unit">
+                                        <option value="days">Days</option>
+                                        <option value="weeks">Weeks</option>
+                                        <option value="months">Months</option>
+                                        <option value="years">Years</option>
+                                    </select>
+                                </div>
+                                <input type="hidden" id="data_management_retention_days" value="30">
+                                <div class="form-text" id="data-management-retention-help">Automatic cleanup keeps the newest successful full backup as a safety baseline.</div>
+                            </div>
+                        </div>
+                        <div class="row g-3 mt-1">
+                            <div class="col-md-6">
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="data_management_partial_enabled" checked>
+                                    <label class="form-check-label" for="data_management_partial_enabled">Run partial backups daily between full backups</label>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="data_management_low_impact_mode" checked>
+                                    <label class="form-check-label" for="data_management_low_impact_mode">Use low impact mode for scheduled jobs</label>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="mt-3">
+                            <button class="btn btn-outline-secondary btn-sm" type="button" data-bs-toggle="collapse" data-bs-target="#data-management-advanced-scope-drawer" aria-expanded="false" aria-controls="data-management-advanced-scope-drawer">
+                                <i class="bi bi-sliders me-1"></i>Advanced backup scope
+                            </button>
+                        </div>
+                        <div class="collapse mt-3" id="data-management-advanced-scope-drawer">
+                            <div class="card card-body border-warning-subtle bg-warning-subtle">
+                                <div class="alert alert-warning mb-3" role="alert">
+                                    <i class="bi bi-exclamation-triangle-fill me-2"></i>
+                                    These backup scope controls are advanced. Modify them at your own risk because excluding a surface can create backups that are incomplete for restore or migration scenarios.
+                                </div>
+                                <div class="row g-3">
+                                    <div class="col-md-4">
+                                        <div class="form-check form-switch">
+                                            <input class="form-check-input" type="checkbox" role="switch" id="data_management_include_cosmos" checked aria-describedby="data-management-include-cosmos-help">
+                                            <label class="form-check-label" for="data_management_include_cosmos">
+                                                Include Cosmos DB data
+                                                <i class="bi bi-info-circle ms-1" data-bs-toggle="tooltip" title="Exports SimpleChat application records such as settings, users, workspaces, conversations, documents, agents, actions, prompts, and identities."></i>
+                                            </label>
+                                            <div class="form-text" id="data-management-include-cosmos-help">Core application records required for meaningful restore and migration.</div>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <div class="form-check form-switch">
+                                            <input class="form-check-input" type="checkbox" role="switch" id="data_management_include_ai_search" checked aria-describedby="data-management-include-ai-search-help">
+                                            <label class="form-check-label" for="data_management_include_ai_search">
+                                                Include AI Search indexes
+                                                <i class="bi bi-info-circle ms-1" data-bs-toggle="tooltip" title="Exports AI Search index schemas and retrievable documents for personal, group, and public search indexes."></i>
+                                            </label>
+                                            <div class="form-text" id="data-management-include-ai-search-help">Search index schemas and retrievable indexed documents.</div>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <div class="form-check form-switch">
+                                            <input class="form-check-input" type="checkbox" role="switch" id="data_management_include_source_blobs" aria-describedby="data-management-include-source-blobs-help data-management-source-blobs-lock-message">
+                                            <label class="form-check-label" for="data_management_include_source_blobs">
+                                                Include source document blobs
+                                                <i class="bi bi-info-circle ms-1" data-bs-toggle="tooltip" title="Copies original source files stored by Enhanced Citations. This is only available when Enhanced Citations is enabled."></i>
+                                            </label>
+                                            <div class="form-text" id="data-management-include-source-blobs-help">Original source files used by Enhanced Citations.</div>
+                                            <div class="form-text text-muted" id="data-management-source-blobs-lock-message"></div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="card p-3 mb-3 border-secondary-subtle" id="data-management-storage-section">
+                        <div class="d-flex align-items-center justify-content-between mb-3">
+                            <div>
+                                <h5 class="mb-1">Storage</h5>
+                                <p class="text-muted mb-0 small">Store backup artifacts in Azure Blob Storage.</p>
+                            </div>
+                            <button type="button" class="btn btn-outline-secondary btn-sm" id="data-management-test-storage-btn">
+                                <i class="bi bi-plug me-1"></i>Test Storage
+                            </button>
+                        </div>
+                        <div class="alert alert-info py-2 mb-3" id="data-management-storage-isolation-notice" role="note">
+                            <i class="bi bi-info-circle me-2"></i>
+                            Use a dedicated backup storage account. Data Management will reject storage that matches the Enhanced Citations connection string or Blob endpoint.
+                        </div>
+                        <div class="row g-3">
+                            <div class="col-md-4">
+                                <label class="form-label" for="data_management_storage_auth">Authentication</label>
+                                <select class="form-select" id="data_management_storage_auth">
+                                    <option value="managed_identity">Managed identity</option>
+                                    <option value="connection_string">Connection string</option>
+                                </select>
+                            </div>
+                            <div class="col-md-4" id="data-management-blob-endpoint-field">
+                                <label class="form-label" for="data_management_blob_endpoint">Blob endpoint</label>
+                                <input class="form-control" type="url" id="data_management_blob_endpoint" placeholder="https://account.blob.core.windows.net">
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label" for="data_management_container_name">Container</label>
+                                <input class="form-control" type="text" id="data_management_container_name" value="simplechat-backups">
+                            </div>
+                        </div>
+                        <div class="row g-3 mt-1">
+                            <div class="col-md-8" id="data-management-connection-string-field">
+                                <label class="form-label" for="data_management_connection_string">Connection string</label>
+                                <input class="form-control" type="password" id="data_management_connection_string" autocomplete="off" placeholder="Paste a connection string to save or replace it" aria-describedby="data-management-connection-string-status">
+                                <div class="form-text" id="data-management-connection-string-status">No connection string saved yet.</div>
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label" for="data_management_path_prefix">Blob prefix</label>
+                                <input class="form-control" type="text" id="data_management_path_prefix" value="simplechat-backups">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="card p-3 border-info-subtle" id="data-management-encryption-section">
+                        <div class="d-flex align-items-center justify-content-between mb-3">
+                            <div>
+                                <h5 class="mb-1">Encryption</h5>
+                                <p class="text-muted mb-0 small">Generate a 256-bit backup encryption key.</p>
+                            </div>
+                            <button type="button" class="btn btn-outline-primary btn-sm" id="data-management-generate-key-btn">
+                                <i class="bi bi-key me-1"></i>Generate Key
+                            </button>
+                        </div>
+                        <div class="form-check form-switch mb-3">
+                            <input class="form-check-input" type="checkbox" role="switch" id="data_management_encryption_enabled" checked>
+                            <label class="form-check-label" for="data_management_encryption_enabled">Encrypt backup artifacts</label>
+                        </div>
+                        <dl class="row mb-0">
+                            <dt class="col-sm-3">Key storage</dt>
+                            <dd class="col-sm-9" id="data-management-key-storage">Not configured</dd>
+                            <dt class="col-sm-3">Key reference</dt>
+                            <dd class="col-sm-9" id="data-management-key-reference">Not configured</dd>
+                        </dl>
+                        <div class="alert alert-warning d-flex align-items-start gap-2 mt-3 mb-0" id="data-management-key-storage-alert" role="status" aria-live="polite">
+                            <i class="bi bi-exclamation-triangle-fill mt-1" id="data-management-key-storage-alert-icon"></i>
+                            <div>
+                                <div class="fw-semibold" id="data-management-key-storage-alert-title">Key Vault is strongly recommended</div>
+                                <div class="small" id="data-management-key-storage-alert-message">Generated backup encryption keys are stored in the Data Management settings document when Key Vault is not enabled.</div>
+                                <a href="#security" id="data-management-key-vault-link">Open Key Vault settings</a>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="card p-3 mt-3 border-success-subtle" id="data-management-backup-performance-section">
+                        <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
+                            <div>
+                                <h5 class="mb-1">Cosmos Backup Performance</h5>
+                                <p class="text-muted mb-0 small">Backups stream deterministic checkpoint batches and commit only verified work. Higher concurrency can increase source Cosmos cost and pressure.</p>
+                            </div>
+                            <button type="button" class="btn btn-outline-info btn-sm" data-bs-toggle="modal" data-bs-target="#data-management-ru-boost-guide-modal">
+                                <i class="bi bi-info-circle me-1"></i>RU Boost Guide
+                            </button>
+                        </div>
+
+                        <div class="card p-3 mt-3 border-info-subtle" id="data-management-blob-backup-performance-section">
+                            <div class="mb-3">
+                                <h5 class="mb-1">Source Blob Backup Performance</h5>
+                                <p class="text-muted mb-0 small">Source files stream through bounded chunks and durable per-file checkpoints. Peak transfer buffering is bounded by concurrent transfers multiplied by chunk size.</p>
+                            </div>
+                            <div class="row g-3">
+                                <div class="col-md-4">
+                                    <label class="form-label" for="data_management_backup_blob_max_parallel_operations">Concurrent blob transfers</label>
+                                    <input class="form-control" type="number" id="data_management_backup_blob_max_parallel_operations" min="1" max="8" value="4" aria-describedby="data-management-backup-blob-memory-help">
+                                </div>
+                                <div class="col-md-4">
+                                    <label class="form-label" for="data_management_backup_blob_chunk_size_mib">Transfer chunk size (MiB)</label>
+                                    <input class="form-control" type="number" id="data_management_backup_blob_chunk_size_mib" min="1" max="16" value="8" aria-describedby="data-management-backup-blob-memory-help">
+                                </div>
+                                <div class="col-md-4">
+                                    <label class="form-label" for="data_management_backup_blob_retry_count">Blob retry attempts</label>
+                                    <input class="form-control" type="number" id="data_management_backup_blob_retry_count" min="1" max="10" value="5">
+                                </div>
+                            </div>
+                            <div class="form-text mt-2" id="data-management-backup-blob-memory-help">Defaults bound application transfer buffering to approximately 32 MiB, excluding Azure SDK overhead. Throttling temporarily reduces active transfers.</div>
+                        </div>
+                        <div class="row g-3">
+                            <div class="col-md-4">
+                                <label class="form-label" for="data_management_backup_max_parallel_operations">Concurrent batch staging</label>
+                                <input class="form-control" type="number" id="data_management_backup_max_parallel_operations" min="1" max="16" value="4">
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label" for="data_management_backup_retry_count">Retry attempts</label>
+                                <input class="form-control" type="number" id="data_management_backup_retry_count" min="1" max="10" value="5">
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label" for="data_management_backup_capacity_failure_policy">If source RU Boost is unavailable</label>
+                                <select class="form-select" id="data_management_backup_capacity_failure_policy">
+                                    <option value="continue_without_boost">Continue without boost</option>
+                                    <option value="fail">Fail before export</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="form-check form-switch mt-3">
+                            <input class="form-check-input" type="checkbox" role="switch" id="data_management_backup_temporary_source_ru_enabled">
+                            <label class="form-check-label" for="data_management_backup_temporary_source_ru_enabled">Enable source RU Boost for backups</label>
+                        </div>
+                        <div class="row g-3 mt-1" id="data-management-backup-temporary-ru-field">
+                            <div class="col-md-4">
+                                <label class="form-label" for="data_management_backup_temporary_source_ru">Source RU Boost target</label>
+                                <input class="form-control" type="number" id="data_management_backup_temporary_source_ru" min="1000" max="10000" step="1000" value="10000">
+                            </div>
+                            <div class="col-md-8 d-flex align-items-end">
+                                <div class="form-text mb-2">The backup records the current source capacity, raises only eligible targets up to 10,000 RU/s, and restores the original setting after completion, cancellation, failure, or recovery. This can increase Cosmos charges and requires source ARM throughput permission.</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="card p-3 mt-3 border-success-subtle" id="data-management-backup-operations-section">
+                        <div class="d-flex flex-wrap justify-content-between align-items-start gap-3">
+                            <div>
+                                <h5 class="mb-1">Backup Operations</h5>
+                                <p class="text-muted mb-0 small">Queue immediate full or partial backup jobs using the settings above.</p>
+                            </div>
+                            <div class="d-flex flex-wrap gap-2">
+                                <button type="button" class="btn btn-primary" id="data-management-run-full-backup-btn">
+                                    <i class="bi bi-archive me-1"></i>Queue Full Backup
+                                </button>
+                                <button type="button" class="btn btn-outline-primary" id="data-management-run-partial-backup-btn">
+                                    <i class="bi bi-archive-fill me-1"></i>Queue Partial Backup
+                                </button>
+                            </div>
+                        </div>
+                        <p class="text-muted mb-0 mt-2">Jobs use Cosmos-backed leases so scaled-out App Service workers do not run the same backup twice.</p>
+                    </div>
+                </div>
+
+                <!--
+                    THESIS: Migration is an evidence-gated operation, not a long settings form; this flow refuses the three-column picker wall.
+                    OWN-WORLD: Restrained Bootstrap admin surfaces, slate neutrals, one blue action accent, and semantic amber/red/green states.
+                    STORY: Configure a destination, define exhaustive scope, choose transfer behavior, prove readiness, confirm risk, then operate the durable job.
+                    FIRST VIEWPORT: A compact six-step rail sits above one focused work area with the current task, evidence, and one next action.
+                    FORM: Established-world extension, ranked first as a control-room checkpoint flow; staging is one focused panel at a time.
+                -->
+                <section class="card p-0 mb-4 shadow-sm migration-workflow" id="data-management-migration-section" aria-labelledby="data-management-migration-title">
+                    <header class="migration-workflow-header">
+                        <div>
+                            <h4 class="mb-1" id="data-management-migration-title">
+                                <i class="bi bi-arrow-left-right me-2" aria-hidden="true"></i>Migration
+                            </h4>
+                            <p class="mb-0">Move SimpleChat data through a reviewed, recoverable environment transfer.</p>
+                        </div>
+                        <div class="migration-workflow-readiness" id="data-management-migration-readiness" role="status" aria-live="polite">
+                            <span class="migration-readiness-dot" aria-hidden="true"></span>
+                            <span>Not reviewed</span>
+                        </div>
+                    </header>
+
+                    <div class="migration-workflow-body" id="data-management-migration-workflow-section">
+                        <nav class="migration-stepper" aria-label="Migration workflow">
+                            <button type="button" class="migration-step is-active" data-migration-step-button="target" aria-current="step">
+                                <span class="migration-step-marker">1</span>
+                                <span class="migration-step-copy">
+                                    <span class="migration-step-label">Target</span>
+                                    <span class="migration-step-state">Configure services</span>
+                                </span>
+                            </button>
+                            <button type="button" class="migration-step" data-migration-step-button="scope">
+                                <span class="migration-step-marker">2</span>
+                                <span class="migration-step-copy">
+                                    <span class="migration-step-label">Scope</span>
+                                    <span class="migration-step-state">Choose principals</span>
+                                </span>
+                            </button>
+                            <button type="button" class="migration-step" data-migration-step-button="options">
+                                <span class="migration-step-marker">3</span>
+                                <span class="migration-step-copy">
+                                    <span class="migration-step-label">What Moves</span>
+                                    <span class="migration-step-state">Choose behavior</span>
+                                </span>
+                            </button>
+                            <button type="button" class="migration-step" data-migration-step-button="review">
+                                <span class="migration-step-marker">4</span>
+                                <span class="migration-step-copy">
+                                    <span class="migration-step-label">Review</span>
+                                    <span class="migration-step-state">Run preflight</span>
+                                </span>
+                            </button>
+                            <button type="button" class="migration-step" data-migration-step-button="confirm">
+                                <span class="migration-step-marker">5</span>
+                                <span class="migration-step-copy">
+                                    <span class="migration-step-label">Confirm</span>
+                                    <span class="migration-step-state">Authorize execution</span>
+                                </span>
+                            </button>
+                            <button type="button" class="migration-step" data-migration-step-button="progress">
+                                <span class="migration-step-marker">6</span>
+                                <span class="migration-step-copy">
+                                    <span class="migration-step-label">Progress</span>
+                                    <span class="migration-step-state">Operate the job</span>
+                                </span>
+                            </button>
+                        </nav>
+
+                        <div class="alert alert-danger d-none mt-3 mb-0" id="data-management-migration-step-error" role="alert" tabindex="-1"></div>
+
+                        <!-- Target Step -->
+                        <section class="migration-stage" data-migration-step-panel="target" aria-labelledby="data-management-migration-target-heading">
+                            <div class="migration-stage-heading">
+                                <div>
+                                    <h5 id="data-management-migration-target-heading">Connect the destination</h5>
+                                    <p>Configure the services this migration will write to. Stored credentials remain redacted.</p>
+                                </div>
+                                <span class="badge text-bg-light border">Destination database: SimpleChat</span>
+                            </div>
+
+                            <div class="migration-target-grid">
+                                <section class="migration-service-panel" id="data-management-target-cosmos-section" aria-labelledby="data-management-target-cosmos-heading">
+                                    <div class="migration-service-heading">
+                                        <div>
+                                            <h6 id="data-management-target-cosmos-heading"><i class="bi bi-database me-2" aria-hidden="true"></i>Target Cosmos Database</h6>
+                                            <p>Required for every migration.</p>
+                                        </div>
+                                        <button type="button" class="btn btn-outline-secondary btn-sm" id="data-management-test-target-cosmos-btn">
+                                            <i class="bi bi-plug me-1" aria-hidden="true"></i>Test Cosmos
+                                        </button>
+                                    </div>
+                                    <div class="alert alert-info small" role="note">
+                                        Managed identity requires Cosmos DB Data Contributor and target network access.
+                                    </div>
+                                    <div class="row g-3">
+                                        <div class="col-md-4">
+                                            <label class="form-label" for="data_management_target_cosmos_auth">Authentication</label>
+                                            <select class="form-select" id="data_management_target_cosmos_auth">
+                                                <option value="managed_identity">Managed identity</option>
+                                                <option value="key">Account key</option>
+                                            </select>
+                                        </div>
+                                        <div class="col-md-5">
+                                            <label class="form-label" for="data_management_target_cosmos_endpoint">Endpoint</label>
+                                            <input class="form-control" type="url" id="data_management_target_cosmos_endpoint" placeholder="https://account.documents.azure.com:443/" autocomplete="off">
+                                        </div>
+                                        <div class="col-md-3">
+                                            <label class="form-label" for="data_management_target_cosmos_database">Database</label>
+                                            <input class="form-control" type="text" id="data_management_target_cosmos_database" value="SimpleChat" readonly aria-readonly="true" aria-describedby="data-management-target-cosmos-database-help">
+                                            <div class="form-text" id="data-management-target-cosmos-database-help">Fixed app contract.</div>
+                                        </div>
+                                    </div>
+                                    <div class="mt-3" id="data-management-target-cosmos-key-field">
+                                        <label class="form-label" for="data_management_target_cosmos_key">Account key</label>
+                                        <input class="form-control" type="password" id="data_management_target_cosmos_key" autocomplete="off" placeholder="Stored keys stay redacted after save">
+                                    </div>
+                                </section>
+
+                                <section class="migration-service-panel" id="data-management-target-ai-search-section" aria-labelledby="data-management-target-search-heading">
+                                    <div class="migration-service-heading">
+                                        <div>
+                                            <h6 id="data-management-target-search-heading"><i class="bi bi-search me-2" aria-hidden="true"></i>Target Search</h6>
+                                            <p>Required when AI Search documents are included.</p>
+                                        </div>
+                                        <button type="button" class="btn btn-outline-secondary btn-sm" id="data-management-test-target-search-btn">
+                                            <i class="bi bi-plug me-1" aria-hidden="true"></i>Test Search
+                                        </button>
+                                    </div>
+                                    <div class="row g-3">
+                                        <div class="col-md-4">
+                                            <label class="form-label" for="data_management_target_ai_search_auth">Authentication</label>
+                                            <select class="form-select" id="data_management_target_ai_search_auth">
+                                                <option value="managed_identity">Managed identity</option>
+                                                <option value="key">Admin key</option>
+                                            </select>
+                                        </div>
+                                        <div class="col-md-5">
+                                            <label class="form-label" for="data_management_target_ai_search_endpoint">Endpoint</label>
+                                            <input class="form-control" type="url" id="data_management_target_ai_search_endpoint" placeholder="https://search-service.search.windows.net" autocomplete="off">
+                                        </div>
+                                        <div class="col-md-3" id="data-management-target-ai-search-key-field">
+                                            <label class="form-label" for="data_management_target_ai_search_key">Admin key</label>
+                                            <input class="form-control" type="password" id="data_management_target_ai_search_key" autocomplete="off" placeholder="Stored keys stay redacted after save">
+                                        </div>
+                                    </div>
+                                </section>
+
+                                <section class="migration-service-panel" id="data-management-target-enhanced-citations-section" aria-labelledby="data-management-target-storage-heading">
+                                    <div class="migration-service-heading">
+                                        <div>
+                                            <h6 id="data-management-target-storage-heading"><i class="bi bi-file-earmark-lock me-2" aria-hidden="true"></i>Target Enhanced Citation Storage</h6>
+                                            <p>Required only when source document blobs are included.</p>
+                                        </div>
+                                        <button type="button" class="btn btn-outline-secondary btn-sm" id="data-management-test-target-ec-storage-btn">
+                                            <i class="bi bi-plug me-1" aria-hidden="true"></i>Test Storage
+                                        </button>
+                                    </div>
+                                    <div class="row g-3">
+                                        <div class="col-md-4">
+                                            <label class="form-label" for="data_management_target_ec_storage_auth">Authentication</label>
+                                            <select class="form-select" id="data_management_target_ec_storage_auth">
+                                                <option value="managed_identity">Managed identity</option>
+                                                <option value="connection_string">Connection string</option>
+                                            </select>
+                                        </div>
+                                        <div class="col-md-5" id="data-management-target-ec-blob-endpoint-field">
+                                            <label class="form-label" for="data_management_target_ec_blob_endpoint">Blob endpoint</label>
+                                            <input class="form-control" type="url" id="data_management_target_ec_blob_endpoint" placeholder="https://account.blob.core.windows.net" autocomplete="off">
+                                        </div>
+                                        <div class="col-md-8" id="data-management-target-ec-connection-string-field">
+                                            <label class="form-label" for="data_management_target_ec_connection_string">Connection string</label>
+                                            <input class="form-control" type="password" id="data_management_target_ec_connection_string" autocomplete="off" placeholder="Paste a connection string to save or replace it">
+                                        </div>
+                                    </div>
+                                </section>
+                            </div>
+                        </section>
+
+                        <!-- Scope Step -->
+                        <section class="migration-stage d-none" data-migration-step-panel="scope" aria-labelledby="data-management-migration-scope-heading">
+                            <div class="migration-stage-heading">
+                                <div>
+                                    <h5 id="data-management-migration-scope-heading">Choose who and what moves</h5>
+                                    <p>Selections persist while you search and page. “All” always uses the exhaustive server count.</p>
+                                </div>
+                                <div class="migration-scope-total" id="data-management-migration-scope-total" aria-live="polite">0 principal scopes selected</div>
+                            </div>
+
+                            <div class="migration-scope-tabs" role="tablist" aria-label="Migration scope type">
+                                <button type="button" class="btn btn-outline-primary active" data-migration-scope-tab="users" role="tab" aria-selected="true">Users <span class="badge text-bg-light ms-1" data-migration-scope-count="users">0</span></button>
+                                <button type="button" class="btn btn-outline-primary" data-migration-scope-tab="groups" role="tab" aria-selected="false">Groups <span class="badge text-bg-light ms-1" data-migration-scope-count="groups">0</span></button>
+                                <button type="button" class="btn btn-outline-primary" data-migration-scope-tab="public_workspaces" role="tab" aria-selected="false">Public workspaces <span class="badge text-bg-light ms-1" data-migration-scope-count="public_workspaces">0</span></button>
+                            </div>
+
+                            <section class="migration-scope-pane" data-migration-scope-pane="users" role="tabpanel" aria-label="Users">
+                                <input type="hidden" id="data_management_migration_users_mode" value="none">
+                                <fieldset>
+                                    <legend class="h6">Migration mode</legend>
+                                    <div class="migration-mode-options">
+                                        <label class="migration-mode-option">
+                                            <input type="radio" name="data_management_migration_users_mode_choice" value="none" data-migration-mode-option="users" checked>
+                                            <span><strong>None</strong><small>Skip users</small></span>
+                                        </label>
+                                        <label class="migration-mode-option">
+                                            <input type="radio" name="data_management_migration_users_mode_choice" value="selected" data-migration-mode-option="users">
+                                            <span><strong>Selected</strong><small>Choose across pages</small></span>
+                                        </label>
+                                        <label class="migration-mode-option">
+                                            <input type="radio" name="data_management_migration_users_mode_choice" value="all" data-migration-mode-option="users">
+                                            <span><strong>All</strong><small>Use exhaustive count</small></span>
+                                        </label>
+                                    </div>
+                                </fieldset>
+
+                                <div class="migration-catalog-workspace d-none" data-migration-catalog-workspace="users">
+                                    <div class="migration-catalog-column">
+                                        <div class="d-flex flex-wrap justify-content-between align-items-end gap-2 mb-2">
+                                            <div>
+                                                <h6 class="mb-1">Available users</h6>
+                                                <p class="small text-muted mb-0" data-migration-catalog-status="users">Search the server catalog.</p>
+                                            </div>
+                                            <div class="input-group input-group-sm migration-catalog-search">
+                                                <label class="visually-hidden" for="data_management_migration_users_search">Search users</label>
+                                                <input type="search" class="form-control" id="data_management_migration_users_search" placeholder="Search users" autocomplete="off">
+                                                <button type="button" class="btn btn-outline-secondary" id="data-management-search-users-btn">Search</button>
+                                            </div>
+                                        </div>
+                                        <div class="migration-catalog-list list-group" id="data-management-migration-users-available" aria-live="polite"></div>
+                                        <div class="migration-catalog-pagination">
+                                            <button type="button" class="btn btn-outline-secondary btn-sm" data-migration-page-previous="users" disabled>
+                                                <i class="bi bi-chevron-left me-1" aria-hidden="true"></i>Previous
+                                            </button>
+                                            <span class="small text-muted" data-migration-page-status="users">Page 1</span>
+                                            <button type="button" class="btn btn-outline-secondary btn-sm" data-migration-page-next="users" disabled>
+                                                Next<i class="bi bi-chevron-right ms-1" aria-hidden="true"></i>
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <aside class="migration-selection-column" aria-label="Selected users">
+                                        <div class="d-flex justify-content-between align-items-center mb-2">
+                                            <h6 class="mb-0">Selected</h6>
+                                            <span class="badge text-bg-primary" data-migration-selected-count="users">0</span>
+                                        </div>
+                                        <div class="migration-selected-list list-group" id="data-management-migration-users-selected"></div>
+                                    </aside>
+                                </div>
+
+                                <div class="migration-all-summary d-none" data-migration-all-summary="users" role="status">
+                                    <i class="bi bi-collection-fill" aria-hidden="true"></i>
+                                    <div>
+                                        <strong data-migration-all-count="users">Loading exhaustive count…</strong>
+                                        <span>Every current user record will be resolved by the server when the job starts.</span>
+                                    </div>
+                                </div>
+
+                                <div class="form-check form-switch mt-3">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="data_management_migration_users_documents" disabled>
+                                    <label class="form-check-label" for="data_management_migration_users_documents">Include users' documents</label>
+                                </div>
+                            </section>
+
+                            <section class="migration-scope-pane d-none" data-migration-scope-pane="groups" role="tabpanel" aria-label="Groups">
+                                <input type="hidden" id="data_management_migration_groups_mode" value="none">
+                                <fieldset>
+                                    <legend class="h6">Migration mode</legend>
+                                    <div class="migration-mode-options">
+                                        <label class="migration-mode-option">
+                                            <input type="radio" name="data_management_migration_groups_mode_choice" value="none" data-migration-mode-option="groups" checked>
+                                            <span><strong>None</strong><small>Skip groups</small></span>
+                                        </label>
+                                        <label class="migration-mode-option">
+                                            <input type="radio" name="data_management_migration_groups_mode_choice" value="selected" data-migration-mode-option="groups">
+                                            <span><strong>Selected</strong><small>Choose across pages</small></span>
+                                        </label>
+                                        <label class="migration-mode-option">
+                                            <input type="radio" name="data_management_migration_groups_mode_choice" value="all" data-migration-mode-option="groups">
+                                            <span><strong>All</strong><small>Use exhaustive count</small></span>
+                                        </label>
+                                    </div>
+                                </fieldset>
+                                <div class="migration-catalog-workspace d-none" data-migration-catalog-workspace="groups">
+                                    <div class="migration-catalog-column">
+                                        <div class="d-flex flex-wrap justify-content-between align-items-end gap-2 mb-2">
+                                            <div>
+                                                <h6 class="mb-1">Available groups</h6>
+                                                <p class="small text-muted mb-0" data-migration-catalog-status="groups">Search the server catalog.</p>
+                                            </div>
+                                            <div class="input-group input-group-sm migration-catalog-search">
+                                                <label class="visually-hidden" for="data_management_migration_groups_search">Search groups</label>
+                                                <input type="search" class="form-control" id="data_management_migration_groups_search" placeholder="Search groups" autocomplete="off">
+                                                <button type="button" class="btn btn-outline-secondary" id="data-management-search-groups-btn">Search</button>
+                                            </div>
+                                        </div>
+                                        <div class="migration-catalog-list list-group" id="data-management-migration-groups-available" aria-live="polite"></div>
+                                        <div class="migration-catalog-pagination">
+                                            <button type="button" class="btn btn-outline-secondary btn-sm" data-migration-page-previous="groups" disabled><i class="bi bi-chevron-left me-1" aria-hidden="true"></i>Previous</button>
+                                            <span class="small text-muted" data-migration-page-status="groups">Page 1</span>
+                                            <button type="button" class="btn btn-outline-secondary btn-sm" data-migration-page-next="groups" disabled>Next<i class="bi bi-chevron-right ms-1" aria-hidden="true"></i></button>
+                                        </div>
+                                    </div>
+                                    <aside class="migration-selection-column" aria-label="Selected groups">
+                                        <div class="d-flex justify-content-between align-items-center mb-2">
+                                            <h6 class="mb-0">Selected</h6>
+                                            <span class="badge text-bg-primary" data-migration-selected-count="groups">0</span>
+                                        </div>
+                                        <div class="migration-selected-list list-group" id="data-management-migration-groups-selected"></div>
+                                    </aside>
+                                </div>
+                                <div class="migration-all-summary d-none" data-migration-all-summary="groups" role="status">
+                                    <i class="bi bi-collection-fill" aria-hidden="true"></i>
+                                    <div>
+                                        <strong data-migration-all-count="groups">Loading exhaustive count…</strong>
+                                        <span>Every current group record will be resolved by the server when the job starts.</span>
+                                    </div>
+                                </div>
+                                <div class="form-check form-switch mt-3">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="data_management_migration_groups_documents" disabled>
+                                    <label class="form-check-label" for="data_management_migration_groups_documents">Include group documents</label>
+                                </div>
+                            </section>
+
+                            <section class="migration-scope-pane d-none" data-migration-scope-pane="public_workspaces" role="tabpanel" aria-label="Public Workspaces">
+                                <input type="hidden" id="data_management_migration_public_workspaces_mode" value="none">
+                                <fieldset>
+                                    <legend class="h6">Migration mode</legend>
+                                    <div class="migration-mode-options">
+                                        <label class="migration-mode-option">
+                                            <input type="radio" name="data_management_migration_public_workspaces_mode_choice" value="none" data-migration-mode-option="public_workspaces" checked>
+                                            <span><strong>None</strong><small>Skip public workspaces</small></span>
+                                        </label>
+                                        <label class="migration-mode-option">
+                                            <input type="radio" name="data_management_migration_public_workspaces_mode_choice" value="selected" data-migration-mode-option="public_workspaces">
+                                            <span><strong>Selected</strong><small>Choose across pages</small></span>
+                                        </label>
+                                        <label class="migration-mode-option">
+                                            <input type="radio" name="data_management_migration_public_workspaces_mode_choice" value="all" data-migration-mode-option="public_workspaces">
+                                            <span><strong>All</strong><small>Use exhaustive count</small></span>
+                                        </label>
+                                    </div>
+                                </fieldset>
+                                <div class="migration-catalog-workspace d-none" data-migration-catalog-workspace="public_workspaces">
+                                    <div class="migration-catalog-column">
+                                        <div class="d-flex flex-wrap justify-content-between align-items-end gap-2 mb-2">
+                                            <div>
+                                                <h6 class="mb-1">Available public workspaces</h6>
+                                                <p class="small text-muted mb-0" data-migration-catalog-status="public_workspaces">Search the server catalog.</p>
+                                            </div>
+                                            <div class="input-group input-group-sm migration-catalog-search">
+                                                <label class="visually-hidden" for="data_management_migration_public_workspaces_search">Search public workspaces</label>
+                                                <input type="search" class="form-control" id="data_management_migration_public_workspaces_search" placeholder="Search public workspaces" autocomplete="off">
+                                                <button type="button" class="btn btn-outline-secondary" id="data-management-search-public-workspaces-btn">Search</button>
+                                            </div>
+                                        </div>
+                                        <div class="migration-catalog-list list-group" id="data-management-migration-public-workspaces-available" aria-live="polite"></div>
+                                        <div class="migration-catalog-pagination">
+                                            <button type="button" class="btn btn-outline-secondary btn-sm" data-migration-page-previous="public_workspaces" disabled><i class="bi bi-chevron-left me-1" aria-hidden="true"></i>Previous</button>
+                                            <span class="small text-muted" data-migration-page-status="public_workspaces">Page 1</span>
+                                            <button type="button" class="btn btn-outline-secondary btn-sm" data-migration-page-next="public_workspaces" disabled>Next<i class="bi bi-chevron-right ms-1" aria-hidden="true"></i></button>
+                                        </div>
+                                    </div>
+                                    <aside class="migration-selection-column" aria-label="Selected public workspaces">
+                                        <div class="d-flex justify-content-between align-items-center mb-2">
+                                            <h6 class="mb-0">Selected</h6>
+                                            <span class="badge text-bg-primary" data-migration-selected-count="public_workspaces">0</span>
+                                        </div>
+                                        <div class="migration-selected-list list-group" id="data-management-migration-public-workspaces-selected"></div>
+                                    </aside>
+                                </div>
+                                <div class="migration-all-summary d-none" data-migration-all-summary="public_workspaces" role="status">
+                                    <i class="bi bi-collection-fill" aria-hidden="true"></i>
+                                    <div>
+                                        <strong data-migration-all-count="public_workspaces">Loading exhaustive count…</strong>
+                                        <span>Every current public workspace record will be resolved by the server when the job starts.</span>
+                                    </div>
+                                </div>
+                                <div class="form-check form-switch mt-3">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="data_management_migration_public_workspaces_documents" disabled>
+                                    <label class="form-check-label" for="data_management_migration_public_workspaces_documents">Include public workspace documents</label>
+                                </div>
+                            </section>
+                        </section>
+
+                        <!-- Content and Options Step -->
+                        <section class="migration-stage d-none" data-migration-step-panel="options" aria-labelledby="data-management-migration-options-heading">
+                            <div class="migration-stage-heading">
+                                <div>
+                                    <h5 id="data-management-migration-options-heading">Choose what happens at the destination</h5>
+                                    <p>Choose whether to copy only missing items, catch up changes, or make migrated destination data match the source.</p>
+                                </div>
+                            </div>
+
+                            <fieldset class="migration-option-section" id="data-management-migration-mode-section">
+                                <legend>Destination behavior</legend>
+                                <div class="btn-group flex-wrap" role="radiogroup" aria-label="Migration destination behavior">
+                                    <input class="btn-check" type="radio" name="data_management_migration_mode" id="data_management_migration_mode_new_only" value="new_only" checked>
+                                    <label class="btn btn-outline-primary" for="data_management_migration_mode_new_only">Copy missing items only</label>
+                                    <input class="btn-check" type="radio" name="data_management_migration_mode" id="data_management_migration_mode_delta_upsert" value="delta_upsert">
+                                    <label class="btn btn-outline-primary" for="data_management_migration_mode_delta_upsert">Catch up changed items</label>
+                                    <input class="btn-check" type="radio" name="data_management_migration_mode" id="data_management_migration_mode_mirror_with_deletions" value="mirror_with_deletions">
+                                    <label class="btn btn-outline-danger" for="data_management_migration_mode_mirror_with_deletions">Make destination match source</label>
+                                </div>
+                                <p class="text-muted small mt-2 mb-0" id="data-management-migration-mode-description" aria-live="polite">
+                                    Copies source items that are absent from the destination. Existing destination data is never updated or deleted.
+                                </p>
+                                <div class="row g-3 mt-1 d-none" id="data-management-migration-baseline-field">
+                                    <div class="col-lg-7">
+                                        <label class="form-label" for="data_management_migration_baseline_job_id">Previous completed migration job ID</label>
+                                        <input class="form-control" type="text" id="data_management_migration_baseline_job_id" autocomplete="off" placeholder="Leave blank to use the latest compatible completed migration">
+                                        <div class="form-text">Leave blank to let SimpleChat choose the latest compatible completed migration as the starting point for this catch-up run.</div>
+                                    </div>
+                                </div>
+                            </fieldset>
+
+                            <fieldset class="migration-option-section">
+                                <legend>Data surfaces</legend>
+                                <div class="row g-3">
+                                    <div class="col-lg-6">
+                                        <div class="form-check form-switch">
+                                            <input class="form-check-input" type="checkbox" role="switch" id="data_management_migration_include_ai_search" checked>
+                                            <label class="form-check-label" for="data_management_migration_include_ai_search">Migrate matching AI Search documents</label>
+                                        </div>
+                                        <div class="form-check mt-3" id="data-management-migration-search-write-freeze">
+                                            <input class="form-check-input" type="checkbox" id="data_management_migration_target_search_writes_frozen">
+                                            <label class="form-check-label" for="data_management_migration_target_search_writes_frozen">I confirm external destination AI Search writers are frozen</label>
+                                            <div class="form-text">SimpleChat pauses its own target indexing. Freeze other writers before review.</div>
+                                        </div>
+                                    </div>
+                                    <div class="col-lg-6">
+                                        <div class="form-check form-switch">
+                                            <input class="form-check-input" type="checkbox" role="switch" id="data_management_migration_include_source_blobs">
+                                            <label class="form-check-label" for="data_management_migration_include_source_blobs">Migrate selected source document blobs</label>
+                                            <div class="form-text">Requires Enhanced Citation storage at both source and destination.</div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </fieldset>
+
+                            <fieldset class="migration-option-section" id="data-management-migration-performance-section">
+                                <legend>Performance and resume</legend>
+                                <p class="text-muted small">Migration uses durable resource checkpoints and retains the same migration ID after Retry or Resume.</p>
+                                <div class="row g-3">
+                                    <div class="col-md-4">
+                                        <label class="form-label" for="data_management_migration_max_parallel_operations">Concurrent operations</label>
+                                        <input class="form-control" type="number" id="data_management_migration_max_parallel_operations" min="1" max="32" value="8">
+                                    </div>
+                                    <div class="col-md-4">
+                                        <label class="form-label" for="data_management_migration_retry_count">Retry attempts</label>
+                                        <input class="form-control" type="number" id="data_management_migration_retry_count" min="1" max="10" value="5">
+                                    </div>
+                                    <div class="col-md-4">
+                                        <label class="form-label" for="data_management_migration_skip_recent_within_hours">Skip prior successes within hours</label>
+                                        <input class="form-control" type="number" id="data_management_migration_skip_recent_within_hours" min="0" max="8760" value="0">
+                                    </div>
+                                </div>
+                                <div class="form-check form-switch mt-3">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="data_management_migration_temporary_destination_ru_enabled">
+                                    <label class="form-check-label" for="data_management_migration_temporary_destination_ru_enabled">Enable destination RU Boost for this migration</label>
+                                    <button type="button" class="btn btn-outline-info btn-sm ms-2" data-bs-toggle="modal" data-bs-target="#data-management-ru-boost-guide-modal">
+                                        <i class="bi bi-info-circle me-1"></i>What permissions are needed?
+                                    </button>
+                                </div>
+                                <div class="row g-3 mt-1" id="data-management-migration-temporary-ru-field">
+                                    <div class="col-md-3">
+                                        <label class="form-label" for="data_management_migration_temporary_destination_ru">Destination RU Boost target</label>
+                                        <input class="form-control" type="number" id="data_management_migration_temporary_destination_ru" min="1000" max="10000" step="1000" value="10000">
+                                    </div>
+                                    <div class="col-md-3">
+                                        <label class="form-label" for="data_management_target_cosmos_subscription_id">Subscription ID</label>
+                                        <input class="form-control" type="text" id="data_management_target_cosmos_subscription_id" autocomplete="off" placeholder="Required for RU Boost">
+                                    </div>
+                                    <div class="col-md-3">
+                                        <label class="form-label" for="data_management_target_cosmos_resource_group">Resource group</label>
+                                        <input class="form-control" type="text" id="data_management_target_cosmos_resource_group" autocomplete="off" placeholder="Required for RU Boost">
+                                    </div>
+                                    <div class="col-md-3 d-flex align-items-end">
+                                        <button type="button" class="btn btn-outline-secondary w-100" id="data-management-test-target-cosmos-ru-boost-btn">
+                                            <i class="bi bi-speedometer me-1" aria-hidden="true"></i>Test RU Boost
+                                        </button>
+                                    </div>
+                                    <div class="col-12">
+                                        <div class="form-text">RU Boost validates Azure management-plane throughput permissions separately from Cosmos data-copy access. Eligible capacity is raised only up to 10,000 RU/s during execution and restored after completion or failure.</div>
+                                    </div>
+                                </div>
+                            </fieldset>
+                        </section>
+
+                        <!-- Review Step -->
+                        <section class="migration-stage d-none" data-migration-step-panel="review" aria-labelledby="data-management-migration-review-heading">
+                            <div class="migration-stage-heading">
+                                <div>
+                                    <h5 id="data-management-migration-review-heading">Prove the plan is ready</h5>
+                                    <p>Preflight runs server-owned access probes and inventory. Any earlier change makes this review stale.</p>
+                                </div>
+                                <div class="d-flex flex-wrap gap-2">
+                                    <button type="button" class="btn btn-outline-secondary btn-sm" id="data-management-test-migration-access-btn">
+                                        <i class="bi bi-shield-check me-1" aria-hidden="true"></i>Validate Cosmos Access
+                                    </button>
+                                    <button type="button" class="btn btn-primary" id="data-management-migration-preview-btn">
+                                        <i class="bi bi-clipboard2-check me-1" aria-hidden="true"></i>Run Preflight Review
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="migration-review-empty" id="data-management-migration-review-empty">
+                                <i class="bi bi-clipboard2-pulse" aria-hidden="true"></i>
+                                <div>
+                                    <strong>Review has not run.</strong>
+                                    <span>Run preflight to verify target access, counts, collisions, locks, and capacity policy.</span>
+                                </div>
+                            </div>
+                            <div class="d-none" id="data-management-migration-summary" aria-live="polite"></div>
+                            <div class="d-none" id="data-management-migration-review-checks"></div>
+                            <button type="button" class="btn btn-link btn-sm px-0 mt-3 d-none" id="data-management-refresh-migration-summary-btn">
+                                <i class="bi bi-arrow-clockwise me-1" aria-hidden="true"></i>Refresh review
+                            </button>
+                        </section>
+
+                        <!-- Confirm Step -->
+                        <section class="migration-stage d-none" data-migration-step-panel="confirm" aria-labelledby="data-management-migration-confirm-heading">
+                            <div class="migration-stage-heading">
+                                <div>
+                                    <h5 id="data-management-migration-confirm-heading">Confirm execution</h5>
+                                    <p>Review the final server-normalized plan. Submission is guarded against duplicate requests.</p>
+                                </div>
+                            </div>
+                            <div class="migration-confirm-summary" id="data-management-migration-confirm-summary">
+                                <p class="text-muted mb-0">Complete preflight review before confirmation.</p>
+                            </div>
+                            <div class="alert alert-danger mt-3 mb-0 d-none" id="data-management-migration-mirror-confirmation" role="alert">
+                                <strong>Destructive destination cleanup.</strong> Only destination items previously created by SimpleChat migration may be deleted. Unowned destination data is retained and reported as a conflict.
+                                <label class="form-label mt-3" for="data_management_migration_mirror_confirmation_phrase">Type <code>MAKE DESTINATION MATCH SOURCE</code> to authorize this run</label>
+                                <input class="form-control" type="text" id="data_management_migration_mirror_confirmation_phrase" autocomplete="off">
+                            </div>
+                            <div class="form-check mt-3">
+                                <input class="form-check-input" type="checkbox" id="data_management_migration_final_confirmation">
+                                <label class="form-check-label" for="data_management_migration_final_confirmation">I reviewed the normalized plan, destination checks, warnings, and operational impact.</label>
+                            </div>
+                            <button type="button" class="btn btn-warning mt-3" id="data-management-execute-migration-btn" disabled aria-disabled="true">
+                                <i class="bi bi-arrow-left-right me-1" aria-hidden="true"></i>Execute Migration
+                            </button>
+                        </section>
+
+                        <!-- Progress Step -->
+                        <section class="migration-stage d-none" data-migration-step-panel="progress" aria-labelledby="data-management-migration-progress-heading">
+                            <div class="migration-stage-heading">
+                                <div>
+                                    <h5 id="data-management-migration-progress-heading">Operate the migration</h5>
+                                    <p>Progress comes from the durable job record. Cancel, Retry, and Resume retain verified checkpoints.</p>
+                                </div>
+                                <div class="d-flex flex-wrap gap-2">
+                                    <button type="button" class="btn btn-outline-primary btn-sm d-none" id="data-management-migration-start-new-btn">
+                                        <i class="bi bi-plus-circle me-1" aria-hidden="true"></i>Start new migration
+                                    </button>
+                                    <button type="button" class="btn btn-outline-secondary btn-sm d-none" id="data-management-migration-view-job-btn">
+                                        <i class="bi bi-list-check me-1" aria-hidden="true"></i>View full job log
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="migration-progress-empty" id="data-management-migration-progress-empty">
+                                <i class="bi bi-hourglass-split" aria-hidden="true"></i>
+                                <div>
+                                    <strong>No migration is attached to this workflow yet.</strong>
+                                    <span>After execution, this stage follows the queued job and exposes its recovery actions.</span>
+                                </div>
+                            </div>
+                            <div class="d-none" id="data-management-migration-workflow-progress">
+                                <div id="data-management-migration-workflow-progress-summary"></div>
+                                <div id="data-management-migration-workflow-progress-state"></div>
+                                <div class="d-flex flex-wrap gap-2 mt-3" id="data-management-migration-workflow-progress-actions"></div>
+                            </div>
+                        </section>
+
+                        <footer class="migration-workflow-footer">
+                            <div>
+                                <button type="button" class="btn btn-outline-secondary" id="data-management-migration-back-btn" disabled>
+                                    <i class="bi bi-arrow-left me-1" aria-hidden="true"></i>Back
+                                </button>
+                                <button type="button" class="btn btn-primary" id="data-management-migration-next-btn">
+                                    Continue to Scope<i class="bi bi-arrow-right ms-1" aria-hidden="true"></i>
+                                </button>
+                            </div>
+                            <span class="small text-muted" id="data-management-migration-step-position">Step 1 of 6</span>
+                        </footer>
+                    </div>
+                </section>
+
+                <div class="card p-4 mb-4 border-danger shadow-sm" id="data-management-cosmos-editor-section" data-ignore-data-management-change="true">
+                    <div class="d-flex flex-wrap align-items-start justify-content-between gap-3 mb-3">
+                        <div>
+                            <h4 class="mb-1"><i class="bi bi-database-exclamation me-2"></i>Cosmos DB JSON Editor</h4>
+                            <p class="text-muted mb-0 small">Query SimpleChat Cosmos DB containers, inspect one document, and save JSON changes with ETag protection.</p>
+                        </div>
+                        <button type="button" class="btn btn-danger" id="data-management-cosmos-editor-open-danger-btn">
+                            <i class="bi bi-unlock me-1"></i>Unlock Editor
+                        </button>
+                    </div>
+                    <div class="alert alert-danger mb-3" role="alert">
+                        This tool can modify production Cosmos DB documents directly. Use it only for targeted admin repair or investigation after you understand the impact.
+                    </div>
+                    <div class="alert alert-warning mb-3" id="data-management-cosmos-editor-locked-message" role="status">
+                        The Cosmos DB JSON editor is locked. Acknowledge the danger prompt before querying or editing data.
+                    </div>
+                    <div class="d-none" id="data-management-cosmos-editor-workspace">
+                        <div class="row g-3">
+                            <div class="col-lg-4">
+                                <label class="form-label" for="data_management_cosmos_editor_container">Container</label>
+                                <select class="form-select" id="data_management_cosmos_editor_container">
+                                    <option value="">Loading containers...</option>
+                                </select>
+                                <div class="form-text" id="data-management-cosmos-editor-container-help">Choose a known SimpleChat Cosmos DB container.</div>
+                            </div>
+                            <div class="col-lg-2">
+                                <label class="form-label" for="data_management_cosmos_editor_page_size">Page size</label>
+                                <input class="form-control" type="number" id="data_management_cosmos_editor_page_size" min="1" max="100" value="100">
+                                <div class="form-text">Max 100 per request.</div>
+                            </div>
+                            <div class="col-lg-6">
+                                <label class="form-label" for="data_management_cosmos_editor_query">SELECT query</label>
+                                <textarea class="form-control font-monospace" id="data_management_cosmos_editor_query" rows="4" placeholder="Leave empty to browse the first 100 documents. Custom queries must start with SELECT."></textarea>
+                                <div class="form-text">Empty query returns only the first 100 documents. Custom SELECT queries can page beyond 100 with Next Page.</div>
+                            </div>
+                        </div>
+                        <div class="d-flex flex-wrap align-items-center gap-2 mt-3">
+                            <button type="button" class="btn btn-primary" id="data-management-cosmos-editor-run-query-btn">
+                                <i class="bi bi-search me-1"></i>Run Query
+                            </button>
+                            <span class="small text-muted" id="data-management-cosmos-editor-query-status">No query has run yet.</span>
+                        </div>
+                        <div class="form-text mt-2">
+                            Query results and the JSON editor open in a modal so the Data Management page stays compact.
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card p-4 mb-4 border-primary shadow-sm" id="data-management-backup-inventory-section">
+                    <div class="d-flex flex-wrap align-items-start justify-content-between gap-3 mb-3">
+                        <div>
+                            <h4 class="mb-1">Backup Inventory</h4>
+                            <p class="text-muted mb-0 small">Track completed full and partial backups created by Data Management jobs.</p>
+                        </div>
+                        <div class="d-flex flex-wrap align-items-center gap-2">
+                            <button type="button" class="btn btn-outline-danger btn-sm" id="data-management-run-retention-cleanup-btn"
+                                    data-bs-toggle="tooltip" data-bs-placement="bottom"
+                                    title="Permanently deletes backups older than the configured retention period, along with their stored artifacts. Backups still inside the retention window are never touched.">
+                                <i class="bi bi-trash3 me-1"></i>Run Retention Cleanup
+                            </button>
+                            <button type="button" class="btn btn-link btn-sm p-0 text-decoration-none" id="data-management-retention-cleanup-info-btn"
+                                    data-bs-toggle="collapse" data-bs-target="#data-management-retention-cleanup-help"
+                                    aria-expanded="false" aria-controls="data-management-retention-cleanup-help"
+                                    aria-label="What does Run Retention Cleanup do?">
+                                <i class="bi bi-info-circle" aria-hidden="true"></i>
+                            </button>
+                            <button type="button" class="btn btn-outline-secondary btn-sm" id="data-management-refresh-backups-btn">
+                                <i class="bi bi-arrow-clockwise me-1"></i>Refresh
+                            </button>
+                        </div>
+                    </div>
+                    <div class="collapse mb-3" id="data-management-retention-cleanup-help">
+                        <div class="alert alert-info small mb-0" role="note">
+                            <div class="fw-semibold mb-1"><i class="bi bi-info-circle me-1" aria-hidden="true"></i>What does Run Retention Cleanup do?</div>
+                            <p class="mb-2">
+                                It permanently deletes backups whose age exceeds the retention period configured in Data Management settings,
+                                and removes their stored artifacts from the backup container. Backups newer than the retention cutoff are left alone.
+                            </p>
+                            <ul class="mb-2 ps-3">
+                                <li>Only backups in a finished state are eligible; running or queued jobs are skipped.</li>
+                                <li>When <em>Keep latest full backup</em> is enabled, the most recent successful full backup is protected even if it is past the cutoff.</li>
+                                <li>Each run deletes at most 25 backups, so very large cleanups may need several runs.</li>
+                                <li>Cleanup also runs automatically on the configured schedule; this button just runs it now.</li>
+                            </ul>
+                            <p class="mb-0 text-muted">
+                                Seeing &ldquo;found no expired backups to delete&rdquo; means every backup is still inside the retention window. That is expected, not an error.
+                            </p>
+                        </div>
+                    </div>
+                    <div class="row g-3 mb-3" role="group" aria-label="Backup inventory filters">
+                        <div class="col-lg-4">
+                            <button type="button" class="btn btn-primary w-100 h-100 text-start" id="data-management-view-all-backups-btn" data-backup-filter="all" aria-pressed="true">
+                                <span class="d-flex align-items-center gap-2 small text-white-50">
+                                    <i class="bi bi-check-circle"></i>
+                                    <span>Available backups</span>
+                                </span>
+                                <span class="d-block fs-3 fw-semibold" id="data-management-available-backup-count">0</span>
+                                <span class="d-block small text-white-50">Completed backups ready to inspect or restore later.</span>
+                            </button>
+                        </div>
+                        <div class="col-lg-4">
+                            <button type="button" class="btn btn-outline-primary w-100 h-100 text-start" id="data-management-view-full-backups-btn" data-backup-filter="full" aria-pressed="false">
+                                <span class="d-flex align-items-center gap-2 small text-muted">
+                                    <i class="bi bi-archive"></i>
+                                    <span>Full backups</span>
+                                </span>
+                                <span class="d-block fs-3 fw-semibold" id="data-management-full-backup-count">0</span>
+                                <span class="d-block small text-muted">Complete snapshots across the selected backup surfaces.</span>
+                            </button>
+                        </div>
+                        <div class="col-lg-4">
+                            <button type="button" class="btn btn-outline-primary w-100 h-100 text-start" id="data-management-view-partial-backups-btn" data-backup-filter="partial" aria-pressed="false">
+                                <span class="d-flex align-items-center gap-2 small text-muted">
+                                    <i class="bi bi-archive-fill"></i>
+                                    <span>Partial backups</span>
+                                </span>
+                                <span class="d-block fs-3 fw-semibold" id="data-management-partial-backup-count">0</span>
+                                <span class="d-block small text-muted">Daily change captures between full backup windows.</span>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="row g-2 align-items-end mb-3" aria-label="Backup inventory query filters">
+                        <div class="col-sm-6 col-lg-2">
+                            <label class="form-label small" for="data_management_backup_status_filter">Status</label>
+                            <select class="form-select form-select-sm" id="data_management_backup_status_filter">
+                                <option value="available" selected>Available</option>
+                                <option value="">All statuses</option>
+                                <option value="completed">Completed</option>
+                                <option value="completed_with_warnings">Completed with warnings</option>
+                                <option value="queued">Queued</option>
+                                <option value="running">Running</option>
+                                <option value="failed">Failed</option>
+                                <option value="canceled">Canceled</option>
+                            </select>
+                        </div>
+                        <div class="col-sm-6 col-lg-2">
+                            <label class="form-label small" for="data_management_backup_scheduled_filter">Run type</label>
+                            <select class="form-select form-select-sm" id="data_management_backup_scheduled_filter">
+                                <option value="all" selected>Scheduled and manual</option>
+                                <option value="scheduled">Scheduled</option>
+                                <option value="manual">Manual</option>
+                            </select>
+                        </div>
+                        <div class="col-sm-6 col-lg-2">
+                            <label class="form-label small" for="data_management_backup_created_from">Created from</label>
+                            <input class="form-control form-control-sm" type="date" id="data_management_backup_created_from" />
+                        </div>
+                        <div class="col-sm-6 col-lg-2">
+                            <label class="form-label small" for="data_management_backup_created_to">Created through</label>
+                            <input class="form-control form-control-sm" type="date" id="data_management_backup_created_to" />
+                        </div>
+                        <div class="col-sm-6 col-lg-2">
+                            <label class="form-label small" for="data_management_backup_page_size">Rows per page</label>
+                            <select class="form-select form-select-sm" id="data_management_backup_page_size">
+                                <option value="10">10</option>
+                                <option value="25" selected>25</option>
+                                <option value="50">50</option>
+                                <option value="100">100</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="table-responsive">
+                        <table class="table table-sm align-middle">
+                            <thead>
+                                <tr>
+                                    <th scope="col">Backup</th>
+                                    <th scope="col">Completed</th>
+                                    <th scope="col">Contents</th>
+                                    <th scope="col">Storage</th>
+                                    <th scope="col">Protection</th>
+                                    <th scope="col">Warnings</th>
+                                    <th scope="col">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="data-management-backups-tbody">
+                                <tr>
+                                    <td colspan="7" class="text-muted">Backup inventory has not loaded yet.</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <nav class="d-flex flex-wrap align-items-center justify-content-between gap-2" aria-label="Backup inventory pagination">
+                        <span class="small text-muted" id="data-management-backup-pagination-status" role="status" aria-live="polite">Page 1 has not loaded yet.</span>
+                        <div class="btn-group btn-group-sm" role="group" aria-label="Backup inventory pages">
+                            <button type="button" class="btn btn-outline-secondary" id="data-management-backup-previous-page-btn" disabled aria-disabled="true">
+                                <i class="bi bi-chevron-left me-1"></i>Previous
+                            </button>
+                            <button type="button" class="btn btn-outline-secondary" id="data-management-backup-next-page-btn" disabled aria-disabled="true">
+                                Next<i class="bi bi-chevron-right ms-1"></i>
+                            </button>
+                        </div>
+                    </nav>
+                </div>
+
+                <div class="modal fade" id="data-management-restore-modal" tabindex="-1" aria-labelledby="data-management-restore-title" aria-hidden="true">
+                    <div class="modal-dialog modal-xl modal-dialog-scrollable">
+                        <div class="modal-content">
+                            <div class="modal-header">
+                                <div>
+                                    <h5 class="modal-title" id="data-management-restore-title">Restore Backup</h5>
+                                    <p class="text-muted small mb-0">Review the target, policy, and backup manifest before queueing a restore job.</p>
+                                </div>
+                                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                            </div>
+                            <div class="modal-body">
+                                <div class="alert alert-warning" role="alert">
+                                    Restore writes data into the configured target Cosmos DB, AI Search, and Enhanced Citation Storage services. Create-only mode blocks existing destination collisions; overwrite mode requires a separate phrase.
+                                </div>
+                                <section class="border rounded p-3 mb-3" aria-labelledby="data-management-restore-backup-heading">
+                                    <h6 class="mb-2" id="data-management-restore-backup-heading">Selected backup</h6>
+                                    <div class="row g-2" id="data-management-restore-backup-summary">
+                                        <div class="col-12 text-muted">Choose Restore from a backup row.</div>
+                                    </div>
+                                </section>
+                                <section class="border rounded p-3 mb-3" aria-labelledby="data-management-restore-policy-heading">
+                                    <h6 class="mb-3" id="data-management-restore-policy-heading">Restore policy and surfaces</h6>
+                                    <div class="row g-3">
+                                        <div class="col-md-4">
+                                            <label class="form-label" for="data_management_restore_policy">Collision policy</label>
+                                            <select class="form-select" id="data_management_restore_policy">
+                                                <option value="create_only" selected>Create only (block collisions)</option>
+                                                <option value="overwrite_existing">Overwrite existing target records</option>
+                                            </select>
+                                            <div class="form-text">Create-only is non-destructive and recommended for first restore attempts.</div>
+                                        </div>
+                                        <div class="col-md-8">
+                                            <fieldset>
+                                                <legend class="form-label">Restore surfaces</legend>
+                                                <div class="d-flex flex-wrap gap-3">
+                                                    <div class="form-check form-switch">
+                                                        <input class="form-check-input" type="checkbox" role="switch" id="data_management_restore_include_cosmos" checked>
+                                                        <label class="form-check-label" for="data_management_restore_include_cosmos">Cosmos DB</label>
+                                                    </div>
+                                                    <div class="form-check form-switch">
+                                                        <input class="form-check-input" type="checkbox" role="switch" id="data_management_restore_include_ai_search" checked>
+                                                        <label class="form-check-label" for="data_management_restore_include_ai_search">AI Search</label>
+                                                    </div>
+                                                    <div class="form-check form-switch">
+                                                        <input class="form-check-input" type="checkbox" role="switch" id="data_management_restore_include_source_blobs" checked>
+                                                        <label class="form-check-label" for="data_management_restore_include_source_blobs">Enhanced Citation blobs</label>
+                                                    </div>
+                                                </div>
+                                            </fieldset>
+                                        </div>
+                                    </div>
+                                    <div class="mt-3 d-none" id="data-management-restore-confirmation-section">
+                                        <label class="form-label" for="data_management_restore_overwrite_confirmation_phrase">Type the overwrite confirmation phrase</label>
+                                        <input class="form-control" type="text" id="data_management_restore_overwrite_confirmation_phrase" autocomplete="off" aria-describedby="data-management-restore-confirmation-help">
+                                        <div class="form-text" id="data-management-restore-confirmation-help">
+                                            Required phrase: <code>RESTORE WITH OVERWRITE</code>
+                                        </div>
+                                    </div>
+                                </section>
+                                <section class="border rounded p-3" aria-labelledby="data-management-restore-review-heading">
+                                    <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
+                                        <div>
+                                            <h6 class="mb-1" id="data-management-restore-review-heading">Preflight review</h6>
+                                            <p class="text-muted small mb-0" id="data-management-restore-review-status">Run review to validate the manifest, target access, and restore policy.</p>
+                                        </div>
+                                        <button type="button" class="btn btn-outline-primary btn-sm" id="data-management-restore-review-btn">
+                                            <i class="bi bi-shield-check me-1"></i>Run Restore Review
+                                        </button>
+                                    </div>
+                                    <div class="list-group" id="data-management-restore-review-checks" aria-live="polite">
+                                        <div class="list-group-item text-muted">No restore review has run yet.</div>
+                                    </div>
+                                </section>
+                                <div class="form-check mt-3">
+                                    <input class="form-check-input" type="checkbox" id="data_management_restore_final_confirmation">
+                                    <label class="form-check-label fw-semibold" for="data_management_restore_final_confirmation">
+                                        I reviewed the restore target, policy, and preflight result.
+                                    </label>
+                                </div>
+                            </div>
+                            <div class="modal-footer">
+                                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                                <button type="button" class="btn btn-danger" id="data-management-restore-queue-btn" disabled aria-disabled="true">
+                                    Queue Restore Job
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card p-4 mb-4 border-dark shadow-sm" id="data-management-jobs-section">
+                    <div class="d-flex align-items-center justify-content-between mb-3">
+                        <h4 class="mb-0">Job History</h4>
+                        <button type="button" class="btn btn-outline-secondary btn-sm" id="data-management-refresh-jobs-btn">
+                            <i class="bi bi-arrow-clockwise me-1"></i>Refresh
+                        </button>
+                    </div>
+                    <div class="row g-2 align-items-end mb-3" aria-label="Job history filters">
+                        <div class="col-sm-6 col-lg-2">
+                            <label class="form-label small" for="data_management_job_operation_filter">Operation</label>
+                            <select class="form-select form-select-sm" id="data_management_job_operation_filter">
+                                <option value="" selected>All operations</option>
+                                <option value="backup">Backup</option>
+                                <option value="migration">Migration</option>
+                                <option value="restore">Restore</option>
+                                <option value="dry_run">Dry run</option>
+                            </select>
+                        </div>
+                        <div class="col-sm-6 col-lg-2">
+                            <label class="form-label small" for="data_management_job_status_filter">Status</label>
+                            <select class="form-select form-select-sm" id="data_management_job_status_filter">
+                                <option value="" selected>All statuses</option>
+                                <option value="queued">Queued</option>
+                                <option value="running">Running</option>
+                                <option value="completed">Completed</option>
+                                <option value="completed_with_warnings">Completed with warnings</option>
+                                <option value="failed">Failed</option>
+                                <option value="canceled">Canceled</option>
+                            </select>
+                        </div>
+                        <div class="col-sm-6 col-lg-2">
+                            <label class="form-label small" for="data_management_job_scheduled_filter">Run type</label>
+                            <select class="form-select form-select-sm" id="data_management_job_scheduled_filter">
+                                <option value="all" selected>Scheduled and manual</option>
+                                <option value="scheduled">Scheduled</option>
+                                <option value="manual">Manual</option>
+                            </select>
+                        </div>
+                        <div class="col-sm-6 col-lg-2">
+                            <label class="form-label small" for="data_management_job_created_from">Created from</label>
+                            <input class="form-control form-control-sm" type="date" id="data_management_job_created_from" />
+                        </div>
+                        <div class="col-sm-6 col-lg-2">
+                            <label class="form-label small" for="data_management_job_created_to">Created through</label>
+                            <input class="form-control form-control-sm" type="date" id="data_management_job_created_to" />
+                        </div>
+                        <div class="col-sm-6 col-lg-2">
+                            <label class="form-label small" for="data_management_job_page_size">Rows per page</label>
+                            <select class="form-select form-select-sm" id="data_management_job_page_size">
+                                <option value="10">10</option>
+                                <option value="25" selected>25</option>
+                                <option value="50">50</option>
+                                <option value="100">100</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="table-responsive">
+                        <table class="table table-sm align-middle">
+                            <thead>
+                                <tr>
+                                    <th scope="col">Created</th>
+                                    <th scope="col">Operation</th>
+                                    <th scope="col">Status</th>
+                                    <th scope="col">Progress</th>
+                                    <th scope="col">Message</th>
+                                    <th scope="col">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="data-management-jobs-tbody">
+                                <tr>
+                                    <td colspan="6" class="text-muted">Job history has not loaded yet.</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <nav class="d-flex flex-wrap align-items-center justify-content-between gap-2" aria-label="Job history pagination">
+                        <span class="small text-muted" id="data-management-job-pagination-status" role="status" aria-live="polite">Page 1 has not loaded yet.</span>
+                        <div class="btn-group btn-group-sm" role="group" aria-label="Job history pages">
+                            <button type="button" class="btn btn-outline-secondary" id="data-management-job-previous-page-btn" disabled aria-disabled="true">
+                                <i class="bi bi-chevron-left me-1"></i>Previous
+                            </button>
+                            <button type="button" class="btn btn-outline-secondary" id="data-management-job-next-page-btn" disabled aria-disabled="true">
+                                Next<i class="bi bi-chevron-right ms-1"></i>
+                            </button>
+                        </div>
+                    </nav>
+                </div>
+
+                <div class="modal fade" id="data-management-cosmos-editor-danger-modal" tabindex="-1" aria-labelledby="data-management-cosmos-editor-danger-title" aria-hidden="true">
+                    <div class="modal-dialog modal-lg">
+                        <div class="modal-content border-danger">
+                            <div class="modal-header bg-danger text-white">
+                                <div>
+                                    <h5 class="modal-title" id="data-management-cosmos-editor-danger-title">Cosmos DB JSON Editor Warning</h5>
+                                    <p class="mb-0 small text-white-50">This interface can change live application data.</p>
+                                </div>
+                                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                            </div>
+                            <div class="modal-body">
+                                <div class="alert alert-danger" role="alert">
+                                    Incorrect edits can break authentication, workspaces, chat history, documents, automations, or activity log integrity. Use this editor only when safer admin tools cannot solve the problem.
+                                </div>
+                                <ul class="mb-3">
+                                    <li>Run targeted SELECT queries and page results instead of loading large containers at once.</li>
+                                    <li>Do not change <code>id</code> or the container partition key value.</li>
+                                    <li>Review JSON carefully before saving. Saves are audited in Activity Logs.</li>
+                                </ul>
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" id="data_management_cosmos_editor_danger_accept">
+                                    <label class="form-check-label fw-semibold" for="data_management_cosmos_editor_danger_accept">
+                                        I understand this editor can damage overall system health.
+                                    </label>
+                                </div>
+                            </div>
+                            <div class="modal-footer">
+                                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                                <button type="button" class="btn btn-danger" id="data-management-cosmos-editor-accept-danger-btn" disabled aria-disabled="true">
+                                    I Understand, Unlock Editor
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="modal fade" id="data-management-cosmos-editor-results-modal" tabindex="-1" aria-labelledby="data-management-cosmos-editor-modal-title" aria-hidden="true">
+                    <div class="modal-dialog modal-xl modal-dialog-scrollable">
+                        <div class="modal-content">
+                            <div class="modal-header">
+                                <div>
+                                    <h5 class="modal-title" id="data-management-cosmos-editor-modal-title">Cosmos DB Query Results</h5>
+                                    <p class="text-muted small mb-0" id="data-management-cosmos-editor-modal-subtitle">Run a query to load document summaries.</p>
+                                    <p class="text-muted small mb-0" id="data-management-cosmos-editor-modal-status">No query has run yet.</p>
+                                </div>
+                                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                            </div>
+                            <div class="modal-body cosmos-editor-results-modal-body">
+                                <div class="row g-3">
+                                    <div class="col-lg-4">
+                                        <div class="border rounded h-100">
+                                            <div class="border-bottom px-3 py-2 bg-light">
+                                                <h6 class="mb-0">Results</h6>
+                                            </div>
+                                            <div class="list-group list-group-flush cosmos-editor-results-list" id="data-management-cosmos-editor-results-list" aria-label="Cosmos DB query results">
+                                                <div class="list-group-item text-muted">Run a query to list documents.</div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="col-lg-8">
+                                        <div class="border rounded h-100">
+                                            <div class="border-bottom px-3 py-2 bg-light">
+                                                <div class="d-flex flex-wrap align-items-center justify-content-between gap-2">
+                                                    <div>
+                                                        <h6 class="mb-0">Document JSON</h6>
+                                                        <div class="small text-muted" id="data-management-cosmos-editor-document-meta">Select a result to load JSON.</div>
+                                                    </div>
+                                                    <div class="d-flex flex-wrap gap-2">
+                                                        <button type="button" class="btn btn-outline-secondary btn-sm" id="data-management-cosmos-editor-refresh-document-btn" disabled aria-disabled="true">
+                                                            <i class="bi bi-arrow-clockwise me-1"></i>Refresh Document
+                                                        </button>
+                                                        <button type="button" class="btn btn-danger btn-sm" id="data-management-cosmos-editor-save-btn" disabled aria-disabled="true">
+                                                            <i class="bi bi-save me-1"></i>Save JSON
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <div class="p-3">
+                                                <textarea class="form-control font-monospace" id="data_management_cosmos_editor_document_json" rows="20" spellcheck="false" disabled aria-disabled="true" placeholder="Selected document JSON appears here." style="min-height: 58vh;"></textarea>
+                                                <div class="form-text" id="data-management-cosmos-editor-document-help">The editor blocks id and partition key changes. Saves use the ETag from the loaded document.</div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="modal-footer d-flex flex-wrap justify-content-between gap-2">
+                                <div class="small text-muted">Custom SELECT queries can page beyond the first request when Cosmos returns a continuation token.</div>
+                                <div class="d-flex flex-wrap gap-2">
+                                    <button type="button" class="btn btn-outline-primary" id="data-management-cosmos-editor-next-page-btn" disabled aria-disabled="true">
+                                        <i class="bi bi-arrow-right-circle me-1"></i>Next Page
+                                    </button>
+                                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="modal fade" id="data-management-cosmos-editor-save-modal" tabindex="-1" aria-labelledby="data-management-cosmos-editor-save-title" aria-hidden="true">
+                    <div class="modal-dialog modal-lg">
+                        <div class="modal-content border-danger">
+                            <div class="modal-header">
+                                <div>
+                                    <h5 class="modal-title" id="data-management-cosmos-editor-save-title">Confirm Cosmos DB Document Save</h5>
+                                    <p class="text-muted small mb-0" id="data-management-cosmos-editor-save-subtitle">Review the change summary before saving.</p>
+                                </div>
+                                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                            </div>
+                            <div class="modal-body">
+                                <div class="alert alert-danger" role="alert">
+                                    Saving replaces the selected Cosmos DB document with the JSON currently in the editor. This action is audited and cannot be undone from this screen.
+                                </div>
+                                <div class="border rounded p-3 mb-3" id="data-management-cosmos-editor-save-summary">
+                                    No changes summarized yet.
+                                </div>
+                                <label class="form-label" for="data_management_cosmos_editor_confirmation_phrase">Type the confirmation phrase to enable saving</label>
+                                <input class="form-control" type="text" id="data_management_cosmos_editor_confirmation_phrase" autocomplete="off" aria-describedby="data-management-cosmos-editor-confirmation-help">
+                                <div class="form-text" id="data-management-cosmos-editor-confirmation-help">
+                                    Required phrase: <code>I understand this can damage system data</code>
+                                </div>
+                            </div>
+                            <div class="modal-footer">
+                                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                                <button type="button" class="btn btn-danger" id="data-management-cosmos-editor-confirm-save-btn" disabled aria-disabled="true">
+                                    Save Cosmos Document
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="modal fade" id="data-management-job-detail-modal" tabindex="-1" aria-labelledby="data-management-job-detail-title" aria-hidden="true">
+                    <div class="modal-dialog modal-xl modal-dialog-scrollable">
+                        <div class="modal-content">
+                            <div class="modal-header">
+                                <div class="me-3">
+                                    <h5 class="modal-title" id="data-management-job-detail-title">Job Details</h5>
+                                    <p class="text-muted small mb-0" id="data-management-job-detail-subtitle"></p>
+                                    <p class="text-muted small mb-0" id="data-management-job-detail-refresh-state"></p>
+                                </div>
+                                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                            </div>
+                            <div class="modal-body">
+                                <div class="row g-3 mb-4" id="data-management-job-detail-summary"></div>
+                                <div class="d-flex flex-wrap gap-2 mb-4 d-none" id="data-management-job-detail-actions" aria-label="Migration job actions"></div>
+                                <div id="data-management-job-detail-progress" class="mb-4"></div>
+                                <div class="row g-3">
+                                    <div class="col-lg-5">
+                                        <div class="card h-100">
+                                            <div class="card-header bg-primary text-white">
+                                                <h6 class="mb-0"><i class="bi bi-list-check me-2"></i>Timeline</h6>
+                                            </div>
+                                            <div class="card-body p-0">
+                                                <div class="list-group list-group-flush" id="data-management-job-items-tbody">
+                                                    <div class="list-group-item text-muted">No timeline events loaded.</div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="col-lg-7">
+                                        <div class="card h-100">
+                                            <div class="card-header bg-success text-white">
+                                                <h6 class="mb-0"><i class="bi bi-box-seam me-2"></i>Backup Contents</h6>
+                                            </div>
+                                            <div class="card-body">
+                                                <div class="vstack gap-3" id="data-management-job-artifacts-tbody">
+                                                    <div class="text-muted">No backup artifacts recorded for this job.</div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="col-lg-7">
+                                        <div class="card h-100">
+                                            <div class="card-header bg-info text-dark">
+                                                <h6 class="mb-0"><i class="bi bi-database-check me-2"></i>Storage and Manifest</h6>
+                                            </div>
+                                            <div class="card-body" id="data-management-job-manifest-detail"></div>
+                                        </div>
+                                    </div>
+                                    <div class="col-lg-5">
+                                        <div class="card h-100">
+                                            <div class="card-header bg-warning text-dark">
+                                                <h6 class="mb-0"><i class="bi bi-exclamation-triangle me-2"></i>Warnings</h6>
+                                            </div>
+                                            <div class="card-body" id="data-management-job-warnings"></div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="modal fade" id="data-management-migration-cancel-modal" tabindex="-1" aria-labelledby="data-management-migration-cancel-title" aria-hidden="true">
+                    <div class="modal-dialog modal-dialog-centered">
+                        <div class="modal-content">
+                            <div class="modal-header">
+                                <h5 class="modal-title" id="data-management-migration-cancel-title">Request Data Management Job Cancellation</h5>
+                                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                            </div>
+                            <div class="modal-body">
+                                <p class="mb-2" id="data-management-migration-cancel-message"></p>
+                                <p class="text-muted small mb-0">The worker stops at its next durable checkpoint. Completed items remain available for Retry or Resume.</p>
+                            </div>
+                            <div class="modal-footer">
+                                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Keep Running</button>
+                                <button type="button" class="btn btn-danger" id="data-management-confirm-migration-cancel-btn">Request Cancellation</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="modal fade" id="data-management-backup-delete-modal" tabindex="-1" aria-labelledby="data-management-backup-delete-title" aria-hidden="true">
+                        <div class="modal-dialog modal-dialog-centered">
+                            <div class="modal-content border-danger">
+                                <div class="modal-header">
+                                    <h5 class="modal-title" id="data-management-backup-delete-title">Delete Data Management Backup</h5>
+                                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                                </div>
+                                <div class="modal-body">
+                                    <p class="mb-2" id="data-management-backup-delete-message"></p>
+                                    <div class="alert alert-warning small mb-0" role="alert">
+                                        Backup deletion removes stored artifacts, job timeline records, and differential sidecar state for this job. Future partial backups will re-export affected unchanged items.
+                                    </div>
+                                </div>
+                                <div class="modal-footer">
+                                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Keep Backup</button>
+                                    <button type="button" class="btn btn-danger" id="data-management-confirm-backup-delete-btn">Delete Backup</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="modal fade" id="data-management-setup-guide-modal" tabindex="-1" aria-labelledby="data-management-setup-guide-title" aria-hidden="true">
+                    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+                        <div class="modal-content">
+                            <div class="modal-header">
+                                <h5 class="modal-title" id="data-management-setup-guide-title">Backup, Migrate &amp; Restore Configuration Guide</h5>
+                                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                            </div>
+                            <div class="modal-body">
+                                <p>Configure backup, migration, and restore readiness before an incident or cutover window. The safest path is to first prove backups, then rehearse migration or restore decisions from completed backup records.</p>
+                                <ol>
+                                    <li>Use dedicated backup storage that is separate from Enhanced Citation source files.</li>
+                                    <li>Generate and protect the backup encryption key, preferably in Key Vault.</li>
+                                    <li>Run a manual full backup and inspect the Backup Inventory entry.</li>
+                                    <li>For migration, connect destination Cosmos, Search, and storage services before selecting scope.</li>
+                                    <li>For restore, open Backup Inventory and stage the selected backup through the Restore workflow.</li>
+                                </ol>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="modal fade" id="data-management-backup-guide-modal" tabindex="-1" aria-labelledby="data-management-backup-guide-title" aria-hidden="true">
+                    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+                        <div class="modal-content">
+                            <div class="modal-header">
+                                <h5 class="modal-title" id="data-management-backup-guide-title">Backup Setup Guide</h5>
+                                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                            </div>
+                            <div class="modal-body">
+                                <p>Backups create durable artifacts and job records that later migration or restore workflows can inspect. Full backups capture a complete selected snapshot. Partial backups capture daily changes between full backups.</p>
+                                <ul>
+                                    <li><strong>Storage:</strong> Use a dedicated backup account/container so restore and migration artifacts never overwrite source documents.</li>
+                                    <li><strong>Encryption:</strong> Keep backup encryption enabled and store generated keys in Key Vault for production.</li>
+                                    <li><strong>Scope:</strong> Leave Cosmos DB and AI Search enabled unless you are intentionally creating a limited backup.</li>
+                                    <li><strong>Timing:</strong> Queue large backup jobs outside business hours because App Service workers perform the work.</li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="modal fade" id="data-management-migration-guide-modal" tabindex="-1" aria-labelledby="data-management-migration-guide-title" aria-hidden="true">
+                    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+                        <div class="modal-content">
+                            <div class="modal-header">
+                                <h5 class="modal-title" id="data-management-migration-guide-title">Migration Guide</h5>
+                                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                            </div>
+                            <div class="modal-body">
+                                <p>Migration moves selected SimpleChat users, groups, public workspaces, and their optional documents to another SimpleChat environment.</p>
+                                <ul>
+                                    <li><strong>Copy missing items only:</strong> safest first run; existing destination records are not changed.</li>
+                                    <li><strong>Catch up changed items:</strong> use after a previous completed migration to copy new items and update migration-owned changes.</li>
+                                    <li><strong>Make destination match source:</strong> use only during cutover when migrated destination-only items should be removed.</li>
+                                    <li><strong>AI Search freeze:</strong> freeze external destination writers before moving Search documents because SimpleChat cannot coordinate external writers.</li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="modal fade" id="data-management-ru-boost-guide-modal" tabindex="-1" aria-labelledby="data-management-ru-boost-guide-title" aria-hidden="true">
+                    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+                        <div class="modal-content">
+                            <div class="modal-header">
+                                <h5 class="modal-title" id="data-management-ru-boost-guide-title">RU Boost Permission Guide</h5>
+                                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                            </div>
+                            <div class="modal-body">
+                                <p>RU Boost temporarily raises eligible Cosmos DB throughput up to 10,000 RU/s and then restores the original setting. It can increase Azure charges and requires Azure management-plane permissions.</p>
+                                <ul>
+                                    <li><strong>Data copy permissions</strong> prove the identity can create, read, and delete probe records in destination Cosmos containers.</li>
+                                    <li><strong>RU Boost permissions</strong> prove the identity can read and write Cosmos throughput settings through Azure Resource Manager.</li>
+                                    <li>Destination RU Boost also needs the destination subscription ID and resource group because those values are not part of the data-plane endpoint.</li>
+                                    <li>Use Test RU Boost before a cutover window; it validates capacity permissions separately from migration data access.</li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="modal fade" id="data-management-restore-guide-modal" tabindex="-1" aria-labelledby="data-management-restore-guide-title" aria-hidden="true">
+                    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+                        <div class="modal-content">
+                            <div class="modal-header">
+                                <h5 class="modal-title" id="data-management-restore-guide-title">Restore Guide</h5>
+                                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                            </div>
+                            <div class="modal-body">
+                                <p>Restore starts from Backup Inventory. The workflow helps admins confirm what is in the backup, what surfaces are safe to restore, and whether backend restore execution is available for the selected backup.</p>
+                                <ul>
+                                    <li>Prefer full backups for restore decisions because partial backups depend on earlier backup history.</li>
+                                    <li>Confirm the encryption key is still available before relying on encrypted artifacts.</li>
+                                    <li>Review warnings and missing surfaces before restoring AI Search or source document blobs.</li>
+                                    <li>Run restore only in a maintenance window because restored records can affect live users and search results.</li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>

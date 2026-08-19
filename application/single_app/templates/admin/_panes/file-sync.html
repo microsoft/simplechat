@@ -1,0 +1,411 @@
+            <div class="tab-pane fade" id="file-sync" role="tabpanel" aria-labelledby="file-sync-tab">
+                <p class="text-muted">
+                    Configure file synchronization for personal, group, and public workspaces.
+                </p>
+
+                <div class="card mb-3 p-3" id="file-sync-section">
+                    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
+                        <h5 class="mb-0">
+                            <i class="bi bi-arrow-repeat me-2"></i>File Sync
+                        </h5>
+                        <button type="button" class="btn btn-outline-info btn-sm" data-bs-toggle="modal" data-bs-target="#file-sync-app-role-setup-modal">
+                            <i class="bi bi-info-circle me-1"></i>App Role Setup
+                        </button>
+                    </div>
+                    <p class="text-muted">
+                        Enable File Sync globally, set conservative run limits, and choose whether workspace managers or SimpleChat admins manage sync sources.
+                    </p>
+
+                    <div class="alert alert-warning" role="alert">
+                        File Sync can scan large remote shares and create many document versions. Start with narrow filters, conservative schedules, and low per-run limits before enabling broad workspace access.
+                    </div>
+
+                    {% if not settings.file_sync_redis_ready %}
+                    <div class="alert alert-danger" role="alert">
+                        Redis Cache must be enabled and configured before File Sync can run. Saved File Sync settings remain inactive until Redis is ready.
+                    </div>
+                    {% elif settings.requested_enable_file_sync and not settings.file_sync_effective_enabled %}
+                    <div class="alert alert-warning" role="alert">
+                        File Sync is saved as requested but is not currently active. Check Redis configuration and scope controls.
+                    </div>
+                    {% endif %}
+
+                    <div class="form-group form-check form-switch mb-3">
+                        <input type="checkbox"
+                            class="form-check-input"
+                            id="enable_file_sync"
+                            name="enable_file_sync"
+                            {% if settings.requested_enable_file_sync %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="enable_file_sync">
+                            Enable File Sync
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Enable File Sync source management and sync runs for allowed workspaces. Redis Cache is required before sync is active."></i>
+                    </div>
+
+                    <div id="file_sync_settings" class="{% if not settings.requested_enable_file_sync %}d-none{% endif %}">
+                        <div class="row g-3 mb-3">
+                            <div class="col-md-3">
+                                <label for="file_sync_max_sources_per_scope" class="form-label">Max Sources</label>
+                                <input type="number" class="form-control" id="file_sync_max_sources_per_scope" name="file_sync_max_sources_per_scope" min="1" max="100" value="{{ settings.file_sync_max_sources_per_scope }}">
+                            </div>
+                            <div class="col-md-3">
+                                <label for="file_sync_min_schedule_interval_minutes" class="form-label">Min Schedule Minutes</label>
+                                <input type="number" class="form-control" id="file_sync_min_schedule_interval_minutes" name="file_sync_min_schedule_interval_minutes" min="5" max="1440" value="{{ settings.file_sync_min_schedule_interval_minutes }}">
+                            </div>
+                            <div class="col-md-3">
+                                <label for="file_sync_max_files_per_run" class="form-label">Max Files Per Run</label>
+                                <input type="number" class="form-control" id="file_sync_max_files_per_run" name="file_sync_max_files_per_run" min="1" max="100000" value="{{ settings.file_sync_max_files_per_run }}">
+                            </div>
+                            <div class="col-md-3">
+                                <label for="file_sync_max_gb_per_run" class="form-label">Max GB Per Run</label>
+                                <input type="number" class="form-control" id="file_sync_max_gb_per_run" name="file_sync_max_gb_per_run" min="1" value="{{ settings.file_sync_max_gb_per_run }}">
+                            </div>
+                        </div>
+
+                        <div class="row g-3 mb-4">
+                            <div class="col-md-4">
+                                <label for="file_sync_max_concurrent_runs" class="form-label">Max Concurrent Runs</label>
+                                <input type="number" class="form-control" id="file_sync_max_concurrent_runs" name="file_sync_max_concurrent_runs" min="1" max="25" value="{{ settings.file_sync_max_concurrent_runs }}">
+                            </div>
+                            <div class="col-md-4 d-flex align-items-end">
+                                <div class="form-check form-switch mb-2">
+                                    <input type="checkbox" class="form-check-input" id="file_sync_allow_recursive_sources" name="file_sync_allow_recursive_sources" {% if settings.file_sync_allow_recursive_sources %}checked{% endif %}>
+                                    <label class="form-check-label" for="file_sync_allow_recursive_sources">Allow Recursive Sources</label>
+                                </div>
+                            </div>
+                        </div>
+
+                        {% set file_sync_visible_source_types = settings.file_sync_visible_source_types|default(['smb', 'azure_files']) %}
+                        <div class="border rounded p-3 mb-4" id="file-sync-source-types-section">
+                            <h6 class="mb-2"><i class="bi bi-sliders me-2"></i>Visible Source Types</h6>
+                            <p class="text-muted small mb-3">
+                                Choose which source types appear in the Add Source workflow. OneDrive, SharePoint, and Google Workspace connectors are coming soon while validation continues.
+                            </p>
+                            <div class="row g-3">
+                                <div class="col-md-4">
+                                    <div class="form-check">
+                                        <input type="checkbox" class="form-check-input" id="file_sync_visible_source_type_smb" name="file_sync_visible_source_types" value="smb" {% if 'smb' in file_sync_visible_source_types %}checked{% endif %}>
+                                        <label class="form-check-label" for="file_sync_visible_source_type_smb">SMB Share</label>
+                                        <div class="form-text">Available now.</div>
+                                    </div>
+                                </div>
+                                <div class="col-md-4">
+                                    <div class="form-check">
+                                        <input type="checkbox" class="form-check-input" id="file_sync_visible_source_type_azure_files" name="file_sync_visible_source_types" value="azure_files" {% if 'azure_files' in file_sync_visible_source_types %}checked{% endif %}>
+                                        <label class="form-check-label" for="file_sync_visible_source_type_azure_files">Azure Files</label>
+                                        <div class="form-text">Available now.</div>
+                                    </div>
+                                </div>
+                                <div class="col-md-4">
+                                    <div class="form-check">
+                                        <input type="checkbox" class="form-check-input" id="file_sync_visible_source_type_azure_blob" name="file_sync_visible_source_types" value="azure_blob" {% if 'azure_blob' in file_sync_visible_source_types %}checked{% endif %}>
+                                        <label class="form-check-label" for="file_sync_visible_source_type_azure_blob">Azure Blob Storage</label>
+                                        <div class="form-text">Available now.</div>
+                                    </div>
+                                </div>
+                                <div class="col-md-4">
+                                    <div class="form-check">
+                                        <input type="checkbox" class="form-check-input" id="file_sync_visible_source_type_onedrive" value="onedrive" disabled>
+                                        <label class="form-check-label" for="file_sync_visible_source_type_onedrive">OneDrive</label>
+                                        <div class="form-text">Coming Soon.</div>
+                                    </div>
+                                </div>
+                                <div class="col-md-4">
+                                    <div class="form-check">
+                                        <input type="checkbox" class="form-check-input" id="file_sync_visible_source_type_sharepoint_on_prem" value="sharepoint_on_prem" disabled>
+                                        <label class="form-check-label" for="file_sync_visible_source_type_sharepoint_on_prem">On-prem SharePoint</label>
+                                        <div class="form-text">Coming Soon.</div>
+                                    </div>
+                                </div>
+                                <div class="col-md-4">
+                                    <div class="form-check">
+                                        <input type="checkbox" class="form-check-input" id="file_sync_visible_source_type_google_workspace" value="google_workspace" disabled>
+                                        <label class="form-check-label" for="file_sync_visible_source_type_google_workspace">Google Workspace</label>
+                                        <div class="form-text">Coming Soon.</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="alert alert-info mb-4" role="alert">
+                            <div class="fw-semibold mb-1">Cloud drive connector identities</div>
+                            <div class="small">
+                                OneDrive, SharePoint, and Google Workspace File Sync connectors are coming soon. Any existing global connector identities can remain configured for future use.
+                            </div>
+                        </div>
+
+                        <div class="row g-3">
+                            <div class="col-12">
+                                <div class="border rounded h-100 p-3" id="file-sync-personal-section" data-testid="file-sync-personal-card">
+                                    <h6 class="mb-3"><i class="bi bi-person me-2"></i>Personal Workspace Sync</h6>
+                                    <div class="form-check form-switch mb-3">
+                                        <input type="checkbox" class="form-check-input" id="enable_file_sync_personal" name="enable_file_sync_personal" {% if settings.enable_file_sync_personal %}checked{% endif %}>
+                                        <label class="form-check-label" for="enable_file_sync_personal">Enable personal sync</label>
+                                    </div>
+                                    <div class="form-check form-switch mb-3">
+                                        <input type="checkbox" class="form-check-input" id="file_sync_personal_admin_only" name="file_sync_personal_admin_only" {% if settings.file_sync_personal_admin_only %}checked{% endif %}>
+                                        <label class="form-check-label" for="file_sync_personal_admin_only">Admins manage sources only</label>
+                                    </div>
+                                    <div class="form-check form-switch mb-2">
+                                        <input type="checkbox" class="form-check-input" id="file_sync_personal_require_app_role" name="file_sync_personal_require_app_role" {% if settings.file_sync_personal_require_app_role %}checked{% endif %}>
+                                        <label class="form-check-label" for="file_sync_personal_require_app_role">Require PersonalFileSyncUser App Role</label>
+                                    </div>
+                                    <div class="form-text mb-3">Required app role value: <code>PersonalFileSyncUser</code>. Assign this role to users or groups in the Enterprise App before enabling the requirement for personal sync.</div>
+                                    <hr />
+                                    <div data-file-sync-admin-target data-scope="personal" data-search-endpoint="/api/admin/file-sync/users/search" data-results-key="users" data-value-field="id" data-title-field="displayName" data-subtitle-field="email">
+                                        <label class="form-label" for="file-sync-admin-personal-target-query">Manage User Sources</label>
+                                        <div class="input-group mb-2">
+                                            <input type="search" class="form-control" id="file-sync-admin-personal-target-query" data-file-sync-admin-target-query placeholder="Search user" aria-label="Search user to manage" />
+                                            <button class="btn btn-outline-secondary" type="button" data-file-sync-admin-target-search>Search</button>
+                                        </div>
+                                        <div class="list-group small mb-2 d-none" data-file-sync-admin-target-results></div>
+                                        <div class="input-group">
+                                            <input type="text" class="form-control" data-file-sync-admin-target-id placeholder="User ID" aria-label="Target user ID" />
+                                            <button class="btn btn-primary" type="button" data-file-sync-admin-target-manage disabled>Manage Sources</button>
+                                        </div>
+                                        <div class="form-text" data-file-sync-admin-target-label>No user selected.</div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="col-12">
+                                <div class="border rounded h-100 p-3" id="file-sync-group-section" data-testid="file-sync-group-card">
+                                    <h6 class="mb-3"><i class="bi bi-people me-2"></i>Group Workspace Sync</h6>
+                                    <div class="form-check form-switch mb-3">
+                                        <input type="checkbox" class="form-check-input" id="enable_file_sync_group" name="enable_file_sync_group" {% if settings.enable_file_sync_group %}checked{% endif %}>
+                                        <label class="form-check-label" for="enable_file_sync_group">Enable group sync</label>
+                                    </div>
+                                    <div class="form-check form-switch mb-3">
+                                        <input type="checkbox" class="form-check-input" id="file_sync_group_admin_only" name="file_sync_group_admin_only" {% if settings.file_sync_group_admin_only %}checked{% endif %}>
+                                        <label class="form-check-label" for="file_sync_group_admin_only">Admins manage sources only</label>
+                                    </div>
+                                    <div class="form-check form-switch mb-2">
+                                        <input type="checkbox" class="form-check-input" id="require_group_assignment_for_file_sync" name="require_group_assignment_for_file_sync" {% if settings.require_group_assignment_for_file_sync %}checked{% endif %}>
+                                        <label class="form-check-label" for="require_group_assignment_for_file_sync">Require Group Assignment to Use File Sync</label>
+                                    </div>
+                                    <div class="d-flex flex-wrap align-items-center gap-2 mb-3">
+                                        <button type="button" class="btn btn-sm btn-outline-primary" id="manage-file-sync-groups-btn" data-bs-toggle="modal" data-bs-target="#fileSyncGroupAssignmentModal">
+                                            <i class="bi bi-people me-1"></i>Manage Groups
+                                        </button>
+                                        <span class="text-muted small" id="file-sync-group-assignment-summary">No groups assigned.</span>
+                                    </div>
+                                    <textarea class="d-none" id="file_sync_allowed_group_ids" name="file_sync_allowed_group_ids">{{ settings.file_sync_allowed_group_ids|default([], true)|tojson }}</textarea>
+                                    <hr />
+                                    <div data-file-sync-admin-target data-scope="group" data-search-endpoint="/api/admin/file-sync/groups/search" data-results-key="groups" data-value-field="id" data-title-field="name" data-subtitle-field="description">
+                                        <label class="form-label" for="file-sync-admin-group-target-query">Manage Group Sources</label>
+                                        <div class="input-group mb-2">
+                                            <input type="search" class="form-control" id="file-sync-admin-group-target-query" data-file-sync-admin-target-query placeholder="Search group" aria-label="Search group to manage" />
+                                            <button class="btn btn-outline-secondary" type="button" data-file-sync-admin-target-search>Search</button>
+                                        </div>
+                                        <div class="list-group small mb-2 d-none" data-file-sync-admin-target-results></div>
+                                        <div class="input-group">
+                                            <input type="text" class="form-control" data-file-sync-admin-target-id placeholder="Group ID" aria-label="Target group ID" />
+                                            <button class="btn btn-primary" type="button" data-file-sync-admin-target-manage disabled>Manage Sources</button>
+                                        </div>
+                                        <div class="form-text" data-file-sync-admin-target-label>No group selected.</div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="col-12">
+                                <div class="border rounded h-100 p-3" id="file-sync-public-section" data-testid="file-sync-public-card">
+                                    <h6 class="mb-3"><i class="bi bi-globe me-2"></i>Public Workspace Sync</h6>
+                                    <div class="form-check form-switch mb-3">
+                                        <input type="checkbox" class="form-check-input" id="enable_file_sync_public" name="enable_file_sync_public" {% if settings.enable_file_sync_public %}checked{% endif %}>
+                                        <label class="form-check-label" for="enable_file_sync_public">Enable public sync</label>
+                                    </div>
+                                    <div class="form-check form-switch mb-3">
+                                        <input type="checkbox" class="form-check-input" id="file_sync_public_admin_only" name="file_sync_public_admin_only" {% if settings.file_sync_public_admin_only %}checked{% endif %}>
+                                        <label class="form-check-label" for="file_sync_public_admin_only">Admins manage sources only</label>
+                                    </div>
+                                    <div class="form-check form-switch mb-2">
+                                        <input type="checkbox" class="form-check-input" id="require_public_workspace_assignment_for_file_sync" name="require_public_workspace_assignment_for_file_sync" {% if settings.require_public_workspace_assignment_for_file_sync %}checked{% endif %}>
+                                        <label class="form-check-label" for="require_public_workspace_assignment_for_file_sync">Require Public Workspace Assignment to Use File Sync</label>
+                                    </div>
+                                    <div class="d-flex flex-wrap align-items-center gap-2 mb-3">
+                                        <button type="button" class="btn btn-sm btn-outline-primary" id="manage-file-sync-public-workspaces-btn" data-bs-toggle="modal" data-bs-target="#fileSyncPublicWorkspaceAssignmentModal">
+                                            <i class="bi bi-globe me-1"></i>Manage Public Workspaces
+                                        </button>
+                                        <span class="text-muted small" id="file-sync-public-workspace-assignment-summary">No public workspaces assigned.</span>
+                                    </div>
+                                    <textarea class="d-none" id="file_sync_allowed_public_workspace_ids" name="file_sync_allowed_public_workspace_ids">{{ settings.file_sync_allowed_public_workspace_ids|default([], true)|tojson }}</textarea>
+                                    <hr />
+                                    <div data-file-sync-admin-target data-scope="public" data-search-endpoint="/api/admin/file-sync/public-workspaces/search" data-results-key="workspaces" data-value-field="id" data-title-field="name" data-subtitle-field="description">
+                                        <label class="form-label" for="file-sync-admin-public-target-query">Manage Public Workspace Sources</label>
+                                        <div class="input-group mb-2">
+                                            <input type="search" class="form-control" id="file-sync-admin-public-target-query" data-file-sync-admin-target-query placeholder="Search public workspace" aria-label="Search public workspace to manage" />
+                                            <button class="btn btn-outline-secondary" type="button" data-file-sync-admin-target-search>Search</button>
+                                        </div>
+                                        <div class="list-group small mb-2 d-none" data-file-sync-admin-target-results></div>
+                                        <div class="input-group">
+                                            <input type="text" class="form-control" data-file-sync-admin-target-id placeholder="Public workspace ID" aria-label="Target public workspace ID" />
+                                            <button class="btn btn-primary" type="button" data-file-sync-admin-target-manage disabled>Manage Sources</button>
+                                        </div>
+                                        <div class="form-text" data-file-sync-admin-target-label>No public workspace selected.</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="form-text mt-3">
+                            SMB source credentials are stored in Azure Key Vault when Key Vault secret storage is enabled; otherwise they use the app's existing encrypted settings path.
+                        </div>
+                    </div>
+                </div>
+
+                <div class="modal fade" id="file-sync-admin-manager-modal" tabindex="-1" aria-labelledby="file-sync-admin-manager-title" aria-hidden="true">
+                    <div class="modal-dialog modal-xl modal-dialog-scrollable">
+                        <div class="modal-content">
+                            <div class="modal-header">
+                                <div>
+                                    <h5 class="modal-title" id="file-sync-admin-manager-title">Manage File Sync Sources</h5>
+                                    <div class="text-muted small" id="file-sync-admin-manager-context"></div>
+                                </div>
+                                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                            </div>
+                            <div class="modal-body">
+                                <div id="file-sync-admin-manager-container"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="modal fade" id="fileSyncGroupAssignmentModal" tabindex="-1" aria-labelledby="fileSyncGroupAssignmentModalLabel" aria-hidden="true">
+                    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+                        <div class="modal-content">
+                            <div class="modal-header">
+                                <div>
+                                    <h5 class="modal-title mb-0" id="fileSyncGroupAssignmentModalLabel">File Sync Group Assignments</h5>
+                                    <small class="text-muted">Choose which groups can use File Sync when group assignment is required.</small>
+                                </div>
+                                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                            </div>
+                            <div class="modal-body">
+                                <div class="row g-2 align-items-end mb-3">
+                                    <div class="col">
+                                        <label for="file-sync-group-assignment-search" class="form-label">Search Groups</label>
+                                        <input type="search" class="form-control" id="file-sync-group-assignment-search" placeholder="Search by group name or description" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true">
+                                    </div>
+                                    <div class="col-auto">
+                                        <button type="button" class="btn btn-outline-primary" id="file-sync-group-assignment-search-btn">
+                                            <i class="bi bi-search me-1"></i>Search
+                                        </button>
+                                    </div>
+                                </div>
+                                <div class="alert alert-danger d-none" id="file-sync-group-assignment-error"></div>
+                                <div class="small text-muted mb-2" id="file-sync-group-assignment-status">No groups loaded.</div>
+                                <div class="table-responsive">
+                                    <table class="table table-sm align-middle">
+                                        <thead>
+                                            <tr>
+                                                <th scope="col">Group</th>
+                                                <th scope="col">Description</th>
+                                                <th scope="col" class="text-end">Assignment</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="file-sync-group-assignment-body">
+                                            <tr>
+                                                <td colspan="3" class="text-center text-muted py-3">Search for groups to assign.</td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                            <div class="modal-footer">
+                                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Done</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="modal fade" id="fileSyncPublicWorkspaceAssignmentModal" tabindex="-1" aria-labelledby="fileSyncPublicWorkspaceAssignmentModalLabel" aria-hidden="true">
+                    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+                        <div class="modal-content">
+                            <div class="modal-header">
+                                <div>
+                                    <h5 class="modal-title mb-0" id="fileSyncPublicWorkspaceAssignmentModalLabel">File Sync Public Workspace Assignments</h5>
+                                    <small class="text-muted">Choose which public workspaces can use File Sync when public workspace assignment is required.</small>
+                                </div>
+                                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                            </div>
+                            <div class="modal-body">
+                                <div class="row g-2 align-items-end mb-3">
+                                    <div class="col">
+                                        <label for="file-sync-public-workspace-assignment-search" class="form-label">Search Public Workspaces</label>
+                                        <input type="search" class="form-control" id="file-sync-public-workspace-assignment-search" placeholder="Search by public workspace name or description" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true">
+                                    </div>
+                                    <div class="col-auto">
+                                        <button type="button" class="btn btn-outline-primary" id="file-sync-public-workspace-assignment-search-btn">
+                                            <i class="bi bi-search me-1"></i>Search
+                                        </button>
+                                    </div>
+                                </div>
+                                <div class="alert alert-danger d-none" id="file-sync-public-workspace-assignment-error"></div>
+                                <div class="small text-muted mb-2" id="file-sync-public-workspace-assignment-status">Enter at least 2 characters to search.</div>
+                                <div class="table-responsive">
+                                    <table class="table table-sm align-middle">
+                                        <thead>
+                                            <tr>
+                                                <th scope="col">Public Workspace</th>
+                                                <th scope="col">Description</th>
+                                                <th scope="col" class="text-end">Assignment</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="file-sync-public-workspace-assignment-body">
+                                            <tr>
+                                                <td colspan="3" class="text-center text-muted py-3">Search for public workspaces to assign.</td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                            <div class="modal-footer">
+                                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Done</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="modal fade" id="file-sync-app-role-setup-modal" tabindex="-1" aria-labelledby="file-sync-app-role-setup-title" aria-hidden="true">
+                    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+                        <div class="modal-content">
+                            <div class="modal-header">
+                                <h5 class="modal-title" id="file-sync-app-role-setup-title">Personal File Sync App Role Setup</h5>
+                                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                            </div>
+                            <div class="modal-body">
+                                <p class="text-muted">
+                                    Create the personal File Sync app role on the SimpleChat app registration, then assign users or groups to the role in the Enterprise App before enabling the personal require-role toggle.
+                                </p>
+                                <div class="table-responsive">
+                                    <table class="table table-sm align-middle">
+                                        <thead>
+                                            <tr>
+                                                <th scope="col">Capability</th>
+                                                <th scope="col">App role value</th>
+                                                <th scope="col">Typical assignment</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            <tr>
+                                                <td>Personal File Sync</td>
+                                                <td><code>PersonalFileSyncUser</code></td>
+                                                <td>Users allowed to manage personal sync sources</td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                                <ol class="mb-0">
+                                    <li>Open Microsoft Entra admin center and edit the SimpleChat app registration.</li>
+                                    <li>Add the app role with allowed member type <strong>Users/Groups</strong> and value exactly matching the table.</li>
+                                    <li>Open the Enterprise App for SimpleChat and assign users or groups to the app role.</li>
+                                    <li>Have affected users sign out and sign back in so their role claims refresh.</li>
+                                </ol>
+                            </div>
+                            <div class="modal-footer">
+                                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>

@@ -15,6 +15,7 @@ import subprocess
 import sys
 import wave
 from pathlib import Path
+from test_support.templates import compose_if_admin_settings
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -49,7 +50,9 @@ EXPECTED_SOUND_IDS = [
 
 def read_text(path):
     """Read a UTF-8 source file."""
-    return path.read_text(encoding="utf-8")
+    return compose_if_admin_settings(
+        path, path.read_text(encoding="utf-8")
+    )
 
 
 def test_local_audio_assets():

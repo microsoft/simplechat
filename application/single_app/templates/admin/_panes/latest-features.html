@@ -1,0 +1,1253 @@
+            <div class="tab-pane fade" id="latest-features" role="tabpanel" aria-labelledby="latest-features-tab">
+                <p class="text-muted mb-2">
+                    Review the main capabilities introduced in v{{ config['VERSION'] }} and use this page as an admin-facing overview for what to highlight with your teams.
+                </p>
+                <div class="alert alert-primary" role="alert">
+                    This tab is intentionally curated. It groups related improvements together and mirrors a small number of high-impact settings so admins can enable them from the same overview.
+                </div>
+
+                {% for release_group in admin_latest_feature_release_groups %}
+                {% if release_group.id == 'current_release' %}
+                <div class="d-flex flex-column flex-lg-row align-items-lg-center justify-content-between gap-2 mb-3">
+                    <div>
+                        <h5 class="mb-1">{{ release_group.label }}</h5>
+                        <p class="text-muted mb-0">{{ release_group.description }}</p>
+                    </div>
+                    {% if release_group.release_version %}
+                    <span class="badge bg-primary-subtle text-primary border border-primary-subtle">v{{ release_group.release_version }}</span>
+                    {% endif %}
+                </div>
+
+                {% for feature in release_group.features %}
+                {% set feature_card_id = 'latest-features-' ~ feature.id|replace('_', '-') ~ '-card' %}
+                {% set feature_collapse_id = feature_card_id ~ '-details' %}
+                <div class="card p-3 mb-3 latest-feature-card" id="{{ feature_card_id }}">
+                    <div class="latest-feature-header">
+                        <div class="latest-feature-copy">
+                            <h5 class="mb-1"><i class="bi {{ feature.icon }} me-2"></i>{{ feature.title }}</h5>
+                            <p class="text-muted mb-0">{{ feature.summary }}</p>
+                        </div>
+                        <a href="#{{ feature_collapse_id }}" class="fw-bold latest-feature-toggle" data-bs-toggle="collapse" aria-expanded="false" aria-controls="{{ feature_collapse_id }}">
+                            Show Details
+                        </a>
+                    </div>
+                    <div class="collapse mt-3" id="{{ feature_collapse_id }}">
+                        <div class="card card-body">
+                            {% if feature.details %}
+                            <p class="mb-2">{{ feature.details }}</p>
+                            {% endif %}
+                            {% if feature.why %}
+                            <div class="alert alert-secondary mb-3" role="alert">{{ feature.why }}</div>
+                            {% endif %}
+                            {% if feature.guidance %}
+                            <h6 class="mb-2">{% if feature.images %}Screenshot and rollout notes{% else %}Rollout notes{% endif %}</h6>
+                            <ul class="mb-3">
+                                {% for tip in feature.guidance %}
+                                <li>{{ tip }}</li>
+                                {% endfor %}
+                            </ul>
+                            {% endif %}
+                            {% if feature.images %}
+                            <div class="latest-feature-gallery mb-3">
+                                {% for image in feature.images %}
+                                <button
+                                    type="button"
+                                    class="latest-feature-thumbnail-trigger"
+                                    data-latest-feature-image-src="{{ url_for('static', filename=image.path) }}"
+                                    data-latest-feature-image-title="{{ image.title }}"
+                                    data-latest-feature-image-caption="{{ image.caption }}"
+                                >
+                                    <div class="latest-feature-thumbnail-card h-100">
+                                        <img class="latest-feature-thumbnail-image" src="{{ url_for('static', filename=image.path) }}" alt="{{ image.alt }}">
+                                        <div class="latest-feature-thumbnail-body">
+                                            <div class="latest-feature-thumbnail-title">{{ image.label }}</div>
+                                            <div class="latest-feature-thumbnail-meta">Click to enlarge</div>
+                                        </div>
+                                    </div>
+                                </button>
+                                {% endfor %}
+                            </div>
+                            {% endif %}
+                            {% if feature.actions %}
+                            <div class="d-flex flex-wrap gap-2">
+                                {% for action in feature.actions %}
+                                <a
+                                    class="btn btn-outline-primary btn-sm"
+                                    href="{% if action.href %}{{ action.href }}{% else %}{{ url_for(action.endpoint) }}{% if action.fragment %}#{{ action.fragment }}{% endif %}{% endif %}"
+                                    {% if action.is_external %}target="_blank" rel="noopener noreferrer"{% endif %}
+                                    {% if action.admin_tab %}data-open-admin-tab="{{ action.admin_tab }}"{% endif %}
+                                    {% if action.admin_section %}data-open-admin-section="{{ action.admin_section }}"{% endif %}
+                                >
+                                    <i class="bi {{ action.icon }} me-1"></i>{{ action.label }}
+                                </a>
+                                {% endfor %}
+                            </div>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+                {% else %}
+                {% set release_card_id = 'latest-features-' ~ release_group.id|replace('_', '-') ~ '-card' %}
+                {% set release_collapse_id = release_group.collapse_id %}
+                <div class="card p-3 mb-3 latest-feature-card" id="{{ release_card_id }}">
+                    <div class="latest-feature-header">
+                        <div class="latest-feature-copy">
+                            <h5 class="mb-1"><i class="bi bi-clock-history me-2"></i>{{ release_group.label }}</h5>
+                            <p class="text-muted mb-0">{{ release_group.description }}</p>
+                        </div>
+                        <a href="#{{ release_collapse_id }}" class="fw-bold latest-feature-toggle" data-bs-toggle="collapse" aria-expanded="false" aria-controls="{{ release_collapse_id }}">
+                            Show Details
+                        </a>
+                    </div>
+                    <div class="collapse mt-3" id="{{ release_collapse_id }}">
+                        <div class="card card-body">
+                            {% if release_group.release_version %}
+                            <div class="alert alert-secondary mb-3" role="alert">
+                                These were the headline admin-facing items in the earlier v{{ release_group.release_version }} release set.
+                            </div>
+                            {% endif %}
+                            <div class="row g-3">
+                                {% for feature in release_group.features %}
+                                <div class="col-xl-6">
+                                    <div class="border rounded p-3 h-100 bg-body-tertiary">
+                                        <div class="d-flex flex-column gap-3 h-100">
+                                            <div>
+                                                <h6 class="mb-1"><i class="bi {{ feature.icon }} me-2"></i>{{ feature.title }}</h6>
+                                                <p class="text-muted small mb-0">{{ feature.summary }}</p>
+                                            </div>
+                                            <p class="small mb-0">{{ feature.details }}</p>
+                                            {% if feature.guidance %}
+                                            <ul class="small mb-0">
+                                                {% for tip in feature.guidance %}
+                                                <li>{{ tip }}</li>
+                                                {% endfor %}
+                                            </ul>
+                                            {% endif %}
+                                            {% if feature.images %}
+                                            <div class="latest-feature-gallery">
+                                                {% for image in feature.images %}
+                                                <button
+                                                    type="button"
+                                                    class="latest-feature-thumbnail-trigger"
+                                                    data-latest-feature-image-src="{{ url_for('static', filename=image.path) }}"
+                                                    data-latest-feature-image-title="{{ image.title }}"
+                                                    data-latest-feature-image-caption="{{ image.caption }}"
+                                                >
+                                                    <div class="latest-feature-thumbnail-card h-100">
+                                                        <img class="latest-feature-thumbnail-image" src="{{ url_for('static', filename=image.path) }}" alt="{{ image.alt }}">
+                                                        <div class="latest-feature-thumbnail-body">
+                                                            <div class="latest-feature-thumbnail-title">{{ image.label }}</div>
+                                                            <div class="latest-feature-thumbnail-meta">Click to enlarge</div>
+                                                        </div>
+                                                    </div>
+                                                </button>
+                                                {% endfor %}
+                                            </div>
+                                            {% endif %}
+                                            {% if feature.actions %}
+                                            <div class="d-flex flex-wrap gap-2 mt-auto pt-2">
+                                                {% for action in feature.actions %}
+                                                <a
+                                                    class="btn btn-outline-primary btn-sm"
+                                                    href="{% if action.href %}{{ action.href }}{% else %}{{ url_for(action.endpoint) }}{% if action.fragment %}#{{ action.fragment }}{% endif %}{% endif %}"
+                                                    {% if action.is_external %}target="_blank" rel="noopener noreferrer"{% endif %}
+                                                    {% if action.admin_tab %}data-open-admin-tab="{{ action.admin_tab }}"{% endif %}
+                                                    {% if action.admin_section %}data-open-admin-section="{{ action.admin_section }}"{% endif %}
+                                                >
+                                                    <i class="bi {{ action.icon }} me-1"></i>{{ action.label }}
+                                                </a>
+                                                {% endfor %}
+                                            </div>
+                                            {% endif %}
+                                        </div>
+                                    </div>
+                                </div>
+                                {% endfor %}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                {% endif %}
+                {% endfor %}
+
+                {% if false %}
+                <div class="card p-3 mb-3 latest-feature-card" id="latest-features-release-notifications-card">
+                    <div class="latest-feature-header">
+                        <div class="latest-feature-copy">
+                            <h5 class="mb-1">
+                                <i class="bi bi-megaphone me-2"></i>Registered / Unregistered Badge
+                            </h5>
+                            <p class="text-muted mb-0">The badge next to the Admin Settings version number shows whether this admin instance is registered for latest release and community call notifications.</p>
+                        </div>
+                        <a href="#latestFeaturesReleaseNotifications" class="fw-bold latest-feature-toggle" data-bs-toggle="collapse" aria-expanded="false" aria-controls="latestFeaturesReleaseNotifications">
+                            Show Details
+                        </a>
+                    </div>
+                    <div class="collapse mt-3" id="latestFeaturesReleaseNotifications">
+                        <div class="card card-body">
+                            <div class="alert alert-secondary mb-3" role="alert">
+                                Admin-only explainer: this badge belongs to Admin Settings only and does not need to appear in the user-facing Latest Features pages.
+                            </div>
+                            <p class="mb-2">Use this badge as the quick status check for whether your environment is already registered to receive SimpleChat release updates.</p>
+                            <ul class="mb-0">
+                                <li><strong>Unregistered</strong> means this environment has not saved release notification registration details yet.</li>
+                                <li><strong>Registered</strong> means the environment already has saved contact details for release and community call notifications.</li>
+                                <li>Clicking the badge opens the registration modal where admins can add or edit the name, email, and organization for this instance.</li>
+                                <li>Submitting the form opens a prefilled email draft to <strong>simplechat@microsoft.com</strong> and stores the registration details back in Admin Settings.</li>
+                                <li>The badge lives beside the version number at the top of Admin Settings so admins can confirm status without hunting through tabs.</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card p-3 mb-3 latest-feature-card" id="latest-features-deployment-card">
+                    <div class="latest-feature-header">
+                        <div class="latest-feature-copy">
+                            <h5 class="mb-1">
+                                <i class="bi bi-hdd-rack me-2"></i>Performance Improvements for Apps running Native Python (not containers)
+                            </h5>
+                            <p class="text-muted mb-0">Native Python App Service deployments should use Gunicorn as the startup command. Container deployments already do this for you.</p>
+                        </div>
+                        <a href="#latestFeaturesDeployment" class="fw-bold latest-feature-toggle" data-bs-toggle="collapse" aria-expanded="false" aria-controls="latestFeaturesDeployment">
+                            Show Details
+                        </a>
+                    </div>
+                    <div class="collapse mt-3" id="latestFeaturesDeployment">
+                        <div class="card card-body">
+                            <p class="mb-2">If you run the native Python App Service deployment instead of the container deployment, set the App Service Startup command to the following:</p>
+                            <pre class="latest-feature-command">python -m gunicorn -c gunicorn.conf.py app:app</pre>
+                            <p class="mt-3 mb-2">Use container deployments when possible if you want the runtime defaults and startup behavior handled by the shipped image.</p>
+                            <div class="d-flex flex-wrap gap-2 mb-3">
+                                <a href="https://github.com/microsoft/simplechat/blob/main/docs/explanation/features/SIMPLECHAT_STARTUP.md" target="_blank" rel="noopener noreferrer" class="btn btn-outline-primary btn-sm">
+                                    <i class="bi bi-box-arrow-up-right me-1"></i>Startup Guidance
+                                </a>
+                                <a href="https://github.com/microsoft/simplechat/blob/main/README.md#deployment-runtime-notes" target="_blank" rel="noopener noreferrer" class="btn btn-outline-secondary btn-sm">
+                                    <i class="bi bi-box-arrow-up-right me-1"></i>Runtime Notes
+                                </a>
+                            </div>
+                            <div class="latest-feature-gallery">
+                                <button
+                                    type="button"
+                                    class="latest-feature-thumbnail-trigger"
+                                    data-latest-feature-image-src="{{ url_for('static', filename='images/features/gunicorn_startup_guidance.png') }}"
+                                    data-latest-feature-image-title="Gunicorn Startup Guidance"
+                                    data-latest-feature-image-caption="Native Python App Service startup command guidance preview."
+                                >
+                                    <div class="latest-feature-thumbnail-card">
+                                        <img class="latest-feature-thumbnail-image" src="{{ url_for('static', filename='images/features/gunicorn_startup_guidance.png') }}" alt="Gunicorn startup guidance screenshot">
+                                        <div class="latest-feature-thumbnail-body">
+                                            <div class="latest-feature-thumbnail-title">Gunicorn Startup Guidance</div>
+                                            <div class="latest-feature-thumbnail-meta">Click to enlarge</div>
+                                        </div>
+                                    </div>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card p-3 mb-3 latest-feature-card" id="latest-features-guided-tutorials-card">
+                    <div class="latest-feature-header">
+                        <div class="latest-feature-copy">
+                            <h5 class="mb-1">
+                                <i class="bi bi-signpost-split me-2"></i>Guided Tutorials
+                            </h5>
+                            <p class="text-muted mb-0">New guided walkthroughs help users learn the live chat and personal workspace interfaces without leaving the app.</p>
+                        </div>
+                        <a href="#latestFeaturesGuidedTutorials" class="fw-bold latest-feature-toggle" data-bs-toggle="collapse" aria-expanded="false" aria-controls="latestFeaturesGuidedTutorials">
+                            Show Details
+                        </a>
+                    </div>
+                    <div class="collapse mt-3" id="latestFeaturesGuidedTutorials">
+                        <div class="card card-body">
+                            <p class="mb-2">Admins can use these walkthroughs to accelerate onboarding for new users and reduce orientation time across the primary product surfaces.</p>
+                            <ul class="mb-3">
+                                <li>Guided Chat Tutorial covers the active chat experience, message actions, search flows, citations, thoughts, and export-related actions.</li>
+                                <li>Personal Workspace Guided Tutorial walks through uploads, search, filters, list and grid views, prompts, agents, actions, and tags.</li>
+                            </ul>
+                            <div class="latest-feature-gallery">
+                                <button
+                                    type="button"
+                                    class="latest-feature-thumbnail-trigger"
+                                    data-latest-feature-image-src="{{ url_for('static', filename='images/features/guided_tutorials_chat.png') }}"
+                                    data-latest-feature-image-title="Guided Chat Tutorial"
+                                    data-latest-feature-image-caption="Chat walkthrough preview for end users."
+                                >
+                                    <div class="latest-feature-thumbnail-card">
+                                        <img class="latest-feature-thumbnail-image" src="{{ url_for('static', filename='images/features/guided_tutorials_chat.png') }}" alt="Guided chat tutorial screenshot">
+                                        <div class="latest-feature-thumbnail-body">
+                                            <div class="latest-feature-thumbnail-title">Guided Chat Tutorial</div>
+                                            <div class="latest-feature-thumbnail-meta">Click to enlarge</div>
+                                        </div>
+                                    </div>
+                                </button>
+                                <button
+                                    type="button"
+                                    class="latest-feature-thumbnail-trigger"
+                                    data-latest-feature-image-src="{{ url_for('static', filename='images/features/guided_tutorials_workspace.png') }}"
+                                    data-latest-feature-image-title="Workspace Guided Tutorial"
+                                    data-latest-feature-image-caption="Personal workspace walkthrough preview."
+                                >
+                                    <div class="latest-feature-thumbnail-card">
+                                        <img class="latest-feature-thumbnail-image" src="{{ url_for('static', filename='images/features/guided_tutorials_workspace.png') }}" alt="Workspace guided tutorial screenshot">
+                                        <div class="latest-feature-thumbnail-body">
+                                            <div class="latest-feature-thumbnail-title">Workspace Guided Tutorial</div>
+                                            <div class="latest-feature-thumbnail-meta">Click to enlarge</div>
+                                        </div>
+                                    </div>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card p-3 mb-3 latest-feature-card" id="latest-features-background-chat-card">
+                    <div class="latest-feature-header">
+                        <div class="latest-feature-copy">
+                            <h5 class="mb-1">
+                                <i class="bi bi-bell me-2"></i>Background Chat Completion
+                            </h5>
+                            <p class="text-muted mb-0">Personal chats can continue finishing after a user leaves the chat page, and completed responses surface as notifications with unread indicators.</p>
+                        </div>
+                        <a href="#latestFeaturesBackgroundChat" class="fw-bold latest-feature-toggle" data-bs-toggle="collapse" aria-expanded="false" aria-controls="latestFeaturesBackgroundChat">
+                            Show Details
+                        </a>
+                    </div>
+                    <div class="collapse mt-3" id="latestFeaturesBackgroundChat">
+                        <div class="card card-body">
+                            <p class="mb-2">This makes long-running responses more reliable for users who navigate into other areas of the app before generation finishes.</p>
+                            <ul class="mb-3">
+                                <li>Completion notifications deep-link back into the finished conversation.</li>
+                                <li>Unread markers remain visible until the response is actually opened.</li>
+                                <li>Personal, workspace, and navigation flows now behave more consistently while chat completion continues in the background.</li>
+                            </ul>
+                            <div class="latest-feature-gallery">
+                                <button
+                                    type="button"
+                                    class="latest-feature-thumbnail-trigger"
+                                    data-latest-feature-image-src="{{ url_for('static', filename='images/features/background_completion_notifications-01.png') }}"
+                                    data-latest-feature-image-title="Background Completion Notification"
+                                    data-latest-feature-image-caption="Unread completion notification state for background chat responses."
+                                >
+                                    <div class="latest-feature-thumbnail-card">
+                                        <img class="latest-feature-thumbnail-image" src="{{ url_for('static', filename='images/features/background_completion_notifications-01.png') }}" alt="Background completion notification screenshot">
+                                        <div class="latest-feature-thumbnail-body">
+                                            <div class="latest-feature-thumbnail-title">Notification State</div>
+                                            <div class="latest-feature-thumbnail-meta">Click to enlarge</div>
+                                        </div>
+                                    </div>
+                                </button>
+                                <button
+                                    type="button"
+                                    class="latest-feature-thumbnail-trigger"
+                                    data-latest-feature-image-src="{{ url_for('static', filename='images/features/background_completion_notifications-02.png') }}"
+                                    data-latest-feature-image-title="Background Completion Deep Link"
+                                    data-latest-feature-image-caption="Finished response entry point back into the completed chat."
+                                >
+                                    <div class="latest-feature-thumbnail-card">
+                                        <img class="latest-feature-thumbnail-image" src="{{ url_for('static', filename='images/features/background_completion_notifications-02.png') }}" alt="Background completion deep link screenshot">
+                                        <div class="latest-feature-thumbnail-body">
+                                            <div class="latest-feature-thumbnail-title">Deep Link Back to Chat</div>
+                                            <div class="latest-feature-thumbnail-meta">Click to enlarge</div>
+                                        </div>
+                                    </div>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card p-3 mb-3 latest-feature-card" id="latest-features-model-selection-card">
+                    <div class="latest-feature-header">
+                        <div class="latest-feature-copy">
+                            <h5 class="mb-1">
+                                <i class="bi bi-cpu me-2"></i>Multi-Endpoint GPT Selection
+                            </h5>
+                            <p class="text-muted mb-0">Admins can expose multiple GPT choices across Azure OpenAI and Azure AI Foundry, set a saved default fallback model, and now review agent rebinding in a modal before applying changes.</p>
+                        </div>
+                        <a href="#latestFeaturesModelSelection" class="fw-bold latest-feature-toggle" data-bs-toggle="collapse" aria-expanded="false" aria-controls="latestFeaturesModelSelection">
+                            Show Details
+                        </a>
+                    </div>
+                    <div class="collapse mt-3" id="latestFeaturesModelSelection">
+                        <div class="card card-body">
+                            <p class="mb-2">This is the high-value admin control for teams that want broader GPT choice without locking every workflow to a single deployment.</p>
+                            <ul class="mb-3">
+                                <li>Configure multiple model endpoints and choose which GPT deployments are available to users.</li>
+                                <li>Set a default fallback model so summarization, agent requests, and other background flows still resolve a usable GPT when an explicit selection is missing.</li>
+                                <li>Use the admin-only Agent Default Model Review modal to inspect inherited agents, search and filter large agent sets, and explicitly choose which review rows should be overridden to the saved default.</li>
+                            </ul>
+                            <div class="alert alert-info mb-3" role="alert">
+                                <strong>Admin-only workflow:</strong> The review modal is intended for administrators who need to standardize agents on a new default model, control cost, or intentionally replace older explicit bindings as new models are released.
+                            </div>
+                            <div class="alert alert-secondary mb-3" role="alert">
+                                Review endpoint and fallback configuration in the <a href="#ai-models" onclick="switchTab(event, 'ai-models-tab')">AI Models</a> tab.
+                            </div>
+                            <div class="latest-feature-gallery">
+                                <button
+                                    type="button"
+                                    class="latest-feature-thumbnail-trigger"
+                                    data-latest-feature-image-src="{{ url_for('static', filename='images/features/model_selection_multi_endpoint_admin.png') }}"
+                                    data-latest-feature-image-title="Admin Multi-Endpoint Model Management"
+                                    data-latest-feature-image-caption="Admin endpoint table showing Azure OpenAI and Foundry model endpoints with configured GPT choices."
+                                >
+                                    <div class="latest-feature-thumbnail-card">
+                                        <img class="latest-feature-thumbnail-image" src="{{ url_for('static', filename='images/features/model_selection_multi_endpoint_admin.png') }}" alt="Admin multi-endpoint model management screenshot">
+                                        <div class="latest-feature-thumbnail-body">
+                                            <div class="latest-feature-thumbnail-title">Admin Endpoint Table</div>
+                                            <div class="latest-feature-thumbnail-meta">Click to enlarge</div>
+                                        </div>
+                                    </div>
+                                </button>
+                                <button
+                                    type="button"
+                                    class="latest-feature-thumbnail-trigger"
+                                    data-latest-feature-image-src="{{ url_for('static', filename='images/features/agent_default_model_review_summary.png') }}"
+                                    data-latest-feature-image-title="Agent Default Model Review Summary"
+                                    data-latest-feature-image-caption="AI Models summary card showing recommended agents, explicit override candidates, and the saved default model before opening the review modal."
+                                >
+                                    <div class="latest-feature-thumbnail-card">
+                                        <img class="latest-feature-thumbnail-image" src="{{ url_for('static', filename='images/features/agent_default_model_review_summary.png') }}" alt="Agent default model review summary screenshot">
+                                        <div class="latest-feature-thumbnail-body">
+                                            <div class="latest-feature-thumbnail-title">Review Summary Card</div>
+                                            <div class="latest-feature-thumbnail-meta">Click to enlarge</div>
+                                        </div>
+                                    </div>
+                                </button>
+                                <button
+                                    type="button"
+                                    class="latest-feature-thumbnail-trigger"
+                                    data-latest-feature-image-src="{{ url_for('static', filename='images/features/agent_default_model_review_action.png') }}"
+                                    data-latest-feature-image-title="Agent Default Model Review Modal"
+                                    data-latest-feature-image-caption="Admin modal for searching, filtering, and selecting the exact agents that should adopt the saved default model."
+                                >
+                                    <div class="latest-feature-thumbnail-card">
+                                        <img class="latest-feature-thumbnail-image" src="{{ url_for('static', filename='images/features/agent_default_model_review_action.png') }}" alt="Agent default model review modal screenshot">
+                                        <div class="latest-feature-thumbnail-body">
+                                            <div class="latest-feature-thumbnail-title">Review Modal Action</div>
+                                            <div class="latest-feature-thumbnail-meta">Click to enlarge</div>
+                                        </div>
+                                    </div>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card p-3 mb-3 latest-feature-card" id="latest-features-tabular-card">
+                    <div class="latest-feature-header">
+                        <div class="latest-feature-copy">
+                            <h5 class="mb-1">
+                                <i class="bi bi-table me-2"></i>Tabular Data Analysis
+                            </h5>
+                            <p class="text-muted mb-0">Enhanced citations now unlock a more consistent tabular analysis experience for normal chat and workspace-backed files, not just dedicated agent scenarios.</p>
+                        </div>
+                        <a href="#latestFeaturesTabular" class="fw-bold latest-feature-toggle" data-bs-toggle="collapse" aria-expanded="false" aria-controls="latestFeaturesTabular">
+                            Show Details
+                        </a>
+                    </div>
+                    <div class="collapse mt-3" id="latestFeaturesTabular">
+                        <div class="card card-body">
+                            <p class="mb-2">This is the highest-impact settings area to mirror here because it combines storage-backed citations, tabular previews, and consistent behavior across workspace and chat uploads.</p>
+                            <ul class="mb-3">
+                                <li>Tabular files can be analyzed with the same core approach whether they come from chat uploads or any workspace container.</li>
+                                <li>Enhanced citations provide the blob-backed dependency for richer tabular processing and citation transparency.</li>
+                                <li>Admins can right-size tabular preview limits based on the memory profile of their runtime.</li>
+                            </ul>
+                            <div class="alert alert-secondary mb-3" role="alert">
+                                These controls mirror the saved values in the <a href="#citation" onclick="switchTab(event, 'citation-tab')">Citations</a> tab.
+                            </div>
+                            <div class="form-check form-switch mb-3">
+                                <input
+                                    type="checkbox"
+                                    class="form-check-input"
+                                    id="latest_features_enable_enhanced_citations"
+                                    name="latest_features_enable_enhanced_citations_proxy"
+                                    autocomplete="off"
+                                    data-ignore-settings-change="true"
+                                    data-lpignore="true"
+                                    data-1p-ignore="true"
+                                    data-bwignore="true"
+                                    {% if settings.enable_enhanced_citations %}checked{% endif %}
+                                >
+                                <label class="form-check-label ms-2" for="latest_features_enable_enhanced_citations">
+                                    Enable Enhanced Citations
+                                </label>
+                            </div>
+
+                            <div id="latest_features_enhanced_citation_settings" class="{% if not settings.enable_enhanced_citations %}d-none{% endif %}">
+                                <div class="card mb-3 p-3">
+                                    <h6><strong>All filetypes</strong></h6>
+                                    <div class="mb-3">
+                                        <label for="latest_features_office_docs_authentication_type" class="form-label">
+                                            Storage Account Authentication Type
+                                        </label>
+                                        <select class="form-select" id="latest_features_office_docs_authentication_type" name="latest_features_office_docs_authentication_type_proxy" autocomplete="off" data-ignore-settings-change="true" data-lpignore="true" data-1p-ignore="true" data-bwignore="true">
+                                            <option value="key" {% if settings.office_docs_authentication_type == "key" or not settings.office_docs_authentication_type %}selected{% endif %}>Connection String</option>
+                                            <option value="managed_identity" {% if settings.office_docs_authentication_type == "managed_identity" %}selected{% endif %}>Managed Identity</option>
+                                        </select>
+                                    </div>
+
+                                    <div class="mb-3 {% if settings.office_docs_authentication_type == 'managed_identity' %}d-none{% endif %}" id="latest_features_office_docs_storage_conn_str_group">
+                                        <label for="latest_features_office_docs_storage_account_url" class="form-label">
+                                            Storage Account Connection String
+                                        </label>
+                                        <div class="input-group">
+                                            <input
+                                                type="password"
+                                                class="form-control"
+                                                id="latest_features_office_docs_storage_account_url"
+                                                name="latest_features_office_docs_storage_account_url_proxy"
+                                                autocomplete="off"
+                                                data-ignore-settings-change="true"
+                                                data-lpignore="true"
+                                                data-1p-ignore="true"
+                                                data-bwignore="true"
+                                                value="{{ settings.office_docs_storage_account_url or '' }}"
+                                            >
+                                            <button type="button" class="btn btn-outline-secondary" id="toggle_latest_features_office_conn_str">Show</button>
+                                        </div>
+                                    </div>
+
+                                    <div class="mb-3 {% if settings.office_docs_authentication_type != 'managed_identity' %}d-none{% endif %}" id="latest_features_office_docs_storage_url_group">
+                                        <label for="latest_features_office_docs_storage_account_blob_endpoint" class="form-label">
+                                            Storage Account Blob Service Endpoint
+                                        </label>
+                                        <div class="input-group">
+                                            <input
+                                                type="password"
+                                                class="form-control"
+                                                id="latest_features_office_docs_storage_account_blob_endpoint"
+                                                name="latest_features_office_docs_storage_account_blob_endpoint_proxy"
+                                                autocomplete="off"
+                                                data-ignore-settings-change="true"
+                                                data-lpignore="true"
+                                                data-1p-ignore="true"
+                                                data-bwignore="true"
+                                                value="{{ settings.office_docs_storage_account_blob_endpoint or '' }}"
+                                            >
+                                            <button type="button" class="btn btn-outline-secondary" id="toggle_latest_features_office_url">Show</button>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="card mb-3 p-3">
+                                    <h6><strong>Tabular Preview Limits</strong></h6>
+                                    <div class="mb-3">
+                                        <label for="latest_features_tabular_preview_max_blob_size_mb" class="form-label">
+                                            Maximum File Size for Tabular Preview (MB)
+                                        </label>
+                                        <input type="number" class="form-control" id="latest_features_tabular_preview_max_blob_size_mb" name="latest_features_tabular_preview_max_blob_size_mb_proxy" autocomplete="off" inputmode="numeric" data-ignore-settings-change="true" data-lpignore="true" data-1p-ignore="true" data-bwignore="true"
+                                            min="1" max="1024"
+                                            value="{{ settings.tabular_preview_max_blob_size_mb or 200 }}">
+                                        <small class="form-text text-muted">
+                                            Mirror of the Citations setting. Larger values support bigger previews but increase runtime memory pressure.
+                                        </small>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="latest-feature-gallery">
+                                <button
+                                    type="button"
+                                    class="latest-feature-thumbnail-trigger"
+                                    data-latest-feature-image-src="{{ url_for('static', filename='images/features/tabular_analysis_enhanced_citations.png') }}"
+                                    data-latest-feature-image-title="Tabular Analysis with Enhanced Citations"
+                                    data-latest-feature-image-caption="Enhanced citations and tabular analysis preview."
+                                >
+                                    <div class="latest-feature-thumbnail-card">
+                                        <img class="latest-feature-thumbnail-image" src="{{ url_for('static', filename='images/features/tabular_analysis_enhanced_citations.png') }}" alt="Tabular analysis enhanced citations screenshot">
+                                        <div class="latest-feature-thumbnail-body">
+                                            <div class="latest-feature-thumbnail-title">Tabular Analysis Preview</div>
+                                            <div class="latest-feature-thumbnail-meta">Click to enlarge</div>
+                                        </div>
+                                    </div>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card p-3 mb-3 latest-feature-card" id="latest-features-citation-improvements-card">
+                    <div class="latest-feature-header">
+                        <div class="latest-feature-copy">
+                            <h5 class="mb-1">
+                                <i class="bi bi-journal-text me-2"></i>Citation Improvements
+                            </h5>
+                            <p class="text-muted mb-0">Conversation history citation replay and citation amplification keep more grounded evidence available across follow-up turns without making the chat history unwieldy.</p>
+                        </div>
+                        <a href="#latestFeaturesCitationImprovements" class="fw-bold latest-feature-toggle" data-bs-toggle="collapse" aria-expanded="false" aria-controls="latestFeaturesCitationImprovements">
+                            Show Details
+                        </a>
+                    </div>
+                    <div class="collapse mt-3" id="latestFeaturesCitationImprovements">
+                        <div class="card card-body">
+                            <p class="mb-2">These improvements make follow-up questions more reliable because the system can reuse prior grounded evidence instead of relying only on the assistant's last prose response.</p>
+                            <ul class="mb-3">
+                                <li>Conversation history citations carry forward prior citation summaries so later prompts can reuse earlier grounded results.</li>
+                                <li>Citation amplification keeps richer supporting payloads available for inspection and export while keeping prompt history compact.</li>
+                                <li>This is especially useful for larger or tabular outputs where users often ask multiple follow-up questions against the same evidence chain.</li>
+                            </ul>
+                            <div class="alert alert-secondary mb-3" role="alert">
+                                These improvements complement the <a href="#citation" onclick="switchTab(event, 'citation-tab')">Citations</a> configuration and the enhanced-citation storage flow.
+                            </div>
+                            <div class="latest-feature-gallery">
+                                <button
+                                    type="button"
+                                    class="latest-feature-thumbnail-trigger"
+                                    data-latest-feature-image-src="{{ url_for('static', filename='images/features/citation_improvements_history_replay.png') }}"
+                                    data-latest-feature-image-title="Conversation History Citation Replay"
+                                    data-latest-feature-image-caption="Follow-up chat where prior citation summaries are replayed into the next turn's reasoning context."
+                                >
+                                    <div class="latest-feature-thumbnail-card">
+                                        <img class="latest-feature-thumbnail-image" src="{{ url_for('static', filename='images/features/citation_improvements_history_replay.png') }}" alt="Conversation history citation replay screenshot">
+                                        <div class="latest-feature-thumbnail-body">
+                                            <div class="latest-feature-thumbnail-title">History Citation Replay</div>
+                                            <div class="latest-feature-thumbnail-meta">Click to enlarge</div>
+                                        </div>
+                                    </div>
+                                </button>
+                                <button
+                                    type="button"
+                                    class="latest-feature-thumbnail-trigger"
+                                    data-latest-feature-image-src="{{ url_for('static', filename='images/features/citation_improvements_amplified_results.png') }}"
+                                    data-latest-feature-image-title="Citation Amplification Details"
+                                    data-latest-feature-image-caption="Expanded citation detail showing amplified supporting evidence and fuller artifact-backed results."
+                                >
+                                    <div class="latest-feature-thumbnail-card">
+                                        <img class="latest-feature-thumbnail-image" src="{{ url_for('static', filename='images/features/citation_improvements_amplified_results.png') }}" alt="Citation amplification details screenshot">
+                                        <div class="latest-feature-thumbnail-body">
+                                            <div class="latest-feature-thumbnail-title">Amplified Citation Detail</div>
+                                            <div class="latest-feature-thumbnail-meta">Click to enlarge</div>
+                                        </div>
+                                    </div>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card p-3 mb-3 latest-feature-card" id="latest-features-document-versioning-card">
+                    <div class="latest-feature-header">
+                        <div class="latest-feature-copy">
+                            <h5 class="mb-1">
+                                <i class="bi bi-files me-2"></i>Document Revisioning and Management
+                            </h5>
+                            <p class="text-muted mb-0">Uploading a document with the same name now creates a new revision instead of overwriting the previous file, while older versions remain available for traceability and later analysis.</p>
+                        </div>
+                        <a href="#latestFeaturesDocumentVersioning" class="fw-bold latest-feature-toggle" data-bs-toggle="collapse" aria-expanded="false" aria-controls="latestFeaturesDocumentVersioning">
+                            Show Details
+                        </a>
+                    </div>
+                    <div class="collapse mt-3" id="latestFeaturesDocumentVersioning">
+                        <div class="card card-body">
+                            <p class="mb-2">This improves both document management and citation integrity for long-lived conversations that span multiple document updates.</p>
+                            <ul class="mb-3">
+                                <li>Same-name uploads create a revision family with an incremented current version instead of destroying prior history.</li>
+                                <li>Previous versions are retained for analysis or comparison, while workspace and search views focus on the current revision by default.</li>
+                                <li>Older conversations can still resolve citations against the correct historical document version.</li>
+                                <li>Updated revisions inherit document classifications and tags so admins do not have to reapply metadata after every refresh.</li>
+                            </ul>
+                            <div class="latest-feature-gallery">
+                                <button
+                                    type="button"
+                                    class="latest-feature-thumbnail-trigger"
+                                    data-latest-feature-image-src="{{ url_for('static', filename='images/features/document_revision_workspace.png') }}"
+                                    data-latest-feature-image-title="Current Revision in Workspace"
+                                    data-latest-feature-image-caption="Workspace document list showing the current revision state for same-name uploads."
+                                >
+                                    <div class="latest-feature-thumbnail-card">
+                                        <img class="latest-feature-thumbnail-image" src="{{ url_for('static', filename='images/features/document_revision_workspace.png') }}" alt="Document revision workspace screenshot">
+                                        <div class="latest-feature-thumbnail-body">
+                                            <div class="latest-feature-thumbnail-title">Current Revision View</div>
+                                            <div class="latest-feature-thumbnail-meta">Click to enlarge</div>
+                                        </div>
+                                    </div>
+                                </button>
+                                <button
+                                    type="button"
+                                    class="latest-feature-thumbnail-trigger"
+                                    data-latest-feature-image-src="{{ url_for('static', filename='images/features/document_revision_delete_compare.png') }}"
+                                    data-latest-feature-image-title="Revision Actions and Comparison"
+                                    data-latest-feature-image-caption="Version-aware actions such as comparison, analysis of previous revisions, or current-versus-all-versions deletion choices."
+                                >
+                                    <div class="latest-feature-thumbnail-card">
+                                        <img class="latest-feature-thumbnail-image" src="{{ url_for('static', filename='images/features/document_revision_delete_compare.png') }}" alt="Document revision actions screenshot">
+                                        <div class="latest-feature-thumbnail-body">
+                                            <div class="latest-feature-thumbnail-title">Revision Actions</div>
+                                            <div class="latest-feature-thumbnail-meta">Click to enlarge</div>
+                                        </div>
+                                    </div>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card p-3 mb-3 latest-feature-card" id="latest-features-export-card">
+                    <div class="latest-feature-header">
+                        <div class="latest-feature-copy">
+                            <h5 class="mb-1">
+                                <i class="bi bi-file-earmark-arrow-down me-2"></i>Conversation Summaries and Export
+                            </h5>
+                            <p class="text-muted mb-0">Conversation export now includes persistent summaries, PDF output, and easier per-message reuse and sharing actions.</p>
+                        </div>
+                        <a href="#latestFeaturesExports" class="fw-bold latest-feature-toggle" data-bs-toggle="collapse" aria-expanded="false" aria-controls="latestFeaturesExports">
+                            Show Details
+                        </a>
+                    </div>
+                    <div class="collapse mt-3" id="latestFeaturesExports">
+                        <div class="card card-body">
+                            <ul class="mb-3">
+                                <li>Conversation details now surface a summary card with generate and regenerate actions.</li>
+                                <li>Export supports PDF alongside existing export options.</li>
+                                <li>Per-message actions support Markdown export, Word export, open in email, and use as prompt.</li>
+                            </ul>
+                            <div class="row g-3">
+                                <div class="col-lg-6">
+                                    <button
+                                        type="button"
+                                        class="latest-feature-thumbnail-trigger"
+                                        data-latest-feature-image-src="{{ url_for('static', filename='images/features/conversation_summary_card.png') }}"
+                                        data-latest-feature-image-title="Conversation Summary Card"
+                                        data-latest-feature-image-caption="Conversation summary panel preview in the chat experience."
+                                    >
+                                        <div class="latest-feature-thumbnail-card h-100">
+                                            <img class="latest-feature-thumbnail-image" src="{{ url_for('static', filename='images/features/conversation_summary_card.png') }}" alt="Conversation summary card screenshot">
+                                            <div class="latest-feature-thumbnail-body">
+                                                <div class="latest-feature-thumbnail-title">Conversation Summary Card</div>
+                                                <div class="latest-feature-thumbnail-meta">Click to enlarge</div>
+                                            </div>
+                                        </div>
+                                    </button>
+                                </div>
+                                <div class="col-lg-6">
+                                    <div class="latest-feature-gallery h-100">
+                                        <button
+                                            type="button"
+                                            class="latest-feature-thumbnail-trigger"
+                                            data-latest-feature-image-src="{{ url_for('static', filename='images/features/pdf_export_option.png') }}"
+                                            data-latest-feature-image-title="PDF Export Option"
+                                            data-latest-feature-image-caption="PDF export entry in the conversation export workflow."
+                                        >
+                                            <div class="latest-feature-thumbnail-card h-100">
+                                                <img class="latest-feature-thumbnail-image" src="{{ url_for('static', filename='images/features/pdf_export_option.png') }}" alt="PDF export option screenshot">
+                                                <div class="latest-feature-thumbnail-body">
+                                                    <div class="latest-feature-thumbnail-title">PDF Export Option</div>
+                                                    <div class="latest-feature-thumbnail-meta">Click to enlarge</div>
+                                                </div>
+                                            </div>
+                                        </button>
+                                        <button
+                                            type="button"
+                                            class="latest-feature-thumbnail-trigger"
+                                            data-latest-feature-image-src="{{ url_for('static', filename='images/features/per_message_export_menu.png') }}"
+                                            data-latest-feature-image-title="Per-Message Export Menu"
+                                            data-latest-feature-image-caption="Expanded per-message export and reuse actions."
+                                        >
+                                            <div class="latest-feature-thumbnail-card h-100">
+                                                <img class="latest-feature-thumbnail-image" src="{{ url_for('static', filename='images/features/per_message_export_menu.png') }}" alt="Per-message export menu screenshot">
+                                                <div class="latest-feature-thumbnail-body">
+                                                    <div class="latest-feature-thumbnail-title">Per-Message Export Menu</div>
+                                                    <div class="latest-feature-thumbnail-meta">Click to enlarge</div>
+                                                </div>
+                                            </div>
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card p-3 mb-3 latest-feature-card" id="latest-features-agent-ops-card">
+                    <div class="latest-feature-header">
+                        <div class="latest-feature-copy">
+                            <h5 class="mb-1">
+                                <i class="bi bi-grid me-2"></i>Agent and Action Operations
+                            </h5>
+                            <p class="text-muted mb-0">Recent updates improve manageability for agents and actions with richer views, easier SQL connectivity checks, and better operational tracking.</p>
+                        </div>
+                        <a href="#latestFeaturesAgentOps" class="fw-bold latest-feature-toggle" data-bs-toggle="collapse" aria-expanded="false" aria-controls="latestFeaturesAgentOps">
+                            Show Details
+                        </a>
+                    </div>
+                    <div class="collapse mt-3" id="latestFeaturesAgentOps">
+                        <div class="card card-body">
+                            <ul class="mb-3">
+                                <li>List and grid view toggles give admins and users a better way to browse agents and actions.</li>
+                                <li>SQL actions now include an inline Test Connection button before save.</li>
+                                <li>User tracking and activity logging improve auditability for agent and action changes.</li>
+                            </ul>
+                            <div class="latest-feature-gallery">
+                                <button
+                                    type="button"
+                                    class="latest-feature-thumbnail-trigger"
+                                    data-latest-feature-image-src="{{ url_for('static', filename='images/features/agent_action_grid_view.png') }}"
+                                    data-latest-feature-image-title="Agent and Action Grid View"
+                                    data-latest-feature-image-caption="Grid browsing experience for agents and actions."
+                                >
+                                    <div class="latest-feature-thumbnail-card">
+                                        <img class="latest-feature-thumbnail-image" src="{{ url_for('static', filename='images/features/agent_action_grid_view.png') }}" alt="Agent and action grid view screenshot">
+                                        <div class="latest-feature-thumbnail-body">
+                                            <div class="latest-feature-thumbnail-title">Grid View</div>
+                                            <div class="latest-feature-thumbnail-meta">Click to enlarge</div>
+                                        </div>
+                                    </div>
+                                </button>
+                                <button
+                                    type="button"
+                                    class="latest-feature-thumbnail-trigger"
+                                    data-latest-feature-image-src="{{ url_for('static', filename='images/features/sql_test_connection.png') }}"
+                                    data-latest-feature-image-title="SQL Test Connection"
+                                    data-latest-feature-image-caption="Inline SQL connection test preview before save."
+                                >
+                                    <div class="latest-feature-thumbnail-card">
+                                        <img class="latest-feature-thumbnail-image" src="{{ url_for('static', filename='images/features/sql_test_connection.png') }}" alt="SQL test connection screenshot">
+                                        <div class="latest-feature-thumbnail-body">
+                                            <div class="latest-feature-thumbnail-title">SQL Test Connection</div>
+                                            <div class="latest-feature-thumbnail-meta">Click to enlarge</div>
+                                        </div>
+                                    </div>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card p-3 mb-3 latest-feature-card" id="latest-features-thoughts-card">
+                    <div class="latest-feature-header">
+                        <div class="latest-feature-copy">
+                            <h5 class="mb-1">
+                                <i class="bi bi-stars me-2"></i>AI Transparency
+                            </h5>
+                            <p class="text-muted mb-0">Processing Thoughts provide a clearer view into model activity, duration, and execution flow while responses are being generated.</p>
+                        </div>
+                        <a href="#latestFeaturesThoughts" class="fw-bold latest-feature-toggle" data-bs-toggle="collapse" aria-expanded="false" aria-controls="latestFeaturesThoughts">
+                            Show Details
+                        </a>
+                    </div>
+                    <div class="collapse mt-3" id="latestFeaturesThoughts">
+                        <div class="card card-body">
+                            <p class="mb-2">Admins can enable this once and let users see more of the model pipeline, including sending, generating, and responded states with clearer timing information.</p>
+                            <div class="alert alert-secondary mb-3" role="alert">
+                                This toggle mirrors the saved value in the <a href="#ai-models" onclick="switchTab(event, 'ai-models-tab')">AI Models</a> tab.
+                            </div>
+                            <div class="form-check form-switch mb-3">
+                                <input
+                                    type="checkbox"
+                                    class="form-check-input"
+                                    id="latest_features_enable_thoughts"
+                                    name="latest_features_enable_thoughts_proxy"
+                                    autocomplete="off"
+                                    data-ignore-settings-change="true"
+                                    data-lpignore="true"
+                                    data-1p-ignore="true"
+                                    data-bwignore="true"
+                                    {% if settings.enable_thoughts %}checked{% endif %}
+                                >
+                                <label class="form-check-label ms-2" for="latest_features_enable_thoughts">
+                                    Enable Processing Thoughts
+                                </label>
+                            </div>
+                            <div class="latest-feature-gallery">
+                                <button
+                                    type="button"
+                                    class="latest-feature-thumbnail-trigger"
+                                    data-latest-feature-image-src="{{ url_for('static', filename='images/features/thoughts_visibility.png') }}"
+                                    data-latest-feature-image-title="Processing Thoughts Visibility"
+                                    data-latest-feature-image-caption="Processing thoughts state and timing details preview."
+                                >
+                                    <div class="latest-feature-thumbnail-card">
+                                        <img class="latest-feature-thumbnail-image" src="{{ url_for('static', filename='images/features/thoughts_visibility.png') }}" alt="Processing thoughts visibility screenshot">
+                                        <div class="latest-feature-thumbnail-body">
+                                            <div class="latest-feature-thumbnail-title">Processing Thoughts</div>
+                                            <div class="latest-feature-thumbnail-meta">Click to enlarge</div>
+                                        </div>
+                                    </div>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card p-3 mb-3 latest-feature-card" id="latest-features-fact-memory-card">
+                    <div class="latest-feature-header">
+                        <div class="latest-feature-copy">
+                            <h5 class="mb-1">
+                                <i class="bi bi-journal-bookmark me-2"></i>Fact Memory
+                            </h5>
+                            <p class="text-muted mb-0">Users can now save Instructions and Facts on their profile so the assistant can apply durable preferences every time and recall relevant personal context only when needed.</p>
+                        </div>
+                        <a href="#latestFeaturesFactMemory" class="fw-bold latest-feature-toggle" data-bs-toggle="collapse" aria-expanded="false" aria-controls="latestFeaturesFactMemory">
+                            Show Details
+                        </a>
+                    </div>
+                    <div class="collapse mt-3" id="latestFeaturesFactMemory">
+                        <div class="card card-body">
+                            <p class="mb-2">Fact Memory gives users a compact profile experience for managing two distinct memory types: always-on Instructions and relevance-based Facts.</p>
+                            <ul class="mb-3">
+                                <li>Instructions act like stable user preferences and are applied on every prompt unless the current message overrides them.</li>
+                                <li>Facts are recalled only when relevant and now appear as dedicated thought and citation entries in chat.</li>
+                                <li>The profile page includes a compact add flow plus a popup manager for search, paging, edit, retag, and delete actions.</li>
+                                <li>Admins can choose whether this announcement is visible on the user-facing Latest Features page from <strong>General > User-Facing Latest Features</strong>.</li>
+                            </ul>
+                            <div class="alert alert-secondary mb-3" role="alert">
+                                Use the <a href="#general" onclick="switchTab(event, 'general-tab')">General</a> tab when you want to show or hide the Fact Memory announcement for end users.
+                            </div>
+                            <div class="latest-feature-gallery">
+                                <button
+                                    type="button"
+                                    class="latest-feature-thumbnail-trigger"
+                                    data-latest-feature-image-src="{{ url_for('static', filename='images/features/facts_memory_view_profile.png') }}"
+                                    data-latest-feature-image-title="Fact Memory on Profile"
+                                    data-latest-feature-image-caption="Profile page section for adding saved instructions and facts and opening the manager modal."
+                                >
+                                    <div class="latest-feature-thumbnail-card">
+                                        <img class="latest-feature-thumbnail-image" src="{{ url_for('static', filename='images/features/facts_memory_view_profile.png') }}" alt="Profile fact memory section screenshot">
+                                        <div class="latest-feature-thumbnail-body">
+                                            <div class="latest-feature-thumbnail-title">Profile Entry Point</div>
+                                            <div class="latest-feature-thumbnail-meta">Click to enlarge</div>
+                                        </div>
+                                    </div>
+                                </button>
+                                <button
+                                    type="button"
+                                    class="latest-feature-thumbnail-trigger"
+                                    data-latest-feature-image-src="{{ url_for('static', filename='images/features/fact_memory_management.png') }}"
+                                    data-latest-feature-image-title="Manage Fact Memories"
+                                    data-latest-feature-image-caption="Compact popup manager showing saved instructions and facts with search, paging, edit, and type controls."
+                                >
+                                    <div class="latest-feature-thumbnail-card">
+                                        <img class="latest-feature-thumbnail-image" src="{{ url_for('static', filename='images/features/fact_memory_management.png') }}" alt="Fact memory management modal screenshot">
+                                        <div class="latest-feature-thumbnail-body">
+                                            <div class="latest-feature-thumbnail-title">Memory Manager</div>
+                                            <div class="latest-feature-thumbnail-meta">Click to enlarge</div>
+                                        </div>
+                                    </div>
+                                </button>
+                                <button
+                                    type="button"
+                                    class="latest-feature-thumbnail-trigger"
+                                    data-latest-feature-image-src="{{ url_for('static', filename='images/features/facts_citation_and_thoughts.png') }}"
+                                    data-latest-feature-image-title="Instruction Memory and Fact Recall in Chat"
+                                    data-latest-feature-image-caption="Chat response showing instruction memory and fact recall surfaced as dedicated thoughts and citations."
+                                >
+                                    <div class="latest-feature-thumbnail-card">
+                                        <img class="latest-feature-thumbnail-image" src="{{ url_for('static', filename='images/features/facts_citation_and_thoughts.png') }}" alt="Chat fact memory thoughts and citations screenshot">
+                                        <div class="latest-feature-thumbnail-body">
+                                            <div class="latest-feature-thumbnail-title">Chat Recall</div>
+                                            <div class="latest-feature-thumbnail-meta">Click to enlarge</div>
+                                        </div>
+                                    </div>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card p-3 mb-3 latest-feature-card" id="latest-features-redis-card">
+                    <div class="latest-feature-header">
+                        <div class="latest-feature-copy">
+                            <h5 class="mb-1">
+                                <i class="bi bi-key me-2"></i>Redis and Key Vault
+                            </h5>
+                            <p class="text-muted mb-0">Redis configuration now supports using a Key Vault secret name instead of storing the access key directly in settings.</p>
+                        </div>
+                        <a href="#latestFeaturesRedis" class="fw-bold latest-feature-toggle" data-bs-toggle="collapse" aria-expanded="false" aria-controls="latestFeaturesRedis">
+                            Show Details
+                        </a>
+                    </div>
+                    <div class="collapse mt-3" id="latestFeaturesRedis">
+                        <div class="card card-body">
+                            <p class="mb-2">This is useful for teams standardizing on Key Vault-backed secret storage while still using Redis for cache and session scenarios.</p>
+                            <ul class="mb-3">
+                                <li>Use Redis authentication type <strong>Key Vault</strong> when you want the stored value to represent a secret name instead of a raw Redis key.</li>
+                                <li>This works best when Key Vault is already configured for the app.</li>
+                            </ul>
+                            <div class="alert alert-secondary mb-3" role="alert">
+                                These controls mirror the saved values in the <a href="#scale" onclick="switchTab(event, 'scale-tab')">Scale</a> tab.
+                            </div>
+                            <div class="form-check form-switch mb-3">
+                                <input
+                                    type="checkbox"
+                                    class="form-check-input"
+                                    id="latest_features_enable_redis_cache"
+                                    name="latest_features_enable_redis_cache_proxy"
+                                    autocomplete="off"
+                                    data-ignore-settings-change="true"
+                                    data-lpignore="true"
+                                    data-1p-ignore="true"
+                                    data-bwignore="true"
+                                    {% if settings.enable_redis_cache %}checked{% endif %}
+                                >
+                                <label class="form-check-label ms-2" for="latest_features_enable_redis_cache">
+                                    Enable Redis Cache
+                                </label>
+                            </div>
+
+                            <div id="latest_features_redis_settings" class="{% if not settings.enable_redis_cache %}d-none{% endif %}">
+                                <div class="card mb-3 p-3">
+                                    <h6><strong>Redis Cache Settings</strong></h6>
+                                    <div class="mb-3">
+                                        <label for="latest_features_redis_url" class="form-label">Redis Server Host Name</label>
+                                        <input
+                                            type="text"
+                                            class="form-control"
+                                            id="latest_features_redis_url"
+                                            name="latest_features_redis_url_proxy"
+                                            autocomplete="off"
+                                            data-ignore-settings-change="true"
+                                            data-lpignore="true"
+                                            data-1p-ignore="true"
+                                            data-bwignore="true"
+                                            value="{{ settings.redis_url or '' }}"
+                                        >
+                                    </div>
+                                    <div class="mb-3">
+                                        <label for="latest_features_redis_auth_type" class="form-label">Redis Authentication Type</label>
+                                        <select
+                                            class="form-select"
+                                            id="latest_features_redis_auth_type"
+                                            name="latest_features_redis_auth_type_proxy"
+                                            autocomplete="off"
+                                            data-ignore-settings-change="true"
+                                            data-lpignore="true"
+                                            data-1p-ignore="true"
+                                            data-bwignore="true"
+                                        >
+                                            <option value="key" {% if settings.redis_auth_type == 'key' or not settings.redis_auth_type %}selected{% endif %}>Key</option>
+                                            <option value="managed_identity" {% if settings.redis_auth_type == 'managed_identity' %}selected{% endif %}>Managed Identity</option>
+                                            <option value="key_vault" {% if settings.redis_auth_type == 'key_vault' %}selected{% endif %}>Key Vault</option>
+                                        </select>
+                                    </div>
+                                    <div class="mb-3 {% if settings.redis_auth_type == 'managed_identity' %}d-none{% endif %}" id="latest_features_redis_key_container">
+                                        <label for="latest_features_redis_key" class="form-label" id="latest_features_redis_key_label">
+                                            {%- if settings.redis_auth_type == 'key_vault' -%}
+                                                Key Vault Secret Name
+                                            {%- else -%}
+                                                Redis Access Key
+                                            {%- endif -%}
+                                        </label>
+                                        <div class="input-group">
+                                            <input
+                                                type="password"
+                                                class="form-control"
+                                                id="latest_features_redis_key"
+                                                name="latest_features_redis_key_proxy"
+                                                autocomplete="off"
+                                                data-ignore-settings-change="true"
+                                                data-lpignore="true"
+                                                data-1p-ignore="true"
+                                                data-bwignore="true"
+                                                value="{{ settings.redis_key or '' }}"
+                                            >
+                                            <button type="button" class="btn btn-outline-secondary" id="toggle_latest_features_redis_key">Show</button>
+                                        </div>
+                                        <div id="latest_features_redis_key_vault_hint" class="form-text text-muted {% if settings.redis_auth_type != 'key_vault' %}d-none{% endif %}">
+                                            When using Key Vault, store the secret name here instead of the raw Redis key.
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="latest-feature-gallery">
+                                <button
+                                    type="button"
+                                    class="latest-feature-thumbnail-trigger"
+                                    data-latest-feature-image-src="{{ url_for('static', filename='images/features/redis_key_vault.png') }}"
+                                    data-latest-feature-image-title="Redis Key Vault Configuration"
+                                    data-latest-feature-image-caption="Redis authentication with Key Vault secret name preview."
+                                >
+                                    <div class="latest-feature-thumbnail-card">
+                                        <img class="latest-feature-thumbnail-image" src="{{ url_for('static', filename='images/features/redis_key_vault.png') }}" alt="Redis Key Vault configuration screenshot">
+                                        <div class="latest-feature-thumbnail-body">
+                                            <div class="latest-feature-thumbnail-title">Redis Key Vault</div>
+                                            <div class="latest-feature-thumbnail-meta">Click to enlarge</div>
+                                        </div>
+                                    </div>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card p-3 mb-3 latest-feature-card" id="latest-features-send-feedback-card">
+                    <div class="latest-feature-header">
+                        <div class="latest-feature-copy">
+                            <h5 class="mb-1">
+                                <i class="bi bi-envelope-paper me-2"></i>Send Feedback to the SimpleChat Team
+                            </h5>
+                            <p class="text-muted mb-0">Admins now have a dedicated Send Feedback tab for bug reports and feature requests that opens a prefilled email draft and writes an audit record to the activity log.</p>
+                        </div>
+                        <a href="#latestFeaturesSendFeedback" class="fw-bold latest-feature-toggle" data-bs-toggle="collapse" aria-expanded="false" aria-controls="latestFeaturesSendFeedback">
+                            Show Details
+                        </a>
+                    </div>
+                    <div class="collapse mt-3" id="latestFeaturesSendFeedback">
+                        <div class="card card-body">
+                            <p class="mb-3">Use the Send Feedback tab when you want to report a bug or suggest a feature directly from Admin Settings without leaving the page.</p>
+                            <ul class="mb-3">
+                                <li>Opens a prefilled email draft addressed to <strong>simplechat@microsoft.com</strong>.</li>
+                                <li>Logs the action to the activity log so admins can audit when feedback emails were prepared.</li>
+                                <li>Keeps the workflow simple by using text-only email content with no confusing pseudo-attachment step.</li>
+                            </ul>
+                            <a href="#send-feedback" onclick="switchTab(event, 'send-feedback-tab')" class="btn btn-outline-primary align-self-start">
+                                <i class="bi bi-envelope-paper me-1"></i>Open Send Feedback
+                            </a>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card p-3 mb-3 latest-feature-card" id="latest-features-support-menu-card">
+                    <div class="latest-feature-header">
+                        <div class="latest-feature-copy">
+                            <h5 class="mb-1">
+                                <i class="bi bi-life-preserver me-2"></i>Support Menu
+                            </h5>
+                            <p class="text-muted mb-0">Support can now expose user-facing Latest Features and Send Feedback workflows directly in everyday navigation.</p>
+                        </div>
+                        <a href="#latestFeaturesSupportMenu" class="fw-bold latest-feature-toggle" data-bs-toggle="collapse" aria-expanded="false" aria-controls="latestFeaturesSupportMenu">
+                            Show Details
+                        </a>
+                    </div>
+                    <div class="collapse mt-3" id="latestFeaturesSupportMenu">
+                        <div class="card card-body">
+                            <div class="alert alert-success mb-3" role="alert">
+                                Support is now configurable from the General tab so admins can choose exactly what users see.
+                            </div>
+                            <ul class="mb-3">
+                                <li>Admins can enable or disable the Support menu and rename it for user navigation.</li>
+                                <li>Send Feedback now routes users to an internal recipient email address defined by admins.</li>
+                                <li>The user-facing Latest Features page can be curated feature-by-feature so teams only share the items they want visible.</li>
+                                <li>The General tab now includes a dedicated User-Facing Latest Features checklist so admins can quickly confirm which announcements will be visible to end users.</li>
+                            </ul>
+                            <a href="#general" onclick="switchTab(event, 'general-tab')" class="btn btn-outline-primary align-self-start mb-3">
+                                <i class="bi bi-gear me-1"></i>Open General Settings
+                            </a>
+                            <div class="latest-feature-gallery">
+                                <button
+                                    type="button"
+                                    class="latest-feature-thumbnail-trigger"
+                                    data-latest-feature-image-src="{{ url_for('static', filename='images/features/support_menu_entry.png') }}"
+                                    data-latest-feature-image-title="User Support Menu Entry"
+                                    data-latest-feature-image-caption="User-facing Support menu entry exposing Latest Features and Send Feedback."
+                                >
+                                    <div class="latest-feature-thumbnail-card">
+                                        <img class="latest-feature-thumbnail-image" src="{{ url_for('static', filename='images/features/support_menu_entry.png') }}" alt="Support menu entry screenshot">
+                                        <div class="latest-feature-thumbnail-body">
+                                            <div class="latest-feature-thumbnail-title">Support Menu Entry</div>
+                                            <div class="latest-feature-thumbnail-meta">Click to enlarge</div>
+                                        </div>
+                                    </div>
+                                </button>
+                                <button
+                                    type="button"
+                                    class="latest-feature-thumbnail-trigger"
+                                    data-latest-feature-image-src="{{ url_for('static', filename='images/features/enable_support_menu_for_end_users.png') }}"
+                                    data-latest-feature-image-title="User-Facing Latest Features in General Settings"
+                                    data-latest-feature-image-caption="General tab Support settings showing Enable Support Menu for End Users and the User-Facing Latest Features checklist that controls what gets shared."
+                                >
+                                    <div class="latest-feature-thumbnail-card">
+                                        <img class="latest-feature-thumbnail-image" src="{{ url_for('static', filename='images/features/enable_support_menu_for_end_users.png') }}" alt="User-facing latest features checklist in general settings screenshot">
+                                        <div class="latest-feature-thumbnail-body">
+                                            <div class="latest-feature-thumbnail-title">General Tab Feature Sharing</div>
+                                            <div class="latest-feature-thumbnail-meta">Click to enlarge</div>
+                                        </div>
+                                    </div>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                {% endif %}
+
+                {% for release_group in support_latest_feature_release_groups_preview %}
+                {% if release_group.id != 'current_release' %}
+                {% set preview_card_id = 'latest-features-user-preview-' ~ release_group.id|replace('_', '-') ~ '-card' %}
+                {% set preview_collapse_id = 'latestFeaturesUserPreview' ~ release_group.id|replace('_', ' ')|title|replace(' ', '') %}
+                <div class="card p-3 mb-3 latest-feature-card" id="{{ preview_card_id }}">
+                    <div class="latest-feature-header">
+                        <div class="latest-feature-copy">
+                            <h5 class="mb-1">
+                                <i class="bi bi-clock-history me-2"></i>{{ release_group.label }}
+                            </h5>
+                            <p class="text-muted mb-0">{{ release_group.description }}</p>
+                        </div>
+                        <a href="#{{ preview_collapse_id }}" class="fw-bold latest-feature-toggle" data-bs-toggle="collapse" aria-expanded="false" aria-controls="{{ preview_collapse_id }}">
+                            Show Details
+                        </a>
+                    </div>
+                    <div class="collapse mt-3" id="{{ preview_collapse_id }}">
+                        <div class="card card-body">
+                            <div class="alert alert-secondary mb-3" role="alert">
+                                These were the headline user-facing items in the earlier v{{ release_group.release_version }} release set. Keeping them here gives admins a simple previous-and-archive release view without mixing older items into the current release list.
+                            </div>
+                            <div class="row g-3">
+                                {% for feature in release_group.features %}
+                                <div class="col-xl-6">
+                                    <div class="border rounded p-3 h-100 bg-body-tertiary">
+                                        <div class="d-flex flex-column gap-3 h-100">
+                                            <div class="d-flex align-items-start justify-content-between gap-3">
+                                                <div>
+                                                    <h6 class="mb-1"><i class="bi {{ feature.icon }} me-2"></i>{{ feature.title }}</h6>
+                                                    <p class="text-muted small mb-0">{{ feature.summary }}</p>
+                                                </div>
+                                                <span class="badge {% if settings.support_latest_features_visibility.get(feature.id, true) %}bg-success{% else %}bg-secondary{% endif %}">
+                                                    {% if settings.support_latest_features_visibility.get(feature.id, true) %}Shared with Users{% else %}Hidden from Users{% endif %}
+                                                </span>
+                                            </div>
+                                            <p class="small mb-0">{{ feature.details }}</p>
+                                            {% if feature.guidance %}
+                                            <ul class="small mb-0">
+                                                {% for tip in feature.guidance %}
+                                                <li>{{ tip }}</li>
+                                                {% endfor %}
+                                            </ul>
+                                            {% endif %}
+                                            {% if feature.images %}
+                                            <div class="latest-feature-gallery">
+                                                {% for image in feature.images %}
+                                                <button
+                                                    type="button"
+                                                    class="latest-feature-thumbnail-trigger"
+                                                    data-latest-feature-image-src="{{ url_for('static', filename=image.path) }}"
+                                                    data-latest-feature-image-title="{{ image.title }}"
+                                                    data-latest-feature-image-caption="{{ image.caption }}"
+                                                >
+                                                    <div class="latest-feature-thumbnail-card h-100">
+                                                        <img class="latest-feature-thumbnail-image" src="{{ url_for('static', filename=image.path) }}" alt="{{ image.alt }}">
+                                                        <div class="latest-feature-thumbnail-body">
+                                                            <div class="latest-feature-thumbnail-title">{{ image.label }}</div>
+                                                            <div class="latest-feature-thumbnail-meta">Click to enlarge</div>
+                                                        </div>
+                                                    </div>
+                                                </button>
+                                                {% endfor %}
+                                            </div>
+                                            {% endif %}
+                                            {% if feature.actions %}
+                                            <div class="d-flex flex-wrap gap-2 mt-auto pt-2">
+                                                {% for action in feature.actions %}
+                                                <a
+                                                    class="btn btn-outline-primary btn-sm"
+                                                    href="{% if action.href %}{{ action.href }}{% else %}{{ url_for(action.endpoint) }}{% if action.fragment %}#{{ action.fragment }}{% endif %}{% endif %}"
+                                                    {% if action.is_external %}target="_blank" rel="noopener noreferrer"{% endif %}
+                                                >
+                                                    <i class="bi {{ action.icon }} me-1"></i>{{ action.label }}
+                                                </a>
+                                                {% endfor %}
+                                            </div>
+                                            {% endif %}
+                                        </div>
+                                    </div>
+                                </div>
+                                {% endfor %}
+                            </div>
+                            <p class="text-muted small mb-0 mt-3">Visibility still comes from <strong>General &gt; User-Facing Latest Features</strong>, so admins can keep previous and archived release content available without promoting every item forever.</p>
+                        </div>
+                    </div>
+                </div>
+                {% endif %}
+                {% endfor %}
+            </div>

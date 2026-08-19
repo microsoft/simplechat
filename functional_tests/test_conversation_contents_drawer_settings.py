@@ -13,6 +13,7 @@ import importlib.util
 from pathlib import Path
 
 from flask import Flask, jsonify, request
+from test_support.templates import compose_if_admin_settings
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -27,7 +28,10 @@ is_conversation_contents_drawer_enabled = HELPER_MODULE.is_conversation_contents
 
 
 def _read(relative_path):
-    return (REPO_ROOT / relative_path).read_text(encoding="utf-8")
+    _path = REPO_ROOT / relative_path
+    return compose_if_admin_settings(
+        _path, _path.read_text(encoding="utf-8")
+    )
 
 
 def test_admin_setting_defaults_on_and_persists():

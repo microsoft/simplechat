@@ -2,6 +2,51 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.260.007)**
+
+#### User Interface Enhancements
+
+*   **Latest Features No Longer Opens Every Time You Visit Admin Settings**
+    *   Latest Features was pinned first in both the top tabs and the admin sidebar, and its pane was hard-coded as the default active tab, so a curated release-notes page behaved like the Admin Settings landing page.
+    *   It now sits last in both navigations, after **Send Feedback**, and **General** is the landing tab instead.
+    *   The Latest Features content is unchanged, including its **New** badge and the hide/unhide option.
+    *   (Ref: `admin_settings.html` top-tab strip, `_sidebar_nav.html`, `admin_sidebar_nav.js` default tab)
+
+*   **Global Identities Is No Longer An Unlabelled Widget**
+    *   The Global Identities tab rendered a bare control with no heading or description, unlike every other Admin Settings tab.
+    *   It now has a heading and explains that identities are deployment-wide and that secrets are stored in Key Vault when Key Vault storage is configured.
+    *   (Ref: Global Identities, `workspace-identities-section`, `functions_workspace_identities.py`)
+
+*   **File Sync Is Now Reachable From The Sidebar**
+    *   File Sync is one of the larger settings surfaces but was the only tab with no sidebar submenu, so its sub-areas could not be jumped to or found with sidebar search.
+    *   **Visible Source Types**, **Personal Workspace Sync**, **Group Workspace Sync**, and **Public Workspace Sync** are now sidebar destinations.
+    *   (Ref: File Sync, `_sidebar_nav.html`, `file-sync-submenu`)
+
+#### Bug Fixes
+
+*   **Classification Banner Preview Now Updates As You Type**
+    *   The live preview in Admin Settings never updated, because its script sat between template blocks where Jinja discards it, so the code was never rendered to the page.
+    *   The preview now responds to banner text, background colour, and text colour changes.
+    *   (Ref: Classification Banner, `admin_settings.html` `{% block scripts %}`)
+
+*   **Admin Sidebar Section Map Cleaned Up**
+    *   The sidebar's `sectionMap` had grown to 72 entries, but 66 of them mapped a key to itself, which the existing fallback already handled, and one pointed at an element that no longer exists.
+    *   Reduced to the 6 entries that are genuine aliases. A new test now fails if a redundant, dangling, or unreferenced entry is reintroduced.
+    *   (Ref: `admin_sidebar_nav.js`, `scrollToSection`, `test_admin_settings_sidebar_card_parity.py`)
+
+*   **Home Page Text Preview No Longer Reinterprets Editor Text As HTML**
+    *   The Home Page Text preview in Admin Settings assigned the raw editor contents to `innerHTML` when the Markdown editor had not initialized, so text typed into the editor was reinterpreted as HTML. CodeQL flagged this as `js/xss-through-dom` (high severity).
+    *   The raw fallback now uses `textContent`, which is what the code intended by "just show raw text", and the Markdown path is sanitized inline with `DOMPurify.sanitize(...)` at the sink. DOMPurify is loaded globally from the local vendored bundle, so no external asset is introduced.
+    *   (Ref: Home Page Text, `admin_settings.html` `showPreview`, DOMPurify)
+
+#### Breaking Changes
+
+*   **Admin Settings Template Split Into Per-Tab Partials**
+    *   `admin_settings.html` had grown to 13,526 lines in a single 1 MB file. Each tab pane now lives in `templates/admin/_panes/` and is included by the parent, which keeps the global form, the modals, and the script blocks.
+    *   No settings behaviour changes: every form field name and all 110 configuration card ids are byte-identical, so the submitted payload and the settings backend are untouched.
+    *   **Migration**: code or tests that read `templates/admin_settings.html` directly now see only the parent shell. Use `test_support.templates.read_admin_settings_template()` in functional tests, or `compose_if_admin_settings()` inside a shared file-reading helper. A new contract test fails if a test asserts on a partial-backed card or field without composing the template first.
+    *   (Ref: `templates/admin/_panes/`, `functional_tests/test_support/templates.py`, `test_admin_settings_template_composition.py`)
+
 ### **(v0.260.006)**
 
 #### New Features

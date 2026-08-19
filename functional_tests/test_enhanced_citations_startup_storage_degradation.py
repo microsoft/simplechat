@@ -14,6 +14,7 @@ import sys
 from pathlib import Path
 
 from test_support.versioning import assert_app_version_at_least
+from test_support.templates import compose_if_admin_settings
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -27,7 +28,9 @@ ADMIN_SETTINGS_JS_PATH = REPO_ROOT / "application" / "single_app" / "static" / "
 
 def read_text(path):
     """Read a repository file as UTF-8 text."""
-    return path.read_text(encoding="utf-8")
+    return compose_if_admin_settings(
+        path, path.read_text(encoding="utf-8")
+    )
 
 
 def get_function_source(path, function_name):

@@ -12,13 +12,17 @@ with the WorkflowUser app role, and are enforced across UI and API surfaces.
 import json
 from pathlib import Path
 from test_support.versioning import assert_app_version_at_least
+from test_support.templates import compose_if_admin_settings
 
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 def read_text(relative_path):
-    return (ROOT / relative_path).read_text(encoding="utf-8")
+    _path = ROOT / relative_path
+    return compose_if_admin_settings(
+        _path, _path.read_text(encoding="utf-8")
+    )
 
 
 def test_workflow_access_control_wiring():

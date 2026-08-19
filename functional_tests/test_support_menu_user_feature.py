@@ -15,6 +15,7 @@ catalog.
 import os
 import sys
 import importlib.util
+from test_support.templates import compose_if_admin_settings
 
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -39,8 +40,8 @@ FEATURE_IMAGE_DIR = os.path.join(REPO_ROOT, 'application', 'single_app', 'static
 
 
 def read_text(path):
-    with open(path, 'r', encoding='utf-8') as file_handle:
-        return file_handle.read()
+    with open(path, "r", encoding="utf-8") as file_handle:
+        return compose_if_admin_settings(path, file_handle.read())
 
 
 def load_module(path, module_name):

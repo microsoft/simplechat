@@ -1,0 +1,1138 @@
+            <div class="tab-pane fade" id="workspaces" role="tabpanel" aria-labelledby="workspaces-tab">
+                <p class="text-muted">
+                    Configure workspace settings like personal/group access, multimedia support, metadata, and document classification.
+                </p>
+
+
+                <div class="card mb-3 p-3" id="personal-workspaces-section">
+                    <h5>
+                        <i class="bi bi-person me-2"></i>Personal Workspaces
+                    </h5>
+                    <p class="text-muted">
+                        Turn this on to allow access and management of your personal workspace.
+                    </p>
+                    <div class="form-group form-check form-switch mb-3">
+                        <input type="checkbox"
+                            class="form-check-input"
+                            id="enable_user_workspace"
+                            name="enable_user_workspace"
+                            {% if settings.enable_user_workspace %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="enable_user_workspace">
+                            Enable Personal Workspaces
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to create and manage their own private workspaces for document storage, knowledge bases, and personal AI interactions."></i>
+                    </div>
+                </div>
+
+                <div class="card mb-3 p-3" id="workflow-settings-section">
+                    <h5>
+                        <i class="bi bi-diagram-3 me-2"></i>Workflow
+                    </h5>
+                    <p class="text-muted">
+                        Control personal and group workflow authoring and execution for users.
+                    </p>
+                    <div class="form-group form-check form-switch mb-3">
+                        <input type="checkbox"
+                            class="form-check-input"
+                            id="allow_user_workflows"
+                            name="allow_user_workflows"
+                            {% if settings.allow_user_workflows %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="allow_user_workflows">
+                            Enable Personal Workflows
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to create personal workflows that run a selected agent or model manually or on an interval schedule."></i>
+                    </div>
+                    <div class="form-group form-check form-switch mb-2">
+                        <input type="checkbox"
+                            class="form-check-input"
+                            id="require_member_of_workflow_user"
+                            name="require_member_of_workflow_user"
+                            {% if settings.require_member_of_workflow_user %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="require_member_of_workflow_user">
+                            Require WorkflowUser App Role
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Require the WorkflowUser Enterprise App role before users can open, create, edit, run, or inspect personal workflows."></i>
+                    </div>
+                    <p class="text-muted small mb-0">
+                        Required app role value: <code>WorkflowUser</code>. Assign this role to users or groups in the Enterprise App before enabling the requirement.
+                    </p>
+
+                    <div class="form-group mt-3 mb-3">
+                        <label for="workflow_max_auto_invoke_attempts" class="form-label">
+                            Workflow Agent Action Limit
+                        </label>
+                        <input type="number"
+                            class="form-control"
+                            id="workflow_max_auto_invoke_attempts"
+                            name="workflow_max_auto_invoke_attempts"
+                            min="1"
+                            max="500"
+                            step="1"
+                            value="{{ settings.workflow_max_auto_invoke_attempts|default(60, true) }}">
+                        <div class="form-text">
+                            Maximum automatic tool or action calls an agent can make during one workflow run. Default is 60; increase for large document sets.
+                        </div>
+                        <div class="alert alert-warning small mb-0 mt-2" role="alert">
+                            Values above 100 are capacity-sensitive. Enable Cosmos DB Throughput automation in SimpleChat so the app can monitor RU pressure and scale up Cosmos when needed, and also monitor Azure OpenAI throttling, App Service CPU and memory, and downstream service latency.
+                        </div>
+                    </div>
+
+                    <div class="form-group mt-3 mb-3">
+                        <label for="workflow_max_tasks" class="form-label">
+                            Workflow Task Limit
+                        </label>
+                        <input type="number"
+                            class="form-control"
+                            id="workflow_max_tasks"
+                            name="workflow_max_tasks"
+                            min="1"
+                            max="100"
+                            step="1"
+                            value="{{ settings.workflow_max_tasks|default(50, true) }}">
+                        <div class="form-text">
+                            Maximum ordered instruction tasks users can add to one workflow. Default is 50; supported range is 1-100.
+                        </div>
+                    </div>
+
+                    <hr>
+
+                    <div class="form-group form-check form-switch mb-3">
+                        <input type="checkbox"
+                            class="form-check-input"
+                            id="allow_group_workflows"
+                            name="allow_group_workflows"
+                            {% if settings.allow_group_workflows %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="allow_group_workflows">
+                            Enable Group Workflows
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow permitted group members to create, manage, and run workflows from group workspaces."></i>
+                    </div>
+                    <div class="form-group form-check form-switch mb-2">
+                        <input type="checkbox"
+                            class="form-check-input"
+                            id="require_group_assignment_for_group_workflows"
+                            name="require_group_assignment_for_group_workflows"
+                            {% if settings.require_group_assignment_for_group_workflows %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="require_group_assignment_for_group_workflows">
+                            Require Group Assignment to Use Workflow
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="When enabled, only groups selected in Manage Groups can create, manage, or run group workflows."></i>
+                    </div>
+                    <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+                        <button type="button" class="btn btn-sm btn-outline-primary" id="manage-group-workflow-groups-btn" data-bs-toggle="modal" data-bs-target="#groupWorkflowAssignmentModal">
+                            <i class="bi bi-people me-1"></i>Manage Groups
+                        </button>
+                        <span class="text-muted small" id="group-workflow-assignment-summary">No groups assigned.</span>
+                    </div>
+                    <textarea class="d-none" id="group_workflow_allowed_group_ids" name="group_workflow_allowed_group_ids">{{ settings.group_workflow_allowed_group_ids|default([], true)|tojson }}</textarea>
+                    <p class="text-muted small mb-0">
+                        Group workflow authoring is available to group Owners and Admins by default. Enable the owner-only setting below to limit group agent, action, and workflow management to Owners.
+                    </p>
+                </div>
+
+                <div class="card mb-3 p-3" id="file-download-settings-section">
+                    <h5>
+                        <i class="bi bi-download me-2"></i>File Downloads
+                    </h5>
+                    <p class="text-muted">
+                        Control when users can download original workspace document files from personal, group, and public workspaces.
+                    </p>
+                    <div class="form-group form-check form-switch mb-3">
+                        <input type="checkbox"
+                            class="form-check-input"
+                            id="allow_personal_workspace_file_downloads"
+                            name="allow_personal_workspace_file_downloads"
+                            {% if settings.allow_personal_workspace_file_downloads %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="allow_personal_workspace_file_downloads">
+                            Enable Personal Workspace Downloads
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to download original files from their personal workspace document menus and bulk selection bar."></i>
+                    </div>
+                    <hr>
+                    <div class="form-group form-check form-switch mb-3">
+                        <input type="checkbox"
+                            class="form-check-input"
+                            id="allow_group_workspace_file_downloads"
+                            name="allow_group_workspace_file_downloads"
+                            {% if settings.allow_group_workspace_file_downloads %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="allow_group_workspace_file_downloads">
+                            Enable Group Workspace Downloads
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow group workspace document downloads when global policy and each group's local setting allow it."></i>
+                    </div>
+                    <div class="form-group form-check form-switch mb-2">
+                        <input type="checkbox"
+                            class="form-check-input"
+                            id="require_group_assignment_for_file_downloads"
+                            name="require_group_assignment_for_file_downloads"
+                            {% if settings.require_group_assignment_for_file_downloads %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="require_group_assignment_for_file_downloads">
+                            Require Group Assignment for Downloads
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="When enabled, only groups selected in Manage Groups can offer document downloads, unless a group owner or admin disables downloads locally."></i>
+                    </div>
+                    <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+                        <button type="button" class="btn btn-sm btn-outline-primary" id="manage-file-download-groups-btn" data-bs-toggle="modal" data-bs-target="#fileDownloadGroupAssignmentModal">
+                            <i class="bi bi-people me-1"></i>Manage Groups
+                        </button>
+                        <span class="text-muted small" id="file-download-group-assignment-summary">No groups assigned.</span>
+                    </div>
+                    <textarea class="d-none" id="file_download_allowed_group_ids" name="file_download_allowed_group_ids">{{ settings.file_download_allowed_group_ids|default([], true)|tojson }}</textarea>
+                    <hr>
+                    <div class="form-group form-check form-switch mb-3">
+                        <input type="checkbox"
+                            class="form-check-input"
+                            id="allow_public_workspace_file_downloads"
+                            name="allow_public_workspace_file_downloads"
+                            {% if settings.allow_public_workspace_file_downloads %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="allow_public_workspace_file_downloads">
+                            Enable Public Workspace Downloads
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow public workspace document downloads when global policy and each workspace's local setting allow it."></i>
+                    </div>
+                    <div class="form-group form-check form-switch mb-2">
+                        <input type="checkbox"
+                            class="form-check-input"
+                            id="require_public_workspace_assignment_for_file_downloads"
+                            name="require_public_workspace_assignment_for_file_downloads"
+                            {% if settings.require_public_workspace_assignment_for_file_downloads %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="require_public_workspace_assignment_for_file_downloads">
+                            Require Public Workspace Assignment for Downloads
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="When enabled, only selected public workspaces can offer document downloads, unless a workspace owner or admin disables downloads locally."></i>
+                    </div>
+                    <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+                        <button type="button" class="btn btn-sm btn-outline-primary" id="manage-file-download-public-workspaces-btn" data-bs-toggle="modal" data-bs-target="#fileDownloadPublicWorkspaceAssignmentModal">
+                            <i class="bi bi-globe me-1"></i>Manage Public Workspaces
+                        </button>
+                        <span class="text-muted small" id="file-download-public-workspace-assignment-summary">No public workspaces assigned.</span>
+                    </div>
+                    <textarea class="d-none" id="file_download_allowed_public_workspace_ids" name="file_download_allowed_public_workspace_ids">{{ settings.file_download_allowed_public_workspace_ids|default([], true)|tojson }}</textarea>
+                </div>
+
+                <div class="modal fade" id="groupWorkflowAssignmentModal" tabindex="-1" aria-labelledby="groupWorkflowAssignmentModalLabel" aria-hidden="true">
+                    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+                        <div class="modal-content">
+                            <div class="modal-header">
+                                <div>
+                                    <h5 class="modal-title mb-0" id="groupWorkflowAssignmentModalLabel">Group Workflow Assignments</h5>
+                                    <small class="text-muted">Choose which groups can use group workflows when assignment is required.</small>
+                                </div>
+                                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                            </div>
+                            <div class="modal-body">
+                                <div class="row g-2 align-items-end mb-3">
+                                    <div class="col">
+                                        <label for="group-workflow-group-search" class="form-label">Search Groups</label>
+                                        <input type="search" class="form-control" id="group-workflow-group-search" placeholder="Search by group name or description" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true">
+                                    </div>
+                                    <div class="col-auto">
+                                        <button type="button" class="btn btn-outline-primary" id="group-workflow-group-search-btn">
+                                            <i class="bi bi-search me-1"></i>Search
+                                        </button>
+                                    </div>
+                                </div>
+                                <div class="alert alert-danger d-none" id="group-workflow-assignment-error"></div>
+                                <div class="small text-muted mb-2" id="group-workflow-assignment-status">No groups loaded.</div>
+                                <div class="table-responsive">
+                                    <table class="table table-sm align-middle">
+                                        <thead>
+                                            <tr>
+                                                <th scope="col">Group</th>
+                                                <th scope="col">Description</th>
+                                                <th scope="col" class="text-end">Assignment</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="group-workflow-assignment-groups-body">
+                                            <tr>
+                                                <td colspan="3" class="text-center text-muted py-3">Search for groups to assign.</td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                            <div class="modal-footer">
+                                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Done</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="modal fade" id="fileDownloadGroupAssignmentModal" tabindex="-1" aria-labelledby="fileDownloadGroupAssignmentModalLabel" aria-hidden="true">
+                    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+                        <div class="modal-content">
+                            <div class="modal-header">
+                                <div>
+                                    <h5 class="modal-title mb-0" id="fileDownloadGroupAssignmentModalLabel">File Download Group Assignments</h5>
+                                    <small class="text-muted">Choose which groups can download files when group assignment is required.</small>
+                                </div>
+                                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                            </div>
+                            <div class="modal-body">
+                                <div class="row g-2 align-items-end mb-3">
+                                    <div class="col">
+                                        <label for="file-download-group-assignment-search" class="form-label">Search Groups</label>
+                                        <input type="search" class="form-control" id="file-download-group-assignment-search" placeholder="Search by group name or description" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true">
+                                    </div>
+                                    <div class="col-auto">
+                                        <button type="button" class="btn btn-outline-primary" id="file-download-group-assignment-search-btn">
+                                            <i class="bi bi-search me-1"></i>Search
+                                        </button>
+                                    </div>
+                                </div>
+                                <div class="alert alert-danger d-none" id="file-download-group-assignment-error"></div>
+                                <div class="small text-muted mb-2" id="file-download-group-assignment-status">No groups loaded.</div>
+                                <div class="table-responsive">
+                                    <table class="table table-sm align-middle">
+                                        <thead>
+                                            <tr>
+                                                <th scope="col">Group</th>
+                                                <th scope="col">Description</th>
+                                                <th scope="col" class="text-end">Assignment</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="file-download-group-assignment-body">
+                                            <tr>
+                                                <td colspan="3" class="text-center text-muted py-3">Search for groups to assign.</td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                            <div class="modal-footer">
+                                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Done</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="modal fade" id="fileDownloadPublicWorkspaceAssignmentModal" tabindex="-1" aria-labelledby="fileDownloadPublicWorkspaceAssignmentModalLabel" aria-hidden="true">
+                    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+                        <div class="modal-content">
+                            <div class="modal-header">
+                                <div>
+                                    <h5 class="modal-title mb-0" id="fileDownloadPublicWorkspaceAssignmentModalLabel">File Download Public Workspace Assignments</h5>
+                                    <small class="text-muted">Choose which public workspaces can download files when public workspace assignment is required.</small>
+                                </div>
+                                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                            </div>
+                            <div class="modal-body">
+                                <div class="row g-2 align-items-end mb-3">
+                                    <div class="col">
+                                        <label for="file-download-public-workspace-assignment-search" class="form-label">Search Public Workspaces</label>
+                                        <input type="search" class="form-control" id="file-download-public-workspace-assignment-search" placeholder="Search by public workspace name or description" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true">
+                                    </div>
+                                    <div class="col-auto">
+                                        <button type="button" class="btn btn-outline-primary" id="file-download-public-workspace-assignment-search-btn">
+                                            <i class="bi bi-search me-1"></i>Search
+                                        </button>
+                                    </div>
+                                </div>
+                                <div class="alert alert-danger d-none" id="file-download-public-workspace-assignment-error"></div>
+                                <div class="small text-muted mb-2" id="file-download-public-workspace-assignment-status">Enter at least 2 characters to search.</div>
+                                <div class="table-responsive">
+                                    <table class="table table-sm align-middle">
+                                        <thead>
+                                            <tr>
+                                                <th scope="col">Public Workspace</th>
+                                                <th scope="col">Description</th>
+                                                <th scope="col" class="text-end">Assignment</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="file-download-public-workspace-assignment-body">
+                                            <tr>
+                                                <td colspan="3" class="text-center text-muted py-3">Search for public workspaces to assign.</td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                            <div class="modal-footer">
+                                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Done</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+
+               <div class="card mb-3 p-3" id="group-workspaces-section">
+                    <h5>
+                        <i class="bi bi-people me-2"></i>Group Workspaces
+                    </h5>
+                    <p class="text-muted">
+                        Turn this on to allow access and management of group workspaces, as well as group collaboration features.
+                    </p>
+                    <div class="form-group form-check form-switch mb-3">
+                        <input type="checkbox"
+                            class="form-check-input"
+                            id="enable_group_workspaces"
+                            name="enable_group_workspaces"
+                            {% if settings.enable_group_workspaces %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="enable_group_workspaces">
+                            Enable Group Workspaces
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to create and participate in shared group workspaces for team collaboration, document sharing, and collective knowledge building."></i>
+                    </div>
+
+
+                    <div id="create_group_permission_setting" {% if not settings.enable_group_workspaces %}style="display: none;"{% endif %}>
+                        <hr>
+
+                        <!-- Disable Group Creation Setting -->
+                        <div class="form-group form-check form-switch mb-3">
+                            <input type="checkbox"
+                                class="form-check-input"
+                                id="disable_group_creation"
+                                name="disable_group_creation"
+                                {% if not settings.enable_group_creation %}checked{% endif %}>
+                            <label class="form-check-label ms-2" for="disable_group_creation">
+                                Disable Group Creation
+                            </label>
+                            <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Prevent all users from creating new groups system-wide, regardless of app role assignment."></i>
+                        </div>
+                        <p class="text-muted small mb-3">
+                            When enabled, no users will be able to create new groups, regardless of app role assignment. This global setting overrides the <strong>Require CreateGroups App Role</strong> setting below.
+                        </p>
+
+                        <div class="form-group form-check form-switch mb-2">
+                            <input type="checkbox"
+                                class="form-check-input"
+                                id="require_member_of_create_group"
+                                name="require_member_of_create_group"
+                                {% if settings.require_member_of_create_group %}checked{% endif %}>
+                            <label class="form-check-label ms-2" for="require_member_of_create_group">
+                                Require CreateGroups App Role
+                            </label>
+                            <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="When enabled, only users assigned the CreateGroups Enterprise App role can create new groups."></i>
+                        </div>
+                        <p class="text-muted small mb-0">
+                            Required app role value: <code>CreateGroups</code>. Assign this role to users or groups in the Enterprise App before enabling the requirement. If disabled, any authenticated user can create groups while group workspaces and group creation are enabled.
+                        </p>
+
+                        <hr>
+
+                        <!-- Require Owner to Manage Group Agents, Actions and Workflows -->
+                        <div class="form-group form-check form-switch mb-2">
+                            <input type="checkbox"
+                                class="form-check-input"
+                                id="require_owner_for_group_agent_management"
+                                name="require_owner_for_group_agent_management"
+                                {% if settings.require_owner_for_group_agent_management %}checked{% endif %}>
+                            <label class="form-check-label ms-2" for="require_owner_for_group_agent_management">
+                                Require Owner to Manage Group Agents, Actions and Workflows
+                            </label>
+                            <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="When enabled, only the group Owner can create, edit, and delete group agents, actions, and workflows. Group Admins will have read-only access."></i>
+                        </div>
+                        <p class="text-muted small mb-0">
+                            If enabled, only the group Owner can create, edit, and delete group agents, group actions, and group workflows. Admins and other roles will only be able to view them.
+                        </p>
+                    </div>
+
+                </div>
+
+                <div class="card mb-3 p-3" id="public-workspaces-section">
+                    <h5>
+                        <i class="bi bi-globe me-2"></i>Public Workspaces
+                    </h5>
+                    <p class="text-muted">
+                        Turn this on to enable public workspaces that are visible to everyone in the organization.
+                    </p>
+                    <div class="form-group form-check form-switch mb-3">
+                        <input type="checkbox"
+                            class="form-check-input"
+                            id="enable_public_workspaces"
+                            name="enable_public_workspaces"
+                            {% if settings.enable_public_workspaces %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="enable_public_workspaces">
+                            Enable Public Workspaces
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow creation of public workspaces that are visible and accessible to all users in the organization for broad knowledge sharing."></i>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label" for="public_workspace_display_name">End-user display name</label>
+                        <input
+                            type="text"
+                            class="form-control"
+                            id="public_workspace_display_name"
+                            name="public_workspace_display_name"
+                            maxlength="{{ settings.public_workspace_labels.max_length }}"
+                            value="{{ settings.public_workspace_display_name }}"
+                            placeholder="Public Workspace"
+                            aria-describedby="public-workspace-display-name-help"
+                        >
+                        <div class="form-text" id="public-workspace-display-name-help">
+                            Optional. End users will see this label instead of Public Workspace. Admin settings and internal references continue to use Public Workspace.
+                        </div>
+                    </div>
+
+                    <div id="create_public_workspace_permission_setting" {% if not settings.enable_public_workspaces %}style="display: none;"{% endif %}>
+                        <hr>
+                        <div class="form-group form-check form-switch mb-2">
+                            <input type="checkbox"
+                                class="form-check-input"
+                                id="require_member_of_create_public_workspace"
+                                name="require_member_of_create_public_workspace"
+                                {% if settings.require_member_of_create_public_workspace %}checked{% endif %}>
+                            <label class="form-check-label ms-2" for="require_member_of_create_public_workspace">
+                                Require CreatePublicWorkspaces App Role
+                            </label>
+                            <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="When enabled, only users assigned the CreatePublicWorkspaces Enterprise App role can create public workspaces."></i>
+                        </div>
+                        <p class="text-muted small mb-0">
+                            Required app role value: <code>CreatePublicWorkspaces</code>. Assign this role to users or groups in the Enterprise App before enabling the requirement. If disabled, any authenticated user can create public workspaces while public workspaces are enabled.
+                        </p>
+                    </div>
+
+                </div>
+
+                <div class="card mb-3 p-3" id="file-sharing-section">
+                    <h5>
+                        <i class="bi bi-share me-2"></i>File Sharing
+                    </h5>
+                    <p class="text-muted">
+                        Turn this on to enable file sharing capabilities between users and workspaces.
+                    </p>
+                    <div class="form-group form-check form-switch mb-3">
+                        <input type="checkbox"
+                            class="form-check-input"
+                            id="enable_file_sharing"
+                            name="enable_file_sharing"
+                            {% if settings.enable_file_sharing %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="enable_file_sharing">
+                            Enable File Sharing
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to upload, share, and manage files within workspaces for document-based AI interactions and collaboration."></i>
+                    </div>
+                </div>
+
+                <div class="card mb-3 p-3" id="chat-file-uploads-section">
+                    <h5>
+                        <i class="bi bi-paperclip me-2"></i>Chat File Uploads
+                    </h5>
+                    <p class="text-muted">
+                        Control whether users can upload files directly into chat conversations.
+                    </p>
+                    <div class="form-group form-check form-switch mb-3">
+                        <input type="checkbox"
+                            class="form-check-input"
+                            id="enable_chat_file_uploads"
+                            name="enable_chat_file_uploads"
+                            {% if settings.enable_chat_file_uploads %}checked{% endif %} />
+                        <label class="form-check-label ms-2" for="enable_chat_file_uploads">
+                            Enable Chat File Uploads
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to upload files directly into personal, group, and multi-user chat conversations."></i>
+                    </div>
+
+                    <div class="card mb-3 p-3" id="conversation-contents-drawer-section">
+                        <h5>
+                            <i class="bi bi-list-nested me-2"></i>Conversation Contents Drawer
+                        </h5>
+                        <p class="text-muted">
+                            Let users navigate long conversations from a list of their prompts.
+                        </p>
+                        <div class="form-group form-check form-switch mb-2">
+                            <input
+                                type="checkbox"
+                                class="form-check-input"
+                                id="enable_conversation_contents_drawer"
+                                name="enable_conversation_contents_drawer"
+                                {% if settings.enable_conversation_contents_drawer %}checked{% endif %}
+                            />
+                            <label class="form-check-label ms-2" for="enable_conversation_contents_drawer">
+                                Enable Conversation Contents Drawer
+                            </label>
+                            <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to open a responsive contents drawer that lists persisted user messages and jumps to them."></i>
+                        </div>
+                        <p class="text-muted small mb-0">
+                            When enabled, users can turn the drawer off for their own account from Profile settings.
+                        </p>
+                    </div>
+                    <div class="form-group form-check form-switch mb-2">
+                        <input type="checkbox"
+                            class="form-check-input"
+                            id="require_member_of_chat_file_upload_user"
+                            name="require_member_of_chat_file_upload_user"
+                            {% if settings.require_member_of_chat_file_upload_user %}checked{% endif %} />
+                        <label class="form-check-label ms-2" for="require_member_of_chat_file_upload_user">
+                            Require ChatFileUploadUser App Role
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="When enabled, only users assigned the ChatFileUploadUser Enterprise App role can upload files into chat."></i>
+                    </div>
+                    <p class="text-muted small mb-0">
+                        Required app role value: <code>ChatFileUploadUser</code>. Assign this role to users or groups in the Enterprise App before enabling the requirement. Existing chat attachments remain visible; this only controls new uploads.
+                    </p>
+                </div>
+
+                <div class="card mb-3 p-3" id="metadata-extraction-section">
+                    <h5>
+                        <i class="bi bi-file-earmark-code me-2"></i>Metadata Extraction
+                    </h5>
+                    <p class="text-muted">
+                      Enable this to automatically parse and store file metadata for advanced indexing and search.
+                    </p>
+                    <div class="form-check form-switch mb-3">
+                      <input
+                        type="checkbox"
+                        class="form-check-input"
+                        id="enable_extract_meta_data"
+                        name="enable_extract_meta_data"
+                        {% if settings.enable_extract_meta_data %}checked{% endif %}>
+                      <label class="form-check-label ms-2" for="enable_extract_meta_data">
+                        Enable Extract Meta Data
+                      </label>
+                      <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Automatically extract and index metadata from uploaded files for enhanced search capabilities and content organization."></i>
+                    </div>
+
+                    <div id="metadata_extraction_model_settings" class="mb-3"
+                         {% if not settings.enable_extract_meta_data %}style="display: none;"{% endif %}>
+                                            <label for="metadata_extraction_model" class="form-label">Extraction Model</label>
+                                            <select class="form-select" id="metadata_extraction_model" name="metadata_extraction_model">
+                                                <option value="">No metadata extraction model selected</option>
+                                            </select>
+                                            <input type="hidden" name="metadata_extraction_model_selection_json" id="metadata_extraction_model_selection_json" />
+                                            <div class="form-text">
+                                                Uses Global Endpoints when multi-endpoint model management is enabled; otherwise uses the legacy GPT/APIM deployment settings.
+                                            </div>
+                    </div>
+                </div>
+
+                <!-- Multi-Modal Vision Analysis Section -->
+                <div class="card mb-3 p-3" id="multimodal-vision-section">
+                    <h5>
+                        <i class="bi bi-eye me-2"></i>Multi-Modal Vision Analysis
+                    </h5>
+                    <p class="text-muted">
+                        Enable AI-powered vision analysis for images uploaded to chat or workspace. When enabled alongside Document Intelligence OCR, images will receive both text extraction (OCR) and semantic understanding (vision AI).
+                    </p>
+
+                    <div class="alert alert-info mb-3">
+                        <strong><i class="bi bi-info-circle"></i> How it works:</strong>
+                        <ul class="mb-0 mt-2">
+                            <li><strong>Document Intelligence</strong>: Extracts text from images (OCR)</li>
+                            <li><strong>Vision Model</strong>: Provides semantic analysis, object detection, and contextual understanding</li>
+                            <li>Both analyses are combined and available in citations when Enhanced Citations is enabled</li>
+                        </ul>
+                    </div>
+
+                    <div class="form-check form-switch mb-3">
+                        <input
+                            type="checkbox"
+                            class="form-check-input"
+                            id="enable_multimodal_vision"
+                            name="enable_multimodal_vision"
+                            {% if settings.enable_multimodal_vision %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="enable_multimodal_vision">
+                            Enable Multi-Modal Vision Analysis
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Use GPT-4 Vision or similar models to analyze images for semantic content, objects, and contextual information beyond OCR."></i>
+                    </div>
+
+                    <div id="multimodal_vision_model_settings" class="mb-3"
+                         {% if not settings.enable_multimodal_vision %}style="display: none;"{% endif %}>
+                        <label for="multimodal_vision_model" class="form-label">
+                            Vision Model <span class="text-danger">*</span>
+                        </label>
+                        <select class="form-select" id="multimodal_vision_model" name="multimodal_vision_model"
+                                data-prev="{{ settings.multimodal_vision_model or '' }}">
+                            <option value="">Select a vision-capable model...</option>
+
+                            {#
+                                Multi-endpoint aware vision model selection.
+                                Preference order:
+                                1. When multi-endpoint is enabled and model_endpoints has entries, use those.
+                                2. Otherwise, fall back to legacy gpt_model.selected / APIM settings.
+                            #}
+
+                            {% set has_multi_endpoints = settings.enable_multi_model_endpoints and settings.model_endpoints %}
+
+                            {% if has_multi_endpoints %}
+                                {# Iterate all enabled endpoints and models, filter to vision-capable #}
+                                {% for endpoint in settings.model_endpoints if endpoint.enabled %}
+                                    {% for m in endpoint.models if m.enabled %}
+                                        {% if is_vision_capable_model is defined and is_vision_capable_model(m) %}
+                                            {% set option_value = m.deploymentName %}
+                                            <option value="{{ option_value }}"
+                                                data-endpoint-id="{{ endpoint.id or '' }}"
+                                                data-model-id="{{ m.id or '' }}"
+                                                data-provider="{{ endpoint.provider or '' }}"
+                                                data-model-name="{{ m.modelName or '' }}"
+                                                {% if settings.multimodal_vision_model == option_value %}selected{% endif %}>
+                                                {{ m.displayName or m.deploymentName }}{% if m.modelName %} ({{ m.modelName }}){% endif %}
+                                            </option>
+                                        {% endif %}
+                                    {% endfor %}
+                                {% endfor %}
+                            {% elif settings.enable_gpt_apim %}
+                                {# Legacy APIM-based GPT configuration #}
+                                {% for d in (settings.azure_apim_gpt_deployment or '').split(',') if d %}
+                                    {% set d_trim = d.strip() %}
+                                    {% if is_vision_capable_model is defined and is_vision_capable_model(d_trim) %}
+                                        <option value="{{ d_trim }}"
+                                            {% if settings.multimodal_vision_model == d_trim %}selected{% endif %}>
+                                            {{ d_trim }}
+                                        </option>
+                                    {% endif %}
+                                {% endfor %}
+                            {% else %}
+                                {# Legacy single-endpoint GPT configuration #}
+                                {% for m in settings.gpt_model.selected %}
+                                    {% if is_vision_capable_model is defined and is_vision_capable_model(m) %}
+                                        <option value="{{ m.deploymentName }}"
+                                            {% if settings.multimodal_vision_model == m.deploymentName %}selected{% endif %}>
+                                            {{ m.deploymentName }}{% if m.modelName %} ({{ m.modelName }}){% endif %}
+                                        </option>
+                                    {% endif %}
+                                {% endfor %}
+                            {% endif %}
+                        </select>
+                        <div class="form-text">Select a GPT model with vision capabilities (for example, gpt-4o or supported GPT 5 and later models). Only vision-capable models are shown.</div>
+
+                        <button type="button" class="btn btn-secondary mt-3" id="test_multimodal_vision_button">
+                            <i class="bi bi-clipboard-check me-1"></i>Test Vision Analysis
+                        </button>
+                        <div id="test_multimodal_vision_result" class="mt-2"></div>
+                    </div>
+                </div>
+
+
+
+                <div class="card mb-3 p-3" id="document-classification-section">
+                    <h5>
+                        <i class="bi bi-tags me-2"></i>Document Classification
+                    </h5>
+                    <p class="text-muted">
+                        Enable this feature to allow users to classify documents uploaded to their workspaces using predefined categories.
+                    </p>
+                    <div class="form-group form-check form-switch mb-3">
+                        <input
+                            type="checkbox"
+                            class="form-check-input"
+                            id="enable_document_classification"
+                            name="enable_document_classification"
+                            {% if settings.enable_document_classification %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="enable_document_classification">
+                            Enable Document Classification
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to classify uploaded documents with predefined categories for better organization and search filtering."></i>
+                    </div>
+
+
+                    <div id="document_classification_settings" {% if not settings.enable_document_classification %}style="display: none;"{% endif %}>
+                        <h6>Classification Categories</h6>
+                        <p class="text-muted small">Define the labels and corresponding colors for document classification.</p>
+                        <table class="table table-sm table-bordered">
+                            <thead class="table-light">
+                                <tr>
+                                    <th style="width: 50%;">Label</th>
+                                    <th style="width: 30%;">Color</th>
+                                    <th style="width: 20%;">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="classification-categories-tbody">
+
+                            </tbody>
+                        </table>
+                        <button type="button" id="add-classification-btn" class="btn btn-success btn-sm mt-2">
+                            <i class="bi bi-plus-circle"></i> Add New Category
+                        </button>
+
+                        <input type="hidden" name="document_classification_categories_json" id="document_classification_categories_json">
+                    </div>
+                </div>
+
+                <!-- Retention Policy Section -->
+                <div class="card p-3 mb-3" id="retention-policy-section">
+                    <h5>
+                        <i class="bi bi-hourglass-split me-2"></i>Retention Policy
+                    </h5>
+                    <p class="text-muted">Automatically delete aged conversations and documents based on configurable retention periods. Users, group owners, and public workspace admins can set their own retention policies.</p>
+
+                    <div class="alert alert-info mb-3" role="alert">
+                        <i class="bi bi-info-circle me-2"></i>
+                        <strong>How it works:</strong> Enable retention policy for workspace types below. Users/owners can then configure how many days to retain conversations and documents. Items older than the configured period are automatically deleted. Default is "none" (no deletion) until explicitly set by each user/owner.
+                    </div>
+
+                    <!-- Enable toggles for different workspace types -->
+                    <div class="row g-3 mb-3">
+                        <div class="col-md-4">
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" role="switch" id="enable_retention_policy_personal" name="enable_retention_policy_personal" {% if settings.enable_retention_policy_personal %}checked{% endif %}>
+                                <label class="form-check-label ms-2" for="enable_retention_policy_personal">
+                                    Enable for Personal Workspaces
+                                </label>
+                                <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to configure retention policies for their personal conversations and documents."></i>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" role="switch" id="enable_retention_policy_group" name="enable_retention_policy_group" {% if settings.enable_retention_policy_group %}checked{% endif %}>
+                                <label class="form-check-label ms-2" for="enable_retention_policy_group">
+                                    Enable for Group Workspaces
+                                </label>
+                                <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow group owners and admins to configure retention policies for group conversations and documents."></i>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" role="switch" id="enable_retention_policy_public" name="enable_retention_policy_public" {% if settings.enable_retention_policy_public %}checked{% endif %}>
+                                <label class="form-check-label ms-2" for="enable_retention_policy_public">
+                                    Enable for Public Workspaces
+                                </label>
+                                <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow public workspace owners and admins to configure retention policies for workspace conversations and documents."></i>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Default Retention Policy Settings -->
+                    <div class="card bg-light p-3 mb-3">
+                        <h6 class="mb-3"><i class="bi bi-sliders me-2"></i>Default Retention Policies</h6>
+                        <p class="text-muted small mb-3">Set organization-wide default retention periods for each workspace type. Users can override these defaults with their own preferences. Setting a default here means new users/workspaces will start with this retention period.</p>
+
+                        <!-- Personal Workspace Defaults -->
+                        <div class="row g-3 mb-3" id="retention_defaults_personal" style="{% if not settings.enable_retention_policy_personal %}display: none;{% endif %}">
+                            <div class="col-12">
+                                <label class="form-label fw-bold"><i class="bi bi-person me-1"></i>Personal Workspace Defaults</label>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="default_retention_conversation_personal" class="form-label">Conversation Retention</label>
+                                <select class="form-select" id="default_retention_conversation_personal" name="default_retention_conversation_personal">
+                                    <option value="none" {% if settings.default_retention_conversation_personal == 'none' %}selected{% endif %}>No automatic deletion</option>
+                                    <option value="1" {% if settings.default_retention_conversation_personal == '1' or settings.default_retention_conversation_personal == 1 %}selected{% endif %}>1 day</option>
+                                    <option value="2" {% if settings.default_retention_conversation_personal == '2' or settings.default_retention_conversation_personal == 2 %}selected{% endif %}>2 days</option>
+                                    <option value="3" {% if settings.default_retention_conversation_personal == '3' or settings.default_retention_conversation_personal == 3 %}selected{% endif %}>3 days</option>
+                                    <option value="4" {% if settings.default_retention_conversation_personal == '4' or settings.default_retention_conversation_personal == 4 %}selected{% endif %}>4 days</option>
+                                    <option value="5" {% if settings.default_retention_conversation_personal == '5' or settings.default_retention_conversation_personal == 5 %}selected{% endif %}>5 days</option>
+                                    <option value="6" {% if settings.default_retention_conversation_personal == '6' or settings.default_retention_conversation_personal == 6 %}selected{% endif %}>6 days</option>
+                                    <option value="7" {% if settings.default_retention_conversation_personal == '7' or settings.default_retention_conversation_personal == 7 %}selected{% endif %}>7 days (1 week)</option>
+                                    <option value="10" {% if settings.default_retention_conversation_personal == '10' or settings.default_retention_conversation_personal == 10 %}selected{% endif %}>10 days</option>
+                                    <option value="14" {% if settings.default_retention_conversation_personal == '14' or settings.default_retention_conversation_personal == 14 %}selected{% endif %}>14 days (2 weeks)</option>
+                                    <option value="21" {% if settings.default_retention_conversation_personal == '21' or settings.default_retention_conversation_personal == 21 %}selected{% endif %}>21 days (3 weeks)</option>
+                                    <option value="30" {% if settings.default_retention_conversation_personal == '30' or settings.default_retention_conversation_personal == 30 %}selected{% endif %}>30 days</option>
+                                    <option value="60" {% if settings.default_retention_conversation_personal == '60' or settings.default_retention_conversation_personal == 60 %}selected{% endif %}>60 days</option>
+                                    <option value="90" {% if settings.default_retention_conversation_personal == '90' or settings.default_retention_conversation_personal == 90 %}selected{% endif %}>90 days (3 months)</option>
+                                    <option value="180" {% if settings.default_retention_conversation_personal == '180' or settings.default_retention_conversation_personal == 180 %}selected{% endif %}>180 days (6 months)</option>
+                                    <option value="365" {% if settings.default_retention_conversation_personal == '365' or settings.default_retention_conversation_personal == 365 %}selected{% endif %}>365 days (1 year)</option>
+                                    <option value="730" {% if settings.default_retention_conversation_personal == '730' or settings.default_retention_conversation_personal == 730 %}selected{% endif %}>730 days (2 years)</option>
+                                </select>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="default_retention_document_personal" class="form-label">Document Retention</label>
+                                <select class="form-select" id="default_retention_document_personal" name="default_retention_document_personal">
+                                    <option value="none" {% if settings.default_retention_document_personal == 'none' %}selected{% endif %}>No automatic deletion</option>
+                                    <option value="1" {% if settings.default_retention_document_personal == '1' or settings.default_retention_document_personal == 1 %}selected{% endif %}>1 day</option>
+                                    <option value="2" {% if settings.default_retention_document_personal == '2' or settings.default_retention_document_personal == 2 %}selected{% endif %}>2 days</option>
+                                    <option value="3" {% if settings.default_retention_document_personal == '3' or settings.default_retention_document_personal == 3 %}selected{% endif %}>3 days</option>
+                                    <option value="4" {% if settings.default_retention_document_personal == '4' or settings.default_retention_document_personal == 4 %}selected{% endif %}>4 days</option>
+                                    <option value="5" {% if settings.default_retention_document_personal == '5' or settings.default_retention_document_personal == 5 %}selected{% endif %}>5 days</option>
+                                    <option value="6" {% if settings.default_retention_document_personal == '6' or settings.default_retention_document_personal == 6 %}selected{% endif %}>6 days</option>
+                                    <option value="7" {% if settings.default_retention_document_personal == '7' or settings.default_retention_document_personal == 7 %}selected{% endif %}>7 days (1 week)</option>
+                                    <option value="10" {% if settings.default_retention_document_personal == '10' or settings.default_retention_document_personal == 10 %}selected{% endif %}>10 days</option>
+                                    <option value="14" {% if settings.default_retention_document_personal == '14' or settings.default_retention_document_personal == 14 %}selected{% endif %}>14 days (2 weeks)</option>
+                                    <option value="21" {% if settings.default_retention_document_personal == '21' or settings.default_retention_document_personal == 21 %}selected{% endif %}>21 days (3 weeks)</option>
+                                    <option value="30" {% if settings.default_retention_document_personal == '30' or settings.default_retention_document_personal == 30 %}selected{% endif %}>30 days</option>
+                                    <option value="60" {% if settings.default_retention_document_personal == '60' or settings.default_retention_document_personal == 60 %}selected{% endif %}>60 days</option>
+                                    <option value="90" {% if settings.default_retention_document_personal == '90' or settings.default_retention_document_personal == 90 %}selected{% endif %}>90 days (3 months)</option>
+                                    <option value="180" {% if settings.default_retention_document_personal == '180' or settings.default_retention_document_personal == 180 %}selected{% endif %}>180 days (6 months)</option>
+                                    <option value="365" {% if settings.default_retention_document_personal == '365' or settings.default_retention_document_personal == 365 %}selected{% endif %}>365 days (1 year)</option>
+                                    <option value="730" {% if settings.default_retention_document_personal == '730' or settings.default_retention_document_personal == 730 %}selected{% endif %}>730 days (2 years)</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <!-- Group Workspace Defaults -->
+                        <div class="row g-3 mb-3" id="retention_defaults_group" style="{% if not settings.enable_retention_policy_group %}display: none;{% endif %}">
+                            <div class="col-12">
+                                <label class="form-label fw-bold"><i class="bi bi-people me-1"></i>Group Workspace Defaults</label>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="default_retention_conversation_group" class="form-label">Conversation Retention</label>
+                                <select class="form-select" id="default_retention_conversation_group" name="default_retention_conversation_group">
+                                    <option value="none" {% if settings.default_retention_conversation_group == 'none' %}selected{% endif %}>No automatic deletion</option>
+                                    <option value="1" {% if settings.default_retention_conversation_group == '1' or settings.default_retention_conversation_group == 1 %}selected{% endif %}>1 day</option>
+                                    <option value="2" {% if settings.default_retention_conversation_group == '2' or settings.default_retention_conversation_group == 2 %}selected{% endif %}>2 days</option>
+                                    <option value="3" {% if settings.default_retention_conversation_group == '3' or settings.default_retention_conversation_group == 3 %}selected{% endif %}>3 days</option>
+                                    <option value="4" {% if settings.default_retention_conversation_group == '4' or settings.default_retention_conversation_group == 4 %}selected{% endif %}>4 days</option>
+                                    <option value="5" {% if settings.default_retention_conversation_group == '5' or settings.default_retention_conversation_group == 5 %}selected{% endif %}>5 days</option>
+                                    <option value="6" {% if settings.default_retention_conversation_group == '6' or settings.default_retention_conversation_group == 6 %}selected{% endif %}>6 days</option>
+                                    <option value="7" {% if settings.default_retention_conversation_group == '7' or settings.default_retention_conversation_group == 7 %}selected{% endif %}>7 days (1 week)</option>
+                                    <option value="10" {% if settings.default_retention_conversation_group == '10' or settings.default_retention_conversation_group == 10 %}selected{% endif %}>10 days</option>
+                                    <option value="14" {% if settings.default_retention_conversation_group == '14' or settings.default_retention_conversation_group == 14 %}selected{% endif %}>14 days (2 weeks)</option>
+                                    <option value="21" {% if settings.default_retention_conversation_group == '21' or settings.default_retention_conversation_group == 21 %}selected{% endif %}>21 days (3 weeks)</option>
+                                    <option value="30" {% if settings.default_retention_conversation_group == '30' or settings.default_retention_conversation_group == 30 %}selected{% endif %}>30 days</option>
+                                    <option value="60" {% if settings.default_retention_conversation_group == '60' or settings.default_retention_conversation_group == 60 %}selected{% endif %}>60 days</option>
+                                    <option value="90" {% if settings.default_retention_conversation_group == '90' or settings.default_retention_conversation_group == 90 %}selected{% endif %}>90 days (3 months)</option>
+                                    <option value="180" {% if settings.default_retention_conversation_group == '180' or settings.default_retention_conversation_group == 180 %}selected{% endif %}>180 days (6 months)</option>
+                                    <option value="365" {% if settings.default_retention_conversation_group == '365' or settings.default_retention_conversation_group == 365 %}selected{% endif %}>365 days (1 year)</option>
+                                    <option value="730" {% if settings.default_retention_conversation_group == '730' or settings.default_retention_conversation_group == 730 %}selected{% endif %}>730 days (2 years)</option>
+                                </select>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="default_retention_document_group" class="form-label">Document Retention</label>
+                                <select class="form-select" id="default_retention_document_group" name="default_retention_document_group">
+                                    <option value="none" {% if settings.default_retention_document_group == 'none' %}selected{% endif %}>No automatic deletion</option>
+                                    <option value="1" {% if settings.default_retention_document_group == '1' or settings.default_retention_document_group == 1 %}selected{% endif %}>1 day</option>
+                                    <option value="2" {% if settings.default_retention_document_group == '2' or settings.default_retention_document_group == 2 %}selected{% endif %}>2 days</option>
+                                    <option value="3" {% if settings.default_retention_document_group == '3' or settings.default_retention_document_group == 3 %}selected{% endif %}>3 days</option>
+                                    <option value="4" {% if settings.default_retention_document_group == '4' or settings.default_retention_document_group == 4 %}selected{% endif %}>4 days</option>
+                                    <option value="5" {% if settings.default_retention_document_group == '5' or settings.default_retention_document_group == 5 %}selected{% endif %}>5 days</option>
+                                    <option value="6" {% if settings.default_retention_document_group == '6' or settings.default_retention_document_group == 6 %}selected{% endif %}>6 days</option>
+                                    <option value="7" {% if settings.default_retention_document_group == '7' or settings.default_retention_document_group == 7 %}selected{% endif %}>7 days (1 week)</option>
+                                    <option value="10" {% if settings.default_retention_document_group == '10' or settings.default_retention_document_group == 10 %}selected{% endif %}>10 days</option>
+                                    <option value="14" {% if settings.default_retention_document_group == '14' or settings.default_retention_document_group == 14 %}selected{% endif %}>14 days (2 weeks)</option>
+                                    <option value="21" {% if settings.default_retention_document_group == '21' or settings.default_retention_document_group == 21 %}selected{% endif %}>21 days (3 weeks)</option>
+                                    <option value="30" {% if settings.default_retention_document_group == '30' or settings.default_retention_document_group == 30 %}selected{% endif %}>30 days</option>
+                                    <option value="60" {% if settings.default_retention_document_group == '60' or settings.default_retention_document_group == 60 %}selected{% endif %}>60 days</option>
+                                    <option value="90" {% if settings.default_retention_document_group == '90' or settings.default_retention_document_group == 90 %}selected{% endif %}>90 days (3 months)</option>
+                                    <option value="180" {% if settings.default_retention_document_group == '180' or settings.default_retention_document_group == 180 %}selected{% endif %}>180 days (6 months)</option>
+                                    <option value="365" {% if settings.default_retention_document_group == '365' or settings.default_retention_document_group == 365 %}selected{% endif %}>365 days (1 year)</option>
+                                    <option value="730" {% if settings.default_retention_document_group == '730' or settings.default_retention_document_group == 730 %}selected{% endif %}>730 days (2 years)</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <!-- Public Workspace Defaults -->
+                        <div class="row g-3" id="retention_defaults_public" style="{% if not settings.enable_retention_policy_public %}display: none;{% endif %}">
+                            <div class="col-12">
+                                <label class="form-label fw-bold"><i class="bi bi-globe me-1"></i>Public Workspace Defaults</label>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="default_retention_conversation_public" class="form-label">Conversation Retention</label>
+                                <select class="form-select" id="default_retention_conversation_public" name="default_retention_conversation_public">
+                                    <option value="none" {% if settings.default_retention_conversation_public == 'none' %}selected{% endif %}>No automatic deletion</option>
+                                    <option value="1" {% if settings.default_retention_conversation_public == '1' or settings.default_retention_conversation_public == 1 %}selected{% endif %}>1 day</option>
+                                    <option value="2" {% if settings.default_retention_conversation_public == '2' or settings.default_retention_conversation_public == 2 %}selected{% endif %}>2 days</option>
+                                    <option value="3" {% if settings.default_retention_conversation_public == '3' or settings.default_retention_conversation_public == 3 %}selected{% endif %}>3 days</option>
+                                    <option value="4" {% if settings.default_retention_conversation_public == '4' or settings.default_retention_conversation_public == 4 %}selected{% endif %}>4 days</option>
+                                    <option value="5" {% if settings.default_retention_conversation_public == '5' or settings.default_retention_conversation_public == 5 %}selected{% endif %}>5 days</option>
+                                    <option value="6" {% if settings.default_retention_conversation_public == '6' or settings.default_retention_conversation_public == 6 %}selected{% endif %}>6 days</option>
+                                    <option value="7" {% if settings.default_retention_conversation_public == '7' or settings.default_retention_conversation_public == 7 %}selected{% endif %}>7 days (1 week)</option>
+                                    <option value="10" {% if settings.default_retention_conversation_public == '10' or settings.default_retention_conversation_public == 10 %}selected{% endif %}>10 days</option>
+                                    <option value="14" {% if settings.default_retention_conversation_public == '14' or settings.default_retention_conversation_public == 14 %}selected{% endif %}>14 days (2 weeks)</option>
+                                    <option value="21" {% if settings.default_retention_conversation_public == '21' or settings.default_retention_conversation_public == 21 %}selected{% endif %}>21 days (3 weeks)</option>
+                                    <option value="30" {% if settings.default_retention_conversation_public == '30' or settings.default_retention_conversation_public == 30 %}selected{% endif %}>30 days</option>
+                                    <option value="60" {% if settings.default_retention_conversation_public == '60' or settings.default_retention_conversation_public == 60 %}selected{% endif %}>60 days</option>
+                                    <option value="90" {% if settings.default_retention_conversation_public == '90' or settings.default_retention_conversation_public == 90 %}selected{% endif %}>90 days (3 months)</option>
+                                    <option value="180" {% if settings.default_retention_conversation_public == '180' or settings.default_retention_conversation_public == 180 %}selected{% endif %}>180 days (6 months)</option>
+                                    <option value="365" {% if settings.default_retention_conversation_public == '365' or settings.default_retention_conversation_public == 365 %}selected{% endif %}>365 days (1 year)</option>
+                                    <option value="730" {% if settings.default_retention_conversation_public == '730' or settings.default_retention_conversation_public == 730 %}selected{% endif %}>730 days (2 years)</option>
+                                </select>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="default_retention_document_public" class="form-label">Document Retention</label>
+                                <select class="form-select" id="default_retention_document_public" name="default_retention_document_public">
+                                    <option value="none" {% if settings.default_retention_document_public == 'none' %}selected{% endif %}>No automatic deletion</option>
+                                    <option value="1" {% if settings.default_retention_document_public == '1' or settings.default_retention_document_public == 1 %}selected{% endif %}>1 day</option>
+                                    <option value="2" {% if settings.default_retention_document_public == '2' or settings.default_retention_document_public == 2 %}selected{% endif %}>2 days</option>
+                                    <option value="3" {% if settings.default_retention_document_public == '3' or settings.default_retention_document_public == 3 %}selected{% endif %}>3 days</option>
+                                    <option value="4" {% if settings.default_retention_document_public == '4' or settings.default_retention_document_public == 4 %}selected{% endif %}>4 days</option>
+                                    <option value="5" {% if settings.default_retention_document_public == '5' or settings.default_retention_document_public == 5 %}selected{% endif %}>5 days</option>
+                                    <option value="6" {% if settings.default_retention_document_public == '6' or settings.default_retention_document_public == 6 %}selected{% endif %}>6 days</option>
+                                    <option value="7" {% if settings.default_retention_document_public == '7' or settings.default_retention_document_public == 7 %}selected{% endif %}>7 days (1 week)</option>
+                                    <option value="10" {% if settings.default_retention_document_public == '10' or settings.default_retention_document_public == 10 %}selected{% endif %}>10 days</option>
+                                    <option value="14" {% if settings.default_retention_document_public == '14' or settings.default_retention_document_public == 14 %}selected{% endif %}>14 days (2 weeks)</option>
+                                    <option value="21" {% if settings.default_retention_document_public == '21' or settings.default_retention_document_public == 21 %}selected{% endif %}>21 days (3 weeks)</option>
+                                    <option value="30" {% if settings.default_retention_document_public == '30' or settings.default_retention_document_public == 30 %}selected{% endif %}>30 days</option>
+                                    <option value="60" {% if settings.default_retention_document_public == '60' or settings.default_retention_document_public == 60 %}selected{% endif %}>60 days</option>
+                                    <option value="90" {% if settings.default_retention_document_public == '90' or settings.default_retention_document_public == 90 %}selected{% endif %}>90 days (3 months)</option>
+                                    <option value="180" {% if settings.default_retention_document_public == '180' or settings.default_retention_document_public == 180 %}selected{% endif %}>180 days (6 months)</option>
+                                    <option value="365" {% if settings.default_retention_document_public == '365' or settings.default_retention_document_public == 365 %}selected{% endif %}>365 days (1 year)</option>
+                                    <option value="730" {% if settings.default_retention_document_public == '730' or settings.default_retention_document_public == 730 %}selected{% endif %}>730 days (2 years)</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <!-- Force Push Button -->
+                        <div class="row g-3 mt-3">
+                            <div class="col-12">
+                                <div class="alert alert-warning mb-2">
+                                    <i class="bi bi-exclamation-triangle me-2"></i>
+                                    <strong>Force Push:</strong> Override all user/group/workspace custom retention policies with the organization defaults above. Users will then use the organization default until they set their own preference.
+                                </div>
+                                <button type="button" class="btn btn-warning" onclick="showForcePushModal()">
+                                    <i class="bi bi-arrow-repeat me-2"></i>Force Push Defaults to All
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Scheduled execution time -->
+                    <div class="mb-3">
+                        <label for="retention_policy_execution_hour" class="form-label">Scheduled Execution Time (Hour of Day)</label>
+                        <select class="form-select" id="retention_policy_execution_hour" name="retention_policy_execution_hour" style="max-width: 300px;">
+                            {% for hour in range(24) %}
+                            <option value="{{ hour }}" {% if settings.retention_policy_execution_hour == hour %}selected{% endif %}>
+                                {{ "%02d"|format(hour) }}:00 ({{ "Midnight" if hour == 0 else ("%d AM"|format(hour) if hour < 12 else ("Noon" if hour == 12 else "%d PM"|format(hour - 12))) }})
+                            </option>
+                            {% endfor %}
+                        </select>
+                        <small class="form-text text-muted">Retention policy will run once daily at this hour (UTC timezone).</small>
+                    </div>
+
+                    <!-- Status information -->
+                    <div class="row g-3 mb-3">
+                        <div class="col-md-6">
+                            <label class="form-label">Last Execution:</label>
+                            <div class="form-control-plaintext">
+                                {% if settings.retention_policy_last_run %}
+                                    <span class="text-success">{{ settings.retention_policy_last_run }}</span>
+                                {% else %}
+                                    <span class="text-muted">Never run</span>
+                                {% endif %}
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Next Scheduled Execution:</label>
+                            <div class="form-control-plaintext">
+                                {% if settings.retention_policy_next_run %}
+                                    <span class="text-info">{{ settings.retention_policy_next_run }}</span>
+                                {% else %}
+                                    <span class="text-muted">Not scheduled</span>
+                                {% endif %}
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Manual execution button -->
+                    <div class="mt-3">
+                        <button type="button" class="btn btn-warning" onclick="showManualExecutionModal()">
+                            <i class="bi bi-play-circle me-2"></i>Manual Execution
+                        </button>
+                        <small class="form-text text-muted d-block mt-2">
+                            Trigger retention policy execution immediately for selected workspace types, bypassing the scheduled time.
+                        </small>
+                    </div>
+
+                    <div class="alert alert-warning mt-3" role="alert">
+                        <i class="bi bi-exclamation-triangle me-2"></i>
+                        <strong>Important:</strong> Deleted items respect your archiving settings. If conversation archiving is enabled, items will be archived before deletion. Activity logs are created for all deletions.
+                    </div>
+                </div>
+
+                <!-- Workspace Scope Lock Section -->
+                <div class="card mb-3 p-3" id="workspace-scope-lock-section">
+                    <h5>
+                        <i class="bi bi-lock me-2"></i>Workspace Scope Lock
+                    </h5>
+                    <p class="text-muted">
+                        Control whether users can unlock workspace scope in chat conversations. When scope is locked, conversations are restricted to the workspaces that produced search results, preventing accidental cross-contamination with other data sources.
+                    </p>
+                    <div class="form-group form-check form-switch mb-3">
+                        <input type="checkbox"
+                            class="form-check-input"
+                            id="enforce_workspace_scope_lock"
+                            name="enforce_workspace_scope_lock"
+                            {% if settings.enforce_workspace_scope_lock %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="enforce_workspace_scope_lock">
+                            Enforce Workspace Scope Lock
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="When enabled, users cannot unlock the workspace scope on conversations. Scope automatically locks after the first AI search and remains locked. Disable this to allow users to manually unlock scope."></i>
+                    </div>
+                </div>
+
+                <!-- User Agreement Section -->
+                <div class="card mb-3 p-3" id="user-agreement-section">
+                    <h5>
+                        <i class="bi bi-file-earmark-check me-2"></i>User Agreement
+                    </h5>
+                    <p class="text-muted">
+                        Configure a user agreement that users must accept before uploading files.
+                        Supports Markdown formatting.
+                    </p>
+
+                    <!-- Enable Toggle -->
+                    <div class="form-group form-check form-switch mb-3">
+                        <input type="checkbox"
+                            class="form-check-input"
+                            id="enable_user_agreement"
+                            name="enable_user_agreement"
+                            {% if settings.enable_user_agreement %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="enable_user_agreement">
+                            Enable User Agreement
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="When enabled, users must accept the agreement before uploading files in the selected workspace types."></i>
+                    </div>
+
+                    <!-- User Agreement Settings (shown when enabled) -->
+                    <div id="user_agreement_settings" {% if not settings.enable_user_agreement %}style="display: none;"{% endif %}>
+                        <hr>
+
+                        <!-- Apply To Checkboxes -->
+                        <div class="mb-3">
+                            <label class="form-label fw-bold">Apply to <span class="text-danger">*</span></label>
+                            <p class="text-muted small mb-2">Select where the user agreement should be shown (at least one required):</p>
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <div class="form-check mb-2">
+                                        <input type="checkbox" class="form-check-input" id="user_agreement_apply_personal" name="user_agreement_apply_personal"
+                                            {% if settings.user_agreement_apply_to and 'personal' in settings.user_agreement_apply_to %}checked{% endif %}>
+                                        <label class="form-check-label" for="user_agreement_apply_personal">
+                                            <i class="bi bi-person me-1"></i>Personal Workspaces
+                                        </label>
+                                    </div>
+                                    <div class="form-check mb-2">
+                                        <input type="checkbox" class="form-check-input" id="user_agreement_apply_group" name="user_agreement_apply_group"
+                                            {% if settings.user_agreement_apply_to and 'group' in settings.user_agreement_apply_to %}checked{% endif %}>
+                                        <label class="form-check-label" for="user_agreement_apply_group">
+                                            <i class="bi bi-people me-1"></i>Group Workspaces
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <div class="form-check mb-2">
+                                        <input type="checkbox" class="form-check-input" id="user_agreement_apply_public" name="user_agreement_apply_public"
+                                            {% if settings.user_agreement_apply_to and 'public' in settings.user_agreement_apply_to %}checked{% endif %}>
+                                        <label class="form-check-label" for="user_agreement_apply_public">
+                                            <i class="bi bi-globe me-1"></i>Public Workspaces
+                                        </label>
+                                    </div>
+                                    <div class="form-check mb-2">
+                                        <input type="checkbox" class="form-check-input" id="user_agreement_apply_chat" name="user_agreement_apply_chat"
+                                            {% if settings.user_agreement_apply_to and 'chat' in settings.user_agreement_apply_to %}checked{% endif %}>
+                                        <label class="form-check-label" for="user_agreement_apply_chat">
+                                            <i class="bi bi-chat-dots me-1"></i>Chat
+                                        </label>
+                                    </div>
+                                </div>
+                            </div>
+                            <div id="user_agreement_apply_to_validation" class="text-danger small" style="display: none;">
+                                <i class="bi bi-exclamation-circle me-1"></i>At least one location must be selected
+                            </div>
+                        </div>
+
+                        <!-- Agreement Text -->
+                        <div class="mb-3">
+                            <label for="user_agreement_text" class="form-label fw-bold">
+                                Agreement Text <span class="text-danger">*</span>
+                                <span class="text-muted fw-normal ms-2">(Markdown supported)</span>
+                            </label>
+                            <textarea class="form-control" id="user_agreement_text" name="user_agreement_text" rows="6"
+                                placeholder="Enter the agreement text that users must accept before uploading files...&#10;&#10;Example:&#10;**I confirm that:**&#10;- The documents I am uploading do not contain PII&#10;- I have permission to share these documents">{{ settings.user_agreement_text or '' }}</textarea>
+                            <div class="d-flex justify-content-between mt-1">
+                                <small id="user_agreement_word_count" class="text-muted">0 / 200 words</small>
+                                <small id="user_agreement_word_warning" class="text-danger" style="display: none;">
+                                    <i class="bi bi-exclamation-circle me-1"></i>Exceeds 200 word limit
+                                </small>
+                            </div>
+                        </div>
+
+                        <!-- Daily Acceptance Option -->
+                        <div class="form-group form-check form-switch mb-3">
+                            <input type="checkbox" class="form-check-input" id="enable_user_agreement_daily" name="enable_user_agreement_daily"
+                                {% if settings.enable_user_agreement_daily %}checked{% endif %}>
+                            <label class="form-check-label ms-2" for="enable_user_agreement_daily">
+                                Allow users to accept once per day
+                            </label>
+                            <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="When enabled, users only need to accept the agreement once per day instead of every time they upload files."></i>
+                        </div>
+
+                        <!-- Test Preview Button -->
+                        <div class="d-flex gap-2 flex-wrap">
+                            <button type="button" class="btn btn-outline-secondary" id="test_user_agreement_btn">
+                                <i class="bi bi-eye me-1"></i>Test Preview
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
