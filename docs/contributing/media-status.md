@@ -104,6 +104,47 @@ image in the repo.
 
 {% endfor %}
 
+## Placeholder images awaiting real captures
+
+Some images exist and render, but are branded "Screenshot pending" graphics
+rather than real captures. They ship so pages do not show broken images, but
+they still need replacing.
+
+To resolve one, capture the real screenshot, overwrite the file at the listed
+path, and remove its entry from `docs/_data/media_pending.yml`.
+
+{% assign pending_groups = site.data.media_pending %}
+{% assign pending_total = 0 %}
+{% for group in pending_groups %}
+  {% for item in group[1].items %}
+    {% assign pending_total = pending_total | plus: item.images %}
+  {% endfor %}
+{% endfor %}
+
+**{{ pending_total }} placeholder images** across {{ pending_groups.size }} release group{% if pending_groups.size != 1 %}s{% endif %}.
+
+{% for group in pending_groups %}
+{% assign meta = group[1] %}
+### {{ meta.label }}
+
+{{ meta.note }}
+
+<table class="docs-media-status-table">
+<thead>
+<tr><th scope="col">Page</th><th scope="col">Images</th><th scope="col">Files to replace</th></tr>
+</thead>
+<tbody>
+{%- for item in meta.items -%}
+<tr>
+<td><a href="{{ item.page | relative_url }}">{{ item.page }}</a></td>
+<td>{{ item.images }}</td>
+<td><code>{{ item.path_pattern }}</code></td>
+</tr>
+{%- endfor -%}
+</tbody>
+</table>
+{% endfor %}
+
 ## Adding a new slot
 
 Register it in `docs/_data/media.yml`:

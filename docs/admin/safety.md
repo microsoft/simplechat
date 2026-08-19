@@ -15,7 +15,7 @@ Controls Azure Content Safety, user feedback, desktop notifications, review-role
 
 Safety settings control what happens when chat content violates policy, who can review those events, and whether conversations are archived instead of permanently deleted. Turning Content Safety on can block harmful or sensitive prompts before they reach a model, but a bad endpoint or overly strict message can interrupt normal work. Role requirements protect review data from casual admin access.
 
-{% include media.html src="admin/safety-overview.png" alt="Screenshot of the Safety settings tab showing safety tab." title="Safety tab" capture="Capture the Safety tab for Safety tab. Show relevant controls and redact secrets." %}
+{% include media.html src="admin-settings/safety.png" alt="Screenshot of the Safety settings tab showing content safety, user feedback, notifications, review-role requirements, and conversation archiving controls." title="Safety settings tab" %}
 
 {% include media.html type="video" title="Safety settings walkthrough" poster="video-posters/admin-safety.png" capture="Recording planned. Walk through every setting on the Safety tab and explain when to change each one." %}
 

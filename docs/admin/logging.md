@@ -15,7 +15,7 @@ Controls Application Insights logging, temporary debug logging, file-processing 
 
 Logging is the difference between guessing and diagnosing, but it can also increase storage and expose sensitive operational details. Application Insights is appropriate for ongoing telemetry; debug logging and file-processing logs should be temporary or intentionally retained with cleanup.
 
-{% include media.html src="admin/logging-overview.png" alt="Screenshot of the Logging settings tab showing logging tab." title="Logging tab" capture="Capture the Logging tab for Logging tab. Show relevant controls and redact secrets." %}
+{% include media.html src="admin-settings/logging.png" alt="Screenshot of the Logging settings tab showing Application Insights, debug logging, file-processing logs, and stored-log cleanup controls." title="Logging settings tab" %}
 
 {% include media.html type="video" title="Logging settings walkthrough" poster="video-posters/admin-logging.png" capture="Recording planned. Walk through every setting on the Logging tab and explain when to change each one." %}
 

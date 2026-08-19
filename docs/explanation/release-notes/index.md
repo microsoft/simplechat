@@ -20,126 +20,12 @@ This page includes the latest release notes inline. Older release sections are s
 
 | Version | Page |
 | --- | --- |
+| v0.260.002 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
+| v0.260.001 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
 | v0.250.231 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
 | v0.250.230 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
-| v0.250.229 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
-| v0.250.228 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
-| v0.250.227 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
-| v0.250.226 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
-| v0.250.225 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
-| v0.250.224 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
-| v0.250.223 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
-| v0.250.222 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
-| v0.250.221 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
-| v0.250.220 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
-| v0.250.219 | [Release notes 0.250.219 – 0.250.128]({{ '/explanation/release-notes/v0.250-part-1/' | relative_url }}) |
-| v0.250.218 | [Release notes 0.250.219 – 0.250.128]({{ '/explanation/release-notes/v0.250-part-1/' | relative_url }}) |
-| v0.250.217 | [Release notes 0.250.219 – 0.250.128]({{ '/explanation/release-notes/v0.250-part-1/' | relative_url }}) |
-| v0.250.216 | [Release notes 0.250.219 – 0.250.128]({{ '/explanation/release-notes/v0.250-part-1/' | relative_url }}) |
-| v0.250.215 | [Release notes 0.250.219 – 0.250.128]({{ '/explanation/release-notes/v0.250-part-1/' | relative_url }}) |
-| v0.250.214 | [Release notes 0.250.219 – 0.250.128]({{ '/explanation/release-notes/v0.250-part-1/' | relative_url }}) |
-| v0.250.213 | [Release notes 0.250.219 – 0.250.128]({{ '/explanation/release-notes/v0.250-part-1/' | relative_url }}) |
-| v0.250.212 | [Release notes 0.250.219 – 0.250.128]({{ '/explanation/release-notes/v0.250-part-1/' | relative_url }}) |
-| v0.250.211 | [Release notes 0.250.219 – 0.250.128]({{ '/explanation/release-notes/v0.250-part-1/' | relative_url }}) |
-| v0.250.210 | [Release notes 0.250.219 – 0.250.128]({{ '/explanation/release-notes/v0.250-part-1/' | relative_url }}) |
-| v0.250.209 | [Release notes 0.250.219 – 0.250.128]({{ '/explanation/release-notes/v0.250-part-1/' | relative_url }}) |
-| v0.250.208 | [Release notes 0.250.219 – 0.250.128]({{ '/explanation/release-notes/v0.250-part-1/' | relative_url }}) |
-| v0.250.207 | [Release notes 0.250.219 – 0.250.128]({{ '/explanation/release-notes/v0.250-part-1/' | relative_url }}) |
-| v0.250.206 | [Release notes 0.250.219 – 0.250.128]({{ '/explanation/release-notes/v0.250-part-1/' | relative_url }}) |
-| v0.250.205 | [Release notes 0.250.219 – 0.250.128]({{ '/explanation/release-notes/v0.250-part-1/' | relative_url }}) |
-| v0.250.204 | [Release notes 0.250.219 – 0.250.128]({{ '/explanation/release-notes/v0.250-part-1/' | relative_url }}) |
-| v0.250.203 | [Release notes 0.250.219 – 0.250.128]({{ '/explanation/release-notes/v0.250-part-1/' | relative_url }}) |
-| v0.250.202 | [Release notes 0.250.219 – 0.250.128]({{ '/explanation/release-notes/v0.250-part-1/' | relative_url }}) |
-| v0.250.201 | [Release notes 0.250.219 – 0.250.128]({{ '/explanation/release-notes/v0.250-part-1/' | relative_url }}) |
-| v0.250.200 | [Release notes 0.250.219 – 0.250.128]({{ '/explanation/release-notes/v0.250-part-1/' | relative_url }}) |
-| v0.250.199 | [Release notes 0.250.219 – 0.250.128]({{ '/explanation/release-notes/v0.250-part-1/' | relative_url }}) |
-| v0.250.198 | [Release notes 0.250.219 – 0.250.128]({{ '/explanation/release-notes/v0.250-part-1/' | relative_url }}) |
-| v0.250.197 | [Release notes 0.250.219 – 0.250.128]({{ '/explanation/release-notes/v0.250-part-1/' | relative_url }}) |
-| v0.250.196 | [Release notes 0.250.219 – 0.250.128]({{ '/explanation/release-notes/v0.250-part-1/' | relative_url }}) |
-| v0.250.185 | [Release notes 0.250.219 – 0.250.128]({{ '/explanation/release-notes/v0.250-part-1/' | relative_url }}) |
-| v0.250.182 | [Release notes 0.250.219 – 0.250.128]({{ '/explanation/release-notes/v0.250-part-1/' | relative_url }}) |
-| v0.250.181 | [Release notes 0.250.219 – 0.250.128]({{ '/explanation/release-notes/v0.250-part-1/' | relative_url }}) |
-| v0.250.180 | [Release notes 0.250.219 – 0.250.128]({{ '/explanation/release-notes/v0.250-part-1/' | relative_url }}) |
-| v0.250.170 | [Release notes 0.250.219 – 0.250.128]({{ '/explanation/release-notes/v0.250-part-1/' | relative_url }}) |
-| v0.250.169 | [Release notes 0.250.219 – 0.250.128]({{ '/explanation/release-notes/v0.250-part-1/' | relative_url }}) |
-| v0.250.168 | [Release notes 0.250.219 – 0.250.128]({{ '/explanation/release-notes/v0.250-part-1/' | relative_url }}) |
-| v0.250.167 | [Release notes 0.250.219 – 0.250.128]({{ '/explanation/release-notes/v0.250-part-1/' | relative_url }}) |
-| v0.250.166 | [Release notes 0.250.219 – 0.250.128]({{ '/explanation/release-notes/v0.250-part-1/' | relative_url }}) |
-| v0.250.160 | [Release notes 0.250.219 – 0.250.128]({{ '/explanation/release-notes/v0.250-part-1/' | relative_url }}) |
-| v0.250.159 | [Release notes 0.250.219 – 0.250.128]({{ '/explanation/release-notes/v0.250-part-1/' | relative_url }}) |
-| v0.250.157 | [Release notes 0.250.219 – 0.250.128]({{ '/explanation/release-notes/v0.250-part-1/' | relative_url }}) |
-| v0.250.156 | [Release notes 0.250.219 – 0.250.128]({{ '/explanation/release-notes/v0.250-part-1/' | relative_url }}) |
-| v0.250.155 | [Release notes 0.250.219 – 0.250.128]({{ '/explanation/release-notes/v0.250-part-1/' | relative_url }}) |
-| v0.250.129 | [Release notes 0.250.219 – 0.250.128]({{ '/explanation/release-notes/v0.250-part-1/' | relative_url }}) |
-| v0.250.128 | [Release notes 0.250.219 – 0.250.128]({{ '/explanation/release-notes/v0.250-part-1/' | relative_url }}) |
-| v0.250.127 | [Release notes 0.250.127 – 0.250.059]({{ '/explanation/release-notes/v0.250-part-2/' | relative_url }}) |
-| v0.250.126 | [Release notes 0.250.127 – 0.250.059]({{ '/explanation/release-notes/v0.250-part-2/' | relative_url }}) |
-| v0.250.125 | [Release notes 0.250.127 – 0.250.059]({{ '/explanation/release-notes/v0.250-part-2/' | relative_url }}) |
-| v0.250.124 | [Release notes 0.250.127 – 0.250.059]({{ '/explanation/release-notes/v0.250-part-2/' | relative_url }}) |
-| v0.250.123 | [Release notes 0.250.127 – 0.250.059]({{ '/explanation/release-notes/v0.250-part-2/' | relative_url }}) |
-| v0.250.122 | [Release notes 0.250.127 – 0.250.059]({{ '/explanation/release-notes/v0.250-part-2/' | relative_url }}) |
-| v0.250.121 | [Release notes 0.250.127 – 0.250.059]({{ '/explanation/release-notes/v0.250-part-2/' | relative_url }}) |
-| v0.250.119 | [Release notes 0.250.127 – 0.250.059]({{ '/explanation/release-notes/v0.250-part-2/' | relative_url }}) |
-| v0.250.118 | [Release notes 0.250.127 – 0.250.059]({{ '/explanation/release-notes/v0.250-part-2/' | relative_url }}) |
-| v0.250.115 | [Release notes 0.250.127 – 0.250.059]({{ '/explanation/release-notes/v0.250-part-2/' | relative_url }}) |
-| v0.250.114 | [Release notes 0.250.127 – 0.250.059]({{ '/explanation/release-notes/v0.250-part-2/' | relative_url }}) |
-| v0.250.114 | [Release notes 0.250.127 – 0.250.059]({{ '/explanation/release-notes/v0.250-part-2/' | relative_url }}) |
-| v0.250.112 | [Release notes 0.250.127 – 0.250.059]({{ '/explanation/release-notes/v0.250-part-2/' | relative_url }}) |
-| v0.250.111 | [Release notes 0.250.127 – 0.250.059]({{ '/explanation/release-notes/v0.250-part-2/' | relative_url }}) |
-| v0.250.110 | [Release notes 0.250.127 – 0.250.059]({{ '/explanation/release-notes/v0.250-part-2/' | relative_url }}) |
-| v0.250.109 | [Release notes 0.250.127 – 0.250.059]({{ '/explanation/release-notes/v0.250-part-2/' | relative_url }}) |
-| v0.250.108 | [Release notes 0.250.127 – 0.250.059]({{ '/explanation/release-notes/v0.250-part-2/' | relative_url }}) |
-| v0.250.107 | [Release notes 0.250.127 – 0.250.059]({{ '/explanation/release-notes/v0.250-part-2/' | relative_url }}) |
-| v0.250.106 | [Release notes 0.250.127 – 0.250.059]({{ '/explanation/release-notes/v0.250-part-2/' | relative_url }}) |
-| v0.250.105 | [Release notes 0.250.127 – 0.250.059]({{ '/explanation/release-notes/v0.250-part-2/' | relative_url }}) |
-| v0.250.103 | [Release notes 0.250.127 – 0.250.059]({{ '/explanation/release-notes/v0.250-part-2/' | relative_url }}) |
-| v0.250.102 | [Release notes 0.250.127 – 0.250.059]({{ '/explanation/release-notes/v0.250-part-2/' | relative_url }}) |
-| v0.250.101 | [Release notes 0.250.127 – 0.250.059]({{ '/explanation/release-notes/v0.250-part-2/' | relative_url }}) |
-| v0.250.100 | [Release notes 0.250.127 – 0.250.059]({{ '/explanation/release-notes/v0.250-part-2/' | relative_url }}) |
-| v0.250.098 | [Release notes 0.250.127 – 0.250.059]({{ '/explanation/release-notes/v0.250-part-2/' | relative_url }}) |
-| v0.250.076 | [Release notes 0.250.127 – 0.250.059]({{ '/explanation/release-notes/v0.250-part-2/' | relative_url }}) |
-| v0.250.075 | [Release notes 0.250.127 – 0.250.059]({{ '/explanation/release-notes/v0.250-part-2/' | relative_url }}) |
-| v0.250.074 | [Release notes 0.250.127 – 0.250.059]({{ '/explanation/release-notes/v0.250-part-2/' | relative_url }}) |
-| v0.250.073 | [Release notes 0.250.127 – 0.250.059]({{ '/explanation/release-notes/v0.250-part-2/' | relative_url }}) |
-| v0.250.072 | [Release notes 0.250.127 – 0.250.059]({{ '/explanation/release-notes/v0.250-part-2/' | relative_url }}) |
-| v0.250.071 | [Release notes 0.250.127 – 0.250.059]({{ '/explanation/release-notes/v0.250-part-2/' | relative_url }}) |
-| v0.250.070 | [Release notes 0.250.127 – 0.250.059]({{ '/explanation/release-notes/v0.250-part-2/' | relative_url }}) |
-| v0.250.068 | [Release notes 0.250.127 – 0.250.059]({{ '/explanation/release-notes/v0.250-part-2/' | relative_url }}) |
-| v0.250.067 | [Release notes 0.250.127 – 0.250.059]({{ '/explanation/release-notes/v0.250-part-2/' | relative_url }}) |
-| v0.250.066 | [Release notes 0.250.127 – 0.250.059]({{ '/explanation/release-notes/v0.250-part-2/' | relative_url }}) |
-| v0.250.065 | [Release notes 0.250.127 – 0.250.059]({{ '/explanation/release-notes/v0.250-part-2/' | relative_url }}) |
-| v0.250.064 | [Release notes 0.250.127 – 0.250.059]({{ '/explanation/release-notes/v0.250-part-2/' | relative_url }}) |
-| v0.250.062 | [Release notes 0.250.127 – 0.250.059]({{ '/explanation/release-notes/v0.250-part-2/' | relative_url }}) |
-| v0.250.061 | [Release notes 0.250.127 – 0.250.059]({{ '/explanation/release-notes/v0.250-part-2/' | relative_url }}) |
-| v0.250.059 | [Release notes 0.250.127 – 0.250.059]({{ '/explanation/release-notes/v0.250-part-2/' | relative_url }}) |
-| v0.250.057 | [Release notes 0.250.057 – 0.250.001]({{ '/explanation/release-notes/v0.250-part-3/' | relative_url }}) |
-| v0.250.056 | [Release notes 0.250.057 – 0.250.001]({{ '/explanation/release-notes/v0.250-part-3/' | relative_url }}) |
-| v0.250.052 | [Release notes 0.250.057 – 0.250.001]({{ '/explanation/release-notes/v0.250-part-3/' | relative_url }}) |
-| v0.250.051 | [Release notes 0.250.057 – 0.250.001]({{ '/explanation/release-notes/v0.250-part-3/' | relative_url }}) |
-| v0.250.049 | [Release notes 0.250.057 – 0.250.001]({{ '/explanation/release-notes/v0.250-part-3/' | relative_url }}) |
-| v0.250.048 | [Release notes 0.250.057 – 0.250.001]({{ '/explanation/release-notes/v0.250-part-3/' | relative_url }}) |
-| v0.250.047 | [Release notes 0.250.057 – 0.250.001]({{ '/explanation/release-notes/v0.250-part-3/' | relative_url }}) |
-| v0.250.046 | [Release notes 0.250.057 – 0.250.001]({{ '/explanation/release-notes/v0.250-part-3/' | relative_url }}) |
-| v0.250.044 | [Release notes 0.250.057 – 0.250.001]({{ '/explanation/release-notes/v0.250-part-3/' | relative_url }}) |
-| v0.250.043 | [Release notes 0.250.057 – 0.250.001]({{ '/explanation/release-notes/v0.250-part-3/' | relative_url }}) |
-| v0.250.041 | [Release notes 0.250.057 – 0.250.001]({{ '/explanation/release-notes/v0.250-part-3/' | relative_url }}) |
-| v0.250.040 | [Release notes 0.250.057 – 0.250.001]({{ '/explanation/release-notes/v0.250-part-3/' | relative_url }}) |
-| v0.250.039 | [Release notes 0.250.057 – 0.250.001]({{ '/explanation/release-notes/v0.250-part-3/' | relative_url }}) |
-| v0.250.037 | [Release notes 0.250.057 – 0.250.001]({{ '/explanation/release-notes/v0.250-part-3/' | relative_url }}) |
-| v0.250.035 | [Release notes 0.250.057 – 0.250.001]({{ '/explanation/release-notes/v0.250-part-3/' | relative_url }}) |
-| v0.250.034 | [Release notes 0.250.057 – 0.250.001]({{ '/explanation/release-notes/v0.250-part-3/' | relative_url }}) |
-| v0.250.033 | [Release notes 0.250.057 – 0.250.001]({{ '/explanation/release-notes/v0.250-part-3/' | relative_url }}) |
-| v0.250.032 | [Release notes 0.250.057 – 0.250.001]({{ '/explanation/release-notes/v0.250-part-3/' | relative_url }}) |
-| v0.250.030 | [Release notes 0.250.057 – 0.250.001]({{ '/explanation/release-notes/v0.250-part-3/' | relative_url }}) |
-| v0.250.015 | [Release notes 0.250.057 – 0.250.001]({{ '/explanation/release-notes/v0.250-part-3/' | relative_url }}) |
-| v0.250.010 | [Release notes 0.250.057 – 0.250.001]({{ '/explanation/release-notes/v0.250-part-3/' | relative_url }}) |
-| v0.250.008 | [Release notes 0.250.057 – 0.250.001]({{ '/explanation/release-notes/v0.250-part-3/' | relative_url }}) |
-| v0.250.007 | [Release notes 0.250.057 – 0.250.001]({{ '/explanation/release-notes/v0.250-part-3/' | relative_url }}) |
-| v0.250.006 | [Release notes 0.250.057 – 0.250.001]({{ '/explanation/release-notes/v0.250-part-3/' | relative_url }}) |
-| v0.250.005 | [Release notes 0.250.057 – 0.250.001]({{ '/explanation/release-notes/v0.250-part-3/' | relative_url }}) |
-| v0.250.004 | [Release notes 0.250.057 – 0.250.001]({{ '/explanation/release-notes/v0.250-part-3/' | relative_url }}) |
-| v0.250.003 | [Release notes 0.250.057 – 0.250.001]({{ '/explanation/release-notes/v0.250-part-3/' | relative_url }}) |
-| v0.250.001 | [Release notes 0.250.057 – 0.250.001]({{ '/explanation/release-notes/v0.250-part-3/' | relative_url }}) |
+| v0.250.229 | [Release notes 0.250 series]({{ '/explanation/release-notes/v0.250/' | relative_url }}) |
+| v0.250.001 | [Release notes 0.250 series]({{ '/explanation/release-notes/v0.250/' | relative_url }}) |
 | v0.241.007 | [Release notes 0.241 series]({{ '/explanation/release-notes/v0.241/' | relative_url }}) |
 | v0.241.006 | [Release notes 0.241 series]({{ '/explanation/release-notes/v0.241/' | relative_url }}) |
 | v0.241.002 | [Release notes 0.241 series]({{ '/explanation/release-notes/v0.241/' | relative_url }}) |
@@ -157,26 +43,161 @@ This page includes the latest release notes inline. Older release sections are s
 | v0.235.025 | [Release notes 0.235 series]({{ '/explanation/release-notes/v0.235/' | relative_url }}) |
 | v0.235.012 | [Release notes 0.235 series]({{ '/explanation/release-notes/v0.235/' | relative_url }}) |
 | v0.235.003 | [Release notes 0.235 series]({{ '/explanation/release-notes/v0.235/' | relative_url }}) |
-| v0.229.063 | [Release notes 0.229 series]({{ '/explanation/release-notes/v0.229/' | relative_url }}) |
-| v0.229.062 | [Release notes 0.229 series]({{ '/explanation/release-notes/v0.229/' | relative_url }}) |
-| v0.229.061 | [Release notes 0.229 series]({{ '/explanation/release-notes/v0.229/' | relative_url }}) |
-| v0.229.058 | [Release notes 0.229 series]({{ '/explanation/release-notes/v0.229/' | relative_url }}) |
-| v0.229.058 | [Release notes 0.229 series]({{ '/explanation/release-notes/v0.229/' | relative_url }}) |
-| v0.229.014 | [Release notes 0.229 series]({{ '/explanation/release-notes/v0.229/' | relative_url }}) |
-| v0.229.001 | [Release notes 0.229 series]({{ '/explanation/release-notes/v0.229/' | relative_url }}) |
-| v0.215.36 | [Earlier releases]({{ '/explanation/release-notes/earlier-releases/' | relative_url }}) |
-| v0.214.001 | [Earlier releases]({{ '/explanation/release-notes/earlier-releases/' | relative_url }}) |
-| v0.213.001 | [Earlier releases]({{ '/explanation/release-notes/earlier-releases/' | relative_url }}) |
-| v0.212.79 | [Earlier releases]({{ '/explanation/release-notes/earlier-releases/' | relative_url }}) |
-| v0.203.15 | [Earlier releases]({{ '/explanation/release-notes/earlier-releases/' | relative_url }}) |
-| v0.202.41 | [Earlier releases]({{ '/explanation/release-notes/earlier-releases/' | relative_url }}) |
-| v0.201.5 | [Earlier releases]({{ '/explanation/release-notes/earlier-releases/' | relative_url }}) |
-| v0.196.9 | [Earlier releases]({{ '/explanation/release-notes/earlier-releases/' | relative_url }}) |
-| v0.191.0 | [Earlier releases]({{ '/explanation/release-notes/earlier-releases/' | relative_url }}) |
-| v0.191.0 | [Earlier releases]({{ '/explanation/release-notes/earlier-releases/' | relative_url }}) |
-| v0.190.1 | [Earlier releases]({{ '/explanation/release-notes/earlier-releases/' | relative_url }}) |
 
 ## Latest release notes
+
+### **(v0.260.002)**
+
+#### New Features
+
+*   **Documentation Site Now Reflects the v0.260.001 Release**
+    *   The documentation site's Latest Release section was a full release behind, still presenting v0.250.001 as current. It now mirrors the same three-tier model the application uses: v0.260.001 as the current release, v0.250.001 as the previous release, and v0.239.001-v0.241.007 in the archive.
+    *   Added 20 feature guides for the v0.260.001 release covering enhanced extraction, embedded Office images, workflow task sequences, the MCP platform, the Yamcs and RocksDB actions, agent instruction references, action test connections, Azure Blob file sync, terms of use, audio file support, completion notifications, the chat AI notice, conversation context grounding, used documents on fork, the conversation contents drawer, font size and zoom, message audio export, public workspace display names, and chat scroll accessibility.
+    *   (Ref: `docs/_data/latest_release_features.yml`, `docs/latest-release/release-260-*`, `application/single_app/support_menu_config.py`)
+
+*   **Placeholder Screenshots Are Now Tracked**
+    *   The v0.260.001 release ships branded "Screenshot pending" placeholder graphics so feature cards render while final captures are pending. Those placeholders are now listed on the documentation media status page with the exact file paths to overwrite, so they are visible work rather than a silent gap.
+    *   (Ref: `docs/_data/media_pending.yml`, `/contributing/media-status/`)
+
+#### User Interface Enhancements
+
+*   **Admin Settings Pages Show Real Screenshots**
+    *   Fourteen admin settings tab pages were rendering "screenshot needed" placeholders even though real screenshots already existed in the repository. Those pages now display the actual screenshots for the General, AI Models, Search and Extract, Workspaces, File Sync, Workspace Identities, Citation, Safety, Security, Agents, Scale, Control Center, Logging, and Send Feedback tabs.
+    *   The four tabs with no captured screenshot still show a placeholder naming the exact file to create, so genuine gaps stay visible.
+    *   (Ref: `docs/admin/`, `docs/images/admin-settings/`)
+
+#### Bug Fixes
+
+*   **Release Notes Index No Longer Exceeds Its Page Budget**
+    *   The release notes page generator inlined a fixed number of recent releases on its index. The consolidated v0.260.001 rollup is large enough on its own that this pushed the index past the maximum page size and failed generation. The index now fills its inline section by size rather than by count, so a single large rollup cannot break it.
+    *   (Ref: `scripts/build_release_notes_pages.py`)
+
+*   **Archived Release Notes Links**
+    *   The archived release notes page linked to the internal feature and fix note trees, which are intentionally not published on the documentation site. Those links now point at the repository instead.
+    *   (Ref: `docs/explanation/archive_release_notes.md`)
+
+### **(v0.260.001)**
+
+v0.260.001 consolidates all work released after v0.250.001 into one major release note, spanning 117 incremental patch builds. This rollup highlights the major feature, UI, reliability, security, and operations themes while preserving the full per-build history in the Detailed Change Log at the end of this section.
+
+#### Breaking Changes
+
+*   **Workflow Alert Configuration Model**
+    *   The legacy single `alert_priority` workflow field is superseded by `alert_mode`, `alert_rules`, and `alert_evaluation` for rules-based workflow notifications.
+    *   Existing workflows are auto-migrated on read into equivalent failed-run and completed-run notification rules.
+    *   **Migration**: Review upgraded workflow alert rules and prune any always-notify completed-run rule that is no longer desired.
+*   **New Yamcs Client Dependency**
+    *   The Yamcs Mission Control action adds `yamcs-client==2.1.0`, the repository's first LGPL-3.0 dynamically linked pip dependency.
+    *   SimpleChat can still start without it, but Yamcs actions return an actionable dependency error until installed.
+    *   **Migration**: Run `pip install -r requirements.txt` or rebuild deployment images so the Yamcs client dependency is present where Yamcs actions are used.
+*   **Internal Route Name Hardening**
+    *   Blueprint security hardening changed internal route names and required broad route policy/test updates.
+    *   Shared-conversation streaming regressions from the rename sequence were fixed in the consolidated patch history.
+    *   **Migration**: Update any custom integrations that call SimpleChat by internal endpoint name rather than public route URL.
+*   **Conversation Cache Fallback Behavior**
+    *   Volatile chat bootstrap and conversation cache payloads no longer fall back to the Cosmos `settings` container when Redis is unavailable.
+    *   Deployments without Redis keep full functionality, but bypass these cache benefits.
+    *   **Migration**: Configure Redis for deployments that depend on chat bootstrap or conversation cache acceleration.
+
+#### Upgrade Notes
+
+*   **Enhanced Extraction Settings Migration**
+    *   Deployments already configured for Enhanced or Auto extraction are automatically migrated on first settings read to preserve their existing extraction mode.
+    *   No manual change is required unless admins want to revise extraction defaults after upgrade.
+*   **Embedded Image Chunk Placement**
+    *   Word and PowerPoint figures are now merged into chunks with surrounding text instead of appended as extra chunks.
+    *   Existing documents keep their current chunk layout until re-extracted.
+    *   Use Change Extraction or re-upload documents to benefit from the new placement behavior.
+*   **Workflow Alert Review**
+    *   Rules-based workflow notifications can express run status, text/regex matches, File Sync results, AI-judged outcomes, and agent signals.
+    *   Review workflow owner expectations after upgrade because migrated rules intentionally preserve prior notification behavior.
+*   **Redis-Backed Cache Operations**
+    *   DAI document/tag caches and conversation list/feed caches now include Redis-backed invalidation and metrics behavior.
+    *   Monitor Redis availability to keep cache acceleration active; safety-sensitive cache invalidation fails closed when state is unknown.
+*   **Detailed Patch Traceability**
+    *   The original v0.250.003 through v0.250.229 entries are preserved verbatim below with demoted headings for audit and support lookup.
+
+#### New Features
+
+*   **Enhanced Document Extraction and Analysis**
+    *   Azure AI Content Understanding supports AI-generated figure descriptions for PDFs/images, with Auto mode figure detection.
+    *   Embedded Office images, including EMF/WMF diagrams and legacy DOC/PPT media, are rasterized, analyzed, and indexed as citable chunks.
+    *   Optional Document Intelligence formula extraction adds LaTeX equation capture for PDFs when enabled.
+    *   (Ref: Azure AI Content Understanding, Document Intelligence, embedded image extraction, formula extraction)
+*   **Workflow Multi-Task Automation and Alerts**
+    *   Workflows now support ordered instruction tasks with prior-task context chaining, per-task document actions, retry/failure handling, and configurable task limits.
+    *   Conditional alert rules cover run status, text/regex matches, File Sync summaries, AI-judged results, and agent-raised signals across five severity levels.
+    *   Active workflow runs can be cancelled from workspace rows, run history, or activity surfaces.
+    *   (Ref: workflow task sequencing, workflow alert rules, `raise_workflow_alert`, run cancellation)
+*   **Expanded Agent and Action Integrations**
+    *   Yamcs and RocksDB action types add mission-control and HTTP/JSON data-service integrations.
+    *   Inbound MCP exposes governed SimpleChat capabilities for conversations, documents, prompts, tags, and workflows.
+    *   Action connection testing now covers OpenAPI, Maps, Blob, Databricks, Log Analytics, MCP, Snowflake, Tableau, RocksDB, Yamcs, SQL, and Cosmos DB.
+    *   (Ref: Yamcs action, RocksDB action, MCP inbound server, action test connection)
+*   **Governance, Security, and Model Administration**
+    *   Governance policies support explicit block lists for feature and delegated item policies alongside allow rules.
+    *   Key Vault secret expiration reminders track per-action secrets with background sweeps, notifications, and telemetry.
+    *   Model requests can include HMAC-hashed user identity headers, and admins can configure per-model output token ceilings.
+    *   (Ref: governance policies, Key Vault secret inventory, model endpoint identity header, output token limits)
+*   **Chat Productivity, Grounding, and Notifications**
+    *   Users can opt into response completion sounds, desktop notifications, configurable AI notices, and per-message MP3 export.
+    *   Conversation grounding now exposes model/workspace/document/agent context, used-document panes, assistant-response forks, and a contents drawer.
+    *   User font size preferences, generated JSON/XML export artifacts, and smarter scroll behavior improve long-session usability.
+    *   (Ref: chat notifications, grounding citations, used documents pane, conversation fork, contents drawer, export artifacts)
+*   **Workspace, Sync, and Data Management Operations**
+    *   Azure Blob Storage File Sync adds SAS, managed identity, service principal auth, virtual-folder browsing, and ETag change detection.
+    *   Admin operations add automatic Control Center statistics refresh, backup cleanup/retention, restore workflows, Cosmos JSON editing, Redis Explorer, feedback/safety lifecycle controls, and file-processing log cleanup.
+    *   Multi-select metadata extraction, configurable Public Workspace naming, and index auto-login improve workspace administration.
+    *   (Ref: File Sync, Control Center, Backup Inventory, Data Management, Redis Explorer, metadata extraction)
+*   **Caching, Runtime, and Durable Processing Capabilities**
+    *   DAI Redis read-through caches document lists, tag lists, and legacy counts with scope-version invalidation.
+    *   Conversation list/feed caching adds Redis hit/miss metrics for Admin Settings visibility.
+    *   Durable tabular analyze/search preflight parity, FFmpeg audio runtime support, and the model capability catalog broaden platform readiness.
+    *   (Ref: DAI Redis cache, conversation cache metrics, tabular durable preflight, FFmpeg, model capability catalog)
+
+*   **Latest Features Release Tiers for v0.260.001**
+    *   Shifted the end-user Latest Features page and Admin Settings tab into current, previous, and archive release tiers for the v0.260.001 rollout.
+    *   Preserved per-tenant visibility choices across the shift. The new v0.260.001 user-facing cards ship hidden until their placeholder screenshots are replaced, so admins publish each card once its real capture is in place.
+    *   (Ref: Latest Features release groups, support catalog, admin catalog, visibility normalization)
+*   **Deeper End-User Feature Cards**
+    *   Added 20 v0.260.001 end-user cards with seven concrete How To Try It steps and a three-image gallery each.
+    *   Expanded the Latest Features card helper with the `images=[...]` gallery form for multi-image cards.
+    *   (Ref: `_latest_feature_card`, `_SUPPORT_RELEASE_260_FEATURE_CATALOG`, Latest Features image galleries)
+*   **Admin Latest Features Archive Tier**
+    *   Brought the Admin Settings Latest Features tab to the same three-tier current, previous, and archive model used by the end-user page.
+    *   Keeps v0.250.001 admin cards and older v0.241.x admin highlights available without crowding the current release tier.
+    *   (Ref: `_ADMIN_LATEST_FEATURE_RELEASE_GROUPS`, `_ADMIN_RELEASE_260_FEATURE_CATALOG`, Admin Settings Latest Features tab)
+*   **Latest Features PR Workflow Hooks**
+    *   Added a Latest Features authoring prompt, PR template checklist, and CI warning path so feature PRs consider release notes, cards, and screenshots together.
+    *   Helps future releases keep in-app Latest Features content aligned with shipped user and admin changes.
+    *   (Ref: `.github/prompts/update-latest-features.prompt.md`, `.github/PULL_REQUEST_TEMPLATE.md`, `release-notes-check.yml`)
+
+#### User Interface Enhancements
+
+*   **Agent and Workflow Builder Refresh**
+    *   Agent configuration now follows Actions → Knowledge → Instructions, with selected actions visible in the Instructions step.
+    *   Workflows use a stepped General/Trigger/Tasks/Reliability/Review builder with per-task runner controls and alert-rule editing.
+    *   (Ref: agent modal, workflow builder, workflow runner controls, alert rules editor)
+*   **Administration and Configuration UX Improvements**
+    *   Workspace sections now use a consistent Documents → Prompts → Identities → Sync → Endpoints → Actions → Agents → Workflows order.
+    *   Governance policy copy/inverse/show-users actions, dedicated Log Analytics configuration, refreshed backup/migrate/restore flows, and reviewed data migration steps reduce admin friction.
+    *   External links can be reordered, custom pages can be opened directly, and non-blocking Bootstrap toasts replace browser alerts across admin, workspace, and profile pages.
+    *   (Ref: workspace section order, governance UI, Log Analytics settings, data migration UI, toast notifications)
+*   **Chat, Navigation, and Accessibility Enhancements**
+    *   Chat, navigation, and sidebar layouts remain usable at 200% zoom and with large text.
+    *   The Conversation Contents drawer adds safe labels, keyboard focus handling, active-location tracking, and responsive desktop/mobile navigation.
+    *   Long source lists collapse behind a disclosure, document picker rows show file-name context, and Refresh Documents preserves selection with clearer status.
+    *   (Ref: 508 usability, conversation contents drawer, source disclosure, document picker, refresh documents)
+*   **Data Explorer and Extraction Status UX**
+    *   Redis Explorer uses a fixed-height modal with independent key-list and preview scrolling.
+    *   Cosmos query results open in a scrollable modal so the main editor stays focused on query setup.
+    *   Extraction badges identify the engine that ran and show Content Understanding vs. Document Intelligence fallback reasons.
+    *   (Ref: Redis Explorer, Cosmos editor results modal, extraction badges)
+
+*   **Placeholder Screenshots for Pending Captures**
+    *   Added 76 branded "Screenshot pending" placeholders so every v0.260.001 Latest Features card renders a valid local image while final captures are pending.
+    *   Placeholders can be replaced in place with real screenshots without changing the catalog configuration.
+    *   (Ref: `application/single_app/static/images/features/`, Latest Features image galleries)
 
 ### **(v0.250.231)**
 
@@ -254,233 +275,3 @@ This page includes the latest release notes inline. Older release sections are s
 *   **Documentation Site Loads No Third-Party Assets**
     *   Removed jQuery, DataTables, marked, DOMPurify, and split.js, none of which the site used, and vendored Bootstrap, Bootstrap Icons, Prism, Lunr, and the site fonts locally with their licenses. The site now makes zero external requests.
     *   (Ref: `docs/assets/vendor/`, `docs/_layouts/default.html`, local browser asset policy)
-
-### **(v0.250.229)**
-
-#### Bug Fixes
-
-*   **Citations No Longer Eat the Line Break After Them**
-    *   Text that came after an inline document citation was jammed onto the end of the closing parenthesis instead of starting a new paragraph — you would see `(Source: uploading_documents.md, Page: 1)Thank you, Paul.` with no break at all.
-    *   The citation parser matched the `[#citation-id]` marker along with the whitespace that followed it, then rebuilt the citation without putting that whitespace back. Because this runs on the raw markdown before it is rendered, a deleted blank line did not just remove a space — it changed how the rest of the block was read, so a paragraph after a cited list item got absorbed into the list item itself.
-    *   Spacing is now restored exactly as the model wrote it. Paragraphs, bullets, and numbered lists after a citation render in their intended structure, a citation followed by more text on the same line keeps its space, and back-to-back citations stop colliding. Copied and exported message text keeps its line breaks for the same reason.
-    *   The cleanup pass for leftover citation markers had the same flaw in reverse and could swallow the blank line *before* a stray marker. It now only removes horizontal spacing, or the marker's whole line when it sits on one.
-    *   (Ref: #1289, `chat-citations.js`, `parseCitations()`, chat message rendering)
-
-### **(v0.250.228)**
-
-#### Bug Fixes
-
-*   **Figures Now Stay in the Chunk They Came From**
-    *   Images extracted from Word and PowerPoint files were appended as extra chunks at the end of the document, with page numbers continuing past the real content. A figure on page 5 of a 15-page document became chunk 16, so a search hit on the figure lost its surrounding text and citations pointed at a page that did not exist.
-    *   Embedded images are now merged into the chunk containing the text they appear with. PowerPoint images follow the slide that references them; Word images are placed by their position in reading order; and legacy `.doc` and `.ppt` images, which carry no recoverable position, anchor to the final chunk instead of creating a page beyond the document.
-    *   Merging rather than adding a chunk also removes a latent indexing hazard: chunk ids are derived from the page number, so a second chunk sharing a page number would have overwritten the first in the search index.
-    *   PDFs were already correct — Content Understanding attributes each figure to its page by span, and Document Intelligence Layout inlines tables and figures into the page markdown. That behavior is unchanged and now covered by a regression test.
-    *   **Existing documents keep their current chunks until they are extracted again.** Use *Change Extraction* or re-upload to pick up the new placement.
-    *   (Ref: #1277, `functions_documents.py`, `functions_office_media.py`, figure chunk association)
-
-### **(v0.250.227)**
-
-#### Bug Fixes
-
-*   **Shared Conversation Stream Errors Stay Attached to the Shared Conversation**
-    *   Follow-up hardening to the v0.250.224 shared conversation fix. When an AI request in a shared conversation failed, the error the browser received did not say which kind of conversation it belonged to, so the recovery path could have reloaded from the personal endpoint and produced the same "Conversation not found" error that was just fixed.
-    *   It could not actually happen yet because of an unrelated guard, but it would have come back the moment anyone added a message id to those errors. All shared stream failures now go through a single serializer that always tags the conversation, and a test walks the code to prove no failure path can skip it.
-    *   (Ref: #1281, `route_backend_collaboration.py`, `chat-streaming.js`, collaborative AI streaming)
-
-*   **Repaired Route Assertions Across the Test Suite**
-    *   The recent Blueprint security hardening renamed how routes are declared, but 82 assertions across 40 test files still checked for the old form. Those tests were failing on the rename before they ever reached the behavior they were written to protect.
-    *   This is how the shared conversation streaming bug reached users: the test guarding that exact code path was already red for an unrelated reason. 59 assertions across 32 files were corrected, each verified against a real route first. 14 were deliberately left alone because they point at routes that no longer exist, which is a separate issue worth investigating rather than hiding.
-    *   (Ref: #1281, `functional_tests/`, Blueprint route registration)
-
-### **(v0.250.226)**
-
-#### Bug Fixes
-
-*   **File Sync Now Tells the Workflow What Changed**
-    *   File Sync builds a summary of each run — the scan counts plus every new or changed document — but that summary never reached the model in any workflow that uses tasks, which is every workflow the builder creates.
-    *   The failure was silent and misleading: the summary *was* written into the conversation, so the transcript showed the changed-document list as though the model had received it. In practice the model saw only the raw task instructions and usually replied that it knew nothing about any documents.
-    *   This hit **Monitor File Sync Changes** workflows hardest, along with any workflow using Search or no document action, or with **Use changed documents** turned off. The first task in the sequence now receives the summary, and later tasks get it through the first task's response.
-    *   The summary is also bounded now, with a clear truncation notice, so a very large sync cannot crowd out the actual instructions.
-    *   (Ref: #1285, `functions_workflow_runner.py`, File Sync prompt context)
-
-*   **Document Search Queries Are No Longer Diluted by Injected Context**
-    *   A workflow's document search used the entire task prompt as its search query, including the File Sync summary and the previous task's full response. A search for "find the renewal clause" could end up querying 50 lines of file paths.
-    *   Search queries now use the task's own instructions. Retrieved content and context still reach the model exactly as before — only the query is scoped.
-    *   (Ref: #1285, `functions_workflow_runner.py`, workflow document search)
-
-### **(v0.250.225)**
-
-#### New Features
-
-*   **Workspace Documents Are Now Configured Per Workflow Task**
-    *   Each task in a workflow now owns its own **Workspace documents** setup — document action, document target, selected documents, Compare source and targets, per-document analysis, and windowing — instead of sharing one configuration across the whole workflow.
-    *   Adding a task resets the document fields, and returning to a previously configured task restores that task's setup, so tasks are self-contained.
-    *   Every task now executes with its own document action at run time. Previously the single workflow-level action only ever applied to task 1, and every later task ran with no document context.
-    *   Existing workflows keep working: their saved document action is inherited by task 1 only, matching how they actually ran. Group workflows still force every task into the owning group workspace.
-    *   Task cards and the Review step now summarize which documents each task uses.
-    *   (Ref: #1282, `workspace_workflows.js`, `functions_personal_workflows.py`, `functions_group_workflows.py`, `functions_workflow_runner.py`, per-task document actions)
-
-#### Bug Fixes
-
-*   **Workflow Document Picker No Longer Hangs on "Loading tags..."**
-    *   Choosing a Document action of Search, Analyze, or Compare in the workflow builder revealed the document picker but never loaded it. Tags stayed disabled showing `Loading tags...` forever, the document list stayed empty, and no console error appeared.
-    *   The picker was only ever loaded when the modal opened, and that path returned early whenever the action was `No document action` — which is always true for a new workflow. The Document action dropdown's change handler only toggled visibility and never triggered a load.
-    *   Changing the Document action or Document Target now loads the picker, and the tags control always resolves to the available tags or `No tags available for this scope`.
-    *   (Ref: #1282, `workspace_workflows.js`, `chat-documents.js`, workflow document picker)
-
-*   **Workflow Run History No Longer Masks a Failed Document**
-    *   When two tasks in the same run process the same document, the later task's status used to overwrite the earlier one's, so a document that failed in one task could be shown as succeeded.
-    *   Document run items are now recorded per task, and each item records which task produced it.
-    *   (Ref: #1282, `functions_workflow_runner.py`, workflow run history)
-
-*   **Resume Failed Items Respects Per-Task Documents**
-    *   Resuming failed documents narrowed only the workflow-level document action. Now that tasks own their own documents, it also narrows each task's analyze action to the documents that failed in that task, and group resumes keep every task inside the owning group workspace.
-    *   (Ref: #1282, `route_backend_workflows.py`, resume failed items)
-
-*   **A Workflow Task Configured for Zero Retries Per Window Stays at Zero**
-    *   Saving a multi-task workflow rewrote a stored `Retries Per Window` of `0` to `1` on any task other than the one being edited.
-    *   (Ref: #1282, `workspace_workflows.js`, retries per window)
-
-*   **An Invalid Task Document Action No Longer Aborts the Whole Run**
-    *   If a workflow's document action stopped validating between runs — for example an administrator disabled Analyze or Compare, or lowered the workflow document limit — the run failed outright with no task-level error recorded.
-    *   The failure is now contained to that task and follows the workflow's retry and failure-handling settings.
-    *   (Ref: #1282, `functions_workflow_runner.py`, workflow task error handling)
-
-#### User Interface Enhancements
-
-*   **"Refresh documents" Now Actually Refreshes**
-    *   The **Refresh selected documents** button previously warned `Select one or more workspace documents in the picker first.` even though the picker was empty and nothing could be selected.
-    *   It is now labeled **Refresh documents**, reloads the document list while preserving the current selection, and reports what it found — including a clear message when the selected scope has no documents.
-    *   (Ref: #1282, `workspace.html`, `group_workspaces.html`, `workspace_workflows.js`)
-
-### **(v0.250.224)**
-
-#### Bug Fixes
-
-*   **Shared Conversations Load and Answer Again**
-    *   Sharing a personal conversation left it unusable. Every reload or click on the shared conversation raised a "Conversation not found" error, because the chat page was still asking for its messages from the personal conversation endpoint — and a shared conversation is stored separately, under its own id.
-    *   Shared conversations now load their messages only from the collaboration endpoint, so the failed request and the error banner are gone.
-    *   (Ref: #1281, `chat-conversations.js`, `chat-collaboration.js`, shared conversation loading)
-
-*   **AI Responses Work Again in Shared Conversations**
-    *   Asking the AI anything in a shared conversation failed immediately with "Stream interrupted: Chat streaming endpoint is unavailable" and no answer was ever generated.
-    *   The recent Blueprint security hardening renamed the internal chat streaming endpoint, and the shared-conversation bridge was still looking for the old name. The bridge now resolves the endpoint correctly and logs a diagnostic if it ever cannot, so this fails loudly instead of silently. Group shared conversations are restored by the same fix.
-    *   (Ref: #1281, `route_backend_collaboration.py`, `app.py`, collaborative AI streaming)
-
-*   **Chat Uploads and Task Documents in Shared Conversations**
-    *   Files uploaded inside a shared conversation never showed up in the Analyze and Compare document pickers, and task documents from the previously opened conversation stayed attached after switching to a shared one.
-    *   Shared conversations now refresh both when their messages load, matching personal conversation behavior.
-    *   (Ref: #1281, `chat-collaboration.js`, `chat-messages.js`, Compare and Analyze document pickers)
-
-#### New Features
-
-*   **Optional Mathematical Formula Extraction**
-    *   Added an **Extract mathematical formulas** toggle to the Document Intelligence settings. When enabled, equations in PDFs and images are captured as LaTeX instead of being approximated as OCR text.
-    *   This requests a **billed Document Intelligence add-on**, so it is off by default and must be turned on deliberately. It applies to the Layout model only, so it has no effect while extraction is set to Standard.
-    *   (Ref: #1277, `functions_content.py`, `functions_settings.py`, `admin_settings.html`, Document Intelligence formulas add-on)
-
-#### Bug Fixes
-
-*   **Images in Legacy `.doc` and `.ppt` Files Are Now Analyzed**
-    *   Embedded image analysis previously covered only DOCX and PPTX, because legacy Office files are OLE compound documents rather than zip packages and have no media parts to enumerate.
-    *   Pictures and embedded equation previews are now carved out of the legacy container by metafile signature, using the length recorded in the metafile's own header, then rasterized and analyzed like any other embedded image.
-    *   Validation is strict — record type, signature position, and a length that fits the remaining bytes — so a coincidental byte sequence is not mistaken for an image. Duplicate images are still collapsed and the per-document cap still applies.
-    *   (Ref: #1277, `functions_office_media.py`, `functions_documents.py`, legacy Office image extraction)
-
-### **(v0.250.223)**
-
-#### Bug Fixes
-
-*   **Diagrams in Word and PowerPoint Files Are Now Analyzed**
-    *   Images embedded in Office documents as EMF or WMF metafiles were silently skipped. Word stores pasted diagrams, SmartArt, Visio drawings, and charts in this format, so architecture diagrams — often the most information-dense figures in a document — were never analyzed or indexed.
-    *   Metafiles are now rasterized in-process and sent to the configured extraction engine like any other image. Text drawn inside the diagram is recovered as well, so figure labels such as service and resource names become searchable even when the vision engine returns no description.
-    *   The renderer is pure Python on top of Pillow, with no system packages or external converters, so it behaves the same in the Linux container as it does locally. Fidelity is intentionally a description aid rather than a pixel-accurate reproduction; unsupported drawing records are skipped rather than failing the document.
-    *   (Ref: #1277, `functions_emf_render.py`, `functions_office_media.py`, embedded Office image analysis)
-
-*   **Embedded Image Processing Is Now Visible in the Workspace Log**
-    *   A document whose images were all skipped looked exactly like a document with no images at all, so there was no way to tell whether embedded image analysis had run.
-    *   Processing now reports how many embedded images were found, how many were analyzed, and why any were skipped — too small, duplicates, unsupported format, or over the per-document cap. Progress is reported per image rather than only once at the start.
-    *   The found, analyzed, and skipped counts are stored on the document so the outcome can be confirmed after processing completes.
-    *   (Ref: #1277, `functions_documents.py`, `functions_office_media.py`, embedded image diagnostics)
-
-### **(v0.250.222)**
-
-#### New Features
-
-*   **Index Auto-Login**
-    *   Added an opt-in `ENABLE_AUTO_LOGIN_ON_INDEX` setting that redirects unauthenticated home-page visits to the existing Microsoft Entra sign-in flow.
-    *   Supports government tenant SSO scenarios where users already have a browser session and should enter SimpleChat without first clicking the sign-in link.
-    *   (Ref: `app.py`, `config.py`, `INDEX_AUTO_LOGIN.md`, Microsoft Entra sign-in)
-
-### **(v0.250.221)**
-
-#### New Features
-
-*   **Enhanced Extraction Now Uses Azure AI Content Understanding**
-    *   Enhanced extraction for PDFs and images now uses Azure AI Content Understanding (`prebuilt-documentSearch`) instead of Document Intelligence Layout. In addition to tables, page structure, and checkbox states, it returns AI-generated descriptions of figures, charts, and diagrams — structure Document Intelligence never produced.
-    *   Standard extraction is unchanged and always uses Document Intelligence, which remains required for workspaces and chat file uploads.
-    *   A new **Enable Enhanced extraction** toggle in Admin Settings reveals the Content Understanding configuration. Turning it on defaults the extraction mode to **Auto**, so documents are only upgraded when the sample shows structure worth paying for.
-    *   Content Understanding supports both key and managed identity authentication, with a **Test Connection** button and an in-app setup guide covering Foundry resource creation, supported regions, required model deployment defaults, and the Cognitive Services User role.
-    *   Enhanced never becomes a hard dependency. Content Understanding is not offered in Azure Government, so Enhanced automatically uses Document Intelligence Layout in Government and custom clouds — the admin UI says so plainly and there is nothing to configure there. Enhanced also falls back when Content Understanding is unconfigured or a request fails, and the reason is recorded on the document and shown in workspace tooltips.
-    *   (Ref: #1277, `functions_content_understanding.py`, `functions_content.py`, `functions_settings.py`, `route_backend_settings.py`, `admin_settings.html`, `CONTENT_UNDERSTANDING_ENHANCED_EXTRACTION.md`)
-
-*   **Images Inside Word and PowerPoint Files Are Now Analyzed**
-    *   Neither extraction engine describes figures inside Office files, so SimpleChat now pulls embedded images out of DOCX and PPTX packages and analyzes them with whichever engine backs the selected extraction mode — Content Understanding when Enhanced is active, Document Intelligence otherwise. This works with Standard extraction too.
-    *   Each analyzed image is indexed as its own citable chunk, and PowerPoint images are attributed to the slide that references them.
-    *   Cost is bounded by design: icons, bullets, and spacer graphics are filtered out by a configurable minimum size, byte-identical images such as repeated header logos are analyzed once, and a per-document cap limits the total.
-    *   Uploaded Office files are treated as untrusted: extracted file names are generated rather than reused from the archive, entries are streamed with a hard byte ceiling instead of trusting the archive's declared size, compression methods and entry counts are bounded, and slide relationship parts are parsed with a hardened XML parser.
-    *   Can be turned off entirely with **Analyze images embedded in DOCX and PPTX files**. Image analysis failures never fail the document.
-    *   (Ref: #1277, `functions_office_media.py`, `functions_documents.py`, embedded Office image analysis)
-
-#### Upgrade Notes
-
-*   **Existing Enhanced and Auto Deployments Keep Their Setting**
-    *   The new **Enable Enhanced extraction** toggle defaults to off, so deployments already set to Enhanced or Auto are migrated automatically on first settings read: the toggle is switched on and persisted, preserving the previously selected mode.
-    *   Without this migration an upgrade would have silently downgraded those deployments to Standard and then overwritten the stored mode on the next settings save.
-    *   (Ref: #1277, `functions_settings.py`, `get_settings()` migration)
-
-#### User Interface Enhancements
-
-*   **Extraction Badges Name the Engine That Actually Ran**
-    *   Extraction tooltips in personal, group, and public workspaces now say whether a document was processed with Azure AI Content Understanding or Document Intelligence Layout, and explain any fallback that occurred.
-    *   The **Change Extraction** action now works for images as well as PDFs, and refuses a change to Enhanced while Enhanced extraction is disabled.
-    *   (Ref: #1277, `workspace-documents.js`, `public_workspace.js`, `group_workspaces.html`, `functions_documents.py`)
-
-*   **Auto Mode Also Upgrades for Figures**
-    *   Auto mode still samples the first pages with Document Intelligence Layout as the cheaper detector, but now upgrades to Enhanced when it finds figures or images, not just tables and selection marks. This matters because figure description is the main reason to use Enhanced.
-    *   (Ref: #1277, `functions_documents.py`, Auto mode detection)
-
-### **(v0.250.220)**
-
-#### Bug Fixes
-
-*   **Data Management History Failure Diagnostics**
-    *   Backup Inventory and Job History failures returned a generic 503 telling admins to review application logs, while the logs recorded only the exception class name. The provider status code and message were discarded, making the failure impossible to diagnose.
-    *   Failures now log the Cosmos status code and sanitized provider message. Provider text stays in operator logs and is never returned to the browser.
-    *   (Ref: #1275, `functions_data_management.py`, `route_backend_data_management.py`, Data Management history)
-
-*   **Data Management History Throttle Handling**
-    *   Throttled history reads previously produced the same opaque error as a permanent failure.
-    *   Cosmos throttling is now detected, retried up to three times with jittered backoff, and reported as temporary busy guidance with a retryable flag instead of a generic error.
-    *   (Ref: #1275, `functions_data_management.py`, Cosmos history query retry)
-
-*   **Data Management History Index Guidance**
-    *   Missing-index detection required the exact phrase "composite index", so equivalent provider wording fell through to the generic error.
-    *   Detection now also matches `ORDER BY` failures reported as having no corresponding index, keeping the Cosmos indexing maintenance guidance actionable.
-    *   (Ref: #1275, `functions_data_management.py`, Cosmos indexing maintenance)
-
-*   **Source Blob Backup ETag Failure**
-    *   Fixed every source blob failing backup with "Source blob changed while it was being backed up", which meant user documents, group documents, public documents, and chat attachments were never actually backed up.
-    *   Root cause was comparing an ETag from `list_blobs()` (unquoted XML element) against one from `get_blob_properties()` (RFC-quoted HTTP header); the two never matched, so the post-transfer consistency check always failed after the blob had already been downloaded and uploaded.
-    *   Both values are now normalized before comparison. The precondition sent to Azure is unchanged, and a genuine mid-transfer source change is still rejected.
-    *   (Ref: #1271, `functions_data_management.py`, source blob transfer verification)
-
-*   **Source Blob Backup Checkpoint Throughput**
-    *   Source blob backups previously wrote one Cosmos checkpoint per blob, capping throughput at roughly six items per second and stretching a single container to over an hour.
-    *   Checkpoints are now batched per 100 items or 15 seconds, whichever comes first, while still asserting the job lease on every item.
-    *   (Ref: #1271, `functions_data_management.py`, source blob checkpointing)
-
-*   **Functional Tests Silently Passing Under pytest**
-    *   Backup functional tests written with the try/except and `return False` template were reported as passed by pytest because they returned a value instead of raising.
-    *   The backup ETag and Cosmos pagination test files now assert directly, so real failures are reported by both pytest and standalone execution.
-    *   (Ref: #1271, `test_data_management_backup_source_blob_etag.py`, `test_data_management_backup_cosmos_pagination.py`)

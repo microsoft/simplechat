@@ -15,7 +15,7 @@ Controls Key Vault secret storage and SimpleChat secret expiration reminder trac
 
 This tab moves sensitive agent and action secrets into Key Vault and controls expiration reminder tracking. It changes the operational model from secrets stored only in app settings to secrets managed by Azure Key Vault, so identity permissions and reminder routing must be correct before users depend on it.
 
-{% include media.html src="admin/security-overview.png" alt="Screenshot of the Security settings tab showing security tab." title="Security tab" capture="Capture the Security tab for Security tab. Show relevant controls and redact secrets." %}
+{% include media.html src="admin-settings/security.png" alt="Screenshot of the Security settings tab showing Key Vault secret storage and secret expiration reminder settings." title="Security settings tab" %}
 
 {% include media.html type="video" title="Security settings walkthrough" poster="video-posters/admin-security.png" capture="Recording planned. Walk through every setting on the Security tab and explain when to change each one." %}
 

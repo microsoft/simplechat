@@ -15,7 +15,7 @@ Controls document actions, agent availability, agent marketplace copy, orchestra
 
 Agents and actions can combine model calls with tools, documents, HTTP calls, memory, tabular analysis, and inbound MCP clients. Enabling them expands what users can automate, but it also expands cost and data-access paths. The safest rollout starts with model endpoints, then agent scope, then actions, then governance and MCP.
 
-{% include media.html src="admin/agents-overview.png" alt="Screenshot of the Agents settings tab showing agents tab." title="Agents tab" capture="Capture the Agents tab for Agents tab. Show relevant controls and redact secrets." %}
+{% include media.html src="admin-settings/agents-actions.png" alt="Screenshot of the Agents settings tab showing document actions, agent availability, marketplace copy, orchestration, permissions, core actions, and inbound MCP controls." title="Agents settings tab" %}
 
 {% include media.html type="video" title="Agents settings walkthrough" poster="video-posters/admin-agents.png" capture="Recording planned. Walk through every setting on the Agents tab and explain when to change each one." %}
 

@@ -15,7 +15,7 @@ Controls file sync availability, visible connector types, per-scope sync policy,
 
 File Sync imports external repositories into SimpleChat workspaces. It can quickly create many documents, so source counts, schedule intervals, file and byte limits, recursive behavior, and scope restrictions protect the app from accidental ingestion spikes and keep synced data attached to the right owner.
 
-{% include media.html src="admin/file-sync-overview.png" alt="Screenshot of the File Sync settings tab showing file sync tab." title="File Sync tab" capture="Capture the File Sync tab for File Sync tab. Show relevant controls and redact secrets." %}
+{% include media.html src="admin-settings/file-sync.png" alt="Screenshot of the File Sync settings tab showing connector visibility, sync scope policies, source limits, and source-management access controls." title="File Sync settings tab" %}
 
 {% include media.html type="video" title="File Sync settings walkthrough" poster="video-posters/admin-file-sync.png" capture="Recording planned. Walk through every setting on the File Sync tab and explain when to change each one." %}
 

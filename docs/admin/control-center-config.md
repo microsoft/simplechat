@@ -15,7 +15,7 @@ Controls Control Center refresh scheduling and role-gated access to Control Cent
 
 Control Center can show operational and management data that not every admin should inspect. Refresh scheduling affects background load; role requirements determine whether users need broad admin access or a narrower dashboard-reader role.
 
-{% include media.html src="admin/control-center-config-overview.png" alt="Screenshot of the Control Center settings tab showing control center tab." title="Control Center tab" capture="Capture the Control Center tab for Control Center tab. Show relevant controls and redact secrets." %}
+{% include media.html src="admin-settings/control-center.png" alt="Screenshot of the Control Center settings tab showing refresh scheduling and role-gated access controls." title="Control Center settings tab" %}
 
 {% include media.html type="video" title="Control Center settings walkthrough" poster="video-posters/admin-control-center-config.png" capture="Recording planned. Walk through every setting on the Control Center tab and explain when to change each one." %}
 

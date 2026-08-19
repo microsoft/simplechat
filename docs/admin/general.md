@@ -15,7 +15,7 @@ Controls branding, home page copy, navigation defaults, user notices, health che
 
 This tab shapes the experience every user sees before they ever open a workspace: the app name, landing page, navigation, legal notices, access-denied copy, support links, and upload/session limits. A branding change is low risk, but health-check exposure, Terms of Use frequency, idle timeout, and maximum file size can affect monitoring, sign-in flows, compliance evidence, and whether large uploads or long-running chats succeed.
 
-{% include media.html src="admin/general-overview.png" alt="Screenshot of the General settings tab showing general tab." title="General tab" capture="Capture the General tab for General tab. Show relevant controls and redact secrets." %}
+{% include media.html src="admin-settings/general.png" alt="Screenshot of the General settings tab showing branding, home page, navigation, notices, support links, and health check settings available to administrators." title="General settings tab" %}
 
 {% include media.html type="video" title="General settings walkthrough" poster="video-posters/admin-general.png" capture="Recording planned. Walk through every setting on the General tab and explain when to change each one." %}
 

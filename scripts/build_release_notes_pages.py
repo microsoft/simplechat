@@ -16,6 +16,9 @@ VERSION_HEADING_RE = re.compile(
     r"(?m)^#{2,4}\s*\*?\*?\(?v?(\d+\.\d+\.\d+)\)?\*?\*?.*$"
 )
 LATEST_INLINE_RELEASES = 12
+# Share of the page budget the inlined "latest releases" block may consume, so a
+# single oversized rollup release cannot push the index past MAX_PAGE_BYTES.
+INDEX_INLINE_BUDGET_RATIO = 0.5
 MAX_RELEASES_PER_PAGE = 40
 MAX_PAGE_BYTES = 250 * 1024
 EARLIER_MINOR_CUTOFF = 215
@@ -262,10 +265,34 @@ def build_toc_rows(
     return rows
 
 
+def select_inline_releases(sections: list[ReleaseSection]) -> int:
+    """Choose how many of the newest releases to inline on the index page.
+
+    A fixed count is not safe. A consolidated rollup release can be very large on
+    its own -- v0.260.001 consolidated 117 incremental releases into one section
+    of roughly 120 KB -- so a fixed 12 would push the index far past the page
+    budget. Accumulate newest-first while staying inside a share of the budget,
+    always keeping at least the newest release so the index is never empty.
+    """
+    budget = int(MAX_PAGE_BYTES * INDEX_INLINE_BUDGET_RATIO)
+    total = 0
+    count = 0
+
+    for release in sections[:LATEST_INLINE_RELEASES]:
+        size = len(release.content.encode("utf-8"))
+        if count > 0 and total + size > budget:
+            break
+        total += size
+        count += 1
+
+    return max(count, 1)
+
+
 def build_pages(source_text: str) -> list[GeneratedPage]:
     intro, sections = parse_release_notes(source_text)
-    latest_releases = tuple(sections[:LATEST_INLINE_RELEASES])
-    archive_releases = sections[LATEST_INLINE_RELEASES:]
+    inline_count = select_inline_releases(sections)
+    latest_releases = tuple(sections[:inline_count])
+    archive_releases = sections[inline_count:]
     archive_pages = build_archive_pages(archive_releases)
 
     version_to_page: dict[int, tuple[ReleaseSection, str]] = {}

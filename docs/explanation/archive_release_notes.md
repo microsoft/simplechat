@@ -2,7 +2,7 @@
 
 Release notes for versions **before v0.230.001**, split out of the [current release notes](/explanation/release_notes/) to keep that page readable. Entries below are unchanged from when they were published, running from v0.229.063 back to v0.190.1.
 
-For anything newer, see the [current release notes](/explanation/release_notes/). For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
+For anything newer, see the [current release notes](/explanation/release_notes/). For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
 ### **(v0.229.063)**
 

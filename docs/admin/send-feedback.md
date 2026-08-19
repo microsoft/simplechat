@@ -15,7 +15,7 @@ Provides admin-side forms for reporting bugs and feature requests to the SimpleC
 
 This page gives admins a structured way to report bugs and feature requests with contact and organization context. It is not an end-user feature toggle; its value is in producing reproducible, routed feedback instead of informal messages with missing details.
 
-{% include media.html src="admin/send-feedback-overview.png" alt="Screenshot of the Send Feedback settings tab showing send feedback tab." title="Send Feedback tab" capture="Capture the Send Feedback tab for Send Feedback tab. Show relevant controls and redact secrets." %}
+{% include media.html src="admin-settings/send-feedback.png" alt="Screenshot of the Send Feedback settings tab showing the admin forms for reporting bugs and feature requests with organization context." title="Send Feedback settings tab" %}
 
 {% include media.html type="video" title="Send Feedback settings walkthrough" poster="video-posters/admin-send-feedback.png" capture="Recording planned. Walk through every setting on the Send Feedback tab and explain when to change each one." %}
 

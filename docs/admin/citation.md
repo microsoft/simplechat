@@ -15,7 +15,7 @@ Controls enhanced citation storage, tabular previews, and large tabular run safe
 
 Enhanced citations let users open or preview the original source behind an answer, which improves trust and auditability. They require storage for source documents and can add memory pressure when previewing large tabular files. Large tabular confirmations prevent users from accidentally starting expensive row-level runs.
 
-{% include media.html src="admin/citation-overview.png" alt="Screenshot of the Citations settings tab showing citations tab." title="Citations tab" capture="Capture the Citations tab for Citations tab. Show relevant controls and redact secrets." %}
+{% include media.html src="admin-settings/citation.png" alt="Screenshot of the Citations settings tab showing enhanced citation storage, tabular previews, and large tabular run safeguards." title="Citations settings tab" %}
 
 {% include media.html type="video" title="Citations settings walkthrough" poster="video-posters/admin-citation.png" capture="Recording planned. Walk through every setting on the Citations tab and explain when to change each one." %}
 

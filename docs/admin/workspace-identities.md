@@ -15,7 +15,7 @@ Provides the administration surface for shared identity mappings used by workspa
 
 Global identities exist so connectors and sync sources can reuse approved identity profiles instead of each source carrying its own credentials. The risk is concentrated: a misconfigured shared identity can grant every source that uses it access to the wrong external location.
 
-{% include media.html src="admin/workspace-identities-overview.png" alt="Screenshot of the Global Identities settings tab showing global identities tab." title="Global Identities tab" capture="Capture the Global Identities tab for Global Identities tab. Show relevant controls and redact secrets." %}
+{% include media.html src="admin-settings/global-identity.png" alt="Screenshot of the Global Identities settings tab showing shared identity mappings used by workspace connectors and file sync sources." title="Global Identities settings tab" %}
 
 {% include media.html type="video" title="Global Identities settings walkthrough" poster="video-posters/admin-workspace-identities.png" capture="Recording planned. Walk through every setting on the Global Identities tab and explain when to change each one." %}
 

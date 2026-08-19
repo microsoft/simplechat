@@ -15,7 +15,7 @@ Controls chat, embedding, image generation, and multi-endpoint model routing for
 
 These settings decide which model endpoints receive prompts, embeddings, and image-generation requests. If GPT settings are wrong, chat and agents fail. If embeddings are wrong, workspace retrieval and document search fail. Multi-endpoint routing and user-selectable models are powerful, but they also widen the cost, quota, and governance surface because different deployments may have different capabilities and data-handling expectations.
 
-{% include media.html src="admin/ai-models-overview.png" alt="Screenshot of the AI Models settings tab showing ai models tab." title="AI Models tab" capture="Capture the AI Models tab for AI Models tab. Show relevant controls and redact secrets." %}
+{% include media.html src="admin-settings/ai-models.png" alt="Screenshot of the AI Models settings tab showing chat, embedding, image generation, and model routing controls available to administrators." title="AI Models settings tab" %}
 
 {% include media.html type="video" title="AI Models settings walkthrough" poster="video-posters/admin-ai-models.png" capture="Recording planned. Walk through every setting on the AI Models tab and explain when to change each one." %}
 

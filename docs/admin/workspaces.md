@@ -15,7 +15,7 @@ Controls personal, group, and public workspace availability, downloads, workflow
 
 Workspace settings define the tenant's data boundaries: personal, group, public, workflow, file download, retention, classification, and agreement behavior. Enabling a scope creates new places where documents and conversations can live; disabling or role-gating a scope changes what users can see or create. Retention and download settings directly affect compliance and data-loss risk.
 
-{% include media.html src="admin/workspaces-overview.png" alt="Screenshot of the Workspaces settings tab showing workspaces tab." title="Workspaces tab" capture="Capture the Workspaces tab for Workspaces tab. Show relevant controls and redact secrets." %}
+{% include media.html src="admin-settings/workspaces.png" alt="Screenshot of the Workspaces settings tab showing controls for personal, group, and public workspaces, uploads, workflows, metadata, retention, and agreements." title="Workspaces settings tab" %}
 
 {% include media.html type="video" title="Workspaces settings walkthrough" poster="video-posters/admin-workspaces.png" capture="Recording planned. Walk through every setting on the Workspaces tab and explain when to change each one." %}
 

@@ -15,7 +15,7 @@ Controls retrieval, web search, URL access, Deep Research, extraction services, 
 
 This is the tab where document ingestion, retrieval, outbound web evidence, and media processing meet. The wrong setting can silently make uploaded files unsearchable, send user-provided URLs to external sites, increase Document Intelligence or Content Understanding cost, or allow Deep Research to crawl more than intended. Limits and allowlists are as important as endpoints.
 
-{% include media.html src="admin/search-extract-overview.png" alt="Screenshot of the Search and Extract settings tab showing search and extract tab." title="Search and Extract tab" capture="Capture the Search and Extract tab for Search and Extract tab. Show relevant controls and redact secrets." %}
+{% include media.html src="admin-settings/search-extract.png" alt="Screenshot of the Search and Extract settings tab showing retrieval, web search, extraction, chunking, speech, and video processing controls." title="Search and Extract settings tab" %}
 
 {% include media.html type="video" title="Search and Extract settings walkthrough" poster="video-posters/admin-search-extract.png" capture="Recording planned. Walk through every setting on the Search and Extract tab and explain when to change each one." %}
 

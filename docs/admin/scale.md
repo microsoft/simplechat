@@ -15,7 +15,7 @@ Controls Redis, conversation and document-access caches, Cosmos maintenance and 
 
 Scale settings trade freshness, cost, and resilience. Redis and caches reduce repeated reads but require cache invalidation to work correctly. Cosmos throughput automation can prevent throttling but changes RU spend. Front Door settings affect redirect URLs and sign-in behavior for every user behind the routed domain.
 
-{% include media.html src="admin/scale-overview.png" alt="Screenshot of the Scale settings tab showing scale tab." title="Scale tab" capture="Capture the Scale tab for Scale tab. Show relevant controls and redact secrets." %}
+{% include media.html src="admin-settings/scale.png" alt="Screenshot of the Scale settings tab showing Redis, cache, Cosmos maintenance, throughput automation, and Front Door support settings." title="Scale settings tab" %}
 
 {% include media.html type="video" title="Scale settings walkthrough" poster="video-posters/admin-scale.png" capture="Recording planned. Walk through every setting on the Scale tab and explain when to change each one." %}
 
