@@ -201,15 +201,29 @@ ADMIN_NAV = [
         "icon": "bi-clipboard-check",
         "tabs": [
             {
-                "id": "governance",
-                "label": "Governance",
+                "id": "feature-governance",
+                "label": "Feature Governance",
                 "icon": "bi-braces-asterisk",
                 "sections": [
                     {"id": "governance-feature-toggles-section", "label": "Governance Feature Toggles", "icon": "bi-braces-asterisk"},
-                    {"id": "governance-mcp-destination-section", "label": "MCP Action Destination Governance", "icon": "bi-diagram-3"},
-                    {"id": "governance-inbound-mcp-section", "label": "Inbound MCP Source Governance", "icon": "bi-box-arrow-in-down-right"},
+                ],
+            },
+            {
+                "id": "governance-policies",
+                "label": "Policies",
+                "icon": "bi-sliders2",
+                "sections": [
                     {"id": "governance-feature-policies-section", "label": "Feature Policies", "icon": "bi-sliders2"},
                     {"id": "governance-item-policies-section", "label": "Delegated Item Policies", "icon": "bi-list-check"},
+                ],
+            },
+            {
+                "id": "mcp-governance",
+                "label": "MCP Governance",
+                "icon": "bi-diagram-3",
+                "sections": [
+                    {"id": "governance-mcp-destination-section", "label": "MCP Action Destination Governance", "icon": "bi-diagram-3"},
+                    {"id": "governance-inbound-mcp-section", "label": "Inbound MCP Source Governance", "icon": "bi-box-arrow-in-down-right"},
                 ],
             },
         ],

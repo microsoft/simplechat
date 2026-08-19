@@ -283,7 +283,19 @@ function revealAdminGroupForTab(tabId) {
     }
 }
 
-function showAdminTab(tabId) {    
+// Tabs that existed before the information architecture rework, mapped to
+// where their content now lives. Old bookmarks and links keep working.
+const LEGACY_TAB_REDIRECTS = {
+    'governance': 'feature-governance',
+};
+
+function resolveAdminTabId(tabId) {
+    return LEGACY_TAB_REDIRECTS[tabId] || tabId;
+}
+
+function showAdminTab(requestedTabId) {
+    const tabId = resolveAdminTabId(requestedTabId);
+
     // Open the owning group first, in whichever layout is active, so
     // activating a tab never leaves it hidden behind a collapsed group header
     // or filtered out of the top strip.

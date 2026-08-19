@@ -132,7 +132,7 @@ def test_governance_enforcement_hooks_across_changed_routes():
         assert key in settings_content, f"Missing governance default setting key: {key}"
 
     for marker in [
-        "id=\"governance\"",
+        "id=\"feature-governance\"",
         "governance-feature-policies-table",
         "governance-item-policies-table",
         "governance-item-policy-card-controls",

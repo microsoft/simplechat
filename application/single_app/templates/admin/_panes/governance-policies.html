@@ -1,0 +1,94 @@
+            <div class="tab-pane fade" id="governance-policies" role="tabpanel" aria-labelledby="governance-policies-tab">
+                <div class="card p-3 mb-3" id="governance-feature-policies-section">
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <h5 class="mb-0"><i class="bi bi-sliders2 me-2"></i>Feature Policies</h5>
+                        <button type="button" class="btn btn-primary btn-sm" id="governance-save-feature-policies-btn">Save Feature Policies</button>
+                    </div>
+                    <p class="text-muted">Set allow-all, explicit allow lists, and block lists for each governed feature. Block lists override allow settings.</p>
+                    <div class="table-responsive">
+                        <table class="table table-bordered" id="governance-feature-policies-table">
+                            <thead>
+                                <tr>
+                                    <th>Feature</th>
+                                    <th>Allow All</th>
+                                    <th>Allow List</th>
+                                    <th>Block List</th>
+                                </tr>
+                            </thead>
+                            <tbody id="governance-feature-policies-body"></tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div class="card p-3 mb-3" id="governance-item-policies-section">
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <h5 class="mb-0"><i class="bi bi-list-check me-2"></i>Delegated Item Policies</h5>
+                        <div class="d-flex gap-2">
+                            <button type="button" class="btn btn-primary btn-sm" id="governance-new-item-policy-btn">New Policy</button>
+                            <button type="button" class="btn btn-outline-secondary btn-sm" id="governance-refresh-item-policies-btn">Refresh</button>
+                        </div>
+                    </div>
+                    <p class="text-muted mb-1">Manage delegated governance for configured global resources and action type entitlements that admins assign to specific users or groups.</p>
+                    <div class="alert alert-info py-2 small" role="alert">
+                        Delegated item policies are OR combined allow lists with optional block lists. Blocked users and groups are denied even when Allow All or another allow list would grant access.
+                    </div>
+
+                    <div class="row g-2 align-items-end mb-3" id="governance-item-policy-card-controls">
+                        <div class="col-lg-5 col-md-6">
+                            <label class="form-label" for="governance-item-review-search">Search</label>
+                            <input type="search" class="form-control" id="governance-item-review-search" placeholder="Search users, groups, endpoint IDs, or item IDs">
+                        </div>
+                        <div class="col-lg-3 col-md-6">
+                            <label class="form-label" for="governance-item-review-entity-type">Entity Type</label>
+                            <select class="form-select" id="governance-item-review-entity-type">
+                                <option value="">All</option>
+                                <option value="global_endpoint">Global Endpoint</option>
+                                <option value="global_agent">Global Agent</option>
+                                <option value="global_action">Global Action</option>
+                                <option value="personal_action_type">Personal Action Type</option>
+                                <option value="group_action_type">Group Action Type</option>
+                                <option value="global_action_type">Global Action Type</option>
+                                <option value="mcp_personal_destination">MCP Personal Destination</option>
+                                <option value="mcp_group_destination">MCP Group Destination</option>
+                                <option value="mcp_global_destination">MCP Global Destination</option>
+                                <option value="inbound_mcp_source">Inbound MCP Source</option>
+                            </select>
+                        </div>
+                        <div class="col-lg-2 col-md-4">
+                            <label class="form-label" for="governance-item-review-page-size">Page Size</label>
+                            <select class="form-select" id="governance-item-review-page-size">
+                                <option value="10">10</option>
+                                <option value="25" selected>25</option>
+                                <option value="50">50</option>
+                            </select>
+                        </div>
+                        <div class="col-lg-2 col-md-8 d-flex gap-2">
+                            <button type="button" class="btn btn-primary flex-fill" id="governance-item-review-search-btn">Search</button>
+                            <button type="button" class="btn btn-outline-secondary flex-fill" id="governance-item-review-reset-btn">Reset</button>
+                        </div>
+                    </div>
+
+                    <div class="table-responsive">
+                        <table class="table table-sm table-striped align-middle" id="governance-item-policies-table">
+                            <thead>
+                                <tr>
+                                    <th>Policy</th>
+                                    <th>Entity Type</th>
+                                    <th>Item</th>
+                                    <th>Allow All</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="governance-item-policies-review-body"></tbody>
+                        </table>
+                    </div>
+
+                    <div class="d-flex align-items-center justify-content-between gap-2 mt-3">
+                        <div class="text-muted small" id="governance-item-review-summary"></div>
+                        <div class="btn-group" role="group" aria-label="Delegated item policy pagination">
+                            <button type="button" class="btn btn-outline-secondary btn-sm" id="governance-item-review-prev-btn">Previous</button>
+                            <button type="button" class="btn btn-outline-secondary btn-sm" id="governance-item-review-next-btn">Next</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
