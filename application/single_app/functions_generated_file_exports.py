@@ -31,6 +31,9 @@ GENERATED_FILE_FORMATS = {
     GENERATED_FILE_FORMAT_PDF,
 }
 SUPPORTED_GENERATED_EXPORT_FORMATS = {'csv', 'json', 'xml'}
+# Only these payloads are withheld from the streamed assistant text, so only their cards
+# replace it. CSV narratives stream intact and must stay visible above the artifact card.
+ASSISTANT_TEXT_SUPPRESSING_FORMATS = {'json', 'xml'}
 GENERATED_FILE_PREVIEW_ROWS = 3
 REQUESTED_ARTIFACT_FORMATS = ('csv', 'json', 'xml', 'md', 'docx', 'pdf')
 STRUCTURED_ARTIFACT_FORMAT_MARKERS = {
@@ -597,7 +600,7 @@ def build_generated_file_artifact_metadata(
         'file_name': uploaded_message.get('file_name') or generated_file_name,
         'output_format': normalized_output_format,
         'summary': str(export_payload.get('summary') or '').strip(),
-        'suppress_assistant_text': normalized_output_format in {'csv', 'json', 'xml'},
+        'suppress_assistant_text': normalized_output_format in ASSISTANT_TEXT_SUPPRESSING_FORMATS,
     }
     row_count = export_payload.get('row_count')
     if isinstance(row_count, int) and row_count > 0:
