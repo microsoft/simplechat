@@ -31,7 +31,7 @@ from functions_authentication import *
 from functions_content import *
 from functions_documents import *
 from functions_latest_features_nav import should_hide_latest_features_nav
-from admin_settings_nav import ADMIN_NAV
+from admin_settings_nav import ADMIN_NAV, get_landing_tab_id
 from functions_search import *
 from functions_settings import *
 from functions_mcp_server_config import is_mcp_ui_enabled
@@ -600,6 +600,7 @@ def inject_settings():
         user_settings=user_settings,
         custom_pages_nav=custom_pages_nav,
         admin_nav=ADMIN_NAV,
+        admin_landing_tab=get_landing_tab_id(),
         latest_features_current_version=VERSION,
         latest_features_nav_hidden=latest_features_nav_hidden,
         latest_features_nav_hidden_by_development=IS_DEVELOPMENT,

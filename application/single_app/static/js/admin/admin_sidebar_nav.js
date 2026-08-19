@@ -145,12 +145,15 @@ function initAdminSidebarNav() {
     
     // Set the initial active tab - but only if no tab is already active.
     // Latest Features is deliberately excluded so it never opens by default.
+    // The landing tab is whichever tab the nav map renders first rather than a
+    // hardcoded id, so it stays correct as the information architecture moves.
     const activeTab = document.querySelector('.admin-nav-tab.active, .admin-nav-section.active');
     if (!activeTab) {
-        const firstTab = document.querySelector('.admin-nav-tab[data-tab="general"]');
-        if (firstTab) {
+        const firstTab = document.querySelector('.admin-nav-tab[data-tab]');
+        const firstTabId = firstTab ? firstTab.getAttribute('data-tab') : null;
+        if (firstTabId) {
             firstTab.classList.add('active');
-            showAdminTab('general');
+            showAdminTab(firstTabId);
         }
     } else {
         console.log('initAdminSidebarNav - Found existing active tab, preserving current state:', activeTab.getAttribute('data-tab'));
@@ -288,6 +291,9 @@ function revealAdminGroupForTab(tabId) {
 const LEGACY_TAB_REDIRECTS = {
     'governance': 'feature-governance',
     'scale': 'redis-caching',
+    'general': 'branding',
+    'safety': 'access-roles',
+    'security': 'secrets',
 };
 
 function resolveAdminTabId(tabId) {

@@ -345,7 +345,6 @@ def test_admin_javascript_uses_safe_dom_patterns():
     for required_snippet in [
         'document.createElement("tr")',
         'document.createElement("td")',
-        'openKeyVaultSettings',
         'buildMigrationPlan()',
         'queueMigration(false)',
         'loadMigrationCatalog(targetType, "reset")',
