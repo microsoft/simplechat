@@ -127,6 +127,20 @@ v0.260.001 consolidates all work released after v0.250.001 into one major releas
 
 #### Bug Fixes
 
+*   **Admin Latest Features Previous and Archive Preview Restored**
+    *   The read-only user-facing preview panel in Admin Settings > Latest Features never rendered, because it sat inside a disabled template block that also holds the legacy hardcoded feature cards from before the tab became data-driven.
+    *   The admin route was already computing and passing `support_latest_feature_release_groups_preview` for a panel that could never display, so admins had no way to review previous and archive release cards alongside their sharing status.
+    *   Closed the disabled block after the legacy cards so the preview panel renders again, and namespaced its element ids to avoid colliding with the admin release-group cards.
+    *   (Ref: `admin_settings.html` Latest Features tab, `support_latest_feature_release_groups_preview`, `route_frontend_admin_settings.py`)
+*   **Latest Features Sidebar Card Id Special Case Removed**
+    *   The admin sidebar built the previous-release section link through a redundant conditional that produced the same id as the general dynamic expression.
+    *   Simplified to the dynamic form so every non-current tier, including the new archive tier, is handled the same way.
+    *   (Ref: `_sidebar_nav.html`, admin Latest Features navigation)
+*   **Orphaned Latest Features Metadata Tables Removed**
+    *   Removed `_SUPPORT_CURRENT_FEATURE_IMAGE_METADATA` and `_SUPPORT_CURRENT_FEATURE_USER_METADATA` along with the two helpers that consumed them. Their keys matched no feature id in any release tier, so both helpers were no-ops, and the `_CURRENT_` naming became misleading after the release tiers shifted.
+    *   Verified behavior-neutral: the full serialized catalog output across every accessor and several settings permutations is byte-identical before and after removal.
+    *   Added a regression test that generically detects orphaned per-feature metadata tables, so this class of drift is caught in future rather than only these two names.
+    *   (Ref: `support_menu_config.py`, `test_support_menu_config_dead_metadata_removal.py`)
 *   **Citations and Source Rendering**
     *   Citation parsing preserves line breaks after inline citations, agent document search results render as document sources, retrieved and cited sources remain separated, prior grounded references resolve in follow-up turns, and source-reading intent is no longer misclassified as artifact generation.
     *   (Ref: citation parser, agent document search, grounded source references, generated artifacts)

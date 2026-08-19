@@ -251,7 +251,7 @@ def test_latest_features_template_structure():
         'Screenshot and rollout notes',
         'data-open-admin-tab="{{ action.admin_tab }}"',
         'data-open-admin-section="{{ action.admin_section }}"',
-        "{% set preview_card_id = 'latest-features-' ~ release_group.id|replace('_', '-') ~ '-card' %}",
+        "{% set preview_card_id = 'latest-features-user-preview-' ~ release_group.id|replace('_', '-') ~ '-card' %}",
         '{% set release_collapse_id = release_group.collapse_id %}',
         'id="latestFeatureImageModal"',
         'class="latest-feature-image-frame"',

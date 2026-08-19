@@ -127,6 +127,8 @@ Admin-only cards are not controlled by user-facing visibility toggles. They are 
 
 Stored choices are merged over defaults, so disabling an older card remains honored after the v0.260.001 tier shift. New v0.260.001 cards start visible unless an admin turns them off.
 
+The **Latest Features** admin tab also carries a read-only preview of the user-facing catalog. Each non-current tier renders as a collapsible panel whose cards show a **Shared with Users** or **Hidden from Users** badge, so an admin can review exactly what the previous and archive tiers look like without leaving Admin Settings. Its element ids are namespaced `latest-features-user-preview-*` and `latestFeaturesUserPreview*` so they never collide with the admin-facing release-group cards.
+
 ### Adding a New Card
 
 1. Read `_latest_feature_card(...)` and the current catalog style in `support_menu_config.py` before editing.

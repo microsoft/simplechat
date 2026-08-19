@@ -2,8 +2,8 @@
 """
 Functional test for support menu sidebar visibility, access behavior, and
 latest-feature image preview support.
-Version: 0.241.167
-Implemented in: 0.240.061; 0.240.085; 0.241.002; 0.241.164; 0.241.165; 0.241.166; 0.241.167
+Version: 0.260.001
+Implemented in: 0.240.061; 0.240.085; 0.241.002; 0.241.164; 0.241.165; 0.241.166; 0.241.167; 0.260.001
 
 This test ensures the Support menu renders for signed-in app users when enabled,
 the sidebar and top-nav templates expose the expected links, and the user-facing
@@ -36,31 +36,6 @@ ADMIN_JS = os.path.join(REPO_ROOT, 'application', 'single_app', 'static', 'js', 
 LATEST_FEATURES_JS = os.path.join(REPO_ROOT, 'application', 'single_app', 'static', 'js', 'support', 'latest_features.js')
 SUPPORT_JS = os.path.join(REPO_ROOT, 'application', 'single_app', 'static', 'js', 'support', 'support_feedback.js')
 FEATURE_IMAGE_DIR = os.path.join(REPO_ROOT, 'application', 'single_app', 'static', 'images', 'features')
-
-USER_CURRENT_FEATURE_IMAGE_FILES = {
-    'document_intelligence': ['document_intelligence_user_details.png'],
-    'file_sync': ['file_sync_user_sources.png', 'file_sync_user_identities.png'],
-    'source_review': ['source_review_user_grounded_search.png', 'source_review_user_deep_research.png'],
-    'agent_knowledge_actions': ['agent_knowledge_user_agents.png', 'agent_knowledge_user_actions.png'],
-    'generated_artifacts': ['generated_artifacts_user_chat_output.png'],
-    'chat_productivity': ['chat_productivity_user_chat.png'],
-    'workspace_experience': [
-        'workspace_experience_user_list_view.png',
-        'workspace_experience_user_cards_view.png',
-        'workspace_experience_user_folders_view.png',
-        'workspace_experience_user_folders_cards_view.png',
-    ],
-    'workflow_automation': ['workflow_automation_user_list.png', 'workflow_automation_user_file_sync_trigger.png'],
-    'visio_ingestion': ['visio_ingestion_user_upload.png'],
-    'stats_reporting': ['stats_reporting_user_profile.png'],
-}
-
-ADMIN_CURRENT_FEATURE_IMAGE_FILES = {
-    'document_intelligence': ['document_intelligence_admin_controls.png'],
-    'file_sync': ['file_sync_admin_scope_controls.png'],
-    'source_review': ['source_review_admin_policy.png'],
-    'workflow_automation': ['workflow_automation_admin_controls.png'],
-}
 
 
 def read_text(path):
@@ -142,7 +117,7 @@ def test_support_menu_settings_defaults_and_persistence():
         "'id': 'multi_workspace_scope_management'",
         "'id': 'chat_document_and_tag_filtering'",
         "'label': 'Previous Release Features'",
-        "'release_version': '0.239.001'",
+        "'release_version': '0.239.001 - 0.241.007'",
         "'href': 'https://microsoft.github.io/simplechat/latest-release/export-conversation/'",
         "'path': 'images/features/conversation_export.png'",
         "'path': 'images/features/conversation_export_type_option.png'",
@@ -190,38 +165,32 @@ def test_support_menu_settings_defaults_and_persistence():
 
 
 def test_latest_features_user_media_overrides_admin_preview():
-    print('🔍 Testing user-facing Latest Features media split...')
+    print('🔍 Testing user-facing Latest Features current-release media split...')
 
     support_config = load_module(SUPPORT_CONFIG, 'support_menu_config_user_media_test')
-    admin_release_groups = support_config.get_support_latest_feature_release_groups()
-    admin_current = {
-        feature['id']: feature
-        for feature in admin_release_groups[0]['features']
-    }
-
-    for feature_id, image_names in ADMIN_CURRENT_FEATURE_IMAGE_FILES.items():
-        expected_paths = [f'images/features/{image_name}' for image_name in image_names]
-        assert [image['path'] for image in admin_current[feature_id]['images']] == expected_paths, f'Admin preview image mismatch for {feature_id}'
-
     visible_groups = support_config.get_visible_support_latest_feature_groups({
         'enable_user_workspace': True,
     })
     visible_current = next(group for group in visible_groups if group['id'] == 'current_release')
-    visible_by_id = {
-        feature['id']: feature
-        for feature in visible_current['features']
-    }
 
+    assert visible_current['release_version'] == '0.260.001', 'Current user-facing Latest Features tier should be v0.260.001'
+    assert len(visible_current['features']) == 20, 'Current user-facing Latest Features tier should expose 20 cards'
+
+    visible_by_id = {feature['id']: feature for feature in visible_current['features']}
     assert 'cosmos_autoscale' not in visible_by_id, 'Cosmos autoscale should remain hidden by default for users'
 
-    for feature_id, image_names in USER_CURRENT_FEATURE_IMAGE_FILES.items():
-        expected_paths = [f'images/features/{image_name}' for image_name in image_names]
-        feature = visible_by_id.get(feature_id)
-        assert feature, f'Missing visible support feature {feature_id}'
-        assert feature.get('image') == expected_paths[0], f'Primary user image mismatch for {feature_id}'
-        assert [image['path'] for image in feature.get('images', [])] == expected_paths, f'User gallery image mismatch for {feature_id}'
-        assert all(image.get('caption', '').startswith('1 ') or image.get('caption', '').startswith('1 opens') or '1 ' in image.get('caption', '') for image in feature.get('images', [])), f'Numbered caption missing for {feature_id}'
-        assert all(os.path.exists(os.path.join(FEATURE_IMAGE_DIR, image_name)) for image_name in image_names), f'Missing user screenshot assets for {feature_id}'
+    for feature in visible_current['features']:
+        feature_id = feature['id']
+        assert feature_id.startswith('release_260_'), f'Current user-facing feature should use a release_260 id: {feature_id}'
+        images = feature.get('images', [])
+        assert len(images) == 3, f'Expected three current-release screenshots for {feature_id}'
+        assert feature.get('image') == images[0]['path'], f'Primary user image mismatch for {feature_id}'
+        for image in images:
+            image_path = image['path'].replace('images/features/', '')
+            assert image['path'].startswith('images/features/release_260_'), f'Current user screenshot should use release_260 asset names: {image["path"]}'
+            assert image.get('caption'), f'Missing image caption for {feature_id}'
+            assert image.get('label'), f'Missing image label for {feature_id}'
+            assert os.path.exists(os.path.join(FEATURE_IMAGE_DIR, image_path)), f'Missing user screenshot asset: {image["path"]}'
         admin_actions = [
             action.get('href', '')
             for action in feature.get('actions', [])
@@ -229,7 +198,7 @@ def test_latest_features_user_media_overrides_admin_preview():
         ]
         assert not admin_actions, f'User-facing feature {feature_id} exposes admin settings links: {admin_actions}'
 
-    print('✅ User-facing Latest Features use user workflow screenshots and keep admin preview screenshots separate')
+    print('✅ User-facing Latest Features use current-release user workflow screenshots')
 
 
 def test_support_menu_admin_template_and_js():
@@ -249,8 +218,8 @@ def test_support_menu_admin_template_and_js():
         'name="support_latest_feature_{{ feature.id }}"',
         '{{ feature.title }}',
         'Enable Support Menu for End Users',
-        'Cosmos autoscale, deployment, and Redis items start unchecked because they are mainly admin-facing rollout and infrastructure topics.',
-        "release_group.id == 'previous_release'",
+        'Deployment and Redis start unchecked because they are mainly admin-facing rollout and infrastructure topics.',
+        'not release_group.default_expanded',
         "release_group.collapse_id ~ 'Checklist'",
         'Show {{ release_group.label }}',
         '<i class="bi bi-life-preserver me-2"></i>Support',
@@ -283,8 +252,8 @@ def test_support_menu_navigation_and_routes():
     sidebar_markers = [
         'data-section="support-menu-section"',
         'id="support-menu-toggle"',
-        "url_for('support_latest_features')",
-        "url_for('support_send_feedback')",
+        "url_for('frontend_support.support_latest_features')",
+        "url_for('frontend_support.support_send_feedback')",
         "app_settings.support_menu_name or 'Support'",
     ]
     missing_sidebar = [marker for marker in sidebar_markers if marker not in sidebar_content]
@@ -294,8 +263,8 @@ def test_support_menu_navigation_and_routes():
 
     short_sidebar_markers = [
         'id="support-menu-toggle"',
-        "url_for('support_latest_features')",
-        "url_for('support_send_feedback')",
+        "url_for('frontend_support.support_latest_features')",
+        "url_for('frontend_support.support_send_feedback')",
         "app_settings.support_menu_name or 'Support'",
     ]
     missing_short_sidebar = [marker for marker in short_sidebar_markers if marker not in short_sidebar_content]
@@ -303,8 +272,8 @@ def test_support_menu_navigation_and_routes():
 
     top_nav_markers = [
         'id="supportMenuDropdown"',
-        "url_for('support_latest_features')",
-        "url_for('support_send_feedback')",
+        "url_for('frontend_support.support_latest_features')",
+        "url_for('frontend_support.support_send_feedback')",
         "app_settings.support_menu_name or 'Support'",
     ]
     missing_top_nav = [marker for marker in top_nav_markers if marker not in top_nav_content]
