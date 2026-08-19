@@ -40,6 +40,8 @@ OFFICE_EMBEDDED_IMAGE_RENDER_MAX_PIXELS = 1600
 OFFICE_EMBEDDED_IMAGE_MAX_BYTES = 64 * 1024 * 1024
 # Slide relationship parts are small XML documents; anything larger is not worth decompressing.
 OFFICE_EMBEDDED_RELS_MAX_BYTES = 4 * 1024 * 1024
+# The main document part carries the body text used to locate images in reading order.
+OFFICE_DOCUMENT_PART_MAX_BYTES = 64 * 1024 * 1024
 # A zip header can understate the uncompressed size, so entries are streamed in bounded chunks.
 OFFICE_ZIP_READ_CHUNK_BYTES = 256 * 1024
 # Caps on how much of a crafted archive is inspected at all.
@@ -146,10 +148,9 @@ def _build_pptx_media_slide_map(archive):
             continue
 
         for relationship in rels_root:
-            target = str(relationship.attrib.get('Target') or '').replace('\\', '/')
-            if '/media/' not in target:
+            media_name = _normalize_office_media_target(relationship.attrib.get('Target'), 'ppt/media/')
+            if not media_name:
                 continue
-            media_name = 'ppt/media/' + target.rsplit('/media/', 1)[-1]
             # Keep the first slide that references the image so ordering stays stable.
             media_slide_map.setdefault(media_name, slide_number)
 
@@ -175,6 +176,7 @@ def _new_diagnostics():
         'analyzed': 0,
         'skipped': 0,
         'skipped_reasons': {},
+        'total_body_words': 0,
     }
 
 
@@ -193,7 +195,9 @@ def extract_office_embedded_images(file_path, output_dir, min_pixels=150, max_im
         max_images (int): Maximum number of images to extract.
 
     Returns:
-        list: Dicts with ``name``, ``path``, ``width``, ``height``, and ``slide_number`` keys.
+        list: Dicts describing each extracted image, including ``name``, ``path``, ``width``,
+        ``height``, ``source_format``, ``rasterized``, ``embedded_text``, and the position hints
+        ``slide_number`` and ``word_offset`` used to place the image back into its origin chunk.
     """
     extracted_images, _diagnostics = extract_office_embedded_images_with_diagnostics(
         file_path,
@@ -320,12 +324,125 @@ def _extract_from_binary_office_file(file_path, output_dir, min_pixels, max_imag
             'width': width,
             'height': height,
             'slide_number': None,
+            'word_offset': None,
+            'position_known': False,
             'source_format': source_format,
             'rasterized': True,
             'embedded_text': embedded_text,
         })
 
     return extracted_images
+
+
+DOCX_MAIN_DOCUMENT_PART = 'word/document.xml'
+DOCX_MAIN_DOCUMENT_RELS_PART = 'word/_rels/document.xml.rels'
+DOCX_NS_WORDPROCESSING = '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}'
+DOCX_NS_DRAWING = '{http://schemas.openxmlformats.org/drawingml/2006/main}'
+DOCX_NS_RELATIONSHIPS = '{http://schemas.openxmlformats.org/officeDocument/2006/relationships}'
+DOCX_NS_VML = '{urn:schemas-microsoft-com:vml}'
+
+
+def _normalize_office_media_target(target, media_prefix):
+    """Resolve a relationship target to its package media path.
+
+    Relationship targets are relative to the part that declares them, so Word writes
+    ``media/image1.emf`` while PowerPoint writes ``../media/image1.png``. Both resolve to the same
+    ``<prefix>/media/<file>`` location. Requiring a ``media`` parent segment also rejects unrelated
+    targets such as hyperlinks.
+    """
+    normalized_target = str(target or '').replace('\\', '/')
+    segments = [segment for segment in normalized_target.split('/') if segment not in ('', '.', '..')]
+    if len(segments) < 2 or segments[-2].lower() != 'media':
+        return ''
+    return f'{media_prefix}{segments[-1]}'
+
+
+def _build_docx_relationship_targets(archive):
+    """Map relationship ids in the main document part to their ``word/media`` targets."""
+    relationship_targets = {}
+
+    rels_bytes = _read_zip_entry_bounded(
+        archive, DOCX_MAIN_DOCUMENT_RELS_PART, OFFICE_EMBEDDED_RELS_MAX_BYTES
+    )
+    if rels_bytes is None:
+        return relationship_targets
+
+    try:
+        rels_root = defused_fromstring(rels_bytes)
+    except (DefusedParseError, ValueError):
+        return relationship_targets
+
+    for relationship in rels_root:
+        relationship_id = str(relationship.attrib.get('Id') or '')
+        if not relationship_id:
+            continue
+        if str(relationship.attrib.get('TargetMode') or '').lower() == 'external':
+            continue
+        media_name = _normalize_office_media_target(relationship.attrib.get('Target'), 'word/media/')
+        if media_name:
+            relationship_targets[relationship_id] = media_name
+
+    return relationship_targets
+
+
+def build_docx_image_word_offsets(archive):
+    """Return ``(offsets, total_body_words)`` describing where each image sits in reading order.
+
+    Word has no fixed pages until it is rendered, but the ingestion pipeline chunks Word content by
+    word count, so an image's position in the document body maps onto a chunk. Walking
+    ``document.xml`` in document order and counting the words that precede each image reference
+    gives that position. The body total is returned as well so callers can place images
+    proportionally, which stays stable when the extractor's word count differs from the raw body.
+    """
+    image_word_offsets = {}
+
+    document_bytes = _read_zip_entry_bounded(
+        archive, DOCX_MAIN_DOCUMENT_PART, OFFICE_DOCUMENT_PART_MAX_BYTES
+    )
+    if document_bytes is None:
+        return image_word_offsets, 0
+
+    try:
+        document_root = defused_fromstring(document_bytes)
+    except (DefusedParseError, ValueError):
+        return image_word_offsets, 0
+
+    relationship_targets = _build_docx_relationship_targets(archive)
+
+    word_count = 0
+    text_tag = f'{DOCX_NS_WORDPROCESSING}t'
+    blip_tag = f'{DOCX_NS_DRAWING}blip'
+    image_data_tag = f'{DOCX_NS_VML}imagedata'
+    embed_attr = f'{DOCX_NS_RELATIONSHIPS}embed'
+    id_attr = f'{DOCX_NS_RELATIONSHIPS}id'
+
+    # iter() is a document-order traversal, which is the same order the text is extracted in.
+    for element in document_root.iter():
+        tag = element.tag
+        if tag == text_tag:
+            word_count += len(str(element.text or '').split())
+            continue
+
+        if not relationship_targets:
+            continue
+
+        relationship_id = ''
+        if tag == blip_tag:
+            relationship_id = str(element.attrib.get(embed_attr) or '')
+        elif tag == image_data_tag:
+            relationship_id = str(element.attrib.get(id_attr) or '')
+
+        if not relationship_id:
+            continue
+
+        media_name = relationship_targets.get(relationship_id)
+        if not media_name:
+            continue
+
+        # Keep the first occurrence so a repeated image maps to where it is first seen.
+        image_word_offsets.setdefault(media_name, word_count)
+
+    return image_word_offsets, word_count
 
 
 def extract_office_embedded_images_with_diagnostics(file_path, output_dir, min_pixels=150, max_images=25):
@@ -364,6 +481,8 @@ def extract_office_embedded_images_with_diagnostics(file_path, output_dir, min_p
                 return [], diagnostics
 
             media_slide_map = _build_pptx_media_slide_map(archive)
+            media_word_offsets, total_body_words = build_docx_image_word_offsets(archive)
+            diagnostics['total_body_words'] = total_body_words
 
             candidate_names = [
                 entry_name for entry_name in entry_names
@@ -453,6 +572,8 @@ def extract_office_embedded_images_with_diagnostics(file_path, output_dir, min_p
                     'width': width,
                     'height': height,
                     'slide_number': media_slide_map.get(media_name),
+                    'word_offset': media_word_offsets.get(media_name),
+                    'position_known': media_name in media_word_offsets or media_name in media_slide_map,
                     'source_format': source_extension.lstrip('.'),
                     'rasterized': is_vector,
                     'embedded_text': embedded_text,

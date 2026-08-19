@@ -258,6 +258,12 @@ DI_MARKDOWN_TABLE_ROW_PATTERN = re.compile(r'(?m)^\s*\|.+\|\s*$')
 # treats them as a signal that Enhanced extraction is worth the extra cost, because Content
 # Understanding is the only engine that describes figures.
 DI_MARKDOWN_FIGURE_PATTERN = re.compile(r'(<figure\b|</figure>|!\[[^\]]*\]\()', re.IGNORECASE)
+# Budget for image content merged into an existing chunk. The cap is token-oriented, so it is
+# converted with a conservative characters-per-token estimate before being used as a length limit.
+OFFICE_IMAGE_MERGE_CHARS_PER_TOKEN = 4
+OFFICE_IMAGE_MERGE_UTILIZATION = 0.9
+OFFICE_IMAGE_MERGE_FALLBACK_CAP = 16384
+OFFICE_IMAGE_MERGE_MIN_CHAR_LIMIT = 4000
 
 
 def is_pdf_file_name(file_name):
@@ -339,17 +345,18 @@ def _build_office_embedded_image_chunks(
     file_path,
     settings,
     update_callback,
-    starting_page_number=1,
 ):
-    """Analyze images embedded in an Office file and return them as labelled content chunks.
+    """Analyze images embedded in an Office file and return placeable content blocks.
 
-    Neither engine describes figures inside Office files, so the images are pulled out of the OOXML
-    package and analyzed individually with whichever engine backs the admin's selected mode.
+    Neither engine describes figures inside Office files, so the images are pulled out of the
+    package and analyzed individually with whichever engine backs the admin's selected mode. Each
+    result carries the position metadata needed to merge it back into the chunk it came from,
+    rather than being appended to the end of the document.
 
-    Returns ``(chunks, analyzed_count, extraction_engine)``.
+    Returns ``(image_blocks, analyzed_count, extraction_engine, total_body_words)``.
     """
     if not settings.get('enable_office_embedded_image_analysis', True):
-        return [], 0, EXTRACTION_ENGINE_DOCUMENT_INTELLIGENCE
+        return [], 0, EXTRACTION_ENGINE_DOCUMENT_INTELLIGENCE, 0
 
     min_pixels = normalize_office_embedded_image_min_pixels(
         settings.get('office_embedded_image_min_pixels')
@@ -358,7 +365,7 @@ def _build_office_embedded_image_chunks(
         settings.get('office_embedded_image_max_per_document')
     )
     if max_images <= 0:
-        return [], 0, EXTRACTION_ENGINE_DOCUMENT_INTELLIGENCE
+        return [], 0, EXTRACTION_ENGINE_DOCUMENT_INTELLIGENCE, 0
 
     # Embedded images are images, so they follow the image side of the admin's configured mode.
     admin_extraction_mode = get_effective_document_intelligence_pdf_image_extraction_mode(settings)
@@ -368,6 +375,7 @@ def _build_office_embedded_image_chunks(
     chunks = []
     analyzed_count = 0
     temp_image_dir = None
+    total_body_words = 0
 
     try:
         temp_image_dir = tempfile.mkdtemp(prefix='office_images_')
@@ -379,6 +387,7 @@ def _build_office_embedded_image_chunks(
         )
 
         candidate_count = image_diagnostics.get('candidates', 0)
+        total_body_words = image_diagnostics.get('total_body_words', 0)
         if not embedded_images:
             # Say so explicitly. Otherwise "no images in this file" and "images found but all
             # skipped" look identical in the workspace log, which is the common confusion.
@@ -404,7 +413,7 @@ def _build_office_embedded_image_chunks(
                     office_embedded_image_count=0,
                     office_embedded_image_candidates=0,
                 )
-            return [], 0, extraction_engine
+            return [], 0, extraction_engine, total_body_words
 
         engine_label = (
             "Content Understanding"
@@ -456,8 +465,11 @@ def _build_office_embedded_image_chunks(
                 f"{embedded_image.get('name')}{location_label}"
             )
             chunks.append({
-                'page_number': starting_page_number + len(chunks),
                 'content': f"{heading}\n\n" + "\n\n".join(body_parts),
+                'slide_number': embedded_image.get('slide_number'),
+                'word_offset': embedded_image.get('word_offset'),
+                'position_known': bool(embedded_image.get('position_known')),
+                'name': embedded_image.get('name'),
             })
             analyzed_count += 1
 
@@ -481,7 +493,140 @@ def _build_office_embedded_image_chunks(
         if temp_image_dir and os.path.isdir(temp_image_dir):
             shutil.rmtree(temp_image_dir, ignore_errors=True)
 
-    return chunks, analyzed_count, extraction_engine
+    return chunks, analyzed_count, extraction_engine, total_body_words
+
+
+def _resolve_embedded_image_chunk_index(image_block, chunks, total_body_words):
+    """Return the index of the chunk an embedded image belongs to.
+
+    PowerPoint images carry a slide number, which maps onto the chunk covering that slide. Word
+    images carry a word offset, which is mapped proportionally rather than absolutely because the
+    extractor's word count will not match the raw document body exactly; a proportional mapping
+    keeps images spread across the document instead of clustering them at the front. Images with no
+    position at all, which is the case for legacy binary Office formats, anchor to the final chunk
+    so no page number is invented beyond the end of the document.
+    """
+    if not chunks:
+        return None
+
+    slide_number = image_block.get('slide_number')
+    if slide_number:
+        best_index = 0
+        for index, chunk in enumerate(chunks):
+            try:
+                page_number = int(chunk.get('page_number') or 0)
+            except (TypeError, ValueError):
+                continue
+            if page_number <= slide_number:
+                best_index = index
+        return best_index
+
+    word_offset = image_block.get('word_offset')
+    if word_offset is not None and total_body_words > 0:
+        relative_position = float(word_offset) / float(total_body_words)
+        relative_position = min(max(relative_position, 0.0), 1.0)
+        index = int(relative_position * len(chunks))
+        return min(index, len(chunks) - 1)
+
+    return len(chunks) - 1
+
+
+def _merge_embedded_images_into_chunks(final_chunks, image_blocks, total_body_words, settings):
+    """Merge analyzed images into the chunk they came from.
+
+    Chunk ids are derived from the page number, so two chunks sharing a page number overwrite each
+    other in the search index. Image content is therefore appended to the existing chunk's content
+    rather than emitted as a second chunk, which is also what keeps a figure searchable alongside
+    the text it belongs to.
+
+    Returns ``(merged_chunks, merged_count, overflow_blocks)``.
+    """
+    if not image_blocks:
+        return final_chunks, 0, []
+
+    merged_chunks = [dict(chunk) for chunk in final_chunks]
+    if not merged_chunks:
+        return merged_chunks, 0, list(image_blocks)
+
+    try:
+        chunk_size_cap = int(get_chunk_size_cap(settings))
+    except Exception:
+        chunk_size_cap = OFFICE_IMAGE_MERGE_FALLBACK_CAP
+    merged_char_limit = max(
+        OFFICE_IMAGE_MERGE_MIN_CHAR_LIMIT,
+        int(chunk_size_cap * OFFICE_IMAGE_MERGE_CHARS_PER_TOKEN * OFFICE_IMAGE_MERGE_UTILIZATION),
+    )
+
+    merged_count = 0
+    overflow_blocks = []
+
+    for image_block in image_blocks:
+        content = str(image_block.get('content') or '').strip()
+        if not content:
+            continue
+
+        target_index = _resolve_embedded_image_chunk_index(image_block, merged_chunks, total_body_words)
+        if target_index is None:
+            overflow_blocks.append(image_block)
+            continue
+
+        target_chunk = merged_chunks[target_index]
+        existing_content = str(target_chunk.get('content') or '')
+
+        # Keep merged chunks under the embedding budget; anything that does not fit spills rather
+        # than silently producing an oversized chunk.
+        if len(existing_content) + len(content) + 2 > merged_char_limit:
+            overflow_blocks.append(image_block)
+            continue
+
+        target_chunk['content'] = (
+            f"{existing_content.rstrip()}\n\n{content}" if existing_content.strip() else content
+        )
+        merged_count += 1
+
+    return merged_chunks, merged_count, overflow_blocks
+
+
+def _append_overflow_image_chunks(merged_chunks, overflow_blocks):
+    """Append images that could not fit their origin chunk, numbered past the existing chunks."""
+    if not overflow_blocks:
+        return merged_chunks
+
+    next_page_number = max(
+        (int(chunk.get('page_number') or 0) for chunk in merged_chunks),
+        default=0,
+    ) + 1
+
+    for offset, image_block in enumerate(overflow_blocks):
+        content = str(image_block.get('content') or '').strip()
+        if not content:
+            continue
+        merged_chunks.append({
+            'page_number': next_page_number + offset,
+            'content': content,
+        })
+
+    return merged_chunks
+
+
+def _assert_unique_chunk_page_numbers(chunks, document_id):
+    """Warn when chunks share a page number, which would overwrite entries in the search index."""
+    seen_page_numbers = set()
+    duplicates = set()
+    for chunk in chunks:
+        page_number = chunk.get('page_number')
+        if page_number in seen_page_numbers:
+            duplicates.add(page_number)
+        seen_page_numbers.add(page_number)
+
+    if duplicates:
+        log_event(
+            f"[OFFICE_EMBEDDED_IMAGES] Duplicate chunk page numbers for document {document_id}: "
+            f"{sorted(duplicates)}. Chunk ids are derived from the page number, so these would "
+            "overwrite each other in the search index.",
+            level=logging.ERROR,
+        )
+    return not duplicates
 
 
 def _resolve_extraction_engine_for_mode(extraction_mode, settings):
@@ -7500,28 +7645,50 @@ def process_di_document(document_id, user_id, temp_file_path, original_filename,
 
         # --- Embedded Office image analysis (DOCX/DOC/PPTX/PPT) ---
         # Neither extraction engine describes figures inside Office files, so embedded images are
-        # analyzed separately and appended as their own citable chunks. Legacy binary formats are
-        # included because their pictures are carved from the OLE container by signature.
+        # analyzed separately and merged back into the chunk they came from. Merging rather than
+        # appending keeps a figure searchable alongside its surrounding text, and avoids inventing
+        # page numbers past the end of the document.
         if is_word or is_ppt:
-            next_chunk_page_number = max(
-                (int(chunk.get('page_number') or 0) for chunk in final_chunks_to_save),
-                default=0,
-            ) + 1
-
-            embedded_image_chunks, embedded_image_count, embedded_image_engine = _build_office_embedded_image_chunks(
-                chunk_path,
-                settings,
-                update_callback,
-                starting_page_number=next_chunk_page_number,
+            image_blocks, embedded_image_count, embedded_image_engine, embedded_total_words = (
+                _build_office_embedded_image_chunks(
+                    chunk_path,
+                    settings,
+                    update_callback,
+                )
             )
 
-            if embedded_image_chunks:
-                final_chunks_to_save = list(final_chunks_to_save) + embedded_image_chunks
+            if image_blocks:
+                final_chunks_to_save, merged_image_count, overflow_image_blocks = (
+                    _merge_embedded_images_into_chunks(
+                        final_chunks_to_save,
+                        image_blocks,
+                        embedded_total_words,
+                        settings,
+                    )
+                )
+                final_chunks_to_save = _append_overflow_image_chunks(
+                    final_chunks_to_save, overflow_image_blocks
+                )
+                _assert_unique_chunk_page_numbers(final_chunks_to_save, document_id)
+
                 update_callback(
                     number_of_pages=len(final_chunks_to_save),
                     office_embedded_image_count=embedded_image_count,
+                    office_embedded_image_merged=merged_image_count,
                     office_embedded_image_engine=embedded_image_engine,
                 )
+                if overflow_image_blocks:
+                    update_callback(
+                        status=(
+                            f"Merged {merged_image_count} embedded image(s) into their source "
+                            f"chunk; {len(overflow_image_blocks)} exceeded the chunk size budget "
+                            "and were appended."
+                        )
+                    )
+                else:
+                    update_callback(
+                        status=f"Merged {merged_image_count} embedded image(s) into their source chunk."
+                    )
 
         # Save Final Chunks to Search Index
         num_final_chunks = len(final_chunks_to_save)

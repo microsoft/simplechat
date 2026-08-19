@@ -2,6 +2,18 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.228)**
+
+#### Bug Fixes
+
+*   **Figures Now Stay in the Chunk They Came From**
+    *   Images extracted from Word and PowerPoint files were appended as extra chunks at the end of the document, with page numbers continuing past the real content. A figure on page 5 of a 15-page document became chunk 16, so a search hit on the figure lost its surrounding text and citations pointed at a page that did not exist.
+    *   Embedded images are now merged into the chunk containing the text they appear with. PowerPoint images follow the slide that references them; Word images are placed by their position in reading order; and legacy `.doc` and `.ppt` images, which carry no recoverable position, anchor to the final chunk instead of creating a page beyond the document.
+    *   Merging rather than adding a chunk also removes a latent indexing hazard: chunk ids are derived from the page number, so a second chunk sharing a page number would have overwritten the first in the search index.
+    *   PDFs were already correct — Content Understanding attributes each figure to its page by span, and Document Intelligence Layout inlines tables and figures into the page markdown. That behavior is unchanged and now covered by a regression test.
+    *   **Existing documents keep their current chunks until they are extracted again.** Use *Change Extraction* or re-upload to pick up the new placement.
+    *   (Ref: #1277, `functions_documents.py`, `functions_office_media.py`, figure chunk association)
+
 ### **(v0.250.227)**
 
 #### Bug Fixes
