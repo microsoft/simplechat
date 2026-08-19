@@ -143,14 +143,23 @@ def test_latest_features_stays_last():
     assert tab_ids[-1] == "latest-features", (
         f"Latest Features must be the last tab, got '{tab_ids[-1]}'"
     )
-    assert tab_ids[0] == "general", (
-        f"General must be the first tab, got '{tab_ids[0]}'"
-    )
     assert ADMIN_NAV[-1]["id"] == "help", (
         "Latest Features should sit in the last group"
     )
 
-    print("Latest Features is last; General leads.")
+    # The landing tab is whatever the map lists first, so it moves freely as the
+    # information architecture changes. What must never drift is that the admin
+    # does not land on Latest Features, which is the whole point of the move.
+    assert tab_ids[0] != "latest-features", (
+        "Latest Features must never be the landing tab"
+    )
+    assert ADMIN_NAV[0]["tabs"], "The first group must expose at least one tab"
+    assert tab_ids[0] == ADMIN_NAV[0]["tabs"][0]["id"], (
+        "The landing tab must be the first tab of the first group, so the "
+        "sidebar and the tab strip agree on where an admin lands"
+    )
+
+    print(f"Latest Features is last; '{tab_ids[0]}' leads.")
 
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
-            <div class="tab-pane fade" id="safety" role="tabpanel" aria-labelledby="safety-tab">
+            <div class="tab-pane fade{% if admin_landing_tab == 'content-safety' %} show active{% endif %}" id="content-safety" role="tabpanel" aria-labelledby="content-safety-tab">
 
                  <p class="text-muted">
                     Configure content safety, archiving, and user feedback settings. If Content Safety is enabled, user
@@ -174,49 +174,6 @@
 
 
 
-                <div class="card p-3 mb-3" id="permissions-section"
-                    data-requires="enable_user_feedback"
-                    data-requires-label="User Feedback"
-                    data-requires-target="user-feedback-section"
-                    data-requires-scope="#require_member_of_feedback_admin"
-                    data-requires-description="The FeedbackAdmin role only controls access to the User Feedback report, so it does nothing until User Feedback is enabled.">
-                    <h5>
-                        <i class="bi bi-person-check me-2"></i>Permissions
-                    </h5>
-                    <p class="text-muted">Control which users can access specific administrative views related to safety and feedback.</p>
-
-
-                    <div class="form-group form-check form-switch mb-2">
-                        <input type="checkbox"
-                            class="form-check-input"
-                            id="require_member_of_safety_violation_admin"
-                            name="require_member_of_safety_violation_admin"
-                            {% if settings.require_member_of_safety_violation_admin %}checked{% endif %}>
-                        <label class="form-check-label ms-2" for="require_member_of_safety_violation_admin">
-                            Require SafetyViolationAdmin App Role
-                        </label>
-                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="When enabled, only users assigned the SafetyViolationAdmin Enterprise App role can access safety violation reports."></i>
-                    </div>
-                     <p class="text-muted small mb-3">
-                        Required app role value: <code>SafetyViolationAdmin</code>. Assign this role to users or groups in the Enterprise App before enabling the requirement. If disabled, any user with the general <code>Admin</code> app role can access the Safety Violations admin page.
-                    </p>
-
-
-                    <div class="form-group form-check form-switch mb-2">
-                        <input type="checkbox"
-                            class="form-check-input"
-                            id="require_member_of_feedback_admin"
-                            name="require_member_of_feedback_admin"
-                            {% if settings.require_member_of_feedback_admin %}checked{% endif %}>
-                        <label class="form-check-label ms-2" for="require_member_of_feedback_admin">
-                            Require FeedbackAdmin App Role
-                        </label>
-                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="When enabled, only users assigned the FeedbackAdmin Enterprise App role can access user feedback reports."></i>
-                    </div>
-                     <p class="text-muted small mb-0">
-                        Required app role value: <code>FeedbackAdmin</code>. Assign this role to users or groups in the Enterprise App before enabling the requirement. If disabled, any user with the general <code>Admin</code> app role can access the User Feedback admin page. Requires <strong>Enable User Feedback</strong> to be active.
-                    </p>
-                </div>
 
 
 

@@ -19,29 +19,35 @@ ADMIN_NAV = [
         "icon": "bi-palette",
         "tabs": [
             {
-                "id": "general",
-                "label": "General",
-                "icon": "bi-gear",
+                "id": "branding",
+                "label": "Branding",
+                "icon": "bi-palette",
                 "sections": [
                     {"id": "branding-section", "label": "Branding", "icon": "bi-palette"},
                     {"id": "home-page-text-section", "label": "Home Page Text", "icon": "bi-house"},
                     {"id": "appearance-section", "label": "Appearance", "icon": "bi-brush"},
-                    {"id": "health-check-section", "label": "Health Check", "icon": "bi-heart-pulse"},
-                    {"id": "swagger-section", "label": "API Documentation", "icon": "bi-file-earmark-code"},
+                ],
+            },
+            {
+                # Everything the app states to the user before or during use:
+                # banners, notices and the agreements they must accept.
+                "id": "notices",
+                "label": "Notices & Agreements",
+                "icon": "bi-megaphone",
+                "sections": [
                     {"id": "classification-banner-section", "label": "Classification Banner", "icon": "bi-shield-exclamation"},
                     {"id": "ai-notice-section", "label": "Chat AI Notice", "icon": "bi-robot"},
                     {"id": "terms-of-use-section", "label": "Terms of Use", "icon": "bi-door-open"},
-                    {"id": "support-menu-section", "label": "Support", "icon": "bi-life-preserver"},
-                    {"id": "external-links-section", "label": "External Links", "icon": "bi-box-arrow-up-right"},
-                    {"id": "system-settings-section", "label": "System Settings", "icon": "bi-gear-fill"},
+                    {"id": "user-agreement-section", "label": "User Agreement", "icon": "bi-file-earmark-check"},
                 ],
             },
             {
                 "id": "custom-pages",
-                "label": "Custom Pages",
+                "label": "Pages & Links",
                 "icon": "bi-window-plus",
                 "sections": [
                     {"id": "custom-pages-section", "label": "Static Pages", "icon": "bi-file-earmark-richtext"},
+                    {"id": "external-links-section", "label": "External Links", "icon": "bi-box-arrow-up-right"},
                 ],
             },
         ],
@@ -138,7 +144,6 @@ ADMIN_NAV = [
                     {"id": "file-sharing-section", "label": "File Sharing", "icon": "bi-share"},
                     {"id": "metadata-extraction-section", "label": "Metadata Extraction", "icon": "bi-file-earmark-code"},
                     {"id": "multimodal-vision-section", "label": "Multi-Modal Vision Analysis", "icon": "bi-eye"},
-                    {"id": "user-agreement-section", "label": "User Agreement", "icon": "bi-file-earmark-check"},
                 ],
             },
             {
@@ -189,20 +194,40 @@ ADMIN_NAV = [
         "icon": "bi-shield-lock",
         "tabs": [
             {
-                "id": "security",
-                "label": "Security",
-                "icon": "bi-shield-lock",
+                # Who can get in and what role they need. Distinct from Content
+                # Safety, which is about what may be said once you are in.
+                "id": "access-roles",
+                "label": "Access & Roles",
+                "icon": "bi-person-check",
+                "sections": [
+                    {"id": "permissions-section", "label": "Permissions", "icon": "bi-person-check"},
+                ],
+            },
+            {
+                "id": "secrets",
+                "label": "Secrets",
+                "icon": "bi-safe",
                 "sections": [
                     {"id": "keyvault-section", "label": "Key Vault", "icon": "bi-safe"},
                 ],
             },
             {
-                "id": "safety",
-                "label": "Safety",
-                "icon": "bi-shield-check",
+                "id": "content-safety",
+                "label": "Content Safety",
+                "icon": "bi-shield-exclamation",
                 "sections": [
                     {"id": "content-safety-section", "label": "Content Safety", "icon": "bi-shield-exclamation"},
-                    {"id": "permissions-section", "label": "Permissions", "icon": "bi-person-check"},
+                ],
+            },
+            {
+                # Interim home for the mixed System Settings card. Four of its
+                # eight fields are idle-timeout, which is the plurality; the
+                # rest are split out to their real homes in a later change.
+                "id": "session",
+                "label": "Session",
+                "icon": "bi-hourglass-split",
+                "sections": [
+                    {"id": "system-settings-section", "label": "System Settings", "icon": "bi-sliders"},
                 ],
             },
             {
@@ -348,12 +373,14 @@ ADMIN_NAV = [
             },
             {
                 "id": "logging",
-                "label": "Logging",
+                "label": "Logging & Health",
                 "icon": "bi-journal-text",
                 "sections": [
                     {"id": "application-insights-section", "label": "Application Insights", "icon": "bi-graph-up"},
                     {"id": "debug-logging-section", "label": "Debug Logging", "icon": "bi-bug"},
                     {"id": "file-processing-logs-section", "label": "File Process Logging", "icon": "bi-file-earmark-text"},
+                    {"id": "health-check-section", "label": "Health Check", "icon": "bi-heart-pulse"},
+                    {"id": "swagger-section", "label": "API Documentation", "icon": "bi-file-earmark-code"},
                 ],
             },
         ],
@@ -363,6 +390,16 @@ ADMIN_NAV = [
         "label": "Help",
         "icon": "bi-life-preserver",
         "tabs": [
+            {
+                # Where an admin looks first when a user needs help, ahead of
+                # raising it with the project.
+                "id": "support-menu",
+                "label": "Support Menu",
+                "icon": "bi-life-preserver",
+                "sections": [
+                    {"id": "support-menu-section", "label": "Support", "icon": "bi-life-preserver"},
+                ],
+            },
             {
                 "id": "send-feedback",
                 "label": "Send Feedback",
@@ -405,6 +442,18 @@ def get_group_for_tab(tab_id):
     for group, tab in iter_tabs():
         if tab["id"] == tab_id:
             return group
+    return None
+
+
+def get_landing_tab_id():
+    """Return the tab an admin lands on when no tab is requested.
+
+    This is the first tab of the first group rather than a fixed id, so the
+    landing pane follows the navigation map as cards are regrouped. Latest
+    Features is pinned last precisely so it can never win this.
+    """
+    for _, tab in iter_tabs():
+        return tab["id"]
     return None
 
 

@@ -2,6 +2,38 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.260.013)**
+
+#### User Interface Enhancements
+
+*   **General Tab Broken Up Into Focused Tabs**
+    *   General had grown into a catch-all of eleven unrelated cards: branding sat next to health checks, API documentation, terms of use and system settings.
+    *   Appearance now has **Branding** (branding, home page text, appearance), **Notices & Agreements** (classification banner, chat AI notice, terms of use and the user agreement pulled across from Workspaces) and **Pages & Links** (static pages plus external links).
+    *   Health Check and API Documentation moved to Operations, which is now **Logging & Health** — they report on how the app is running rather than how it looks.
+    *   Support moved to Help as its own **Support Menu** tab, next to Send Feedback.
+    *   (Ref: `branding`, `notices`, `custom-pages`, `logging`, `support-menu`)
+
+*   **Security Split Into Five Purposeful Tabs**
+    *   Security held a single Key Vault card while an unrelated Safety tab mixed content filtering with role permissions, which are different jobs.
+    *   Security is now **Access & Roles** (who gets in and with what role), **Secrets** (Key Vault), **Content Safety** (what may be said once you are in), **Session** (idle timeout and related system settings) and **Network** (Azure Front Door).
+    *   (Ref: `access-roles`, `secrets`, `content-safety`, `session`, `network`)
+
+#### Bug Fixes
+
+*   **"Open Key Vault Settings" Link No Longer Depends On A Hardcoded Tab**
+    *   The link from Data Management to Key Vault switched tabs by a hardcoded id, so it silently stopped working whenever that tab was renamed.
+    *   It now uses the standard card link, which finds the owning tab from the page itself and stays correct however the settings are grouped.
+    *   (Ref: `data-management-key-vault-link`, `admin_card_links.js`, `admin_data_management.js`)
+
+*   **Admin Settings Always Opens On A Real Tab**
+    *   The tab shown on arrival was pinned to a specific id in both the markup and the sidebar script. Regrouping settings could leave Admin Settings opening with no tab selected at all.
+    *   The landing tab is now taken from the navigation map, so it follows the settings and can never be Latest Features.
+    *   (Ref: `admin_landing_tab`, `get_landing_tab_id`, `admin_sidebar_nav.js`)
+
+*   **Stale Tab Names In Latest Features**
+    *   Several Latest Features entries pointed readers at tabs by their old names after the settings moved.
+    *   (Ref: `latest-features` pane)
+
 ### **(v0.260.012)**
 
 #### User Interface Enhancements

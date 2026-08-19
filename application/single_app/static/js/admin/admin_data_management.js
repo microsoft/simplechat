@@ -388,7 +388,8 @@ function bindEvents() {
         pendingDataManagementBackupDelete = null;
     });
     elements.dataManagementConfirmBackupDeleteBtn?.addEventListener("click", deleteDataManagementBackup);
-    elements.dataManagementKeyVaultLink?.addEventListener("click", openKeyVaultSettings);
+    // The Key Vault link carries data-admin-link, so admin_card_links.js
+    // resolves the owning tab from the DOM and scrolls to the card.
     elements.dataManagementCosmosEditorOpenDangerBtn?.addEventListener("click", showCosmosEditorDangerModal);
     elements.datamanagementcosmoseditordangeraccept?.addEventListener("change", updateCosmosEditorDangerAcceptState);
     elements.dataManagementCosmosEditorAcceptDangerBtn?.addEventListener("click", acceptCosmosEditorDanger);
@@ -907,20 +908,6 @@ function setKeyStorageAlert(variant, iconClass, title, message, linkText) {
     setText(elements.dataManagementKeyStorageAlertTitle, title);
     setText(elements.dataManagementKeyStorageAlertMessage, message);
     setText(elements.dataManagementKeyVaultLink, linkText);
-}
-
-function openKeyVaultSettings(event) {
-    event?.preventDefault();
-    const securityTabButton = document.getElementById("security-tab");
-    if (securityTabButton && window.bootstrap?.Tab) {
-        window.bootstrap.Tab.getOrCreateInstance(securityTabButton).show();
-    } else if (securityTabButton) {
-        securityTabButton.click();
-    }
-    window.location.hash = "security";
-    window.setTimeout(() => {
-        document.getElementById("keyvault-section")?.scrollIntoView({ block: "start", behavior: "smooth" });
-    }, 100);
 }
 
 function collectSettings() {

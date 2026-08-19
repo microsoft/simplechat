@@ -1,4 +1,4 @@
-            <div class="tab-pane fade" id="logging" role="tabpanel" aria-labelledby="logging-tab">
+            <div class="tab-pane fade{% if admin_landing_tab == 'logging' %} show active{% endif %}" id="logging" role="tabpanel" aria-labelledby="logging-tab">
                 <p class="text-muted">
                     Configure logging settings for monitoring, debugging, and auditing purposes. These settings control various types of logging throughout the application including application insights, debug messages, and file processing events.
                 </p>
@@ -173,5 +173,102 @@
                             </div>
                         </div>
                     </section>
+                </div>
+                <div class="card p-3 mb-3" id="health-check-section">
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <h5 class="mb-0">
+                            <i class="bi bi-heart-pulse me-2"></i>Health Check
+                        </h5>
+                        <button type="button" class="btn btn-outline-info btn-sm" data-bs-toggle="modal" data-bs-target="#healthCheckInfoModal">
+                            <i class="bi bi-info-circle me-1"></i>Configuration Guide
+                        </button>
+                    </div>
+                    <p class="text-muted mb-3">Configure health check endpoint for external monitoring systems.</p>
+
+                    <div class="row g-3">
+                        <div class="col-lg-6">
+                            <div class="border rounded p-3 h-100 bg-body-tertiary-subtle">
+                                <div class="d-flex align-items-start justify-content-between gap-2">
+                                    <div>
+                                        <h6 class="mb-1">Authenticated Endpoint</h6>
+                                        <p class="text-muted small mb-0">Use when your monitoring system can reach a protected route and you want the endpoint governed by the normal app access boundary.</p>
+                                    </div>
+                                    <span class="badge text-bg-primary">Protected</span>
+                                </div>
+                                <div class="form-check form-switch mt-3 mb-2">
+                                    <input
+                                        type="checkbox"
+                                        class="form-check-input"
+                                        id="enable_external_healthcheck"
+                                        name="enable_external_healthcheck"
+                                        {% if settings.enable_external_healthcheck %}checked{% endif %}>
+                                    <label class="form-check-label ms-2" for="enable_external_healthcheck">
+                                        Enable /external/healthcheck
+                                    </label>
+                                    <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Enable the authenticated /external/healthcheck endpoint for external monitoring systems."></i>
+                                </div>
+                                <p class="text-muted small mb-0">Best for internal monitors or diagnostics tooling that already authenticates to the application.</p>
+                            </div>
+                        </div>
+                        <div class="col-lg-6">
+                            <div class="border rounded p-3 h-100 border-warning-subtle bg-warning-subtle">
+                                <div class="d-flex align-items-start justify-content-between gap-2">
+                                    <div>
+                                        <h6 class="mb-1">Unauthenticated Endpoint</h6>
+                                        <p class="text-muted small mb-0">Use when a platform health probe cannot sign in and only needs a lightweight availability response.</p>
+                                    </div>
+                                    <span class="badge text-bg-warning">No Auth</span>
+                                </div>
+                                <div class="form-check form-switch mt-3 mb-2">
+                                    <input
+                                        type="checkbox"
+                                        class="form-check-input"
+                                        id="enable_no_auth_external_healthcheck"
+                                        name="enable_no_auth_external_healthcheck"
+                                        {% if settings.enable_no_auth_external_healthcheck %}checked{% endif %}>
+                                    <label class="form-check-label ms-2" for="enable_no_auth_external_healthcheck">
+                                        Enable /external/healthcheckz
+                                    </label>
+                                    <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Enable the unauthenticated /external/healthcheckz endpoint for probes that cannot authenticate."></i>
+                                </div>
+                                <div class="alert alert-warning small mb-0" role="alert">
+                                    <strong>Security note:</strong> This route is intentionally unauthenticated. Only enable it for trusted health probes or controlled network paths.
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="card p-3 mb-3" id="swagger-section">
+                    <div class="d-flex align-items-center justify-content-between mb-2">
+                        <h5 class="mb-0">
+                            <i class="bi bi-file-earmark-code me-2"></i>API Documentation
+                        </h5>
+                        <div class="btn-group" role="group">
+                            <button type="button" class="btn btn-outline-info btn-sm" data-bs-toggle="modal" data-bs-target="#swaggerInfoModal">
+                                <i class="bi bi-info-circle me-1"></i>Why Enable Swagger?
+                            </button>
+                            <a href="/swagger" class="btn btn-primary btn-sm" target="_blank">
+                                <i class="bi bi-box-arrow-up-right me-1"></i>Open Swagger UI
+                            </a>
+                        </div>
+                    </div>
+                    <p class="text-muted mb-3">Configure automatic OpenAPI/Swagger documentation for API endpoints.</p>
+
+                    <div class="form-check form-switch mb-2">
+                        <input
+                            type="checkbox"
+                            class="form-check-input"
+                            id="enable_swagger"
+                            name="enable_swagger"
+                            {% if settings.enable_swagger %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="enable_swagger">
+                            Enable Swagger/OpenAPI Documentation (/swagger)
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Enable automatic API documentation with Swagger UI interface for testing and exploring endpoints."></i>
+                    </div>
+                    <p class="text-muted small mb-0">
+                        Provides interactive API documentation, endpoint testing, and schema validation.
+                        Useful for developers, API integration, and system troubleshooting.
+                    </p>
                 </div>
             </div>

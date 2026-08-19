@@ -980,7 +980,10 @@
            visible whichever governance tab is active. #}
         <div id="governance-status" class="alert d-none" role="alert"></div>
         <div class="tab-content mt-3" id="adminSettingsTabContent">
-            {% include "admin/_panes/security.html" %}
+            {% include "admin/_panes/secrets.html" %}
+            {% include "admin/_panes/access-roles.html" %}
+            {% include "admin/_panes/content-safety.html" %}
+            {% include "admin/_panes/session.html" %}
 
 
             {% include "admin/_panes/agents.html" %}
@@ -994,7 +997,8 @@
             <!-- Logging Tab Content -->
             {% include "admin/_panes/logging.html" %}
 
-            {% include "admin/_panes/general.html" %}
+            {% include "admin/_panes/branding.html" %}
+            {% include "admin/_panes/notices.html" %}
 
             {% include "admin/_panes/custom-pages.html" %}
 
@@ -1031,11 +1035,11 @@
             {% include "admin/_panes/feedback-alerts.html" %}
 
 
-            {% include "admin/_panes/safety.html" %}
 
 
             {% include "admin/_panes/search-extract.html" %}
 
+            {% include "admin/_panes/support-menu.html" %}
             {% include "admin/_panes/send-feedback.html" %}
 
             {# Latest Features stays last so it never opens by default #}

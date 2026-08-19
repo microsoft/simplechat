@@ -1,0 +1,288 @@
+            <div class="tab-pane fade{% if admin_landing_tab == 'notices' %} show active{% endif %}" id="notices" role="tabpanel" aria-labelledby="notices-tab">
+                <div class="card p-3 mb-3" id="classification-banner-section">
+                    <h5>
+                        <i class="bi bi-shield-exclamation me-2"></i>Classification Banner
+                    </h5>
+                    <div class="form-check form-switch mb-2">
+                        <input class="form-check-input" type="checkbox" id="classification_banner_enabled" name="classification_banner_enabled"
+                            {% if settings.classification_banner_enabled %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="classification_banner_enabled">
+                            Enable Classification Banner
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Display a security classification banner at the top of every page to indicate data sensitivity level."></i>
+                    </div>
+                    <div class="mb-2">
+                        <label for="classification_banner_text" class="form-label">Banner Text</label>
+                        <input type="text" class="form-control" id="classification_banner_text" name="classification_banner_text"
+                            value="{{ settings.classification_banner_text }}">
+                    </div>
+                    <div class="mb-2">
+                        <label for="classification_banner_color" class="form-label">Banner Color</label>
+                        <input type="color" class="form-control form-control-color" id="classification_banner_color" name="classification_banner_color"
+                            value="{{ settings.classification_banner_color or '#ffc107' }}" style="width: 3rem; height: 2rem;">
+                    </div>
+                    <div class="mb-2">
+                        <label for="classification_banner_text_color" class="form-label">Banner Text Color</label>
+                        <input type="color" class="form-control form-control-color" id="classification_banner_text_color" name="classification_banner_text_color"
+                            value="{{ settings.classification_banner_text_color or '#ffffff' }}" style="width: 3rem; height: 2rem;">
+                    </div>
+                    <div class="mb-2">
+                        <span id="classification-banner-preview"
+                              style="display:inline-block; padding:0.5em 1em; border-radius:0.3em; font-weight:bold; color:{{ settings.classification_banner_text_color or '#ffffff' }}; background:{{ settings.classification_banner_color or '#ffc107' }};">
+                            {{ settings.classification_banner_text or 'Banner Preview' }}
+                        </span>
+                    </div>
+                </div>
+
+                <div class="card p-3 mb-3" id="ai-notice-section">
+                    <h5>
+                        <i class="bi bi-robot me-2"></i>Chat AI Notice
+                    </h5>
+                    <p class="text-muted small">
+                        Display an administrator-provided reminder directly below the chat input, such as guidance that responses are AI-generated and should be reviewed.
+                    </p>
+                    <div class="form-check form-switch mb-3">
+                        <input
+                            class="form-check-input"
+                            type="checkbox"
+                            id="enable_ai_notice"
+                            name="enable_ai_notice"
+                            {% if settings.enable_ai_notice %}checked{% endif %}
+                        >
+                        <label class="form-check-label ms-2" for="enable_ai_notice">
+                            Show a custom AI notice below the chat input
+                        </label>
+                    </div>
+                    <div id="ai_notice_settings" class="{% if not settings.enable_ai_notice %}d-none{% endif %}">
+                        <div class="mb-3">
+                            <label for="ai_notice_message" class="form-label">Notice Text</label>
+                            <textarea
+                                class="form-control"
+                                id="ai_notice_message"
+                                name="ai_notice_message"
+                                rows="3"
+                                maxlength="1000"
+                                placeholder="AI-generated responses may contain errors. Review important information before relying on it."
+                            >{{ settings.ai_notice_message or '' }}</textarea>
+                            <div class="form-text">Plain text only. Line breaks are preserved.</div>
+                        </div>
+                        <div>
+                            <label for="ai_notice_frequency" class="form-label">Display Behavior</label>
+                            <select class="form-select" id="ai_notice_frequency" name="ai_notice_frequency">
+                                <option value="non_dismissible" {% if settings.ai_notice_frequency == 'non_dismissible' %}selected{% endif %}>Always visible; users cannot dismiss it</option>
+                                <option value="every_session" {% if settings.ai_notice_frequency == 'every_session' %}selected{% endif %}>Dismissible once per session</option>
+                                <option value="daily" {% if settings.ai_notice_frequency == 'daily' %}selected{% endif %}>Dismissible once per day</option>
+                                <option value="once" {% if settings.ai_notice_frequency == 'once' %}selected{% endif %}>Dismissible once per message version</option>
+                            </select>
+                            <div class="form-text">Changing the notice text or display behavior creates a new message version and shows it again.</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card p-3 mb-3" id="terms-of-use-section">
+                    <h5>
+                        <i class="bi bi-door-open me-2"></i>Terms of Use
+                    </h5>
+                    <p class="text-muted small">
+                        Require users to accept the Terms of Use before using SimpleChat. Standard Microsoft sign-in users see it before authentication; Teams SSO and other passive sign-in flows are gated immediately after the app session is created.
+                    </p>
+
+                    <div class="form-check form-switch mb-3">
+                        <input
+                            class="form-check-input"
+                            type="checkbox"
+                            id="enable_terms_of_use"
+                            name="enable_terms_of_use"
+                            {% if settings.enable_terms_of_use %}checked{% endif %}
+                        >
+                        <label class="form-check-label ms-2" for="enable_terms_of_use">
+                            Require terms of use
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="When enabled, users must accept the Terms of Use before accessing authenticated application pages or APIs."></i>
+                    </div>
+
+                    <div class="row g-3">
+                        <div class="col-lg-6">
+                            <label for="terms_of_use_title" class="form-label">Popup Title</label>
+                            <input
+                                type="text"
+                                class="form-control"
+                                id="terms_of_use_title"
+                                name="terms_of_use_title"
+                                maxlength="160"
+                                value="{{ settings.terms_of_use_title or 'Terms of Use' }}"
+                            >
+                        </div>
+                        <div class="col-lg-6">
+                            <label for="terms_of_use_frequency" class="form-label">Show Frequency</label>
+                            <select class="form-select" id="terms_of_use_frequency" name="terms_of_use_frequency">
+                                <option value="every_session" {% if settings.terms_of_use_frequency == 'every_session' %}selected{% endif %}>At the start of every session</option>
+                                <option value="daily" {% if settings.terms_of_use_frequency == 'daily' %}selected{% endif %}>Once per day</option>
+                                <option value="once" {% if settings.terms_of_use_frequency == 'once' %}selected{% endif %}>Just once per terms version</option>
+                            </select>
+                            <small class="form-text text-muted">Changing the title, message, or frequency creates a new terms version that users must accept again.</small>
+                        </div>
+                    </div>
+
+                    <div class="mb-3 mt-3">
+                        <label for="terms_of_use_message" class="form-label">Terms of Use Message</label>
+                        <textarea
+                            class="form-control"
+                            id="terms_of_use_message"
+                            name="terms_of_use_message"
+                            rows="7"
+                            maxlength="10000"
+                            placeholder="Enter the terms, notice, or rules of behavior users must accept before using the application."
+                        >{{ settings.terms_of_use_message or '' }}</textarea>
+                        <small class="form-text text-muted">Plain text is shown to users with line breaks preserved.</small>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="terms_of_use_decline_redirect_url" class="form-label">Cancel Redirect URL</label>
+                        <input
+                            type="text"
+                            class="form-control"
+                            id="terms_of_use_decline_redirect_url"
+                            name="terms_of_use_decline_redirect_url"
+                            value="{{ settings.terms_of_use_decline_redirect_url or '/' }}"
+                            placeholder="/"
+                        >
+                        <small class="form-text text-muted">Use a local path such as <code>/</code> or an admin-approved HTTP(S) URL. Signed-in users are locally logged out before this redirect.</small>
+                    </div>
+
+                    <div class="row g-3">
+                        <div class="col-lg-6">
+                            <label for="terms_of_use_accept_button_text" class="form-label">Accept Button Text</label>
+                            <input
+                                type="text"
+                                class="form-control"
+                                id="terms_of_use_accept_button_text"
+                                name="terms_of_use_accept_button_text"
+                                maxlength="80"
+                                value="{{ settings.terms_of_use_accept_button_text or 'Accept and continue' }}"
+                            >
+                        </div>
+                        <div class="col-lg-6">
+                            <label for="terms_of_use_decline_button_text" class="form-label">Cancel Button Text</label>
+                            <input
+                                type="text"
+                                class="form-control"
+                                id="terms_of_use_decline_button_text"
+                                name="terms_of_use_decline_button_text"
+                                maxlength="80"
+                                value="{{ settings.terms_of_use_decline_button_text or 'Cancel' }}"
+                            >
+                        </div>
+                    </div>
+
+                    <div class="alert alert-info mt-3 mb-0" role="alert">
+                        <strong>Tracking:</strong> Every-session acceptance is stored in the Flask session. Daily and once-per-version acceptance are stored in user settings, and accepted or declined events are written to the activity log when the user identity is known.
+                    </div>
+                </div>
+
+
+
+                <div class="card mb-3 p-3" id="user-agreement-section">
+                    <h5>
+                        <i class="bi bi-file-earmark-check me-2"></i>User Agreement
+                    </h5>
+                    <p class="text-muted">
+                        Configure a user agreement that users must accept before uploading files.
+                        Supports Markdown formatting.
+                    </p>
+
+                    <!-- Enable Toggle -->
+                    <div class="form-group form-check form-switch mb-3">
+                        <input type="checkbox"
+                            class="form-check-input"
+                            id="enable_user_agreement"
+                            name="enable_user_agreement"
+                            {% if settings.enable_user_agreement %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="enable_user_agreement">
+                            Enable User Agreement
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="When enabled, users must accept the agreement before uploading files in the selected workspace types."></i>
+                    </div>
+
+                    <!-- User Agreement Settings (shown when enabled) -->
+                    <div id="user_agreement_settings" {% if not settings.enable_user_agreement %}style="display: none;"{% endif %}>
+                        <hr>
+
+                        <!-- Apply To Checkboxes -->
+                        <div class="mb-3">
+                            <label class="form-label fw-bold">Apply to <span class="text-danger">*</span></label>
+                            <p class="text-muted small mb-2">Select where the user agreement should be shown (at least one required):</p>
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <div class="form-check mb-2">
+                                        <input type="checkbox" class="form-check-input" id="user_agreement_apply_personal" name="user_agreement_apply_personal"
+                                            {% if settings.user_agreement_apply_to and 'personal' in settings.user_agreement_apply_to %}checked{% endif %}>
+                                        <label class="form-check-label" for="user_agreement_apply_personal">
+                                            <i class="bi bi-person me-1"></i>Personal Workspaces
+                                        </label>
+                                    </div>
+                                    <div class="form-check mb-2">
+                                        <input type="checkbox" class="form-check-input" id="user_agreement_apply_group" name="user_agreement_apply_group"
+                                            {% if settings.user_agreement_apply_to and 'group' in settings.user_agreement_apply_to %}checked{% endif %}>
+                                        <label class="form-check-label" for="user_agreement_apply_group">
+                                            <i class="bi bi-people me-1"></i>Group Workspaces
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <div class="form-check mb-2">
+                                        <input type="checkbox" class="form-check-input" id="user_agreement_apply_public" name="user_agreement_apply_public"
+                                            {% if settings.user_agreement_apply_to and 'public' in settings.user_agreement_apply_to %}checked{% endif %}>
+                                        <label class="form-check-label" for="user_agreement_apply_public">
+                                            <i class="bi bi-globe me-1"></i>Public Workspaces
+                                        </label>
+                                    </div>
+                                    <div class="form-check mb-2">
+                                        <input type="checkbox" class="form-check-input" id="user_agreement_apply_chat" name="user_agreement_apply_chat"
+                                            {% if settings.user_agreement_apply_to and 'chat' in settings.user_agreement_apply_to %}checked{% endif %}>
+                                        <label class="form-check-label" for="user_agreement_apply_chat">
+                                            <i class="bi bi-chat-dots me-1"></i>Chat
+                                        </label>
+                                    </div>
+                                </div>
+                            </div>
+                            <div id="user_agreement_apply_to_validation" class="text-danger small" style="display: none;">
+                                <i class="bi bi-exclamation-circle me-1"></i>At least one location must be selected
+                            </div>
+                        </div>
+
+                        <!-- Agreement Text -->
+                        <div class="mb-3">
+                            <label for="user_agreement_text" class="form-label fw-bold">
+                                Agreement Text <span class="text-danger">*</span>
+                                <span class="text-muted fw-normal ms-2">(Markdown supported)</span>
+                            </label>
+                            <textarea class="form-control" id="user_agreement_text" name="user_agreement_text" rows="6"
+                                placeholder="Enter the agreement text that users must accept before uploading files...&#10;&#10;Example:&#10;**I confirm that:**&#10;- The documents I am uploading do not contain PII&#10;- I have permission to share these documents">{{ settings.user_agreement_text or '' }}</textarea>
+                            <div class="d-flex justify-content-between mt-1">
+                                <small id="user_agreement_word_count" class="text-muted">0 / 200 words</small>
+                                <small id="user_agreement_word_warning" class="text-danger" style="display: none;">
+                                    <i class="bi bi-exclamation-circle me-1"></i>Exceeds 200 word limit
+                                </small>
+                            </div>
+                        </div>
+
+                        <!-- Daily Acceptance Option -->
+                        <div class="form-group form-check form-switch mb-3">
+                            <input type="checkbox" class="form-check-input" id="enable_user_agreement_daily" name="enable_user_agreement_daily"
+                                {% if settings.enable_user_agreement_daily %}checked{% endif %}>
+                            <label class="form-check-label ms-2" for="enable_user_agreement_daily">
+                                Allow users to accept once per day
+                            </label>
+                            <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="When enabled, users only need to accept the agreement once per day instead of every time they upload files."></i>
+                        </div>
+
+                        <!-- Test Preview Button -->
+                        <div class="d-flex gap-2 flex-wrap">
+                            <button type="button" class="btn btn-outline-secondary" id="test_user_agreement_btn">
+                                <i class="bi bi-eye me-1"></i>Test Preview
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>

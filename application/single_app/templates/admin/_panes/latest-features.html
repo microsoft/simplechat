@@ -1,4 +1,4 @@
-            <div class="tab-pane fade" id="latest-features" role="tabpanel" aria-labelledby="latest-features-tab">
+            <div class="tab-pane fade{% if admin_landing_tab == 'latest-features' %} show active{% endif %}" id="latest-features" role="tabpanel" aria-labelledby="latest-features-tab">
                 <p class="text-muted mb-2">
                     Review the main capabilities introduced in v{{ config['VERSION'] }} and use this page as an admin-facing overview for what to highlight with your teams.
                 </p>
@@ -832,7 +832,7 @@
                         <div class="card card-body">
                             <p class="mb-2">Admins can enable this once and let users see more of the model pipeline, including sending, generating, and responded states with clearer timing information.</p>
                             <div class="alert alert-secondary mb-3" role="alert">
-                                This toggle mirrors the saved value in the <a href="#processing-thoughts-section" data-admin-link="processing-thoughts-section">AI Models</a> tab.
+                                This toggle mirrors the saved value in the <a href="#processing-thoughts-section" data-admin-link="processing-thoughts-section">Chat Experience</a> tab.
                             </div>
                             <div class="form-check form-switch mb-3">
                                 <input
@@ -894,7 +894,7 @@
                                 <li>Admins can choose whether this announcement is visible on the user-facing Latest Features page from <strong>General > User-Facing Latest Features</strong>.</li>
                             </ul>
                             <div class="alert alert-secondary mb-3" role="alert">
-                                Use the <a href="#support-menu-section" data-admin-link="support-menu-section">General</a> tab when you want to show or hide the Fact Memory announcement for end users.
+                                Use the <a href="#support-menu-section" data-admin-link="support-menu-section">Support Menu</a> tab when you want to show or hide the Fact Memory announcement for end users.
                             </div>
                             <div class="latest-feature-gallery">
                                 <button
@@ -967,7 +967,7 @@
                                 <li>This works best when Key Vault is already configured for the app.</li>
                             </ul>
                             <div class="alert alert-secondary mb-3" role="alert">
-                                These controls mirror the saved values in the <a href="#redis-cache-section" data-admin-link="redis-cache-section">Scale</a> tab.
+                                These controls mirror the saved values in the <a href="#redis-cache-section" data-admin-link="redis-cache-section">Redis &amp; Caching</a> tab.
                             </div>
                             <div class="form-check form-switch mb-3">
                                 <input

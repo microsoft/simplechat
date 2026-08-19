@@ -1,4 +1,4 @@
-            <div class="tab-pane fade" id="redis-caching" role="tabpanel" aria-labelledby="redis-caching-tab">
+            <div class="tab-pane fade{% if admin_landing_tab == 'redis-caching' %} show active{% endif %}" id="redis-caching" role="tabpanel" aria-labelledby="redis-caching-tab">
                 {% set enable_dai_debug = settings.enable_dai_debug | default(false) %}
                 <p class="text-muted">
                     Configure Redis cache to improve enterprise scale and performance by caching session data. Enabling Redis allows you to horizontally scale your application across multiple instances without losing session data.

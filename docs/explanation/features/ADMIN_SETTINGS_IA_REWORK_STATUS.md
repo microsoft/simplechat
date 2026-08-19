@@ -22,8 +22,8 @@ Development ─── feature/admin-settings-ia ──┬── #1297 stage 1   
                                                       └──► final PR ──► Development
 ```
 
-Current version: **0.260.012**. Fingerprint: **462 field names / 110 card ids**.
-Navigation: **13 groups / 27 tabs / 88 sections**.
+Current version: **0.260.013**. Fingerprint: **462 field names / 110 card ids**.
+Navigation: **13 groups / 31 tabs / 88 sections**.
 
 ### Shipped
 
@@ -109,6 +109,29 @@ moved from Scale to Security that way.
 | Scale | → Redis & Caching, Cosmos; Front Door moved to Security as Network |
 | Data Lifecycle | **New group.** Retention + Classification pulled from Workspaces, Archiving pulled from Safety |
 | Chat | **New group.** Chat Experience (thoughts from AI Models, file uploads + contents drawer and scope lock from Workspaces), Feedback & Alerts (feedback + desktop notifications from Safety) |
+| Appearance | **General dismantled.** → Branding, Notices & Agreements (+ user agreement from Workspaces), Pages & Links (+ external links) |
+| Security | **Safety dismantled.** → Access & Roles, Secrets, Content Safety, Session, Network |
+| Operations | Logging is now Logging & Health, gaining health check and API documentation from General |
+| Help | Gains Support Menu from General |
+
+### Two hardcoded-id traps found and closed
+
+Both were latent breakage that only surfaced because a tab id changed:
+
+- **`openKeyVaultSettings`** in `admin_data_management.js` switched tabs by the
+  literal id `security-tab`. It was dead weight anyway — the link now carries
+  `data-admin-link` and `admin_card_links.js` resolves the tab from the DOM.
+- **The landing pane** was `show active` hardcoded in one pane's markup and
+  `showAdminTab('general')` hardcoded in the sidebar script. Splitting that
+  pane left Admin Settings with **no active pane at all**. Every pane now
+  renders `{% if admin_landing_tab == '<id>' %} show active{% endif %}`, fed by
+  `get_landing_tab_id()`, and the sidebar reads the first rendered tab.
+
+**Assert durable properties, not current ids.** Four test files hardcoded
+`general` or `security` and had to be rewritten to assert what actually matters
+— Latest Features is last, exactly one pane is active, every tab renders one
+pane. Any new test that names a tab id will need the same treatment next time.
+
 
 ### The cross-pane move tool
 

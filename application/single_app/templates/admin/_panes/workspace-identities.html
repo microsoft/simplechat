@@ -1,4 +1,4 @@
-            <div class="tab-pane fade" id="workspace-identities" role="tabpanel" aria-labelledby="workspace-identities-tab">
+            <div class="tab-pane fade{% if admin_landing_tab == 'workspace-identities' %} show active{% endif %}" id="workspace-identities" role="tabpanel" aria-labelledby="workspace-identities-tab">
                 <p class="text-muted">
                     Manage the global authentication profiles that File Sync sources and Actions reuse, so credentials stay scoped and are resolved server-side.
                 </p>

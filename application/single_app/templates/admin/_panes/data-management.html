@@ -1,4 +1,4 @@
-            <div class="tab-pane fade" id="data-management" role="tabpanel" aria-labelledby="data-management-tab" data-testid="data-management-tab-pane" data-ignore-settings-change="true">
+            <div class="tab-pane fade{% if admin_landing_tab == 'data-management' %} show active{% endif %}" id="data-management" role="tabpanel" aria-labelledby="data-management-tab" data-testid="data-management-tab-pane" data-ignore-settings-change="true">
                 <div class="d-flex align-items-center justify-content-between gap-3 mb-2">
                     <div>
                         <h3 class="mb-1">Backup, Migrate &amp; Restore</h3>
@@ -241,7 +241,7 @@
                             <div>
                                 <div class="fw-semibold" id="data-management-key-storage-alert-title">Key Vault is strongly recommended</div>
                                 <div class="small" id="data-management-key-storage-alert-message">Generated backup encryption keys are stored in the Data Management settings document when Key Vault is not enabled.</div>
-                                <a href="#security" id="data-management-key-vault-link">Open Key Vault settings</a>
+                                <a href="#keyvault-section" data-admin-link="keyvault-section" id="data-management-key-vault-link">Open Key Vault settings</a>
                             </div>
                         </div>
                     </div>
