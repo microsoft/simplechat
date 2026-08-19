@@ -492,10 +492,12 @@ def build_generated_file_output_guidance(
         )
     if output_format in {GENERATED_FILE_FORMAT_DOCX, GENERATED_FILE_FORMAT_PDF}:
         return (
-            f'The user requested a downloadable {output_format.upper()} artifact. Provide a clear final '
-            'response grounded in the available evidence. Structured function results from this turn may '
-            'be included as labeled tables in the generated file; do not invent rows or claim an attachment '
-            'exists before the file-output finalizer publishes it.'
+            f'The user requested a downloadable {output_format.upper()} artifact. The server renders and '
+            'attaches the file after generation. Provide a clear final response grounded in the available '
+            'evidence. Structured function results from this turn may be included as labeled tables in the '
+            'generated file. Do not claim that you cannot create or attach files, do not tell the user to '
+            'copy or save the content manually, do not invent rows, and do not claim an attachment exists '
+            'before the file-output finalizer publishes it.'
         )
     return ''
 
@@ -533,6 +535,8 @@ def build_generated_file_export(
 
     assistant_text = str(assistant_content or '').strip()
     assistant_rows = extract_assistant_table_entries(assistant_text)
+    if not assistant_rows and _assistant_reply_requests_clarification(assistant_text):
+        return None
     function_rows = extract_authorized_function_result_rows(function_results)
     row_provenance = ROW_SOURCE_CURRENT_ACTION
     if not assistant_rows and not function_rows and prior_function_results_loader is not None:
@@ -547,8 +551,6 @@ def build_generated_file_export(
     ) if function_rows else {'allowed': False, 'reason_code': 'source_result_incomplete'}
 
     if output_format == GENERATED_FILE_FORMAT_CSV:
-        if not assistant_rows and _assistant_reply_requests_clarification(assistant_text):
-            return None
         use_function_rows = bool(function_rows) and bool(function_passthrough.get('allowed')) and (
             not assistant_rows
             or _assistant_rows_sample_function_rows(assistant_rows, function_rows)
@@ -584,8 +586,50 @@ def build_generated_file_export(
         row_source=row_source,
         assistant_content=assistant_text,
         title=title,
-        passthrough_reason_code=(function_passthrough.get('reason_code') if row_source == 'structured function result' else None),
+        passthrough_reason_code=(
+            function_passthrough.get('reason_code') if row_source in FUNCTION_RESULT_ROW_SOURCES else None
+        ),
     )
+
+
+def build_structured_artifact_rows_payload(
+    user_question: str,
+    output_format: str,
+    function_results: Optional[List[Dict[str, Any]]] = None,
+    prior_function_results_loader: Optional[Callable[[], Optional[List[Dict[str, Any]]]]] = None,
+) -> Optional[Dict[str, Any]]:
+    """Serialize authorized action rows when a JSON or XML reply did not carry the payload."""
+    normalized_output_format = str(output_format or '').strip().lower()
+    if normalized_output_format not in {'json', 'xml'}:
+        return None
+
+    function_rows = extract_authorized_function_result_rows(function_results)
+    row_provenance = ROW_SOURCE_CURRENT_ACTION
+    if not function_rows and prior_function_results_loader is not None:
+        function_rows = extract_authorized_function_result_rows(prior_function_results_loader())
+        if function_rows:
+            row_provenance = ROW_SOURCE_EARLIER_ACTION
+    if not function_rows:
+        return None
+
+    function_passthrough = evaluate_generated_file_passthrough_eligibility(
+        user_question,
+        rows=function_rows,
+    )
+    if not function_passthrough.get('allowed'):
+        return None
+
+    if normalized_output_format == 'json':
+        file_content = serialize_generated_json(function_rows)
+    else:
+        file_content = serialize_generated_xml(function_rows, root_name='GeneratedRows')
+    return {
+        'file_content': file_content,
+        'rows': function_rows,
+        'row_count': len(function_rows),
+        'row_source': row_provenance,
+        'passthrough_reason_code': function_passthrough.get('reason_code'),
+    }
 
 
 def extract_authorized_function_result_rows(function_results: Optional[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
