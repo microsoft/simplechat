@@ -3853,10 +3853,12 @@ function getMigrationLiveMetrics(job) {
         const hasRecentProgress = timestampAgeSeconds(
             job?.last_progress_at || migrationState.last_progress_at
         ) <= 10;
-        metrics.push({
-            label: "Liveness",
-            value: hasRecentProgress ? "Running - progress active" : "Running - alive, no recent progress",
-        });
+        if (!isTerminalJobStatus(job?.status)) {
+            metrics.push({
+                label: "Liveness",
+                value: hasRecentProgress ? "Running - progress active" : "Running - alive, no recent progress",
+            });
+        }
     }
     return metrics;
 }
@@ -3869,15 +3871,18 @@ function getBackupLiveMetrics(job) {
     const totals = backupState.totals && typeof backupState.totals === "object" ? backupState.totals : {};
     const telemetry = backupState.telemetry && typeof backupState.telemetry === "object" ? backupState.telemetry : {};
     const sourceCapacity = backupState.source_capacity && typeof backupState.source_capacity === "object" ? backupState.source_capacity : {};
-    const metrics = [
-        { label: "Current container", value: telemetry.current_container || "Waiting" },
+    const metrics = [];
+    if (!isTerminalJobStatus(job?.status)) {
+        metrics.push({ label: "Current container", value: telemetry.current_container || "Waiting" });
+    }
+    metrics.push(
         { label: "Checkpoint position", value: formatNumber(telemetry.checkpoint_position || totals.checkpoint_count || 0) },
         { label: "Processed", value: formatNumber(telemetry.records_processed || totals.processed_count || 0) },
         { label: "Transferred", value: formatBytes(telemetry.bytes || totals.bytes || 0) },
         { label: "Request units", value: formatNumber(telemetry.request_units || totals.request_units || 0) },
         { label: "Retries / throttles", value: `${formatNumber(telemetry.retries || totals.retry_attempt_count || 0)} / ${formatNumber(telemetry.throttles || totals.throttle_count || 0)}` },
         { label: "Skipped / failed", value: `${formatNumber(totals.skipped_count || 0)} / ${formatNumber(totals.failed_count || 0)}` },
-    ];
+    );
     if (telemetry.elapsed_seconds !== undefined || totals.elapsed_seconds !== undefined) {
         metrics.push({ label: "Elapsed", value: `${formatNumber(telemetry.elapsed_seconds ?? totals.elapsed_seconds ?? 0)}s` });
     }
@@ -3921,6 +3926,10 @@ function getRestoreLiveMetrics(job) {
         metrics.push({ label: "Last progress", value: progressAge });
     }
     return metrics;
+}
+
+function isTerminalJobStatus(status) {
+    return ["completed", "completed_with_warnings", "failed", "canceled"].includes(String(status || ""));
 }
 
 function timestampAgeSeconds(value) {
