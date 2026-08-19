@@ -7,6 +7,7 @@ import uuid
 
 
 COLLABORATION_KIND = 'collaborative'
+COLLABORATION_SOURCE_KIND = 'collaboration_source'
 
 PERSONAL_MULTI_USER_CHAT_TYPE = 'personal_multi_user'
 GROUP_MULTI_USER_CHAT_TYPE = 'group_multi_user'

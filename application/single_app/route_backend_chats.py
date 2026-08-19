@@ -186,6 +186,7 @@ from functions_citation_tracking import (
     merge_cited_documents_into_conversation,
     resolve_citation_location,
 )
+from functions_collaboration import build_conversation_participation_context
 from functions_conversation_metadata import collect_conversation_metadata, update_conversation_with_metadata
 from functions_conversation_unread import mark_conversation_unread
 from functions_image_messages import build_image_message_documents, decode_image_content
@@ -3465,8 +3466,15 @@ def _create_personal_conversation(user_id, conversation_id=None):
     return conversation_item
 
 
-def _authorize_personal_conversation_access(user_id, conversation_id):
-    """Load a personal conversation and ensure the caller owns it."""
+def _resolve_authorized_conversation_context(user_id, conversation_id):
+    """Load a conversation plus the access context that authorized the caller.
+
+    Shared conversations are backed by a hidden source conversation owned by the shared
+    conversation creator, so participants can never satisfy a plain ownership comparison even
+    though they are legitimate members. The returned context distinguishes an owner acting in
+    their own conversation from a participant acting inside a shared one, which downstream
+    artifact writes use to decide whether an approval is required.
+    """
     try:
         conversation_item = cosmos_conversations_container.read_item(
             item=conversation_id,
@@ -3475,9 +3483,13 @@ def _authorize_personal_conversation_access(user_id, conversation_id):
     except CosmosResourceNotFoundError as exc:
         raise LookupError(f"Conversation {conversation_id} not found") from exc
 
-    if conversation_item.get('user_id') != user_id:
-        raise PermissionError('You can only access your own conversations')
+    access_context = build_conversation_participation_context(user_id, conversation_item)
+    return conversation_item, access_context
 
+
+def _authorize_personal_conversation_access(user_id, conversation_id):
+    """Load a personal conversation and ensure the caller may act in it."""
+    conversation_item, _ = _resolve_authorized_conversation_context(user_id, conversation_id)
     return conversation_item
 
 

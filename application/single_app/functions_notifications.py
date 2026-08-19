@@ -174,6 +174,18 @@ NOTIFICATION_TYPES = {
         'icon': 'bi-trash',
         'color': 'secondary'
     },
+    'generated_file_approval_pending': {
+        'icon': 'bi-file-earmark-lock',
+        'color': 'warning'
+    },
+    'generated_file_approval_approved': {
+        'icon': 'bi-file-earmark-check',
+        'color': 'success'
+    },
+    'generated_file_approval_denied': {
+        'icon': 'bi-file-earmark-x',
+        'color': 'danger'
+    },
     WORKFLOW_ALERT_NOTIFICATION_TYPE: {
         'icon': 'bi-bell',
         'color': 'secondary'

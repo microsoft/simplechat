@@ -59,6 +59,11 @@ from functions_message_masking import (
 )
 from functions_notifications import mark_collaboration_message_notifications_read_for_conversation
 from functions_message_artifacts import make_json_serializable
+from functions_simplechat_operations import (
+    attach_generated_file_approval_state,
+    list_pending_generated_file_approvals_for_user,
+    resolve_generated_file_approval_for_user,
+)
 from functions_settings import get_settings
 from swagger_wrapper import swagger_route, get_auth_security
 
@@ -413,6 +418,76 @@ def _sync_collaboration_mask_metadata_to_source(message_doc):
 
 
 def register_route_backend_collaboration(bp):
+    @bp.route('/api/collaboration/file-approvals', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def list_generated_file_approvals_api():
+        """List generated files staged in shared conversations that this user may release."""
+        try:
+            _require_collaboration_feature_enabled()
+            current_user = _get_current_collaboration_user()
+            if not current_user:
+                return jsonify({'error': 'User not authenticated'}), 401
+
+            approvals = list_pending_generated_file_approvals_for_user(current_user['user_id'])
+            return jsonify({'approvals': approvals})
+        except PermissionError as exc:
+            return jsonify({'error': str(exc)}), 403
+        except Exception as exc:
+            log_event(
+                f'[GENERATED_FILE_APPROVALS] Failed to list pending file approvals: {exc}',
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({'error': 'Failed to load pending file approvals'}), 500
+
+    @bp.route(
+        '/api/collaboration/file-approvals/<source_conversation_id>/<artifact_message_id>/<decision>',
+        methods=['POST'],
+    )
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def resolve_generated_file_approval_api(source_conversation_id, artifact_message_id, decision):
+        """Approve or deny one generated file staged in a shared conversation."""
+        try:
+            _require_collaboration_feature_enabled()
+            current_user = _get_current_collaboration_user()
+            if not current_user:
+                return jsonify({'error': 'User not authenticated'}), 401
+
+            normalized_decision = str(decision or '').strip().lower()
+            if normalized_decision not in ('approve', 'deny'):
+                return jsonify({'error': 'Decision must be approve or deny'}), 400
+
+            updated_message = resolve_generated_file_approval_for_user(
+                user_id=current_user['user_id'],
+                source_conversation_id=source_conversation_id,
+                artifact_message_id=artifact_message_id,
+                decision='approved' if normalized_decision == 'approve' else 'denied',
+            )
+            message_metadata = updated_message.get('metadata') or {}
+            return jsonify({
+                'artifact_message_id': updated_message.get('id'),
+                'approval_state': message_metadata.get('generated_artifact_approval_state'),
+                'resolved_by_name': message_metadata.get('generated_artifact_approval_resolved_by_name'),
+                'resolved_at': message_metadata.get('generated_artifact_approval_resolved_at'),
+            })
+        except LookupError:
+            return jsonify({'error': 'Generated file approval not found'}), 404
+        except PermissionError as exc:
+            return jsonify({'error': str(exc)}), 403
+        except ValueError as exc:
+            return jsonify({'error': str(exc)}), 400
+        except Exception as exc:
+            log_event(
+                f'[GENERATED_FILE_APPROVALS] Failed to resolve file approval: {exc}',
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({'error': 'Failed to resolve the file approval'}), 500
+
     @bp.route('/api/collaboration/conversations', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
@@ -1178,6 +1253,7 @@ def register_route_backend_collaboration(bp):
                 allow_pending=True,
             )
             messages = [serialize_collaboration_message(doc) for doc in list_collaboration_messages(conversation_id)]
+            attach_generated_file_approval_state(messages, current_user['user_id'])
             return jsonify({'messages': messages}), 200
         except CosmosResourceNotFoundError:
             return jsonify({'error': 'Collaborative conversation not found'}), 404

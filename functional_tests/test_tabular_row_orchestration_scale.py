@@ -1422,6 +1422,23 @@ def _load_idempotent_artifact_helper():
         'uuid': uuid,
         'storage_account_personal_chat_container_name': 'personal-chat',
         '_get_latest_personal_thread_id': lambda conversation_id: None,
+        # Shared conversations authorize through the participation context. This fixture is a
+        # single-owner conversation, so no approval staging applies.
+        'build_conversation_participation_context': lambda user_id, conversation_item: {
+            'user_id': user_id,
+            'owner_user_id': (conversation_item or {}).get('user_id', ''),
+            'is_owner': True,
+            'collaboration_conversation_id': '',
+            'group_id': '',
+        },
+        'requires_generated_file_approval': lambda *args, **kwargs: False,
+        'build_generated_file_approval_metadata': lambda *args, **kwargs: {},
+        '_get_current_user_summary_or_none': lambda fallback_user_id='': {
+            'user_id': fallback_user_id,
+            'display_name': '',
+            'email': '',
+        },
+        '_notify_generated_file_approval_requested': lambda *args, **kwargs: None,
         'log_event': lambda *args, **kwargs: None,
     }
     extracted_module = ast.Module(body=selected_nodes, type_ignores=[])
