@@ -2,6 +2,25 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.260.002)**
+
+#### Bug Fixes
+
+*   **Backup Inventory No Longer Fails To Load**
+    *   Fixed the Backup Inventory panel in Admin Settings → Data Management always returning `503` and showing `0` for available, full, and partial backups.
+    *   The global summary used a Cosmos `GROUP BY` with a non-VALUE aggregate (`COUNT(1) AS count`), a combination the `azure-cosmos` Python client does not support. Cosmos rejected the query during plan negotiation with `BadRequest ... GroupBy NonValueAggregate`.
+    *   Counts are now computed with bounded, fully supported `SELECT VALUE COUNT(1)` queries, so the panel renders real numbers without loading backup history into memory.
+    *   This was not a throttling or indexing problem; the composite index was already aligned. Backup Inventory had been broken since the summary shipped.
+    *   (Ref: `functions_data_management.py`, `_get_data_management_backup_global_summary`, `_count_data_management_backups`, `/api/admin/data-management/backups`)
+
+#### User Interface Enhancements
+
+*   **Run Retention Cleanup Now Explains Itself**
+    *   Added a hover tooltip and an `(i)` toggle that expands inline guidance next to the **Run Retention Cleanup** button.
+    *   Documents that cleanup permanently deletes backups past the retention period along with their artifacts, skips jobs that are still running, honors **Keep latest full backup**, and deletes at most 25 backups per run.
+    *   Clarifies that "found no expired backups to delete" means every backup is still inside the retention window, which is expected rather than a failure.
+    *   (Ref: `admin_settings.html`, backup retention cleanup, Data Management)
+
 ### **(v0.260.001)**
 
 v0.260.001 consolidates all work released after v0.250.001 into one major release note, spanning 117 incremental patch builds. This rollup highlights the major feature, UI, reliability, security, and operations themes while preserving the full per-build history in the Detailed Change Log at the end of this section.
