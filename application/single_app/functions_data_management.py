@@ -10538,6 +10538,22 @@ def get_data_management_backup_inventory(limit=100):
     ]
 
 
+def _count_data_management_backups(extra_clauses=None, extra_parameters=None):
+    """Count backups with a VALUE aggregate; the Python client cannot serve GROUP BY here."""
+    clauses = ["c.type = @type", "c.operation = @operation"]
+    parameters = [
+        {"name": "@type", "value": DATA_MANAGEMENT_JOB_TYPE},
+        {"name": "@operation", "value": DATA_MANAGEMENT_OPERATION_BACKUP},
+    ]
+    clauses.extend(extra_clauses or [])
+    parameters.extend(extra_parameters or [])
+    rows = _query_data_management_history_items(
+        query=f"SELECT VALUE COUNT(1) FROM c WHERE {' AND '.join(clauses)}",
+        parameters=parameters,
+    )
+    return _safe_int(rows[0], default=0, minimum=0) if rows else 0
+
+
 def _get_data_management_backup_global_summary():
     summary = {
         "full": 0,
@@ -10549,39 +10565,42 @@ def _get_data_management_backup_global_summary():
         "latest_full": None,
         "latest_partial": None,
     }
-    aggregate_query = (
-        "SELECT c.backup_type, c.status, COUNT(1) AS count FROM c "
-        "WHERE c.type = @type AND c.operation = @operation "
-        "GROUP BY c.backup_type, c.status"
-    )
     parameters = [
         {"name": "@type", "value": DATA_MANAGEMENT_JOB_TYPE},
         {"name": "@operation", "value": DATA_MANAGEMENT_OPERATION_BACKUP},
     ]
-    aggregate_rows = _query_data_management_history_items(
-        query=aggregate_query,
-        parameters=parameters,
+    available_clause = "(c.status = @completed OR c.status = @completed_with_warnings)"
+    available_parameters = [
+        {"name": "@completed", "value": DATA_MANAGEMENT_STATUS_COMPLETED},
+        {
+            "name": "@completed_with_warnings",
+            "value": DATA_MANAGEMENT_STATUS_COMPLETED_WITH_WARNINGS,
+        },
+    ]
+
+    summary["total"] = _count_data_management_backups()
+    summary["available"] = _count_data_management_backups(
+        [available_clause],
+        available_parameters,
     )
-    for row in aggregate_rows:
-        if not isinstance(row, dict):
-            continue
-        count = _safe_int(row.get("count"), default=0, minimum=0)
-        status = row.get("status")
-        backup_type = row.get("backup_type")
-        summary["total"] += count
-        if status in {
-            DATA_MANAGEMENT_STATUS_COMPLETED,
-            DATA_MANAGEMENT_STATUS_COMPLETED_WITH_WARNINGS,
-        }:
-            summary["available"] += count
-            if backup_type == DATA_MANAGEMENT_BACKUP_FULL:
-                summary["full"] += count
-            elif backup_type == DATA_MANAGEMENT_BACKUP_PARTIAL:
-                summary["partial"] += count
-        elif status == DATA_MANAGEMENT_STATUS_RUNNING:
-            summary["running"] += count
-        elif status == DATA_MANAGEMENT_STATUS_FAILED:
-            summary["failed"] += count
+    summary["running"] = _count_data_management_backups(
+        ["c.status = @running"],
+        [{"name": "@running", "value": DATA_MANAGEMENT_STATUS_RUNNING}],
+    )
+    summary["failed"] = _count_data_management_backups(
+        ["c.status = @failed"],
+        [{"name": "@failed", "value": DATA_MANAGEMENT_STATUS_FAILED}],
+    )
+    for backup_type, summary_field in (
+        (DATA_MANAGEMENT_BACKUP_FULL, "full"),
+        (DATA_MANAGEMENT_BACKUP_PARTIAL, "partial"),
+    ):
+        summary[summary_field] = _count_data_management_backups(
+            [available_clause, "c.backup_type = @backup_type"],
+            available_parameters + [
+                {"name": "@backup_type", "value": backup_type},
+            ],
+        )
 
     for backup_type, summary_field in (
         (DATA_MANAGEMENT_BACKUP_FULL, "latest_full"),
