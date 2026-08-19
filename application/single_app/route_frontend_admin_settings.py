@@ -2681,6 +2681,7 @@ def register_route_frontend_admin_settings(bp):
                 'enable_desktop_notifications': form_data.get('enable_desktop_notifications') == 'on',
                 'enable_conversation_archiving': form_data.get('enable_conversation_archiving') == 'on',
                 'enable_thoughts': form_data.get('enable_thoughts') == 'on',
+                'require_shared_conversation_file_approval': form_data.get('require_shared_conversation_file_approval') == 'on',
 
                 # Search (Web Search via Azure AI Foundry agent)
                 'enable_web_search': enable_web_search,

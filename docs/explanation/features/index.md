@@ -41,6 +41,10 @@ category: Version History
 - [Outlook MSG File Ingestion](v0.242.063/MSG_FILE_INGESTION.md)
 - [Chat Upload Personal Workspace Handoff](CHAT_UPLOAD_PERSONAL_WORKSPACE_HANDOFF.md)
 
+## Collaborative Conversation Features
+
+- [Shared Conversation File Approvals](SHARED_CONVERSATION_FILE_APPROVALS.md)
+
 ## Workspace Branding Features
 
 - [Group And Public Workspace Custom Hero Colors](GROUP_PUBLIC_WORKSPACE_CUSTOM_HERO_COLORS.md)

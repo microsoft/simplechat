@@ -47,6 +47,20 @@ class FakeContainer:
         return body
 
 
+def _fake_participation_context(user_id, conversation_item):
+    """Stand in for the collaboration-aware authorization used by artifact helpers."""
+    owner_user_id = str((conversation_item or {}).get("user_id") or "").strip()
+    if owner_user_id and owner_user_id != str(user_id or "").strip():
+        raise PermissionError("You can only access your own conversations")
+    return {
+        "user_id": user_id,
+        "owner_user_id": owner_user_id,
+        "is_owner": True,
+        "collaboration_conversation_id": "",
+        "group_id": "",
+    }
+
+
 def load_operation_helpers(conversation_item, message_item, run_item=None):
     source = OPERATIONS_FILE.read_text(encoding="utf-8")
     tree = ast.parse(source, filename=str(OPERATIONS_FILE))
@@ -73,6 +87,9 @@ def load_operation_helpers(conversation_item, message_item, run_item=None):
         "datetime": datetime,
         "timezone": timezone,
         "CosmosResourceNotFoundError": FakeNotFound,
+        # Shared conversations authorize through the participation context, which owner-only
+        # fixtures satisfy without any collaboration linkage.
+        "build_conversation_participation_context": _fake_participation_context,
         "cosmos_conversations_container": FakeContainer({"conversation-1": conversation_item}),
         "cosmos_messages_container": FakeContainer({"message-1": message_item}),
         "cosmos_tabular_export_runs_container": FakeContainer({"run-1": run_item} if run_item else {}),
@@ -83,7 +100,7 @@ def load_operation_helpers(conversation_item, message_item, run_item=None):
     return namespace
 
 
-def load_route_helper(message_item, publication_assertion):
+def load_route_helper(message_item, publication_assertion, approval_assertion=None):
     source = ROUTE_FILE.read_text(encoding="utf-8")
     tree = ast.parse(source, filename=str(ROUTE_FILE))
     helper = next(
@@ -94,6 +111,8 @@ def load_route_helper(message_item, publication_assertion):
         "CosmosResourceNotFoundError": FakeNotFound,
         "cosmos_conversations_container": FakeContainer({"conversation-1": {"user_id": "user-1"}}),
         "cosmos_messages_container": FakeContainer({"message-1": message_item}),
+        "build_conversation_participation_context": _fake_participation_context,
+        "assert_generated_file_approval_allows_download": approval_assertion or (lambda user_id, message_item: None),
         "assert_generated_chat_artifact_is_published_for_user": publication_assertion,
     }
     module = ast.Module(body=[helper], type_ignores=[])
