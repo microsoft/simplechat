@@ -1,0 +1,21 @@
+            <div class="tab-pane fade" id="archiving" role="tabpanel" aria-labelledby="archiving-tab">
+                <div class="card p-3 mb-3" id="conversation-archiving-section">
+                    <h5>
+                        <i class="bi bi-archive me-2"></i>Conversation Archiving
+                    </h5>
+                    <p class="text-muted">When enabled, conversation deletions will be archived instead of permanently deleted.</p>
+                    <div class="form-group form-check form-switch mb-3">
+                        <input
+                            type="checkbox"
+                            class="form-check-input"
+                            id="enable_conversation_archiving"
+                            name="enable_conversation_archiving"
+                            {% if settings.enable_conversation_archiving %}checked{% endif %}
+                        >
+                        <label class="form-check-label ms-2" for="enable_conversation_archiving">
+                            Enable Conversation Archiving
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Archive conversations instead of permanently deleting them, allowing for recovery and compliance with data retention policies."></i>
+                    </div>
+                </div>
+            </div>

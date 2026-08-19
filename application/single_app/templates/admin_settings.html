@@ -1018,8 +1018,17 @@
 
             {% include "admin/_panes/workspaces.html" %}
 
+            {# Data Lifecycle: what happens to user data over time #}
+            {% include "admin/_panes/retention.html" %}
+            {% include "admin/_panes/classification.html" %}
+            {% include "admin/_panes/archiving.html" %}
+
 
             {% include "admin/_panes/citation.html" %}
+
+            {# Chat: the conversation surface itself #}
+            {% include "admin/_panes/chat-experience.html" %}
+            {% include "admin/_panes/feedback-alerts.html" %}
 
 
             {% include "admin/_panes/safety.html" %}
