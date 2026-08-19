@@ -1,5 +1,14 @@
             <div class="tab-pane fade" id="workspace-identities" role="tabpanel" aria-labelledby="workspace-identities-tab">
+                <p class="text-muted">
+                    Manage the global authentication profiles that File Sync sources and Actions reuse, so credentials stay scoped and are resolved server-side.
+                </p>
                 <div class="card mb-3 p-3" id="workspace-identities-section">
+                    <h5>
+                        <i class="bi bi-person-badge me-2"></i>Global Identities
+                    </h5>
+                    <p class="text-muted">
+                        Identities defined here are available across the deployment. Each one stores its secret in Key Vault when Key Vault is configured, and is referenced by name rather than by value wherever it is used.
+                    </p>
                     <div
                         id="global-workspace-identities-root"
                         data-workspace-identity-root="true"

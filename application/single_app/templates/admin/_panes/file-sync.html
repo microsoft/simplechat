@@ -76,7 +76,7 @@
                         </div>
 
                         {% set file_sync_visible_source_types = settings.file_sync_visible_source_types|default(['smb', 'azure_files']) %}
-                        <div class="border rounded p-3 mb-4">
+                        <div class="border rounded p-3 mb-4" id="file-sync-source-types-section">
                             <h6 class="mb-2"><i class="bi bi-sliders me-2"></i>Visible Source Types</h6>
                             <p class="text-muted small mb-3">
                                 Choose which source types appear in the Add Source workflow. OneDrive, SharePoint, and Google Workspace connectors are coming soon while validation continues.
@@ -136,7 +136,7 @@
 
                         <div class="row g-3">
                             <div class="col-12">
-                                <div class="border rounded h-100 p-3" data-testid="file-sync-personal-card">
+                                <div class="border rounded h-100 p-3" id="file-sync-personal-section" data-testid="file-sync-personal-card">
                                     <h6 class="mb-3"><i class="bi bi-person me-2"></i>Personal Workspace Sync</h6>
                                     <div class="form-check form-switch mb-3">
                                         <input type="checkbox" class="form-check-input" id="enable_file_sync_personal" name="enable_file_sync_personal" {% if settings.enable_file_sync_personal %}checked{% endif %}>
@@ -169,7 +169,7 @@
                             </div>
 
                             <div class="col-12">
-                                <div class="border rounded h-100 p-3" data-testid="file-sync-group-card">
+                                <div class="border rounded h-100 p-3" id="file-sync-group-section" data-testid="file-sync-group-card">
                                     <h6 class="mb-3"><i class="bi bi-people me-2"></i>Group Workspace Sync</h6>
                                     <div class="form-check form-switch mb-3">
                                         <input type="checkbox" class="form-check-input" id="enable_file_sync_group" name="enable_file_sync_group" {% if settings.enable_file_sync_group %}checked{% endif %}>
@@ -208,7 +208,7 @@
                             </div>
 
                             <div class="col-12">
-                                <div class="border rounded h-100 p-3" data-testid="file-sync-public-card">
+                                <div class="border rounded h-100 p-3" id="file-sync-public-section" data-testid="file-sync-public-card">
                                     <h6 class="mb-3"><i class="bi bi-globe me-2"></i>Public Workspace Sync</h6>
                                     <div class="form-check form-switch mb-3">
                                         <input type="checkbox" class="form-check-input" id="enable_file_sync_public" name="enable_file_sync_public" {% if settings.enable_file_sync_public %}checked{% endif %}>

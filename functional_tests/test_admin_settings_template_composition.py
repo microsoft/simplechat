@@ -108,9 +108,9 @@ def test_composed_template_exposes_configuration_cards():
 def test_no_functional_test_reads_the_template_uncomposed():
     """Guard the convention so new tests do not assert on the parent shell.
 
-    Only tests that actually reference a card living exclusively inside a
-    partial are flagged. Tests that assert on markup still held by the parent
-    (the nav, the form, the modals) are reading exactly what they expect.
+    Only tests that actually reference a card or form field living exclusively
+    inside a partial are flagged. Tests that assert on markup still held by the
+    parent (the nav, the form tag, the modals) are reading what they expect.
     """
     print("Testing Admin Settings read convention across functional tests...")
 
@@ -118,9 +118,15 @@ def test_no_functional_test_reads_the_template_uncomposed():
     composed = read_admin_settings_template()
 
     card_pattern = re.compile(r'<div class="card[^"]*"[^>]*\sid="([^"]+)"')
+    field_pattern = re.compile(r'\sname="([^"]+)"')
+
     parent_cards = set(card_pattern.findall(parent))
     partial_only_cards = set(card_pattern.findall(composed)) - parent_cards
     assert partial_only_cards, "Expected some cards to live only in partials"
+
+    parent_fields = set(field_pattern.findall(parent))
+    partial_only_fields = set(field_pattern.findall(composed)) - parent_fields
+    assert partial_only_fields, "Expected some fields to live only in partials"
 
     offenders = []
     for path in sorted(TESTS_DIR.glob("test_*.py")):
@@ -135,6 +141,11 @@ def test_no_functional_test_reads_the_template_uncomposed():
 
         referenced = sorted(
             card_id for card_id in partial_only_cards if card_id in source
+        )
+        referenced += sorted(
+            f'name="{field}"'
+            for field in partial_only_fields
+            if f'name="{field}"' in source
         )
         if referenced:
             offenders.append(f"{path.name} -> {', '.join(referenced[:3])}")
