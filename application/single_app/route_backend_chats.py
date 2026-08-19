@@ -150,6 +150,7 @@ from functions_generated_file_exports import (
     build_generated_file_artifact_metadata,
     build_generated_file_export,
     build_generated_file_output_guidance,
+    build_structured_artifact_rows_payload,
     evaluate_generated_file_passthrough_eligibility,
     estimate_function_result_row_count,
     get_generated_file_export_content,
@@ -2633,11 +2634,26 @@ def _build_streaming_assistant_file_status(output_format):
     return f'Generating the {normalized_output_format} file. It will appear here when ready.'
 
 
+def _build_structured_artifact_rows_payload(user_question, output_format, conversation_id, function_results):
+    """Fall back to authorized action rows when a JSON/XML reply carried no payload."""
+    return build_structured_artifact_rows_payload(
+        user_question,
+        output_format,
+        function_results=function_results,
+        prior_function_results_loader=lambda: _load_prior_turn_function_results(
+            get_current_user_id(),
+            conversation_id,
+            settings=get_settings(),
+        ),
+    )
+
+
 def maybe_create_assistant_file_generated_output(
     user_question,
     assistant_content,
     conversation_id,
     existing_outputs=None,
+    function_results=None,
 ):
     """Save assistant-generated JSON/XML content as a downloadable chat artifact."""
     output_format = get_tabular_generated_output_format(user_question)
@@ -2650,20 +2666,40 @@ def maybe_create_assistant_file_generated_output(
 
     preview_items = []
     preview_lines = []
+    row_payload = None
     if output_format == 'json':
         json_payload = normalize_json_artifact_payload(assistant_content)
         if json_payload is None:
-            return None
-        file_content = serialize_generated_json(json_payload)
-        if isinstance(json_payload, list):
-            preview_items = json_payload[:3]
-        elif isinstance(json_payload, dict):
-            preview_items = [json_payload]
+            row_payload = _build_structured_artifact_rows_payload(
+                user_question,
+                output_format,
+                conversation_id,
+                function_results,
+            )
+            if row_payload is None:
+                return None
+            file_content = row_payload['file_content']
+            preview_items = row_payload['rows'][:3]
+        else:
+            file_content = serialize_generated_json(json_payload)
+            if isinstance(json_payload, list):
+                preview_items = json_payload[:3]
+            elif isinstance(json_payload, dict):
+                preview_items = [json_payload]
     else:
         xml_payload = normalize_xml_artifact_payload(assistant_content)
         if not xml_payload:
-            return None
-        file_content = xml_payload
+            row_payload = _build_structured_artifact_rows_payload(
+                user_question,
+                output_format,
+                conversation_id,
+                function_results,
+            )
+            if row_payload is None:
+                return None
+            file_content = row_payload['file_content']
+        else:
+            file_content = xml_payload
         preview_lines = _build_assistant_file_preview_lines(file_content)
 
     generated_file_name = _build_assistant_file_export_name(output_format)
@@ -15529,6 +15565,7 @@ def register_route_backend_chats(bp):
                 assistant_content=document_action_reply_content,
                 conversation_id=conversation_id,
                 existing_outputs=document_generated_analysis_artifacts + document_generated_tabular_outputs,
+                function_results=execution_result.get('agent_citations') or [],
             )
             if assistant_file_generated_output:
                 document_generated_analysis_artifacts.append(assistant_file_generated_output)
@@ -19969,6 +20006,7 @@ def register_route_backend_chats(bp):
                 assistant_content=ai_message,
                 conversation_id=conversation_id,
                 existing_outputs=generated_analysis_artifacts_list + generated_tabular_outputs_list,
+                function_results=agent_citations_list,
             )
             if assistant_file_generated_output:
                 generated_analysis_artifacts_list.append(assistant_file_generated_output)
@@ -23917,6 +23955,7 @@ def register_route_backend_chats(bp):
                         assistant_content=accumulated_content,
                         conversation_id=conversation_id,
                         existing_outputs=generated_analysis_artifacts_list + generated_tabular_outputs_list,
+                        function_results=agent_citations_list,
                     )
                     if assistant_file_generated_output:
                         generated_analysis_artifacts_list.append(assistant_file_generated_output)
