@@ -287,6 +287,7 @@ function revealAdminGroupForTab(tabId) {
 // where their content now lives. Old bookmarks and links keep working.
 const LEGACY_TAB_REDIRECTS = {
     'governance': 'feature-governance',
+    'scale': 'redis-caching',
 };
 
 function resolveAdminTabId(tabId) {

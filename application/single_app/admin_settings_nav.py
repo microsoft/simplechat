@@ -193,6 +193,16 @@ ADMIN_NAV = [
                     {"id": "conversation-archiving-section", "label": "Conversation Archiving", "icon": "bi-archive"},
                 ],
             },
+            {
+                # Front Door configures authentication and redirect flows, so it
+                # belongs with Security rather than with throughput settings.
+                "id": "network",
+                "label": "Network",
+                "icon": "bi-door-open",
+                "sections": [
+                    {"id": "front-door-section", "label": "Azure Front Door", "icon": "bi-door-open"},
+                ],
+            },
         ],
     },
     {
@@ -257,18 +267,24 @@ ADMIN_NAV = [
         "icon": "bi-speedometer2",
         "tabs": [
             {
-                "id": "scale",
-                "label": "Scale",
-                "icon": "bi-diagram-3",
+                "id": "redis-caching",
+                "label": "Redis & Caching",
+                "icon": "bi-database",
                 "sections": [
                     {"id": "redis-cache-section", "label": "Redis Cache", "icon": "bi-database"},
                     {"id": "redis-monitoring-section", "label": "Redis Metrics", "icon": "bi-activity"},
                     {"id": "conversation-cache-section", "label": "Conversation Cache", "icon": "bi-chat-square-text"},
+                ],
+            },
+            {
+                "id": "cosmos",
+                "label": "Cosmos",
+                "icon": "bi-diagram-3",
+                "sections": [
                     {"id": "document-access-index-section", "label": "DAI Metrics", "icon": "bi-diagram-3"},
                     {"id": "cosmos-maintenance-section", "label": "Cosmos Maintenance", "icon": "bi-tools"},
                     {"id": "cosmos-throughput-section", "label": "Cosmos DB Throughput", "icon": "bi-speedometer2"},
                     {"id": "cosmos-throughput-metrics-table-section", "label": "Cosmos Metrics", "icon": "bi-table"},
-                    {"id": "front-door-section", "label": "Azure Front Door", "icon": "bi-door-open"},
                 ],
             },
         ],
