@@ -2,8 +2,8 @@
 # test_admin_settings_template_composition.py
 """
 Functional test for the Admin Settings composed-template contract.
-Version: 0.260.003
-Implemented in: 0.260.003
+Version: 0.260.004
+Implemented in: 0.260.004
 
 Admin Settings is assembled from per-tab partials under templates/admin/, so
 reading admin_settings.html straight from disk only yields the parent shell.
@@ -46,7 +46,7 @@ def test_parent_template_delegates_panes_to_partials():
     """The parent template should include partials rather than inline panes."""
     print("Testing Admin Settings partial delegation...")
 
-    assert_app_version_at_least("0.260.003")
+    assert_app_version_at_least("0.260.004")
     parent = ADMIN_SETTINGS_TEMPLATE.read_text(encoding="utf-8")
 
     includes = re.findall(r'\{%\s*include\s+"(admin/[^"]+)"\s*%\}', parent)

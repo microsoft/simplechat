@@ -1614,8 +1614,13 @@
     </div>
 </div>
 {% endblock %}
+
+{% block scripts %}
+
 <script>
-    // Live preview for banner in admin
+    // Live preview for the classification banner in admin.
+    // This previously sat between blocks in a child template, where Jinja
+    // discards it, so the preview never updated.
     document.addEventListener('DOMContentLoaded', function() {
         const textInput = document.getElementById('classification_banner_text');
         const colorInput = document.getElementById('classification_banner_color');
@@ -1633,8 +1638,6 @@
         }
     });
 </script>
-
-{% block scripts %}
 
  <script src="/static/js/simplemde/simplemde.min.js"></script>
 
