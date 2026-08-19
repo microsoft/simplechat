@@ -296,6 +296,7 @@ const LEGACY_TAB_REDIRECTS = {
     'security': 'secrets',
     'workspaces': 'workspace-types',
     'search-extract': 'web-research',
+    'ai-models': 'model-endpoints',
 };
 
 function resolveAdminTabId(tabId) {
