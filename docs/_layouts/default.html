@@ -7,18 +7,25 @@
     <title>{% if page.title %}{{ page.title }} | {% endif %}{{ site.title | default: site.github.repository_name }}</title>
 
     <link rel="icon" href="{{ site.favicon | relative_url }}" type="image/x-icon" />
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous" />
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500&amp;family=Work+Sans:wght@600;700&amp;display=swap" rel="stylesheet" />
+
+    {% comment %}
+    All browser runtime assets are vendored locally under /assets/vendor/ and pinned
+    by version. See .github/instructions/local_browser_assets.instructions.md -- the
+    repository forbids loading browser runtime code or its companion assets (fonts,
+    CSS, workers) from public CDNs.
+    {% endcomment %}
+
+    <!-- Self-hosted web fonts (Inter, JetBrains Mono, Work Sans) -->
+    <link rel="stylesheet" href="{{ '/assets/vendor/fonts/fonts.css' | relative_url }}" />
 
     <!-- Bootstrap CSS -->
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet" />
+    <link rel="stylesheet" href="{{ '/assets/vendor/bootstrap-5.3.0/bootstrap.min.css' | relative_url }}" />
 
     <!-- Bootstrap Icons -->
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" />
+    <link rel="stylesheet" href="{{ '/assets/vendor/bootstrap-icons-1.11.3/bootstrap-icons.css' | relative_url }}" />
 
-    <!-- Prism.js syntax highlighting -->
-    <link id="prism-theme-css" rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism.min.css" />
+    <!-- Prism.js syntax highlighting. The href is swapped at runtime for dark mode. -->
+    <link id="prism-theme-css" rel="stylesheet" href="{{ '/assets/vendor/prism-1.29.0/prism.min.css' | relative_url }}" />
 
     <!-- Custom CSS -->
     <link rel="stylesheet" href="{{ '/assets/css/main.css' | relative_url }}" />
@@ -80,15 +87,15 @@
     <div id="toast-container" class="position-fixed bottom-0 end-0 p-3"></div>
 
     <!-- JavaScript Libraries -->
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="{{ '/assets/vendor/bootstrap-5.3.0/bootstrap.bundle.min.js' | relative_url }}"></script>
 
     <!-- Prism.js syntax highlighting -->
-    <script id="prism-theme-js" src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-javascript.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-python.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-json.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-yaml.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-bash.min.js"></script>
+    <script id="prism-theme-js" src="{{ '/assets/vendor/prism-1.29.0/prism.min.js' | relative_url }}"></script>
+    <script src="{{ '/assets/vendor/prism-1.29.0/components/prism-javascript.min.js' | relative_url }}"></script>
+    <script src="{{ '/assets/vendor/prism-1.29.0/components/prism-python.min.js' | relative_url }}"></script>
+    <script src="{{ '/assets/vendor/prism-1.29.0/components/prism-json.min.js' | relative_url }}"></script>
+    <script src="{{ '/assets/vendor/prism-1.29.0/components/prism-yaml.min.js' | relative_url }}"></script>
+    <script src="{{ '/assets/vendor/prism-1.29.0/components/prism-bash.min.js' | relative_url }}"></script>
 
     <!-- App settings for JS -->
     <script>
@@ -106,15 +113,17 @@
     <script>
         (function() {
             const prismThemes = {
-                light: "https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism.min.css",
-                dark: "https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css"
+                light: {{ '/assets/vendor/prism-1.29.0/prism.min.css' | relative_url | jsonify }},
+                dark: {{ '/assets/vendor/prism-1.29.0/prism-tomorrow.min.css' | relative_url | jsonify }}
             };
 
             function setPrismTheme(mode) {
                 const cssLink = document.getElementById("prism-theme-css");
                 if (!cssLink) return;
                 const theme = prismThemes[mode] || prismThemes.light;
-                if (cssLink.href !== theme) cssLink.href = theme;
+                // Compare the resolved attribute rather than the absolute href so the
+                // local relative paths above do not cause a reassignment on every check.
+                if (cssLink.getAttribute("href") !== theme) cssLink.setAttribute("href", theme);
             }
 
             function getCurrentMode() {
