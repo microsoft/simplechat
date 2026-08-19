@@ -43,7 +43,37 @@
                     </p>
                 </div>
 
+                <div class="card p-3 mb-3" id="app-role-requirements-section">
+                    <h5>
+                        <i class="bi bi-person-badge me-2"></i>App Role Requirements
+                    </h5>
+                    <p class="text-muted">
+                        Every setting that can require an Entra app role, gathered here so the
+                        full access policy can be read in one place. Each switch is a mirror of
+                        the setting on its own tab, so changing it here changes it there.
+                    </p>
+                    {# Rows are built from the page itself by
+                       admin_access_roles_roster.js, so a new role requirement appears here
+                       automatically and this list can never fall out of step. #}
+                    <div id="app-role-requirements-list" class="d-flex flex-column gap-2"></div>
+                    <p class="text-muted small mb-0 d-none" id="app-role-requirements-empty">
+                        No app role requirements are available on this page.
+                    </p>
+                </div>
 
-
+                <div class="card p-3 mb-3" id="access-denied-message-section">
+                    <h5>
+                        <i class="bi bi-shield-x me-2"></i>Access Denied Message
+                    </h5>
+                    <p class="text-muted">
+                        Shown to a user whose account does not carry a required role.
+                    </p>
+                    <div class="mb-3">
+                        <label for="access_denied_message" class="form-label">Access Denied Message</label>
+                        <small class="text-muted d-block mb-1">Shown to signed-in users who lack the required roles. Use Enter for line breaks.</small>
+                        <textarea class="form-control" id="access_denied_message" name="access_denied_message"
+                            rows="3">{{ settings.access_denied_message }}</textarea>
+                    </div>
+                </div>
 
             </div>

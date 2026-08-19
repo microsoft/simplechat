@@ -220,4 +220,18 @@
                     </div>
                 </div>
 
+                <div class="card p-3 mb-3" id="file-size-limit-section">
+                    <h5>
+                        <i class="bi bi-file-earmark-arrow-up me-2"></i>Maximum File Size
+                    </h5>
+                    <p class="text-muted">
+                        The largest file a user may upload into a workspace.
+                    </p>
+                    <div class="mb-3">
+                        <label for="max_file_size_mb" class="form-label">Maximum File Size (MB)</label>
+                        <input type="number" class="form-control" id="max_file_size_mb" name="max_file_size_mb"
+                            value="{{ settings.max_file_size_mb }}">
+                    </div>
+                </div>
+
             </div>

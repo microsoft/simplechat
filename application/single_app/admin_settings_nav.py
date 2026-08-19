@@ -66,6 +66,8 @@ ADMIN_NAV = [
                     {"id": "chat-file-uploads-section", "label": "Chat File Uploads", "icon": "bi-paperclip"},
                     {"id": "conversation-contents-drawer-section", "label": "Conversation Contents Drawer", "icon": "bi-list-nested"},
                     {"id": "workspace-scope-lock-section", "label": "Workspace Scope Lock", "icon": "bi-lock"},
+                    {"id": "conversation-history-section", "label": "Conversation History", "icon": "bi-clock-history"},
+                    {"id": "default-system-prompt-section", "label": "Default System Prompt", "icon": "bi-chat-square-quote"},
                 ],
             },
             {
@@ -184,6 +186,7 @@ ADMIN_NAV = [
                     {"id": "file-download-settings-section", "label": "File Downloads", "icon": "bi-download"},
                     {"id": "file-sharing-section", "label": "File Sharing", "icon": "bi-share"},
                     {"id": "shared-conversation-file-approvals-section", "label": "Shared Conversation File Approvals", "icon": "bi-check2-square"},
+                    {"id": "file-size-limit-section", "label": "Maximum File Size", "icon": "bi-file-earmark-arrow-up"},
                 ],
             },
             {
@@ -284,6 +287,8 @@ ADMIN_NAV = [
                 "icon": "bi-person-check",
                 "sections": [
                     {"id": "permissions-section", "label": "Permissions", "icon": "bi-person-check"},
+                    {"id": "app-role-requirements-section", "label": "App Role Requirements", "icon": "bi-person-badge"},
+                    {"id": "access-denied-message-section", "label": "Access Denied Message", "icon": "bi-shield-x"},
                 ],
             },
             {
@@ -303,14 +308,14 @@ ADMIN_NAV = [
                 ],
             },
             {
-                # Interim home for the mixed System Settings card. Four of its
-                # eight fields are idle-timeout, which is the plurality; the
-                # rest are split out to their real homes in a later change.
+                # Idle timeout is the only thing left here. The rest of the old
+                # System Settings card was split out to the tabs that own each
+                # setting, without renaming a single field.
                 "id": "session",
                 "label": "Session",
                 "icon": "bi-hourglass-split",
                 "sections": [
-                    {"id": "system-settings-section", "label": "System Settings", "icon": "bi-sliders"},
+                    {"id": "idle-timeout-section", "label": "Idle Session Timeout", "icon": "bi-hourglass-split"},
                 ],
             },
             {

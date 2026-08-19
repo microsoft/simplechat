@@ -97,4 +97,34 @@
                         <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="When enabled, users cannot unlock the workspace scope on conversations. Scope automatically locks after the first AI search and remains locked. Disable this to allow users to manually unlock scope."></i>
                     </div>
                 </div>
+                <div class="card p-3 mb-3" id="conversation-history-section">
+                    <h5>
+                        <i class="bi bi-clock-history me-2"></i>Conversation History
+                    </h5>
+                    <p class="text-muted">
+                        How many previous messages are carried into each new request.
+                    </p>
+                    <div class="mb-3">
+                        <label for="conversation_history_limit" class="form-label">
+                            Conversation History Limit
+                        </label>
+                        <input type="number" class="form-control" id="conversation_history_limit"
+                            name="conversation_history_limit" value="{{ settings.conversation_history_limit }}">
+                    </div>
+                </div>
+
+                <div class="card p-3 mb-3" id="default-system-prompt-section">
+                    <h5>
+                        <i class="bi bi-chat-square-quote me-2"></i>Default System Prompt
+                    </h5>
+                    <p class="text-muted">
+                        The system prompt applied to conversations that do not set their own.
+                    </p>
+                    <div class="mb-3">
+                        <label for="default_system_prompt" class="form-label">Default System Prompt</label>
+                        <textarea class="form-control" id="default_system_prompt" name="default_system_prompt"
+                            rows="5">{{ settings.default_system_prompt }}</textarea>
+                    </div>
+                </div>
+
             </div>

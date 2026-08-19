@@ -41,6 +41,31 @@ COMPOSITION_HELPERS = (
 )
 
 
+def test_every_pane_partial_is_balanced():
+    """An unbalanced pane silently nests the panes that follow it.
+
+    A stray or missing closing tag does not fail to render. It changes the
+    document tree, so later panes end up inside the broken one and are hidden
+    with it, which only shows up as a confusing failure somewhere unrelated.
+    """
+    print("Testing Admin Settings pane partials are balanced...")
+
+    panes_dir = PARTIAL_DIR / "_panes"
+    unbalanced = []
+    for path in sorted(panes_dir.glob("*.html")):
+        markup = path.read_text(encoding="utf-8")
+        for tag in ("div", "section"):
+            opened = len(re.findall(rf"<{tag}\b", markup))
+            closed = len(re.findall(rf"</{tag}>", markup))
+            if opened != closed:
+                unbalanced.append(f"{path.name}: {opened} <{tag}> vs {closed} </{tag}>")
+
+    assert not unbalanced, "Unbalanced tab pane partials:\n  " + "\n  ".join(unbalanced)
+
+    print(f"All {len(list(panes_dir.glob('*.html')))} pane partials are balanced.")
+    return True
+
+
 def test_parent_template_delegates_panes_to_partials():
     """The parent template should include partials rather than inline panes."""
     print("Testing Admin Settings partial delegation...")
