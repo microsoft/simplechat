@@ -616,6 +616,17 @@ def build_generated_file_artifact_metadata(
     row_source = str(export_payload.get('row_source') or '').strip()
     if row_source:
         artifact_metadata['row_source'] = row_source
+
+    # Surfaced immediately so the participant who asked for the file sees the pending state in
+    # the same response instead of a download button that would be refused.
+    approval_state = str(uploaded_message.get('approval_state') or '').strip()
+    if approval_state:
+        artifact_metadata['approval'] = {
+            'state': approval_state,
+            'is_pending': approval_state == 'pending_approval',
+            'viewer_is_requester': True,
+            'viewer_can_approve': False,
+        }
     return artifact_metadata
 
 

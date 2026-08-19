@@ -8,6 +8,7 @@ import uuid
 from config import *
 from collaboration_models import (
     COLLABORATION_KIND,
+    COLLABORATION_SOURCE_KIND,
     GROUP_MULTI_USER_CHAT_TYPE,
     MEMBERSHIP_ROLE_ADMIN,
     MEMBERSHIP_ROLE_MEMBER,
@@ -1568,6 +1569,91 @@ def assert_user_can_participate_in_collaboration_conversation(user_id, conversat
     return access_context
 
 
+def is_collaboration_source_conversation(conversation_item):
+    """Return True when a personal conversation is the hidden backing store of a shared one."""
+    normalized_item = conversation_item or {}
+    return bool(
+        str(normalized_item.get('conversation_kind') or '').strip() == COLLABORATION_SOURCE_KIND
+        or str(normalized_item.get('collaboration_conversation_id') or '').strip()
+    )
+
+
+def get_collaboration_conversation_for_source(conversation_item):
+    """Load the shared conversation that owns a collaboration source conversation."""
+    collaboration_conversation_id = str(
+        (conversation_item or {}).get('collaboration_conversation_id') or ''
+    ).strip()
+    if not collaboration_conversation_id:
+        return None
+
+    try:
+        return get_collaboration_conversation(collaboration_conversation_id)
+    except CosmosResourceNotFoundError:
+        return None
+
+
+def build_conversation_participation_context(user_id, conversation_item):
+    """Authorize one caller against a personal conversation or its linked shared conversation.
+
+    Ordinary personal conversations stay owner-only. Collaboration source conversations are
+    always owned by the shared conversation creator, so every other participant fails a plain
+    ownership comparison even though they are legitimate members. Those callers are authorized
+    against the linked collaboration conversation instead, mirroring the chat upload path in
+    ``route_frontend_chats._resolve_chat_upload_context``.
+
+    Returns a context describing how access was granted so callers can distinguish an owner
+    acting on their own conversation from a participant acting inside a shared one.
+    """
+    normalized_user_id = str(user_id or '').strip()
+    normalized_item = conversation_item or {}
+    owner_user_id = str(normalized_item.get('user_id') or '').strip()
+    conversation_id = str(normalized_item.get('id') or '').strip()
+
+    if normalized_user_id and owner_user_id == normalized_user_id:
+        return {
+            'user_id': normalized_user_id,
+            'conversation_id': conversation_id,
+            'owner_user_id': owner_user_id,
+            'is_owner': True,
+            'is_collaboration_source': is_collaboration_source_conversation(normalized_item),
+            'collaboration_conversation': None,
+            'collaboration_conversation_id': str(
+                normalized_item.get('collaboration_conversation_id') or ''
+            ).strip(),
+            'collaboration_access': None,
+            'group_id': '',
+            'group_role': '',
+        }
+
+    collaboration_conversation = get_collaboration_conversation_for_source(normalized_item)
+    if not collaboration_conversation:
+        raise PermissionError('You can only access your own conversations')
+
+    collaboration_access = assert_user_can_participate_in_collaboration_conversation(
+        normalized_user_id,
+        collaboration_conversation,
+    )
+
+    group_id = ''
+    if is_group_collaboration_conversation(collaboration_conversation):
+        group_id = str(
+            (collaboration_conversation.get('scope') or {}).get('group_id') or ''
+        ).strip()
+
+    return {
+        'user_id': normalized_user_id,
+        'conversation_id': conversation_id,
+        'owner_user_id': owner_user_id,
+        'is_owner': False,
+        'is_collaboration_source': True,
+        'collaboration_conversation': collaboration_conversation,
+        'collaboration_conversation_id': str(collaboration_conversation.get('id') or '').strip(),
+        'collaboration_access': collaboration_access,
+        'group_id': group_id,
+        'group_role': str((collaboration_access or {}).get('group_role') or '').strip(),
+    }
+
+
 def record_personal_invite_response(conversation_id, user_id, action):
     conversation_doc = get_collaboration_conversation(conversation_id)
     if not is_explicit_membership_collaboration(conversation_doc):
@@ -1930,7 +2016,7 @@ def ensure_collaboration_source_conversation(conversation_doc, current_user):
             'locked_contexts': list((conversation_doc or {}).get('locked_contexts', []) or []),
             'classification': list((conversation_doc or {}).get('classification', []) or []),
             'summary': (conversation_doc or {}).get('summary'),
-            'conversation_kind': 'collaboration_source',
+            'conversation_kind': COLLABORATION_SOURCE_KIND,
             'collaboration_conversation_id': (conversation_doc or {}).get('id'),
             'is_hidden': True,
         }
@@ -1950,7 +2036,7 @@ def ensure_collaboration_source_conversation(conversation_doc, current_user):
             'locked_contexts': list((conversation_doc or {}).get('locked_contexts', []) or source_conversation_doc.get('locked_contexts', []) or []),
             'classification': list((conversation_doc or {}).get('classification', []) or source_conversation_doc.get('classification', []) or []),
             'summary': (conversation_doc or {}).get('summary', source_conversation_doc.get('summary')),
-            'conversation_kind': 'collaboration_source',
+            'conversation_kind': COLLABORATION_SOURCE_KIND,
             'collaboration_conversation_id': (conversation_doc or {}).get('id'),
             'is_hidden': True,
         }
