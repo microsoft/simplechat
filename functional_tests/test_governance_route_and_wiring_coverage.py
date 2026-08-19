@@ -12,6 +12,7 @@ agent, and action flows.
 
 import os
 import sys
+from test_support.templates import compose_if_admin_settings
 
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -23,7 +24,7 @@ if SINGLE_APP_DIR not in sys.path:
 def _read(*parts):
     path = os.path.join(ROOT_DIR, *parts)
     with open(path, "r", encoding="utf-8") as handle:
-        return handle.read()
+        return compose_if_admin_settings(path, handle.read())
 
 
 def test_governance_route_registration_and_guards():

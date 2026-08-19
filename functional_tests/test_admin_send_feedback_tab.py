@@ -15,6 +15,10 @@ import sys
 
 from bs4 import BeautifulSoup
 
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
+from test_support.templates import resolve_template_includes
+
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.abspath(os.path.join(CURRENT_DIR, '..'))
@@ -29,7 +33,13 @@ FEATURE_DOC = os.path.join(REPO_ROOT, 'docs', 'explanation', 'features', 'SEND_F
 
 def read_text(path):
     with open(path, 'r', encoding='utf-8') as file_handle:
-        return file_handle.read()
+        content = file_handle.read()
+
+    # Admin Settings is composed from per-tab partials, so structural
+    # assertions have to see the fully composed markup.
+    if os.path.basename(str(path)) == 'admin_settings.html':
+        return resolve_template_includes(content, os.path.dirname(str(path)))
+    return content
 
 
 def test_send_feedback_template_structure():

@@ -1,0 +1,244 @@
+            <div class="tab-pane fade" id="citation" role="tabpanel" aria-labelledby="citation-tab">
+
+                 <p class="text-muted">
+                    Configure standard and enhanced citations features for your and group workspaces.
+                </p>
+
+
+                <div class="card p-3 mb-3" id="standard-citations-section">
+                    <h5>
+                        <i class="bi bi-quote me-2"></i>Standard Citations
+                    </h5>
+                    <p class="text-muted">
+                        Standard citations is always enabled for both Your Workspace and Group Workspace.
+                    </p>
+                    <p class="mb-0">
+                        Users can see text content of the source/citation for documents.
+                    </p>
+                </div>
+
+
+                <div class="card p-3" id="enhanced-citations-section">
+                    <h5>
+                        <i class="bi bi-star me-2"></i>Enhanced Citations
+                    </h5>
+                    <p class="text-muted mb-2">
+                        Enable Enhanced Citation to store files in a Storage Account,
+                        and show direct references (Preview feature, files are saved to storage, presentation
+                        layer will be available in a future release).
+                    </p>
+
+                    {% set ec_storage_status = settings.enhanced_citations_storage_status or {} %}
+                    {% set ec_storage_state = ec_storage_status.state or 'not_initialized' %}
+                    {% if settings.enable_enhanced_citations %}
+                    <div
+                        class="alert {% if ec_storage_state in ['initialization_failed', 'not_initialized'] %}alert-warning{% else %}alert-info{% endif %} mb-3"
+                        id="enhanced-citations-storage-startup-status"
+                    >
+                        <div class="fw-semibold">Enhanced Citations storage startup status</div>
+                        <div>{{ ec_storage_status.message or 'Enhanced Citations storage status is not available for this process.' }}</div>
+                        <div class="small mt-1">
+                            Startup skips live storage container checks so storage outages do not block application boot.
+                            Use the connection test to validate current storage reachability and container access.
+                        </div>
+                        <button
+                            type="button"
+                            class="btn btn-outline-secondary btn-sm mt-2"
+                            id="test_enhanced_citations_storage_button"
+                        >
+                            Test Enhanced Citations Storage
+                        </button>
+                        <div class="mt-2" id="test_enhanced_citations_storage_result"></div>
+                    </div>
+                    {% endif %}
+
+
+                    <div class="form-group form-check form-switch mb-3">
+                        <input
+                            type="checkbox"
+                            class="form-check-input"
+                            id="enable_enhanced_citations"
+                            name="enable_enhanced_citations"
+                            {% if settings.enable_enhanced_citations %}checked{% endif %}
+                        >
+                        <label class="form-check-label ms-2" for="enable_enhanced_citations">
+                            Enable Enhanced Citations
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Store original files in Azure Storage and provide direct file references and previews in citations for improved source tracking."></i>
+                    </div>
+
+
+                    <div id="enhanced_citation_settings" style="display: none;">
+
+                        <div class="card mb-3 p-3">
+                            <h6><strong>All filetypes</strong></h6>
+                            <div class="mb-3">
+                                <label for="office_docs_authentication_type" class="form-label">
+                                    Storage Account Authentication Type
+                                </label>
+                                <select class="form-select" id="office_docs_authentication_type" name="office_docs_authentication_type">
+                                    <option value="key" {% if settings.office_docs_authentication_type == "key" or not settings.office_docs_authentication_type %}selected{% endif %}>Connection String</option>
+                                    <option value="managed_identity" {% if settings.office_docs_authentication_type == "managed_identity" %}selected{% endif %}>Managed Identity</option>
+                                </select>
+                            </div>
+
+                            <div class="mb-3" id="office_docs_storage_conn_str_group" {% if settings.office_docs_authentication_type == "managed_identity" %}style="display:none;"{% endif %}>
+                                <label for="office_docs_storage_account_url" class="form-label">
+                                    Storage Account Connection String
+                                </label>
+                                <div class="input-group">
+                                    <input
+                                        type="password"
+                                        class="form-control"
+                                        id="office_docs_storage_account_url"
+                                        name="office_docs_storage_account_url"
+                                        value="{{ settings.office_docs_storage_account_url or '' }}"
+                                    >
+                                    <button type="button" class="btn btn-outline-secondary" id="toggle_office_conn_str">Show</button>
+                                </div>
+                            </div>
+
+                            <div class="mb-3" id="office_docs_storage_url_group" {% if settings.office_docs_authentication_type != "managed_identity" %}style="display:none;"{% endif %}>
+                                <label for="office_docs_storage_account_blob_endpoint" class="form-label">
+                                    Storage Account Blob Service Endpoint
+                                </label>
+                                <div class="input-group">
+                                    <input
+                                        type="password"
+                                        class="form-control"
+                                        id="office_docs_storage_account_blob_endpoint"
+                                        name="office_docs_storage_account_blob_endpoint"
+                                        value="{{ settings.office_docs_storage_account_blob_endpoint or '' }}"
+                                    >
+                                    <button type="button" class="btn btn-outline-secondary" id="toggle_office_url">Show</button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="card mb-3 p-3">
+                            <h6><strong>Tabular Preview Limits</strong></h6>
+                            <div class="mb-3">
+                                <label for="tabular_preview_max_blob_size_mb" class="form-label">
+                                    Maximum File Size for Tabular Preview (MB)
+                                </label>
+                                <input type="number" class="form-control" id="tabular_preview_max_blob_size_mb"
+                                    name="tabular_preview_max_blob_size_mb"
+                                    min="1" max="1024"
+                                    value="{{ settings.tabular_preview_max_blob_size_mb or 200 }}">
+                                <small class="form-text text-muted">
+                                    Maximum blob size (in MB) allowed for tabular file previews (CSV, XLSX). Files larger than this will not be previewed.
+                                    Increase for larger files if your compute has sufficient memory, or decrease to protect smaller instances. Default: 200 MB.
+                                </small>
+                            </div>
+                            <hr>
+                            <h6><strong>Large Tabular Run Controls</strong></h6>
+                            <div class="form-check form-switch mb-3">
+                                <input class="form-check-input" type="checkbox" role="switch" id="enable_tabular_durable_run_confirmation" name="enable_tabular_durable_run_confirmation" {% if settings.enable_tabular_durable_run_confirmation | default(true) %}checked{% endif %}>
+                                <label class="form-check-label" for="enable_tabular_durable_run_confirmation">Confirm very large row-level runs before starting</label>
+                                <div class="form-text">When a prompt includes an explicit large row count, users are asked to continue or narrow scope before the run starts.</div>
+                            </div>
+                            <div class="row g-3 mb-3">
+                                <div class="col-md-6">
+                                    <label for="tabular_durable_run_confirmation_threshold_rows" class="form-label">Confirmation Row Threshold</label>
+                                    <input type="number" class="form-control" id="tabular_durable_run_confirmation_threshold_rows" name="tabular_durable_run_confirmation_threshold_rows" min="1" max="1000000" value="{{ settings.tabular_durable_run_confirmation_threshold_rows | default(500, true) }}">
+                                </div>
+                                <div class="col-md-6">
+                                    <label for="tabular_durable_run_confirmation_threshold_batches" class="form-label">Confirmation Batch Threshold</label>
+                                    <input type="number" class="form-control" id="tabular_durable_run_confirmation_threshold_batches" name="tabular_durable_run_confirmation_threshold_batches" min="1" max="100000" value="{{ settings.tabular_durable_run_confirmation_threshold_batches | default(75, true) }}">
+                                </div>
+                            </div>
+                            <div class="row g-3">
+                                <div class="col-md-6">
+                                    <label for="tabular_generated_output_chunk_model_mode" class="form-label">Chunk Processing Model</label>
+                                    <select class="form-select" id="tabular_generated_output_chunk_model_mode" name="tabular_generated_output_chunk_model_mode">
+                                        <option value="current" {% if settings.tabular_generated_output_chunk_model_mode | default('current', true) != 'configured' %}selected{% endif %}>Use the user's selected model</option>
+                                        <option value="configured" {% if settings.tabular_generated_output_chunk_model_mode | default('current', true) == 'configured' %}selected{% endif %}>Use a configured deployment for chunk work</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-6">
+                                    <label for="tabular_generated_output_chunk_model_deployment" class="form-label">Configured Chunk Model Deployment</label>
+                                    <input type="text" class="form-control" id="tabular_generated_output_chunk_model_deployment" name="tabular_generated_output_chunk_model_deployment" maxlength="120" value="{{ settings.tabular_generated_output_chunk_model_deployment | default('', true) }}" autocomplete="off">
+                                </div>
+                            </div>
+                        </div>
+
+
+                        <!-- <div class="card mb-3 p-3">
+                            <h6><strong>Video Files</strong></h6>
+                            {% if settings.enable_video_file_support %}
+
+                                <div class="mb-3">
+                                    <label for="video_files_storage_account_url" class="form-label">
+                                        Storage Account Connection String
+                                    </label>
+
+                                    <div class="input-group">
+                                        <input
+                                            type="password"
+                                            class="form-control"
+                                            id="video_files_storage_account_url"
+                                            name="video_files_storage_account_url"
+                                            value="{{ settings.video_files_storage_account_url or '' }}"
+                                        >
+                                        <button type="button" class="btn btn-outline-secondary" id="toggle_video_conn_str">Show</button>
+                                    </div>
+
+                                </div>
+                            {% else %}
+
+                                <p class="text-danger mb-1">
+                                    Video support is currently disabled in the Workspaces tab.
+                                </p>
+                                <p class="mt-2 mb-0">
+                                    <small class="text-muted">
+                                        Reference:
+                                        <a href="#workspaces" onclick="switchTab(event, 'workspaces-tab')">
+                                            Enable Video File Support
+                                        </a>
+                                        (see the Workspaces tab)
+                                    </small>
+                                </p>
+                            {% endif %}
+                        </div>
+
+
+                        <div class="card mb-3 p-3">
+                            <h6><strong>Audio Files</strong></h6>
+                            {% if settings.enable_audio_file_support %}
+
+                                <div class="mb-3">
+                                    <label for="audio_files_storage_account_url" class="form-label">
+                                        Storage Account Connection String
+                                    </label>
+
+                                    <div class="input-group">
+                                        <input
+                                            type="password"
+                                            class="form-control"
+                                            id="audio_files_storage_account_url"
+                                            name="audio_files_storage_account_url"
+                                            value="{{ settings.audio_files_storage_account_url or '' }}"
+                                        >
+                                        <button type="button" class="btn btn-outline-secondary" id="toggle_audio_conn_str">Show</button>
+                                    </div>
+
+                                </div>
+                            {% else %}
+
+                                <p class="text-danger mb-1">
+                                    Audio support is currently disabled in the Workspaces tab.
+                                </p>
+                                <p class="mt-2 mb-0">
+                                    <small class="text-muted">
+                                        Reference:
+                                        <a href="#workspaces" onclick="switchTab(event, 'workspaces-tab')">
+                                            Enable Audio File Support
+                                        </a>
+                                        (see the Workspaces tab)
+                                    </small>
+                                </p>
+                            {% endif %}
+                        </div> -->
+                    </div>
+                </div>
+            </div>

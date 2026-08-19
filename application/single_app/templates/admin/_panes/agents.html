@@ -1,0 +1,1021 @@
+            <div class="tab-pane fade" id="agents" role="tabpanel" aria-labelledby="agents-tab">
+
+                <p class="text-muted">
+                    Configure AI agents and actions for enhanced functionality. Agents provide AI-driven task automation while Actions extend functionality with custom tools and integrations.
+                </p>
+
+                <div class="alert alert-info d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-3" role="alert">
+                    <div>
+                        <strong>Agent model lifecycle review lives in AI Models.</strong>
+
+                        <div class="small mt-1">
+                            Use AI Models to review inherited agents, selectively override explicit agent model choices, and move agents to newer default models as costs or model releases change.
+                        </div>
+                    </div>
+                    <button type="button" class="btn btn-outline-primary btn-sm align-self-start" data-open-admin-tab="#ai-models">
+                        <i class="bi bi-box-arrow-up-right me-1"></i>Open AI Models
+                    </button>
+                </div>
+
+                <div class="alert alert-warning mb-3" role="alert">
+                    <strong>Note:</strong> All changes to global agents and actions require a restart of the web app to take effect.
+                </div>
+
+                {% set analyze_capability = settings.document_action_capabilities.analyze %}
+                {% set comparison_capability = settings.document_action_capabilities.comparison %}
+                <div class="card p-3 mb-4" id="document-action-capabilities-card">
+                    <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-3 mb-3">
+                        <div>
+                            <h5 class="mb-1"><i class="bi bi-files me-2"></i>Document Action Capabilities</h5>
+                            <p class="text-muted small mb-0">Configure the document actions shown in the <strong>Action</strong> dropdown in Chat and Workflow. These controls live in the Agents and Actions tab, but remain separate from the global agent and custom action cards below.</p>
+                        </div>
+                        <span class="badge text-bg-light border align-self-start align-self-lg-center">Chat: 2-300 | Workflow: 2-1000</span>
+                    </div>
+                    <div class="alert alert-light border small mb-3" role="alert">
+                        Use these settings to explicitly allow Analyze and Document Comparison in the Chat and Workflow <strong>Action</strong> dropdowns without bundling them into the global agent or custom action configuration cards below.
+                    </div>
+                    <div class="row g-3">
+                        <div class="col-xl-6">
+                            <div class="border rounded-3 p-3 h-100">
+                                <div class="form-check form-switch mb-3">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="document_action_analyze_enabled" name="document_action_analyze_enabled" {% if analyze_capability.enabled %}checked{% endif %}>
+                                    <label class="form-check-label ms-2" for="document_action_analyze_enabled">Enable Analyze</label>
+                                    <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to run deterministic analysis across selected documents in chat and workflows."></i>
+                                </div>
+                                <div class="mb-3">
+                                    <div class="d-flex justify-content-between align-items-center mb-1">
+                                        <label for="document_action_analyze_chat_max_documents" class="form-label mb-0">Chat max documents</label>
+                                        <span id="document_action_analyze_chat_max_documents_value" class="small text-muted fw-semibold">{{ analyze_capability.chat_max_documents }}</span>
+                                    </div>
+                                    <div class="row g-2 align-items-center">
+                                        <div class="col-lg-8">
+                                            <input type="range" class="form-range document-action-capability-range" id="document_action_analyze_chat_max_documents_range" min="2" max="300" step="1" value="{{ analyze_capability.chat_max_documents }}" data-range-sync="document_action_analyze_chat_max_documents" data-range-display="document_action_analyze_chat_max_documents_value" />
+                                        </div>
+                                        <div class="col-lg-4">
+                                            <input type="number" class="form-control" id="document_action_analyze_chat_max_documents" name="document_action_analyze_chat_max_documents" min="2" max="300" value="{{ analyze_capability.chat_max_documents }}" />
+                                        </div>
+                                    </div>
+                                    <div class="d-flex justify-content-between small text-muted">
+                                        <span>2</span>
+                                        <span>300</span>
+                                    </div>
+                                </div>
+                                <div>
+                                    <div class="d-flex justify-content-between align-items-center mb-1">
+                                        <label for="document_action_analyze_workflow_max_documents" class="form-label mb-0">Workflow max documents</label>
+                                        <span id="document_action_analyze_workflow_max_documents_value" class="small text-muted fw-semibold">{{ analyze_capability.workflow_max_documents }}</span>
+                                    </div>
+                                    <div class="row g-2 align-items-center">
+                                        <div class="col-lg-8">
+                                            <input type="range" class="form-range document-action-capability-range" id="document_action_analyze_workflow_max_documents_range" min="2" max="1000" step="1" value="{{ analyze_capability.workflow_max_documents }}" data-range-sync="document_action_analyze_workflow_max_documents" data-range-display="document_action_analyze_workflow_max_documents_value" />
+                                        </div>
+                                        <div class="col-lg-4">
+                                            <input type="number" class="form-control" id="document_action_analyze_workflow_max_documents" name="document_action_analyze_workflow_max_documents" min="2" max="1000" value="{{ analyze_capability.workflow_max_documents }}" />
+                                        </div>
+                                    </div>
+                                    <div class="d-flex justify-content-between small text-muted">
+                                        <span>2</span>
+                                        <span>1000</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-xl-6">
+                            <div class="border rounded-3 p-3 h-100">
+                                <div class="form-check form-switch mb-3">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="document_action_comparison_enabled" name="document_action_comparison_enabled" {% if comparison_capability.enabled %}checked{% endif %}>
+                                    <label class="form-check-label ms-2" for="document_action_comparison_enabled">Enable Document Comparison</label>
+                                    <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to compare one baseline document against one or more selected documents in chat and workflows."></i>
+                                </div>
+                                <div class="mb-3">
+                                    <div class="d-flex justify-content-between align-items-center mb-1">
+                                        <label for="document_action_comparison_chat_max_documents" class="form-label mb-0">Chat max documents</label>
+                                        <span id="document_action_comparison_chat_max_documents_value" class="small text-muted fw-semibold">{{ comparison_capability.chat_max_documents }}</span>
+                                    </div>
+                                    <div class="row g-2 align-items-center">
+                                        <div class="col-lg-8">
+                                            <input type="range" class="form-range document-action-capability-range" id="document_action_comparison_chat_max_documents_range" min="2" max="300" step="1" value="{{ comparison_capability.chat_max_documents }}" data-range-sync="document_action_comparison_chat_max_documents" data-range-display="document_action_comparison_chat_max_documents_value" />
+                                        </div>
+                                        <div class="col-lg-4">
+                                            <input type="number" class="form-control" id="document_action_comparison_chat_max_documents" name="document_action_comparison_chat_max_documents" min="2" max="300" value="{{ comparison_capability.chat_max_documents }}" />
+                                        </div>
+                                    </div>
+                                    <div class="d-flex justify-content-between small text-muted">
+                                        <span>2</span>
+                                        <span>300</span>
+                                    </div>
+                                </div>
+                                <div>
+                                    <div class="d-flex justify-content-between align-items-center mb-1">
+                                        <label for="document_action_comparison_workflow_max_documents" class="form-label mb-0">Workflow max documents</label>
+                                        <span id="document_action_comparison_workflow_max_documents_value" class="small text-muted fw-semibold">{{ comparison_capability.workflow_max_documents }}</span>
+                                    </div>
+                                    <div class="row g-2 align-items-center">
+                                        <div class="col-lg-8">
+                                            <input type="range" class="form-range document-action-capability-range" id="document_action_comparison_workflow_max_documents_range" min="2" max="1000" step="1" value="{{ comparison_capability.workflow_max_documents }}" data-range-sync="document_action_comparison_workflow_max_documents" data-range-display="document_action_comparison_workflow_max_documents_value" />
+                                        </div>
+                                        <div class="col-lg-4">
+                                            <input type="number" class="form-control" id="document_action_comparison_workflow_max_documents" name="document_action_comparison_workflow_max_documents" min="2" max="1000" value="{{ comparison_capability.workflow_max_documents }}" />
+                                        </div>
+                                    </div>
+                                    <div class="d-flex justify-content-between small text-muted">
+                                        <span>2</span>
+                                        <span>1000</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Agents Configuration Section -->
+                <div class="card p-3 mb-4" id="agents-configuration">
+                    <h5 class="card-title">
+                        <i class="bi bi-robot me-2"></i>Agents Configuration
+                    </h5>
+                    <p class="text-muted small">
+                        Configure AI agents powered by Semantic Kernel for task automation and orchestration.
+                    </p>
+                    <div class="card p-3 mb-3" id="agents-page-customization-card">
+                        <h6 class="mb-2">
+                            <i class="bi bi-palette me-2"></i>Agents Page Customization
+                        </h6>
+                        <p class="text-muted small">Customize the public Agents page hero, color treatment, and optional guidance message.</p>
+                        <div class="row g-3">
+                            <div class="col-lg-6">
+                                <label for="agents_page_title" class="form-label">Hero Title</label>
+                                <input type="text" class="form-control" id="agents_page_title" name="agents_page_title" maxlength="120" value="{{ settings.agents_page_title | default('Find your next AI partner') }}" />
+                            </div>
+                            <div class="col-lg-6">
+                                <label for="agents_page_subtitle" class="form-label">Hero Subtitle</label>
+                                <input type="text" class="form-control" id="agents_page_subtitle" name="agents_page_subtitle" maxlength="240" value="{{ settings.agents_page_subtitle | default('Explore specialized agents built to accelerate how you work.') }}" />
+                            </div>
+                            <div class="col-md-4">
+                                <label for="agents_page_hero_color_mode" class="form-label">Hero Color Mode</label>
+                                <select class="form-select" id="agents_page_hero_color_mode" name="agents_page_hero_color_mode">
+                                    <option value="single" {% if settings.agents_page_hero_color_mode != 'two_tone' %}selected{% endif %}>Single color</option>
+                                    <option value="two_tone" {% if settings.agents_page_hero_color_mode == 'two_tone' %}selected{% endif %}>Two tone gradient</option>
+                                </select>
+                            </div>
+                            <div class="col-md-4">
+                                <label for="agents_page_hero_primary_color" class="form-label">Primary Color</label>
+                                <input type="color" class="form-control form-control-color" id="agents_page_hero_primary_color" name="agents_page_hero_primary_color" value="{{ settings.agents_page_hero_primary_color | default('#0f172a') }}" />
+                            </div>
+                            <div class="col-md-4">
+                                <label for="agents_page_hero_secondary_color" class="form-label">Secondary Color</label>
+                                <input type="color" class="form-control form-control-color" id="agents_page_hero_secondary_color" name="agents_page_hero_secondary_color" value="{{ settings.agents_page_hero_secondary_color | default('#1e293b') }}" />
+                                <div class="form-text">Used when two tone gradient is selected.</div>
+                            </div>
+                            <div class="col-12">
+                                <label for="agents_page_disclaimer_markdown" class="form-label">Disclaimer / Guidance Text <span class="text-muted fw-normal">(Markdown supported)</span></label>
+                                <textarea class="form-control" id="agents_page_disclaimer_markdown" name="agents_page_disclaimer_markdown" rows="4" maxlength="3000" placeholder="Need a new agent? Contact ai-support@example.com.">{{ settings.agents_page_disclaimer_markdown | default('') }}</textarea>
+                                <div class="form-text">Shown below the Agents page hero. Use this for contact details, request guidance, or governance reminders.</div>
+                            </div>
+                            <div class="col-12">
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="agents_page_show_instructions_in_details" name="agents_page_show_instructions_in_details" {% if settings.agents_page_show_instructions_in_details | default(true) %}checked{% endif %} />
+                                    <label class="form-check-label" for="agents_page_show_instructions_in_details">Show agent instructions in Agents page details</label>
+                                </div>
+                                <div class="form-text">When disabled, the Agents tab details popup hides instructions and the catalog API response omits them.</div>
+                            </div>
+                            <div class="col-12">
+                                <hr class="my-2" />
+                                <h6 class="mb-2">Promoted Popular Agents</h6>
+                                <p class="text-muted small mb-3">Highlight selected agents in the Popular tab even before they have usage counts. Users only see promoted agents that are already visible to them.</p>
+                                <textarea class="d-none" id="agents_page_promoted_popular_agents_json" name="agents_page_promoted_popular_agents_json">{{ settings.agents_page_promoted_popular_agents | default([], true) | tojson }}</textarea>
+                                <div class="row g-3 mb-3">
+                                    <div class="col-lg-4">
+                                        <label for="agents_page_promoted_popular_order" class="form-label">Placement</label>
+                                        <select class="form-select" id="agents_page_promoted_popular_order" name="agents_page_promoted_popular_order">
+                                            <option value="before" {% if settings.agents_page_promoted_popular_order | default('before') == 'before' %}selected{% endif %}>Before actual popular agents</option>
+                                            <option value="after" {% if settings.agents_page_promoted_popular_order | default('before') == 'after' %}selected{% endif %}>After actual popular agents</option>
+                                            <option value="mixed" {% if settings.agents_page_promoted_popular_order | default('before') == 'mixed' %}selected{% endif %}>Mixed by usage</option>
+                                        </select>
+                                    </div>
+                                    <div class="col-lg-4">
+                                        <label for="agents_page_promoted_popular_tag_label" class="form-label">Promoted Tag Label</label>
+                                        <input type="text" class="form-control" id="agents_page_promoted_popular_tag_label" name="agents_page_promoted_popular_tag_label" maxlength="40" value="{{ settings.agents_page_promoted_popular_tag_label | default('Promoted') }}" />
+                                    </div>
+                                    <div class="col-lg-4 d-flex align-items-end">
+                                        <div>
+                                            <div class="form-check form-switch">
+                                                <input class="form-check-input" type="checkbox" role="switch" id="agents_page_promoted_popular_tag_enabled" name="agents_page_promoted_popular_tag_enabled" {% if settings.agents_page_promoted_popular_tag_enabled | default(true) %}checked{% endif %} />
+                                                <label class="form-check-label" for="agents_page_promoted_popular_tag_enabled">Show promoted tag</label>
+                                            </div>
+                                            <div class="form-text">When enabled, promoted agents show the configured tag in the Popular tab.</div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="row g-2 align-items-end mb-3">
+                                    <div class="col-lg-9">
+                                        <label for="agents-page-promoted-agent-select" class="form-label">Add Agent</label>
+                                        <select class="form-select" id="agents-page-promoted-agent-select">
+                                            <option value="">Loading available agents...</option>
+                                        </select>
+                                    </div>
+                                    <div class="col-lg-3">
+                                        <button type="button" class="btn btn-outline-primary w-100" id="agents-page-promoted-agent-add">
+                                            <i class="bi bi-plus-lg me-1" aria-hidden="true"></i>Add Agent
+                                        </button>
+                                    </div>
+                                </div>
+                                <div class="table-responsive">
+                                    <table class="table table-sm align-middle mb-2">
+                                        <thead>
+                                            <tr>
+                                                <th scope="col">Agent</th>
+                                                <th scope="col" class="text-nowrap">Show In</th>
+                                                <th scope="col" class="text-end">Actions</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="agents-page-promoted-popular-tbody"></tbody>
+                                    </table>
+                                </div>
+                                <div class="alert alert-info py-2 mb-0" id="agents-page-promoted-popular-empty">No agents are promoted yet.</div>
+                                <div class="alert alert-warning py-2 mt-2 mb-0 d-none" id="agents-page-promoted-popular-load-error" role="status"></div>
+                            </div>
+                        </div>
+                    </div>
+                <div class="mb-3">
+                    <div class="form-check form-switch mb-2">
+                        <input class="form-check-input" type="checkbox" role="switch" id="toggle-enable-agents-agents" name="enable_semantic_kernel" {% if settings.enable_semantic_kernel %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="toggle-enable-agents-agents">Enable Agents</label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Enable the agents system powered by Semantic Kernel for AI-driven task automation and orchestration."></i>
+                        <button type="button" class="btn btn-outline-info btn-sm ms-2 governance-primary-link" data-governance-target="governance_global_agents_usage">Govern Global Agents</button>
+                        <button type="button" class="btn btn-outline-info btn-sm ms-2 governance-primary-link" data-governance-target="governance_global_actions_usage">Govern Global Actions</button>
+                    </div>
+                    <div id="per-user-sk-restart-msg" class="text-muted small mb-2" style="display:none;">Requires a restart to take effect.</div>
+                </div>
+                {% if not settings.enable_semantic_kernel %}
+                    <div class="alert alert-info">
+                        <strong>Agents UI is not available while agents are disabled.</strong>
+                    </div>
+                {% else %}
+                    <div>
+                        <div class="form-check form-switch mb-2">
+                            <input class="form-check-input" type="checkbox" role="switch" id="toggle-per-user-sk" name="per_user_semantic_kernel" {% if settings.per_user_semantic_kernel %}checked{% endif %} {% if not settings.enable_semantic_kernel %}disabled{% endif %}>
+                            <label class="form-check-label ms-2" for="toggle-per-user-sk">Workspace Mode (workspace-specific agents/plugins and disables global configuration)</label>
+                            <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="If enabled, each user gets their own agent/plugin set. If disabled, all users share the same global set."></i>
+                        </div>
+                        {% if settings.per_user_semantic_kernel %}
+                            <!-- Agent Feature Flags -->
+                            <div class="card p-3 mb-3" id="agent-toggles-card">
+                                <h6 class="mb-2">Workspace Feature Toggles</h6>
+                                <div class="form-check form-switch mb-2">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="toggle-allow-user-agents" name="allow_user_agents" {% if settings.allow_user_agents %}checked{% endif %}>
+                                    <label class="form-check-label ms-2" for="toggle-allow-user-agents">Allow User Agents</label>
+                                    <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to create and manage their own workspace-level agents for personal use and customization."></i>
+                                    <button type="button" class="btn btn-outline-info btn-sm ms-2 governance-primary-link" data-governance-target="governance_user_agents">Govern</button>
+                                </div>
+                                <div class="form-check form-switch mb-2">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="toggle-allow-group-agents" name="allow_group_agents" {% if settings.allow_group_agents %}checked{% endif %}>
+                                    <label class="form-check-label ms-2" for="toggle-allow-group-agents">Allow Group Agents</label>
+                                    <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to create and manage group-level agents that can be shared within workgroups and teams."></i>
+                                    <button type="button" class="btn btn-outline-info btn-sm ms-2 governance-primary-link" data-governance-target="governance_group_agents">Govern</button>
+                                </div>
+                                <div class="form-check form-switch mb-2">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="toggle-allow-user-custom-endpoints" name="allow_user_custom_endpoints" {% if settings.allow_user_custom_endpoints %}checked{% endif %}>
+                                    <label class="form-check-label ms-2" for="toggle-allow-user-custom-endpoints">Allow User Custom Endpoints</label>
+                                    <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to configure custom endpoints for their personal workspace agents and model endpoints."></i>
+                                    <button type="button" class="btn btn-outline-info btn-sm ms-2 governance-primary-link" data-governance-target="governance_user_endpoints">Govern</button>
+                                </div>
+                                <div class="form-check form-switch mb-2">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="toggle-allow-group-custom-endpoints" name="allow_group_custom_endpoints" {% if settings.allow_group_custom_endpoints %}checked{% endif %}>
+                                    <label class="form-check-label ms-2" for="toggle-allow-group-custom-endpoints">Allow Group Custom Endpoints</label>
+                                    <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to configure custom endpoints for group workspace agents and model endpoints."></i>
+                                    <button type="button" class="btn btn-outline-info btn-sm ms-2 governance-primary-link" data-governance-target="governance_group_endpoints">Govern</button>
+                                </div>
+                                <div class="form-check form-switch mb-2">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="toggle-merge-global-sk" name="merge_global_semantic_kernel_with_workspace" {% if settings.merge_global_semantic_kernel_with_workspace %}checked{% endif %}>
+                                    <label class="form-check-label ms-2" for="toggle-merge-global-sk">Merge Global Agents/Plugins into Workspace</label>
+                                    <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="If enabled, workspace agents/plugins will include global ones as well."></i>
+                                </div>
+                                <div class="form-check form-switch mb-2">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="toggle-enable-agent-template-gallery" name="enable_agent_template_gallery" {% if settings.enable_agent_template_gallery %}checked{% endif %}>
+                                    <label class="form-check-label ms-2" for="toggle-enable-agent-template-gallery">Enable Agent Template Gallery</label>
+                                    <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow workspace users to browse approved templates and submit their own for review."></i>
+                                </div>
+                            </div>
+                            <!-- End Agent Feature Flags -->
+
+                        {% endif %}
+                        <!-- Orchestration Settings Card -->
+                        <div class="d-flex justify-content-between align-items-center mb-3">
+                            <h4>Agent Orchestration Settings</h4>
+                        </div>
+                        <div class="card p-3 mb-3">
+                            <p class="text-muted mb-1">Configure how the chat system orchestrates agents (single or multi-agent group chat).</p>
+                            <div class="mb-3">
+                                <label for="orchestration_type" class="form-label">Orchestration Type</label>
+                                <select class="form-select" id="orchestration_type" name="orchestration_type"></select>
+                            </div>
+                            <div class="mb-3" id="max_rounds_per_agent_group" style="display:none;">
+                                <label for="max_rounds_per_agent" class="form-label">Max Rounds Per Agent (Group Chat)</label>
+                                <input type="number" class="form-control" id="max_rounds_per_agent" name="max_rounds_per_agent" min="1" value="1">
+                            </div>
+                            <button type="button" class="btn btn-primary" id="save-orchestration-settings-btn">Save Orchestration Settings</button>
+                        </div>
+                        <div class="d-flex justify-content-between align-items-center mb-3">
+                            <h4>Global  Agents</h4>
+                            <div class="d-flex align-items-center gap-2">
+                                <button type="button" class="btn btn-outline-info btn-sm agent-examples-trigger" data-bs-toggle="modal" data-bs-target="#agentExamplesModal" data-trigger-button="#add-agent-btn">
+                                    <i class="bi bi-magic"></i>
+                                    Agent Templates
+                                </button>
+                                <button type="button" class="btn btn-primary" id="add-agent-btn">Add Agent</button>
+                            </div>
+                        </div>
+                        <p class="text-muted small">Disable a global agent to keep it saved for admins while hiding it from runtime selection until it is re-enabled.</p>
+                        <div class="mb-3 d-flex align-items-center">
+                            {% if settings.orchestration_type == "default_agent" %}
+                                <label for="default-agent-select" class="form-label me-2 mb-0">Selected Agent:</label>
+                            {% else %}
+                                <label for="default-agent-select" class="form-label me-2 mb-0">Orchestrator Agent:</label>
+                            {% endif %}
+                            <select id="default-agent-select" class="form-select w-auto" style="min-width:200px;"></select>
+                            <span id="default-agent-select-msg" class="ms-2 text-muted small"></span>
+                        </div>
+                        <table class="table table-bordered" id="agents-table">
+                            <thead>
+                                <tr>
+                                    <th>Name</th>
+                                    <th>Display Name</th>
+                                    <th>Description</th>
+                                    {% if settings.orchestration_type == "default_agent" %}
+                                        <th>Selected Agent</th>
+                                    {% else %}
+                                        <th>Orchestrator Agent</th>
+                                    {% endif %}
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="agents-table-body"></tbody>
+                        </table>
+                    </div>
+                {% endif %}
+                </div>
+
+                {% if settings.enable_agent_template_gallery %}
+                <div class="card p-3 mb-4" id="agent-template-approvals-section">
+                    <div class="row g-3 mb-3">
+                        <div class="col-xl-6">
+                            <div class="form-check form-switch mb-0">
+                                <input class="form-check-input" type="checkbox" role="switch" id="toggle-agent-template-submissions" name="agent_templates_allow_user_submission" {% if settings.agent_templates_allow_user_submission %}checked{% endif %}>
+                                <label class="form-check-label ms-2" for="toggle-agent-template-submissions">Allow User Template Submissions</label>
+                                <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow workspace users to submit their custom agents for review."></i>
+                            </div>
+                        </div>
+                        <div class="col-xl-6">
+                            <div class="form-check form-switch mb-0">
+                                <input class="form-check-input" type="checkbox" role="switch" id="toggle-agent-template-approval" name="agent_templates_require_approval" {% if settings.agent_templates_require_approval %}checked{% endif %}>
+                                <label class="form-check-label ms-2" for="toggle-agent-template-approval">Require Admin Approval</label>
+                                <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Keep user submissions pending until an admin approves them."></i>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-3">
+                        <div>
+                            <h5 class="mb-1">
+                                <i class="bi bi-layers me-2"></i>Agent Template Approvals
+                            </h5>
+                            <p class="text-muted small mb-0">Template submissions are now reviewed from the shared approvals page.</p>
+                        </div>
+                        <a class="btn btn-outline-primary align-self-start align-self-lg-center" href="/approvals#agent-template-approvals">
+                            <i class="bi bi-box-arrow-up-right me-1"></i>Open Approvals Queue
+                        </a>
+                    </div>
+                </div>
+                {% endif %}
+
+                <!-- Actions Configuration Section -->
+                <div class="card p-3 mb-4" id="actions-configuration">
+                    <h5 class="card-title">
+                        <i class="bi bi-plugin me-2"></i>Global Actions Configuration
+                    </h5>
+                    <p class="text-muted small">
+                        Configure custom actions and tools to extend functionality with integrations and specialized capabilities.
+                    </p>
+
+                    {% if not settings.enable_semantic_kernel %}
+                        <div class="alert alert-info">
+                            <strong>Actions are not available while agents are disabled.</strong> Enable agents above to configure actions.
+                        </div>
+                    {% else %}
+                        <div>
+                            <div class="d-flex justify-content-between align-items-center mb-3">
+                                <h6>Global Actions</h6>
+                                <button type="button" class="btn btn-primary btn-sm" id="add-plugin-btn">Add Action</button>
+                            </div>
+                            <p class="text-muted small">Disable a global action to keep the configuration without exposing it to runtime action loading until it is re-enabled.</p>
+                            {% if settings.per_user_semantic_kernel %}
+                            <!-- Action Feature Flags -->
+                                <div class="card p-3 mb-3" id="plugin-feature-toggles">
+                                    <h6 class="mb-2">Workspace Action Feature Toggles</h6>
+                                    <div class="form-check form-switch mb-2">
+                                        <input class="form-check-input" type="checkbox" role="switch" id="toggle-allow-user-plugins" name="allow_user_plugins" {% if settings.allow_user_plugins %}checked{% endif %}>
+                                        <label class="form-check-label ms-2" for="toggle-allow-user-plugins">Allow Personal Actions</label>
+                                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to create and manage their own workspace-level actions/plugins for personal use."></i>
+                                        <button type="button" class="btn btn-outline-info btn-sm ms-2 governance-primary-link" data-governance-target="governance_user_actions">Govern</button>
+                                    </div>
+                                    <div class="form-check form-switch mb-2">
+                                        <input class="form-check-input" type="checkbox" role="switch" id="toggle-allow-group-plugins" name="allow_group_plugins" {% if settings.allow_group_plugins %}checked{% endif %}>
+                                        <label class="form-check-label ms-2" for="toggle-allow-group-plugins">Allow Group Actions</label>
+                                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to create and manage group-level actions/plugins that can be shared within workgroups."></i>
+                                        <button type="button" class="btn btn-outline-info btn-sm ms-2 governance-primary-link" data-governance-target="governance_group_actions">Govern</button>
+                                    </div>
+                                </div>
+                            {% endif %}
+
+                            <!-- Core Plugin Toggles -->
+                            <div class="card p-3 mb-3" id="core-plugin-toggles">
+                                <h6 class="mb-2">Core Action Toggles</h6>
+                                <div class="form-check form-switch mb-2">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="toggle-time-plugin" name="enable_time_plugin" {% if settings.enable_time_plugin %}checked{% endif %}>
+                                    <label class="form-check-label ms-2" for="toggle-time-plugin">Enable Time Action</label>
+                                    <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Enables agents to get current date, time, and perform time-related calculations and conversions."></i>
+                                </div>
+                                <div class="form-check form-switch mb-2">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="toggle-http-plugin" name="enable_http_plugin" {% if settings.enable_http_plugin %}checked{% endif %}>
+                                    <label class="form-check-label ms-2" for="toggle-http-plugin">Enable HTTP Action</label>
+                                    <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Enables agents to make HTTP requests to websites for data retrieval and integration."></i>
+                                </div>
+                                <div class="form-check form-switch mb-2">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="toggle-wait-plugin" name="enable_wait_plugin" {% if settings.enable_wait_plugin %}checked{% endif %}>
+                                    <label class="form-check-label ms-2" for="toggle-wait-plugin">Enable Wait Action</label>
+                                    <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Enables agents to pause execution for specified time periods, useful for delays and timing control in workflows."></i>
+                                </div>
+                                <div class="form-check form-switch mb-2">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="toggle-math-plugin" name="enable_math_plugin" {% if settings.enable_math_plugin %}checked{% endif %}>
+                                    <label class="form-check-label ms-2" for="toggle-math-plugin">Enable Math Action</label>
+                                    <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Enables agents to perform mathematical calculations, solve equations, and handle complex mathematical operations."></i>
+                                </div>
+                                <div class="form-check form-switch mb-2">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="toggle-text-plugin" name="enable_text_plugin" {% if settings.enable_text_plugin %}checked{% endif %}>
+                                    <label class="form-check-label ms-2" for="toggle-text-plugin">Enable Text Action</label>
+                                    <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Enables agents to perform text processing operations like formatting, validation, and manipulation of strings and text content."></i>
+                                </div>
+                                <div class="form-check form-switch mb-2">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="toggle-default-embedding-model-plugin" name="enable_default_embedding_model_plugin" {% if settings.enable_default_embedding_model_plugin %}checked{% endif %}>
+                                    <label class="form-check-label ms-2" for="toggle-default-embedding-model-plugin">Enable Default Embedding Model Action</label>
+                                    <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Enables agents to access and use the default embedding model for text similarity and vector operations."></i>
+                                </div>
+                                <div class="form-check form-switch mb-2">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="toggle-fact-memory-plugin" name="enable_fact_memory_plugin" {% if settings.enable_fact_memory_plugin %}checked{% endif %}>
+                                    <label class="form-check-label ms-2" for="toggle-fact-memory-plugin">Enable Fact Memory Action</label>
+                                    <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Enables agents to store and retrieve facts and information across conversations for improved memory and context retention."></i>
+                                </div>
+                                <div class="mb-2" id="tabular-processing-toggle-wrapper">
+                                    <div class="d-flex align-items-center">
+                                        <span class="fw-semibold">Tabular Processing Action</span>
+                                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Agents can analyze tabular data files (CSV, XLSX) using pandas for aggregations, filtering, and full dataset operations. This action is automatically enabled whenever Enhanced Citations is enabled."></i>
+                                    </div>
+                                    <small class="text-muted d-block ms-4" id="tabular-processing-dependency-note">Automatically enabled when Enhanced Citations is enabled</small>
+                                </div>
+                            </div>
+                            <table class="table table-bordered" id="plugins-table">
+                                <thead>
+                                    <tr>
+                                        <th>Display Name</th>
+                                        <th>Description</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="admin-plugins-table-body"></tbody>
+                            </table>
+                        </div>
+                    {% endif %}
+                </div>
+                {% if mcp_ui_enabled %}
+                <div class="card p-3 mb-4" id="inbound-mcp-configuration" data-default-tenant-id="{{ inbound_mcp_easy_auth_script_context.tenant_id }}">
+                    <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-start gap-3 mb-3">
+                        <div>
+                            <h5 class="card-title mb-1">
+                                <i class="bi bi-diagram-3 me-2"></i>Inbound MCP Server
+                            </h5>
+                            <p class="text-muted small mb-0">
+                                Configure the governed SimpleChat MCP endpoint used by external MCP clients. Personal tools use delegated user tokens by default; tool access remains deny-by-default until authentication, source, client, and governance policy all allow the request.
+                            </p>
+                        </div>
+                        <div class="d-flex flex-column gap-2 align-items-lg-end">
+                            <span class="badge text-bg-warning align-self-start align-self-lg-end">Preview</span>
+                            <button type="button" class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#inboundMcpInfoModal">
+                                <i class="bi bi-info-circle me-1"></i>About MCP &amp; Tools
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="alert alert-info small" role="alert">
+                        Enable only after the Microsoft Entra delegated scope, delegated user app role, client app allowlist, source allowlist, and SimpleChat governance item policies are configured. Personal MCP tools require delegated user context plus an assigned user role. The app-only role is reserved for future non-personal service/admin tools.
+                    </div>
+
+                    <div class="row g-3">
+                        <div class="col-xl-6">
+                            <div class="border rounded-3 p-3 h-100">
+                                <h6 class="mb-3">Runtime Gate</h6>
+                                <div class="form-check form-switch mb-3">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="enable_inbound_mcp_server" name="enable_inbound_mcp_server" {% if settings.enable_inbound_mcp_server %}checked{% endif %}>
+                                    <label class="form-check-label ms-2" for="enable_inbound_mcp_server">Enable inbound MCP server</label>
+                                    <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Controls whether authenticated requests to the SimpleChat inbound MCP endpoint are accepted."></i>
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label" for="inbound_mcp_required_scope">Required delegated scope</label>
+                                    <input class="form-control" type="text" id="inbound_mcp_required_scope" name="inbound_mcp_required_scope" value="{{ settings.inbound_mcp_required_scope }}" autocomplete="off">
+                                    <div class="form-text">Default: <code>DelegatedMcpServerAccess</code>. VS Code and other user clients must present this delegated scope.</div>
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label" for="inbound_mcp_required_user_role">Required delegated user role</label>
+                                    <input class="form-control" type="text" id="inbound_mcp_required_user_role" name="inbound_mcp_required_user_role" value="{{ settings.inbound_mcp_required_user_role }}" autocomplete="off">
+                                    <div class="form-text">Default: <code>InboundMCPUserAccess</code>. Governance determines which users/groups can use tools after this Entra role and delegated scope pass.</div>
+                                </div>
+                                <div class="mb-0">
+                                    <label class="form-label" for="inbound_mcp_required_app_role">Required app-only role</label>
+                                    <input class="form-control" type="text" id="inbound_mcp_required_app_role" name="inbound_mcp_required_app_role" value="{{ settings.inbound_mcp_required_app_role }}" autocomplete="off">
+                                    <div class="form-text">Default: <code>InboundMCPAppAccess</code>. Reserved for future app-only MCP tools and still governed separately.</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="col-xl-6">
+                            <div class="border rounded-3 p-3 h-100">
+                                <h6 class="mb-3">Endpoint Contract</h6>
+                                <dl class="row small mb-0">
+                                    <dt class="col-sm-5">MCP endpoint</dt>
+                                    <dd class="col-sm-7"><code>{{ inbound_mcp_resource_path }}</code></dd>
+                                    <dt class="col-sm-5">Protected resource metadata</dt>
+                                    <dd class="col-sm-7"><code>{{ inbound_mcp_prm_path }}</code></dd>
+                                    <dt class="col-sm-5">Transport</dt>
+                                    <dd class="col-sm-7">Streamable HTTP JSON-RPC</dd>
+                                    <dt class="col-sm-5">Current tool surface</dt>
+                                    <dd class="col-sm-7">Personal delegated tools only.</dd>
+                                    <dt class="col-sm-5">Tool identity</dt>
+                                    <dd class="col-sm-7">Delegated user token required for personal data.</dd>
+                                </dl>
+                                <div class="alert alert-light border small mt-3 mb-0" role="alert">
+                                    Endpoint paths are fixed in application routing for this initial UI slice. Change the app setting below for the source header only.
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="col-12">
+                            <div class="border rounded-3 p-3 h-100">
+                                <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-start gap-2 mb-3">
+                                    <div>
+                                        <h6 class="mb-1">Request Size &amp; Throttling</h6>
+                                        <div class="small text-muted">Protect the inbound MCP endpoint from oversized payloads and noisy clients. Rate limits are enforced per caller and tool category across app instances.</div>
+                                    </div>
+                                    <div class="form-check form-switch">
+                                        <input class="form-check-input" type="checkbox" role="switch" id="enable_inbound_mcp_rate_limits" name="enable_inbound_mcp_rate_limits" {% if settings.enable_inbound_mcp_rate_limits %}checked{% endif %}>
+                                        <label class="form-check-label ms-2" for="enable_inbound_mcp_rate_limits">Enable tool throttles</label>
+                                    </div>
+                                </div>
+                                <div class="row g-3">
+                                    <div class="col-md-6 col-xl-3">
+                                        <label class="form-label" for="inbound_mcp_max_request_bytes">Max request bytes</label>
+                                        <input class="form-control" type="number" id="inbound_mcp_max_request_bytes" name="inbound_mcp_max_request_bytes" min="1024" max="1048576" step="1" value="{{ settings.inbound_mcp_max_request_bytes }}">
+                                        <div class="form-text">Default: <code>65536</code>. Range: 1 KB to 1 MB.</div>
+                                    </div>
+                                    <div class="col-md-6 col-xl-3">
+                                        <label class="form-label" for="inbound_mcp_rate_limit_window_seconds">Rate window seconds</label>
+                                        <input class="form-control" type="number" id="inbound_mcp_rate_limit_window_seconds" name="inbound_mcp_rate_limit_window_seconds" min="10" max="3600" step="1" value="{{ settings.inbound_mcp_rate_limit_window_seconds }}">
+                                        <div class="form-text">Default: <code>60</code>. Applies to each throttle category.</div>
+                                    </div>
+                                    <div class="col-md-4 col-xl-2">
+                                        <label class="form-label" for="inbound_mcp_rate_limit_read_per_window">Read limit</label>
+                                        <input class="form-control" type="number" id="inbound_mcp_rate_limit_read_per_window" name="inbound_mcp_rate_limit_read_per_window" min="1" max="10000" step="1" value="{{ settings.inbound_mcp_rate_limit_read_per_window }}">
+                                        <div class="form-text">Default: <code>120</code>.</div>
+                                    </div>
+                                    <div class="col-md-4 col-xl-2">
+                                        <label class="form-label" for="inbound_mcp_rate_limit_search_per_window">Search limit</label>
+                                        <input class="form-control" type="number" id="inbound_mcp_rate_limit_search_per_window" name="inbound_mcp_rate_limit_search_per_window" min="1" max="10000" step="1" value="{{ settings.inbound_mcp_rate_limit_search_per_window }}">
+                                        <div class="form-text">Default: <code>30</code>.</div>
+                                    </div>
+                                    <div class="col-md-4 col-xl-2">
+                                        <label class="form-label" for="inbound_mcp_rate_limit_write_per_window">Write limit</label>
+                                        <input class="form-control" type="number" id="inbound_mcp_rate_limit_write_per_window" name="inbound_mcp_rate_limit_write_per_window" min="1" max="10000" step="1" value="{{ settings.inbound_mcp_rate_limit_write_per_window }}">
+                                        <div class="form-text">Default: <code>10</code>.</div>
+                                    </div>
+                                </div>
+                                <div class="alert alert-light border small mt-3 mb-0" role="alert">
+                                    Application Insights events include <code>mcp_request_id</code>, caller app, delegated user, source, tool, duration, result status, and rate-limit category without recording prompts, document content, bearer tokens, or secrets.
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="col-12">
+                            <input type="hidden" id="inbound_mcp_allowed_client_app_entries_json" name="inbound_mcp_allowed_client_app_entries_json" value='{{ settings.inbound_mcp_allowed_client_app_entries | default([], true) | tojson }}'>
+                            <input type="hidden" id="inbound_mcp_allowed_tenant_entries_json" name="inbound_mcp_allowed_tenant_entries_json" value='{{ settings.inbound_mcp_allowed_tenant_entries | default([], true) | tojson }}'>
+                            <input type="hidden" id="inbound_mcp_allowed_source_entries_json" name="inbound_mcp_allowed_source_entries_json" value='{{ settings.inbound_mcp_allowed_source_entries | default([], true) | tojson }}'>
+                        </div>
+
+                        <div class="col-12">
+                            <div class="border rounded-3 p-3 h-100">
+                                <div class="d-flex justify-content-between align-items-start gap-2 mb-2">
+                                    <div>
+                                        <h6 class="mb-1">Allowed client app IDs</h6>
+                                        <div class="small text-muted">Required allowlist. Empty means no MCP clients can connect.</div>
+                                    </div>
+                                    <button type="button" class="btn btn-sm btn-outline-primary inbound-mcp-entry-add-btn" data-mcp-entry-list="clients">Add</button>
+                                </div>
+                                <div class="table-responsive">
+                                    <table class="table table-sm align-middle mb-2">
+                                        <thead>
+                                            <tr>
+                                                <th>Client app ID</th>
+                                                <th>Description</th>
+                                                <th class="text-end">Actions</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="inbound-mcp-client-app-entries-body"></tbody>
+                                    </table>
+                                </div>
+                                <div class="small text-muted" id="inbound-mcp-client-app-entries-summary"></div>
+                            </div>
+                        </div>
+
+                        <div class="col-12">
+                            <div class="border rounded-3 p-3 h-100">
+                                <div class="form-check form-switch mb-2">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="inbound_mcp_allow_external_tenants" name="inbound_mcp_allow_external_tenants" {% if settings.inbound_mcp_allow_external_tenants %}checked{% endif %}>
+                                    <label class="form-check-label ms-2" for="inbound_mcp_allow_external_tenants">Allow additional tenant IDs</label>
+                                </div>
+                                <div class="small text-muted mb-3">
+                                    Off allows only the configured SimpleChat tenant. Turning this on auto-includes the SimpleChat tenant and lets admins add more tenants.
+                                </div>
+                                <div id="inbound-mcp-tenant-list-container" class="{% if not settings.inbound_mcp_allow_external_tenants %}d-none{% endif %}">
+                                    <div class="d-flex justify-content-between align-items-center mb-2">
+                                        <h6 class="mb-0">Allowed tenant IDs</h6>
+                                        <button type="button" class="btn btn-sm btn-outline-primary inbound-mcp-entry-add-btn" data-mcp-entry-list="tenants">Add</button>
+                                    </div>
+                                    <div class="table-responsive">
+                                        <table class="table table-sm align-middle mb-2">
+                                            <thead>
+                                                <tr>
+                                                    <th>Tenant ID</th>
+                                                    <th>Description</th>
+                                                    <th class="text-end">Actions</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody id="inbound-mcp-tenant-entries-body"></tbody>
+                                        </table>
+                                    </div>
+                                    <div class="small text-muted" id="inbound-mcp-tenant-entries-summary"></div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="col-12">
+                            <div class="border rounded-3 p-3 h-100">
+                                <div class="form-check form-switch mb-2">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="inbound_mcp_allow_all_source_ids" name="inbound_mcp_allow_all_source_ids" {% if settings.inbound_mcp_allow_all_source_ids %}checked{% endif %}>
+                                    <label class="form-check-label ms-2" for="inbound_mcp_allow_all_source_ids">Allow all source IDs</label>
+                                </div>
+                                <div class="small text-muted mb-3">
+                                    Default on accepts any source signal at the runtime allowlist layer. Turn off to require explicit source values here. In both modes, admins must still create an inbound MCP source governance policy before tools are returned.
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label" for="inbound_mcp_source_header">Source header name</label>
+                                    <input class="form-control" type="text" id="inbound_mcp_source_header" name="inbound_mcp_source_header" value="{{ settings.inbound_mcp_source_header }}" autocomplete="off">
+                                    <div class="form-text">Default: <code>X-SimpleChat-MCP-Source</code>.</div>
+                                </div>
+                                <div class="alert alert-warning py-2 small" role="alert">
+                                    Source IDs are read from the configured header when present. This is a client-provided value and can be spoofed unless a trusted gateway, APIM policy, or similar control sets/enforces it.
+                                </div>
+                                <div id="inbound-mcp-all-source-governance-callout" class="alert alert-info py-2 small {% if not settings.inbound_mcp_allow_all_source_ids %}d-none{% endif %}" role="alert">
+                                    <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-2">
+                                        <div>
+                                            Create an <code>inbound_mcp_source</code> policy for <code>*</code> to choose which users or groups can use inbound MCP from any accepted source.
+                                        </div>
+                                        <button
+                                            type="button"
+                                            class="btn btn-sm btn-outline-primary governance-new-inbound-mcp-policy-btn"
+                                            data-governance-inbound-mcp-entity="inbound_mcp_source"
+                                            data-governance-inbound-mcp-item="*"
+                                            data-governance-inbound-mcp-policy-name="Inbound MCP all source access"
+                                            data-governance-inbound-mcp-resource-label="All accepted source IDs (*)"
+                                            data-governance-open-tab="true"
+                                        >
+                                            Create Wildcard Source Policy
+                                        </button>
+                                    </div>
+                                </div>
+                                <div id="inbound-mcp-controlled-source-governance-callout" class="alert alert-info py-2 small {% if settings.inbound_mcp_allow_all_source_ids %}d-none{% endif %}" role="alert">
+                                    <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-2">
+                                        <div>
+                                            After adding allowed source IDs, create an <code>inbound_mcp_source</code> policy for <code>*</code> or a specific source to choose which users or groups can use inbound MCP.
+                                        </div>
+                                        <button
+                                            type="button"
+                                            class="btn btn-sm btn-outline-primary governance-new-inbound-mcp-policy-btn"
+                                            data-governance-inbound-mcp-entity="inbound_mcp_source"
+                                            data-governance-inbound-mcp-policy-name="Inbound MCP source access"
+                                            data-governance-open-tab="true"
+                                        >
+                                            Create Source Policy
+                                        </button>
+                                    </div>
+                                </div>
+                                <div id="inbound-mcp-source-list-container" class="{% if settings.inbound_mcp_allow_all_source_ids %}d-none{% endif %}">
+                                    <div class="d-flex justify-content-between align-items-center mb-2">
+                                        <h6 class="mb-0">Allowed source IDs</h6>
+                                        <button type="button" class="btn btn-sm btn-outline-primary inbound-mcp-entry-add-btn" data-mcp-entry-list="sources">Add</button>
+                                    </div>
+                                    <div class="table-responsive">
+                                        <table class="table table-sm align-middle mb-2">
+                                            <thead>
+                                                <tr>
+                                                    <th>Source value</th>
+                                                    <th>Description</th>
+                                                    <th class="text-end">Actions</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody id="inbound-mcp-source-entries-body"></tbody>
+                                        </table>
+                                    </div>
+                                    <div class="small text-muted" id="inbound-mcp-source-entries-summary"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal fade" id="inboundMcpEntryModal" tabindex="-1" aria-labelledby="inboundMcpEntryModalLabel" aria-hidden="true" data-ignore-settings-change="true">
+                    <div class="modal-dialog">
+                        <div class="modal-content">
+                            <div class="modal-header">
+                                <h5 class="modal-title" id="inboundMcpEntryModalLabel">Add MCP Entry</h5>
+                                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                            </div>
+                            <div class="modal-body">
+                                <input type="hidden" id="inbound-mcp-entry-list-key">
+                                <input type="hidden" id="inbound-mcp-entry-edit-index">
+                                <div class="mb-3">
+                                    <label class="form-label" for="inbound-mcp-entry-value" id="inbound-mcp-entry-value-label">Value</label>
+                                    <input class="form-control" type="text" id="inbound-mcp-entry-value" autocomplete="off">
+                                    <div class="invalid-feedback" id="inbound-mcp-entry-value-error">Value is required.</div>
+                                </div>
+                                <div class="mb-0">
+                                    <label class="form-label" for="inbound-mcp-entry-description">Description</label>
+                                    <input class="form-control" type="text" id="inbound-mcp-entry-description" autocomplete="off" maxlength="256">
+                                    <div class="form-text">Use descriptions to explain who owns this app, tenant, or source value without making the value easy to guess.</div>
+                                </div>
+                            </div>
+                            <div class="modal-footer">
+                                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                                <button type="button" class="btn btn-primary" id="inbound-mcp-entry-save-btn">Save Entry</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal fade" id="inboundMcpInfoModal" tabindex="-1" aria-labelledby="inboundMcpInfoModalLabel" aria-hidden="true" data-ignore-settings-change="true">
+                    <div class="modal-dialog modal-xl modal-dialog-scrollable">
+                        <div class="modal-content">
+                            <div class="modal-header">
+                                <h5 class="modal-title" id="inboundMcpInfoModalLabel">Inbound MCP overview</h5>
+                                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                            </div>
+                            <div class="modal-body">
+                                <div class="alert alert-info small" role="alert">
+                                    SimpleChat exposes a governed Streamable HTTP MCP endpoint for approved external MCP clients. Authentication handles tenant, client, delegated scope, and Entra role checks; governance decides which users/groups and source IDs can use tools.
+                                </div>
+                                <div class="row g-3 mb-3">
+                                    <div class="col-lg-6">
+                                        <h6>Runtime checks</h6>
+                                        <ul class="small mb-0">
+                                            <li>Client app ID must be in the allowed client list.</li>
+                                            <li>Tenant must be the SimpleChat tenant unless additional tenants are enabled.</li>
+                                            <li>Delegated personal tools require the configured scope and user role.</li>
+                                            <li>Governance uses <code>inbound_mcp_source</code> policies to decide which users or groups can use each accepted source.</li>
+                                        </ul>
+                                    </div>
+                                    <div class="col-lg-6">
+                                        <h6>Source header guidance</h6>
+                                        <p class="small mb-0">
+                                            The configured source header is an advisory control-plane signal. Treat it like an APIM subscription-key label, not strong identity. For stronger assurance, set or overwrite it at a trusted gateway and avoid relying on client-provided values alone.
+                                        </p>
+                                    </div>
+                                </div>
+                                <h6>Available MCP tools</h6>
+                                <div class="table-responsive">
+                                    <table class="table table-sm align-middle">
+                                        <thead>
+                                            <tr>
+                                                <th>Tool</th>
+                                                <th>Scope</th>
+                                                <th>Operation</th>
+                                                <th>Description</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {% for tool in inbound_mcp_tools %}
+                                            <tr>
+                                                <td>
+                                                    <div class="fw-semibold">{{ tool.display_name }}</div>
+                                                    <code>{{ tool.id }}</code>
+                                                </td>
+                                                <td>{{ tool.scope }}</td>
+                                                <td>{{ tool.resource_family }} / {{ tool.operation }}</td>
+                                                <td>{{ tool.description }}</td>
+                                            </tr>
+                                            {% endfor %}
+                                        </tbody>
+                                    </table>
+                                </div>
+                                <hr />
+                                <h6>Application Insights starter queries</h6>
+                                <p class="small text-muted">
+                                    Use these KQL queries in Application Insights Logs to validate inbound MCP traffic, denials, and tool latency. They rely on safe structured dimensions emitted by the inbound MCP route and do not require prompt, message, document, token, or secret values.
+                                </p>
+                                <div class="accordion" id="inbound-mcp-observability-accordion">
+                                    <div class="accordion-item">
+                                        <h2 class="accordion-header" id="inbound-mcp-kql-request-trends-heading">
+                                            <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#inbound-mcp-kql-request-trends-collapse" aria-expanded="true" aria-controls="inbound-mcp-kql-request-trends-collapse">
+                                                Request and failure trends
+                                            </button>
+                                        </h2>
+                                        <div id="inbound-mcp-kql-request-trends-collapse" class="accordion-collapse collapse show" aria-labelledby="inbound-mcp-kql-request-trends-heading" data-bs-parent="#inbound-mcp-observability-accordion">
+                                            <div class="accordion-body">
+                                                <button type="button" class="btn btn-sm btn-outline-secondary mb-2 inbound-mcp-kql-copy-btn" data-kql-target="inbound-mcp-kql-request-trends">
+                                                    <i class="bi bi-clipboard me-1"></i>Copy query
+                                                </button>
+                                                <pre class="bg-body-tertiary border rounded p-3 small mb-0"><code id="inbound-mcp-kql-request-trends">traces
+| where timestamp > ago(24h)
+| where message has "[InboundMCP]"
+| summarize requests=count(), failures=countif(tostring(customDimensions.result_status) !in ("", "success", "accepted")) by bin(timestamp, 1h)
+| order by timestamp desc</code></pre>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="accordion-item">
+                                        <h2 class="accordion-header" id="inbound-mcp-kql-error-categories-heading">
+                                            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#inbound-mcp-kql-error-categories-collapse" aria-expanded="false" aria-controls="inbound-mcp-kql-error-categories-collapse">
+                                                Error categories by caller and source
+                                            </button>
+                                        </h2>
+                                        <div id="inbound-mcp-kql-error-categories-collapse" class="accordion-collapse collapse" aria-labelledby="inbound-mcp-kql-error-categories-heading" data-bs-parent="#inbound-mcp-observability-accordion">
+                                            <div class="accordion-body">
+                                                <button type="button" class="btn btn-sm btn-outline-secondary mb-2 inbound-mcp-kql-copy-btn" data-kql-target="inbound-mcp-kql-error-categories">
+                                                    <i class="bi bi-clipboard me-1"></i>Copy query
+                                                </button>
+                                                <pre class="bg-body-tertiary border rounded p-3 small mb-0"><code id="inbound-mcp-kql-error-categories">traces
+| where timestamp > ago(24h)
+| where message has "[InboundMCP]"
+| where isnotempty(tostring(customDimensions.error_type))
+| summarize events=count() by tostring(customDimensions.error_type), tostring(customDimensions.caller_app_id), tostring(customDimensions.source_id)
+| order by events desc</code></pre>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="accordion-item">
+                                        <h2 class="accordion-header" id="inbound-mcp-kql-tool-latency-heading">
+                                            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#inbound-mcp-kql-tool-latency-collapse" aria-expanded="false" aria-controls="inbound-mcp-kql-tool-latency-collapse">
+                                                Tool latency and result status
+                                            </button>
+                                        </h2>
+                                        <div id="inbound-mcp-kql-tool-latency-collapse" class="accordion-collapse collapse" aria-labelledby="inbound-mcp-kql-tool-latency-heading" data-bs-parent="#inbound-mcp-observability-accordion">
+                                            <div class="accordion-body">
+                                                <button type="button" class="btn btn-sm btn-outline-secondary mb-2 inbound-mcp-kql-copy-btn" data-kql-target="inbound-mcp-kql-tool-latency">
+                                                    <i class="bi bi-clipboard me-1"></i>Copy query
+                                                </button>
+                                                <pre class="bg-body-tertiary border rounded p-3 small mb-0"><code id="inbound-mcp-kql-tool-latency">traces
+| where timestamp > ago(24h)
+| where message has "Inbound MCP tool call"
+| where isnotempty(tostring(customDimensions.tool_id))
+| summarize calls=count(), avg_duration_ms=avg(todouble(customDimensions.duration_ms)), p95_duration_ms=percentile(todouble(customDimensions.duration_ms), 95) by tostring(customDimensions.tool_id), tostring(customDimensions.result_status)
+| order by calls desc</code></pre>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="accordion-item">
+                                        <h2 class="accordion-header" id="inbound-mcp-kql-rate-limits-heading">
+                                            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#inbound-mcp-kql-rate-limits-collapse" aria-expanded="false" aria-controls="inbound-mcp-kql-rate-limits-collapse">
+                                                Rate-limit denials
+                                            </button>
+                                        </h2>
+                                        <div id="inbound-mcp-kql-rate-limits-collapse" class="accordion-collapse collapse" aria-labelledby="inbound-mcp-kql-rate-limits-heading" data-bs-parent="#inbound-mcp-observability-accordion">
+                                            <div class="accordion-body">
+                                                <button type="button" class="btn btn-sm btn-outline-secondary mb-2 inbound-mcp-kql-copy-btn" data-kql-target="inbound-mcp-kql-rate-limits">
+                                                    <i class="bi bi-clipboard me-1"></i>Copy query
+                                                </button>
+                                                <pre class="bg-body-tertiary border rounded p-3 small mb-0"><code id="inbound-mcp-kql-rate-limits">traces
+| where timestamp > ago(24h)
+| where message has "Inbound MCP tool call denied by rate limit"
+| summarize denials=count() by tostring(customDimensions.rate_limit_category), tostring(customDimensions.tool_id), tostring(customDimensions.caller_app_id)
+| order by denials desc</code></pre>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="modal-footer">
+                                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal fade" id="inboundMcpEasyAuthModal" tabindex="-1" aria-labelledby="inboundMcpEasyAuthModalLabel" aria-hidden="true" data-ignore-settings-change="true">
+                    <div class="modal-dialog modal-xl modal-dialog-scrollable">
+                        <div class="modal-content">
+                            <div class="modal-header">
+                                <h5 class="modal-title" id="inboundMcpEasyAuthModalLabel">Verify App Service Authentication exclusions</h5>
+                                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                            </div>
+                            <div class="modal-body">
+                                <div class="alert alert-warning">
+                                    <strong>Required before enabling inbound MCP:</strong>
+                                    If Azure App Service Authentication redirects unauthenticated requests, add excluded paths so MCP clients can discover protected resource metadata and so SimpleChat can enforce bearer-token MCP access itself.
+                                </div>
+                                <p>
+                                    Run the following PowerShell with Azure CLI from Azure Cloud Shell or any authenticated terminal. SimpleChat pre-fills the script from this App Service's environment when possible.
+                                </p>
+                                <div class="row g-2 small mb-3">
+                                    <div class="col-lg-6">
+                                        <div class="border rounded p-2 h-100">
+                                            <div class="fw-semibold">Derived deployment values</div>
+                                            <dl class="row mb-0">
+                                                <dt class="col-sm-5">Azure environment</dt>
+                                                <dd class="col-sm-7"><code>{{ inbound_mcp_easy_auth_script_context.azure_environment }}</code></dd>
+                                                <dt class="col-sm-5">Resource Manager</dt>
+                                                <dd class="col-sm-7"><code>{{ inbound_mcp_easy_auth_script_context.resource_manager_endpoint }}</code></dd>
+                                                <dt class="col-sm-5">Resource group</dt>
+                                                <dd class="col-sm-7"><code>{{ inbound_mcp_easy_auth_script_context.resource_group }}</code></dd>
+                                                <dt class="col-sm-5">App Service</dt>
+                                                <dd class="col-sm-7"><code>{{ inbound_mcp_easy_auth_script_context.app_name }}</code></dd>
+                                                <dt class="col-sm-5">Subscription</dt>
+                                                <dd class="col-sm-7"><code>{{ inbound_mcp_easy_auth_script_context.subscription_id or "Current Azure CLI account" }}</code></dd>
+                                                <dt class="col-sm-5">API client ID</dt>
+                                                <dd class="col-sm-7"><code>{{ inbound_mcp_easy_auth_script_context.simplechat_api_client_id }}</code></dd>
+                                                <dt class="col-sm-5">Delegated scope</dt>
+                                                <dd class="col-sm-7"><code>{{ inbound_mcp_easy_auth_script_context.required_delegated_scope }}</code></dd>
+                                                <dt class="col-sm-5">User role</dt>
+                                                <dd class="col-sm-7"><code>{{ inbound_mcp_easy_auth_script_context.required_user_roles | join(", ") }}</code></dd>
+                                                <dt class="col-sm-5">App-only role</dt>
+                                                <dd class="col-sm-7"><code>{{ inbound_mcp_easy_auth_script_context.required_app_roles | join(", ") }}</code></dd>
+                                            </dl>
+                                        </div>
+                                    </div>
+                                    <div class="col-lg-6">
+                                        <div class="border rounded p-2 h-100">
+                                            <div class="fw-semibold">Script behavior</div>
+                                            <ul class="mb-0">
+                                                <li>Sets the Azure CLI cloud before login.</li>
+                                                <li>Logs in with the configured SimpleChat tenant.</li>
+                                                <li>Attempts to verify that the SimpleChat API app exposes the required delegated scope and inbound MCP app roles.</li>
+                                                <li>Uses SimpleChat's Resource Manager endpoint for public, government, or custom clouds.</li>
+                                                <li>Creates a timestamped backup of current <code>authsettingsV2</code> before applying changes.</li>
+                                            </ul>
+                                        </div>
+                                    </div>
+                                </div>
+                                {% if inbound_mcp_easy_auth_script_context.missing_values %}
+                                <div class="alert alert-danger small">
+                                    SimpleChat could not derive every required value. Replace the placeholders in the script before running it:
+                                    <strong>{{ inbound_mcp_easy_auth_script_context.missing_values | join(", ") }}</strong>.
+                                </div>
+                                {% endif %}
+                                {% if inbound_mcp_easy_auth_script_context.scope_check_missing_values %}
+                                <div class="alert alert-warning small">
+                                    SimpleChat could not derive every value needed for the delegated-scope and role preflight. Replace these placeholders if you want the script to validate the app registration before changing Easy Auth:
+                                    <strong>{{ inbound_mcp_easy_auth_script_context.scope_check_missing_values | join(", ") }}</strong>.
+                                </div>
+                                {% endif %}
+                                {% if inbound_mcp_easy_auth_script_context.uses_custom_cloud_match %}
+                                <div class="alert alert-info small">
+                                    This deployment uses a custom Azure environment. The script searches your registered Azure CLI clouds for one with the same Resource Manager endpoint. If none is registered, register the custom cloud first and rerun the script.
+                                </div>
+                                {% endif %}
+                                <div class="position-relative mb-3">
+                                    <button type="button" class="btn btn-outline-secondary btn-sm position-absolute top-0 end-0 m-2" id="inbound-mcp-copy-script" aria-label="Copy PowerShell script">
+                                        <i class="bi bi-clipboard" aria-hidden="true"></i>
+                                    </button>
+                                    <pre class="bg-body-tertiary border rounded p-3 pe-5 small mb-0"><code id="inbound-mcp-easy-auth-script-code">{{ inbound_mcp_easy_auth_script }}</code></pre>
+                                </div>
+                                <div class="alert alert-info small">
+                                    The verification checks these public unauthenticated endpoints and expects SimpleChat JSON responses, not Microsoft sign-in HTML:
+                                    <ul class="mb-0">
+                                        <li><code>/.well-known/oauth-protected-resource</code></li>
+                                        <li><code>/.well-known/oauth-protected-resource/api/mcp</code></li>
+                                        <li><code>/.well-known/oauth-protected-resource/mcp</code></li>
+                                        <li><code>/.well-known/oauth-authorization-server</code></li>
+                                        <li><code>/api/mcp</code></li>
+                                        <li><code>/api/mcp/health</code></li>
+                                    </ul>
+                                </div>
+                                <div class="form-check mb-3">
+                                    <input class="form-check-input" type="checkbox" id="inbound-mcp-easy-auth-confirm">
+                                    <label class="form-check-label" for="inbound-mcp-easy-auth-confirm">
+                                        I have added the required App Service Authentication excluded paths for this SimpleChat App Service.
+                                    </label>
+                                </div>
+                                <div id="inbound-mcp-easy-auth-status" class="alert alert-info d-none" role="status"></div>
+                                <ul id="inbound-mcp-easy-auth-results" class="list-group small d-none"></ul>
+                            </div>
+                            <div class="modal-footer">
+                                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+                                <button type="button" class="btn btn-primary" id="inbound-mcp-easy-auth-verify" disabled>
+                                    I accept, verify endpoints
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                {% endif %}
+            </div>

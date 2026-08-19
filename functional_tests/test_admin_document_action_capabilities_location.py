@@ -12,6 +12,7 @@ Action dropdown in Chat and Workflow.
 
 from pathlib import Path
 import traceback
+from test_support.templates import resolve_template_includes
 from test_support.versioning import assert_app_version_at_least
 
 
@@ -19,7 +20,14 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def read_text(relative_path: str) -> str:
-    return (ROOT / relative_path).read_text(encoding="utf-8")
+    path = ROOT / relative_path
+    content = path.read_text(encoding="utf-8")
+
+    # Admin Settings is composed from per-tab partials, so structural
+    # assertions have to see the fully composed markup.
+    if path.name == "admin_settings.html":
+        return resolve_template_includes(content, path.parent)
+    return content
 
 
 def test_admin_document_action_capabilities_card_location() -> None:

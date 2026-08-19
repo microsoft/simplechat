@@ -10,11 +10,12 @@ and are not nested inside the legacy model modal.
 """
 
 import os
+from test_support.templates import compose_if_admin_settings
 
 
 def read_file_text(file_path):
-    with open(file_path, 'r', encoding='utf-8') as file:
-        return file.read()
+    with open(file_path, "r", encoding="utf-8") as file:
+        return compose_if_admin_settings(file_path, file.read())
 
 
 def test_ai_models_tab_embedding_image_location():

@@ -34,6 +34,7 @@ import ast
 import re
 from pathlib import Path
 from test_support.versioning import assert_app_version_at_least
+from test_support.templates import compose_if_admin_settings
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -50,7 +51,9 @@ TERRAFORM_FILE = REPO_ROOT / "deployers" / "terraform" / "main.tf"
 
 
 def read_text(path):
-    return path.read_text(encoding="utf-8")
+    return compose_if_admin_settings(
+        path, path.read_text(encoding="utf-8")
+    )
 
 
 def route_functions_with_decorators():

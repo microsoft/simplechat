@@ -1,0 +1,250 @@
+            <div class="tab-pane fade" id="governance" role="tabpanel" aria-labelledby="governance-tab">
+                <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-start gap-2 mb-3">
+                    <p class="text-muted mb-0">
+                        Configure governance enforcement for endpoint, agent, and action creation or usage. Governance is disabled by default and only enforced when toggled on.
+                    </p>
+                    <button type="button" class="btn btn-outline-info btn-sm flex-shrink-0" id="governance-info-guide-btn" data-bs-toggle="modal" data-bs-target="#governanceInfoModal">
+                        <i class="bi bi-info-circle me-1"></i>Configuration Guide
+                    </button>
+                </div>
+
+                <div class="card p-3 mb-3" id="governance-feature-toggles-section">
+                    <h5>
+                        <i class="bi bi-braces-asterisk me-2"></i>Governance Feature Toggles
+                    </h5>
+                    <p class="text-muted">Turn on governance checks for each feature area. Save with the main Settings button to persist these toggles.</p>
+
+                    <div class="row">
+                        <div class="col-md-4">
+                            <div class="fw-semibold mb-2">Personal Scope</div>
+                            <div class="form-check form-switch mb-2">
+                                <input class="form-check-input" type="checkbox" role="switch" id="governance_user_endpoints" name="governance_user_endpoints" {% if settings.governance_user_endpoints %}checked{% endif %}>
+                                <label class="form-check-label ms-2" for="governance_user_endpoints">Govern Personal Endpoints</label>
+                            </div>
+                            <div class="form-check form-switch mb-2">
+                                <input class="form-check-input" type="checkbox" role="switch" id="governance_user_agents" name="governance_user_agents" {% if settings.governance_user_agents %}checked{% endif %}>
+                                <label class="form-check-label ms-2" for="governance_user_agents">Govern Personal Agents</label>
+                            </div>
+                            <div class="form-check form-switch mb-2">
+                                <input class="form-check-input" type="checkbox" role="switch" id="governance_user_actions" name="governance_user_actions" {% if settings.governance_user_actions %}checked{% endif %}>
+                                <label class="form-check-label ms-2" for="governance_user_actions">Govern Personal Actions</label>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="fw-semibold mb-2">Group Scope</div>
+                            <div class="form-check form-switch mb-2">
+                                <input class="form-check-input" type="checkbox" role="switch" id="governance_group_endpoints" name="governance_group_endpoints" {% if settings.governance_group_endpoints %}checked{% endif %}>
+                                <label class="form-check-label ms-2" for="governance_group_endpoints">Govern Group Endpoints</label>
+                            </div>
+                            <div class="form-check form-switch mb-2">
+                                <input class="form-check-input" type="checkbox" role="switch" id="governance_group_agents" name="governance_group_agents" {% if settings.governance_group_agents %}checked{% endif %}>
+                                <label class="form-check-label ms-2" for="governance_group_agents">Govern Group Agents</label>
+                            </div>
+                            <div class="form-check form-switch mb-2">
+                                <input class="form-check-input" type="checkbox" role="switch" id="governance_group_actions" name="governance_group_actions" {% if settings.governance_group_actions %}checked{% endif %}>
+                                <label class="form-check-label ms-2" for="governance_group_actions">Govern Group Actions</label>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="fw-semibold mb-2">Global Scope</div>
+                            <div class="form-check form-switch mb-2">
+                                <input class="form-check-input" type="checkbox" role="switch" id="governance_global_endpoints" name="governance_global_endpoints" checked disabled data-governance-locked="true">
+                                <label class="form-check-label ms-2" for="governance_global_endpoints">Govern Global Endpoints</label>
+                                <span class="badge bg-info text-dark ms-2">Always On</span>
+                            </div>
+                            <div class="form-check form-switch mb-2">
+                                <input class="form-check-input" type="checkbox" role="switch" id="governance_global_agents_usage" name="governance_global_agents_usage" {% if settings.governance_global_agents_usage %}checked{% endif %}>
+                                <label class="form-check-label ms-2" for="governance_global_agents_usage">Govern Global Agents</label>
+                            </div>
+                            <div class="form-check form-switch mb-2">
+                                <input class="form-check-input" type="checkbox" role="switch" id="governance_global_actions_usage" name="governance_global_actions_usage" {% if settings.governance_global_actions_usage %}checked{% endif %}>
+                                <label class="form-check-label ms-2" for="governance_global_actions_usage">Govern Global Actions</label>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card p-3 mb-3" id="governance-mcp-destination-section">
+                    <h5>
+                        <i class="bi bi-diagram-3 me-2"></i>MCP Action Destination Governance
+                    </h5>
+                    <p class="text-muted mb-2">
+                        Restrict outbound remote MCP servers by destination pattern and scope. Destination policies reuse delegated item policies, so admins can allow all users, specific users, or workspace groups for each approved destination.
+                    </p>
+                    <div class="row g-3 align-items-start">
+                        <div class="col-lg-4">
+                            <div class="form-check form-switch mb-2">
+                                <input class="form-check-input" type="checkbox" role="switch" id="enable_mcp_destination_governance" name="enable_mcp_destination_governance" {% if settings.enable_mcp_destination_governance %}checked{% endif %}>
+                                <label class="form-check-label ms-2" for="enable_mcp_destination_governance">Enforce MCP Destination Allowlist</label>
+                            </div>
+                            <div class="form-check form-switch mb-2">
+                                <input class="form-check-input" type="checkbox" role="switch" id="mcp_block_unsafe_destinations" name="mcp_block_unsafe_destinations" {% if settings.mcp_block_unsafe_destinations %}checked{% endif %}>
+                                <label class="form-check-label ms-2" for="mcp_block_unsafe_destinations">Block Private/Local Literal IP Destinations</label>
+                            </div>
+                            <div class="form-text">
+                                Save with the main Settings button. Unsafe literal-IP blocking can be enabled even before the allowlist is enforced.
+                            </div>
+                        </div>
+                        <div class="col-lg-5">
+                            <div class="small fw-semibold mb-1">Supported destination patterns</div>
+                            <ul class="small text-muted mb-0">
+                                <li><code>*</code> for any remote MCP destination after identity/auth checks.</li>
+                                <li><code>preconfiguration:microsoft_learn</code> or <code>preset:generic</code>.</li>
+                                <li><code>*.contoso.com</code>, <code>https://example.com/mcp*</code>, or <code>transport:streamable-http</code>.</li>
+                                <li><code>group:&lt;group-id&gt;::preconfiguration:github</code> for one group-specific override.</li>
+                            </ul>
+                        </div>
+                        <div class="col-lg-3">
+                            <div class="d-grid gap-2 governance-policy-action-list">
+                                <div class="input-group input-group-sm">
+                                    <button type="button" class="btn btn-outline-primary flex-grow-1 governance-new-mcp-destination-policy-btn" data-governance-mcp-destination-entity="mcp_personal_destination">New Personal Destination Policy</button>
+                                    <button type="button" class="btn btn-outline-info governance-policy-help-btn" data-governance-help-key="mcp_personal_destination" aria-label="About personal MCP destination policies" title="About personal MCP destination policies">
+                                        <i class="bi bi-info-circle" aria-hidden="true"></i>
+                                    </button>
+                                </div>
+                                <div class="input-group input-group-sm">
+                                    <button type="button" class="btn btn-outline-primary flex-grow-1 governance-new-mcp-destination-policy-btn" data-governance-mcp-destination-entity="mcp_group_destination">New Group Destination Policy</button>
+                                    <button type="button" class="btn btn-outline-info governance-policy-help-btn" data-governance-help-key="mcp_group_destination" aria-label="About group MCP destination policies" title="About group MCP destination policies">
+                                        <i class="bi bi-info-circle" aria-hidden="true"></i>
+                                    </button>
+                                </div>
+                                <div class="input-group input-group-sm">
+                                    <button type="button" class="btn btn-outline-primary flex-grow-1 governance-new-mcp-destination-policy-btn" data-governance-mcp-destination-entity="mcp_global_destination">New Global Destination Policy</button>
+                                    <button type="button" class="btn btn-outline-info governance-policy-help-btn" data-governance-help-key="mcp_global_destination" aria-label="About global MCP destination policies" title="About global MCP destination policies">
+                                        <i class="bi bi-info-circle" aria-hidden="true"></i>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card p-3 mb-3" id="governance-inbound-mcp-section">
+                    <h5>
+                        <i class="bi bi-box-arrow-in-down-right me-2"></i>Inbound MCP Source Governance
+                    </h5>
+                    <p class="text-muted mb-2">
+                        Control which delegated users and groups can use SimpleChat as an inbound MCP server through source-scoped policies.
+                    </p>
+                    <div class="alert alert-warning py-2 small" role="alert">
+                        Quick-create inbound MCP policies open in restricted user/group mode by default. Only use "Allow all users" when every delegated user with the required Entra role and delegated scope should be able to satisfy that policy.
+                    </div>
+                    <div class="row g-3 align-items-start">
+                        <div class="col-lg-7">
+                            <div class="small fw-semibold mb-1">Policy required for inbound MCP</div>
+                            <ul class="small text-muted mb-2">
+                                <li><code>inbound_mcp_source</code> with delegated item <code>*</code>: allows selected users or groups to use any accepted source ID.</li>
+                                <li><code>inbound_mcp_source</code> with a configured source ID: allows selected users or groups to use only requests with that source value.</li>
+                            </ul>
+                            <div class="small text-muted">
+                                Client, tenant, delegated scope, and Entra role checks remain in Inbound MCP configuration. The source ID comes from the configured header when present and is advisory unless a trusted gateway sets or validates it.
+                            </div>
+                        </div>
+                        <div class="col-lg-5">
+                            <div class="d-grid gap-2 governance-policy-action-list">
+                                <div class="input-group input-group-sm">
+                                    <button type="button" class="btn btn-outline-primary flex-grow-1 governance-new-inbound-mcp-policy-btn" data-governance-inbound-mcp-entity="inbound_mcp_source">New Inbound MCP Source Access Policy</button>
+                                    <button type="button" class="btn btn-outline-info governance-policy-help-btn" data-governance-help-key="inbound_mcp_source" aria-label="About inbound MCP source policies" title="About inbound MCP source policies">
+                                        <i class="bi bi-info-circle" aria-hidden="true"></i>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card p-3 mb-3" id="governance-feature-policies-section">
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <h5 class="mb-0"><i class="bi bi-sliders2 me-2"></i>Feature Policies</h5>
+                        <button type="button" class="btn btn-primary btn-sm" id="governance-save-feature-policies-btn">Save Feature Policies</button>
+                    </div>
+                    <p class="text-muted">Set allow-all, explicit allow lists, and block lists for each governed feature. Block lists override allow settings.</p>
+                    <div class="table-responsive">
+                        <table class="table table-bordered" id="governance-feature-policies-table">
+                            <thead>
+                                <tr>
+                                    <th>Feature</th>
+                                    <th>Allow All</th>
+                                    <th>Allow List</th>
+                                    <th>Block List</th>
+                                </tr>
+                            </thead>
+                            <tbody id="governance-feature-policies-body"></tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div class="card p-3 mb-3" id="governance-item-policies-section">
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <h5 class="mb-0"><i class="bi bi-list-check me-2"></i>Delegated Item Policies</h5>
+                        <div class="d-flex gap-2">
+                            <button type="button" class="btn btn-primary btn-sm" id="governance-new-item-policy-btn">New Policy</button>
+                            <button type="button" class="btn btn-outline-secondary btn-sm" id="governance-refresh-item-policies-btn">Refresh</button>
+                        </div>
+                    </div>
+                    <p class="text-muted mb-1">Manage delegated governance for configured global resources and action type entitlements that admins assign to specific users or groups.</p>
+                    <div class="alert alert-info py-2 small" role="alert">
+                        Delegated item policies are OR combined allow lists with optional block lists. Blocked users and groups are denied even when Allow All or another allow list would grant access.
+                    </div>
+
+                    <div class="row g-2 align-items-end mb-3" id="governance-item-policy-card-controls">
+                        <div class="col-lg-5 col-md-6">
+                            <label class="form-label" for="governance-item-review-search">Search</label>
+                            <input type="search" class="form-control" id="governance-item-review-search" placeholder="Search users, groups, endpoint IDs, or item IDs">
+                        </div>
+                        <div class="col-lg-3 col-md-6">
+                            <label class="form-label" for="governance-item-review-entity-type">Entity Type</label>
+                            <select class="form-select" id="governance-item-review-entity-type">
+                                <option value="">All</option>
+                                <option value="global_endpoint">Global Endpoint</option>
+                                <option value="global_agent">Global Agent</option>
+                                <option value="global_action">Global Action</option>
+                                <option value="personal_action_type">Personal Action Type</option>
+                                <option value="group_action_type">Group Action Type</option>
+                                <option value="global_action_type">Global Action Type</option>
+                                <option value="mcp_personal_destination">MCP Personal Destination</option>
+                                <option value="mcp_group_destination">MCP Group Destination</option>
+                                <option value="mcp_global_destination">MCP Global Destination</option>
+                                <option value="inbound_mcp_source">Inbound MCP Source</option>
+                            </select>
+                        </div>
+                        <div class="col-lg-2 col-md-4">
+                            <label class="form-label" for="governance-item-review-page-size">Page Size</label>
+                            <select class="form-select" id="governance-item-review-page-size">
+                                <option value="10">10</option>
+                                <option value="25" selected>25</option>
+                                <option value="50">50</option>
+                            </select>
+                        </div>
+                        <div class="col-lg-2 col-md-8 d-flex gap-2">
+                            <button type="button" class="btn btn-primary flex-fill" id="governance-item-review-search-btn">Search</button>
+                            <button type="button" class="btn btn-outline-secondary flex-fill" id="governance-item-review-reset-btn">Reset</button>
+                        </div>
+                    </div>
+
+                    <div class="table-responsive">
+                        <table class="table table-sm table-striped align-middle" id="governance-item-policies-table">
+                            <thead>
+                                <tr>
+                                    <th>Policy</th>
+                                    <th>Entity Type</th>
+                                    <th>Item</th>
+                                    <th>Allow All</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="governance-item-policies-review-body"></tbody>
+                        </table>
+                    </div>
+
+                    <div class="d-flex align-items-center justify-content-between gap-2 mt-3">
+                        <div class="text-muted small" id="governance-item-review-summary"></div>
+                        <div class="btn-group" role="group" aria-label="Delegated item policy pagination">
+                            <button type="button" class="btn btn-outline-secondary btn-sm" id="governance-item-review-prev-btn">Previous</button>
+                            <button type="button" class="btn btn-outline-secondary btn-sm" id="governance-item-review-next-btn">Next</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="governance-status" class="alert d-none" role="alert"></div>
+            </div>

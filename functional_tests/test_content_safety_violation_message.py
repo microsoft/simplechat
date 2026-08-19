@@ -23,6 +23,8 @@ APPLICATION_PATH = os.path.join(
 ADMIN_SETTINGS_TEMPLATE_PATH = Path(APPLICATION_PATH) / 'templates' / 'admin_settings.html'
 sys.path.insert(0, APPLICATION_PATH)
 
+from test_support.templates import read_admin_settings_template
+
 from functions_content_safety import (
     CONTENT_SAFETY_VIOLATION_MESSAGE_DEFAULT,
     CONTENT_SAFETY_VIOLATION_MESSAGE_MAX_LENGTH,
@@ -59,7 +61,7 @@ def test_message_normalization_preserves_safe_admin_defaults():
 
 def test_admin_settings_uses_the_markdown_editor_toolbar():
     """The Content Safety message field uses the standard local Markdown toolbar."""
-    admin_settings_template = ADMIN_SETTINGS_TEMPLATE_PATH.read_text(encoding='utf-8')
+    admin_settings_template = read_admin_settings_template()
 
     assert '<script src="/static/js/simplemde/simplemde.min.js"></script>' in admin_settings_template
     assert 'id="content_safety_violation_message"' in admin_settings_template

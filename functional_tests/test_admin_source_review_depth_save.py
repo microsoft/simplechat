@@ -12,6 +12,7 @@ overridden by an unrelated duplicate field earlier in the form.
 
 import os
 import sys
+from test_support.templates import compose_if_admin_settings
 
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -27,7 +28,7 @@ ADMIN_TEMPLATE = os.path.join(
 def read_admin_template():
     """Read the Admin Settings template for static regression checks."""
     with open(ADMIN_TEMPLATE, "r", encoding="utf-8") as template_file:
-        return template_file.read()
+        return compose_if_admin_settings(ADMIN_TEMPLATE, template_file.read())
 
 
 def test_source_review_depth_has_single_form_field():

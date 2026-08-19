@@ -15,6 +15,7 @@ from pathlib import Path
 
 from bs4 import BeautifulSoup
 
+from test_support.templates import resolve_template_includes
 from test_support.versioning import assert_app_version_at_least
 
 
@@ -88,7 +89,9 @@ def _card_title(card):
 
 def _navigation_contract():
     """Parse the admin template, sidebar template, and section alias map."""
-    admin_source = _read(ADMIN_TEMPLATE)
+    admin_source = resolve_template_includes(
+        _read(ADMIN_TEMPLATE), ADMIN_TEMPLATE.parent
+    )
     sidebar_source = _read(SIDEBAR_TEMPLATE)
     script_source = _read(SIDEBAR_SCRIPT)
     admin_soup = BeautifulSoup(admin_source, "html.parser")
