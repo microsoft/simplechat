@@ -2,6 +2,28 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.260.016)**
+
+#### User Interface Enhancements
+
+*   **Backup, Migrate & Restore Split Into Five Tabs**
+    *   One tab carried the entire backup, migration, restore, Cosmos editing and job history surface — over 1,600 lines in a single scroll.
+    *   Backup & Recovery now has **Backup** (readiness, backup, schedule, storage, encryption), **Migrate**, **Restore**, **Cosmos Editor** and **Jobs**.
+    *   The save button, status line and operational-hours warning are shared by all five tabs, so they sit above the tabs and stay available wherever you are in the group.
+    *   This completes the Admin Settings restructure: **14 groups and 44 tabs**, from an original 17 flat tabs.
+    *   (Ref: `backup`, `migrate`, `restore`, `cosmos-editor`, `jobs`)
+
+#### Bug Fixes
+
+*   **Backup Dialogs Remain Available From Every Tab**
+    *   The eleven Backup & Recovery dialogs are opened from more than one place and several are opened from code rather than a button. Left inside a tab, a dialog cannot appear while a different tab is showing.
+    *   They now sit outside the tabs, so restore, migration cancel, job detail, the Cosmos editor dialogs and the five setup guides all open wherever they are triggered from.
+    *   (Ref: Backup & Recovery dialogs, `admin_data_management.js`)
+
+*   **Shared Controls Work In Both Navigation Layouts**
+    *   Shared group controls resolve their group from whichever navigation is on screen, so the Backup & Recovery save button is present in the sidebar layout as well as the tab layout.
+    *   (Ref: `data-admin-group-shared`, `admin_sidebar_nav.js`)
+
 ### **(v0.260.015)**
 
 #### User Interface Enhancements
