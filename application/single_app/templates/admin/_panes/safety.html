@@ -216,7 +216,12 @@
                 </div>
 
 
-                <div class="card p-3 mb-3" id="permissions-section">
+                <div class="card p-3 mb-3" id="permissions-section"
+                    data-requires="enable_user_feedback"
+                    data-requires-label="User Feedback"
+                    data-requires-target="user-feedback-section"
+                    data-requires-scope="#require_member_of_feedback_admin"
+                    data-requires-description="The FeedbackAdmin role only controls access to the User Feedback report, so it does nothing until User Feedback is enabled.">
                     <h5>
                         <i class="bi bi-person-check me-2"></i>Permissions
                     </h5>

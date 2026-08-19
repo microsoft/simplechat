@@ -4,6 +4,16 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 
 ### **(v0.260.008)**
 
+#### New Features
+
+*   **Settings That Need Another Setting Now Say So**
+    *   Some Admin Settings options only work when a different option is enabled, and the two often live in different tabs. That was previously explained only in prose, in a tooltip, or in a warning after saving, so you could switch something on and have nothing happen with no visible reason.
+    *   Affected cards now show an inline notice naming what they need, with a switch to enable the prerequisite without leaving the tab and a link straight to its full configuration.
+    *   **File Sync** announces its **Redis Cache** requirement live, and keeps its save-your-intent behaviour: settings can still be saved and activate once Redis is ready.
+    *   The **FeedbackAdmin** role control is disabled until **User Feedback** is enabled, since the role only governs access to the User Feedback report. The unrelated SafetyViolationAdmin control in the same card stays usable.
+    *   These notices are guidance only. The server still validates every prerequisite.
+    *   (Ref: `admin_settings_dependencies.js`, `data-requires`, File Sync, Permissions)
+
 #### Bug Fixes
 
 *   **Cross-Tab Links In Admin Settings Now Point At The Right Place**
