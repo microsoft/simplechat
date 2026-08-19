@@ -28,7 +28,7 @@ The correct upgrade path depends on how the current site is deployed. Native Pyt
 
 ## Step 1: Check the current deployment model and version
 
-Start with [Upgrade Paths]({{ '/how-to/upgrade_paths/' | relative_url }}). The first decision is deployment model, not command choice. Confirm whether App Service is pulling a container image or running native Python code. Then record the current app version and current image tag or deployment package so rollback has a known target.
+Start with [Upgrade Paths]({{ '/guides/upgrade-paths/' | relative_url }}). The first decision is deployment model, not command choice. Confirm whether App Service is pulling a container image or running native Python code. Then record the current app version and current image tag or deployment package so rollback has a known target.
 
 {% include media.html src="guides/admin-update-simplechat-inventory.png"
                       alt="Upgrade inventory showing runtime model, current version, image or package identifier, and App Service details."
@@ -90,7 +90,7 @@ Use the rollback method that matches the rollout. Swap back if you used deployme
 
 ## Related
 
-- [Upgrade Paths]({{ '/how-to/upgrade_paths/' | relative_url }})
+- [Upgrade Paths]({{ '/guides/upgrade-paths/' | relative_url }})
 - [Deployment Reference]({{ '/reference/deploy/' | relative_url }})
 - [Backup, Migrate & Restore settings]({{ '/admin/data-management/' | relative_url }})
 - [Operate SimpleChat day to day]({{ '/guides/admin-operate-simplechat/' | relative_url }})

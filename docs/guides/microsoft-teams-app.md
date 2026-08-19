@@ -1,3 +1,13 @@
+---
+layout: page
+title: "Microsoft Teams App Configuration"
+permalink: /guides/microsoft-teams-app/
+section: "Guides"
+redirect_from:
+  - /how-to/teams_app/
+  - /how-to/teams_app.html
+---
+
 # Microsoft Teams App Configuration
 
 This guide explains how to run SimpleChat as a Microsoft Teams personal tab with Teams Single Sign-On (SSO).

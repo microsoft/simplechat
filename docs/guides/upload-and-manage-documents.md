@@ -1,7 +1,7 @@
 ---
 layout: showcase-page
 title: "Uploading and Managing Documents"
-permalink: /tutorials/uploading_documents/
+permalink: /guides/upload-and-manage-documents/
 menubar: docs_menu
 accent: orange
 eyebrow: "Tutorial 3"
@@ -16,7 +16,7 @@ hero_pills:
   - Retrieval quality starts here
 hero_links:
   - label: Tutorial index
-    url: /tutorials/
+    url: /guides/
     style: primary
   - label: Feature overview
     url: /features/
@@ -25,11 +25,15 @@ show_nav: true
 nav_links:
   prev:
     title: Create Your First Agent
-    url: /tutorials/first_agent/
+    url: /guides/create-your-first-agent/
   next:
     title: Document Classification Tutorial
-    url: /tutorials/classifying_documents/
+    url: /guides/classify-documents/
+section: "Guides"
+redirect_from:
+  - /tutorials/uploading_documents/
 ---
+
 Retrieval quality starts with disciplined uploads. This tutorial explains where documents belong, how processing works, and how to keep the knowledge base understandable as it expands.
 
 <section class="latest-release-card-grid">
@@ -290,8 +294,8 @@ Congratulations! You've successfully:
 Now that you're comfortable with document management:
 - [Classify your documents](classifying_documents) for better organization
 - [Create agents](first_agent) that work with specific document sets
-- Explore [advanced document management](../how-to/add_documents) techniques
-- Learn about [enhanced citations](../how-to/enhanced_citations) for better document linking
+- Explore [advanced document management]({{ '/guides/add-documents/' | relative_url }}) techniques
+- Learn about [enhanced citations]({{ '/admin/citation/' | relative_url }}) for better document linking
 
 ---
 

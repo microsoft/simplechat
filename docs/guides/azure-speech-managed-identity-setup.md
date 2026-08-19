@@ -1,7 +1,7 @@
 ---
 layout: showcase-page
 title: "Azure Speech Managed Identity Setup"
-permalink: /how-to/azure_speech_managed_identity_manul_setup/
+permalink: /guides/azure-speech-managed-identity-setup/
 menubar: docs_menu
 accent: blue
 eyebrow: "How-To Guide"
@@ -16,11 +16,14 @@ hero_pills:
   - Speech User role first
 hero_links:
   - label: "Managed identity guide"
-    url: /how-to/use_managed_identity/
+    url: /guides/use-managed-identity/
     style: primary
   - label: "Admin configuration"
     url: /reference/admin_configuration/
     style: secondary
+section: "Guides"
+redirect_from:
+  - /how-to/azure_speech_managed_identity_manul_setup/
 ---
 
 Speech is the place where managed identity setup becomes very specific. The most important rule is simple: the regional endpoint that works with keys is not enough for managed identity. You need the resource-specific custom-subdomain endpoint so Azure can evaluate RBAC against the correct Speech resource.

@@ -1,7 +1,7 @@
 ---
 layout: showcase-page
 title: "Upgrade Paths"
-permalink: /how-to/upgrade_paths/
+permalink: /guides/upgrade-paths/
 menubar: docs_menu
 accent: emerald
 eyebrow: "How-To Guide"
@@ -21,6 +21,9 @@ hero_links:
   - label: "Manual deployment notes"
     url: /reference/deploy/manual_deploy/
     style: secondary
+section: "Guides"
+redirect_from:
+  - /how-to/upgrade_paths/
 ---
 
 The first upgrade decision is not which command to run. It is whether your existing site is running as native Python App Service or as one of the repo's container-based deployment models. That single distinction drives startup handling, rollout mechanics, and rollback choices.

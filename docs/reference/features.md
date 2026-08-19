@@ -50,7 +50,7 @@ Use the admin reference when you need to turn a capability on and verify which t
 
 Use the workflow guide when you want to understand how uploads, safety review, and retrieval-backed chat behave behind the UI.
 
-[Review workflows]({{ '/application_workflows/' | relative_url }})
+[Review workflows]({{ '/reference/application-workflows/' | relative_url }})
 
 ### Latest release changes
 
@@ -62,4 +62,4 @@ Use the latest-release section when you need the most recent UI and capability c
 
 Use tutorials for onboarding and the how-to guides for repeatable operational workflows once the platform is already running.
 
-[Open tutorials]({{ '/tutorials/' | relative_url }})
+[Open tutorials]({{ '/guides/' | relative_url }})

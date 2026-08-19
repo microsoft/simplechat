@@ -47,7 +47,7 @@ Use the deployment references as the mechanical source of truth instead of copyi
 
 A first deployment needs the core runtime resources before optional capabilities matter: App Service, Azure OpenAI for chat, Azure OpenAI embeddings for retrieval, Azure AI Search, Cosmos DB for app data, Document Intelligence for ingestion, and monitoring. Optional resources such as Content Safety, Video Indexer, Speech, Storage for Enhanced Citations, Redis, and APIM should be provisioned only when the matching feature is in scope.
 
-For resource sizing and service-specific notes, use [Manual Setup]({{ '/setup_instructions_manual/' | relative_url }}). For Azure Government, managed identity, and private endpoint patterns, use [Special Setup Scenarios]({{ '/setup_instructions_special/' | relative_url }}).
+For resource sizing and service-specific notes, use [Manual Setup]({{ '/setup_instructions_manual/' | relative_url }}). For Azure Government, managed identity, and private endpoint patterns, use [Special Setup Scenarios]({{ '/deploy/special-scenarios/' | relative_url }}).
 
 ## Step 3: Run the deployment reference
 
@@ -84,8 +84,8 @@ Open the app URL from the deployment output, sign in, and confirm the applicatio
 
 ## Related
 
-- [Getting Started]({{ '/setup_instructions/' | relative_url }})
+- [Getting Started]({{ '/start/deployment-options/' | relative_url }})
 - [Deployment Reference]({{ '/reference/deploy/' | relative_url }})
 - [Manual Setup]({{ '/setup_instructions_manual/' | relative_url }})
-- [Special Setup Scenarios]({{ '/setup_instructions_special/' | relative_url }})
+- [Special Setup Scenarios]({{ '/deploy/special-scenarios/' | relative_url }})
 - [First configuration guide]({{ '/guides/admin-first-configuration/' | relative_url }})

@@ -2,7 +2,7 @@
 layout: showcase-page
 title: "External Applications Overview"
 section: "Reference"
-permalink: /external_apps_overview/
+permalink: /reference/external-applications/
 menubar: docs_menu
 accent: emerald
 eyebrow: "Supporting Utilities"
@@ -22,6 +22,8 @@ hero_links:
   - label: Admin configuration
     url: /admin_configuration/
     style: secondary
+redirect_from:
+  - /external_apps_overview/
 ---
 
 These utilities sit beside the main application. They are intended for administrators and support teams that need faster environment preparation or large-scale document loading.

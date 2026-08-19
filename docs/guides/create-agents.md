@@ -1,7 +1,7 @@
 ---
 layout: showcase-page
 title: "Create Agents"
-permalink: /how-to/create_agents/
+permalink: /guides/create-agents/
 menubar: docs_menu
 accent: teal
 eyebrow: "How-To Guide"
@@ -16,11 +16,14 @@ hero_pills:
   - Validate before publishing
 hero_links:
   - label: "First agent tutorial"
-    url: /tutorials/first_agent/
+    url: /guides/create-your-first-agent/
     style: primary
   - label: "Admin configuration"
     url: /admin_configuration/
     style: secondary
+section: "Guides"
+redirect_from:
+  - /how-to/create_agents/
 ---
 
 Create agents around a specific job to be done, not around a vague persona. The most reliable agents in Simple Chat have narrow instructions, deliberate tool access, and a test set that proves they behave the way you expect.
@@ -83,7 +86,7 @@ Create agents around a specific job to be done, not around a vague persona. The 
 
 ## Related guides
 
-- [Create Your First Agent](../tutorials/first_agent.md)
+- [Create Your First Agent]({{ '/guides/create-your-first-agent/' | relative_url }})
 - [Admin Configuration Reference](../reference/admin_configuration.md)
 - [API Reference](../reference/api_reference.md)
 - [ServiceNow Agent Examples](./agents/ServiceNow/)

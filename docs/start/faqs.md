@@ -2,7 +2,10 @@
 layout: page
 title: "FAQ"
 description: "Answers to the questions that come up most often when teams deploy, secure, and operate Simple Chat in Azure environments."
-section: "Support"
+section: "Start"
+permalink: /start/faqs/
+redirect_from:
+  - /faqs/
 ---
 
 Use this page as the fast triage layer: it focuses on the recurring questions that show up after a team has already deployed or started hardening the environment.
@@ -85,7 +88,7 @@ What to do:
 
 - Open **Admin Settings > General > Branding** to change the application title, logo visibility, light and dark logos, home page logo size, and favicon.
 - Open **Admin Settings > General > Home Page Text** to edit the landing page Markdown and alignment.
-- Use [Configure Branding, Home Page, and Support Settings]({{ '/how-to/admin_ui_settings/' | relative_url }}) for the full checklist.
+- Use [Configure Branding, Home Page, and Support Settings]({{ '/guides/configure-branding-and-support-settings/' | relative_url }}) for the full checklist.
 
 ### How do I check whether the system is healthy?
 

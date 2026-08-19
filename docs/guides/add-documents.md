@@ -1,7 +1,7 @@
 ---
 layout: showcase-page
 title: "Add Documents"
-permalink: /how-to/add_documents/
+permalink: /guides/add-documents/
 menubar: docs_menu
 accent: blue
 eyebrow: "How-To Guide"
@@ -16,11 +16,14 @@ hero_pills:
   - Classification and citations supported
 hero_links:
   - label: "Document tutorial"
-    url: /tutorials/uploading_documents/
+    url: /guides/upload-and-manage-documents/
     style: primary
   - label: "Admin overview"
     url: /admin_configuration/
     style: secondary
+section: "Guides"
+redirect_from:
+  - /how-to/add_documents/
 ---
 
 Treat uploads as an ingestion workflow, not just a file transfer. The target workspace, enabled services, and metadata choices determine whether the file becomes grounded chat context, searchable workspace content, or an item waiting on a missing dependency.
@@ -77,7 +80,7 @@ Treat uploads as an ingestion workflow, not just a file transfer. The target wor
 
 ## Related guides
 
-- [Uploading and Managing Documents](../tutorials/uploading_documents.md)
-- [Document Classification Tutorial](../tutorials/classifying_documents.md)
-- [Application Workflows](../application_workflows.md)
+- [Uploading and Managing Documents]({{ '/guides/upload-and-manage-documents/' | relative_url }})
+- [Document Classification Tutorial]({{ '/guides/classify-documents/' | relative_url }})
+- [Application Workflows]({{ '/reference/application-workflows/' | relative_url }})
 - [Troubleshooting](../troubleshooting/troubleshooting.md)

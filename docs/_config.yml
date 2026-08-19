@@ -59,8 +59,8 @@ navigation:
       url: /
       icon: bi bi-house
     - title: Guides
-      url: /tutorials/
-      match: /tutorials/
+      url: /guides/
+      match: /guides/
       icon: bi bi-signpost-split
     - title: Features
       url: /features/
@@ -70,7 +70,7 @@ navigation:
       url: /admin/
       match: /admin/
       icon: bi bi-sliders
-    - title: Deploy
+    - title: Deploy and operate
       url: /reference/deploy/
       match: /reference/deploy/
       icon: bi bi-cloud-arrow-up
@@ -85,16 +85,16 @@ navigation:
           url: /
           icon: bi bi-house-fill
         - title: What is Simple Chat
-          url: /about/
+          url: /start/about/
           icon: bi bi-info-circle
         - title: Choose a deployment path
-          url: /setup_instructions/
+          url: /start/deployment-options/
           icon: bi bi-rocket-takeoff
         - title: Architecture
           url: /explanation/architecture/
           icon: bi bi-diagram-3
         - title: FAQ
-          url: /faqs/
+          url: /start/faqs/
           icon: bi bi-question-circle
         - title: Search the docs
           url: /search/
@@ -106,11 +106,11 @@ navigation:
           match: /guides/
           icon: bi bi-list-check
         - title: Tutorials
-          url: /tutorials/
-          match: /tutorials/
+          url: /guides/
+          match: /guides/
           icon: bi bi-mortarboard
         - title: Getting started
-          url: /tutorials/getting_started/
+          url: /guides/getting-started/
           icon: bi bi-play-circle
         - title: Create an action
           url: /guides/create-an-action/
@@ -146,17 +146,17 @@ navigation:
           url: /guides/upload-documents-in-chat/
           icon: bi bi-file-earmark-arrow-up
         - title: All how-to guides
-          url: /how-to/
+          url: /guides/
           icon: bi bi-journal-code
         - title: ServiceNow guides
-          url: /how-to/agents/ServiceNow/
-          match: /how-to/agents/ServiceNow/
+          url: /guides/servicenow/
+          match: /guides/servicenow/
           icon: bi bi-plug
         - title: Use managed identity
-          url: /how-to/use_managed_identity/
+          url: /guides/use-managed-identity/
           icon: bi bi-person-badge
         - title: Solution demos
-          url: /demos/
+          url: /guides/solution-demos/
           icon: bi bi-collection-play
     - title: Features
       links:
@@ -237,7 +237,7 @@ navigation:
           url: /admin/latest-features/
           icon: bi bi-stars
         - title: Branding and home page
-          url: /how-to/admin_ui_settings/
+          url: /guides/configure-branding-and-support-settings/
           icon: bi bi-palette
         - title: Full configuration reference
           url: /admin_configuration/
@@ -252,25 +252,25 @@ navigation:
           url: /setup_instructions_manual/
           icon: bi bi-tools
         - title: Special setup scenarios
-          url: /setup_instructions_special/
+          url: /deploy/special-scenarios/
           icon: bi bi-sliders2
         - title: Upgrade paths
-          url: /how-to/upgrade_paths/
+          url: /guides/upgrade-paths/
           icon: bi bi-arrow-up-circle
         - title: Enterprise networking
-          url: /how-to/enterprise_networking/
+          url: /guides/enterprise-networking/
           icon: bi bi-diagram-2
         - title: Scale on Azure
-          url: /how-to/scaling_on_azure/
+          url: /guides/scale-simplechat-on-azure/
           icon: bi bi-graph-up-arrow
         - title: Docker customization
-          url: /how-to/docker_customization/
+          url: /guides/docker-customization/
           icon: bi bi-box
         - title: Model endpoint identity
-          url: /how-to/model_endpoint_identity_setup/
+          url: /guides/model-endpoint-identity-setup/
           icon: bi bi-hdd-network
         - title: Speech managed identity
-          url: /how-to/azure_speech_managed_identity_manul_setup/
+          url: /guides/azure-speech-managed-identity-setup/
           icon: bi bi-mic
         - title: Running locally
           url: /explanation/running_simplechat_locally/
@@ -297,10 +297,10 @@ navigation:
           url: /admin_configuration/
           icon: bi bi-card-list
         - title: External applications
-          url: /external_apps_overview/
+          url: /reference/external-applications/
           icon: bi bi-window-stack
         - title: Application workflows
-          url: /application_workflows/
+          url: /reference/application-workflows/
           icon: bi bi-diagram-3
         - title: Design principles
           url: /explanation/design_principles/
@@ -340,7 +340,7 @@ sass:
 
 # Collections
 #
-# The previous config declared tutorials/how-to/reference/explanation collections,
+# The previous config declared tutorials/guides/reference/explanation collections,
 # but no matching _tutorials/_how-to/_reference/_explanation directories exist, so
 # they were always empty. Those pages are ordinary pages under docs/ and are given
 # their section labels through path-scoped defaults below.

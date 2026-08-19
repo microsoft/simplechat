@@ -1,14 +1,17 @@
 ---
 layout: showcase-page
 title: "ServiceNow Asset Management Setup"
-permalink: /how-to/agents/ServiceNow/servicenow_asset_management_setup/
+permalink: /guides/servicenow/asset-management-setup/
 menubar: docs_menu
 accent: orange
 eyebrow: "How-To Guide"
 description: "Set up a ServiceNow asset-management agent with separate actions for querying, creating, updating, and deleting records in the `alm_asset` table."
 hero_icons: ["bi-pc-display-horizontal", "bi-database-gear", "bi-arrow-repeat"]
 hero_pills: ["Four-action asset workflow", "Direct `alm_asset` table operations", "Query-first pattern for update and delete"]
-hero_links: [{ label: "ServiceNow guides", url: "/how-to/agents/ServiceNow/", style: "primary" }, { label: "OAuth setup", url: "/how-to/agents/ServiceNow/servicenow_oauth_setup/", style: "secondary" }]
+hero_links: [{ label: "ServiceNow guides", url: "/guides/servicenow/", style: "primary" }, { label: "OAuth setup", url: "/guides/servicenow/oauth-setup/", style: "secondary" }]
+section: "Guides"
+redirect_from:
+  - /how-to/agents/ServiceNow/servicenow_asset_management_setup/
 ---
 
 This guide is for teams that want a dedicated asset-management agent instead of overloading a general ServiceNow support agent. It keeps query, create, update, and delete actions separate so each operation is easier to govern and debug.
@@ -125,7 +128,7 @@ Create a dedicated ServiceNow service account for asset management operations.
 
 ### Generate OAuth Bearer Token
 
-> **📘 For complete OAuth token generation instructions, see: [SERVICENOW_OAUTH_SETUP.md](SERVICENOW_OAUTH_SETUP.md)**
+> **📘 For complete OAuth token generation instructions, see: [SERVICENOW_OAUTH_SETUP.md]({{ '/guides/servicenow/oauth-setup/' | relative_url }})**
 >
 > The OAuth setup guide provides:
 > - OAuth application configuration in ServiceNow
@@ -157,7 +160,7 @@ When creating each action (query, create, update, delete), use the same authenti
 **Description:** `Query assets and retrieve asset details from ServiceNow`  
 **Type:** `openapi`
 
-**OpenAPI Specification:** See [servicenow_query_assets_openapi.json](servicenow_query_assets_openapi.json)
+**OpenAPI Specification:** See [servicenow_query_assets_openapi.json]({{ '/guides/servicenow/open_api_specs/servicenow_query_assets_openapi.json' | relative_url }})
 
 **Key Operations:**
 - `queryAssets` - Search and filter assets with query parameters
@@ -178,7 +181,7 @@ When creating each action (query, create, update, delete), use the same authenti
 **Description:** `Create new assets in ServiceNow`  
 **Type:** `openapi`
 
-**OpenAPI Specification:** See [servicenow_create_asset_openapi.json](servicenow_create_asset_openapi.json)
+**OpenAPI Specification:** See [servicenow_create_asset_openapi.json]({{ '/guides/servicenow/open_api_specs/servicenow_create_asset_openapi.json' | relative_url }})
 
 **Key Operation:**
 - `createAsset` - Create new asset with required fields (asset_tag, display_name)
@@ -200,7 +203,7 @@ When creating each action (query, create, update, delete), use the same authenti
 **Description:** `Update existing assets in ServiceNow`  
 **Type:** `openapi`
 
-**OpenAPI Specification:** See [servicenow_update_asset_openapi.json](servicenow_update_asset_openapi.json)
+**OpenAPI Specification:** See [servicenow_update_asset_openapi.json]({{ '/guides/servicenow/open_api_specs/servicenow_update_asset_openapi.json' | relative_url }})
 
 **Key Operation:**
 - `updateAsset` - Update asset fields using PATCH method
@@ -220,7 +223,7 @@ When creating each action (query, create, update, delete), use the same authenti
 **Description:** `Delete assets from ServiceNow`  
 **Type:** `openapi`
 
-**OpenAPI Specification:** See [servicenow_delete_asset_openapi.json](servicenow_delete_asset_openapi.json)
+**OpenAPI Specification:** See [servicenow_delete_asset_openapi.json]({{ '/guides/servicenow/open_api_specs/servicenow_delete_asset_openapi.json' | relative_url }})
 
 **Key Operation:**
 - `deleteAsset` - Permanently delete an asset from ServiceNow
@@ -250,7 +253,7 @@ When creating each action (query, create, update, delete), use the same authenti
 
 ### Agent Instructions File
 
-Upload the agent instructions file: [servicenow_asset_management_agent_instructions.txt](servicenow_asset_management_agent_instructions.txt)
+Upload the agent instructions file: [servicenow_asset_management_agent_instructions.txt]({{ '/guides/servicenow/agent_instructions/servicenow_asset_management_agent_instructions.txt' | relative_url }})
 
 **Key Instruction Highlights:**
 - No-narration execution pattern (execute silently, show results only)

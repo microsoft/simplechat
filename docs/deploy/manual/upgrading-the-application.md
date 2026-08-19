@@ -48,7 +48,7 @@ python -m gunicorn -c gunicorn.conf.py app:app
 
 
 
-For a shorter decision guide that also covers container-based upgrades, see [Upgrade Paths]({{ '/how-to/upgrade_paths/' | relative_url }}).
+For a shorter decision guide that also covers container-based upgrades, see [Upgrade Paths]({{ '/guides/upgrade-paths/' | relative_url }}).
 
 
 

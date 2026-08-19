@@ -40,6 +40,6 @@ This manual setup hub keeps the original deployment reference URL and points to 
 
 
 
-- [Choose a deployment path]({{ '/setup_instructions/' | relative_url }})
+- [Choose a deployment path]({{ '/start/deployment-options/' | relative_url }})
 
-- [Special setup scenarios]({{ '/setup_instructions_special/' | relative_url }})
+- [Special setup scenarios]({{ '/deploy/special-scenarios/' | relative_url }})

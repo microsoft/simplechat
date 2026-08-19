@@ -1,7 +1,7 @@
 ---
 layout: showcase-page
 title: "Create Your First Agent"
-permalink: /tutorials/first_agent/
+permalink: /guides/create-your-first-agent/
 menubar: docs_menu
 accent: violet
 eyebrow: "Tutorial 2"
@@ -16,7 +16,7 @@ hero_pills:
   - Test and refine behavior
 hero_links:
   - label: Tutorial index
-    url: /tutorials/
+    url: /guides/
     style: primary
   - label: Review admin configuration
     url: /admin_configuration/
@@ -25,10 +25,13 @@ show_nav: true
 nav_links:
    prev:
       title: Getting Started with Simple Chat
-      url: /tutorials/getting_started/
+      url: /guides/getting-started/
    next:
       title: Uploading and Managing Documents
-      url: /tutorials/uploading_documents/
+      url: /guides/upload-and-manage-documents/
+section: "Guides"
+redirect_from:
+  - /tutorials/first_agent/
 ---
 
 Agents are most useful when they are specific. This tutorial shows how to define that specificity in instructions, data access, and testing rather than relying on a generic assistant prompt.
@@ -239,7 +242,7 @@ Now that you have your first agent:
 - [Upload and organize more documents](uploading_documents) to expand agent knowledge
 - [Classify documents](classifying_documents) to help agents find relevant information
 - Create additional agents for different use cases
-- Explore [advanced agent configuration](../how-to/create_agents) options
+- Explore [advanced agent configuration]({{ '/guides/create-agents/' | relative_url }}) options
 
 ## Troubleshooting
 

@@ -1,14 +1,17 @@
 ---
 layout: showcase-page
 title: "ServiceNow Integration"
-permalink: /how-to/agents/ServiceNow/servicenow_integration/
+permalink: /guides/servicenow/integration/
 menubar: docs_menu
 accent: blue
 eyebrow: "How-To Guide"
 description: "Configure the standard single-agent ServiceNow integration for incident management and read-only knowledge-base search in Simple Chat."
 hero_icons: ["bi-life-preserver", "bi-plug", "bi-search"]
 hero_pills: ["Single-agent support pattern", "Incident management + KB search", "Global or group-scoped rollout"]
-hero_links: [{ label: "ServiceNow guides", url: "/how-to/agents/ServiceNow/", style: "primary" }, { label: "OAuth setup", url: "/how-to/agents/ServiceNow/servicenow_oauth_setup/", style: "secondary" }]
+hero_links: [{ label: "ServiceNow guides", url: "/guides/servicenow/", style: "primary" }, { label: "OAuth setup", url: "/guides/servicenow/oauth-setup/", style: "secondary" }]
+section: "Guides"
+redirect_from:
+  - /how-to/agents/ServiceNow/servicenow_integration/
 ---
 
 This is the default ServiceNow pattern for most teams. It gives you one support-focused agent backed by modular OpenAPI actions so users can manage incidents and search KB content without splitting responsibilities across multiple agents.
@@ -54,7 +57,7 @@ This guide documents the **single-agent integration** between Simple Chat and Se
 - ✅ Single ServiceNow agent for standard support operations
 
 **For advanced KB management (create/publish articles), see:**
-- 📘 [TWO_AGENT_SETUP.md](TWO_AGENT_SETUP.md) - Recommended approach with separate KB Management agent
+- 📘 [TWO_AGENT_SETUP.md]({{ '/guides/servicenow/two-agent-setup/' | relative_url }}) - Recommended approach with separate KB Management agent
 - 📘 [KB_MULTI_ACTION_SETUP.md](KB_MULTI_ACTION_SETUP.md) - Alternative multi-action approach
 
 > **⚠️ Important - Work in Progress:**  
@@ -208,7 +211,7 @@ The integration uses two OpenAPI specification files that define all ServiceNow 
 
 ### OpenAPI Specification Files
 
-**Locations:** `docs/how-to/agents/ServiceNow/open_api_specs/`
+**Locations:** `docs/guides/servicenow/open_api_specs/`
 
 **Available Authentication Options:**
 
@@ -343,7 +346,7 @@ Scope: Global or Group
 ```
 
 > **📄 Agent Instructions File:** 
-> - **Location:** `docs/how-to/agents/ServiceNow/agent_instructions/servicenow_agent_instructions.txt`
+> - **Location:** `docs/guides/servicenow/agent_instructions/servicenow_agent_instructions.txt`
 > - **Purpose:** Comprehensive behavioral instructions for the ServiceNow support agent
 > - **Usage:** Copy the entire content from this file into the "Instructions" field when creating the agent
 > 

@@ -2,7 +2,7 @@
 layout: showcase-page
 title: "Solution Demonstrations"
 section: "Guides"
-permalink: /demos/
+permalink: /guides/solution-demos/
 menubar: docs_menu
 accent: orange
 eyebrow: "See The Product Move"
@@ -17,12 +17,15 @@ hero_pills:
   - Observe the user flow quickly
 hero_links:
   - label: Open Getting Started
-    url: /setup_instructions/
+    url: /start/deployment-options/
     style: primary
   - label: Review workflows
-    url: /application_workflows/
+    url: /reference/application-workflows/
     style: secondary
+redirect_from:
+  - /demos/
 ---
+
 These demos are useful when you need a quick visual of the product before walking through setup or user training.
 
 <section class="latest-release-card-grid">

@@ -1,8 +1,8 @@
 ---
 layout: showcase-page
 title: "Application Workflows"
-section: "Explanation"
-permalink: /application_workflows/
+section: "Reference"
+permalink: /reference/application-workflows/
 menubar: docs_menu
 accent: violet
 eyebrow: "How Requests Move"
@@ -22,7 +22,10 @@ hero_links:
   - label: Open troubleshooting
     url: /troubleshooting/
     style: secondary
+redirect_from:
+  - /application_workflows/
 ---
+
 These flows are the fastest way to understand where Simple Chat applies safety checks, where Azure services participate, and where document-grounded answers actually come from.
 
 <section class="latest-release-card-grid">
@@ -49,7 +52,7 @@ These flows are the fastest way to understand where Simple Chat applies safety c
 
 ## Content Safety Workflow
 
-![Workflow - Content Safety](./images/workflow-content_safety.png)
+![Workflow - Content Safety]({{ '/images/workflow-content_safety.png' | relative_url }})
 
 1. A user sends a message from the chat interface.
 2. If Content Safety is enabled, the message is evaluated before it reaches the target backend service.
@@ -69,7 +72,7 @@ The default flow protects the inbound user message. Downstream services may stil
 
 This workflow covers what happens when users upload content into personal or group workspaces for Retrieval-Augmented Generation.
 
-![Add your data - Workflow](./images/workflow-add_your_data.png)
+![Add your data - Workflow]({{ '/images/workflow-add_your_data.png' | relative_url }})
 
 1. Users upload one or more supported files through the application UI.
 2. The backend determines file type and chooses the correct extraction path.

@@ -1,7 +1,7 @@
 ---
 layout: showcase-page
 title: "Configure Model Endpoint Identity"
-permalink: /how-to/model_endpoint_identity_setup/
+permalink: /guides/model-endpoint-identity-setup/
 menubar: docs_menu
 accent: teal
 eyebrow: "Admin How-To"
@@ -29,8 +29,11 @@ hero_links:
     url: /admin_configuration/
     style: primary
   - label: "Managed identity guide"
-    url: /how-to/use_managed_identity/
+    url: /guides/use-managed-identity/
     style: secondary
+section: "Guides"
+redirect_from:
+  - /how-to/model_endpoint_identity_setup/
 ---
 
 Use this guide when admins need to configure the shared **Model Endpoint** modal for Azure OpenAI, Foundry (classic), or New Foundry without depending on legacy single-endpoint settings.
@@ -246,7 +249,5 @@ API keys are not a replacement for Foundry RBAC when users need New Foundry agen
 
 ## Related Documentation
 
-- [Use Managed Identity]({{ '/how-to/use_managed_identity/' | relative_url }})
+- [Use Managed Identity]({{ '/guides/use-managed-identity/' | relative_url }})
 - [Admin configuration overview]({{ '/admin_configuration/' | relative_url }})
-- [Workspace Multi Endpoints]({{ '/explanation/features/v0.241.001/WORKSPACE_MULTI_ENDPOINTS/' | relative_url }})
-- [Dual Foundry Agent Support]({{ '/explanation/features/v0.241.001/DUAL_FOUNDRY_AGENT_SUPPORT/' | relative_url }})

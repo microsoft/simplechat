@@ -1,14 +1,17 @@
 ---
 layout: showcase-page
 title: "ServiceNow OAuth 2.0 Setup"
-permalink: /how-to/agents/ServiceNow/servicenow_oauth_setup/
+permalink: /guides/servicenow/oauth-setup/
 menubar: docs_menu
 accent: violet
 eyebrow: "How-To Guide"
 description: "Configure OAuth 2.0 bearer-token authentication for ServiceNow actions in Simple Chat using ServiceNow's current inbound integration flow."
 hero_icons: ["bi-key", "bi-shield-lock", "bi-arrow-repeat"]
 hero_pills: ["Bearer token auth", "Integration user + OAuth app credentials", "Production-oriented alternative to Basic Auth"]
-hero_links: [{ label: "ServiceNow integration", url: "/how-to/agents/ServiceNow/servicenow_integration/", style: "primary" }, { label: "Two-agent setup", url: "/how-to/agents/ServiceNow/two_agent_setup/", style: "secondary" }]
+hero_links: [{ label: "ServiceNow integration", url: "/guides/servicenow/integration/", style: "primary" }, { label: "Two-agent setup", url: "/guides/servicenow/two-agent-setup/", style: "secondary" }]
+section: "Guides"
+redirect_from:
+  - /how-to/agents/ServiceNow/servicenow_oauth_setup/
 ---
 
 This guide matters when Basic Auth is not acceptable and you want a cleaner production authentication story for ServiceNow actions. The important idea is that OAuth setup here still depends on a dedicated ServiceNow user because the token executes with that user's permissions.
@@ -560,4 +563,4 @@ Refresh Token Lifespan: 604800 (7 days)
 ## Related Documentation
 - [ServiceNow OAuth Documentation](https://docs.servicenow.com/bundle/xanadu-platform-security/page/administer/security/concept/c_OAuthApplications.html)
 - [Simple Chat OpenAPI Basic Auth Fix](./explanation/fixes/OPENAPI_BASIC_AUTH_FIX.md)
-- [ServiceNow Integration Guide](./SERVICENOW_INTEGRATION.md)
+- [ServiceNow Integration Guide]({{ '/guides/servicenow/integration/' | relative_url }})

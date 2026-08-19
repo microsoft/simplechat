@@ -48,6 +48,6 @@ Example workspace and agent scenarios show how the product can be applied in con
 
 ### Version history
 
-Track long-lived feature and fix documentation by version when you need historical context for rollout planning or regression analysis.
+Track release history when you need historical context for rollout planning or regression analysis.
 
-[Features by version]({{ '/explanation/features/' | relative_url }}) · [Fixes by version]({{ '/explanation/fixes/' | relative_url }})
+[Open release notes]({{ '/explanation/release_notes/' | relative_url }})

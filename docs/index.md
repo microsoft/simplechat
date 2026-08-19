@@ -10,16 +10,16 @@ Simple Chat gives teams an Azure-native way to deploy, ground, govern, and
 extend AI experiences without stitching together a separate chat app, search
 layer, and admin plane.
 
-New here? Start with [what Simple Chat is]({{ '/about/' | relative_url }}), then
-pick a [deployment path]({{ '/setup_instructions/' | relative_url }}).
+New here? Start with [what Simple Chat is]({{ '/start/about/' | relative_url }}), then
+pick a [deployment path]({{ '/start/deployment-options/' | relative_url }}).
 
 ## Find what you need
 
 | I want to... | Go to |
 | --- | --- |
-| Understand what Simple Chat is | [About Simple Chat]({{ '/about/' | relative_url }}) |
-| Deploy it for the first time | [Choose a deployment path]({{ '/setup_instructions/' | relative_url }}) |
-| Learn a task step by step | [Guides]({{ '/tutorials/' | relative_url }}) |
+| Understand what Simple Chat is | [About Simple Chat]({{ '/start/about/' | relative_url }}) |
+| Deploy it for the first time | [Choose a deployment path]({{ '/start/deployment-options/' | relative_url }}) |
+| Learn a task step by step | [Guides]({{ '/guides/' | relative_url }}) |
 | Configure a setting | [Admin settings]({{ '/admin/' | relative_url }}) |
 | See what the product can do | [Feature map]({{ '/features/' | relative_url }}) |
 | Look up an API | [API reference]({{ '/reference/api_reference/' | relative_url }}) |
@@ -32,14 +32,14 @@ pick a [deployment path]({{ '/setup_instructions/' | relative_url }}).
 
 Orientation and first deployment. Covers what Simple Chat is, the deployment
 options and their tradeoffs, the architecture, and the
-[FAQ]({{ '/faqs/' | relative_url }}).
+[FAQ]({{ '/start/faqs/' | relative_url }}).
 
 ### Guides
 
 Task-oriented, step-by-step instructions for users and admins. Each guide
 explains what the task does and why you would do it before listing the steps.
-See [tutorials]({{ '/tutorials/' | relative_url }}) and
-[how-to guides]({{ '/how-to/' | relative_url }}).
+See [tutorials]({{ '/guides/' | relative_url }}) and
+[how-to guides]({{ '/guides/' | relative_url }}).
 
 ### Features
 
@@ -58,15 +58,15 @@ and the common tasks admins perform there.
 
 [Deployment paths]({{ '/reference/deploy/' | relative_url }}) for Azure Developer
 CLI, Bicep, Terraform, Azure CLI, and manual setup, plus
-[networking]({{ '/how-to/enterprise_networking/' | relative_url }}),
+[networking]({{ '/guides/enterprise-networking/' | relative_url }}),
 [scaling]({{ '/application_scaling/' | relative_url }}),
-[upgrades]({{ '/how-to/upgrade_paths/' | relative_url }}), and
+[upgrades]({{ '/guides/upgrade-paths/' | relative_url }}), and
 [troubleshooting]({{ '/troubleshooting/' | relative_url }}).
 
 ### Reference
 
 [API reference]({{ '/reference/api_reference/' | relative_url }}), configuration
-reference, [application workflows]({{ '/application_workflows/' | relative_url }}),
+reference, [application workflows]({{ '/reference/application-workflows/' | relative_url }}),
 and [release notes]({{ '/explanation/release_notes/' | relative_url }}).
 
 ## What Simple Chat does

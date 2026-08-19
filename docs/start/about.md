@@ -2,7 +2,7 @@
 layout: showcase-page
 title: "About Simple Chat"
 section: "Start"
-permalink: /about/
+permalink: /start/about/
 menubar: docs_menu
 accent: teal
 eyebrow: "Platform Overview"
@@ -17,11 +17,13 @@ hero_pills:
   - Optional agents and automation
 hero_links:
   - label: Start with setup
-    url: /setup_instructions/
+    url: /start/deployment-options/
     style: primary
   - label: Explore features
     url: /features/
     style: secondary
+redirect_from:
+  - /about/
 ---
 
 Simple Chat is an enterprise-ready Flask application for teams that want conversational AI grounded in their own data, with admin controls that stay practical instead of sprawling.
@@ -56,7 +58,7 @@ Simple Chat is an enterprise-ready Flask application for teams that want convers
 		<div class="latest-release-card-icon"><i class="bi bi-rocket-takeoff"></i></div>
 		<h2>Deploy</h2>
 		<p>Use the guided deployment path if you want the fastest route into a working environment.</p>
-		<p><a href="{{ '/setup_instructions/' | relative_url }}">Open Getting Started</a></p>
+		<p><a href="{{ '/start/deployment-options/' | relative_url }}">Open Getting Started</a></p>
 	</article>
 	<article class="latest-release-card">
 		<div class="latest-release-card-icon"><i class="bi bi-grid-1x2"></i></div>
@@ -74,7 +76,7 @@ Simple Chat is an enterprise-ready Flask application for teams that want convers
 		<div class="latest-release-card-icon"><i class="bi bi-mortarboard"></i></div>
 		<h2>Teach the team</h2>
 		<p>The tutorial track is written for people who need to go from first login to useful document-grounded chat without reading every reference page first.</p>
-		<p><a href="{{ '/tutorials/' | relative_url }}">Open tutorials</a></p>
+		<p><a href="{{ '/guides/' | relative_url }}">Open tutorials</a></p>
 	</article>
 </section>
 

@@ -1,32 +1,19 @@
 ---
-
 layout: showcase-page
-
 title: "Scale Simple Chat on Azure"
-
-permalink: /how-to/scaling_on_azure/
-
+permalink: /guides/scale-simplechat-on-azure/
 menubar: docs_menu
-
 accent: orange
-
 eyebrow: "How-To Guide"
-
 description: "Use this guide when a working deployment needs more throughput, higher availability, or cleaner scaling rules across App Service, Cosmos DB, Search, and AI services."
-
 hero_icons: ["bi-graph-up-arrow", "bi-server", "bi-speedometer2"]
-
 hero_pills: ["App Service and data scale", "Search and AI throughput", "Monitor before you overprovision"]
-
 hero_links: [{ label: "Admin overview", url: "/admin_configuration/", style: "primary" }]
-
+section: "Guides"
 redirect_from:
-
   - /application_scaling/
-
+  - /how-to/scaling_on_azure/
 ---
-
-
 
 Scaling Simple Chat is about coordinating several Azure services, not just adding more web instances. This page is the canonical scaling guide and replaces the former application scaling overview. Use this guide when you already have a functioning deployment and need to expand capacity without breaking session behavior, retrieval performance, or downstream service quotas.
 

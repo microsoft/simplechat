@@ -1,7 +1,7 @@
 ---
 layout: showcase-page
 title: "Document Classification Tutorial"
-permalink: /tutorials/classifying_documents/
+permalink: /guides/classify-documents/
 menubar: docs_menu
 accent: emerald
 eyebrow: "Tutorial 4"
@@ -16,7 +16,7 @@ hero_pills:
   - Better context for AI responses
 hero_links:
   - label: Tutorial index
-    url: /tutorials/
+    url: /guides/
     style: primary
   - label: Admin configuration
     url: /admin_configuration/
@@ -25,10 +25,13 @@ show_nav: true
 nav_links:
    prev:
       title: Uploading and Managing Documents
-      url: /tutorials/uploading_documents/
+      url: /guides/upload-and-manage-documents/
    next:
       title: How-to Guides
-      url: /how-to/
+      url: /guides/
+section: "Guides"
+redirect_from:
+  - /tutorials/classifying_documents/
 ---
 
 Classification works when the categories reflect how your organization actually handles content. This tutorial focuses on making the labels operational, not decorative.
@@ -336,10 +339,10 @@ Congratulations! You've successfully:
 
 Now that you have document classification working:
 - Create [specialized agents](first_agent) that work with specific document classifications
-- Explore [advanced document management](../how-to/add_documents) techniques
-- Set up [group workspaces](../how-to/group_management) with classification workflows
-- Learn about [enhanced citations](../how-to/enhanced_citations) that show classification context
+- Explore [advanced document management]({{ '/guides/add-documents/' | relative_url }}) techniques
+- Set up [group workspaces]({{ '/guides/manage-group-workspaces/' | relative_url }}) with classification workflows
+- Learn about [enhanced citations]({{ '/admin/citation/' | relative_url }}) that show classification context
 
 ---
 
-*Tutorial series complete! Ready for [how-to guides](../how-to/) →*
+*Tutorial series complete! Ready for [how-to guides]({{ '/guides/' | relative_url }}) →*

@@ -78,16 +78,16 @@ The [Administration settings guide]({{ '/admin/' | relative_url }}) is the canon
 
 
 
-For step-by-step branding and home page changes, see [Configure branding, home page, and support settings]({{ '/how-to/admin_ui_settings/' | relative_url }}).
+For step-by-step branding and home page changes, see [Configure branding, home page, and support settings]({{ '/guides/configure-branding-and-support-settings/' | relative_url }}).
 
 
 
 
 ## Related deployment and identity pages
 
-- [Choose a deployment path]({{ '/setup_instructions/' | relative_url }})
+- [Choose a deployment path]({{ '/start/deployment-options/' | relative_url }})
 - [Manual setup reference]({{ '/setup_instructions_manual/' | relative_url }})
-- [Use managed identity]({{ '/how-to/use_managed_identity/' | relative_url }})
+- [Use managed identity]({{ '/guides/use-managed-identity/' | relative_url }})
 
 ## Legacy screenshots
 
@@ -193,7 +193,7 @@ Use the floating **Save Settings** button after each set of changes. Use local *
 
 
 
-For model endpoint identity details, see [Configure model endpoint identity]({{ '/how-to/model_endpoint_identity_setup/' | relative_url }}).
+For model endpoint identity details, see [Configure model endpoint identity]({{ '/guides/model-endpoint-identity-setup/' | relative_url }}).
 
 
 

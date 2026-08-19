@@ -1,7 +1,7 @@
 ---
 layout: showcase-page
 title: "Getting Started with Simple Chat"
-permalink: /tutorials/getting_started/
+permalink: /guides/getting-started/
 menubar: docs_menu
 accent: blue
 eyebrow: "Tutorial 1"
@@ -16,16 +16,19 @@ hero_pills:
   - First grounded conversation
 hero_links:
   - label: Deployment reference
-    url: /setup_instructions/
+    url: /start/deployment-options/
     style: primary
   - label: Tutorial index
-    url: /tutorials/
+    url: /guides/
     style: secondary
 show_nav: true
 nav_links:
    next:
       title: Create Your First Agent
-      url: /tutorials/first_agent/
+      url: /guides/create-your-first-agent/
+section: "Guides"
+redirect_from:
+  - /tutorials/getting_started/
 ---
 
 This tutorial is the shortest useful path into the product. You will deploy Simple Chat, wire the essentials, add one document, and prove the retrieval loop works.
@@ -158,7 +161,7 @@ Now that you're up and running, explore more features:
 - [Upload More Documents](uploading_documents) - Build a larger knowledge base
 - [Document Classification](classifying_documents) - Organize your content
 
-Or dive into specific tasks with our [how-to guides](../how-to/).
+Or dive into specific tasks with our [how-to guides]({{ '/guides/' | relative_url }}).
 
 ## Troubleshooting
 
@@ -176,7 +179,7 @@ Or dive into specific tasks with our [how-to guides](../how-to/).
 - Try more specific questions
 - Check your embeddings configuration
 
-For more help, see our [FAQ](../reference/faqs) or [how-to guides](../how-to/).
+For more help, see our [FAQ](../reference/faqs) or [how-to guides]({{ '/guides/' | relative_url }}).
 
 ---
 

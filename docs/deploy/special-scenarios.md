@@ -2,7 +2,7 @@
 layout: showcase-page
 title: "Special Setup Scenarios"
 section: "Deploy & Operate"
-permalink: /setup_instructions_special/
+permalink: /deploy/special-scenarios/
 menubar: docs_menu
 accent: teal
 eyebrow: "Advanced Deployment Conditions"
@@ -17,7 +17,7 @@ hero_pills:
   - Enterprise private networking
 hero_links:
   - label: Back to getting started
-    url: /setup_instructions/
+    url: /start/deployment-options/
     style: primary
   - label: Manual setup reference
     url: /setup_instructions_manual/
@@ -27,6 +27,8 @@ nav_links:
   prev:
     title: Manual Setup
     url: /setup_instructions_manual/
+redirect_from:
+  - /setup_instructions_special/
 ---
 
 This page covers the deployment conditions that usually force teams off the quickest path: sovereign cloud requirements, secretless runtime access, and private network topologies.
@@ -90,7 +92,7 @@ Using Managed Identity allows the App Service to authenticate to other Azure res
    - Under the **System assigned** tab, switch **Status** to **On**.
    - Click **Save**. Azure creates an identity for your App Service in Azure AD. Note the **Object (principal) ID**.
 
-   ![enable managed identity](./images/enable_managed_identity.png)
+   ![enable managed identity]({{ '/images/enable_managed_identity.png' | relative_url }})
 
 2. **Assign Roles to the Managed Identity**:
 
@@ -104,9 +106,9 @@ Using Managed Identity allows the App Service to authenticate to other Azure res
    - Choose the **Subscription**, select **App Service** for the Managed identity type, and then find and select the **name of your App Service instance**. Click **Select**.
    - Click **Review + assign**.
 
-   ![add role assignment - job function](./images/add_role_assignment-job_function.png)
+   ![add role assignment - job function]({{ '/images/add_role_assignment-job_function.png' | relative_url }})
 
-   ![add role assignment - managed identity](./images/add_role_assignment-select_member-managed_identity.png)
+   ![add role assignment - managed identity]({{ '/images/add_role_assignment-select_member-managed_identity.png' | relative_url }})
 
    **Required Roles for Managed Identity Access:**
 
@@ -130,7 +132,15 @@ Using Managed Identity allows the App Service to authenticate to other Azure res
 
 ## Enterprise Networking
 
-![Architecture with Private Endpoints](./images/architecture-private-endpoints.png)
+{% include media.html src="architecture-private-endpoints-commercial.png"
+                      alt="Reference architecture for Azure Commercial showing Simple Chat connected to Azure services through private endpoints inside a virtual network."
+                      title="Private endpoint architecture (Azure Commercial)"
+                      caption="Azure Commercial reference architecture with private endpoints." %}
+
+{% include media.html src="architecture-private-endpoints-government.png"
+                      alt="Reference architecture for Azure Government showing Simple Chat connected to Azure services through private endpoints inside a virtual network."
+                      title="Private endpoint architecture (Azure Government)"
+                      caption="Azure Government reference architecture with private endpoints." %}
 
 ### Private Endpoints, Virtual Networks, Subnets, and Private DNS Zones
 

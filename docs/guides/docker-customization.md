@@ -1,7 +1,7 @@
 ---
 layout: showcase-page
 title: "Docker Customization"
-permalink: /how-to/docker_customization/
+permalink: /guides/docker-customization/
 menubar: docs_menu
 accent: slate
 eyebrow: "How-To Guide"
@@ -19,8 +19,11 @@ hero_links:
     url: /reference/deploy/azd-cli_deploy/
     style: primary
   - label: "Special setup scenarios"
-    url: /setup_instructions_special/
+    url: /deploy/special-scenarios/
     style: secondary
+section: "Guides"
+redirect_from:
+  - /how-to/docker_customization/
 ---
 
 Use Docker customization when the default container image is correct for the application but not quite correct for the network or package-install environment you need to run inside.

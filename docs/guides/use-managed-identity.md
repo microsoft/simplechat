@@ -1,14 +1,17 @@
 ---
 layout: showcase-page
 title: "Use Managed Identity"
-permalink: /how-to/use_managed_identity/
+permalink: /guides/use-managed-identity/
 menubar: docs_menu
 accent: teal
 eyebrow: "How-To Guide"
 description: "Use Azure Managed Identity to move Simple Chat away from stored API keys and toward resource-to-resource authentication with RBAC."
 hero_icons: ["bi-shield-lock", "bi-key", "bi-person-badge"]
 hero_pills: ["RBAC over stored secrets", "Service-by-service role assignment", "Validate then remove keys"]
-hero_links: [{ label: "Admin configuration", url: "/reference/admin_configuration/", style: "primary" }, { label: "Speech MI manual setup", url: "/how-to/azure_speech_managed_identity_manul_setup/", style: "secondary" }]
+hero_links: [{ label: "Admin configuration", url: "/reference/admin_configuration/", style: "primary" }, { label: "Speech MI manual setup", url: "/guides/azure-speech-managed-identity-setup/", style: "secondary" }]
+section: "Guides"
+redirect_from:
+  - /how-to/use_managed_identity/
 ---
 
 Managed identity works best when you treat it as an incremental migration. Enable the identity, assign the right RBAC roles, switch each service configuration over deliberately, and only then remove the old keys.

@@ -1,14 +1,17 @@
 ---
 layout: showcase-page
 title: "ServiceNow Two-Agent Setup"
-permalink: /how-to/agents/ServiceNow/two_agent_setup/
+permalink: /guides/servicenow/two-agent-setup/
 menubar: docs_menu
 accent: teal
 eyebrow: "How-To Guide"
 description: "Use a split-agent ServiceNow design when incident handling and knowledge-base management need different roles, users, and approval boundaries."
 hero_icons: ["bi-people", "bi-journal-richtext", "bi-shield-lock"]
 hero_pills: ["Separate support and KB permissions", "Distinct integration users and tokens", "Approval-aware KB management"]
-hero_links: [{ label: "ServiceNow guides", url: "/how-to/agents/ServiceNow/", style: "primary" }, { label: "OAuth setup", url: "/how-to/agents/ServiceNow/servicenow_oauth_setup/", style: "secondary" }]
+hero_links: [{ label: "ServiceNow guides", url: "/guides/servicenow/", style: "primary" }, { label: "OAuth setup", url: "/guides/servicenow/oauth-setup/", style: "secondary" }]
+section: "Guides"
+redirect_from:
+  - /how-to/agents/ServiceNow/two_agent_setup/
 ---
 
 Use this pattern only when separation really helps. The value is not having more agents. The value is keeping support operations and KB publishing under different permission boundaries so governance and audit trails stay cleaner.
@@ -55,7 +58,7 @@ This guide describes the **advanced two-agent architecture** for organizations t
 - ✅ Workflow-based KB article approval (draft → review → published)
 
 **For simpler single-agent setup (incidents + KB search only), see:**
-- 📘 [SERVICENOW_INTEGRATION.md](SERVICENOW_INTEGRATION.md) - Recommended for most users
+- 📘 [SERVICENOW_INTEGRATION.md]({{ '/guides/servicenow/integration/' | relative_url }}) - Recommended for most users
 
 ---
 
@@ -127,7 +130,7 @@ Primary agent for incident management and KB article searches.
 
 ### Agent Instructions
 - File: `servicenow_agent_instructions.txt`
-- Location: `docs/how-to/agents/ServiceNow/`
+- Location: `docs/guides/servicenow/`
 
 ### Available To
 - All users (standard support staff)
@@ -201,7 +204,7 @@ Specialized agent for knowledge base article management.
 
 ### Agent Instructions
 - File: `servicenow_kb_management_agent_instructions.txt`
-- Location: `docs/how-to/agents/ServiceNow/`
+- Location: `docs/guides/servicenow/`
 
 ### Available To
 - Knowledge managers only
@@ -262,7 +265,7 @@ Specialized agent for knowledge base article management.
 
 ### Step 2: Generate OAuth Tokens
 
-> **📘 For detailed OAuth token generation instructions, see: [SERVICENOW_OAUTH_SETUP.md](SERVICENOW_OAUTH_SETUP.md)**
+> **📘 For detailed OAuth token generation instructions, see: [SERVICENOW_OAUTH_SETUP.md]({{ '/guides/servicenow/oauth-setup/' | relative_url }})**
 >
 > The OAuth setup guide provides:
 > - Complete OAuth application configuration in ServiceNow
@@ -588,7 +591,7 @@ Your ServiceNow instance requires approval workflow: **Draft → Review → Publ
 
 Bearer tokens expire after a period (typically 1 hour). 
 
-> **📘 For token refresh procedures, see: [SERVICENOW_OAUTH_SETUP.md](SERVICENOW_OAUTH_SETUP.md)**
+> **📘 For token refresh procedures, see: [SERVICENOW_OAUTH_SETUP.md]({{ '/guides/servicenow/oauth-setup/' | relative_url }})**
 
 After obtaining a new token, update it in the agent action configuration in Simple Chat.
 

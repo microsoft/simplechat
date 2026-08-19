@@ -1,7 +1,7 @@
 ---
 layout: showcase-page
 title: "Create Custom Pages"
-permalink: /how-to/custom_pages/
+permalink: /guides/create-custom-pages/
 menubar: docs_menu
 accent: teal
 eyebrow: "Developer How-To"
@@ -19,8 +19,11 @@ hero_links:
     url: ../../application/single_app/docs/how-to/custom_pages.md
     style: primary
   - label: "Feature explanation"
-    url: /explanation/features/CUSTOM_PAGES/
+    url: /admin/custom-pages/
     style: secondary
+section: "Guides"
+redirect_from:
+  - /how-to/custom_pages/
 ---
 
 # Create Custom Pages

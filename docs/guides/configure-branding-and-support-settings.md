@@ -1,7 +1,7 @@
 ---
 layout: showcase-page
 title: "Configure Branding, Home Page, and Support Settings"
-permalink: /how-to/admin_ui_settings/
+permalink: /guides/configure-branding-and-support-settings/
 menubar: docs_menu
 accent: teal
 eyebrow: "Admin How-To"
@@ -36,6 +36,9 @@ hero_links:
   - label: "API reference"
     url: /reference/api_reference/
     style: secondary
+section: "Guides"
+redirect_from:
+  - /how-to/admin_ui_settings/
 ---
 
 Use this guide when an admin needs to make the deployed application feel like the organization's product: name it, upload the logo, explain the home page, show data classification, expose help links, and decide which operational endpoints should be visible.

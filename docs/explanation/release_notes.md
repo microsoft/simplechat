@@ -3816,7 +3816,7 @@ The individual patch builds consolidated into v0.260.001 are preserved below for
     *   **OpenAPI Specifications**: 7 OpenAPI YAML files for ServiceNow Incident Management and Knowledge Base APIs (both bearer token and basic auth versions).
     *   **Agent Instructions**: Behavioral instructions optimized for ServiceNow operations (263 lines).
     *   **Key Features**: Integration user creation, role assignment guidance, token management strategies, troubleshooting guide, and production deployment considerations.
-    *   **Documentation Files**: `SERVICENOW_INTEGRATION.md` (760 lines), `SERVICENOW_OAUTH_SETUP.md` (480+ lines), `servicenow_agent_instructions.txt`, and 7 OpenAPI specs in `docs/how-to/agents/ServiceNow/`.
+    *   **Documentation Files**: `SERVICENOW_INTEGRATION.md` (760 lines), `SERVICENOW_OAUTH_SETUP.md` (480+ lines), `servicenow_agent_instructions.txt`, and 7 OpenAPI specs in `docs/guides/servicenow/`.
     *   (Ref: ServiceNow integration, OAuth 2.0, OpenAPI specifications, enterprise integrations)
 
 #### Bug Fixes

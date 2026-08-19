@@ -1,14 +1,17 @@
 ---
 layout: showcase-page
 title: "Enterprise Networking"
-permalink: /how-to/enterprise_networking/
+permalink: /guides/enterprise-networking/
 menubar: docs_menu
 accent: teal
 eyebrow: "How-To Guide"
 description: "Use private endpoints, VNets, and private DNS to move Simple Chat into an enterprise network boundary without losing deployment or service connectivity."
 hero_icons: ["bi-diagram-3", "bi-shield-lock", "bi-hdd-network"]
 hero_pills: ["Private endpoints across services", "DNS and route-all matter", "Deployment runner connectivity first"]
-hero_links: [{ label: "Special setup scenarios", url: "/setup_instructions_special/", style: "primary" }, { label: "Managed identity guide", url: "/how-to/use_managed_identity/", style: "secondary" }]
+hero_links: [{ label: "Special setup scenarios", url: "/deploy/special-scenarios/", style: "primary" }, { label: "Managed identity guide", url: "/guides/use-managed-identity/", style: "secondary" }]
+section: "Guides"
+redirect_from:
+  - /how-to/enterprise_networking/
 ---
 
 Enterprise networking changes the deployment story as much as the runtime story. The main job is to keep the deployment runner, App Service, and Azure dependencies all able to reach one another while you progressively close off public access.

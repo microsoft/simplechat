@@ -2,11 +2,14 @@
 layout: page
 title: "Getting Started"
 description: "Choose the right deployment path, line up the prerequisites, and follow the repo's recommended rollout order for Simple Chat."
-section: "Tutorials"
+section: "Start"
 nav_links:
   next:
     title: "Manual Setup"
     url: /setup_instructions_manual/
+permalink: /start/deployment-options/
+redirect_from:
+  - /setup_instructions/
 ---
 
 If you want the most current, least ambiguous deployment path, start with Azure Developer CLI and run `azd up`. The rest of the deployment options exist to match different operating models, not because they are all equally preferred.
@@ -52,5 +55,5 @@ These documents sit alongside the main setup flow instead of replacing it.
 | Guide | Use it for |
 | --- | --- |
 | [Manual deployment]({{ '/setup_instructions_manual/' | relative_url }}) | Native Python App Service deployments or when you need the lower-level configuration path spelled out. |
-| [Special deployment scenarios]({{ '/setup_instructions_special/' | relative_url }}) | Guidance for Azure Government, managed identities, enterprise networking, and other non-default rollout patterns. |
-| [Upgrade existing deployments]({{ '/how-to/upgrade_paths/' | relative_url }}) | Once you are live, use the upgrade guide to decide between code-only, image-only, and infrastructure-aware updates. |
+| [Special deployment scenarios]({{ '/deploy/special-scenarios/' | relative_url }}) | Guidance for Azure Government, managed identities, enterprise networking, and other non-default rollout patterns. |
+| [Upgrade existing deployments]({{ '/guides/upgrade-paths/' | relative_url }}) | Once you are live, use the upgrade guide to decide between code-only, image-only, and infrastructure-aware updates. |
