@@ -16,6 +16,7 @@ import os
 import sys
 import importlib.util
 from test_support.templates import compose_if_admin_settings
+from test_support.nav import iter_tabs
 
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -261,7 +262,6 @@ def test_support_menu_navigation_and_routes():
     support_route_content = read_text(SUPPORT_ROUTE)
 
     sidebar_markers = [
-        'data-section="support-menu-section"',
         'id="support-menu-toggle"',
         "url_for('frontend_support.support_latest_features')",
         "url_for('frontend_support.support_send_feedback')",
@@ -269,6 +269,13 @@ def test_support_menu_navigation_and_routes():
     ]
     missing_sidebar = [marker for marker in sidebar_markers if marker not in sidebar_content]
     assert not missing_sidebar, f'Missing support menu sidebar markers: {missing_sidebar}'
+
+    # The admin destination for the Support card comes from the navigation map.
+    assert any(
+        section["id"] == "support-menu-section"
+        for _, tab in iter_tabs()
+        for section in tab["sections"]
+    ), 'Support menu admin destination missing from the navigation map'
 
     assert sidebar_content.index('id="support-menu-toggle"') < sidebar_content.index('id="external-links-toggle"'), 'Support menu should render before external links in the sidebar'
 

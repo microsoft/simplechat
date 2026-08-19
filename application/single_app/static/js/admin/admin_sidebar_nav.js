@@ -1,6 +1,10 @@
 // admin_sidebar_nav.js
 // Admin Sidebar Navigation
 document.addEventListener('DOMContentLoaded', function() {
+    // The top-nav group pills exist only in the tab layout, so they are wired
+    // independently of the sidebar.
+    setupAdminGroupPills();
+
     // Only initialize if we're on admin settings page with sidebar nav
     if (!document.getElementById('admin-settings-toggle')) return;
     
@@ -77,6 +81,10 @@ function initAdminSidebarNav() {
         });
     }
     
+    // Set up group expand/collapse. Groups are the level above tabs, so a
+    // collapsed group hides its tabs without affecting which tab is active.
+    setupAdminGroupToggles();
+
     // Set up tab navigation
     document.querySelectorAll('.admin-nav-tab').forEach(tabLink => {
         tabLink.addEventListener('click', function(e) {
@@ -149,7 +157,139 @@ function initAdminSidebarNav() {
     }
 }
 
+function setupAdminGroupToggles() {
+    document.querySelectorAll('[data-admin-group-toggle]').forEach(toggle => {
+        toggle.addEventListener('click', function (e) {
+            e.preventDefault();
+            const groupId = this.getAttribute('data-admin-group-toggle');
+            setAdminGroupExpanded(groupId, !isAdminGroupExpanded(groupId), true);
+        });
+    });
+}
+
+/**
+ * Wire the top-nav group pills, which filter the tab strip to one group.
+ * Only relevant in the tab layout; the sidebar layout uses group headers.
+ */
+function setupAdminGroupPills() {
+    const pills = document.querySelectorAll('[data-admin-group-pill]');
+    if (!pills.length) {
+        return;
+    }
+
+    pills.forEach(pill => {
+        pill.addEventListener('click', function () {
+            showAdminGroupTabs(this.getAttribute('data-admin-group-pill'), true);
+        });
+    });
+}
+
+/**
+ * Show one group's tabs in the top strip.
+ * @param {string} groupId Group to reveal.
+ * @param {boolean} activateFirstTab Whether to open that group's first tab.
+ */
+function showAdminGroupTabs(groupId, activateFirstTab) {
+    document.querySelectorAll('[data-admin-group-pill]').forEach(pill => {
+        const selected = pill.getAttribute('data-admin-group-pill') === groupId;
+        pill.classList.toggle('active', selected);
+        pill.setAttribute('aria-selected', selected ? 'true' : 'false');
+    });
+
+    let firstTabButton = null;
+    document.querySelectorAll('.admin-tab-item').forEach(item => {
+        const inGroup = item.getAttribute('data-admin-group') === groupId;
+        item.hidden = !inGroup;
+        if (inGroup && !firstTabButton) {
+            firstTabButton = item.querySelector('button[data-bs-target]');
+        }
+    });
+
+    if (activateFirstTab && firstTabButton) {
+        const target = firstTabButton.getAttribute('data-bs-target') || '';
+        showAdminTab(target.replace('#', ''));
+    }
+}
+
+/**
+ * Reveal the group owning a tab in the top strip, so a deep link or a
+ * cross-reference never activates a pane whose tab is filtered out of view.
+ * @param {string} tabId Tab pane id.
+ */
+function revealAdminGroupPillForTab(tabId) {
+    const item = document.querySelector(`.admin-tab-item [data-bs-target="#${tabId}"]`);
+    const groupItem = item && item.closest('.admin-tab-item');
+    if (!groupItem) {
+        return;
+    }
+
+    const groupId = groupItem.getAttribute('data-admin-group');
+    if (groupId && groupItem.hidden) {
+        showAdminGroupTabs(groupId, false);
+    }
+}
+
+function getAdminGroupElements(groupId) {
+    return {
+        toggle: document.querySelector(`[data-admin-group-toggle="${groupId}"]`),
+        list: document.getElementById(`admin-group-${groupId}`),
+    };
+}
+
+function isAdminGroupExpanded(groupId) {
+    const { list } = getAdminGroupElements(groupId);
+    return Boolean(list) && !list.classList.contains('d-none');
+}
+
+/**
+ * Expand or collapse a nav group.
+ * @param {string} groupId Group identifier.
+ * @param {boolean} expanded Desired state.
+ * @param {boolean} persist Whether to remember the state for this user.
+ */
+function setAdminGroupExpanded(groupId, expanded, persist) {
+    const { toggle, list } = getAdminGroupElements(groupId);
+    if (!toggle || !list) {
+        return;
+    }
+
+    list.classList.toggle('d-none', !expanded);
+    toggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+
+    const caret = toggle.querySelector('.admin-nav-group-caret');
+    if (caret) {
+        caret.classList.toggle('collapsed', !expanded);
+    }
+
+    if (persist && typeof window.setPersistentSidebarMenuExpanded === 'function') {
+        window.setPersistentSidebarMenuExpanded(`adminGroup:${groupId}`, expanded);
+    }
+}
+
+/**
+ * Open the group that owns a tab, so activating a tab never leaves it hidden.
+ * @param {string} tabId Tab pane id.
+ */
+function revealAdminGroupForTab(tabId) {
+    const tabLink = document.querySelector(`.admin-nav-tab[data-tab="${tabId}"]`);
+    const groupItem = tabLink && tabLink.closest('[data-admin-group]');
+    if (!groupItem) {
+        return;
+    }
+
+    const groupId = groupItem.getAttribute('data-admin-group');
+    if (!isAdminGroupExpanded(groupId)) {
+        setAdminGroupExpanded(groupId, true, true);
+    }
+}
+
 function showAdminTab(tabId) {    
+    // Open the owning group first, in whichever layout is active, so
+    // activating a tab never leaves it hidden behind a collapsed group header
+    // or filtered out of the top strip.
+    revealAdminGroupForTab(tabId);
+    revealAdminGroupPillForTab(tabId);
+
     const bootstrapTabButton = document.querySelector(`button.nav-link[data-bs-target="#${tabId}"]`);
     if (bootstrapTabButton && typeof bootstrap !== 'undefined' && typeof bootstrap.Tab === 'function') {
         const tab = bootstrap.Tab.getOrCreateInstance(bootstrapTabButton);
@@ -247,112 +387,171 @@ style.textContent = `
     .admin-search-hidden {
         display: none !important;
     }
+    .admin-nav-group {
+        font-weight: 500;
+        letter-spacing: 0.01em;
+    }
+    .admin-nav-group:hover {
+        background-color: rgba(0, 0, 0, 0.05);
+    }
+    .admin-nav-group-caret {
+        font-size: 0.75em;
+        transition: transform 0.2s ease;
+    }
+    .admin-nav-group-caret.collapsed {
+        transform: rotate(-90deg);
+    }
 `;
 document.head.appendChild(style);
 
 // Admin search functionality
 function filterAdminSections(searchTerm) {
     const normalizedSearch = searchTerm.toLowerCase().trim();
-    
+
     if (!normalizedSearch) {
-        // Show all sections if search is empty
         showAllAdminSections();
         return;
     }
-    
+
     let hasVisibleSections = false;
-    
-    // Get all admin nav items
+
+    const groupItems = document.querySelectorAll('.admin-nav-group-item');
     const allTabs = document.querySelectorAll('.admin-nav-tab');
     const allSections = document.querySelectorAll('.admin-nav-section');
-    
-    // Hide all sections and tabs initially
+
+    // Start from everything hidden, then reveal what matches.
+    groupItems.forEach(group => group.classList.add('admin-search-hidden'));
+    document.querySelectorAll('.admin-nav-group').forEach(group => {
+        group.classList.remove('admin-search-highlight');
+    });
+
     allTabs.forEach(tab => {
         tab.closest('li').classList.add('admin-search-hidden');
-        // Hide submenu
+        tab.classList.remove('admin-search-highlight');
         const submenu = document.getElementById(tab.getAttribute('data-tab') + '-submenu');
         if (submenu) {
             submenu.style.display = 'none';
         }
     });
-    
+
     allSections.forEach(section => {
         section.closest('li').classList.add('admin-search-hidden');
         section.classList.remove('admin-search-highlight');
     });
-    
-    // Search through tabs and sections
+
+    /**
+     * Reveal the group containing an element and expand its tab list, so a
+     * match is never left hidden behind a collapsed group.
+     * @param {HTMLElement} element Element inside a group.
+     */
+    const revealGroupOf = (element) => {
+        const groupItem = element.closest('.admin-nav-group-item');
+        if (!groupItem) {
+            return;
+        }
+        groupItem.classList.remove('admin-search-hidden');
+        const list = groupItem.querySelector('.admin-nav-group-tabs');
+        if (list) {
+            list.classList.remove('d-none');
+        }
+    };
+
+    // A group matching by name reveals everything it holds.
+    document.querySelectorAll('.admin-nav-group').forEach(group => {
+        const label = group.querySelector('.nav-text');
+        if (!label || !label.textContent.toLowerCase().includes(normalizedSearch)) {
+            return;
+        }
+
+        group.classList.add('admin-search-highlight');
+        revealGroupOf(group);
+        hasVisibleSections = true;
+
+        const groupItem = group.closest('.admin-nav-group-item');
+        groupItem.querySelectorAll('.admin-nav-tab').forEach(tab => {
+            tab.closest('li').classList.remove('admin-search-hidden');
+        });
+    });
+
     allTabs.forEach(tab => {
-        const tabText = tab.querySelector('.nav-text').textContent.toLowerCase();
+        const label = tab.querySelector('.nav-text');
+        const tabText = label ? label.textContent.toLowerCase() : '';
         const tabId = tab.getAttribute('data-tab');
         let tabHasMatch = false;
-        
-        // Check if tab name matches
+
         if (tabText.includes(normalizedSearch)) {
             tab.closest('li').classList.remove('admin-search-hidden');
             tab.classList.add('admin-search-highlight');
+            revealGroupOf(tab);
             tabHasMatch = true;
             hasVisibleSections = true;
-            
-            // Show submenu for matched tab
+
             const submenu = document.getElementById(tabId + '-submenu');
             if (submenu) {
                 submenu.style.display = 'block';
-                // Show all sections under this tab
                 submenu.querySelectorAll('.admin-nav-section').forEach(section => {
                     section.closest('li').classList.remove('admin-search-hidden');
                 });
             }
         }
-        
-        // Check sections under this tab
+
         const sections = document.querySelectorAll(`.admin-nav-section[data-tab="${tabId}"]`);
         let sectionHasMatch = false;
-        
+
         sections.forEach(section => {
-            const sectionText = section.querySelector('.nav-text').textContent.toLowerCase();
-            
+            const sectionLabel = section.querySelector('.nav-text');
+            const sectionText = sectionLabel ? sectionLabel.textContent.toLowerCase() : '';
+
             if (sectionText.includes(normalizedSearch)) {
-                // Show the section
                 section.closest('li').classList.remove('admin-search-hidden');
                 section.classList.add('admin-search-highlight');
                 sectionHasMatch = true;
                 hasVisibleSections = true;
-                
-                // Show the parent tab
+
                 tab.closest('li').classList.remove('admin-search-hidden');
-                
-                // Show the submenu
+                revealGroupOf(tab);
+
                 const submenu = document.getElementById(tabId + '-submenu');
                 if (submenu) {
                     submenu.style.display = 'block';
                 }
             }
         });
-        
-        // If tab has matching sections but doesn't match itself, remove tab highlight
+
+        // A tab surfaced only because a section matched is not itself a hit.
         if (sectionHasMatch && !tabHasMatch) {
             tab.classList.remove('admin-search-highlight');
         }
     });
-    
-    // Show "No results" message if nothing found
+
     showSearchResults(hasVisibleSections, normalizedSearch);
 }
 
 function showAllAdminSections() {
-    // Remove all search-related classes and show all items
-    document.querySelectorAll('.admin-nav-tab, .admin-nav-section').forEach(item => {
-        item.closest('li').classList.remove('admin-search-hidden');
+    // Restore the normal browsing state: nothing hidden, nothing highlighted,
+    // submenus closed, and groups back to their persisted expansion.
+    document.querySelectorAll('.admin-nav-group-item').forEach(group => {
+        group.classList.remove('admin-search-hidden');
+    });
+
+    document.querySelectorAll('.admin-nav-tab, .admin-nav-section, .admin-nav-group').forEach(item => {
+        const listItem = item.closest('li');
+        if (listItem) {
+            listItem.classList.remove('admin-search-hidden');
+        }
         item.classList.remove('admin-search-highlight');
     });
-    
-    // Hide all submenus (normal collapsed state)
+
     document.querySelectorAll('[id$="-submenu"]').forEach(submenu => {
         submenu.style.display = 'none';
     });
-    
-    // Remove search results message
+
+    document.querySelectorAll('[data-admin-group-toggle]').forEach(toggle => {
+        const groupId = toggle.getAttribute('data-admin-group-toggle');
+        const expanded = toggle.getAttribute('aria-expanded') === 'true';
+        setAdminGroupExpanded(groupId, expanded, false);
+    });
+
     hideSearchResults();
 }
 

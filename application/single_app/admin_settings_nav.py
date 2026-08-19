@@ -1,0 +1,344 @@
+# admin_settings_nav.py
+"""Single source of truth for the Admin Settings navigation.
+
+The top tab strip and the sidebar previously maintained the same
+structure twice, by hand, and had already drifted: tab order differed
+between them and three tabs carried different labels in each. Both now
+render from this one definition, so they cannot disagree.
+
+Structure is GROUP -> TAB -> SECTION. A section points at a card id in
+the rendered page; card ids are stable and are what cross-references
+resolve against, so cards can move between tabs without breaking links.
+"""
+
+
+ADMIN_NAV = [
+    {
+        "id": "appearance",
+        "label": "Appearance",
+        "icon": "bi-palette",
+        "tabs": [
+            {
+                "id": "general",
+                "label": "General",
+                "icon": "bi-gear",
+                "sections": [
+                    {"id": "branding-section", "label": "Branding", "icon": "bi-palette"},
+                    {"id": "home-page-text-section", "label": "Home Page Text", "icon": "bi-house"},
+                    {"id": "appearance-section", "label": "Appearance", "icon": "bi-brush"},
+                    {"id": "health-check-section", "label": "Health Check", "icon": "bi-heart-pulse"},
+                    {"id": "swagger-section", "label": "API Documentation", "icon": "bi-file-earmark-code"},
+                    {"id": "classification-banner-section", "label": "Classification Banner", "icon": "bi-shield-exclamation"},
+                    {"id": "ai-notice-section", "label": "Chat AI Notice", "icon": "bi-robot"},
+                    {"id": "terms-of-use-section", "label": "Terms of Use", "icon": "bi-door-open"},
+                    {"id": "support-menu-section", "label": "Support", "icon": "bi-life-preserver"},
+                    {"id": "external-links-section", "label": "External Links", "icon": "bi-box-arrow-up-right"},
+                    {"id": "system-settings-section", "label": "System Settings", "icon": "bi-gear-fill"},
+                ],
+            },
+            {
+                "id": "custom-pages",
+                "label": "Custom Pages",
+                "icon": "bi-window-plus",
+                "sections": [
+                    {"id": "custom-pages-section", "label": "Static Pages", "icon": "bi-file-earmark-richtext"},
+                ],
+            },
+        ],
+    },
+    {
+        "id": "chat",
+        "label": "Chat",
+        "icon": "bi-chat-square-text",
+        "tabs": [
+            {
+                "id": "citation",
+                "label": "Citations",
+                "icon": "bi-quote",
+                "sections": [
+                    {"id": "standard-citations-section", "label": "Standard", "icon": "bi-quote"},
+                    {"id": "enhanced-citations-section", "label": "Enhanced", "icon": "bi-star"},
+                ],
+            },
+        ],
+    },
+    {
+        "id": "ai-models",
+        "label": "AI Models",
+        "icon": "bi-cpu",
+        "tabs": [
+            {
+                "id": "ai-models",
+                "label": "AI Models",
+                "icon": "bi-cpu",
+                "sections": [
+                    {"id": "multi-endpoint-configuration", "label": "Model Endpoints", "icon": "bi-hdd-network"},
+                    {"id": "processing-thoughts-section", "label": "Processing Thoughts", "icon": "bi-stars"},
+                    {"id": "shared-conversation-file-approvals-section", "label": "Shared Conversation File Approvals", "icon": "bi-file-earmark-lock"},
+                    {"id": "embeddings-config", "label": "Embeddings", "icon": "bi-vector-pen"},
+                    {"id": "image-config", "label": "Image Generation", "icon": "bi-image"},
+                    {"id": "gpt-config", "label": "Chat Model", "icon": "bi-chat-square-text"},
+                ],
+            },
+        ],
+    },
+    {
+        "id": "agents-actions",
+        "label": "Agents & Actions",
+        "icon": "bi-robot",
+        "tabs": [
+            {
+                "id": "agents",
+                "label": "Agents and Actions",
+                "icon": "bi-robot",
+                "sections": [
+                    {"id": "document-action-capabilities-card", "label": "Document Action Capabilities", "icon": "bi-files"},
+                    {"id": "agents-config", "label": "Agents Configuration", "icon": "bi-robot"},
+                    {"id": "agent-template-approvals-section", "label": "Agent Template Approvals", "icon": "bi-layers", "condition": "enable_agent_template_gallery"},
+                    {"id": "actions-config", "label": "Actions Configuration", "icon": "bi-plugin"},
+                    {"id": "inbound-mcp-configuration", "label": "Inbound MCP", "icon": "bi-diagram-3", "condition": "mcp_ui_enabled"},
+                ],
+            },
+        ],
+    },
+    {
+        "id": "workspaces",
+        "label": "Workspaces",
+        "icon": "bi-folder",
+        "tabs": [
+            {
+                "id": "workspaces",
+                "label": "Workspaces",
+                "icon": "bi-folder",
+                "sections": [
+                    {"id": "personal-workspaces-section", "label": "Personal Workspaces", "icon": "bi-person"},
+                    {"id": "workflow-settings-section", "label": "Workflow", "icon": "bi-diagram-3"},
+                    {"id": "file-download-settings-section", "label": "File Downloads", "icon": "bi-download"},
+                    {"id": "group-workspaces-section", "label": "Group Workspaces", "icon": "bi-people"},
+                    {"id": "public-workspaces-section", "label": "Public Workspaces", "icon": "bi-globe"},
+                    {"id": "file-sharing-section", "label": "File Sharing", "icon": "bi-share"},
+                    {"id": "chat-file-uploads-section", "label": "Chat File Uploads", "icon": "bi-paperclip"},
+                    {"id": "metadata-extraction-section", "label": "Metadata Extraction", "icon": "bi-file-earmark-code"},
+                    {"id": "multimodal-vision-section", "label": "Multi-Modal Vision Analysis", "icon": "bi-eye"},
+                    {"id": "document-classification-section", "label": "Document Classification", "icon": "bi-tags"},
+                    {"id": "retention-policy-section", "label": "Retention Policy", "icon": "bi-hourglass-split"},
+                    {"id": "workspace-scope-lock-section", "label": "Workspace Scope Lock", "icon": "bi-lock"},
+                    {"id": "user-agreement-section", "label": "User Agreement", "icon": "bi-file-earmark-check"},
+                ],
+            },
+            {
+                "id": "workspace-identities",
+                "label": "Global Identities",
+                "icon": "bi-person-badge",
+                "sections": [],
+            },
+        ],
+    },
+    {
+        "id": "knowledge",
+        "label": "Knowledge",
+        "icon": "bi-search",
+        "tabs": [
+            {
+                "id": "search-extract",
+                "label": "Search & Extract",
+                "icon": "bi-search",
+                "sections": [
+                    {"id": "web-search-section", "label": "Web Search", "icon": "bi-globe"},
+                    {"id": "url-access-section", "label": "URL Access", "icon": "bi-link-45deg"},
+                    {"id": "source-review-section", "label": "Deep Research", "icon": "bi-binoculars"},
+                    {"id": "azure-ai-search-section", "label": "Azure AI Search", "icon": "bi-search"},
+                    {"id": "document-intelligence-section", "label": "Document Intelligence", "icon": "bi-file-earmark-text"},
+                    {"id": "chunk-size-section", "label": "Chunk Sizes", "icon": "bi-collection"},
+                    {"id": "video-intelligence-section", "label": "AI Video Intelligence", "icon": "bi-play-circle"},
+                    {"id": "ai-voice-chat-section", "label": "AI Voice Conversations", "icon": "bi-mic"},
+                ],
+            },
+            {
+                "id": "file-sync",
+                "label": "File Sync",
+                "icon": "bi-arrow-repeat",
+                "sections": [
+                    {"id": "file-sync-section", "label": "File Sync", "icon": "bi-arrow-repeat"},
+                    {"id": "file-sync-source-types-section", "label": "Visible Source Types", "icon": "bi-sliders"},
+                    {"id": "file-sync-personal-section", "label": "Personal Workspace Sync", "icon": "bi-person"},
+                    {"id": "file-sync-group-section", "label": "Group Workspace Sync", "icon": "bi-people"},
+                    {"id": "file-sync-public-section", "label": "Public Workspace Sync", "icon": "bi-globe"},
+                ],
+            },
+        ],
+    },
+    {
+        "id": "security",
+        "label": "Security",
+        "icon": "bi-shield-lock",
+        "tabs": [
+            {
+                "id": "security",
+                "label": "Security",
+                "icon": "bi-shield-lock",
+                "sections": [
+                    {"id": "keyvault-section", "label": "Key Vault", "icon": "bi-safe"},
+                ],
+            },
+            {
+                "id": "safety",
+                "label": "Safety",
+                "icon": "bi-shield-check",
+                "sections": [
+                    {"id": "content-safety-section", "label": "Content Safety", "icon": "bi-shield-exclamation"},
+                    {"id": "user-feedback-section", "label": "User Feedback", "icon": "bi-chat-square-heart"},
+                    {"id": "desktop-notifications-section", "label": "Desktop Conversation Notifications", "icon": "bi-bell"},
+                    {"id": "permissions-section", "label": "Permissions", "icon": "bi-person-check"},
+                    {"id": "conversation-archiving-section", "label": "Conversation Archiving", "icon": "bi-archive"},
+                ],
+            },
+        ],
+    },
+    {
+        "id": "governance",
+        "label": "Governance",
+        "icon": "bi-clipboard-check",
+        "tabs": [
+            {
+                "id": "governance",
+                "label": "Governance",
+                "icon": "bi-braces-asterisk",
+                "sections": [
+                    {"id": "governance-feature-toggles-section", "label": "Governance Feature Toggles", "icon": "bi-braces-asterisk"},
+                    {"id": "governance-mcp-destination-section", "label": "MCP Action Destination Governance", "icon": "bi-diagram-3"},
+                    {"id": "governance-inbound-mcp-section", "label": "Inbound MCP Source Governance", "icon": "bi-box-arrow-in-down-right"},
+                    {"id": "governance-feature-policies-section", "label": "Feature Policies", "icon": "bi-sliders2"},
+                    {"id": "governance-item-policies-section", "label": "Delegated Item Policies", "icon": "bi-list-check"},
+                ],
+            },
+        ],
+    },
+    {
+        "id": "backup-recovery",
+        "label": "Backup & Recovery",
+        "icon": "bi-database",
+        "tabs": [
+            {
+                "id": "data-management",
+                "label": "Backup, Migrate &amp; Restore",
+                "icon": "bi-database-check",
+                "sections": [
+                    {"id": "data-management-readiness-section", "label": "Start Here", "icon": "bi-compass"},
+                    {"id": "data-management-backup-section", "label": "Backup", "icon": "bi-archive"},
+                    {"id": "data-management-schedule-section", "label": "Schedule", "icon": "bi-calendar-event"},
+                    {"id": "data-management-storage-section", "label": "Storage", "icon": "bi-hdd"},
+                    {"id": "data-management-encryption-section", "label": "Encryption", "icon": "bi-key"},
+                    {"id": "data-management-migration-section", "label": "Migration", "icon": "bi-arrow-left-right"},
+                    {"id": "data-management-cosmos-editor-section", "label": "Cosmos Editor", "icon": "bi-database-exclamation"},
+                    {"id": "data-management-backup-inventory-section", "label": "Backup Inventory &amp; Restore", "icon": "bi-box-seam"},
+                    {"id": "data-management-jobs-section", "label": "Jobs", "icon": "bi-clock-history"},
+                ],
+            },
+        ],
+    },
+    {
+        "id": "scale",
+        "label": "Scale",
+        "icon": "bi-speedometer2",
+        "tabs": [
+            {
+                "id": "scale",
+                "label": "Scale",
+                "icon": "bi-diagram-3",
+                "sections": [
+                    {"id": "redis-cache-section", "label": "Redis Cache", "icon": "bi-database"},
+                    {"id": "redis-monitoring-section", "label": "Redis Metrics", "icon": "bi-activity"},
+                    {"id": "conversation-cache-section", "label": "Conversation Cache", "icon": "bi-chat-square-text"},
+                    {"id": "document-access-index-section", "label": "DAI Metrics", "icon": "bi-diagram-3"},
+                    {"id": "cosmos-maintenance-section", "label": "Cosmos Maintenance", "icon": "bi-tools"},
+                    {"id": "cosmos-throughput-section", "label": "Cosmos DB Throughput", "icon": "bi-speedometer2"},
+                    {"id": "cosmos-throughput-metrics-table-section", "label": "Cosmos Metrics", "icon": "bi-table"},
+                    {"id": "front-door-section", "label": "Azure Front Door", "icon": "bi-door-open"},
+                ],
+            },
+        ],
+    },
+    {
+        "id": "operations",
+        "label": "Operations",
+        "icon": "bi-activity",
+        "tabs": [
+            {
+                "id": "control-center-config",
+                "label": "Control Center",
+                "icon": "bi-speedometer2",
+                "sections": [
+                    {"id": "control-center-auto-refresh-section", "label": "Automatic Data Refresh", "icon": "bi-calendar-check"},
+                    {"id": "control-center-overview-section", "label": "Control Center Access", "icon": "bi-gear-wide-connected"},
+                ],
+            },
+            {
+                "id": "logging",
+                "label": "Logging",
+                "icon": "bi-journal-text",
+                "sections": [
+                    {"id": "application-insights-section", "label": "Application Insights", "icon": "bi-graph-up"},
+                    {"id": "debug-logging-section", "label": "Debug Logging", "icon": "bi-bug"},
+                    {"id": "file-processing-logs-section", "label": "File Process Logging", "icon": "bi-file-earmark-text"},
+                ],
+            },
+        ],
+    },
+    {
+        "id": "help",
+        "label": "Help",
+        "icon": "bi-life-preserver",
+        "tabs": [
+            {
+                "id": "send-feedback",
+                "label": "Send Feedback",
+                "icon": "bi-envelope-paper",
+                "sections": [
+                    {"id": "send-feedback-overview-card", "label": "Overview", "icon": "bi-info-circle"},
+                    {"id": "send-feedback-bug-card", "label": "Report a Bug", "icon": "bi-bug"},
+                    {"id": "send-feedback-feature-card", "label": "Request a Feature", "icon": "bi-lightbulb"},
+                ],
+            },
+            {
+                "id": "latest-features",
+                "label": "Latest Features",
+                "icon": "bi-lightning-charge",
+                "sections": [],
+                # Rendered specially: it can be hidden per user, carries a New
+                # badge and a hide/unhide menu, and its sections are generated
+                # from the release catalogue rather than declared here.
+                "render": "latest_features",
+            },
+        ],
+    },
+]
+
+
+def iter_tabs():
+    """Yield (group, tab) pairs in navigation order."""
+    for group in ADMIN_NAV:
+        for tab in group["tabs"]:
+            yield group, tab
+
+
+def get_tab_ids():
+    """Return every tab id in navigation order."""
+    return [tab["id"] for _, tab in iter_tabs()]
+
+
+def get_group_for_tab(tab_id):
+    """Return the group owning a tab, or None when the tab is unknown."""
+    for group, tab in iter_tabs():
+        if tab["id"] == tab_id:
+            return group
+    return None
+
+
+def get_section_ids():
+    """Return every section target declared across the navigation."""
+    return [
+        section["id"]
+        for _, tab in iter_tabs()
+        for section in tab["sections"]
+    ]

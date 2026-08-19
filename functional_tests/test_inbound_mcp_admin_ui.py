@@ -39,7 +39,9 @@ server-side endpoint check.
 import sys
 from pathlib import Path
 from test_support.versioning import assert_app_version_at_least
+from test_support.nav import iter_tabs
 from test_support.templates import compose_if_admin_settings
+from test_support.nav import iter_tabs
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -177,9 +179,26 @@ def test_admin_settings_mcp_ui_is_gated_and_minimal():
         assert f"'{operational_setting}'," in admin_route_source
         assert f"INBOUND_MCP_SETTINGS_DEFAULTS['{operational_setting}']" in admin_route_source
 
-    assert "{% if mcp_ui_enabled %}" in sidebar_template
-    assert 'data-section="inbound-mcp-configuration"' in sidebar_template
-    assert "Inbound MCP" in sidebar_template
+    # The Inbound MCP navigation entry is gated by the same flag as its card,
+    # declared in the navigation map rather than inline in the sidebar.
+    inbound_section = next(
+        (
+            section
+            for _, tab in iter_tabs()
+            for section in tab["sections"]
+            if section["id"] == "inbound-mcp-configuration"
+        ),
+        None,
+    )
+    assert inbound_section is not None, (
+        "Inbound MCP navigation entry missing from the navigation map"
+    )
+    assert inbound_section.get("condition") == "mcp_ui_enabled", (
+        "Inbound MCP navigation entry must be gated by mcp_ui_enabled"
+    )
+    assert inbound_section["label"] == "Inbound MCP", (
+        f"Unexpected Inbound MCP navigation label: {inbound_section['label']}"
+    )
 
 
 def test_inbound_mcp_auth_uses_settings_runtime_config():

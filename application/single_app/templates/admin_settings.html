@@ -936,127 +936,43 @@
         <!-- Hide tabs when left navigation is enabled -->
         {% set nav_layout = user_settings.get('settings', {}).get('navLayout') %}
         {% if not (nav_layout == 'sidebar' or (not nav_layout and app_settings.enable_left_nav_default)) %}
+        <ul class="nav nav-pills mb-2" id="adminSettingsGroups" role="tablist" aria-label="Admin settings groups">
+            {% for admin_group in admin_nav %}
+            <li class="nav-item" role="presentation">
+                <button class="nav-link admin-group-pill{% if loop.first %} active{% endif %}"
+                    type="button"
+                    data-admin-group-pill="{{ admin_group.id }}"
+                    aria-selected="{{ 'true' if loop.first else 'false' }}">
+                    <i class="bi {{ admin_group.icon }} me-1" aria-hidden="true"></i>{{ admin_group.label }}
+                </button>
+            </li>
+            {% endfor %}
+        </ul>
         <ul class="nav nav-tabs" id="adminSettingsTab" role="tablist">
-            <!-- Core Settings -->
-            <li class="nav-item" role="presentation">
-                <button class="nav-link active" id="general-tab" data-bs-toggle="tab" data-bs-target="#general"
-                    type="button" role="tab" aria-controls="general" aria-selected="true">
-                    General
+            {% for admin_group in admin_nav %}
+            {% set group_is_first = loop.first %}
+            {% for admin_tab in admin_group.tabs %}
+            {% set is_default_tab = group_is_first and loop.first %}
+            <li class="nav-item admin-tab-item"
+                role="presentation"
+                data-admin-group="{{ admin_group.id }}"
+                {% if not group_is_first %}hidden{% endif %}>
+                <button class="nav-link{% if is_default_tab %} active{% endif %}"
+                    id="{{ admin_tab.id }}-tab"
+                    data-bs-toggle="tab"
+                    data-bs-target="#{{ admin_tab.id }}"
+                    type="button"
+                    role="tab"
+                    aria-controls="{{ admin_tab.id }}"
+                    aria-selected="{{ 'true' if is_default_tab else 'false' }}">
+                    {{ admin_tab.label }}
+                    {% if admin_tab.render == 'latest_features' %}
+                    <span class="badge bg-warning text-dark text-uppercase ms-2 latest-feature-nav-badge">New</span>
+                    {% endif %}
                 </button>
             </li>
-            <li class="nav-item" role="presentation">
-                <button class="nav-link" id="custom-pages-tab" data-bs-toggle="tab" data-bs-target="#custom-pages"
-                    type="button" role="tab" aria-controls="custom-pages" aria-selected="false">
-                    Custom Pages
-                </button>
-            </li>
-
-            <!-- AI Models Group -->
-            <li class="nav-item" role="presentation">
-                <button class="nav-link" id="ai-models-tab" data-bs-toggle="tab" data-bs-target="#ai-models"
-                    type="button" role="tab" aria-controls="ai-models" aria-selected="false">
-                    AI Models
-                </button>
-            </li>
-
-            <!-- Content Processing Group -->
-            <li class="nav-item" role="presentation">
-                <button class="nav-link" id="search-extract-tab" data-bs-toggle="tab" data-bs-target="#search-extract"
-                    type="button" role="tab" aria-controls="search-extract" aria-selected="false">
-                    Search and Extract
-                </button>
-            </li>
-            <li class="nav-item" role="presentation">
-                <button class="nav-link" id="workspaces-tab" data-bs-toggle="tab" data-bs-target="#workspaces" type="button"
-                    role="tab" aria-controls="workspaces" aria-selected="false">
-                    Workspaces
-                </button>
-            </li>
-            <li class="nav-item" role="presentation">
-                <button class="nav-link" id="file-sync-tab" data-bs-toggle="tab" data-bs-target="#file-sync" type="button"
-                    role="tab" aria-controls="file-sync" aria-selected="false">
-                    File Sync
-                </button>
-            </li>
-            <li class="nav-item" role="presentation">
-                <button class="nav-link" id="workspace-identities-tab" data-bs-toggle="tab" data-bs-target="#workspace-identities" type="button"
-                    role="tab" aria-controls="workspace-identities" aria-selected="false">
-                    Global Identities
-                </button>
-            </li>
-            <li class="nav-item" role="presentation">
-                <button class="nav-link" id="citation-tab" data-bs-toggle="tab" data-bs-target="#citation"
-                    type="button" role="tab" aria-controls="citation" aria-selected="false">
-                    Citations
-                </button>
-            </li>
-
-            <li class="nav-item" role="presentation">
-                <button class="nav-link" id="safety-tab" data-bs-toggle="tab" data-bs-target="#safety"
-                    type="button" role="tab" aria-controls="safety" aria-selected="false">
-                    Safety
-                </button>
-            </li>
-            <li class="nav-item" role="presentation">
-                <button class="nav-link" id="security-tab" data-bs-toggle="tab" data-bs-target="#security" type="button" role="tab" aria-controls="security" aria-selected="false">
-                    Security
-                </button>
-            </li>
-
-            <li class="nav-item" role="presentation">
-                <button class="nav-link" id="agents-tab" data-bs-toggle="tab" data-bs-target="#agents"
-                    type="button" role="tab" aria-controls="agents" aria-selected="false">
-                    Agents
-                </button>
-            </li>
-
-            <li class="nav-item" role="presentation">
-                <button class="nav-link" id="scale-tab" data-bs-toggle="tab" data-bs-target="#scale"
-                    type="button" role="tab" aria-controls="scale" aria-selected="false">
-                    Scale
-                </button>
-            </li>
-
-            <li class="nav-item" role="presentation">
-                <button class="nav-link" id="control-center-config-tab" data-bs-toggle="tab" data-bs-target="#control-center-config"
-                    type="button" role="tab" aria-controls="control-center-config" aria-selected="false">
-                    Control Center
-                </button>
-            </li>
-
-            <li class="nav-item" role="presentation">
-                <button class="nav-link" id="data-management-tab" data-bs-toggle="tab" data-bs-target="#data-management"
-                    type="button" role="tab" aria-controls="data-management" aria-selected="false">
-                    Backup, Migrate &amp; Restore
-                </button>
-            </li>
-
-            <li class="nav-item" role="presentation">
-                <button class="nav-link" id="governance-tab" data-bs-toggle="tab" data-bs-target="#governance"
-                    type="button" role="tab" aria-controls="governance" aria-selected="false">
-                    Governance
-                </button>
-            </li>
-
-            <li class="nav-item" role="presentation">
-                <button class="nav-link" id="logging-tab" data-bs-toggle="tab" data-bs-target="#logging"
-                    type="button" role="tab" aria-controls="logging" aria-selected="false">
-                    Logging
-                </button>
-            </li>
-            <li class="nav-item" role="presentation">
-                <button class="nav-link" id="send-feedback-tab" data-bs-toggle="tab" data-bs-target="#send-feedback"
-                    type="button" role="tab" aria-controls="send-feedback" aria-selected="false">
-                    Send Feedback
-                </button>
-            </li>
-            <!-- Latest Features stays last so it never opens by default -->
-            <li class="nav-item" role="presentation">
-                <button class="nav-link" id="latest-features-tab" data-bs-toggle="tab" data-bs-target="#latest-features"
-                    type="button" role="tab" aria-controls="latest-features" aria-selected="false">
-                    Latest Features <span class="badge bg-warning text-dark text-uppercase ms-2 latest-feature-nav-badge">New</span>
-                </button>
-            </li>
+            {% endfor %}
+            {% endfor %}
         </ul>
         {% endif %}
 

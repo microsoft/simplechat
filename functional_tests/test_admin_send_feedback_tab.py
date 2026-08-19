@@ -50,8 +50,6 @@ def test_send_feedback_template_structure():
 
     required_markers = [
         'id="admin-settings-form" style="padding-bottom:80px;" novalidate autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true"',
-        'id="send-feedback-tab"',
-        'data-bs-target="#send-feedback"',
         'id="send-feedback" role="tabpanel"',
         'id="send-feedback-overview-card"',
         'id="send-feedback-bug-card"',
