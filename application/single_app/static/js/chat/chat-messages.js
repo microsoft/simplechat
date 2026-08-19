@@ -5347,6 +5347,15 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
       backgroundDetailElements.push(rowCountDetail);
     }
 
+    if (outputMetadata?.rows_truncated) {
+      // The completed-artifact layout hides the summary, so partial coverage needs its own badge.
+      const truncatedBadge = document.createElement('span');
+      truncatedBadge.className = 'badge text-bg-warning';
+      truncatedBadge.textContent = 'Partial';
+      truncatedBadge.title = 'The source action reported truncated results, so this file covers only the rows it returned.';
+      header.appendChild(truncatedBadge);
+    }
+
     card.appendChild(header);
 
     if (!isCompletedTabularArtifact) {

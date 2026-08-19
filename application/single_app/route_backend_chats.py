@@ -2371,6 +2371,17 @@ def _resolve_pending_generated_file_format(user_question, conversation_id, user_
     )
 
 
+def _resolve_generated_file_guidance_format(user_question, conversation_id, user_id):
+    """Return the artifact format this reply owes, including one carried from a clarification."""
+    requested_format = str(get_tabular_generated_output_format(user_question) or '').strip().lower()
+    if requested_format or not conversation_id:
+        return requested_format
+    # A reply that only answers "which rows and columns?" still owes the originally requested file,
+    # so the publication contract has to reach the model on this turn too.
+    pending_format = _resolve_pending_generated_file_format(user_question, conversation_id, user_id)
+    return str(pending_format or '').strip().lower()
+
+
 def maybe_create_generated_file_output(
     user_question,
     assistant_content,
@@ -16278,7 +16289,11 @@ def register_route_backend_chats(bp):
             system_messages_for_augmentation = [] # Collect system messages from search
             generated_file_output_guidance = build_generated_file_output_guidance(
                 user_message,
-                requested_format=get_tabular_generated_output_format(user_message),
+                requested_format=_resolve_generated_file_guidance_format(
+                    user_message,
+                    conversation_id,
+                    user_id,
+                ),
             )
             if generated_file_output_guidance:
                 system_messages_for_augmentation.append({
@@ -20631,9 +20646,11 @@ def register_route_backend_chats(bp):
                 generated_tabular_outputs_list = []
                 generated_analysis_artifacts_list = []
                 system_messages_for_augmentation = []
-                requested_streamed_file_format = str(
-                    get_tabular_generated_output_format(user_message) or ''
-                ).strip().lower()
+                requested_streamed_file_format = _resolve_generated_file_guidance_format(
+                    user_message,
+                    conversation_id,
+                    user_id,
+                )
                 suppress_streamed_file_payload = requested_streamed_file_format in {'json', 'xml'}
                 streamed_file_status_content = _build_streaming_assistant_file_status(
                     requested_streamed_file_format
