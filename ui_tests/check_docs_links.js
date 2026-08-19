@@ -24,6 +24,17 @@ const asJson = process.argv.includes("--json");
 
 const SKIP_PREFIXES = ["http://", "https://", "mailto:", "data:", "javascript:", "//", "#", "tel:"];
 
+// Directories holding sample code rather than documentation navigation. These
+// files are published so readers can view and copy them, but their URLs only
+// resolve when the sample runs inside SimpleChat: they reference application
+// runtime paths such as /custom/assets/... and unrendered template variables
+// such as {{ script_url }}. Checking them would report permanent false failures.
+const SKIP_DIRECTORIES = ["how-to/custom_pages_examples", "guides/custom_pages_examples"];
+
+function isSampleCode(pageUrl) {
+    return SKIP_DIRECTORIES.some((directory) => pageUrl.includes(`/${directory}/`));
+}
+
 function walk(directory, collected) {
     for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
         const full = path.join(directory, entry.name);
@@ -72,10 +83,16 @@ function main() {
     const pages = walk(siteRoot, []);
     const broken = new Map();
     let linkCount = 0;
+    let skippedSamples = 0;
 
     for (const page of pages) {
         const html = fs.readFileSync(page, "utf8");
         const pageUrl = `/${path.relative(siteRoot, page).split(path.sep).join("/")}`;
+
+        if (isSampleCode(pageUrl)) {
+            skippedSamples += 1;
+            continue;
+        }
 
         for (const match of html.matchAll(/(?:href|src)="([^"]+)"/g)) {
             const rawUrl = match[1];
@@ -108,6 +125,7 @@ function main() {
     }
 
     console.log(`Pages scanned:  ${pages.length}`);
+    console.log(`Sample pages skipped: ${skippedSamples}`);
     console.log(`Internal links: ${linkCount}`);
     console.log(`Broken targets: ${broken.size}`);
 

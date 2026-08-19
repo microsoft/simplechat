@@ -619,7 +619,6 @@ If ServiceNow roles change:
 - `sample_now_knowledge_publish_spec.yaml` - KB publish/update operations
 
 ### Documentation
-- `KB_MULTI_ACTION_SETUP.md` - Original multi-action approach (reference)
 - `TWO_AGENT_SETUP.md` - This file (recommended approach)
 
 ---

@@ -562,5 +562,5 @@ Refresh Token Lifespan: 604800 (7 days)
 
 ## Related Documentation
 - [ServiceNow OAuth Documentation](https://docs.servicenow.com/bundle/xanadu-platform-security/page/administer/security/concept/c_OAuthApplications.html)
-- [Simple Chat OpenAPI Basic Auth Fix](./explanation/fixes/OPENAPI_BASIC_AUTH_FIX.md)
+- [Simple Chat OpenAPI Basic Auth Fix](https://github.com/microsoft/simplechat/blob/main/docs/explanation/fixes/OPENAPI_BASIC_AUTH_FIX.md)
 - [ServiceNow Integration Guide]({{ '/guides/servicenow/integration/' | relative_url }})

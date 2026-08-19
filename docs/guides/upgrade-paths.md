@@ -172,7 +172,7 @@ For the Azure CLI deployer specifically, the repo now includes `deployers/azurec
 
 The repo already contains an image publish workflow:
 
-- [.github/workflows/docker_image_publish.yml](../../.github/workflows/docker_image_publish.yml)
+- [.github/workflows/docker_image_publish.yml](https://github.com/microsoft/simplechat/blob/main/.github/workflows/docker_image_publish.yml)
 
 That workflow publishes:
 

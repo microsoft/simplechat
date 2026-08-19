@@ -234,6 +234,18 @@ overflow, reachable search and navigation at every size, working search
 relevance, a functioning mobile search sheet, rendered media placeholders, and
 zero external asset requests. All 100 checks pass.
 
+`ui_tests/check_docs_links.js` walks the built site and verifies every internal
+`href` and `src` resolves, resolving relative links against the containing page
+rather than only checking absolute URLs. That distinction matters: page moves
+break relative links, and a checker that only inspects absolute hrefs reports a
+clean run while the site is quietly broken.
+
+The site currently has **zero broken internal links across 31,650 checked**.
+Sample-code pages under `custom_pages_examples/` are skipped, because they
+reference application runtime paths such as `/custom/assets/...` and unrendered
+template variables such as `{{ script_url }}` that only resolve when the sample
+runs inside SimpleChat.
+
 Run the suite locally with:
 
 ```powershell
@@ -241,6 +253,7 @@ cd docs
 bundle exec jekyll build
 cd _site; python -m http.server 4111    # serve so that /simplechat maps to the built site
 node ..\..\ui_tests\test_docs_site_responsive.js
+node ..\..\ui_tests\check_docs_links.js ..\..\docs\_site
 
 python .\functional_tests\test_docs_app_surface_coverage.py
 python .\functional_tests\test_docs_site_quality.py
@@ -255,3 +268,9 @@ python .\functional_tests\test_docs_site_quality.py
   the remaining actions have shorter overview pages.
 - A small number of internal capability flags are exempted from the coverage test
   with written justifications.
+- Release highlight screenshots are duplicated between
+  `application/single_app/static/images/features/` and
+  `docs/images/latest-release/`. The application serves its own copy for the
+  in-app Latest Features gallery, and GitHub Pages can only publish files inside
+  `docs/`, so both copies are required. When a release screenshot is updated,
+  update both.

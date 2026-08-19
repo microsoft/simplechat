@@ -110,7 +110,7 @@ CUSTOM_TEAMS_ORIGINS=["https://teams.example.cloud", "https://*.teams.example.cl
 
 ## Teams App Manifest
 
-Use [application/teams_app/manifest.template.json](../../application/teams_app/manifest.template.json) as the starting point.
+Use [application/teams_app/manifest.template.json](https://github.com/microsoft/simplechat/blob/main/application/teams_app/manifest.template.json) as the starting point.
 
 Replace these placeholders:
 

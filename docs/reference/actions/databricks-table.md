@@ -25,7 +25,7 @@ Use only to keep older manifests working. For new work, use Databricks.
 
 ## Configuration overview
 
-No new-action panel; migrate to [Databricks](./databricks/) for new actions.
+No new-action panel; migrate to [Databricks]({{ '/reference/actions/databricks/' | relative_url }}) for new actions.
 
 Shared wizard steps: [Common action setup steps](../#common-action-setup-steps).
 

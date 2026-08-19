@@ -239,8 +239,8 @@ Congratulations! You've successfully:
 ## Next Steps
 
 Now that you have your first agent:
-- [Upload and organize more documents](uploading_documents) to expand agent knowledge
-- [Classify documents](classifying_documents) to help agents find relevant information
+- [Upload and organize more documents]({{ '/guides/upload-and-manage-documents/' | relative_url }}) to expand agent knowledge
+- [Classify documents]({{ '/guides/classify-documents/' | relative_url }}) to help agents find relevant information
 - Create additional agents for different use cases
 - Explore [advanced agent configuration]({{ '/guides/create-agents/' | relative_url }}) options
 
@@ -263,4 +263,4 @@ Now that you have your first agent:
 
 ---
 
-*Next: [Uploading Documents](uploading_documents) →*
+*Next: [Uploading Documents]({{ '/guides/upload-and-manage-documents/' | relative_url }}) →*

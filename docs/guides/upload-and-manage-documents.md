@@ -292,11 +292,11 @@ Congratulations! You've successfully:
 ## Next Steps
 
 Now that you're comfortable with document management:
-- [Classify your documents](classifying_documents) for better organization
-- [Create agents](first_agent) that work with specific document sets
+- [Classify your documents]({{ '/guides/classify-documents/' | relative_url }}) for better organization
+- [Create agents]({{ '/guides/create-your-first-agent/' | relative_url }}) that work with specific document sets
 - Explore [advanced document management]({{ '/guides/add-documents/' | relative_url }}) techniques
 - Learn about [enhanced citations]({{ '/admin/citation/' | relative_url }}) for better document linking
 
 ---
 
-*Next: [Classifying Documents](classifying_documents) →*
+*Next: [Classifying Documents]({{ '/guides/classify-documents/' | relative_url }}) →*

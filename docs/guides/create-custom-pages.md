@@ -16,7 +16,7 @@ hero_pills:
   - Python-backed Jinja and API pages
 hero_links:
   - label: "Canonical Markdown"
-    url: ../../application/single_app/docs/how-to/custom_pages.md
+    url: https://github.com/microsoft/simplechat/blob/main/application/single_app/docs/how-to/custom_pages.md
     style: primary
   - label: "Feature explanation"
     url: /admin/custom-pages/
@@ -30,7 +30,7 @@ redirect_from:
 
 The canonical Custom Pages developer guide is maintained inside the application at:
 
-[application/single_app/docs/how-to/custom_pages.md](../../application/single_app/docs/how-to/custom_pages.md)
+[application/single_app/docs/how-to/custom_pages.md](https://github.com/microsoft/simplechat/blob/main/application/single_app/docs/how-to/custom_pages.md)
 
 Admin Settings > Custom Pages > Developer Guide renders that same Markdown in-app. Keeping the maintained copy inside `application/single_app` ensures the guide ships with non-container deployments, ACR-built containers, and any deployment process that sends only the app artifact.
 

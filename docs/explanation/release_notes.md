@@ -563,6 +563,21 @@ v0.260.001 consolidates all work released after v0.250.001 into one major releas
     *   Added 76 branded "Screenshot pending" placeholders so every v0.260.001 Latest Features card renders a valid local image while final captures are pending.
     *   Placeholders can be replaced in place with real screenshots without changing the catalog configuration.
     *   (Ref: `application/single_app/static/images/features/`, Latest Features image galleries)
+### **(v0.250.231)**
+
+#### Bug Fixes
+
+*   **Missing Release Highlight Screenshots Now Display**
+    *   The Latest Release pages referenced 24 screenshots that were never present in the documentation site, so every one of them rendered as a broken image.
+    *   The images already existed in the application at `application/single_app/static/images/features/`, where the in-app Latest Features gallery reads them. They are now also published with the documentation site, so the release highlight pages show the same screenshots users see in the product.
+    *   (Ref: `docs/images/latest-release/`, `docs/_data/latest_release_features.yml`, Latest Release highlight pages)
+
+*   **Broken Documentation Links Repaired**
+    *   Fixed the remaining broken internal links on the documentation site. Links that pointed at renamed pages now resolve, and links that target files kept in the repository rather than published on the site, such as the Custom Pages developer guide, the Teams app manifest, and a CI workflow, now open on GitHub instead of returning a missing page.
+    *   Removed two references to a ServiceNow multi-action setup guide that was never written.
+    *   The documentation site now has zero broken internal links across 31,649 checked links.
+    *   (Ref: `ui_tests/check_docs_links.js`, ServiceNow guides, Custom Pages guide, upgrade paths guide)
+
 ### **(v0.250.230)**
 
 #### New Features

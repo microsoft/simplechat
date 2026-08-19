@@ -58,7 +58,6 @@ This guide documents the **single-agent integration** between Simple Chat and Se
 
 **For advanced KB management (create/publish articles), see:**
 - 📘 [TWO_AGENT_SETUP.md]({{ '/guides/servicenow/two-agent-setup/' | relative_url }}) - Recommended approach with separate KB Management agent
-- 📘 [KB_MULTI_ACTION_SETUP.md](KB_MULTI_ACTION_SETUP.md) - Alternative multi-action approach
 
 > **⚠️ Important - Work in Progress:**  
 > This integration is under active development. **Check back regularly for updates** to the OpenAPI specifications and agent instructions. Unit testing of prompts is still in progress, so further changes to the spec files and agent instruction file are expected.

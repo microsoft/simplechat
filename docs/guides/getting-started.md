@@ -157,9 +157,9 @@ Congratulations! You've successfully:
 
 Now that you're up and running, explore more features:
 
-- [Create Your First Agent](first_agent) - Build a specialized AI assistant
-- [Upload More Documents](uploading_documents) - Build a larger knowledge base
-- [Document Classification](classifying_documents) - Organize your content
+- [Create Your First Agent]({{ '/guides/create-your-first-agent/' | relative_url }}) - Build a specialized AI assistant
+- [Upload More Documents]({{ '/guides/upload-and-manage-documents/' | relative_url }}) - Build a larger knowledge base
+- [Document Classification]({{ '/guides/classify-documents/' | relative_url }}) - Organize your content
 
 Or dive into specific tasks with our [how-to guides]({{ '/guides/' | relative_url }}).
 
@@ -179,8 +179,8 @@ Or dive into specific tasks with our [how-to guides]({{ '/guides/' | relative_ur
 - Try more specific questions
 - Check your embeddings configuration
 
-For more help, see our [FAQ](../reference/faqs) or [how-to guides]({{ '/guides/' | relative_url }}).
+For more help, see our [FAQ]({{ '/start/faqs/' | relative_url }}) or [how-to guides]({{ '/guides/' | relative_url }}).
 
 ---
 
-*Next: [Create Your First Agent](first_agent) →*
+*Next: [Create Your First Agent]({{ '/guides/create-your-first-agent/' | relative_url }}) →*
