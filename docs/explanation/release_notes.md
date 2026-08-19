@@ -2,6 +2,22 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.260.005)**
+
+#### User Interface Enhancements
+
+*   **Tab Now Completes an @ Mention in Shared Conversations**
+    *   In multi-user conversations, pressing **Tab** while the `@` suggestion menu is open now accepts the highlighted participant, agent, model, or invite suggestion, exactly like **Enter** already did.
+    *   Previously **Tab** moved focus out of the message box and left the half-typed `@par` text behind, which broke the autocomplete habit most people bring from other editors and chat clients.
+    *   **Shift+Tab** is deliberately unchanged and still moves focus backwards, and **Tab** still moves focus normally when the menu is showing "No matching participants...".
+    *   The chat mention menu now matches the agent instruction mention menu, which already accepted **Tab**.
+    *   (Ref: `chat-collaboration.js`, `handleComposerKeydown`, `selectActiveMentionSuggestion`, Fixes #1299)
+
+*   **Mention Menu Is Now Announced Correctly By Screen Readers**
+    *   Each `@` suggestion is now exposed as a proper listbox option with `aria-selected`, and the message box references the highlighted suggestion through `aria-activedescendant` paired with `aria-controls` so assistive technology can resolve it.
+    *   The highlighted suggestion is also scrolled into view while arrowing through a long list, so keyboard navigation no longer highlights an off-screen entry.
+    *   (Ref: `chat-collaboration.js`, `renderMentionMenu`, `updateMentionMenuActiveItem`, `applyMentionComboboxState`, `chats.html`)
+
 ### **(v0.260.004)**
 
 #### Bug Fixes

@@ -33,3 +33,4 @@ category: Version History
 - [Workflow File Sync Prompt Context Fix](WORKFLOW_FILE_SYNC_PROMPT_CONTEXT_FIX.md)
 - [Chat Citation Whitespace Collapse Fix](CHAT_CITATION_WHITESPACE_COLLAPSE_FIX.md)
 - [New Chat Conversation Documents Drawer Reset Fix](NEW_CHAT_CONVERSATION_DOCUMENTS_DRAWER_RESET_FIX.md)
+- [Collaboration Mention Tab Autocomplete Fix](COLLABORATION_MENTION_TAB_AUTOCOMPLETE_FIX.md)
