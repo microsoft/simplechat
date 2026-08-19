@@ -165,8 +165,28 @@ proxy convention, so the setting is still posted exactly once. Sync is two-way:
 the mirror drives the canonical input and dispatches a `change` event, and the
 canonical input updates the mirror when changed on its own tab.
 
-### A structural guard worth keeping
+### Stage F: the last hardcoded tab ids
 
+Two places still navigated by naming a tab, and both were broken by the rework:
+
+- **The setup walkthrough** mapped each of twelve steps to a tab id. Eleven
+  named tabs that no longer existed, so those steps would have moved nowhere.
+  Each step already knew which card it was about, so the tab id was a duplicate
+  copy of that knowledge. Steps now name the card and `openAdminCard()` finds
+  the tab. `scrollToRelevantSection()` became redundant and was deleted.
+- **Cosmos throughput validation** clicked `scale-tab` to reveal an invalid
+  field. It now walks up from the invalid field to its own card, so it goes to
+  wherever that field actually lives.
+
+`test_admin_settings_walkthrough_targets.py` asserts every step points at an
+element that exists, that no tab id is hardcoded, and that step numbering has no
+gaps. A scan confirms **no stale `-tab` literal remains in executable admin
+JavaScript**.
+
+The general rule this rework converged on: **never name a tab; name the setting
+and resolve the tab from the page.**
+
+### A structural guard worth keeping
 `test_every_pane_partial_is_balanced` checks `<div>` and `<section>` balance in
 every pane. An unbalanced pane does not fail to render — it silently nests the
 panes that follow it, so the failure surfaces somewhere unrelated and confusing.

@@ -15,6 +15,12 @@ const TABLEAU_ACTION_IDENTITY_AUTH_TYPES = ['api_key', 'username_password'];
 const YAMCS_ACTION_IDENTITY_AUTH_TYPES = ['api_key', 'bearer_token', 'username_password'];
 const LOG_ANALYTICS_ACTION_IDENTITY_AUTH_TYPES = ['client_secret', 'managed_identity'];
 const BLOB_STORAGE_PLUGIN_TYPE = 'blob_storage';
+const AZURE_STORAGE_ENDPOINT_SUFFIXES = [
+  'core.windows.net',
+  'core.usgovcloudapi.net',
+  'core.chinacloudapi.cn',
+  'core.cloudapi.de'
+];
 const DATABRICKS_PLUGIN_TYPE = 'databricks';
 const DATABRICKS_DEFAULT_CLOUD = 'azure_commercial';
 const SNOWFLAKE_PLUGIN_TYPE = 'snowflake';
@@ -769,6 +775,11 @@ export class PluginModalStepper {
     document.getElementById('sql-auth-type').addEventListener('change', () => this.handleSqlAuthTypeChange());
     document.getElementById('sql-identity-select').addEventListener('change', () => this.handleActionIdentityChange('sql'));
     document.getElementById('cosmos-auth-type').addEventListener('change', () => this.handleCosmosAuthTypeChange());
+
+    const blobStorageAuthTypeSelect = document.getElementById('blob-storage-auth-type');
+    if (blobStorageAuthTypeSelect) {
+      blobStorageAuthTypeSelect.addEventListener('change', () => this.handleBlobStorageAuthTypeChange());
+    }
 
     const rocksDbAuthSchemeSelect = document.getElementById('rocksdb-auth-scheme');
     if (rocksDbAuthSchemeSelect) {
@@ -2051,6 +2062,35 @@ export class PluginModalStepper {
 
   normalizeBlobStoragePrefix(prefix = '') {
     return String(prefix || '').trim().replace(/^\/+|\/+$/g, '');
+  }
+
+  isAzureBlobEndpoint(endpoint = '') {
+    // Mirrors the server-side allowlist so the modal fails fast with a clear message.
+    const normalizedEndpoint = String(endpoint || '').trim();
+    if (!normalizedEndpoint) {
+      return false;
+    }
+
+    let parsedUrl;
+    try {
+      parsedUrl = new URL(normalizedEndpoint.includes('://') ? normalizedEndpoint : `https://${normalizedEndpoint}`);
+    } catch (err) {
+      return false;
+    }
+
+    if (parsedUrl.protocol !== 'https:' || parsedUrl.port || parsedUrl.username || parsedUrl.password
+      || parsedUrl.search || parsedUrl.hash) {
+      return false;
+    }
+
+    return AZURE_STORAGE_ENDPOINT_SUFFIXES.some(suffix => {
+      const hostSuffix = `.blob.${suffix}`;
+      if (!parsedUrl.hostname.toLowerCase().endsWith(hostSuffix)) {
+        return false;
+      }
+      const accountName = parsedUrl.hostname.toLowerCase().slice(0, -hostSuffix.length);
+      return /^[a-z0-9]{3,24}$/.test(accountName);
+    });
   }
 
   deriveBlobStorageEndpointFromConnectionString(connectionString = '') {
@@ -3994,14 +4034,29 @@ export class PluginModalStepper {
             return false;
           }
         } else if (isBlobStorageVisible) {
+          const blobAuthType = this.getBlobStorageAuthType();
           const connectionString = document.getElementById('blob-storage-connection-string').value.trim();
+          const blobEndpoint = document.getElementById('blob-storage-endpoint')?.value.trim() || '';
+          const blobAccountKey = document.getElementById('blob-storage-account-key')?.value.trim() || '';
           const containerName = document.getElementById('blob-storage-container-name').value.trim();
           const capabilityValues = Object.values(this.getSelectedBlobStorageCapabilities());
           const readTypeValues = Object.values(this.getSelectedBlobStorageReadFileTypes());
           const uploadTypeValues = Object.values(this.getSelectedBlobStorageUploadFileTypes());
 
-          if (!connectionString) {
+          if (blobAuthType === 'connection_string' && !connectionString) {
             this.showError('Blob storage connection string is required.');
+            return false;
+          }
+          if (blobAuthType !== 'connection_string' && !blobEndpoint) {
+            this.showError('Blob service endpoint is required.');
+            return false;
+          }
+          if (blobAuthType !== 'connection_string' && !this.isAzureBlobEndpoint(blobEndpoint)) {
+            this.showError('Blob service endpoint must be an Azure Blob service URL, for example https://account.blob.core.windows.net.');
+            return false;
+          }
+          if (blobAuthType === 'key' && !blobAccountKey) {
+            this.showError('Blob storage account key is required.');
             return false;
           }
           if (!containerName) {
@@ -5235,8 +5290,26 @@ export class PluginModalStepper {
     };
   }
 
+  getBlobStorageAuthType() {
+    return document.getElementById('blob-storage-auth-type')?.value || 'connection_string';
+  }
+
+  handleBlobStorageAuthTypeChange() {
+    const authType = this.getBlobStorageAuthType();
+    const connectionStringGroup = document.getElementById('blob-storage-connection-string-group');
+    const endpointGroup = document.getElementById('blob-storage-endpoint-group');
+    const accountKeyGroup = document.getElementById('blob-storage-account-key-group');
+
+    connectionStringGroup?.classList.toggle('d-none', authType !== 'connection_string');
+    endpointGroup?.classList.toggle('d-none', authType === 'connection_string');
+    accountKeyGroup?.classList.toggle('d-none', authType !== 'key');
+  }
+
   getBlobStorageConfiguration() {
+    const authType = this.getBlobStorageAuthType();
     const connectionString = document.getElementById('blob-storage-connection-string')?.value.trim() || '';
+    const endpoint = document.getElementById('blob-storage-endpoint')?.value.trim() || '';
+    const accountKey = document.getElementById('blob-storage-account-key')?.value.trim() || '';
     const containerName = document.getElementById('blob-storage-container-name')?.value.trim() || '';
     const blobPrefix = this.normalizeBlobStoragePrefix(document.getElementById('blob-storage-blob-prefix')?.value || '');
 
@@ -5248,6 +5321,24 @@ export class PluginModalStepper {
     };
     if (blobPrefix) {
       additionalFields.blob_prefix = blobPrefix;
+    }
+
+    if (authType === 'identity') {
+      return {
+        endpoint,
+        auth: { type: 'identity', identity: 'managed_identity' },
+        additionalFields,
+        identityId: ''
+      };
+    }
+
+    if (authType === 'key') {
+      return {
+        endpoint,
+        auth: { type: 'key', key: accountKey },
+        additionalFields,
+        identityId: ''
+      };
     }
 
     return {
@@ -5535,8 +5626,14 @@ export class PluginModalStepper {
       if (!blobStorageConfig.additionalFields.container_name) {
         throw new Error('Enter the container name before testing the connection.');
       }
-      if (!blobStorageConfig.auth.key && !this.isEditMode) {
+      if (blobStorageConfig.auth.type === 'connection_string' && !blobStorageConfig.auth.key && !this.isEditMode) {
         throw new Error('Enter the storage connection string before testing the connection.');
+      }
+      if (blobStorageConfig.auth.type !== 'connection_string' && !blobStorageConfig.endpoint) {
+        throw new Error('Enter the blob service endpoint before testing the connection.');
+      }
+      if (blobStorageConfig.auth.type === 'key' && !blobStorageConfig.auth.key && !this.isEditMode) {
+        throw new Error('Enter the storage account key before testing the connection.');
       }
       return blobStorageConfig;
     }
@@ -6249,10 +6346,24 @@ export class PluginModalStepper {
     } else if (this.isBlobStorageType(plugin.type)) {
       const additionalFields = plugin.additionalFields || plugin.additional_fields || {};
       const auth = plugin.auth || {};
+      const blobAuthType = ['identity', 'key'].includes(auth.type) ? auth.type : 'connection_string';
 
-      document.getElementById('blob-storage-connection-string').value = auth.key || '';
+      const blobAuthTypeField = document.getElementById('blob-storage-auth-type');
+      if (blobAuthTypeField) {
+        blobAuthTypeField.value = blobAuthType;
+      }
+      document.getElementById('blob-storage-connection-string').value = blobAuthType === 'connection_string' ? (auth.key || '') : '';
+      const blobEndpointField = document.getElementById('blob-storage-endpoint');
+      if (blobEndpointField) {
+        blobEndpointField.value = blobAuthType === 'connection_string' ? '' : (plugin.endpoint || '');
+      }
+      const blobAccountKeyField = document.getElementById('blob-storage-account-key');
+      if (blobAccountKeyField) {
+        blobAccountKeyField.value = blobAuthType === 'key' ? (auth.key || '') : '';
+      }
       document.getElementById('blob-storage-container-name').value = additionalFields.container_name || '';
       document.getElementById('blob-storage-blob-prefix').value = additionalFields.blob_prefix || '';
+      this.handleBlobStorageAuthTypeChange();
       this.setBlobStorageConfiguration({
         blob_storage_capabilities: additionalFields.blob_storage_capabilities || plugin.blob_storage_capabilities || null,
         blob_storage_read_file_types: additionalFields.blob_storage_read_file_types || plugin.blob_storage_read_file_types || null,
@@ -6862,6 +6973,9 @@ export class PluginModalStepper {
     } else if (isDocumentSearchType) {
       return INTERNAL_DOCUMENT_SEARCH_ENDPOINT;
     } else if (isBlobStorageType) {
+      if (this.getBlobStorageAuthType() !== 'connection_string') {
+        return document.getElementById('blob-storage-endpoint')?.value.trim() || '';
+      }
       const connectionString = document.getElementById('blob-storage-connection-string').value.trim();
       return this.deriveBlobStorageEndpointFromConnectionString(connectionString) || this.originalPlugin?.endpoint || '';
     } else if (isDatabricksType) {

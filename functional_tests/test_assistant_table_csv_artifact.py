@@ -1154,12 +1154,13 @@ def test_chat_route_wires_assistant_table_artifacts():
         'Expected workflow model and agent execution to apply the same file-output guidance.',
     )
     assert_true(
-        chat_route_content.count('function_results=agent_citations_list') == 2,
-        'Expected normal and streaming Chat to pass current-turn action results to generated-file exports.',
+        chat_route_content.count('function_results=agent_citations_list') == 4,
+        'Expected normal and streaming Chat to pass current-turn action results to both the '
+        'generated-file export and the assistant JSON/XML export.',
     )
     assert_true(
-        'function_results=execution_result.get(\'agent_citations\') or []' in chat_route_content,
-        'Expected document actions to pass current-turn action results to generated-file exports.',
+        chat_route_content.count('function_results=execution_result.get(\'agent_citations\') or []') == 2,
+        'Expected document actions to pass current-turn action results to both export paths.',
     )
     assert_true(
         'function_results=raw_agent_citations' in workflow_runner_content,

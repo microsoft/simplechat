@@ -1110,9 +1110,28 @@
                 <i class="bi bi-cloud-arrow-down me-2"></i>Blob Storage Connection
               </div>
               <div class="mb-3">
+                <label for="blob-storage-auth-type" class="form-label">Authentication Type</label>
+                <select class="form-select" id="blob-storage-auth-type">
+                  <option value="connection_string">Connection String</option>
+                  <option value="identity">Managed Identity</option>
+                  <option value="key">Account Key</option>
+                </select>
+                <div class="form-text">Managed identity avoids stored secrets. The endpoint must be an Azure Blob service hostname.</div>
+              </div>
+              <div class="mb-3" id="blob-storage-connection-string-group">
                 <label for="blob-storage-connection-string" class="form-label">Connection String <span class="text-danger">*</span></label>
                 <textarea class="form-control" id="blob-storage-connection-string" rows="3" placeholder="DefaultEndpointsProtocol=https;AccountName=...;AccountKey=...;EndpointSuffix=core.windows.net"></textarea>
                 <div class="form-text">Use an Azure Storage account connection string with access to the target container.</div>
+              </div>
+              <div class="mb-3 d-none" id="blob-storage-endpoint-group">
+                <label for="blob-storage-endpoint" class="form-label">Blob Service Endpoint <span class="text-danger">*</span></label>
+                <input type="text" class="form-control" id="blob-storage-endpoint" placeholder="https://account.blob.core.windows.net" />
+                <div class="form-text">Must be an Azure Blob service endpoint, for example <code>https://account.blob.core.windows.net</code>.</div>
+              </div>
+              <div class="mb-3 d-none" id="blob-storage-account-key-group">
+                <label for="blob-storage-account-key" class="form-label">Account Key <span class="text-danger">*</span></label>
+                <input type="password" class="form-control" id="blob-storage-account-key" placeholder="Primary or secondary account key" autocomplete="new-password" />
+                <div class="form-text">If this action already uses a Key Vault-backed key, leave the stored value unchanged to preserve the existing secret.</div>
               </div>
               <div class="row g-3">
                 <div class="col-md-6">
