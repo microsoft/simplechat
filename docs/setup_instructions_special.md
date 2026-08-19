@@ -1,6 +1,7 @@
 ---
 layout: showcase-page
 title: "Special Setup Scenarios"
+section: "Deploy & Operate"
 permalink: /setup_instructions_special/
 menubar: docs_menu
 accent: teal

@@ -1,9 +1,8 @@
-# explanation/scenarios/workspaces/index.md
 ---
-layout: libdoc/page
-title: Workspace Scenarios
-order: 132
-category: Scenarios
+layout: page
+title: "Workspace Scenarios"
+description: "Public workspace content sets for HR, IT, and service desk demonstrations."
+section: "Explanation"
 ---
 
 Workspaces

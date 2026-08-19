@@ -1,6 +1,7 @@
 ---
 layout: showcase-page
 title: "Application Scaling"
+section: "Deploy & Operate"
 permalink: /application_scaling/
 menubar: docs_menu
 accent: cyan

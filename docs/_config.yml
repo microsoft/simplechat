@@ -18,6 +18,7 @@ plugins:
   - jekyll-seo-tag
   - jekyll-sitemap
   - jekyll-relative-links
+  - jekyll-redirect-from
 
 # Permalinks (pretty URLs)
 permalink: pretty
@@ -179,21 +180,21 @@ sass:
   style: compressed
 
 # Collections
+#
+# The previous config declared tutorials/how-to/reference/explanation collections,
+# but no matching _tutorials/_how-to/_reference/_explanation directories exist, so
+# they were always empty. Those pages are ordinary pages under docs/ and are given
+# their section labels through path-scoped defaults below.
 collections:
-  tutorials:
+  features:
     output: true
-    permalink: /:collection/:name/
-  how-to:
-    output: true
-    permalink: /:collection/:name/
-  reference:
-    output: true
-    permalink: /:collection/:name/
-  explanation:
-    output: true
-    permalink: /:collection/:name/
+    permalink: /features/:name/
 
 # Default layouts and settings
+#
+# Path-scoped defaults must use type "pages" for regular directories. The previous
+# config used the collection label as the type, so these defaults never applied and
+# every page fell back to the generic "Docs" section in search results.
 defaults:
   - scope:
       path: ""
@@ -208,35 +209,69 @@ defaults:
       layout: page
       show_nav: true
   - scope:
-      path: "tutorials"
-      type: "tutorials"
+      path: "start"
+      type: "pages"
     values:
-      layout: page
-      section: "tutorials"
-      show_nav: true
+      section: "Start"
   - scope:
-      path: "how-to"
-      type: "how-to"
+      path: "guides"
+      type: "pages"
     values:
-      layout: page
-      section: "how-to"
-      show_nav: true
+      section: "Guides"
+  - scope:
+      path: "admin"
+      type: "pages"
+    values:
+      section: "Administration"
+  - scope:
+      path: "deploy"
+      type: "pages"
+    values:
+      section: "Deploy & Operate"
   - scope:
       path: "reference"
-      type: "reference"
+      type: "pages"
     values:
-      layout: page
-      section: "reference"
-      show_nav: true
+      section: "Reference"
   - scope:
       path: "explanation"
-      type: "explanation"
+      type: "pages"
     values:
-      layout: page
-      section: "explanation"
+      section: "Explanation"
+  - scope:
+      path: "latest-release"
+      type: "pages"
+    values:
+      section: "Release Highlights"
+  - scope:
+      path: "tutorials"
+      type: "pages"
+    values:
+      section: "Guides"
+  - scope:
+      path: "how-to"
+      type: "pages"
+    values:
+      section: "Guides"
+  - scope:
+      path: "troubleshooting"
+      type: "pages"
+    values:
+      section: "Deploy & Operate"
+  - scope:
+      path: ""
+      type: "features"
+    values:
+      layout: feature
+      section: "Features"
       show_nav: true
 
 # Exclude from processing
+#
+# The explanation/features and explanation/fixes trees hold ~830 internal
+# engineering notes. They stay in the repository and remain readable on GitHub,
+# but publishing them made up 84% of the search index and buried real docs.
+# See docs/explanation/features/DOCUMENTATION_SITE_REDESIGN.md.
 exclude:
   - _site/
   - .sass-cache/
@@ -249,3 +284,8 @@ exclude:
   - vendor/cache/
   - vendor/gems/
   - vendor/ruby/
+  - explanation/features/
+  - explanation/fixes/
+  - explanation/release_notes.md
+  - README-THEME.md
+  - theme-documentation.md

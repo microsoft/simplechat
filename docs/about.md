@@ -1,6 +1,7 @@
 ---
 layout: showcase-page
 title: "About Simple Chat"
+section: "Start"
 permalink: /about/
 menubar: docs_menu
 accent: teal

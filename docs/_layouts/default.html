@@ -22,9 +22,8 @@
 
     <!-- Custom CSS -->
     <link rel="stylesheet" href="{{ '/assets/css/main.css' | relative_url }}" />
-
-    <!-- DataTables CSS -->
-    <link rel="stylesheet" href="https://cdn.datatables.net/1.13.1/css/jquery.dataTables.min.css" />
+    <link rel="stylesheet" href="{{ '/assets/css/docs-media.css' | relative_url }}" />
+    <link rel="stylesheet" href="{{ '/assets/css/docs-search.css' | relative_url }}" />
 
     <!-- Dark mode early initialization to prevent flash -->
     <script>
@@ -81,13 +80,7 @@
     <div id="toast-container" class="position-fixed bottom-0 end-0 p-3"></div>
 
     <!-- JavaScript Libraries -->
-    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-    <script src="https://cdn.datatables.net/1.13.1/js/jquery.dataTables.min.js"></script>
-    <script src="https://cdn.datatables.net/responsive/2.4.1/js/dataTables.responsive.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/2.3.6/purify.min.js"></script>
-    <script src="https://unpkg.com/split.js/dist/split.min.js"></script>
 
     <!-- Prism.js syntax highlighting -->
     <script id="prism-theme-js" src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
@@ -104,7 +97,7 @@
             description: {{ site.description | jsonify }},
             baseurl: {{ site.baseurl | jsonify }},
             url: {{ site.url | jsonify }},
-            searchIndexUrl: {{ '/search.json' | relative_url | jsonify }},
+            searchIndexUrl: {{ '/search-index.json' | relative_url | jsonify }},
             navigation: {{ site.navigation | jsonify }}
         };
     </script>
@@ -143,8 +136,11 @@
     </script>
 
     <!-- Custom JavaScript -->
+    <script src="{{ '/assets/js/vendor/lunr-2.3.9/lunr.min.js' | relative_url }}"></script>
     <script src="{{ '/assets/js/dark-mode.js' | relative_url }}"></script>
     <script src="{{ '/assets/js/sidebar.js' | relative_url }}"></script>
+    <script src="{{ '/assets/js/media.js' | relative_url }}"></script>
+    <script src="{{ '/assets/js/search.js' | relative_url }}"></script>
     <script src="{{ '/assets/js/main.js' | relative_url }}"></script>
 
     {% if page.custom_js %}

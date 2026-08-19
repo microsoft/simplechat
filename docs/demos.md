@@ -1,6 +1,7 @@
 ---
 layout: showcase-page
 title: "Solution Demonstrations"
+section: "Guides"
 permalink: /demos/
 menubar: docs_menu
 accent: orange

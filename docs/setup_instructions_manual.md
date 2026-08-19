@@ -1,6 +1,7 @@
 ---
 layout: showcase-page
 title: "Manual Setup"
+section: "Deploy & Operate"
 permalink: /setup_instructions_manual/
 menubar: docs_menu
 accent: slate

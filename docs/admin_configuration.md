@@ -1,6 +1,7 @@
 ---
 layout: showcase-page
 title: Admin Configuration
+section: "Administration"
 permalink: /admin_configuration/
 menubar: docs_menu
 accent: violet

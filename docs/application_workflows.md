@@ -1,6 +1,7 @@
 ---
 layout: showcase-page
 title: "Application Workflows"
+section: "Explanation"
 permalink: /application_workflows/
 menubar: docs_menu
 accent: violet

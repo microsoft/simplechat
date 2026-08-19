@@ -1,6 +1,7 @@
 ---
 layout: showcase-page
 title: "External Applications Overview"
+section: "Reference"
 permalink: /external_apps_overview/
 menubar: docs_menu
 accent: emerald
