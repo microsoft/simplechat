@@ -5,7 +5,6 @@ on:
     branches:
       - main
       - Development
-      - feature/admin-settings-ia  # temporary: Admin Settings IA staging branch
     paths:
       - 'application/single_app/**.py'
       - '.github/workflows/python-syntax-check.yml'
