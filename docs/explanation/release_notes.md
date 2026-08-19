@@ -4,6 +4,18 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 
 ### **(v0.260.018)**
 
+#### Bug Fixes
+
+*   **Setup Walkthrough Lands On The Right Settings Again**
+    *   The guided setup walkthrough sent each step to a named tab. After the Admin Settings restructure, eleven of its twelve steps named tabs that no longer existed, so those steps would have moved nowhere and left the admin looking at whatever was already on screen.
+    *   Each step now names the setting it is about and the tab is worked out from the page, so the walkthrough follows settings wherever they live.
+    *   (Ref: setup walkthrough, `admin_settings.js`, `admin_card_links.js`)
+
+*   **Cosmos Throughput Validation Reveals The Invalid Field**
+    *   When Cosmos throughput values failed validation, the page tried to switch to a tab that no longer exists, so the field needing attention could be left on a hidden tab with no indication of where to look.
+    *   Validation now jumps to wherever the invalid field actually is.
+    *   (Ref: Cosmos throughput validation, `admin_settings.js`)
+
 #### User Interface Enhancements
 
 *   **Admin Settings Restructure Merged With Current Development**
