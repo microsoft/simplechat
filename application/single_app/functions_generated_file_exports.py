@@ -8,7 +8,7 @@ import os
 import re
 import tempfile
 from datetime import datetime
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 from xml.etree import ElementTree
 
 from defusedxml import ElementTree as DefusedElementTree
@@ -202,6 +202,13 @@ CSV_CLARIFICATION_REPLY_PATTERNS = (
     re.compile(r'\b(?:columns?|fields?)\s+(?:should|would|do)\s+(?:it|they|the\s+\w+)\s+include\b'),
 )
 CSV_CLARIFICATION_REPLY_MAX_CHARS = 500
+# A retrieval action that dwarfs the turn's other calls is the payload; the rest are lookups.
+DOMINANT_FUNCTION_RESULT_MIN_ROWS = 10
+DOMINANT_FUNCTION_RESULT_RATIO = 5
+ROW_SOURCE_ASSISTANT = 'assistant response'
+ROW_SOURCE_CURRENT_ACTION = 'structured function result'
+ROW_SOURCE_EARLIER_ACTION = 'earlier action result'
+FUNCTION_RESULT_ROW_SOURCES = frozenset({ROW_SOURCE_CURRENT_ACTION, ROW_SOURCE_EARLIER_ACTION})
 CSV_PUBLICATION_GUIDANCE = (
     'The server serializes the authorized action results into the requested CSV artifact and '
     'attaches the file after generation. Do not claim that you cannot create or attach files, '
@@ -411,6 +418,7 @@ def evaluate_generated_file_passthrough_eligibility(
     user_question: str,
     rows: Optional[Sequence[Dict[str, Any]]] = None,
     public_output_schema: Optional[Sequence[str]] = None,
+    carried_output_format: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Return whether raw rows can satisfy a requested generated file contract."""
     normalized_question = _normalize_question_for_artifact_detection(user_question)
@@ -436,6 +444,9 @@ def evaluate_generated_file_passthrough_eligibility(
         return {'allowed': False, 'reason_code': 'derived_output_requires_transform'}
     if _question_requests_serialization(normalized_question):
         return {'allowed': True, 'reason_code': 'explicit_format_conversion'}
+    if carried_output_format:
+        # The format contract came from the earlier request this reply answers.
+        return {'allowed': True, 'reason_code': 'pending_format_clarification'}
     return {'allowed': False, 'reason_code': 'no_explicit_passthrough_contract'}
 
 
@@ -498,18 +509,32 @@ def build_generated_file_export(
     user_question: str,
     assistant_content: str,
     function_results: Optional[List[Dict[str, Any]]] = None,
+    prior_function_results_loader: Optional[Callable[[], Optional[List[Dict[str, Any]]]]] = None,
+    pending_output_format: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
     """Build a generated file payload from final assistant content and function-result evidence."""
-    output_format = get_requested_generated_file_format(user_question)
+    output_format = get_requested_generated_file_format(user_question) or _normalize_pending_output_format(
+        pending_output_format,
+    )
     if output_format not in GENERATED_FILE_FORMATS:
         return None
+    carried_output_format = (
+        output_format if not get_requested_generated_file_format(user_question) else None
+    )
 
     assistant_text = str(assistant_content or '').strip()
     assistant_rows = extract_assistant_table_entries(assistant_text)
     function_rows = extract_authorized_function_result_rows(function_results)
+    row_provenance = ROW_SOURCE_CURRENT_ACTION
+    if not assistant_rows and not function_rows and prior_function_results_loader is not None:
+        # This turn answered from evidence gathered earlier, so reuse those rows instead of none.
+        function_rows = extract_authorized_function_result_rows(prior_function_results_loader())
+        if function_rows:
+            row_provenance = ROW_SOURCE_EARLIER_ACTION
     function_passthrough = evaluate_generated_file_passthrough_eligibility(
         user_question,
         rows=function_rows,
+        carried_output_format=carried_output_format,
     ) if function_rows else {'allowed': False, 'reason_code': 'source_result_incomplete'}
 
     if output_format == GENERATED_FILE_FORMAT_CSV:
@@ -522,7 +547,7 @@ def build_generated_file_export(
         rows = function_rows if use_function_rows else assistant_rows
         if not rows:
             return None
-        row_source = 'structured function result' if use_function_rows else 'assistant response'
+        row_source = row_provenance if use_function_rows else ROW_SOURCE_ASSISTANT
         return _build_generated_file_payload(
             output_format=output_format,
             file_content=build_assistant_table_csv(rows),
@@ -537,7 +562,7 @@ def build_generated_file_export(
     rows = function_rows if function_rows and function_passthrough.get('allowed') else assistant_rows
     if not assistant_text and not rows:
         return None
-    row_source = 'structured function result' if rows and rows is function_rows else 'assistant response'
+    row_source = row_provenance if rows and rows is function_rows else ROW_SOURCE_ASSISTANT
     title = _build_generated_file_title(output_format)
     if output_format == GENERATED_FILE_FORMAT_DOCX:
         file_content = _render_docx_file_export(title, assistant_text, rows, row_source)
@@ -555,26 +580,14 @@ def build_generated_file_export(
 
 
 def extract_authorized_function_result_rows(function_results: Optional[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
-    """Return structured rows from successful current-turn non-tabular function results."""
-    function_row_groups: List[Tuple[str, List[Dict[str, Any]]]] = []
-    for function_result in function_results or []:
-        if not isinstance(function_result, dict):
-            continue
-        if function_result.get('success') is False or _is_tabular_function_result(function_result):
-            continue
-
-        structured_rows = _extract_function_result_rows(
-            _parse_function_result_payload(function_result.get('function_result')),
-        )
-        if not structured_rows:
-            continue
-        function_row_groups.append((
-            _get_function_result_label(function_result),
-            structured_rows,
-        ))
-
+    """Return structured rows from successful non-tabular action results."""
+    function_row_groups = _collect_authorized_function_row_groups(function_results)
     if not function_row_groups:
         return []
+
+    dominant_rows = _select_dominant_function_row_group(function_row_groups)
+    if dominant_rows is not None:
+        return dominant_rows
     if len(function_row_groups) == 1:
         return function_row_groups[0][1]
 
@@ -586,6 +599,67 @@ def extract_authorized_function_result_rows(function_results: Optional[List[Dict
             normalized_row[source_column] = function_label
             combined_rows.append(normalized_row)
     return combined_rows
+
+
+def _collect_authorized_function_row_groups(
+    function_results: Optional[List[Dict[str, Any]]],
+) -> List[Tuple[str, List[Dict[str, Any]]]]:
+    """Group authorized rows by action, so paged calls to one action stay one dataset."""
+    grouped_rows: Dict[str, List[Dict[str, Any]]] = {}
+    for function_result in function_results or []:
+        if not isinstance(function_result, dict):
+            continue
+        if function_result.get('success') is False or _is_tabular_function_result(function_result):
+            continue
+
+        structured_rows = _extract_function_result_rows(
+            _parse_function_result_payload(function_result.get('function_result')),
+        )
+        if not structured_rows:
+            continue
+        grouped_rows.setdefault(
+            _get_function_result_label(function_result),
+            [],
+        ).extend(structured_rows)
+    return list(grouped_rows.items())
+
+
+def _select_dominant_function_row_group(
+    function_row_groups: Sequence[Tuple[str, List[Dict[str, Any]]]],
+) -> Optional[List[Dict[str, Any]]]:
+    """Return the retrieval result set when the turn's other actions are only lookups."""
+    if len(function_row_groups) < 2:
+        return None
+
+    dominant_label, dominant_rows = max(function_row_groups, key=lambda group: len(group[1]))
+    if len(dominant_rows) < DOMINANT_FUNCTION_RESULT_MIN_ROWS:
+        return None
+
+    supporting_row_count = sum(
+        len(rows) for label, rows in function_row_groups if label != dominant_label
+    )
+    if len(dominant_rows) < supporting_row_count * DOMINANT_FUNCTION_RESULT_RATIO:
+        return None
+    return dominant_rows
+
+
+def _normalize_pending_output_format(pending_output_format: Optional[str]) -> Optional[str]:
+    normalized_format = str(pending_output_format or '').strip().lower()
+    return normalized_format if normalized_format in GENERATED_FILE_FORMATS else None
+
+
+def resolve_pending_generated_file_format(
+    user_question: str,
+    previous_assistant_content: str,
+) -> Optional[str]:
+    """Carry one unanswered CSV schema clarification forward to the reply that answers it."""
+    if not str(user_question or '').strip():
+        return None
+    if get_requested_artifact_formats(user_question):
+        return None
+    if not _assistant_reply_requests_clarification(previous_assistant_content):
+        return None
+    return GENERATED_FILE_FORMAT_CSV
 
 
 def _assistant_reply_requests_clarification(assistant_content: str) -> bool:
@@ -1030,7 +1104,7 @@ def _format_structured_cell(value: Any) -> str:
 
 
 def _build_structured_rows_heading(row_source: str) -> str:
-    if row_source == 'structured function result':
+    if row_source in FUNCTION_RESULT_ROW_SOURCES:
         return 'Structured function results'
     return 'Structured response rows'
 

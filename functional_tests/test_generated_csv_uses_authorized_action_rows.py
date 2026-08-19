@@ -2,8 +2,8 @@
 #!/usr/bin/env python3
 """
 Functional test for CSV artifacts built from authorized action rows.
-Version: 0.260.007
-Implemented in: 0.260.007
+Version: 0.260.008
+Implemented in: 0.260.007; earlier-turn reach-back and clarification carry-forward in 0.260.008
 
 Two customer conversations asked a telemetry agent to retrieve BatteryVoltage1
 and create a CSV. The agent retrieved 900 authorized samples, but the published
@@ -17,9 +17,14 @@ Three defects combined:
      model said it could not attach files and pasted a sample instead.
   3. A turn whose reply was the schema clarification still published a CSV,
      built from whatever incidental discovery rows the turn happened to produce.
+  4. Discovery and lookup calls were merged into the retrieved dataset, adding
+     junk rows and a Source action column to the artifact.
+  5. Nothing reached back to data an earlier turn already gathered, so a
+     follow-up "create a csv" and an answered clarification both had no rows.
 
 This test ensures the authorized rows win over an excerpt, a deliberate
-assistant table still wins, and a clarification turn publishes nothing.
+assistant table still wins, a clarification turn publishes nothing, and an
+answered clarification resumes the original request using the earlier rows.
 """
 
 import sys
@@ -38,6 +43,8 @@ from test_support.versioning import assert_app_version_at_least  # noqa: E402
 from functions_generated_file_exports import (  # noqa: E402
     build_generated_file_export,
     build_generated_file_output_guidance,
+    extract_authorized_function_result_rows,
+    resolve_pending_generated_file_format,
 )
 
 IMPLEMENTED_VERSION = '0.260.007'
@@ -67,6 +74,33 @@ TELEMETRY_FUNCTION_RESULTS = [{
     'success': True,
     'function_result': {'row_count': 900, 'rows': TELEMETRY_ROWS},
 }]
+# The real turn also ran two discovery calls before paging the history.
+FULL_TURN_FUNCTION_RESULTS = [
+    {
+        'plugin_name': 'YamcsPlugin',
+        'function_name': 'list_instances',
+        'success': True,
+        'function_result': {'rows': [{'name': 'simulator', 'state': 'RUNNING'}]},
+    },
+    {
+        'plugin_name': 'YamcsPlugin',
+        'function_name': 'list_parameters',
+        'success': True,
+        'function_result': {'rows': [{'qualified_name': '/YSS/SIMULATOR/BatteryVoltage1', 'units': 'V'}]},
+    },
+    {
+        'plugin_name': 'YamcsPlugin',
+        'function_name': 'list_parameter_history',
+        'success': True,
+        'function_result': {'rows': TELEMETRY_ROWS[:450]},
+    },
+    {
+        'plugin_name': 'YamcsPlugin',
+        'function_name': 'list_parameter_history',
+        'success': True,
+        'function_result': {'rows': TELEMETRY_ROWS[450:]},
+    },
+]
 TELEMETRY_QUESTION = (
     'grab BatteryVoltage1 over the last 15 minutes, provide high granularity and create a csv'
 )
@@ -224,6 +258,142 @@ def test_answered_turn_still_publishes_action_rows():
     )
 
 
+def test_discovery_calls_do_not_dilute_the_retrieved_dataset():
+    """Lookup and discovery calls in the same turn must not become artifact rows."""
+    print('Testing dominant action-result selection...')
+    assert_app_version_at_least(IMPLEMENTED_VERSION)
+
+    rows = extract_authorized_function_result_rows(FULL_TURN_FUNCTION_RESULTS)
+
+    assert_true(
+        len(rows) == len(TELEMETRY_ROWS),
+        f'Expected only the {len(TELEMETRY_ROWS)} retrieved samples; got {len(rows)}.',
+    )
+    assert_true(
+        list(rows[0]) == list(TELEMETRY_COLUMNS),
+        'Expected the telemetry schema without a Source action column from discovery calls.',
+    )
+
+
+def test_paged_calls_to_one_action_stay_one_dataset():
+    """Two pages of the same action are one dataset, not two labeled groups."""
+    print('Testing paged action-result grouping...')
+    assert_app_version_at_least(IMPLEMENTED_VERSION)
+
+    paged_results = [
+        {
+            'plugin_name': 'YamcsPlugin',
+            'function_name': 'list_parameter_history',
+            'success': True,
+            'function_result': {'rows': TELEMETRY_ROWS[:450]},
+        },
+        {
+            'plugin_name': 'YamcsPlugin',
+            'function_name': 'list_parameter_history',
+            'success': True,
+            'function_result': {'rows': TELEMETRY_ROWS[450:]},
+        },
+    ]
+    rows = extract_authorized_function_result_rows(paged_results)
+
+    assert_true(len(rows) == len(TELEMETRY_ROWS), 'Expected both pages to be kept.')
+    assert_true(
+        'Source action' not in rows[0],
+        'Expected one action to stay one dataset without a Source action column.',
+    )
+
+
+def test_followup_request_reuses_earlier_turn_rows():
+    """'create a csv' must reach back to data an earlier turn already gathered."""
+    print('Testing earlier-turn reach-back...')
+    assert_app_version_at_least(IMPLEMENTED_VERSION)
+
+    export_payload = build_generated_file_export(
+        'create a csv',
+        'Here is the CSV of the BatteryVoltage1 samples I retrieved.',
+        function_results=[],
+        prior_function_results_loader=lambda: FULL_TURN_FUNCTION_RESULTS,
+    )
+
+    assert_true(export_payload is not None, 'Expected the follow-up request to publish an artifact.')
+    assert_true(
+        export_payload['row_count'] == len(TELEMETRY_ROWS),
+        'Expected the earlier turn\'s full result set to be reused.',
+    )
+    assert_true(
+        export_payload['row_source'] == 'earlier action result',
+        'Expected reused rows to declare their earlier-turn provenance.',
+    )
+
+
+def test_current_turn_rows_are_never_double_counted():
+    """The reach-back must not run when the turn gathered its own rows."""
+    print('Testing reach-back suppression when the turn has data...')
+    assert_app_version_at_least(IMPLEMENTED_VERSION)
+
+    export_payload = build_generated_file_export(
+        'create a csv',
+        'Retrieved the archive window and prepared the export.',
+        function_results=FULL_TURN_FUNCTION_RESULTS,
+        prior_function_results_loader=lambda: FULL_TURN_FUNCTION_RESULTS,
+    )
+
+    assert_true(export_payload is not None, 'Expected the request to publish an artifact.')
+    assert_true(
+        export_payload['row_count'] == len(TELEMETRY_ROWS),
+        'Expected current-turn rows only, with no earlier-turn rows appended.',
+    )
+    assert_true(
+        export_payload['row_source'] == 'structured function result',
+        'Expected current-turn provenance when the turn gathered its own rows.',
+    )
+
+
+def test_answering_the_clarification_publishes_the_csv():
+    """Answering the schema clarification must resume the original CSV request."""
+    print('Testing clarification answer carry-forward...')
+    assert_app_version_at_least(IMPLEMENTED_VERSION)
+
+    pending_format = resolve_pending_generated_file_format(
+        'yes, one row per sample',
+        CLARIFICATION_REPLY,
+    )
+    assert_true(pending_format == 'csv', 'Expected the answered clarification to resume a CSV request.')
+
+    export_payload = build_generated_file_export(
+        'yes, one row per sample',
+        'Understood, one row per sample.',
+        function_results=[],
+        prior_function_results_loader=lambda: FULL_TURN_FUNCTION_RESULTS,
+        pending_output_format=pending_format,
+    )
+
+    assert_true(export_payload is not None, 'Expected the answered clarification to publish the CSV.')
+    assert_true(
+        export_payload['row_count'] == len(TELEMETRY_ROWS),
+        'Expected the answered clarification to export the already-gathered samples.',
+    )
+
+
+def test_pending_clarification_does_not_override_a_new_request():
+    """A reply that asks for another format or follows no clarification carries nothing."""
+    print('Testing pending clarification boundaries...')
+    assert_app_version_at_least(IMPLEMENTED_VERSION)
+
+    assert_true(
+        resolve_pending_generated_file_format('actually make it a pdf', CLARIFICATION_REPLY) is None,
+        'Expected a different requested format to cancel the pending CSV request.',
+    )
+    assert_true(
+        resolve_pending_generated_file_format('yes, one row per sample', 'Here are the results.') is None,
+        'Expected no pending request when the previous turn asked nothing.',
+    )
+    assert_true(
+        resolve_pending_generated_file_format('', CLARIFICATION_REPLY) is None,
+        'Expected an empty reply to carry no pending request.',
+    )
+
+
 def test_csv_guidance_states_the_publication_contract():
     """CSV must receive the same publication contract JSON and XML already state."""
     print('Testing CSV publication guidance parity...')
@@ -259,6 +429,12 @@ def run_tests() -> bool:
         test_partial_excerpt_of_larger_result_is_still_replaced,
         test_clarification_turn_publishes_no_artifact,
         test_answered_turn_still_publishes_action_rows,
+        test_discovery_calls_do_not_dilute_the_retrieved_dataset,
+        test_paged_calls_to_one_action_stay_one_dataset,
+        test_followup_request_reuses_earlier_turn_rows,
+        test_current_turn_rows_are_never_double_counted,
+        test_answering_the_clarification_publishes_the_csv,
+        test_pending_clarification_does_not_override_a_new_request,
         test_csv_guidance_states_the_publication_contract,
     ]
 
