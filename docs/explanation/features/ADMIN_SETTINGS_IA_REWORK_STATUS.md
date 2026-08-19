@@ -22,8 +22,8 @@ Development ─── feature/admin-settings-ia ──┬── #1297 stage 1   
                                                       └──► final PR ──► Development
 ```
 
-Current version: **0.260.016**. Fingerprint: **462 field names / 110 card ids**.
-Navigation: **14 groups / 44 tabs / 88 sections**. Stage D is complete.
+Current version: **0.260.017**. Fingerprint: **462 field names / 116 card ids**.
+Navigation: **14 groups / 44 tabs / 93 sections**. Stages D and E are complete.
 
 ### Shipped
 
@@ -81,10 +81,10 @@ template uncomposed while referencing a partial-backed card or field.
 
 ---
 
-## Next: Stage D — the risky one, in progress
+## Stage D — re-homing the cards — complete
 
-Re-home cards into the target groups, **one group per commit**, running the
-field contract test on each.
+Cards were re-homed into the target groups, one group per pull request, running
+the field contract test and the full regression set on each.
 
 ### Proven pattern
 
@@ -136,6 +136,50 @@ The pane was 1,622 lines and needed three things the tools could not do:
   fields are all radio groups inside the migration card, which stayed put.
 - **Shared controls.** One save button, one status line and one operational
   warning serve all five tabs.
+
+### Stage E: the mixed card and the role roster
+
+**`system-settings-section` is gone.** It mixed five unrelated concerns under
+one heading. Each moved to the tab that owns it, wrapped in a new card, with the
+field markup carried across byte-for-byte:
+
+| Field | New home |
+|---|---|
+| `max_file_size_mb` | Workspaces → Files & Sharing |
+| `conversation_history_limit` | Chat → Chat Experience |
+| `default_system_prompt` | Chat → Chat Experience |
+| `access_denied_message` | Security → Access & Roles |
+| idle timeout (4 fields) | stays in Security → Session, card renamed `idle-timeout-section` |
+
+Splitting a card changes card ids but not field names, which is why the field
+contract passed unchanged. Card ids are structural; **field names are the
+breaking surface** and the contract test tracks only those, deliberately.
+
+**The Access & Roles roster** gathers all ten `require_member_of_*` switches,
+which are spread over seven tabs. It is built at runtime by
+`admin_access_roles_roster.js` from `input[name^="require_member_of_"]`, not
+from a list, so a new role requirement appears automatically.
+
+Each row is a mirror carrying **no name attribute**, following the existing
+proxy convention, so the setting is still posted exactly once. Sync is two-way:
+the mirror drives the canonical input and dispatches a `change` event, and the
+canonical input updates the mirror when changed on its own tab.
+
+### A structural guard worth keeping
+
+`test_every_pane_partial_is_balanced` checks `<div>` and `<section>` balance in
+every pane. An unbalanced pane does not fail to render — it silently nests the
+panes that follow it, so the failure surfaces somewhere unrelated and confusing.
+This was found the hard way: a stray `</div>` in `access-roles.html` made a
+Send Feedback test fail. Verified against a deliberately broken pane.
+
+### Nav order must match markup order
+
+`test_admin_settings_sidebar_card_parity` requires the nav map to list sections
+in the same order the cards appear in the pane. Adding a card to a pane means
+inserting it at the matching position in the map, not appending.
+
+
 
 ### Group-shared regions
 
@@ -232,28 +276,24 @@ every-line-accounted-for guarantee as the split tool. Two behaviours matter:
 - **The gap after a card travels with it**, which is what correctly routes an
   interleaved modal to the tab that owns its trigger.
 
-### Remaining
-
-Three complications found while splitting:
+### Complications, all now resolved
 
 - **I1** Modals are interleaved *between* cards, not collected at the end. Each
-  modal moves with the tab that owns its trigger.
-- **I2** Three cards are nested inside other cards and must move with their
-  parents: `conversation-contents-drawer-section` (inside chat file uploads),
+  modal moves with the tab that owns its trigger. Where a modal is shared by
+  cards that end up in different tabs, it goes to the shell instead.
+- **I2** Some cards are nested inside other cards and move with their parents:
+  `conversation-contents-drawer-section` (inside chat file uploads),
   `content-understanding-section` and `office-embedded-image-section` (inside
-  document intelligence). All three land in the same target tab as their parent.
-- **I4** The Data Management migration workflow is ~985 lines of non-card markup
-  forming one unit. Split it across Backup/Migrate/Restore/Jobs **last and on
-  its own**.
+  document intelligence). The card scanner skips card bodies, so this is
+  automatic.
+- **I4** The Data Management migration workflow is one `<section>` of non-card
+  markup. It was split last and on its own, driven from explicit line ranges.
 
-## Then Stage E
+## Stage E — complete
 
-- Split `system-settings-section`: `max_file_size_mb` → Workspaces;
-  `conversation_history_limit` and `default_system_prompt` → Chat; idle timeout
-  fields → Security; `access_denied_message` → Security. **No renames.**
-- Access and Roles roster mirroring the 10 `require_member_of_*` toggles, built
-  on the Stage B proxy handling. Mirrors carry **no `name` attribute** — the
-  field contract test enforces this.
+- `system-settings-section` split to four destinations, no renames.
+- Access & Roles roster mirroring the ten `require_member_of_*` toggles, built
+  from the page rather than a list. Mirrors carry **no `name` attribute**.
 
 ---
 

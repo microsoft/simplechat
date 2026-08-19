@@ -2,6 +2,25 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.260.017)**
+
+#### New Features
+
+*   **All App Role Requirements In One Place**
+    *   Ten settings across seven tabs can each require an Entra app role, which made the overall access policy impossible to read without hunting through the whole of Admin Settings.
+    *   **Security → Access & Roles** now lists every one of them with a switch and a link to the setting in its own tab. Changing a switch here changes the setting itself.
+    *   The list is built from the page, so a new role requirement added anywhere appears here automatically.
+    *   (Ref: `app-role-requirements-section`, `admin_access_roles_roster.js`)
+
+#### User Interface Enhancements
+
+*   **System Settings Card Split To Where Each Setting Belongs**
+    *   One card mixed maximum file size, conversation history, idle timeout, the default system prompt and the access denied message — five unrelated concerns under one heading.
+    *   Maximum File Size is now in **Workspaces → Files & Sharing**, Conversation History and Default System Prompt in **Chat → Chat Experience**, and Access Denied Message in **Security → Access & Roles**.
+    *   What remains in **Security → Session** is the idle timeout, and the card is now named for it.
+    *   Every setting keeps its saved value; nothing needs re-entering.
+    *   (Ref: `idle-timeout-section`, `file-size-limit-section`, `conversation-history-section`, `default-system-prompt-section`, `access-denied-message-section`)
+
 ### **(v0.260.016)**
 
 #### User Interface Enhancements

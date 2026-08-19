@@ -1,24 +1,11 @@
             <div class="tab-pane fade{% if admin_landing_tab == 'session' %} show active{% endif %}" id="session" role="tabpanel" aria-labelledby="session-tab">
-                <div class="card p-3 mb-3" id="system-settings-section">
+                <div class="card p-3 mb-3" id="idle-timeout-section">
                     <h5>
-                        <i class="bi bi-gear-fill me-2"></i>System Settings
+                        <i class="bi bi-hourglass-split me-2"></i>Idle Session Timeout
                     </h5>
                     <p class="text-muted">
-                        System-level settings that control application behavior, including file size limits, conversation history,
-                        and default prompts.
+                        Warn inactive users and sign them out after a period of inactivity.
                     </p>
-                    <div class="mb-3">
-                        <label for="max_file_size_mb" class="form-label">Maximum File Size (MB)</label>
-                        <input type="number" class="form-control" id="max_file_size_mb" name="max_file_size_mb"
-                            value="{{ settings.max_file_size_mb }}">
-                    </div>
-                    <div class="mb-3">
-                        <label for="conversation_history_limit" class="form-label">
-                            Conversation History Limit
-                        </label>
-                        <input type="number" class="form-control" id="conversation_history_limit"
-                            name="conversation_history_limit" value="{{ settings.conversation_history_limit }}">
-                    </div>
                     <div class="form-check form-switch mb-3">
                         <input
                             type="checkbox"
@@ -71,17 +58,6 @@
                                 value="{{ settings.idle_warning_message | default("You've been inactive for a while.") }}">
                             <small class="form-text text-muted">Custom text shown at the top of the idle warning dialog.</small>
                         </div>
-                    </div>
-                    <div class="mb-3">
-                        <label for="default_system_prompt" class="form-label">Default System Prompt</label>
-                        <textarea class="form-control" id="default_system_prompt" name="default_system_prompt"
-                            rows="5">{{ settings.default_system_prompt }}</textarea>
-                    </div>
-                    <div class="mb-3">
-                        <label for="access_denied_message" class="form-label">Access Denied Message</label>
-                        <small class="text-muted d-block mb-1">Shown to signed-in users who lack the required roles. Use Enter for line breaks.</small>
-                        <textarea class="form-control" id="access_denied_message" name="access_denied_message"
-                            rows="3">{{ settings.access_denied_message }}</textarea>
                     </div>
                 </div>
             </div>
