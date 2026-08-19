@@ -380,7 +380,6 @@ def build_inventory() -> dict[str, Any]:
     """Build the complete application surface inventory."""
     chat_controls, sub_elements = extract_chat_controls()
     inventory = {
-        "generated_from_version": extract_version(),
         "capabilities": extract_capabilities(),
         "admin_tabs": extract_admin_tabs(),
         "actions": extract_actions(),
@@ -399,7 +398,6 @@ def build_inventory() -> dict[str, Any]:
         "feature_surfaces": len(inventory["feature_surfaces"]),
     }
     return {
-        "generated_from_version": inventory["generated_from_version"],
         "counts": inventory["counts"],
         "capabilities": inventory["capabilities"],
         "admin_tabs": inventory["admin_tabs"],
@@ -412,10 +410,14 @@ def build_inventory() -> dict[str, Any]:
 
 
 def dump_yaml(data: dict[str, Any]) -> str:
-    """Serialize inventory data to deterministic YAML."""
-    version = data["generated_from_version"]
+    """Serialize inventory data to deterministic YAML.
+
+    The application version is deliberately NOT recorded here. SimpleChat bumps
+    VERSION on every change, so embedding it would make this file differ on every
+    pull request and turn the docs coverage sync check into constant noise. This
+    file should change only when the application surface itself changes.
+    """
     body_data = dict(data)
-    del body_data["generated_from_version"]
     if yaml is not None:
         body = yaml.safe_dump(
             body_data,
@@ -426,7 +428,7 @@ def dump_yaml(data: dict[str, Any]) -> str:
         )
     else:
         body = dump_yaml_manually(body_data)
-    return f'{GENERATED_HEADER}generated_from_version: "{version}"\n{body}'
+    return f"{GENERATED_HEADER}{body}"
 
 
 def dump_yaml_manually(data: Any, indent: int = 0) -> str:
