@@ -2,6 +2,16 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.260.009)**
+
+#### New Features
+
+*   **Admin Settings Form Field Contract Is Now Enforced**
+    *   Admin Settings submits one form and the backend reads every value by field name, so the set of `name` attributes is the real contract between the template and the settings backend. Renaming or dropping one silently stops that setting from saving, with no error anywhere.
+    *   A new test pins every field name against a committed baseline, and fails the build if one disappears. Adding settings is unaffected; removing one now requires regenerating the baseline in the same commit, which makes it a visible, reviewed decision.
+    *   The same test rejects duplicate field names, which is what prevents a mirrored control from submitting a value twice.
+    *   (Ref: `test_admin_settings_field_contract.py`, `admin_settings_field_baseline.json`)
+
 ### **(v0.260.008)**
 
 #### New Features
