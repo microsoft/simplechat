@@ -567,7 +567,12 @@ function renderConversationDocuments(documents) {
 }
 
 async function refreshConversationDocuments(options = {}) {
-    const conversationId = String(options.conversationId || getCurrentConversationId()).trim();
+    const requestedConversationId = String(options.conversationId || "").trim();
+    // An empty id from an explicit context reset (New chat) must clear the pane
+    // instead of silently reloading the conversation the user is leaving.
+    const allowCurrentConversationFallback = options.allowCurrentConversationFallback !== false;
+    const conversationId = requestedConversationId
+        || (allowCurrentConversationFallback ? getCurrentConversationId() : "");
     const conversationKind = String(options.conversationKind || "").trim();
     const requestToken = ++metadataRequestToken;
     const autoOpen = Boolean(options.autoOpen);
@@ -735,10 +740,12 @@ function initializeConversationContents() {
         }
     });
     window.addEventListener("chat:conversation-context-changed", event => {
+        const detail = event.detail || {};
         void refreshConversationDocuments({
-            conversationId: event.detail?.conversationId || "",
+            conversationId: detail.conversationId || "",
+            allowCurrentConversationFallback: false,
             autoOpen: false,
-            conversationKind: event.detail?.conversationKind || "",
+            conversationKind: detail.conversationKind || "",
         });
     });
     window.addEventListener("chat:conversation-documents-refresh", event => {
