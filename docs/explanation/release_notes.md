@@ -2,6 +2,16 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.260.004)**
+
+#### Bug Fixes
+
+*   **New Chat Now Clears The Conversation Documents Side Pane**
+    *   Fixed the conversation side drawer keeping the previous conversation's documents after clicking **New chat**. The stale list, the header documents toggle, and its count badge all stayed visible, and the drawer would not close.
+    *   Root cause was the New chat reset signal carrying a null conversation id while `window.currentConversationId` still pointed at the conversation being left, so the drawer fell back to the old conversation and re-fetched its documents instead of clearing. The **Contents** pane was unaffected because it resets from a separate chatbox observer.
+    *   The **Documents** pane now empties out and the drawer closes, matching **Contents** behavior. Switching between existing conversations is unchanged, and one redundant conversation-metadata request per New chat click is eliminated.
+    *   (Ref: `chat-conversation-contents.js`, `refreshConversationDocuments`, `chat:conversation-context-changed`, `updateDrawerTriggers`, Fixes #1298)
+
 ### **(v0.260.003)**
 
 #### Bug Fixes
