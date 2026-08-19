@@ -2,8 +2,8 @@
 """
 UI test for Tab autocomplete in the collaborative @ mention menu.
 
-Version: 0.260.004
-Implemented in: 0.260.004
+Version: 0.260.005
+Implemented in: 0.260.005
 
 This test ensures that pressing Tab while the chat composer's @ mention menu is
 open accepts the highlighted suggestion and keeps focus in the message box, that

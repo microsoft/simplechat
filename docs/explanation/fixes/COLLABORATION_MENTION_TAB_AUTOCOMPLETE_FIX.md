@@ -1,6 +1,6 @@
 # Collaboration Mention Tab Autocomplete Fix
 
-Fixed in version: **0.260.004**
+Fixed in version: **0.260.005**
 
 Related issue: [#1299](https://github.com/microsoft/simplechat/issues/1299)
 
@@ -40,7 +40,7 @@ A related accessibility gap surfaced in the same code path: `#collaboration-ment
 - Paired `aria-activedescendant` with `aria-controls` and `aria-autocomplete="list"` on `#user-input`. ARIA 1.2 only resolves `aria-activedescendant` from a focused textbox when the referenced option is a descendant of the element named by `aria-controls`, and `#collaboration-mention-menu` is a sibling of the composer rather than a descendant. All three attributes are applied only while the menu is open and removed when it closes, so the composer stays a plain textbox the rest of the time.
 - Kept `aria-selected` and `aria-activedescendant` in sync during arrow-key navigation, cleared the combobox attributes when the menu closes or shows the empty state, and scrolled the highlighted option into view inside the height-capped (`max-height: 240px`) menu.
 - Marked the "No matching participants..." row as a disabled option so the `role="listbox"` container keeps only valid children.
-- Updated `config.py` to version `0.260.004` for this fix.
+- Updated `config.py` to version `0.260.005` for this fix.
 
 ### Behavior Matrix
 

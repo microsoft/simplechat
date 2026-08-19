@@ -1,8 +1,8 @@
 # test_collaboration_mention_tab_autocomplete.py
 """
 Functional test for Tab autocomplete in the collaborative @ mention menu.
-Version: 0.260.004
-Implemented in: 0.260.004
+Version: 0.260.005
+Implemented in: 0.260.005
 
 This test ensures the chat composer's @ mention menu accepts the highlighted
 suggestion when the user presses Tab, that Shift+Tab and the empty-results state
@@ -191,11 +191,11 @@ def test_composer_keydown_is_wired_to_the_chat_input():
 
 
 def test_version_is_at_least_implementation_version():
-    """The fix ships in 0.260.004 or later."""
+    """The fix ships in 0.260.005 or later."""
     print('Testing application version...')
     assert_app_version_at_least(
-        '0.260.004',
-        reason='Tab autocomplete for collaborative @ mentions shipped in 0.260.004.',
+        '0.260.005',
+        reason='Tab autocomplete for collaborative @ mentions shipped in 0.260.005.',
     )
     print('Test passed!')
     return True
