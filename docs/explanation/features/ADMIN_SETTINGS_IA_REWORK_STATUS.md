@@ -15,13 +15,14 @@ and merged in one final reviewed PR.
 ```
 Development ─── feature/admin-settings-ia ──┬── #1297 stage 1    MERGED
                                             ├── #1304 stage A+B  MERGED
-                                            ├── stage C          next
+                                            ├── #1306 guardrail   MERGED
+                                            ├── stage C          in review
                                             ├── stage D
                                             └── stage E
                                                       └──► final PR ──► Development
 ```
 
-Current version: **0.260.009**. Fingerprint: **462 field names / 110 card ids**.
+Current version: **0.260.010**. Fingerprint: **462 field names / 110 card ids**.
 
 ### Shipped
 
@@ -31,6 +32,7 @@ Current version: **0.260.009**. Fingerprint: **462 field names / 110 card ids**.
 | A | 12 cross-tab links converted from tab-coupled `switchTab` to `data-admin-link` card targets; two were already broken; `switchTab` removed |
 | B | `data-requires` dependency announcements with inline mirror and link; File Sync and Permissions wired |
 | — | Form field contract enforced in CI |
+| C | Navigation moved into `admin_settings_nav.py` as groups → tabs → sections; both navigations render from it; group level with persisted collapse state and group pills; three-level search |
 
 ---
 
@@ -44,6 +46,7 @@ silently stops a setting from saving with no error anywhere.
 |---|---|
 | **Field contract** | `python -m pytest functional_tests/test_admin_settings_field_contract.py` |
 | Regenerate baseline *(only for a deliberate removal)* | `python functional_tests/test_admin_settings_field_contract.py --update-baseline` |
+| **Navigation map** | `python -m pytest functional_tests/test_admin_settings_nav_map.py` |
 | Composition contract | `python -m pytest functional_tests/test_admin_settings_template_composition.py` |
 | Card links | `python -m pytest functional_tests/test_admin_card_links.py` |
 | Dependencies | `python -m pytest functional_tests/test_admin_settings_dependencies.py` |
@@ -51,8 +54,8 @@ silently stops a setting from saving with no error anywhere.
 | XSS | `python scripts/check_xss_sinks.py --full-file <changed files>` |
 
 **Regression baseline:** the 75 functional test files that reference
-`admin_settings.html` sit at **33 pre-existing failures**. That number must not
-change. To reproduce the list:
+`admin_settings.html` now sit at **32 pre-existing failures**, down from 33
+after stage C fixed a missing navigation entry. That number must not increase. To reproduce the list:
 
 ```
 cd functional_tests
@@ -76,25 +79,17 @@ template uncomposed while referencing a partial-backed card or field.
 
 ---
 
-## Next: Stage C
+## Next: Stage D — the risky one
 
-Add the group navigation level **against the current 18 tabs**, so grouping is
-proven before any card moves.
+Re-home cards into the 14 target groups, **one group per commit**, running the
+field contract test on each. The nav map now makes this a two-part edit: move
+the card markup between partials, and move its entry between tabs in
+`admin_settings_nav.py`. The parity test fails if the two disagree.
 
-1. Group row in the top-tab strip; collapsible group headers in
-   `_sidebar_nav.html` with persisted state.
-2. Three-level sidebar search (group → tab → card).
-3. Legacy hash redirect map inside `showAdminTab`.
+The interim grouping in the map has 12 groups, because Workflow and Data
+Lifecycle have no tabs until their cards move out of Workspaces and Safety.
 
-A server-side nav map is worth introducing here, since both navs need to render
-the same group structure. Note it is **not** needed for link resolution —
-`admin_card_links.js` resolves card → tab from the DOM via
-`closest('.tab-pane')`, which is why links already survive any IA change.
-
-## Then Stage D — the risky one
-
-Re-home cards into the 14 groups, **one group per commit**, running the field
-contract test on each. Three complications found while splitting:
+Three complications found while splitting:
 
 - **I1** Modals are interleaved *between* cards, not collected at the end. Each
   modal moves with the tab that owns its trigger.
