@@ -4,6 +4,7 @@ on:
   pull_request:
     branches:
       - Development
+      - feature/admin-settings-ia  # temporary: Admin Settings IA staging branch
     paths:
       - 'application/**'
       - 'deployers/**'

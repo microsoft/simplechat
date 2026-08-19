@@ -6,6 +6,7 @@ on:
       - main
       - Development
       - Staging
+      - feature/admin-settings-ia  # temporary: Admin Settings IA staging branch
     paths:
       - 'application/single_app/**/*.py'
       - 'scripts/check_swagger_routes.py'

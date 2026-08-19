@@ -15,7 +15,7 @@ on:
   push:
     branches: [ "Development" ]
   pull_request:
-    branches: [ "Development" ]
+    branches: [ "Development", "feature/admin-settings-ia" ]
   workflow_dispatch:
 
 jobs:
