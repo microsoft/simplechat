@@ -10,6 +10,7 @@ admin-only Latest Features tab while the user-facing support catalog remains
 focused on features users can see and control.
 """
 
+import re
 import importlib.util
 import os
 import sys
@@ -17,6 +18,7 @@ import sys
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from test_support.templates import resolve_template_includes
+from test_support.nav import get_group_for_tab, get_tab_ids
 
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -248,8 +250,6 @@ def test_latest_features_template_structure():
     template_content = read_text(ADMIN_TEMPLATE)
 
     required_markers = [
-        'id="latest-features-tab"',
-        'data-bs-target="#latest-features"',
         'id="latest-features"',
         'admin_latest_feature_release_groups',
         '{% for release_group in admin_latest_feature_release_groups %}',
@@ -336,51 +336,70 @@ def test_latest_features_sidebar_navigation():
         raise AssertionError(f'Missing Latest Features sidebar markers: {missing_markers}')
 
     latest_features_index = sidebar_content.index('data-tab="latest-features"')
-    general_index = sidebar_content.index('data-tab="general"')
-    send_feedback_index = sidebar_content.index('data-tab="send-feedback"')
-    assert latest_features_index > general_index, 'Latest Features should appear after General in the admin sidebar'
-    assert latest_features_index > send_feedback_index, 'Latest Features should be the last admin sidebar destination, after Send Feedback'
     assert '<span class="badge bg-warning text-dark text-uppercase ms-2">New</span>' in sidebar_content, 'Sidebar Latest Features item should include a New badge'
+
+    # Tab order is defined once in the nav map, which the sidebar renders from,
+    # so ordering is asserted there rather than against the rendered markup.
+    tab_ids = get_tab_ids()
+    assert tab_ids.index('latest-features') > tab_ids.index('general'), 'Latest Features should appear after General'
+    assert tab_ids.index('latest-features') > tab_ids.index('send-feedback'), 'Latest Features should be the last destination, after Send Feedback'
 
     print('Latest Features sidebar navigation is present')
     return True
 
 
 def test_latest_features_top_nav_priority():
-    """Latest Features should be the last top-nav tab and never default active."""
-    print('Testing Latest Features top-nav placement...')
+    """Latest Features should be the last tab and never default active."""
+    print('Testing Latest Features navigation placement...')
 
     template_content = read_text(ADMIN_TEMPLATE)
+    tab_ids = get_tab_ids()
 
-    latest_features_tab_index = template_content.index('id="latest-features-tab"')
-    general_tab_index = template_content.index('id="general-tab"')
-    send_feedback_tab_index = template_content.index('id="send-feedback-tab"')
-    assert latest_features_tab_index > general_tab_index, 'Latest Features tab should appear after General in top nav'
-    assert latest_features_tab_index > send_feedback_tab_index, 'Latest Features tab should be the last top-nav tab, after Send Feedback'
+    # Navigation order now comes from the nav map, which both the top tab strip
+    # and the sidebar render from, so order is asserted there rather than
+    # against either rendering.
+    assert tab_ids[-1] == 'latest-features', (
+        'Latest Features should be the last tab in the navigation map, '
+        f'got {tab_ids[-1]}'
+    )
+    assert tab_ids.index('latest-features') > tab_ids.index('send-feedback'), (
+        'Latest Features should come after Send Feedback'
+    )
 
-    assert 'id="latest-features-tab" data-bs-toggle="tab" data-bs-target="#latest-features"' in template_content, 'Latest Features top-nav tab missing'
-    assert 'Latest Features <span class="badge bg-warning text-dark text-uppercase ms-2 latest-feature-nav-badge">New</span>' in template_content, 'Latest Features top-nav tab should include a New badge'
+    group = get_group_for_tab('latest-features')
+    assert group is not None and group['id'] == 'help', (
+        f"Latest Features should sit in the Help group, got {group}"
+    )
 
     # Latest Features opened on every visit to Admin Settings, which is why it
-    # now sits last and General is the landing tab instead.
+    # is pinned last and General is the landing tab instead.
     assert 'class="tab-pane fade" id="latest-features" role="tabpanel" aria-labelledby="latest-features-tab"' in template_content, 'Latest Features pane should not be the default active tab'
     assert 'class="tab-pane fade show active" id="general" role="tabpanel" aria-labelledby="general-tab"' in template_content, 'General pane should be the default active tab'
+    assert tab_ids[0] == 'general', 'General should be the first tab in the navigation map'
 
-    print('Latest Features is last in top navigation and not default active')
+    print('Latest Features is last in navigation and not default active')
     return True
 
 
 def test_admin_settings_tab_uniqueness():
-    """Admin settings template should not contain duplicate Security tab controls or extra active panes."""
+    """Every tab must appear exactly once, with exactly one default pane."""
     print('Testing admin settings tab uniqueness...')
 
     template_content = read_text(ADMIN_TEMPLATE)
     normalized_template = ''.join(template_content.split())
+    tab_ids = get_tab_ids()
 
-    assert template_content.count('id="security-tab"') == 1, 'Security tab button should appear exactly once'
+    duplicates = sorted({t for t in tab_ids if tab_ids.count(t) > 1})
+    assert not duplicates, f'Tabs listed more than once in the nav map: {duplicates}'
+
     assert template_content.count('id="security" role="tabpanel"') == 1, 'Security tab pane should appear exactly once'
-    assert template_content.count('tab-pane fade show active') == 1, 'Only one tab pane should be marked show active in top-nav markup'
+    assert template_content.count('tab-pane fade show active') == 1, 'Only one tab pane should be marked show active'
     assert 'Managesecuritysettingsforkeyvaultandothersecurityconfigurations.</p>' in normalized_template, 'Security intro paragraph should be properly closed'
+
+    # Every tab in the map must have a pane to activate.
+    panes = set(re.findall(r'<div class="tab-pane[^"]*" id="([^"]+)"', template_content))
+    missing = sorted(set(tab_ids) - panes)
+    assert not missing, f'Nav map lists tabs with no matching pane: {missing}'
 
     print('Admin settings tab structure is unique and well-formed')
     return True

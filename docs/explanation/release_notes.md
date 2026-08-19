@@ -2,6 +2,29 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.260.010)**
+
+#### New Features
+
+*   **Admin Settings Navigation Is Now Grouped**
+    *   Admin Settings presented 18 tabs in one flat list. Related tabs are now collected under 12 groups such as Appearance, Knowledge, Security and Operations, so the list is scannable and has room to grow.
+    *   In the sidebar, groups are collapsible and remember whether you left them open. In the tab layout, a row of group pills filters the tab strip to one group at a time.
+    *   Opening a tab always reveals its group first, so a deep link or a cross-reference can never land you on a pane whose tab is hidden.
+    *   Sidebar search now matches group names as well as tab and setting names, and expands whatever it needs to show a result.
+    *   No settings moved in this release. Every tab keeps its contents; only the navigation around them changed.
+    *   (Ref: `admin_settings_nav.py`, `_sidebar_nav.html`, `admin_settings.html`, `admin_sidebar_nav.js`)
+
+#### Bug Fixes
+
+*   **Shared Conversation File Approvals Is Reachable From The Sidebar**
+    *   The Shared Conversation File Approvals card had no navigation entry, so it could only be found by scrolling the AI Models tab. It is now listed like every other setting.
+    *   (Ref: `shared-conversation-file-approvals-section`, navigation map)
+
+*   **Navigation Labels And Order Can No Longer Drift**
+    *   The tab strip and the sidebar each maintained the same structure by hand and had diverged: tab order differed between them, and Agents, Custom Pages and Search and Extract each showed a different name depending on which navigation you used.
+    *   Both now render from one definition, so a change is made once and appears in both.
+    *   (Ref: `admin_settings_nav.py`, `test_admin_settings_nav_map.py`)
+
 ### **(v0.260.009)**
 
 #### New Features

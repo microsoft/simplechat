@@ -34,7 +34,9 @@ import ast
 import re
 from pathlib import Path
 from test_support.versioning import assert_app_version_at_least
+from test_support.nav import iter_tabs
 from test_support.templates import compose_if_admin_settings
+from test_support.nav import iter_tabs
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -413,7 +415,6 @@ def test_admin_ui_exposes_data_management_without_external_assets():
     sidebar = read_text(SIDEBAR_TEMPLATE)
 
     for marker in [
-        'id="data-management-tab"',
         'id="data-management"',
         'id="data-management" role="tabpanel" aria-labelledby="data-management-tab" data-testid="data-management-tab-pane" data-ignore-settings-change="true"',
         'id="data-management-save-settings-btn"',
@@ -563,15 +564,40 @@ def test_admin_ui_exposes_data_management_without_external_assets():
     assert "saveButton.classList.toggle('d-none', isDataManagementActive);" in admin_settings_js
     assert "window.updateAdminSettingsSaveButtonState = updateSaveButtonState;" in admin_settings_js
     assert '<span class="nav-text">Target Cosmos</span>' not in sidebar
-    assert '<span class="nav-text">Migration</span>' in sidebar
-    assert '<span class="nav-text">Backup, Migrate &amp; Restore</span>' in sidebar
+    # Sidebar labels now come from the navigation map, which both the sidebar
+    # and the top tab strip render from.
+    data_management_sections = {
+        section["label"]
+        for _, tab in iter_tabs()
+        if tab["id"] == "data-management"
+        for section in tab["sections"]
+    }
+    assert "Target Cosmos" not in data_management_sections
+    assert "Migration" in data_management_sections
+    assert any(
+        tab["id"] == "data-management" and tab["label"] == "Backup, Migrate &amp; Restore"
+        for _, tab in iter_tabs()
+    ), "Data Management tab label missing from the navigation map"
     assert 'cdn.jsdelivr.net' not in read_text(ADMIN_JS)
-    assert 'data-tab="data-management"' in sidebar
-    assert 'data-section="data-management-readiness-section"' in sidebar
-    assert 'data-section="data-management-backup-section"' in sidebar
-    assert 'data-section="data-management-cosmos-editor-section"' in sidebar
-    assert 'data-section="data-management-backup-inventory-section"' in sidebar
-    assert 'data-section="data-management-migration-section"' in sidebar
+    assert any(tab["id"] == "data-management" for _, tab in iter_tabs()), (
+        "Data Management tab missing from the navigation map"
+    )
+    data_management_section_ids = {
+        section["id"]
+        for _, tab in iter_tabs()
+        if tab["id"] == "data-management"
+        for section in tab["sections"]
+    }
+    for expected_section in (
+        "data-management-readiness-section",
+        "data-management-backup-section",
+        "data-management-cosmos-editor-section",
+        "data-management-backup-inventory-section",
+        "data-management-migration-section",
+    ):
+        assert expected_section in data_management_section_ids, (
+            f"Navigation map is missing {expected_section}"
+        )
 
 
 if __name__ == "__main__":
