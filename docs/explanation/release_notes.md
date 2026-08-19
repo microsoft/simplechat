@@ -2,6 +2,17 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.229)**
+
+#### Bug Fixes
+
+*   **Citations No Longer Eat the Line Break After Them**
+    *   Text that came after an inline document citation was jammed onto the end of the closing parenthesis instead of starting a new paragraph — you would see `(Source: uploading_documents.md, Page: 1)Thank you, Paul.` with no break at all.
+    *   The citation parser matched the `[#citation-id]` marker along with the whitespace that followed it, then rebuilt the citation without putting that whitespace back. Because this runs on the raw markdown before it is rendered, a deleted blank line did not just remove a space — it changed how the rest of the block was read, so a paragraph after a cited list item got absorbed into the list item itself.
+    *   Spacing is now restored exactly as the model wrote it. Paragraphs, bullets, and numbered lists after a citation render in their intended structure, a citation followed by more text on the same line keeps its space, and back-to-back citations stop colliding. Copied and exported message text keeps its line breaks for the same reason.
+    *   The cleanup pass for leftover citation markers had the same flaw in reverse and could swallow the blank line *before* a stray marker. It now only removes horizontal spacing, or the marker's whole line when it sits on one.
+    *   (Ref: #1289, `chat-citations.js`, `parseCitations()`, chat message rendering)
+
 ### **(v0.250.228)**
 
 #### Bug Fixes
