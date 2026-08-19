@@ -395,18 +395,50 @@ ADMIN_NAV = [
         "icon": "bi-database",
         "tabs": [
             {
-                "id": "data-management",
-                "label": "Backup, Migrate &amp; Restore",
-                "icon": "bi-database-check",
+                # Schedule, storage and encryption are cards nested inside the
+                # backup card, so they stay with it.
+                "id": "backup",
+                "label": "Backup",
+                "icon": "bi-archive",
                 "sections": [
                     {"id": "data-management-readiness-section", "label": "Start Here", "icon": "bi-compass"},
                     {"id": "data-management-backup-section", "label": "Backup", "icon": "bi-archive"},
                     {"id": "data-management-schedule-section", "label": "Schedule", "icon": "bi-calendar-event"},
                     {"id": "data-management-storage-section", "label": "Storage", "icon": "bi-hdd"},
                     {"id": "data-management-encryption-section", "label": "Encryption", "icon": "bi-key"},
+                ],
+            },
+            {
+                "id": "migrate",
+                "label": "Migrate",
+                "icon": "bi-arrow-left-right",
+                "sections": [
                     {"id": "data-management-migration-section", "label": "Migration", "icon": "bi-arrow-left-right"},
-                    {"id": "data-management-cosmos-editor-section", "label": "Cosmos Editor", "icon": "bi-database-exclamation"},
+                ],
+            },
+            {
+                "id": "restore",
+                "label": "Restore",
+                "icon": "bi-box-seam",
+                "sections": [
                     {"id": "data-management-backup-inventory-section", "label": "Backup Inventory &amp; Restore", "icon": "bi-box-seam"},
+                ],
+            },
+            {
+                # A direct database editor. It is a repair tool that belongs
+                # with the backup and restore tooling it shares a module with.
+                "id": "cosmos-editor",
+                "label": "Cosmos Editor",
+                "icon": "bi-database-exclamation",
+                "sections": [
+                    {"id": "data-management-cosmos-editor-section", "label": "Cosmos Editor", "icon": "bi-database-exclamation"},
+                ],
+            },
+            {
+                "id": "jobs",
+                "label": "Jobs",
+                "icon": "bi-clock-history",
+                "sections": [
                     {"id": "data-management-jobs-section", "label": "Jobs", "icon": "bi-clock-history"},
                 ],
             },

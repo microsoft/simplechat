@@ -157,7 +157,19 @@ function initAdminSidebarNav() {
         }
     } else {
         console.log('initAdminSidebarNav - Found existing active tab, preserving current state:', activeTab.getAttribute('data-tab'));
+        syncAdminGroupSharedRegions(activeTab.getAttribute('data-tab'));
     }
+
+    // Clicking a tab button directly does not go through showAdminTab, so the
+    // shared regions are synced from Bootstrap's own event as well.
+    document.querySelectorAll('button.nav-link[data-bs-target^="#"]').forEach(button => {
+        button.addEventListener('shown.bs.tab', event => {
+            const target = event.target.getAttribute('data-bs-target');
+            if (target) {
+                syncAdminGroupSharedRegions(target.slice(1));
+            }
+        });
+    });
 }
 
 function setupAdminGroupToggles() {
@@ -297,10 +309,41 @@ const LEGACY_TAB_REDIRECTS = {
     'workspaces': 'workspace-types',
     'search-extract': 'web-research',
     'ai-models': 'model-endpoints',
+    'data-management': 'backup',
 };
 
 function resolveAdminTabId(tabId) {
     return LEGACY_TAB_REDIRECTS[tabId] || tabId;
+}
+
+/**
+ * Some groups share one set of controls across all of their tabs, such as the
+ * single save button that serves every Backup & Recovery tab. Those controls
+ * cannot be duplicated into each pane without repeating element ids, and they
+ * cannot sit in one pane because the other tabs would lose them, so they live
+ * outside the panes and are revealed only while their group is active.
+ */
+function syncAdminGroupSharedRegions(tabId) {
+    const regions = document.querySelectorAll('[data-admin-group-shared]');
+    if (!regions.length) {
+        return;
+    }
+
+    // Only one of the two navigations is rendered at a time, so resolve the
+    // owning group from whichever is present. Looking only at the top tab strip
+    // would leave the region hidden for good in the sidebar layout.
+    const tabButton = document.querySelector(`.admin-tab-item[data-admin-group] button[data-bs-target="#${tabId}"]`);
+    let owner = tabButton ? tabButton.closest('[data-admin-group]') : null;
+    if (!owner) {
+        const sidebarLink = document.querySelector(`.admin-nav-tab[data-tab="${tabId}"]`);
+        owner = sidebarLink ? sidebarLink.closest('[data-admin-group]') : null;
+    }
+    const activeGroup = owner ? owner.getAttribute('data-admin-group') : null;
+
+    regions.forEach(region => {
+        const ownerGroup = region.getAttribute('data-admin-group-shared');
+        region.hidden = ownerGroup !== activeGroup;
+    });
 }
 
 function showAdminTab(requestedTabId) {
@@ -333,6 +376,7 @@ function showAdminTab(requestedTabId) {
     
     // Update the hash in URL for deep linking
     window.location.hash = tabId;
+    syncAdminGroupSharedRegions(tabId);
     if (typeof window.updateAdminSettingsSaveButtonState === 'function') {
         window.updateAdminSettingsSaveButtonState();
     }

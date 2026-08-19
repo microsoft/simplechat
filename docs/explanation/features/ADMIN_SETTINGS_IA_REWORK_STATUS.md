@@ -22,8 +22,8 @@ Development ─── feature/admin-settings-ia ──┬── #1297 stage 1   
                                                       └──► final PR ──► Development
 ```
 
-Current version: **0.260.015**. Fingerprint: **462 field names / 110 card ids**.
-Navigation: **14 groups / 40 tabs / 88 sections**.
+Current version: **0.260.016**. Fingerprint: **462 field names / 110 card ids**.
+Navigation: **14 groups / 44 tabs / 88 sections**. Stage D is complete.
 
 ### Shipped
 
@@ -118,10 +118,39 @@ moved from Scale to Security that way.
 | Workflow | **New group**, split out of Workspaces |
 | AI Models | → Model Endpoints (carries the legacy modal and its nested Chat Model card), Embeddings, Image Generation |
 | Agents & Actions | → Agents, Actions, Inbound MCP (whole tab behind `mcp_ui_enabled`) |
+| Backup & Recovery | → Backup, Migrate, Restore, Cosmos Editor, Jobs |
 
-**Only Backup & Recovery is left**, and it is the hardest: complication I4, a
-~985-line migration workflow that must split across Backup / Migrate / Restore
-/ Jobs as one unit.
+**Stage D is complete.** 14 groups, 44 tabs, from 17 flat tabs.
+
+### Backup & Recovery: complication I4, resolved
+
+The pane was 1,622 lines and needed three things the tools could not do:
+
+- **The migration card is a `<section>`, not a `<div>`**, so every div-balancing
+  helper walked straight past it. Its boundaries had to be found by balancing
+  `<section>` instead. This is why the tools reported 5 top-level cards when
+  there were 6.
+- **Eleven dialogs**, six of them opened from JavaScript rather than a button,
+  serving what became five different tabs. All were lifted to the shell.
+  Checked first that none carried a `name=` attribute: the pane's twelve form
+  fields are all radio groups inside the migration card, which stayed put.
+- **Shared controls.** One save button, one status line and one operational
+  warning serve all five tabs.
+
+### Group-shared regions
+
+Shared controls cannot be copied into each pane (duplicate element ids, and the
+JavaScript module would bind to the wrong one) and cannot live in one pane (an
+inactive pane is hidden, so the other four tabs lose the save button). They now
+sit outside the panes in a region marked `data-admin-group-shared="<group>"`,
+revealed only while that group is active.
+
+`syncAdminGroupSharedRegions()` resolves the owning group from **either**
+navigation. Reading only the top tab strip was a real bug: that strip is not
+rendered at all in the sidebar layout, so the Backup & Recovery save button
+would have been hidden permanently. Verified against a simulated DOM in both
+layouts.
+
 
 ### Card container ids are not the nav section ids
 
