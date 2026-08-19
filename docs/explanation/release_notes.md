@@ -2,6 +2,25 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.260.003)**
+
+#### Bug Fixes
+
+*   **Data Management Timeline Steps Now Show Their Own Status**
+    *   Fixed completed job steps showing a `running` badge on the Data Management job timeline. Events such as "Cosmos DB export step completed" and "Migration reconciliation completed" now read `completed`.
+    *   Root cause was `_set_job_progress` stamping the **job** status onto every step event it recorded, so a finished step inherited `running` because the job itself was still running.
+    *   Step status is now decoupled from job status: steps that start report `running`, steps that finish report `completed`, and the job continues running until it genuinely finishes.
+    *   Applies to backup, restore, and migration timelines.
+    *   (Ref: `functions_data_management.py`, `_set_job_progress`, `_complete_job_step`, `_record_data_management_job_event`)
+
+#### User Interface Enhancements
+
+*   **Finished Jobs No Longer Look Stuck**
+    *   Completed backup jobs no longer display **Current container: Waiting**, which made a finished job look like it was still churning.
+    *   Migration jobs no longer display a **Liveness: Running** row after reaching a terminal status.
+    *   Live-only telemetry is now hidden once a job is `completed`, `completed_with_warnings`, `failed`, or `canceled`.
+    *   (Ref: `admin_data_management.js`, `getBackupLiveMetrics`, `getMigrationLiveMetrics`, `isTerminalJobStatus`)
+
 ### **(v0.260.001)**
 
 v0.260.001 consolidates all work released after v0.250.001 into one major release note, spanning 117 incremental patch builds. This rollup highlights the major feature, UI, reliability, security, and operations themes while preserving the full per-build history in the Detailed Change Log at the end of this section.
