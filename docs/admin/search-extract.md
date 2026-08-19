@@ -93,6 +93,8 @@ This is the tab where document ingestion, retrieval, outbound web evidence, and 
 | Azure APIM Document Intelligence Endpoint | Points SimpleChat to the azure apim document intelligence endpoint used by this feature. | Empty | `azure_apim_document_intelligence_endpoint` |
 | Azure APIM Document Intelligence Subscription Key | Provides the secret credential used when the selected authentication mode requires one. | Empty | `azure_apim_document_intelligence_subscription_key` |
 | Enable custom chunk sizes by file type | Makes custom chunk sizes by file type available in the product when its required service and access policy are configured. | Off | `enable_chunk_size_override`; capability toggle |
+| Summarize history for search context | Adds a model-generated summary of recent conversation history into search context when hybrid document search is active, so follow-up searches can use prior conversational context. | Off | `enable_summarize_content_history_for_search` |
+| Summarize older history beyond conversation limit | Summarizes older conversation messages that fall outside the configured conversation-history window so long chats can retain condensed context instead of dropping all older content. | Off | `enable_summarize_content_history_beyond_conversation_history_limit` |
 | TXT (words) | Caps or schedules txt (words) so the feature stays within expected capacity. | 400 words | `chunk_size_txt` |
 | LOG (words) | Caps or schedules log (words) so the feature stays within expected capacity. | 1000 words | `chunk_size_log` |
 | DOC (words) | Caps or schedules doc (words) so the feature stays within expected capacity. | 400 words | `chunk_size_doc` |
@@ -143,6 +145,10 @@ Document Intelligence extracts text from uploaded documents; enhanced extraction
 ### Video and speech processing
 
 Video uploads depend on Video Indexer settings. Audio uploads, voice input, and voice responses depend on Speech settings. Enable only the features backed by resources you have configured and tested.
+
+### Conversation history summarization
+
+The two history summarization toggles are saved by the Admin Settings route but do not have visible controls in the current `admin_settings.html` template. `enable_summarize_content_history_for_search` can add recent conversation history summaries to hybrid-search context, which may improve follow-up retrieval but adds model work. `enable_summarize_content_history_beyond_conversation_history_limit` summarizes older messages outside the normal conversation-history window so long chats keep compressed context, also at additional model cost.
 
 ## Before you change anything
 

@@ -101,37 +101,53 @@ navigation:
           icon: bi bi-search
     - title: Guides
       links:
-        - title: All tutorials
+        - title: All guides
+          url: /guides/
+          match: /guides/
+          icon: bi bi-list-check
+        - title: Tutorials
           url: /tutorials/
           match: /tutorials/
           icon: bi bi-mortarboard
-        - title: All how-to guides
-          url: /how-to/
-          icon: bi bi-list-check
         - title: Getting started
           url: /tutorials/getting_started/
           icon: bi bi-play-circle
-        - title: Upload and manage documents
-          url: /tutorials/uploading_documents/
-          icon: bi bi-file-earmark-arrow-up
-        - title: Create your first agent
-          url: /tutorials/first_agent/
+        - title: Create an action
+          url: /guides/create-an-action/
+          icon: bi bi-lightning-charge
+        - title: Create an agent
+          url: /guides/create-an-agent/
           icon: bi bi-robot
-        - title: Classify documents
-          url: /tutorials/classifying_documents/
-          icon: bi bi-tags
-        - title: Add documents
-          url: /how-to/add_documents/
-          icon: bi bi-folder-plus
-        - title: Create agents
-          url: /how-to/create_agents/
+        - title: Agent with actions
+          url: /guides/create-an-agent-with-actions/
           icon: bi bi-cpu
-        - title: Create custom pages
-          url: /how-to/custom_pages/
-          icon: bi bi-window-plus
-        - title: Microsoft Teams app
-          url: /how-to/teams_app/
-          icon: bi bi-microsoft-teams
+        - title: Create a workflow
+          url: /guides/create-a-workflow/
+          icon: bi bi-diagram-3
+        - title: Trigger a workflow
+          url: /guides/trigger-a-workflow/
+          icon: bi bi-play-btn
+        - title: Create a file sync
+          url: /guides/create-a-file-sync/
+          icon: bi bi-arrow-repeat
+        - title: Create and manage tags
+          url: /guides/create-and-manage-tags/
+          icon: bi bi-tags
+        - title: Use tags in chat
+          url: /guides/use-tags-in-chat/
+          icon: bi bi-chat-square-text
+        - title: Tag conversations
+          url: /guides/use-tags-on-conversations/
+          icon: bi bi-bookmarks
+        - title: Export a conversation
+          url: /guides/export-a-conversation/
+          icon: bi bi-download
+        - title: Upload documents in chat
+          url: /guides/upload-documents-in-chat/
+          icon: bi bi-file-earmark-arrow-up
+        - title: All how-to guides
+          url: /how-to/
+          icon: bi bi-journal-code
         - title: ServiceNow guides
           url: /how-to/agents/ServiceNow/
           match: /how-to/agents/ServiceNow/
@@ -273,6 +289,13 @@ navigation:
         - title: API reference
           url: /reference/api_reference/
           icon: bi bi-braces
+        - title: Chat interface reference
+          url: /reference/chat-controls/
+          icon: bi bi-ui-radios
+        - title: Actions reference
+          url: /reference/actions/
+          match: /reference/actions/
+          icon: bi bi-lightning-charge
         - title: Admin configuration reference
           url: /reference/admin_configuration/
           icon: bi bi-card-list

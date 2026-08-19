@@ -51,6 +51,7 @@ Workspace settings define the tenant's data boundaries: personal, group, public,
 | Enable File Sharing | Makes file sharing available in the product when its required service and access policy are configured. | Off | `enable_file_sharing`; capability toggle |
 | Enable Chat File Uploads | Makes chat file uploads available in the product when its required service and access policy are configured. | On | `enable_chat_file_uploads`; capability toggle |
 | Enable Conversation Contents Drawer | Makes conversation contents drawer available in the product when its required service and access policy are configured. | On | `enable_conversation_contents_drawer`; capability toggle |
+| Collaborative conversations | Enables shared conversation records and collaboration endpoints so permitted users can create and participate in collaborative conversations instead of only single-user conversation threads. | On | `enable_collaborative_conversations`; no visible field in `admin_settings.html` |
 | Require ChatFileUploadUser App Role | Requires the `ChatFileUploadUser` app role before users can use this capability or view. | Off | `require_member_of_chat_file_upload_user` |
 | Enable Extract Meta Data | Makes extract meta data available in the product when its required service and access policy are configured. | Off | `enable_extract_meta_data`; capability toggle |
 | Extraction Model | Chooses the model or deployment SimpleChat uses for extraction model. | Empty | `metadata_extraction_model` |
@@ -87,6 +88,10 @@ The user agreement can apply to personal, group, public, and chat surfaces. Use 
 ### Role-gated workspace actions
 
 Role requirements such as CreateGroups, CreatePublicWorkspaces, WorkflowUser, and ChatFileUploadUser restrict capabilities after sign-in. Assign the Entra app roles before enabling the corresponding requirement to avoid blocking intended users.
+
+### Collaborative conversations
+
+`enable_collaborative_conversations` is enforced by collaboration backend routes rather than a visible field in `admin_settings.html`. When it is on, SimpleChat can use the collaboration conversation, message, and user-state containers. Turning it off blocks collaboration endpoints, so verify existing collaborative conversations and user expectations before disabling it.
 
 ## Before you change anything
 

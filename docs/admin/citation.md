@@ -24,6 +24,7 @@ Enhanced citations let users open or preview the original source behind an answe
 | Setting | What it does | Default | Notes |
 | --- | --- | --- | --- |
 | Enable Enhanced Citations | Preserves source files for richer citation preview and source-document access in chat answers. | Off | `enable_enhanced_citations`; capability toggle |
+| Enhanced Citations mount path | Enables use of the configured Enhanced Citations mount path for document-view routing when Enhanced Citations is on; the saved value is forced off unless Enhanced Citations is enabled. | Off | `enable_enhanced_citations_mount`; no visible field in `admin_settings.html` |
 | Storage Account Authentication Type | Chooses whether SimpleChat authenticates to this service with a key, managed identity, or another supported method. | key | `office_docs_authentication_type` |
 | Storage Account Connection String | Controls how SimpleChat uses storage account connection string on this tab. | Empty | `office_docs_storage_account_url` |
 | Storage Account Blob Service Endpoint | Points SimpleChat to the storage account blob service endpoint used by this feature. | Empty | `office_docs_storage_account_blob_endpoint` |
@@ -41,6 +42,10 @@ Enhanced citations store original files so answer citations can open richer prev
 ### Large tabular run controls
 
 Tabular preview and confirmation settings protect memory and compute when users work with CSV or Excel files. Increase preview size or confirmation thresholds only when the app instance and model budget can support larger runs.
+
+### Enhanced Citations mount path
+
+`enable_enhanced_citations_mount` is handled by the settings save route but no visible control for it appears in `admin_settings.html`. The route only preserves it when Enhanced Citations is also enabled, and the default mount path is `/view_documents`. Treat it as an advanced deployment setting tied to citation document-view routing rather than a normal admin UI toggle.
 
 ## Before you change anything
 

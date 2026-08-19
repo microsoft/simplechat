@@ -30,6 +30,7 @@ Scale settings trade freshness, cost, and resilience. Redis and caches reduce re
 | Key Filter | Blank filter browses all keys. Filters are case sensitive. Redis SCAN order is server-defined, so use Next Page to keep browsing. | N/A (runtime control) | Runtime UI control |
 | Page Size | Controls how SimpleChat uses page size on this tab. | Not specified in defaults | Runtime UI control |
 | Enable conversation cache | Makes conversation cache available in the product when its required service and access policy are configured. | On | `enable_conversation_cache`; capability toggle |
+| Search result caching | Caches workspace search-result payloads with document-set fingerprints so repeated personal, group, public, or all-scope searches can reuse results until document changes or the TTL invalidate them. | On | `enable_search_result_caching`; no visible field in `admin_settings.html` |
 | Cache TTL Seconds | Default 120 seconds. User-scoped version invalidation refreshes changed conversations; set to 0 to skip writing new entries. | 120 | `conversation_cache_ttl_seconds` |
 | Write-through projection | Makes write-through projection available in the product when its required service and access policy are configured. | On | `enable_document_access_index_write_through`; capability toggle |
 | Automatic repair/backfill | Makes automatic repair/backfill available in the product when its required service and access policy are configured. | On | `enable_startup_document_access_index_backfill`; capability toggle |
@@ -40,6 +41,7 @@ Scale settings trade freshness, cost, and resilience. Redis and caches reduce re
 | Redis document list cache Wave 6 | Makes redis document list cache wave 6 available in the product when its required service and access policy are configured. | On | `enable_document_access_index_cache`; capability toggle |
 | Cache TTL Seconds | Default 900 seconds. Scope-version invalidation makes document changes visible immediately; TTL clears unreachable old entries. | 900 | `document_access_index_cache_ttl_seconds` |
 | Cosmos Throughput Container Policies Json | Controls how SimpleChat uses cosmos throughput container policies json on this tab. | Not specified in defaults | `cosmos_throughput_container_policies_json` |
+| App maintenance background scheduler | Allows the background maintenance loop to run app maintenance jobs such as Cosmos index policy checks and stale cache cleanup according to the maintenance interval and lease settings. | On | `enable_app_maintenance`; no visible field in `admin_settings.html` |
 | Enable Cosmos throughput automation | Controls how SimpleChat uses enable cosmos throughput automation on this tab. | Off | `cosmos_throughput_autoscale_enabled` |
 | Subscription ID | Controls how SimpleChat uses subscription id on this tab. | Not specified in defaults | `cosmos_throughput_subscription_id` |
 | Resource Group | Controls how SimpleChat uses resource group on this tab. | Not specified in defaults | `cosmos_throughput_resource_group` |
@@ -76,6 +78,14 @@ Throughput automation monitors RU consumption and changes Cosmos capacity inside
 ### Front Door
 
 Front Door support tells SimpleChat to generate user-facing and OAuth redirect URLs through the routed domain. Misconfiguration can break sign-in redirects, so validate login through the Front Door URL after saving.
+
+### Search result caching
+
+Search result caching is not exposed as a visible field in `admin_settings.html`, but `utils_cache.py` reads `enable_search_result_caching` and `search_cache_ttl_seconds`. When enabled, cache keys include document-set fingerprints so changes to personal, group, or public documents invalidate affected results. The tradeoff is faster repeated searches versus relying on cache invalidation and TTL for freshness.
+
+### App maintenance background scheduler
+
+`enable_app_maintenance` is not shown as a visible admin field. The background task loop reads it before running application maintenance, including bounded maintenance jobs such as Cosmos indexing policy work and stale cache cleanup. Disabling it would stop those automatic background maintenance passes, so operators would need to run maintenance manually or accept drift until the setting is restored.
 
 ## Before you change anything
 

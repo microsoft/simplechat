@@ -54,6 +54,7 @@ Agents and actions can combine model calls with tools, documents, HTTP calls, me
 | Merge Global Agents/Plugins into Workspace | Controls how SimpleChat uses merge global agents/plugins into workspace on this tab. | Off | `merge_global_semantic_kernel_with_workspace` |
 | Enable Agent Template Gallery | Makes agent template gallery available in the product when its required service and access policy are configured. | On | `enable_agent_template_gallery`; capability toggle |
 | Orchestration Type | Controls how SimpleChat uses orchestration type on this tab. | default_agent | `orchestration_type` |
+| Multi-agent orchestration | Derived from **Orchestration Type**; enables group-chat orchestration paths when the selected orchestration mode is multi-agent, so the runtime can coordinate multiple configured agents instead of routing to a single default agent. | Off | `enable_multi_agent_orchestration`; saved by orchestration settings API |
 | Max Rounds Per Agent (Group Chat) | Caps or schedules max rounds per agent (group chat) so the feature stays within expected capacity. | 1 | `max_rounds_per_agent` |
 | Selected Agent: | Controls how SimpleChat uses selected agent: on this tab. | Not specified in defaults | Runtime UI control |
 | Allow User Template Submissions | Controls how SimpleChat uses allow user template submissions on this tab. | On | `agent_templates_allow_user_submission` |
@@ -67,6 +68,7 @@ Agents and actions can combine model calls with tools, documents, HTTP calls, me
 | Enable Text Action | Makes text action available in the product when its required service and access policy are configured. | On | `enable_text_plugin`; capability toggle |
 | Enable Default Embedding Model Action | Makes default embedding model action available in the product when its required service and access policy are configured. | Off | `enable_default_embedding_model_plugin`; capability toggle |
 | Enable Fact Memory Action | Makes fact memory action available in the product when its required service and access policy are configured. | On | `enable_fact_memory_plugin`; capability toggle |
+| Tabular Processing Action | Makes the tabular-processing action available to agents for CSV and XLSX analysis when Enhanced Citations is enabled; the setting is normalized from Enhanced Citations rather than edited directly in the UI. | Off | `enable_tabular_processing_plugin`; effective value follows `enable_enhanced_citations` |
 | Enable inbound MCP server | Makes inbound mcp server available in the product when its required service and access policy are configured. | Off | `enable_inbound_mcp_server`; capability toggle |
 | Required delegated scope | Default: DelegatedMcpServerAccess . VS Code and other user clients must present this delegated scope. | DelegatedMcpServerAccess | `inbound_mcp_required_scope` |
 | Required delegated user role | Default: InboundMCPUserAccess . Governance determines which users/groups can use tools after this Entra role and delegated scope pass. | InboundMCPUserAccess | `inbound_mcp_required_user_role` |
@@ -95,6 +97,14 @@ Core actions make built-in tools available to agents. Keep any action off unless
 ### Inbound MCP server
 
 Inbound MCP allows external clients such as development tools to call approved SimpleChat tools. Configure delegated scope, user role, source header, source allowlist, request size, throttles, and App Service Authentication exclusions before enabling it.
+
+### Multi-agent orchestration
+
+Multi-agent orchestration is controlled by **Orchestration Type**, not by a separate checkbox in the page. Choosing a multi-agent mode sets `enable_multi_agent_orchestration` and can increase model calls because more than one agent may participate. Configure the global agents and default/orchestrator agent first, then set **Max Rounds Per Agent** low enough to bound cost and latency.
+
+### Tabular Processing Action
+
+The Tabular Processing Action is displayed in the Core Action Toggles area, but it is automatically enabled when Enhanced Citations is enabled. That dependency matters because tabular analysis relies on blob-backed source access for CSV and XLSX files. Disable Enhanced Citations if the deployment should not expose tabular-processing behavior.
 
 ## Before you change anything
 
