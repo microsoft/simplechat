@@ -2,6 +2,24 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.260.011)**
+
+#### Bug Fixes
+
+*   **Reliable File Generation From Agent Action Results**
+    *   Asking an agent for a downloadable file built from action results now produces the complete dataset in the requested format. Previously these requests could fail outright, publish a three-row sample of a large result, overwrite the assistant's written answer, or return nothing at all. Delivered across v0.260.004 through v0.260.011.
+    *   **Files no longer fail to generate.** A CSV built from several actions in one turn could stop with `Generated output schema mismatch at row 2`, because each action returned a different set of columns. The export now pins a union of every column before the run starts and pads the missing cells, so mixed-shape results serialize instead of failing.
+    *   **The written answer is no longer replaced by the file card.** CSV replies were suppressed alongside JSON and XML, but only JSON and XML withhold their payload from the response. CSV, DOCX, and PDF now keep the assistant's answer and append the file card beneath it.
+    *   **Files contain the retrieved data, not a sample of it.** When the assistant pasted a few example rows above its answer, that excerpt outranked the real result set, producing a 3-row file from a 900-row query. Pasted rows are now used only when they are not an excerpt of the data actually retrieved.
+    *   **Discovery calls no longer dilute the dataset.** A turn that lists instances, lists parameters, then retrieves history used to blend all three into one file. Rows are grouped by the action that produced them, and the action holding the substantive dataset wins.
+    *   **Follow-up requests reuse data already gathered.** Asking "now make that a CSV" after the data was retrieved in an earlier turn no longer returns an empty result. The export reaches back through stored conversation citations, bounded by the **conversation history limit** in Admin Settings, and reuses the rows already collected instead of re-querying the source.
+    *   **Answering a clarifying question now delivers the file.** When the assistant asks which rows and columns to include, replying "yes, all columns" now publishes the file that was originally requested. The clarification turn itself no longer publishes a placeholder file built from the question text.
+    *   **The assistant no longer claims it cannot create files.** Every format now states the publication contract to the model, including on the turn that only answers a clarification, so replies stop saying "I cannot create or attach a file in this interface" and then producing one anyway.
+    *   **Overlapping result pages no longer double the row count.** Agents frequently re-request a range from the same start time rather than paging forward, which produced a 1,000-row file for a window holding roughly 500 distinct records. Rows an earlier page of the same action already returned are dropped, while genuinely repeated records inside a single response are preserved.
+    *   **Partial data is now labeled.** When an action reports that it truncated its own results, the file carries a **Partial** badge and a note explaining that it covers only the rows the action returned. Agents are also instructed to request the remainder starting after the last row they already hold, rather than repeating the original range.
+    *   **CSV, DOCX, PDF, JSON, and XML now behave identically.** All five formats resolve rows the same way, reach back to earlier turns, decline to publish on a clarification turn, and report truncation.
+    *   (Ref: `functions_generated_file_exports.py`, `functions_tabular_generated_exports.py`, `route_backend_chats.py`, `chat-messages.js`, [Generated Artifact Paging, Truncation, and Guidance Carry-Forward Fix](fixes/GENERATED_ARTIFACT_PAGING_AND_GUIDANCE_FIX.md), Refs #1071)
+
 ### **(v0.260.006)**
 
 #### New Features
