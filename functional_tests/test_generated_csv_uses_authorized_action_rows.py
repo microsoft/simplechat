@@ -62,8 +62,10 @@ TELEMETRY_COLUMNS = (
 )
 TELEMETRY_ROWS = [
     {
-        'generation_time_utc': f'2026-08-19T15:37:{index % 60:02d}.371000+00:00',
-        'reception_time_utc': f'2026-08-19T15:37:{index % 60:02d}.372000+00:00',
+        # High-granularity telemetry carries a distinct acquisition time per sample, which is what
+        # lets 0.260.011 tell a genuine continuation page apart from a re-read of the same window.
+        'generation_time_utc': f'2026-08-19T15:{37 + index // 60:02d}:{index % 60:02d}.371000+00:00',
+        'reception_time_utc': f'2026-08-19T15:{37 + index // 60:02d}:{index % 60:02d}.372000+00:00',
         'battery_voltage_1_v': 27 + (index % 5),
         'raw_value': 27 + (index % 5),
         'monitoring_result': 'CRITICAL',

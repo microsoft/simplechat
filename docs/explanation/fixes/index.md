@@ -35,3 +35,4 @@ category: Version History
 - [Chat Citation Whitespace Collapse Fix](CHAT_CITATION_WHITESPACE_COLLAPSE_FIX.md)
 - [New Chat Conversation Documents Drawer Reset Fix](NEW_CHAT_CONVERSATION_DOCUMENTS_DRAWER_RESET_FIX.md)
 - [Collaboration Mention Tab Autocomplete Fix](COLLABORATION_MENTION_TAB_AUTOCOMPLETE_FIX.md)
+- [Generated Artifact Paging, Truncation, and Guidance Carry-Forward Fix](GENERATED_ARTIFACT_PAGING_AND_GUIDANCE_FIX.md)

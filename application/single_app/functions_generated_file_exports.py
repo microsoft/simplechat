@@ -110,6 +110,16 @@ FUNCTION_RESULT_ROW_COUNT_KEYS = (
 )
 # Below this a stored action reads as a lookup, not the dataset a request is asking for.
 PRIOR_TURN_SUBSTANTIVE_ROW_COUNT = 10
+# Actions advertise partial results in different ways, so accept the common spellings.
+FUNCTION_RESULT_TRUNCATION_KEYS = {
+    'truncated',
+    'istruncated',
+    'wastruncated',
+    'resultstruncated',
+    'rowstruncated',
+}
+FUNCTION_RESULT_TRUNCATION_MAX_DEPTH = 3
+FUNCTION_RESULT_TRUNCATION_MAX_ITEMS = 20
 FUNCTION_RESULT_CONTROL_KEYS = {
     'count',
     'detail',
@@ -223,6 +233,15 @@ CSV_PUBLICATION_GUIDANCE = (
     'attaches the file after generation. Do not claim that you cannot create or attach files, '
     'do not tell the user to copy or save rows manually, and do not paste a sample of the rows '
     'in place of the artifact.'
+)
+# Agents commonly re-request an action from the same start time, which re-reads rows already held.
+GENERATED_FILE_PAGING_GUIDANCE = (
+    'When an action reports that its results were truncated, request the remaining data with a '
+    'window that starts after the last row you already have instead of repeating the original '
+    'range, and say plainly that the data is partial if you cannot retrieve the rest.'
+)
+GENERATED_FILE_TRUNCATED_ROWS_NOTE = (
+    'The source action reported truncated results, so this file covers only the rows it returned.'
 )
 
 
@@ -473,7 +492,11 @@ def build_generated_file_output_guidance(
         clarification_guidance = build_csv_output_clarification_guidance(user_question)
         return ' '.join(
             guidance_part
-            for guidance_part in (clarification_guidance, CSV_PUBLICATION_GUIDANCE)
+            for guidance_part in (
+                clarification_guidance,
+                CSV_PUBLICATION_GUIDANCE,
+                GENERATED_FILE_PAGING_GUIDANCE,
+            )
             if guidance_part
         )
     if output_format == 'json':
@@ -497,7 +520,7 @@ def build_generated_file_output_guidance(
             'evidence. Structured function results from this turn may be included as labeled tables in the '
             'generated file. Do not claim that you cannot create or attach files, do not tell the user to '
             'copy or save the content manually, do not invent rows, and do not claim an attachment exists '
-            'before the file-output finalizer publishes it.'
+            f'before the file-output finalizer publishes it. {GENERATED_FILE_PAGING_GUIDANCE}'
         )
     return ''
 
@@ -539,11 +562,14 @@ def build_generated_file_export(
         return None
     function_rows = extract_authorized_function_result_rows(function_results)
     row_provenance = ROW_SOURCE_CURRENT_ACTION
+    rows_truncated = function_results_report_truncated_rows(function_results) if function_rows else False
     if not assistant_rows and not function_rows and prior_function_results_loader is not None:
         # This turn answered from evidence gathered earlier, so reuse those rows instead of none.
-        function_rows = extract_authorized_function_result_rows(prior_function_results_loader())
+        prior_function_results = prior_function_results_loader()
+        function_rows = extract_authorized_function_result_rows(prior_function_results)
         if function_rows:
             row_provenance = ROW_SOURCE_EARLIER_ACTION
+            rows_truncated = function_results_report_truncated_rows(prior_function_results)
     function_passthrough = evaluate_generated_file_passthrough_eligibility(
         user_question,
         rows=function_rows,
@@ -566,6 +592,7 @@ def build_generated_file_export(
             row_source=row_source,
             assistant_content=assistant_text,
             passthrough_reason_code=(function_passthrough.get('reason_code') if use_function_rows else None),
+            rows_truncated=rows_truncated if use_function_rows else False,
         )
 
     if not assistant_text and not assistant_rows and not function_rows:
@@ -589,6 +616,7 @@ def build_generated_file_export(
         passthrough_reason_code=(
             function_passthrough.get('reason_code') if row_source in FUNCTION_RESULT_ROW_SOURCES else None
         ),
+        rows_truncated=rows_truncated if row_source in FUNCTION_RESULT_ROW_SOURCES else False,
     )
 
 
@@ -605,10 +633,13 @@ def build_structured_artifact_rows_payload(
 
     function_rows = extract_authorized_function_result_rows(function_results)
     row_provenance = ROW_SOURCE_CURRENT_ACTION
+    rows_truncated = function_results_report_truncated_rows(function_results) if function_rows else False
     if not function_rows and prior_function_results_loader is not None:
-        function_rows = extract_authorized_function_result_rows(prior_function_results_loader())
+        prior_function_results = prior_function_results_loader()
+        function_rows = extract_authorized_function_result_rows(prior_function_results)
         if function_rows:
             row_provenance = ROW_SOURCE_EARLIER_ACTION
+            rows_truncated = function_results_report_truncated_rows(prior_function_results)
     if not function_rows:
         return None
 
@@ -629,6 +660,7 @@ def build_structured_artifact_rows_payload(
         'row_count': len(function_rows),
         'row_source': row_provenance,
         'passthrough_reason_code': function_passthrough.get('reason_code'),
+        'rows_truncated': rows_truncated,
     }
 
 
@@ -659,6 +691,8 @@ def _collect_authorized_function_row_groups(
 ) -> List[Tuple[str, List[Dict[str, Any]]]]:
     """Group authorized rows by action, so paged calls to one action stay one dataset."""
     grouped_rows: Dict[str, List[Dict[str, Any]]] = {}
+    # Agents often re-page an action from the same start, so pages overlap rather than extend.
+    seen_group_rows: Dict[str, set] = {}
     for function_result in function_results or []:
         if not isinstance(function_result, dict):
             continue
@@ -670,11 +704,79 @@ def _collect_authorized_function_row_groups(
         )
         if not structured_rows:
             continue
-        grouped_rows.setdefault(
-            _get_function_result_label(function_result),
-            [],
-        ).extend(structured_rows)
+        function_label = _get_function_result_label(function_result)
+        group_rows = grouped_rows.setdefault(function_label, [])
+        seen_rows = seen_group_rows.setdefault(function_label, set())
+        page_signatures = set()
+        for structured_row in structured_rows:
+            row_signature = _build_function_result_row_signature(structured_row)
+            # Repeats inside one response are records the action counted, so only drop rows an
+            # earlier page of the same action already contributed.
+            if row_signature is not None:
+                if row_signature in seen_rows:
+                    continue
+                page_signatures.add(row_signature)
+            group_rows.append(structured_row)
+        seen_rows.update(page_signatures)
     return list(grouped_rows.items())
+
+
+def _build_function_result_row_signature(row: Any) -> Optional[Tuple[Tuple[str, str], ...]]:
+    if not isinstance(row, dict):
+        return None
+    try:
+        return tuple(sorted(
+            (_normalize_function_result_key(key), _serialize_row_signature_value(value))
+            for key, value in row.items()
+        ))
+    except TypeError:
+        return None
+
+
+def _serialize_row_signature_value(value: Any) -> str:
+    if isinstance(value, (dict, list, tuple, set)):
+        return json.dumps(value, default=str, sort_keys=True)
+    return '' if value is None else str(value)
+
+
+def function_results_report_truncated_rows(
+    function_results: Optional[List[Dict[str, Any]]],
+) -> bool:
+    """Report whether a row-contributing action said it returned only part of the matching data."""
+    for function_result in function_results or []:
+        if not isinstance(function_result, dict):
+            continue
+        if function_result.get('success') is False or _is_tabular_function_result(function_result):
+            continue
+        payload = _parse_function_result_payload(function_result.get('function_result'))
+        if not _extract_function_result_rows(payload):
+            continue
+        if _payload_reports_truncation(payload):
+            return True
+    return False
+
+
+def _payload_reports_truncation(payload: Any, depth: int = 0) -> bool:
+    if depth > FUNCTION_RESULT_TRUNCATION_MAX_DEPTH:
+        return False
+    if isinstance(payload, dict):
+        for key, value in payload.items():
+            if _normalize_function_result_key(key) not in FUNCTION_RESULT_TRUNCATION_KEYS:
+                continue
+            if value is True or str(value).strip().casefold() == 'true':
+                return True
+        return any(
+            _payload_reports_truncation(value, depth + 1)
+            for value in payload.values()
+            if isinstance(value, (dict, list))
+        )
+    if isinstance(payload, list):
+        return any(
+            _payload_reports_truncation(item, depth + 1)
+            for item in payload[:FUNCTION_RESULT_TRUNCATION_MAX_ITEMS]
+            if isinstance(item, (dict, list))
+        )
+    return False
 
 
 def _select_dominant_function_row_group(
@@ -917,6 +1019,8 @@ def build_generated_file_artifact_metadata(
     row_source = str(export_payload.get('row_source') or '').strip()
     if row_source:
         artifact_metadata['row_source'] = row_source
+    if export_payload.get('rows_truncated'):
+        artifact_metadata['rows_truncated'] = True
 
     # Surfaced immediately so the participant who asked for the file sees the pending state in
     # the same response instead of a download button that would be refused.
@@ -939,6 +1043,7 @@ def _build_generated_file_payload(
     assistant_content: str,
     title: str = '',
     passthrough_reason_code: Optional[str] = None,
+    rows_truncated: bool = False,
 ) -> Dict[str, Any]:
     normalized_output_format = str(output_format or '').strip().lower()
     row_count = len(rows or [])
@@ -952,12 +1057,14 @@ def _build_generated_file_payload(
         'preview_rows': list(rows or [])[:GENERATED_FILE_PREVIEW_ROWS],
         'preview_lines': _build_preview_lines(assistant_content),
         'row_source': row_source,
+        'rows_truncated': bool(rows_truncated),
         '_structured_rows': list(rows or []),
         'summary': _build_generated_file_summary(
             normalized_output_format,
             row_count,
             row_source,
             normalized_title,
+            bool(rows_truncated),
         ),
     }
     if passthrough_reason_code:
@@ -979,9 +1086,14 @@ def _build_generated_file_summary(
     row_count: int,
     row_source: str,
     title: str,
+    rows_truncated: bool = False,
 ) -> str:
     row_detail = f' with {row_count} structured row(s)' if row_count else ''
-    return f'Prepared {title}{row_detail} from the {row_source}.'
+    summary = f'Prepared {title}{row_detail} from the {row_source}.'
+    if rows_truncated:
+        # The action capped its own response, so the file is a partial view of the matching data.
+        summary = f'{summary} {GENERATED_FILE_TRUNCATED_ROWS_NOTE}'
+    return summary
 
 
 def _build_preview_lines(assistant_content: str) -> List[str]:
