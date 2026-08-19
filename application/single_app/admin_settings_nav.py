@@ -52,6 +52,26 @@ ADMIN_NAV = [
         "icon": "bi-chat-square-text",
         "tabs": [
             {
+                "id": "chat-experience",
+                "label": "Chat Experience",
+                "icon": "bi-chat-square-dots",
+                "sections": [
+                    {"id": "processing-thoughts-section", "label": "Processing Thoughts", "icon": "bi-stars"},
+                    {"id": "chat-file-uploads-section", "label": "Chat File Uploads", "icon": "bi-paperclip"},
+                    {"id": "conversation-contents-drawer-section", "label": "Conversation Contents Drawer", "icon": "bi-list-nested"},
+                    {"id": "workspace-scope-lock-section", "label": "Workspace Scope Lock", "icon": "bi-lock"},
+                ],
+            },
+            {
+                "id": "feedback-alerts",
+                "label": "Feedback & Alerts",
+                "icon": "bi-chat-square-heart",
+                "sections": [
+                    {"id": "user-feedback-section", "label": "User Feedback", "icon": "bi-chat-square-heart"},
+                    {"id": "desktop-notifications-section", "label": "Desktop Conversation Notifications", "icon": "bi-bell"},
+                ],
+            },
+            {
                 "id": "citation",
                 "label": "Citations",
                 "icon": "bi-quote",
@@ -73,7 +93,6 @@ ADMIN_NAV = [
                 "icon": "bi-cpu",
                 "sections": [
                     {"id": "multi-endpoint-configuration", "label": "Model Endpoints", "icon": "bi-hdd-network"},
-                    {"id": "processing-thoughts-section", "label": "Processing Thoughts", "icon": "bi-stars"},
                     {"id": "shared-conversation-file-approvals-section", "label": "Shared Conversation File Approvals", "icon": "bi-file-earmark-lock"},
                     {"id": "embeddings-config", "label": "Embeddings", "icon": "bi-vector-pen"},
                     {"id": "image-config", "label": "Image Generation", "icon": "bi-image"},
@@ -117,12 +136,8 @@ ADMIN_NAV = [
                     {"id": "group-workspaces-section", "label": "Group Workspaces", "icon": "bi-people"},
                     {"id": "public-workspaces-section", "label": "Public Workspaces", "icon": "bi-globe"},
                     {"id": "file-sharing-section", "label": "File Sharing", "icon": "bi-share"},
-                    {"id": "chat-file-uploads-section", "label": "Chat File Uploads", "icon": "bi-paperclip"},
                     {"id": "metadata-extraction-section", "label": "Metadata Extraction", "icon": "bi-file-earmark-code"},
                     {"id": "multimodal-vision-section", "label": "Multi-Modal Vision Analysis", "icon": "bi-eye"},
-                    {"id": "document-classification-section", "label": "Document Classification", "icon": "bi-tags"},
-                    {"id": "retention-policy-section", "label": "Retention Policy", "icon": "bi-hourglass-split"},
-                    {"id": "workspace-scope-lock-section", "label": "Workspace Scope Lock", "icon": "bi-lock"},
                     {"id": "user-agreement-section", "label": "User Agreement", "icon": "bi-file-earmark-check"},
                 ],
             },
@@ -187,10 +202,7 @@ ADMIN_NAV = [
                 "icon": "bi-shield-check",
                 "sections": [
                     {"id": "content-safety-section", "label": "Content Safety", "icon": "bi-shield-exclamation"},
-                    {"id": "user-feedback-section", "label": "User Feedback", "icon": "bi-chat-square-heart"},
-                    {"id": "desktop-notifications-section", "label": "Desktop Conversation Notifications", "icon": "bi-bell"},
                     {"id": "permissions-section", "label": "Permissions", "icon": "bi-person-check"},
-                    {"id": "conversation-archiving-section", "label": "Conversation Archiving", "icon": "bi-archive"},
                 ],
             },
             {
@@ -234,6 +246,37 @@ ADMIN_NAV = [
                 "sections": [
                     {"id": "governance-mcp-destination-section", "label": "MCP Action Destination Governance", "icon": "bi-diagram-3"},
                     {"id": "governance-inbound-mcp-section", "label": "Inbound MCP Source Governance", "icon": "bi-box-arrow-in-down-right"},
+                ],
+            },
+        ],
+    },
+    {
+        "id": "data-lifecycle",
+        "label": "Data Lifecycle",
+        "icon": "bi-hourglass-split",
+        "tabs": [
+            {
+                "id": "retention",
+                "label": "Retention",
+                "icon": "bi-hourglass-split",
+                "sections": [
+                    {"id": "retention-policy-section", "label": "Retention Policy", "icon": "bi-hourglass-split"},
+                ],
+            },
+            {
+                "id": "classification",
+                "label": "Classification",
+                "icon": "bi-tags",
+                "sections": [
+                    {"id": "document-classification-section", "label": "Document Classification", "icon": "bi-tags"},
+                ],
+            },
+            {
+                "id": "archiving",
+                "label": "Archiving",
+                "icon": "bi-archive",
+                "sections": [
+                    {"id": "conversation-archiving-section", "label": "Conversation Archiving", "icon": "bi-archive"},
                 ],
             },
         ],

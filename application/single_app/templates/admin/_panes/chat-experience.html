@@ -1,0 +1,102 @@
+            <div class="tab-pane fade" id="chat-experience" role="tabpanel" aria-labelledby="chat-experience-tab">
+                <div class="card p-3 mb-4" id="processing-thoughts-section">
+                    <h5>
+                        <i class="bi bi-stars me-2"></i>Processing Thoughts
+                    </h5>
+                    <p class="text-muted">When enabled, real-time processing steps are shown to users during chat responses and persisted for later review.</p>
+                    <div class="form-group form-check form-switch mb-3">
+                        <input
+                            type="checkbox"
+                            class="form-check-input"
+                            id="enable_thoughts"
+                            name="enable_thoughts"
+                            {% if settings.enable_thoughts %}checked{% endif %}
+                        >
+                        <label class="form-check-label ms-2" for="enable_thoughts">
+                            Enable Processing Thoughts
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Show real-time processing steps (searching documents, web search, agent calls, etc.) to users during chat. Steps are stored in Cosmos DB and can be reviewed per-message via a stars icon."></i>
+                    </div>
+                </div>
+
+                <!-- Shared Conversation File Approvals Section -->
+                <div class="card mb-3 p-3" id="chat-file-uploads-section">
+                    <h5>
+                        <i class="bi bi-paperclip me-2"></i>Chat File Uploads
+                    </h5>
+                    <p class="text-muted">
+                        Control whether users can upload files directly into chat conversations.
+                    </p>
+                    <div class="form-group form-check form-switch mb-3">
+                        <input type="checkbox"
+                            class="form-check-input"
+                            id="enable_chat_file_uploads"
+                            name="enable_chat_file_uploads"
+                            {% if settings.enable_chat_file_uploads %}checked{% endif %} />
+                        <label class="form-check-label ms-2" for="enable_chat_file_uploads">
+                            Enable Chat File Uploads
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to upload files directly into personal, group, and multi-user chat conversations."></i>
+                    </div>
+
+                    <div class="card mb-3 p-3" id="conversation-contents-drawer-section">
+                        <h5>
+                            <i class="bi bi-list-nested me-2"></i>Conversation Contents Drawer
+                        </h5>
+                        <p class="text-muted">
+                            Let users navigate long conversations from a list of their prompts.
+                        </p>
+                        <div class="form-group form-check form-switch mb-2">
+                            <input
+                                type="checkbox"
+                                class="form-check-input"
+                                id="enable_conversation_contents_drawer"
+                                name="enable_conversation_contents_drawer"
+                                {% if settings.enable_conversation_contents_drawer %}checked{% endif %}
+                            />
+                            <label class="form-check-label ms-2" for="enable_conversation_contents_drawer">
+                                Enable Conversation Contents Drawer
+                            </label>
+                            <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to open a responsive contents drawer that lists persisted user messages and jumps to them."></i>
+                        </div>
+                        <p class="text-muted small mb-0">
+                            When enabled, users can turn the drawer off for their own account from Profile settings.
+                        </p>
+                    </div>
+                    <div class="form-group form-check form-switch mb-2">
+                        <input type="checkbox"
+                            class="form-check-input"
+                            id="require_member_of_chat_file_upload_user"
+                            name="require_member_of_chat_file_upload_user"
+                            {% if settings.require_member_of_chat_file_upload_user %}checked{% endif %} />
+                        <label class="form-check-label ms-2" for="require_member_of_chat_file_upload_user">
+                            Require ChatFileUploadUser App Role
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="When enabled, only users assigned the ChatFileUploadUser Enterprise App role can upload files into chat."></i>
+                    </div>
+                    <p class="text-muted small mb-0">
+                        Required app role value: <code>ChatFileUploadUser</code>. Assign this role to users or groups in the Enterprise App before enabling the requirement. Existing chat attachments remain visible; this only controls new uploads.
+                    </p>
+                </div>
+                <div class="card mb-3 p-3" id="workspace-scope-lock-section">
+                    <h5>
+                        <i class="bi bi-lock me-2"></i>Workspace Scope Lock
+                    </h5>
+                    <p class="text-muted">
+                        Control whether users can unlock workspace scope in chat conversations. When scope is locked, conversations are restricted to the workspaces that produced search results, preventing accidental cross-contamination with other data sources.
+                    </p>
+                    <div class="form-group form-check form-switch mb-3">
+                        <input type="checkbox"
+                            class="form-check-input"
+                            id="enforce_workspace_scope_lock"
+                            name="enforce_workspace_scope_lock"
+                            {% if settings.enforce_workspace_scope_lock %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="enforce_workspace_scope_lock">
+                            Enforce Workspace Scope Lock
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="When enabled, users cannot unlock the workspace scope on conversations. Scope automatically locks after the first AI search and remains locked. Disable this to allow users to manually unlock scope."></i>
+                    </div>
+                </div>
+
+                <!-- User Agreement Section -->
+            </div>

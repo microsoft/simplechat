@@ -236,27 +236,6 @@
                 </div>
 
                 <!-- Processing Thoughts Section -->
-                <div class="card p-3 mb-4" id="processing-thoughts-section">
-                    <h5>
-                        <i class="bi bi-stars me-2"></i>Processing Thoughts
-                    </h5>
-                    <p class="text-muted">When enabled, real-time processing steps are shown to users during chat responses and persisted for later review.</p>
-                    <div class="form-group form-check form-switch mb-3">
-                        <input
-                            type="checkbox"
-                            class="form-check-input"
-                            id="enable_thoughts"
-                            name="enable_thoughts"
-                            {% if settings.enable_thoughts %}checked{% endif %}
-                        >
-                        <label class="form-check-label ms-2" for="enable_thoughts">
-                            Enable Processing Thoughts
-                        </label>
-                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Show real-time processing steps (searching documents, web search, agent calls, etc.) to users during chat. Steps are stored in Cosmos DB and can be reviewed per-message via a stars icon."></i>
-                    </div>
-                </div>
-
-                <!-- Shared Conversation File Approvals Section -->
                 <div class="card p-3 mb-4" id="shared-conversation-file-approvals-section">
                     <h5>
                         <i class="bi bi-file-earmark-lock me-2"></i>Shared Conversation File Approvals

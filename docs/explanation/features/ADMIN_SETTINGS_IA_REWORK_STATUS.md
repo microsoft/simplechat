@@ -22,7 +22,8 @@ Development ─── feature/admin-settings-ia ──┬── #1297 stage 1   
                                                       └──► final PR ──► Development
 ```
 
-Current version: **0.260.011**. Fingerprint: **462 field names / 110 card ids**.
+Current version: **0.260.012**. Fingerprint: **462 field names / 110 card ids**.
+Navigation: **13 groups / 27 tabs / 88 sections**.
 
 ### Shipped
 
@@ -106,14 +107,21 @@ moved from Scale to Security that way.
 |---|---|
 | Governance | → Feature Governance, Policies, MCP Governance |
 | Scale | → Redis & Caching, Cosmos; Front Door moved to Security as Network |
+| Data Lifecycle | **New group.** Retention + Classification pulled from Workspaces, Archiving pulled from Safety |
+| Chat | **New group.** Chat Experience (thoughts from AI Models, file uploads + contents drawer and scope lock from Workspaces), Feedback & Alerts (feedback + desktop notifications from Safety) |
 
-### Remaining, and the gap to close first
+### The cross-pane move tool
 
-The remaining groups pull cards from **several** source panes, for example Data
-Lifecycle wants Retention and Classification out of Workspaces and Archiving
-out of Safety. The split tool only splits one pane at a time, so a
-**move-card-between-panes** operation is needed next, with the same
-every-line-accounted-for guarantee.
+`move_card.py` moves a top-level card from one pane to another with the same
+every-line-accounted-for guarantee as the split tool. Two behaviours matter:
+
+- **Nested cards travel with their parent automatically**, because the card
+  scanner skips over card bodies. `conversation-contents-drawer-section` moved
+  inside `chat-file-uploads-section` without being named.
+- **The gap after a card travels with it**, which is what correctly routes an
+  interleaved modal to the tab that owns its trigger.
+
+### Remaining
 
 Three complications found while splitting:
 
