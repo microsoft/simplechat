@@ -150,7 +150,9 @@ from functions_generated_file_exports import (
     build_generated_file_artifact_metadata,
     build_generated_file_export,
     build_generated_file_output_guidance,
+    build_structured_artifact_rows_payload,
     evaluate_generated_file_passthrough_eligibility,
+    estimate_function_result_row_count,
     get_generated_file_export_content,
     get_requested_generated_file_format,
     get_requested_structured_artifact_format,
@@ -158,6 +160,8 @@ from functions_generated_file_exports import (
     normalize_json_artifact_payload,
     normalize_generated_output_format,
     normalize_xml_artifact_payload,
+    resolve_pending_generated_file_format,
+    select_prior_turn_action_citations,
     serialize_generated_json,
     serialize_generated_xml,
 )
@@ -2257,6 +2261,127 @@ def _has_generated_tabular_csv_output(generated_outputs):
     return has_generated_tabular_csv_output(generated_outputs)
 
 
+PRIOR_TURN_ACTION_RESULT_MAX_MESSAGES = 40
+PRIOR_TURN_ACTION_RESULT_ARTIFACT_LIMIT = 25
+
+
+def _resolve_prior_turn_history_window(settings=None):
+    """Reach back as far as the history the model itself can still see."""
+    resolved_settings = settings if isinstance(settings, dict) else get_settings()
+    return _bounded_int(
+        resolved_settings.get('conversation_history_limit', 10),
+        default=10,
+        minimum=1,
+        maximum=PRIOR_TURN_ACTION_RESULT_MAX_MESSAGES,
+    )
+
+
+def _read_recent_assistant_messages(conversation_id, message_limit):
+    query = (
+        f'SELECT TOP {int(message_limit)} c.id, c.content, c.agent_citations FROM c '
+        'WHERE c.conversation_id = @conversation_id AND c.role = @role '
+        'ORDER BY c.timestamp DESC'
+    )
+    return list(cosmos_messages_container.query_items(
+        query=query,
+        parameters=[
+            {'name': '@conversation_id', 'value': conversation_id},
+            {'name': '@role', 'value': 'assistant'},
+        ],
+        partition_key=conversation_id,
+    ))
+
+
+def _read_agent_citation_artifact_payloads(conversation_id, artifact_ids):
+    if not artifact_ids:
+        return {}
+    artifact_documents = list(cosmos_messages_container.query_items(
+        query=(
+            'SELECT * FROM c WHERE c.conversation_id = @conversation_id '
+            'AND (ARRAY_CONTAINS(@artifact_ids, c.id) '
+            'OR ARRAY_CONTAINS(@artifact_ids, c.parent_message_id))'
+        ),
+        parameters=[
+            {'name': '@conversation_id', 'value': conversation_id},
+            {'name': '@artifact_ids', 'value': artifact_ids},
+        ],
+        partition_key=conversation_id,
+    ))
+    return build_message_artifact_payload_map(artifact_documents)
+
+
+def _load_prior_turn_function_results(user_id, conversation_id, settings=None):
+    """Return the full action results an earlier turn already gathered in this conversation."""
+    normalized_user_id = str(user_id or '').strip()
+    normalized_conversation_id = str(conversation_id or '').strip()
+    if not normalized_user_id or not normalized_conversation_id:
+        return []
+
+    try:
+        _authorize_personal_conversation_access(normalized_user_id, normalized_conversation_id)
+        assistant_messages = _read_recent_assistant_messages(
+            normalized_conversation_id,
+            _resolve_prior_turn_history_window(settings),
+        )
+        selected_citations = select_prior_turn_action_citations(
+            assistant_messages,
+        )[:PRIOR_TURN_ACTION_RESULT_ARTIFACT_LIMIT]
+        if not selected_citations:
+            return []
+
+        artifact_payload_map = _read_agent_citation_artifact_payloads(
+            normalized_conversation_id,
+            [
+                str(citation.get('artifact_id') or '').strip()
+                for citation in selected_citations
+                if str(citation.get('artifact_id') or '').strip()
+            ],
+        )
+
+        resolved_citations = []
+        for citation in selected_citations:
+            artifact_payload = artifact_payload_map.get(str(citation.get('artifact_id') or ''))
+            stored_citation = artifact_payload.get('citation') if isinstance(artifact_payload, dict) else None
+            resolved_citations.append(stored_citation if isinstance(stored_citation, dict) else citation)
+        return resolved_citations
+    except Exception as exc:
+        log_event(
+            '[GENERATED_FILE_EXPORT] Could not reuse earlier action results',
+            {
+                'conversation_id': normalized_conversation_id,
+                'error': str(exc),
+            },
+            debug_only=True,
+        )
+    return []
+
+
+def _resolve_pending_generated_file_format(user_question, conversation_id, user_id):
+    """Return the artifact format still owed from an unanswered schema clarification."""
+    try:
+        _authorize_personal_conversation_access(str(user_id or '').strip(), str(conversation_id or '').strip())
+        recent_assistant_messages = _read_recent_assistant_messages(str(conversation_id or '').strip(), 1)
+    except Exception:
+        return None
+    if not recent_assistant_messages:
+        return None
+    return resolve_pending_generated_file_format(
+        user_question,
+        recent_assistant_messages[0].get('content') or '',
+    )
+
+
+def _resolve_generated_file_guidance_format(user_question, conversation_id, user_id):
+    """Return the artifact format this reply owes, including one carried from a clarification."""
+    requested_format = str(get_tabular_generated_output_format(user_question) or '').strip().lower()
+    if requested_format or not conversation_id:
+        return requested_format
+    # A reply that only answers "which rows and columns?" still owes the originally requested file,
+    # so the publication contract has to reach the model on this turn too.
+    pending_format = _resolve_pending_generated_file_format(user_question, conversation_id, user_id)
+    return str(pending_format or '').strip().lower()
+
+
 def maybe_create_generated_file_output(
     user_question,
     assistant_content,
@@ -2274,6 +2399,12 @@ def maybe_create_generated_file_output(
     )
     output_format = get_requested_generated_file_format(user_question)
     if not output_format:
+        output_format = _resolve_pending_generated_file_format(
+            user_question,
+            conversation_id,
+            get_current_user_id(),
+        )
+    if not output_format:
         return None
     if output_format == 'csv' and _has_generated_tabular_csv_output(existing_outputs):
         return None
@@ -2284,6 +2415,12 @@ def maybe_create_generated_file_output(
         user_question,
         assistant_content,
         function_results=function_results,
+        prior_function_results_loader=lambda: _load_prior_turn_function_results(
+            get_current_user_id(),
+            conversation_id,
+            settings=get_settings(),
+        ),
+        pending_output_format=output_format,
     )
     if not export_payload:
         return None
@@ -2508,11 +2645,26 @@ def _build_streaming_assistant_file_status(output_format):
     return f'Generating the {normalized_output_format} file. It will appear here when ready.'
 
 
+def _build_structured_artifact_rows_payload(user_question, output_format, conversation_id, function_results):
+    """Fall back to authorized action rows when a JSON/XML reply carried no payload."""
+    return build_structured_artifact_rows_payload(
+        user_question,
+        output_format,
+        function_results=function_results,
+        prior_function_results_loader=lambda: _load_prior_turn_function_results(
+            get_current_user_id(),
+            conversation_id,
+            settings=get_settings(),
+        ),
+    )
+
+
 def maybe_create_assistant_file_generated_output(
     user_question,
     assistant_content,
     conversation_id,
     existing_outputs=None,
+    function_results=None,
 ):
     """Save assistant-generated JSON/XML content as a downloadable chat artifact."""
     output_format = get_tabular_generated_output_format(user_question)
@@ -2525,20 +2677,40 @@ def maybe_create_assistant_file_generated_output(
 
     preview_items = []
     preview_lines = []
+    row_payload = None
     if output_format == 'json':
         json_payload = normalize_json_artifact_payload(assistant_content)
         if json_payload is None:
-            return None
-        file_content = serialize_generated_json(json_payload)
-        if isinstance(json_payload, list):
-            preview_items = json_payload[:3]
-        elif isinstance(json_payload, dict):
-            preview_items = [json_payload]
+            row_payload = _build_structured_artifact_rows_payload(
+                user_question,
+                output_format,
+                conversation_id,
+                function_results,
+            )
+            if row_payload is None:
+                return None
+            file_content = row_payload['file_content']
+            preview_items = row_payload['rows'][:3]
+        else:
+            file_content = serialize_generated_json(json_payload)
+            if isinstance(json_payload, list):
+                preview_items = json_payload[:3]
+            elif isinstance(json_payload, dict):
+                preview_items = [json_payload]
     else:
         xml_payload = normalize_xml_artifact_payload(assistant_content)
         if not xml_payload:
-            return None
-        file_content = xml_payload
+            row_payload = _build_structured_artifact_rows_payload(
+                user_question,
+                output_format,
+                conversation_id,
+                function_results,
+            )
+            if row_payload is None:
+                return None
+            file_content = row_payload['file_content']
+        else:
+            file_content = xml_payload
         preview_lines = _build_assistant_file_preview_lines(file_content)
 
     generated_file_name = _build_assistant_file_export_name(output_format)
@@ -15404,6 +15576,7 @@ def register_route_backend_chats(bp):
                 assistant_content=document_action_reply_content,
                 conversation_id=conversation_id,
                 existing_outputs=document_generated_analysis_artifacts + document_generated_tabular_outputs,
+                function_results=execution_result.get('agent_citations') or [],
             )
             if assistant_file_generated_output:
                 document_generated_analysis_artifacts.append(assistant_file_generated_output)
@@ -16116,7 +16289,11 @@ def register_route_backend_chats(bp):
             system_messages_for_augmentation = [] # Collect system messages from search
             generated_file_output_guidance = build_generated_file_output_guidance(
                 user_message,
-                requested_format=get_tabular_generated_output_format(user_message),
+                requested_format=_resolve_generated_file_guidance_format(
+                    user_message,
+                    conversation_id,
+                    user_id,
+                ),
             )
             if generated_file_output_guidance:
                 system_messages_for_augmentation.append({
@@ -19844,6 +20021,7 @@ def register_route_backend_chats(bp):
                 assistant_content=ai_message,
                 conversation_id=conversation_id,
                 existing_outputs=generated_analysis_artifacts_list + generated_tabular_outputs_list,
+                function_results=agent_citations_list,
             )
             if assistant_file_generated_output:
                 generated_analysis_artifacts_list.append(assistant_file_generated_output)
@@ -20468,9 +20646,11 @@ def register_route_backend_chats(bp):
                 generated_tabular_outputs_list = []
                 generated_analysis_artifacts_list = []
                 system_messages_for_augmentation = []
-                requested_streamed_file_format = str(
-                    get_tabular_generated_output_format(user_message) or ''
-                ).strip().lower()
+                requested_streamed_file_format = _resolve_generated_file_guidance_format(
+                    user_message,
+                    conversation_id,
+                    user_id,
+                )
                 suppress_streamed_file_payload = requested_streamed_file_format in {'json', 'xml'}
                 streamed_file_status_content = _build_streaming_assistant_file_status(
                     requested_streamed_file_format
@@ -23792,6 +23972,7 @@ def register_route_backend_chats(bp):
                         assistant_content=accumulated_content,
                         conversation_id=conversation_id,
                         existing_outputs=generated_analysis_artifacts_list + generated_tabular_outputs_list,
+                        function_results=agent_citations_list,
                     )
                     if assistant_file_generated_output:
                         generated_analysis_artifacts_list.append(assistant_file_generated_output)
