@@ -517,6 +517,9 @@
           </li>
           {% endif %}
               {% else %}
+              {% if not admin_tab.condition
+                    or (admin_tab.condition == 'enable_agent_template_gallery' and app_settings.enable_agent_template_gallery)
+                    or (admin_tab.condition == 'mcp_ui_enabled' and mcp_ui_enabled) %}
               <li class="nav-item">
                 <a class="nav-link d-flex align-items-center admin-nav-tab" href="#" data-tab="{{ admin_tab.id }}">
                   <i class="bi {{ admin_tab.icon }} me-2" aria-hidden="true"></i><span class="nav-text">{{ admin_tab.label }}</span>
@@ -537,6 +540,7 @@
                 </ul>
                 {% endif %}
               </li>
+              {% endif %}
               {% endif %}
               {% endfor %}
             </ul>

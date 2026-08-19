@@ -22,8 +22,8 @@ Development ─── feature/admin-settings-ia ──┬── #1297 stage 1   
                                                       └──► final PR ──► Development
 ```
 
-Current version: **0.260.014**. Fingerprint: **462 field names / 110 card ids**.
-Navigation: **14 groups / 36 tabs / 88 sections**.
+Current version: **0.260.015**. Fingerprint: **462 field names / 110 card ids**.
+Navigation: **14 groups / 40 tabs / 88 sections**.
 
 ### Shipped
 
@@ -116,6 +116,12 @@ moved from Scale to Security that way.
 | Knowledge | **Search & Extract dismantled.** → Web & Research, Search Index, Document Extraction (+ metadata extraction and multi-modal vision from Workspaces), Audio & Video |
 | Workspaces | → Workspace Types, Files & Sharing (+ shared conversation file approvals from AI Models), Global Identities |
 | Workflow | **New group**, split out of Workspaces |
+| AI Models | → Model Endpoints (carries the legacy modal and its nested Chat Model card), Embeddings, Image Generation |
+| Agents & Actions | → Agents, Actions, Inbound MCP (whole tab behind `mcp_ui_enabled`) |
+
+**Only Backup & Recovery is left**, and it is the hardest: complication I4, a
+~985-line migration workflow that must split across Backup / Migrate / Restore
+/ Jobs as one unit.
 
 ### Card container ids are not the nav section ids
 
@@ -137,9 +143,34 @@ Run `list_pane_cards.py` for the real container id rather than assuming.
 ### Trap: gpt-configuration is inside a modal
 
 `gpt-configuration` is **not** a top-level card. It lives inside
-`legacyModelSettingsModal` in the AI Models pane. Splitting AI Models means
-moving a modal, not a card, which is why AI Models and Agents are deliberately
-left for their own change rather than bundled with Knowledge and Workspaces.
+`legacyModelSettingsModal` in the AI Models pane.
+
+**How this was resolved.** The modal was relocated to sit directly after
+`multi-endpoint-configuration`, the card holding its trigger. The split then
+assigned `multi-endpoint-configuration, gpt-configuration` to the same tab, so
+the modal's opening lines, the nested card and the closing lines all landed in
+`model-endpoints.html` in order and the modal reassembled intact.
+
+### Three more splitting rules learned
+
+- **A modal shared by cards that end up in different tabs must go to the
+  shell.** `legacyModelDiscoveryIdentityGuideModal` is opened from endpoints,
+  embeddings and image generation. Check for form fields first: a modal with a
+  `name=` attribute cannot move outside the `<form>` without changing the save
+  payload. That one had none.
+- **The split tool cannot write a target with the same name as its source.**
+  Rename the source (`agents.html` → `agents-src.html`) and split that.
+- **A Jinja conditional wrapping a card and its modals must be lifted out
+  whole.** The inbound MCP block is `{% if mcp_ui_enabled %}` … `{% endif %}`
+  spanning the card and three modals; it was extracted as one unit into its own
+  pane rather than split.
+
+### Tab-level conditions
+
+The nav map now supports `condition` on a **tab**, not just a section, so a tab
+whose entire pane is behind a feature flag disappears rather than rendering
+empty. Both renderers honour it. Verified: 40 tabs with `mcp_ui_enabled`, 39
+without.
 
 
 ### Two hardcoded-id traps found and closed

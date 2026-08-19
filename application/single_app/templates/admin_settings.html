@@ -953,6 +953,9 @@
             {% set group_is_first = loop.first %}
             {% for admin_tab in admin_group.tabs %}
             {% set is_default_tab = group_is_first and loop.first %}
+            {% if not admin_tab.condition
+                  or (admin_tab.condition == 'enable_agent_template_gallery' and app_settings.enable_agent_template_gallery)
+                  or (admin_tab.condition == 'mcp_ui_enabled' and mcp_ui_enabled) %}
             <li class="nav-item admin-tab-item"
                 role="presentation"
                 data-admin-group="{{ admin_group.id }}"
@@ -971,6 +974,7 @@
                     {% endif %}
                 </button>
             </li>
+            {% endif %}
             {% endfor %}
             {% endfor %}
         </ul>
@@ -987,6 +991,8 @@
 
 
             {% include "admin/_panes/agents.html" %}
+            {% include "admin/_panes/actions.html" %}
+            {% include "admin/_panes/inbound-mcp.html" %}
 
 
             <!-- Governance Tab Content -->
@@ -1003,7 +1009,9 @@
             {% include "admin/_panes/custom-pages.html" %}
 
 
-            {% include "admin/_panes/ai-models.html" %}
+            {% include "admin/_panes/model-endpoints.html" %}
+            {% include "admin/_panes/embeddings.html" %}
+            {% include "admin/_panes/image-generation.html" %}
 
             <!-- Control Center Configuration Tab -->
             {% include "admin/_panes/control-center-config.html" %}
@@ -1087,6 +1095,83 @@
     <button type="submit" form="admin-settings-form" class="btn btn-secondary floating-save-btn" id="floating-save-btn" disabled>
         <i class="bi bi-floppy"></i> Save Settings
     </button>
+
+<!-- Shared by Model Endpoints, Embeddings and Image Generation, so it lives
+     outside the panes rather than inside any one of them. -->
+<div class="modal fade" id="legacyModelDiscoveryIdentityGuideModal" tabindex="-1" aria-labelledby="legacyModelDiscoveryIdentityGuideModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="legacyModelDiscoveryIdentityGuideModalLabel">Azure OpenAI Model Setup Guide</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="alert alert-info" role="alert">
+                    <strong>Fetch Models</strong> lists deployments through the Azure management plane. <strong>Test Connection</strong>, chat generation, file uploads, embedding generation, and image generation call the Azure OpenAI data plane. These paths can use different credentials and require different roles.
+                </div>
+
+                <h6>Credential purpose</h6>
+                <div class="table-responsive mb-3">
+                    <table class="table table-sm table-bordered align-middle">
+                        <thead>
+                            <tr>
+                                <th>Action</th>
+                                <th>Plane</th>
+                                <th>Credential used</th>
+                                <th>Role or secret</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td>Legacy GPT, embedding, or image <strong>Fetch Models</strong></td>
+                                <td>Management plane</td>
+                                <td>The SimpleChat app registration or service principal, such as the <code>-ar</code> Entra application created for the deployment.</td>
+                                <td><code>Cognitive Services User</code> on the Azure OpenAI resource, or an equivalent role that can read deployments.</td>
+                            </tr>
+                            <tr>
+                                <td>Global endpoint modal <strong>Fetch Models</strong></td>
+                                <td>Management plane</td>
+                                <td>The endpoint modal identity selected for discovery, such as managed identity or service principal.</td>
+                                <td><code>Cognitive Services User</code> on the Azure OpenAI resource, or an equivalent role that can read deployments.</td>
+                            </tr>
+                            <tr>
+                                <td>GPT, embedding, or image generation with Key authentication selected</td>
+                                <td>Data plane</td>
+                                <td>The Azure OpenAI key saved in this settings section.</td>
+                                <td>Azure OpenAI resource key from <strong>Keys and Endpoint</strong>.</td>
+                            </tr>
+                            <tr>
+                                <td>GPT, embedding, or image generation with Managed Identity selected</td>
+                                <td>Data plane</td>
+                                <td>The App Service managed identity, such as the <code>-app</code> managed identity.</td>
+                                <td><code>Cognitive Services OpenAI User</code> on the Azure OpenAI resource.</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <h6>Where to get values</h6>
+                <ol class="mb-3">
+                    <li>Open the Azure OpenAI resource in the Azure portal.</li>
+                    <li>Copy the endpoint from <strong>Resource Management</strong> &gt; <strong>Keys and Endpoint</strong>.</li>
+                    <li>If using Key authentication for runtime calls, copy <strong>Key 1</strong> or <strong>Key 2</strong> from the same page.</li>
+                    <li>Copy the subscription ID and resource group from the resource <strong>Overview</strong> page. These are required for <strong>Fetch Models</strong>.</li>
+                    <li>If using APIM, use the APIM endpoint, deployment path or name, API version, and APIM subscription key instead of the direct Azure OpenAI key.</li>
+                </ol>
+
+                <h6>Recommended setup</h6>
+                <ul class="mb-0">
+                    <li>For key-backed legacy GPT, embeddings, or image generation, grant the SimpleChat service principal the management-plane role so admins can fetch model deployments, then store the Azure OpenAI key for data-plane generation.</li>
+                    <li>For managed identity runtime, grant the App Service managed identity <code>Cognitive Services OpenAI User</code> for data-plane generation. If the same managed identity should also fetch deployments, grant it the management-plane discovery role too.</li>
+                    <li>Fetch only discovers deployment names and model metadata. It does not prove that embedding or image generation inference will succeed; use <strong>Test Embedding Connection</strong> or <strong>Test Image Connection</strong> after selecting a deployment.</li>
+                </ul>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
 
     <div class="modal fade" id="customPagesRestartModal" tabindex="-1" aria-labelledby="customPagesRestartModalLabel" aria-hidden="true" data-bs-backdrop="static" data-bs-keyboard="false">
         <div class="modal-dialog">

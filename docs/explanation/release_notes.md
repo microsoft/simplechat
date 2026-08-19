@@ -2,6 +2,31 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.260.015)**
+
+#### User Interface Enhancements
+
+*   **AI Models Split By Model Purpose**
+    *   AI Models presented every model setting on one tab. It is now **Model Endpoints** (endpoint and fallback configuration, plus the Chat Model dialog opened from it), **Embeddings** and **Image Generation**.
+    *   (Ref: `model-endpoints`, `embeddings`, `image-generation`)
+
+*   **Agents And Actions Are Now Separate Tabs**
+    *   A single "Agents and Actions" tab carried agent configuration, template approvals, document action capabilities, action configuration and the whole inbound MCP surface.
+    *   It is now **Agents**, **Actions** and **Inbound MCP**.
+    *   Inbound MCP is a large area with its own dialogs and diagnostics, and the whole tab is hidden when the inbound MCP interface is turned off rather than showing an empty tab.
+    *   (Ref: `agents`, `actions`, `inbound-mcp`)
+
+#### Bug Fixes
+
+*   **Model Setup Guide Available From Every Model Tab**
+    *   The Azure OpenAI Model Setup Guide dialog is opened from the endpoints, embeddings and image generation cards. Once those moved to separate tabs it could only have opened from one of them.
+    *   The dialog now sits outside the tabs, so it opens from all three.
+    *   (Ref: `legacyModelDiscoveryIdentityGuideModal`)
+
+*   **Dangling Section Comments Removed**
+    *   Seven tabs ended with a comment labelling a card that had since moved to another tab.
+    *   (Ref: admin settings tab panes)
+
 ### **(v0.260.014)**
 
 #### User Interface Enhancements

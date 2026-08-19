@@ -94,14 +94,31 @@ ADMIN_NAV = [
         "icon": "bi-cpu",
         "tabs": [
             {
-                "id": "ai-models",
-                "label": "AI Models",
-                "icon": "bi-cpu",
+                # The Chat Model card is reached through the legacy model
+                # settings dialog opened from here, so it is listed with the
+                # endpoints rather than as a tab of its own.
+                "id": "model-endpoints",
+                "label": "Model Endpoints",
+                "icon": "bi-hdd-network",
                 "sections": [
                     {"id": "multi-endpoint-configuration", "label": "Model Endpoints", "icon": "bi-hdd-network"},
-                    {"id": "embeddings-config", "label": "Embeddings", "icon": "bi-vector-pen"},
-                    {"id": "image-config", "label": "Image Generation", "icon": "bi-image"},
                     {"id": "gpt-config", "label": "Chat Model", "icon": "bi-chat-square-text"},
+                ],
+            },
+            {
+                "id": "embeddings",
+                "label": "Embeddings",
+                "icon": "bi-vector-pen",
+                "sections": [
+                    {"id": "embeddings-config", "label": "Embeddings", "icon": "bi-vector-pen"},
+                ],
+            },
+            {
+                "id": "image-generation",
+                "label": "Image Generation",
+                "icon": "bi-image",
+                "sections": [
+                    {"id": "image-config", "label": "Image Generation", "icon": "bi-image"},
                 ],
             },
         ],
@@ -113,13 +130,30 @@ ADMIN_NAV = [
         "tabs": [
             {
                 "id": "agents",
-                "label": "Agents and Actions",
+                "label": "Agents",
                 "icon": "bi-robot",
                 "sections": [
-                    {"id": "document-action-capabilities-card", "label": "Document Action Capabilities", "icon": "bi-files"},
                     {"id": "agents-config", "label": "Agents Configuration", "icon": "bi-robot"},
                     {"id": "agent-template-approvals-section", "label": "Agent Template Approvals", "icon": "bi-layers", "condition": "enable_agent_template_gallery"},
+                ],
+            },
+            {
+                "id": "actions",
+                "label": "Actions",
+                "icon": "bi-plugin",
+                "sections": [
+                    {"id": "document-action-capabilities-card", "label": "Document Action Capabilities", "icon": "bi-files"},
                     {"id": "actions-config", "label": "Actions Configuration", "icon": "bi-plugin"},
+                ],
+            },
+            {
+                # The whole tab is behind mcp_ui_enabled, so the tab carries the
+                # condition rather than the single section inside it.
+                "id": "inbound-mcp",
+                "label": "Inbound MCP",
+                "icon": "bi-diagram-3",
+                "condition": "mcp_ui_enabled",
+                "sections": [
                     {"id": "inbound-mcp-configuration", "label": "Inbound MCP", "icon": "bi-diagram-3", "condition": "mcp_ui_enabled"},
                 ],
             },

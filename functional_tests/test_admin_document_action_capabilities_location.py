@@ -42,20 +42,22 @@ def test_admin_document_action_capabilities_card_location() -> None:
     )
 
     card_index = template_content.find('id="document-action-capabilities-card"')
-    agents_tab_index = template_content.find('id="agents" role="tabpanel"')
-    agents_config_index = template_content.find('id="agents-configuration"')
+    actions_tab_index = template_content.find('id="actions" role="tabpanel"')
+    actions_config_index = template_content.find('id="actions-configuration"')
 
     assert card_index != -1, "Expected the admin settings template to render the document action capabilities card."
-    assert agents_tab_index != -1, "Expected the admin settings template to render the Agents and Actions tab pane."
-    assert agents_config_index != -1, "Expected the admin settings template to render the agents configuration card."
-    assert agents_tab_index < card_index < agents_config_index, (
-        "Expected the document action capabilities card to appear at the top of the Agents and Actions tab before the existing configuration cards."
+    assert actions_tab_index != -1, "Expected the admin settings template to render the Actions tab pane."
+    assert actions_config_index != -1, "Expected the admin settings template to render the actions configuration card."
+    # The card now leads the Actions tab. Agents configuration moved to its own
+    # tab, so ordering is asserted against the tab this card actually lives in.
+    assert actions_tab_index < card_index < actions_config_index, (
+        "Expected the document action capabilities card to appear at the top of the Actions tab before the actions configuration card."
     )
     assert 'Action</strong> dropdown in Chat and Workflow' in template_content, (
         "Expected the card copy to explain that these settings control the Action dropdown in Chat and Workflow."
     )
     assert 'global agent and custom action cards below' in template_content, (
-        "Expected the card copy to explain that the capability settings remain separate from the cards below in the Agents and Actions tab."
+        "Expected the card copy to explain that the capability settings remain separate from the cards below in the Actions tab."
     )
 
     print("✅ Admin document action capabilities card placement verified")
