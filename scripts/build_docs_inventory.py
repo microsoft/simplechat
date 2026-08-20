@@ -49,54 +49,6 @@ HTML_TAG_RE = re.compile(r"<[^>]+>")
 JINJA_RE = re.compile(r"{[#%{].*?[#}%]}", re.DOTALL)
 
 
-class TabParser(HTMLParser):
-    """Extract Bootstrap tab controls from the admin settings template."""
-
-    def __init__(self) -> None:
-        super().__init__(convert_charrefs=True)
-        self.tabs: list[dict[str, str]] = []
-        self._active_indexes: list[int] = []
-
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        attr_map = {name: value or "" for name, value in attrs}
-        if attr_map.get("data-bs-toggle") != "tab":
-            return
-
-        target = attr_map.get("data-bs-target") or attr_map.get("href") or ""
-        if not target.startswith("#"):
-            return
-
-        self.tabs.append(
-            {
-                "id": target[1:],
-                "tab_element_id": attr_map.get("id", ""),
-                "_label_parts": [],
-            }
-        )
-        self._active_indexes.append(len(self.tabs) - 1)
-
-    def handle_data(self, data: str) -> None:
-        for index in self._active_indexes:
-            self.tabs[index]["_label_parts"].append(data)
-
-    def handle_endtag(self, tag: str) -> None:
-        if self._active_indexes and tag in {"a", "button"}:
-            self._active_indexes.pop()
-
-    def get_tabs(self) -> list[dict[str, str]]:
-        tabs: list[dict[str, str]] = []
-        for tab in self.tabs:
-            label = normalize_label(" ".join(tab["_label_parts"]))
-            tabs.append(
-                {
-                    "id": tab["id"],
-                    "tab_element_id": tab["tab_element_id"],
-                    "label": label,
-                }
-            )
-        return sorted(tabs, key=lambda item: item["id"])
-
-
 class ChatControlParser(HTMLParser):
     """Extract chat control elements and their labels from the chat template."""
 
@@ -228,11 +180,56 @@ def extract_capabilities() -> list[dict[str, Any]]:
     return sorted(capabilities_by_key.values(), key=lambda item: item["key"])
 
 
-def extract_admin_tabs() -> list[dict[str, str]]:
-    """Extract admin settings Bootstrap tabs."""
-    parser = TabParser()
-    parser.feed(read_text(TEMPLATES_DIR / "admin_settings.html"))
-    return parser.get_tabs()
+def extract_admin_nav() -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    """Extract the Admin Settings navigation groups, tabs, and sections.
+
+    The Admin Settings information architecture was reworked into a single
+    authoritative definition in admin_settings_nav.py, structured as
+    GROUP -> TAB -> SECTION. Before that, the tab strip was hand-written markup
+    in admin_settings.html and was scraped from the rendered HTML.
+
+    Scraping no longer works: the template renders the strip from this
+    definition in a loop, so the markup yields a single literal
+    "{{ admin_tab.id }}" instead of real tabs. Read the definition directly.
+    """
+    source = read_text(APP_ROOT / "admin_settings_nav.py")
+    match = re.search(r"^ADMIN_NAV\s*=\s*(\[.*?^\])", source, re.S | re.M)
+    if match is None:
+        raise ValueError("Unable to find ADMIN_NAV in application\\single_app\\admin_settings_nav.py.")
+
+    nav = ast.literal_eval(match.group(1))
+
+    groups: list[dict[str, Any]] = []
+    tabs: list[dict[str, Any]] = []
+    sections: list[dict[str, Any]] = []
+
+    for group in nav:
+        group_tabs = group.get("tabs", []) or []
+        groups.append({
+            "id": group["id"],
+            "label": group.get("label", ""),
+            "tabs": sorted(tab["id"] for tab in group_tabs),
+        })
+
+        for tab in group_tabs:
+            tab_sections = tab.get("sections", []) or []
+            tabs.append({
+                "id": tab["id"],
+                "label": tab.get("label", ""),
+                "group": group["id"],
+            })
+            for section in tab_sections:
+                sections.append({
+                    "id": section["id"],
+                    "label": section.get("label", ""),
+                    "tab": tab["id"],
+                    "group": group["id"],
+                })
+
+    groups.sort(key=lambda item: item["id"])
+    tabs.sort(key=lambda item: item["id"])
+    sections.sort(key=lambda item: item["id"])
+    return groups, tabs, sections
 
 
 def extract_primary_class(path: Path) -> tuple[str | None, str | None]:
@@ -379,9 +376,12 @@ def extract_feature_surfaces() -> list[dict[str, str]]:
 def build_inventory() -> dict[str, Any]:
     """Build the complete application surface inventory."""
     chat_controls, sub_elements = extract_chat_controls()
+    admin_groups, admin_tabs, admin_sections = extract_admin_nav()
     inventory = {
         "capabilities": extract_capabilities(),
-        "admin_tabs": extract_admin_tabs(),
+        "admin_groups": admin_groups,
+        "admin_tabs": admin_tabs,
+        "admin_sections": admin_sections,
         "actions": extract_actions(),
         "chat_controls": chat_controls,
         "sub_elements": sub_elements,
@@ -390,7 +390,9 @@ def build_inventory() -> dict[str, Any]:
     }
     inventory["counts"] = {
         "capabilities": len(inventory["capabilities"]),
+        "admin_groups": len(inventory["admin_groups"]),
         "admin_tabs": len(inventory["admin_tabs"]),
+        "admin_sections": len(inventory["admin_sections"]),
         "actions": len(inventory["actions"]),
         "chat_controls": len(inventory["chat_controls"]),
         "sub_elements": len(inventory["sub_elements"]),
@@ -400,7 +402,9 @@ def build_inventory() -> dict[str, Any]:
     return {
         "counts": inventory["counts"],
         "capabilities": inventory["capabilities"],
+        "admin_groups": inventory["admin_groups"],
         "admin_tabs": inventory["admin_tabs"],
+        "admin_sections": inventory["admin_sections"],
         "actions": inventory["actions"],
         "chat_controls": inventory["chat_controls"],
         "sub_elements": inventory["sub_elements"],

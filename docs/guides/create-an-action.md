@@ -21,7 +21,7 @@ Use an action when a model needs to do more than write an answer, such as query 
 
 ## Before you start
 
-- An admin must enable `enable_semantic_kernel` and allow actions with `allow_user_plugins` or `allow_group_plugins`; see [Agents settings]({{ '/admin/agents/' | relative_url }}).
+- An admin must enable `enable_semantic_kernel` and allow actions with `allow_user_plugins` or `allow_group_plugins`; see [Agents settings]({{ '/admin/agents-actions/' | relative_url }}).
 - Workspace actions require `per_user_semantic_kernel` when actions are personal or group scoped.
 - Have the OpenAPI file, endpoint, credential, reusable identity, or MCP server details required by the action type.
 
@@ -62,4 +62,4 @@ The action appears in the Actions list or card view. When you create or edit an 
 
 - [Create an agent]({{ '/guides/create-an-agent/' | relative_url }})
 - [Create an agent with actions]({{ '/guides/create-an-agent-with-actions/' | relative_url }})
-- [Agents settings]({{ '/admin/agents/' | relative_url }})
+- [Agents settings]({{ '/admin/agents-actions/' | relative_url }})

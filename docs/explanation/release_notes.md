@@ -6,6 +6,16 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 
 #### New Features
 
+*   **Admin Documentation Rebuilt For The Grouped Settings Layout**
+    *   Admin Settings was reorganized from 18 flat tabs into 14 groups containing 44 tabs and 93 settings sections. The documentation was still written against the old flat layout, so it described tabs that no longer exist and omitted the new ones.
+    *   The admin documentation is now one page per group, with every tab reachable by its own anchor so links to a specific tab keep working. Every retired tab URL redirects to the group that now owns its settings, so existing links and bookmarks continue to resolve.
+    *   (Ref: `docs/admin/`, `application/single_app/admin_settings_nav.py`, `docs/_data/app_surface.yml`)
+
+*   **Collaborating In A Conversation Is Now Documented**
+    *   Added a guide covering shared conversations end to end: sharing a conversation, mentioning a participant with `@` and Tab completion, how shared files are approved before they become available, and what participants can and cannot do.
+    *   The Blob Storage action reference now explains its managed identity and account key options.
+    *   (Ref: `docs/guides/collaborate-in-a-conversation/`, `docs/reference/actions/blob-storage/`, `enable_collaborative_conversations`)
+
 *   **Documentation Site Now Reflects the v0.260.001 Release**
     *   The documentation site's Latest Release section was a full release behind, still presenting v0.250.001 as current. It now mirrors the same three-tier model the application uses: v0.260.001 as the current release, v0.250.001 as the previous release, and v0.239.001-v0.241.007 in the archive.
     *   Added 20 feature guides for the v0.260.001 release covering enhanced extraction, embedded Office images, workflow task sequences, the MCP platform, the Yamcs and RocksDB actions, agent instruction references, action test connections, Azure Blob file sync, terms of use, audio file support, completion notifications, the chat AI notice, conversation context grounding, used documents on fork, the conversation contents drawer, font size and zoom, message audio export, public workspace display names, and chat scroll accessibility.
@@ -23,6 +33,14 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   (Ref: `docs/admin/`, `docs/images/admin-settings/`)
 
 #### Bug Fixes
+
+*   **Release Notes Pages No Longer Break On Quoted Template Syntax**
+    *   Release notes legitimately quote template syntax when describing template work, such as a Jinja `block` tag. The page generator emitted that verbatim, so the site build failed with an unknown tag error. Quoted template syntax is now escaped in generated pages and renders as literal text.
+    *   (Ref: `scripts/build_release_notes_pages.py`)
+
+*   **Release Notes Links To Internal Engineering Notes**
+    *   Some release note entries linked to the internal feature and fix note trees, which are intentionally not published on the documentation site. Those links now point at the repository.
+    *   (Ref: `docs/explanation/release_notes.md`)
 
 *   **Release Notes Index No Longer Exceeds Its Page Budget**
     *   The release notes page generator inlined a fixed number of recent releases on its index. The consolidated v0.260.001 rollup is large enough on its own that this pushed the index past the maximum page size and failed generation. The index now fills its inline section by size rather than by count, so a single large rollup cannot break it.
@@ -251,7 +269,7 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   **Overlapping result pages no longer double the row count.** Agents frequently re-request a range from the same start time rather than paging forward, which produced a 1,000-row file for a window holding roughly 500 distinct records. Rows an earlier page of the same action already returned are dropped, while genuinely repeated records inside a single response are preserved.
     *   **Partial data is now labeled.** When an action reports that it truncated its own results, the file carries a **Partial** badge and a note explaining that it covers only the rows the action returned. Agents are also instructed to request the remainder starting after the last row they already hold, rather than repeating the original range.
     *   **CSV, DOCX, PDF, JSON, and XML now behave identically.** All five formats resolve rows the same way, reach back to earlier turns, decline to publish on a clarification turn, and report truncation.
-    *   (Ref: `functions_generated_file_exports.py`, `functions_tabular_generated_exports.py`, `route_backend_chats.py`, `chat-messages.js`, [Generated Artifact Paging, Truncation, and Guidance Carry-Forward Fix](fixes/GENERATED_ARTIFACT_PAGING_AND_GUIDANCE_FIX.md), Refs #1071)
+    *   (Ref: `functions_generated_file_exports.py`, `functions_tabular_generated_exports.py`, `route_backend_chats.py`, `chat-messages.js`, [Generated Artifact Paging, Truncation, and Guidance Carry-Forward Fix](https://github.com/microsoft/simplechat/blob/main/docs/explanation/fixes/GENERATED_ARTIFACT_PAGING_AND_GUIDANCE_FIX.md), Refs #1071)
 
 ### **(v0.260.010)**
 
@@ -378,7 +396,7 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Endpoints are validated when the action is saved and again immediately before the client is built, so actions stored before this release stop working rather than continuing to send credentials.
     *   Log Analytics custom clouds can no longer choose the Microsoft Entra token authority or the OAuth resource used for delegated tokens.
     *   Existing actions using standard Azure hostnames are unaffected. Custom domains, development storage, Azure Stack, and direct private-link hostnames are intentionally rejected, matching the Azure Blob File Sync hardening in v0.250.068.
-    *   (Ref: `functions_azure_endpoint_validation.py`, `plugin_health_checker.py`, `blob_storage_plugin.py`, `queue_storage_plugin.py`, `cosmos_query_plugin.py`, `databricks_plugin.py`, `log_analytics_plugin.py`, [Action App-Identity Endpoint Hardening Fix](fixes/ACTION_APP_IDENTITY_ENDPOINT_HARDENING_FIX.md))
+    *   (Ref: `functions_azure_endpoint_validation.py`, `plugin_health_checker.py`, `blob_storage_plugin.py`, `queue_storage_plugin.py`, `cosmos_query_plugin.py`, `databricks_plugin.py`, `log_analytics_plugin.py`, [Action App-Identity Endpoint Hardening Fix](https://github.com/microsoft/simplechat/blob/main/docs/explanation/fixes/ACTION_APP_IDENTITY_ENDPOINT_HARDENING_FIX.md))
 
 *   **Action Authentication Types Are Now Enforced on the Server**
     *   Each action type's supported authentication methods, declared in its schema definition file, are now enforced when an action is saved or tested. Previously the list was only used to populate the action modal and was never checked by the backend.

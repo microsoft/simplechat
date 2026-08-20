@@ -2,7 +2,9 @@
 # Regenerate with: python scripts\build_docs_inventory.py
 counts:
   capabilities: 111
-  admin_tabs: 18
+  admin_groups: 14
+  admin_tabs: 44
+  admin_sections: 93
   actions: 27
   chat_controls: 47
   sub_elements: 3
@@ -231,61 +233,599 @@ capabilities:
   default: false
 - key: enable_web_search_user_notice
   default: false
-admin_tabs:
-- id: agents
-  tab_element_id: agents-tab
-  label: Agents
+admin_groups:
+- id: agents-actions
+  label: Agents & Actions
+  tabs:
+  - actions
+  - agents
+  - inbound-mcp
 - id: ai-models
-  tab_element_id: ai-models-tab
   label: AI Models
-- id: citation
-  tab_element_id: citation-tab
-  label: Citations
-- id: control-center-config
-  tab_element_id: control-center-config-tab
-  label: Control Center
-- id: custom-pages
-  tab_element_id: custom-pages-tab
-  label: Custom Pages
-- id: data-management
-  tab_element_id: data-management-tab
-  label: Backup, Migrate & Restore
-- id: file-sync
-  tab_element_id: file-sync-tab
-  label: File Sync
-- id: general
-  tab_element_id: general-tab
-  label: General
+  tabs:
+  - embeddings
+  - image-generation
+  - model-endpoints
+- id: appearance
+  label: Appearance
+  tabs:
+  - branding
+  - custom-pages
+  - notices
+- id: backup-recovery
+  label: Backup & Recovery
+  tabs:
+  - backup
+  - cosmos-editor
+  - jobs
+  - migrate
+  - restore
+- id: chat
+  label: Chat
+  tabs:
+  - chat-experience
+  - citation
+  - feedback-alerts
+- id: data-lifecycle
+  label: Data Lifecycle
+  tabs:
+  - archiving
+  - classification
+  - retention
 - id: governance
-  tab_element_id: governance-tab
   label: Governance
-- id: latest-features
-  tab_element_id: latest-features-tab
-  label: Latest Features New
-- id: logging
-  tab_element_id: logging-tab
-  label: Logging
-- id: safety
-  tab_element_id: safety-tab
-  label: Safety
+  tabs:
+  - feature-governance
+  - governance-policies
+  - mcp-governance
+- id: help
+  label: Help
+  tabs:
+  - latest-features
+  - send-feedback
+  - support-menu
+- id: knowledge
+  label: Knowledge
+  tabs:
+  - audio-video
+  - extraction
+  - file-sync
+  - search-index
+  - web-research
+- id: operations
+  label: Operations
+  tabs:
+  - control-center-config
+  - logging
 - id: scale
-  tab_element_id: scale-tab
   label: Scale
-- id: search-extract
-  tab_element_id: search-extract-tab
-  label: Search and Extract
+  tabs:
+  - cosmos
+  - redis-caching
 - id: security
-  tab_element_id: security-tab
   label: Security
-- id: send-feedback
-  tab_element_id: send-feedback-tab
-  label: Send Feedback
-- id: workspace-identities
-  tab_element_id: workspace-identities-tab
-  label: Global Identities
+  tabs:
+  - access-roles
+  - content-safety
+  - network
+  - secrets
+  - session
+- id: workflow
+  label: Workflow
+  tabs:
+  - workflow
 - id: workspaces
-  tab_element_id: workspaces-tab
   label: Workspaces
+  tabs:
+  - files-sharing
+  - workspace-identities
+  - workspace-types
+admin_tabs:
+- id: access-roles
+  label: Access & Roles
+  group: security
+- id: actions
+  label: Actions
+  group: agents-actions
+- id: agents
+  label: Agents
+  group: agents-actions
+- id: archiving
+  label: Archiving
+  group: data-lifecycle
+- id: audio-video
+  label: Audio & Video
+  group: knowledge
+- id: backup
+  label: Backup
+  group: backup-recovery
+- id: branding
+  label: Branding
+  group: appearance
+- id: chat-experience
+  label: Chat Experience
+  group: chat
+- id: citation
+  label: Citations
+  group: chat
+- id: classification
+  label: Classification
+  group: data-lifecycle
+- id: content-safety
+  label: Content Safety
+  group: security
+- id: control-center-config
+  label: Control Center
+  group: operations
+- id: cosmos
+  label: Cosmos
+  group: scale
+- id: cosmos-editor
+  label: Cosmos Editor
+  group: backup-recovery
+- id: custom-pages
+  label: Pages & Links
+  group: appearance
+- id: embeddings
+  label: Embeddings
+  group: ai-models
+- id: extraction
+  label: Document Extraction
+  group: knowledge
+- id: feature-governance
+  label: Feature Governance
+  group: governance
+- id: feedback-alerts
+  label: Feedback & Alerts
+  group: chat
+- id: file-sync
+  label: File Sync
+  group: knowledge
+- id: files-sharing
+  label: Files & Sharing
+  group: workspaces
+- id: governance-policies
+  label: Policies
+  group: governance
+- id: image-generation
+  label: Image Generation
+  group: ai-models
+- id: inbound-mcp
+  label: Inbound MCP
+  group: agents-actions
+- id: jobs
+  label: Jobs
+  group: backup-recovery
+- id: latest-features
+  label: Latest Features
+  group: help
+- id: logging
+  label: Logging & Health
+  group: operations
+- id: mcp-governance
+  label: MCP Governance
+  group: governance
+- id: migrate
+  label: Migrate
+  group: backup-recovery
+- id: model-endpoints
+  label: Model Endpoints
+  group: ai-models
+- id: network
+  label: Network
+  group: security
+- id: notices
+  label: Notices & Agreements
+  group: appearance
+- id: redis-caching
+  label: Redis & Caching
+  group: scale
+- id: restore
+  label: Restore
+  group: backup-recovery
+- id: retention
+  label: Retention
+  group: data-lifecycle
+- id: search-index
+  label: Search Index
+  group: knowledge
+- id: secrets
+  label: Secrets
+  group: security
+- id: send-feedback
+  label: Send Feedback
+  group: help
+- id: session
+  label: Session
+  group: security
+- id: support-menu
+  label: Support Menu
+  group: help
+- id: web-research
+  label: Web & Research
+  group: knowledge
+- id: workflow
+  label: Workflow
+  group: workflow
+- id: workspace-identities
+  label: Global Identities
+  group: workspaces
+- id: workspace-types
+  label: Workspace Types
+  group: workspaces
+admin_sections:
+- id: access-denied-message-section
+  label: Access Denied Message
+  tab: access-roles
+  group: security
+- id: actions-config
+  label: Actions Configuration
+  tab: actions
+  group: agents-actions
+- id: agent-template-approvals-section
+  label: Agent Template Approvals
+  tab: agents
+  group: agents-actions
+- id: agents-config
+  label: Agents Configuration
+  tab: agents
+  group: agents-actions
+- id: ai-notice-section
+  label: Chat AI Notice
+  tab: notices
+  group: appearance
+- id: ai-voice-chat-section
+  label: AI Voice Conversations
+  tab: audio-video
+  group: knowledge
+- id: app-role-requirements-section
+  label: App Role Requirements
+  tab: access-roles
+  group: security
+- id: appearance-section
+  label: Appearance
+  tab: branding
+  group: appearance
+- id: application-insights-section
+  label: Application Insights
+  tab: logging
+  group: operations
+- id: azure-ai-search-section
+  label: Azure AI Search
+  tab: search-index
+  group: knowledge
+- id: branding-section
+  label: Branding
+  tab: branding
+  group: appearance
+- id: chat-file-uploads-section
+  label: Chat File Uploads
+  tab: chat-experience
+  group: chat
+- id: chunk-size-section
+  label: Chunk Sizes
+  tab: extraction
+  group: knowledge
+- id: classification-banner-section
+  label: Classification Banner
+  tab: notices
+  group: appearance
+- id: content-safety-section
+  label: Content Safety
+  tab: content-safety
+  group: security
+- id: control-center-auto-refresh-section
+  label: Automatic Data Refresh
+  tab: control-center-config
+  group: operations
+- id: control-center-overview-section
+  label: Control Center Access
+  tab: control-center-config
+  group: operations
+- id: conversation-archiving-section
+  label: Conversation Archiving
+  tab: archiving
+  group: data-lifecycle
+- id: conversation-cache-section
+  label: Conversation Cache
+  tab: redis-caching
+  group: scale
+- id: conversation-contents-drawer-section
+  label: Conversation Contents Drawer
+  tab: chat-experience
+  group: chat
+- id: conversation-history-section
+  label: Conversation History
+  tab: chat-experience
+  group: chat
+- id: cosmos-maintenance-section
+  label: Cosmos Maintenance
+  tab: cosmos
+  group: scale
+- id: cosmos-throughput-metrics-table-section
+  label: Cosmos Metrics
+  tab: cosmos
+  group: scale
+- id: cosmos-throughput-section
+  label: Cosmos DB Throughput
+  tab: cosmos
+  group: scale
+- id: custom-pages-section
+  label: Static Pages
+  tab: custom-pages
+  group: appearance
+- id: data-management-backup-inventory-section
+  label: Backup Inventory &amp; Restore
+  tab: restore
+  group: backup-recovery
+- id: data-management-backup-section
+  label: Backup
+  tab: backup
+  group: backup-recovery
+- id: data-management-cosmos-editor-section
+  label: Cosmos Editor
+  tab: cosmos-editor
+  group: backup-recovery
+- id: data-management-encryption-section
+  label: Encryption
+  tab: backup
+  group: backup-recovery
+- id: data-management-jobs-section
+  label: Jobs
+  tab: jobs
+  group: backup-recovery
+- id: data-management-migration-section
+  label: Migration
+  tab: migrate
+  group: backup-recovery
+- id: data-management-readiness-section
+  label: Start Here
+  tab: backup
+  group: backup-recovery
+- id: data-management-schedule-section
+  label: Schedule
+  tab: backup
+  group: backup-recovery
+- id: data-management-storage-section
+  label: Storage
+  tab: backup
+  group: backup-recovery
+- id: debug-logging-section
+  label: Debug Logging
+  tab: logging
+  group: operations
+- id: default-system-prompt-section
+  label: Default System Prompt
+  tab: chat-experience
+  group: chat
+- id: desktop-notifications-section
+  label: Desktop Conversation Notifications
+  tab: feedback-alerts
+  group: chat
+- id: document-access-index-section
+  label: DAI Metrics
+  tab: cosmos
+  group: scale
+- id: document-action-capabilities-card
+  label: Document Action Capabilities
+  tab: actions
+  group: agents-actions
+- id: document-classification-section
+  label: Document Classification
+  tab: classification
+  group: data-lifecycle
+- id: document-intelligence-section
+  label: Document Intelligence
+  tab: extraction
+  group: knowledge
+- id: embeddings-config
+  label: Embeddings
+  tab: embeddings
+  group: ai-models
+- id: enhanced-citations-section
+  label: Enhanced
+  tab: citation
+  group: chat
+- id: external-links-section
+  label: External Links
+  tab: custom-pages
+  group: appearance
+- id: file-download-settings-section
+  label: File Downloads
+  tab: files-sharing
+  group: workspaces
+- id: file-processing-logs-section
+  label: File Process Logging
+  tab: logging
+  group: operations
+- id: file-sharing-section
+  label: File Sharing
+  tab: files-sharing
+  group: workspaces
+- id: file-size-limit-section
+  label: Maximum File Size
+  tab: files-sharing
+  group: workspaces
+- id: file-sync-group-section
+  label: Group Workspace Sync
+  tab: file-sync
+  group: knowledge
+- id: file-sync-personal-section
+  label: Personal Workspace Sync
+  tab: file-sync
+  group: knowledge
+- id: file-sync-public-section
+  label: Public Workspace Sync
+  tab: file-sync
+  group: knowledge
+- id: file-sync-section
+  label: File Sync
+  tab: file-sync
+  group: knowledge
+- id: file-sync-source-types-section
+  label: Visible Source Types
+  tab: file-sync
+  group: knowledge
+- id: front-door-section
+  label: Azure Front Door
+  tab: network
+  group: security
+- id: governance-feature-policies-section
+  label: Feature Policies
+  tab: governance-policies
+  group: governance
+- id: governance-feature-toggles-section
+  label: Governance Feature Toggles
+  tab: feature-governance
+  group: governance
+- id: governance-inbound-mcp-section
+  label: Inbound MCP Source Governance
+  tab: mcp-governance
+  group: governance
+- id: governance-item-policies-section
+  label: Delegated Item Policies
+  tab: governance-policies
+  group: governance
+- id: governance-mcp-destination-section
+  label: MCP Action Destination Governance
+  tab: mcp-governance
+  group: governance
+- id: gpt-config
+  label: Chat Model
+  tab: model-endpoints
+  group: ai-models
+- id: group-workspaces-section
+  label: Group Workspaces
+  tab: workspace-types
+  group: workspaces
+- id: health-check-section
+  label: Health Check
+  tab: logging
+  group: operations
+- id: home-page-text-section
+  label: Home Page Text
+  tab: branding
+  group: appearance
+- id: idle-timeout-section
+  label: Idle Session Timeout
+  tab: session
+  group: security
+- id: image-config
+  label: Image Generation
+  tab: image-generation
+  group: ai-models
+- id: inbound-mcp-configuration
+  label: Inbound MCP
+  tab: inbound-mcp
+  group: agents-actions
+- id: keyvault-section
+  label: Key Vault
+  tab: secrets
+  group: security
+- id: metadata-extraction-section
+  label: Metadata Extraction
+  tab: extraction
+  group: knowledge
+- id: multi-endpoint-configuration
+  label: Model Endpoints
+  tab: model-endpoints
+  group: ai-models
+- id: multimodal-vision-section
+  label: Multi-Modal Vision Analysis
+  tab: extraction
+  group: knowledge
+- id: permissions-section
+  label: Permissions
+  tab: access-roles
+  group: security
+- id: personal-workspaces-section
+  label: Personal Workspaces
+  tab: workspace-types
+  group: workspaces
+- id: processing-thoughts-section
+  label: Processing Thoughts
+  tab: chat-experience
+  group: chat
+- id: public-workspaces-section
+  label: Public Workspaces
+  tab: workspace-types
+  group: workspaces
+- id: redis-cache-section
+  label: Redis Cache
+  tab: redis-caching
+  group: scale
+- id: redis-monitoring-section
+  label: Redis Metrics
+  tab: redis-caching
+  group: scale
+- id: retention-policy-section
+  label: Retention Policy
+  tab: retention
+  group: data-lifecycle
+- id: send-feedback-bug-card
+  label: Report a Bug
+  tab: send-feedback
+  group: help
+- id: send-feedback-feature-card
+  label: Request a Feature
+  tab: send-feedback
+  group: help
+- id: send-feedback-overview-card
+  label: Overview
+  tab: send-feedback
+  group: help
+- id: shared-conversation-file-approvals-section
+  label: Shared Conversation File Approvals
+  tab: files-sharing
+  group: workspaces
+- id: source-review-section
+  label: Deep Research
+  tab: web-research
+  group: knowledge
+- id: standard-citations-section
+  label: Standard
+  tab: citation
+  group: chat
+- id: support-menu-section
+  label: Support
+  tab: support-menu
+  group: help
+- id: swagger-section
+  label: API Documentation
+  tab: logging
+  group: operations
+- id: terms-of-use-section
+  label: Terms of Use
+  tab: notices
+  group: appearance
+- id: url-access-section
+  label: URL Access
+  tab: web-research
+  group: knowledge
+- id: user-agreement-section
+  label: User Agreement
+  tab: notices
+  group: appearance
+- id: user-feedback-section
+  label: User Feedback
+  tab: feedback-alerts
+  group: chat
+- id: video-intelligence-section
+  label: AI Video Intelligence
+  tab: audio-video
+  group: knowledge
+- id: web-search-section
+  label: Web Search
+  tab: web-research
+  group: knowledge
+- id: workflow-settings-section
+  label: Workflow
+  tab: workflow
+  group: workflow
+- id: workspace-scope-lock-section
+  label: Workspace Scope Lock
+  tab: chat-experience
+  group: chat
 actions:
 - slug: azure-maps-openlayers
   module: azure_maps_openlayers_plugin.py

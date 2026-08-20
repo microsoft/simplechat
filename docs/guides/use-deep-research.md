@@ -21,7 +21,7 @@ Use Deep Research when the answer depends on evidence review rather than a quick
 
 ## Before you start
 
-- Admins must enable `enable_source_review`; deeper behavior may depend on `enable_deep_source_review`; see [Search and Extract]({{ '/admin/search-extract/' | relative_url }}).
+- Admins must enable `enable_source_review`; deeper behavior may depend on `enable_deep_source_review`; see [Search and Extract]({{ '/admin/knowledge/' | relative_url }}).
 - Direct URLs in the prompt are subject to configured URL limits.
 - Do not paste sensitive URLs unless your organization permits that review path.
 
@@ -61,4 +61,4 @@ The response reflects reviewed evidence rather than only general model knowledge
 
 - [Review pasted URLs]({{ '/guides/review-pasted-urls/' | relative_url }})
 - [Use web search]({{ '/guides/use-web-search/' | relative_url }})
-- [Search and Extract]({{ '/admin/search-extract/' | relative_url }})
+- [Search and Extract]({{ '/admin/knowledge/' | relative_url }})

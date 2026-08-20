@@ -341,7 +341,7 @@ Now that you have document classification working:
 - Create [specialized agents]({{ '/guides/create-your-first-agent/' | relative_url }}) that work with specific document classifications
 - Explore [advanced document management]({{ '/guides/add-documents/' | relative_url }}) techniques
 - Set up [group workspaces]({{ '/guides/manage-group-workspaces/' | relative_url }}) with classification workflows
-- Learn about [enhanced citations]({{ '/admin/citation/' | relative_url }}) that show classification context
+- Learn about [enhanced citations]({{ '/admin/chat/' | relative_url }}) that show classification context
 
 ---
 

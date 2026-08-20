@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Functional test for documentation coverage of the application surface.
-Version: 0.250.230
+Version: 0.260.020
 Implemented in: 0.250.230
 
 This test ensures that every user-facing capability of SimpleChat has
@@ -150,22 +150,69 @@ def test_inventory_is_in_sync():
     return True
 
 
+def test_admin_group_coverage():
+    """Every admin settings group must have a documentation page.
+
+    Admin Settings was reworked from 18 flat tabs into a grouped information
+    architecture of GROUP -> TAB -> SECTION, defined in admin_settings_nav.py.
+    Documentation is organized one page per group, because several tabs carry
+    only one or two settings sections and would make very thin pages.
+    """
+    print("Checking admin settings group documentation coverage...")
+
+    inventory = load_inventory()
+    groups = [group["id"] for group in inventory.get("admin_groups", [])]
+    missing = [group for group in groups if not (DOCS_ROOT / "admin" / f"{group}.md").exists()]
+
+    if missing:
+        print(report_missing(
+            "Admin settings groups", missing, len(groups),
+            "Add a page at docs/admin/<group-id>.md for each missing group.",
+        ))
+        return False
+
+    print(f"  All {len(groups)} admin settings groups are documented.")
+    return True
+
+
 def test_admin_tab_coverage():
-    """Every admin settings tab must have a documentation page."""
+    """Every admin settings tab must be documented on its group's page.
+
+    Tabs are documented as headings within their group page rather than as
+    separate pages, so each tab id must appear as a heading anchor. That keeps
+    deep links to a specific tab working.
+    """
     print("Checking admin settings tab documentation coverage...")
 
     inventory = load_inventory()
-    tabs = [tab["id"] for tab in inventory.get("admin_tabs", [])]
-    missing = [tab for tab in tabs if not (DOCS_ROOT / "admin" / f"{tab}.md").exists()]
+    tabs = inventory.get("admin_tabs", [])
+    missing = []
+
+    for tab in tabs:
+        page = DOCS_ROOT / "admin" / f"{tab['group']}.md"
+        if not page.exists():
+            missing.append(f"{tab['id']} (group page {tab['group']}.md missing)")
+            continue
+
+        content = io.open(page, encoding="utf-8", errors="ignore").read()
+        # Accept an explicit kramdown heading anchor or an existing HTML anchor.
+        anchors = (
+            "{#" + tab["id"] + "}",
+            'id="' + tab["id"] + '"',
+            "{: #" + tab["id"] + "}",
+        )
+        if not any(anchor in content for anchor in anchors):
+            missing.append(f"{tab['id']} (no anchor in {tab['group']}.md)")
 
     if missing:
         print(report_missing(
             "Admin settings tabs", missing, len(tabs),
-            "Add a page at docs/admin/<tab-id>.md for each missing tab.",
+            "Give each tab a heading anchor on its group page, for example "
+            "'## Redis & Caching {#redis-caching}'.",
         ))
         return False
 
-    print(f"  All {len(tabs)} admin settings tabs are documented.")
+    print(f"  All {len(tabs)} admin settings tabs are documented on their group pages.")
     return True
 
 
@@ -264,10 +311,11 @@ def test_exemptions_are_still_real():
 
 
 if __name__ == "__main__":
-    assert_app_version_at_least("0.250.230")
+    assert_app_version_at_least("0.260.020")
 
     tests = [
         test_inventory_is_in_sync,
+        test_admin_group_coverage,
         test_admin_tab_coverage,
         test_action_coverage,
         test_chat_control_coverage,

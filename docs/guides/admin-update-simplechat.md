@@ -37,7 +37,7 @@ Start with [Upgrade Paths]({{ '/guides/upgrade-paths/' | relative_url }}). The f
 
 ## Step 2: Back up the data surfaces first
 
-Use [Backup, Migrate & Restore settings]({{ '/admin/data-management/' | relative_url }}) before changing code or infrastructure. At minimum, preserve Cosmos DB data and AI Search indexes. Include source document blobs when Enhanced Citations are enabled and those blobs are required for restore or migration. Prefer a recent successful backup plus a clear restore policy over assuming the platform backup is enough.
+Use [Backup, Migrate & Restore settings]({{ '/admin/backup-recovery/' | relative_url }}) before changing code or infrastructure. At minimum, preserve Cosmos DB data and AI Search indexes. Include source document blobs when Enhanced Citations are enabled and those blobs are required for restore or migration. Prefer a recent successful backup plus a clear restore policy over assuming the platform backup is enough.
 
 ## Step 3: Choose the matching upgrade path
 
@@ -70,7 +70,7 @@ Open the updated site, sign in, open Admin Settings, run basic chat, and test on
 
 ## Step 6: Roll back when validation fails
 
-Use the rollback method that matches the rollout. Swap back if you used deployment slots. Repoint App Service to the prior known-good image tag if you use image promotion. Redeploy the previous package for native Python when package rollback is your process. If data changed during the failed release, use [Backup, Migrate & Restore settings]({{ '/admin/data-management/' | relative_url }}) only after preflight confirms the target and collision policy.
+Use the rollback method that matches the rollout. Swap back if you used deployment slots. Repoint App Service to the prior known-good image tag if you use image promotion. Redeploy the previous package for native Python when package rollback is your process. If data changed during the failed release, use [Backup, Migrate & Restore settings]({{ '/admin/backup-recovery/' | relative_url }}) only after preflight confirms the target and collision policy.
 
 ## Verify it worked
 
@@ -86,11 +86,11 @@ Use the rollback method that matches the rollout. Swap back if you used deployme
 | --- | --- | --- |
 | A native Python site fails after deployment | Startup command or deployment folder is wrong | Use the native Python startup command and deploy `application/single_app` as documented in [Manual deployment notes]({{ '/reference/deploy/manual_deploy/' | relative_url }}). |
 | A container release was reprovisioned unnecessarily | `azd up` was used for a code-only change | Prefer `azd deploy` for application-only updates and use provisioning commands only when infrastructure changed. |
-| Post-upgrade document retrieval fails | Search, embedding, or extraction settings changed or a dependency is unhealthy | Check [AI Models settings]({{ '/admin/ai-models/' | relative_url }}), [Search and Extract settings]({{ '/admin/search-extract/' | relative_url }}), and related telemetry. |
+| Post-upgrade document retrieval fails | Search, embedding, or extraction settings changed or a dependency is unhealthy | Check [AI Models settings]({{ '/admin/ai-models/' | relative_url }}), [Search and Extract settings]({{ '/admin/knowledge/' | relative_url }}), and related telemetry. |
 
 ## Related
 
 - [Upgrade Paths]({{ '/guides/upgrade-paths/' | relative_url }})
 - [Deployment Reference]({{ '/reference/deploy/' | relative_url }})
-- [Backup, Migrate & Restore settings]({{ '/admin/data-management/' | relative_url }})
+- [Backup, Migrate & Restore settings]({{ '/admin/backup-recovery/' | relative_url }})
 - [Operate SimpleChat day to day]({{ '/guides/admin-operate-simplechat/' | relative_url }})

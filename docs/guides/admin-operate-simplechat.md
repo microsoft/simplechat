@@ -21,8 +21,8 @@ SimpleChat depends on several Azure services that fail or saturate differently. 
 
 ## Before you start
 
-- Confirm [Logging settings]({{ '/admin/logging/' | relative_url }}) are configured for Application Insights and that temporary debug logging has an auto-turnoff window when used.
-- Confirm [Backup, Migrate & Restore settings]({{ '/admin/data-management/' | relative_url }}) have a valid storage target and a retention policy.
+- Confirm [Logging settings]({{ '/admin/operations/' | relative_url }}) are configured for Application Insights and that temporary debug logging has an auto-turnoff window when used.
+- Confirm [Backup, Migrate & Restore settings]({{ '/admin/backup-recovery/' | relative_url }}) have a valid storage target and a retention policy.
 - Know which optional capabilities are enabled so you can check their backing Azure resources during incidents.
 - Keep access to Azure Portal views for App Service, Cosmos DB, Azure AI Search, Azure OpenAI or Foundry, Document Intelligence, Storage, Redis, and Application Insights.
 
@@ -41,7 +41,7 @@ Use [Application Scaling]({{ '/application_scaling/' | relative_url }}) and [Sca
 
 ## Step 3: Review safety violations, feedback, and governed items
 
-Use [Safety settings]({{ '/admin/safety/' | relative_url }}) to control Content Safety, feedback collection, review role requirements, and conversation archiving. Use [Governance settings]({{ '/admin/governance/' | relative_url }}) to review personal, group, and global endpoints, agents, actions, and MCP destinations. Keep review roles assigned before enforcing review-only access.
+Use [Safety settings]({{ '/admin/security/' | relative_url }}) to control Content Safety, feedback collection, review role requirements, and conversation archiving. Use [Governance settings]({{ '/admin/governance/' | relative_url }}) to review personal, group, and global endpoints, agents, actions, and MCP destinations. Keep review roles assigned before enforcing review-only access.
 
 {% include media.html src="guides/admin-operate-simplechat-review.png"
                       alt="Admin review surfaces for safety, feedback, and governed items."
@@ -50,11 +50,11 @@ Use [Safety settings]({{ '/admin/safety/' | relative_url }}) to control Content 
 
 ## Step 4: Manage retention, archiving, and backups
 
-Use [Workspaces settings]({{ '/admin/workspaces/' | relative_url }}) for default document and conversation retention by workspace type. Use [Safety settings]({{ '/admin/safety/' | relative_url }}) when deletion should archive conversations instead of removing them immediately. Use [Backup, Migrate & Restore settings]({{ '/admin/data-management/' | relative_url }}) for scheduled backups, restore preflight, job history, migration, and emergency Cosmos JSON edits.
+Use [Workspaces settings]({{ '/admin/workspaces/' | relative_url }}) for default document and conversation retention by workspace type. Use [Safety settings]({{ '/admin/security/' | relative_url }}) when deletion should archive conversations instead of removing them immediately. Use [Backup, Migrate & Restore settings]({{ '/admin/backup-recovery/' | relative_url }}) for scheduled backups, restore preflight, job history, migration, and emergency Cosmos JSON edits.
 
 ## Step 5: Keep ingestion and source data under control
 
-Use [Search and Extract settings]({{ '/admin/search-extract/' | relative_url }}) to tune extraction, chunking, URL Access, Web Search, Deep Research, Speech, and Video Indexer. Use [File Sync settings]({{ '/admin/file-sync/' | relative_url }}) to limit source counts, schedule frequency, files per run, GB per run, concurrency, recursive sources, and allowed workspace scopes before sync jobs grow unexpectedly.
+Use [Search and Extract settings]({{ '/admin/knowledge/' | relative_url }}) to tune extraction, chunking, URL Access, Web Search, Deep Research, Speech, and Video Indexer. Use [File Sync settings]({{ '/admin/knowledge/' | relative_url }}) to limit source counts, schedule frequency, files per run, GB per run, concurrency, recursive sources, and allowed workspace scopes before sync jobs grow unexpectedly.
 
 ## Step 6: Diagnose failures by layer
 
@@ -79,12 +79,12 @@ Start with [Troubleshooting]({{ '/troubleshooting/' | relative_url }}). Query fa
 | --- | --- | --- |
 | You cannot tell which backend call failed | The investigation started from settings instead of telemetry | Query Application Insights failed requests, capture `operation_Id`, then pivot to exceptions. |
 | Horizontal scale causes inconsistent behavior | Shared cache or session assumptions were not ready | Review Redis-backed cache guidance in [Scale settings]({{ '/admin/scale/' | relative_url }}) before serious scale-out. |
-| File processing history grows without cleanup | File-processing logs are enabled without a retention routine | Use [Logging settings]({{ '/admin/logging/' | relative_url }}) cleanup controls and set an operating cadence. |
+| File processing history grows without cleanup | File-processing logs are enabled without a retention routine | Use [Logging settings]({{ '/admin/operations/' | relative_url }}) cleanup controls and set an operating cadence. |
 
 ## Related
 
 - [Troubleshooting]({{ '/troubleshooting/' | relative_url }})
 - [Application Scaling]({{ '/application_scaling/' | relative_url }})
-- [Logging settings]({{ '/admin/logging/' | relative_url }})
-- [Backup, Migrate & Restore settings]({{ '/admin/data-management/' | relative_url }})
+- [Logging settings]({{ '/admin/operations/' | relative_url }})
+- [Backup, Migrate & Restore settings]({{ '/admin/backup-recovery/' | relative_url }})
 - [Update SimpleChat]({{ '/guides/admin-update-simplechat/' | relative_url }})

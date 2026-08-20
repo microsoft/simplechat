@@ -23,7 +23,7 @@ Use OpenAPI when an HTTP API has a maintained OpenAPI spec and users need agents
 - An OpenAPI specification file in YAML or JSON, max 5 MB according to the modal help.
 - API **Base URL**, auto-populated from the spec when available but editable.
 - Authentication details: no auth, API key, bearer token, basic auth, OAuth2 access token, or compatible reusable identity.
-- Agents/actions enabled with [`enable_semantic_kernel`]({{ '/admin/agents/' | relative_url }}).
+- Agents/actions enabled with [`enable_semantic_kernel`]({{ '/admin/agents-actions/' | relative_url }}).
 
 ## Configure the action
 

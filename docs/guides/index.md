@@ -43,6 +43,7 @@ Use this section when you want momentum first: each page is a practical path thr
 | [Use tags on conversations]({{ '/guides/use-tags-on-conversations/' | relative_url }}) | Organize conversation work by tagging the documents and document sets that drive the chat. | Users |
 | [Export a conversation]({{ '/guides/export-a-conversation/' | relative_url }}) | Download one or more conversations as JSON, Markdown, or PDF. | Users |
 | [Fork a conversation]({{ '/guides/fork-a-conversation/' | relative_url }}) | Branch an existing chat so you can explore a different direction without changing the original thread. | Users |
+| [Collaborate in a conversation]({{ '/guides/collaborate-in-a-conversation/' | relative_url }}) | Invite others into a shared chat, use mentions, and approve participant-generated files. | Users |
 | [Lock workspace scope in chat]({{ '/guides/lock-workspace-scope/' | relative_url }}) | Keep a conversation tied to the same selected workspaces after grounded answers. | Users |
 | [Use deep research]({{ '/guides/use-deep-research/' | relative_url }}) | Ask chat to perform deeper evidence review for URLs and sources in a message. | Users |
 | [Use web search]({{ '/guides/use-web-search/' | relative_url }}) | Send the current chat message to Bing web search when fresh web information is needed. | Users |

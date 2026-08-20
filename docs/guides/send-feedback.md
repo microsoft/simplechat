@@ -21,7 +21,7 @@ Use the feedback form when admins need enough context to reproduce a problem or 
 
 ## Before you start
 
-- Admins must enable `enable_support_menu` and `enable_support_send_feedback`; see [General settings]({{ '/admin/general/' | relative_url }}).
+- Admins must enable `enable_support_menu` and `enable_support_send_feedback`; see [General settings]({{ '/admin/appearance/' | relative_url }}).
 - Your device needs a local mail client or mail handler.
 - Collect reproduction steps, screenshots, business impact, or desired outcome before filling the form.
 
@@ -61,5 +61,5 @@ Your mail client opens a draft addressed according to tenant feedback configurat
 ## Related
 
 - [Update profile preferences]({{ '/guides/update-profile-preferences/' | relative_url }})
-- [General settings]({{ '/admin/general/' | relative_url }})
-- [Send Feedback settings]({{ '/admin/send-feedback/' | relative_url }})
+- [General settings]({{ '/admin/appearance/' | relative_url }})
+- [Send Feedback settings]({{ '/admin/help/' | relative_url }})

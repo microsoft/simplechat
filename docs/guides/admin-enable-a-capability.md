@@ -63,7 +63,7 @@ Sign in as a user who should have access and complete the smallest real workflow
 
 ## Step 6: Watch telemetry and prepare rollback
 
-After validation, check [Logging settings]({{ '/admin/logging/' | relative_url }}) and Application Insights for failures from the new path. Keep a rollback note with the setting names changed, the previous values, and any dependent resources or roles created. If the feature fails, disable the capability toggle first, then remove broader access or resource changes only after users are no longer hitting the path.
+After validation, check [Logging settings]({{ '/admin/operations/' | relative_url }}) and Application Insights for failures from the new path. Keep a rollback note with the setting names changed, the previous values, and any dependent resources or roles created. If the feature fails, disable the capability toggle first, then remove broader access or resource changes only after users are no longer hitting the path.
 
 ## Verify it worked
 
@@ -86,5 +86,5 @@ After validation, check [Logging settings]({{ '/admin/logging/' | relative_url }
 - [Administration settings overview]({{ '/admin/' | relative_url }})
 - [First configuration guide]({{ '/guides/admin-first-configuration/' | relative_url }})
 - [Operate SimpleChat day to day]({{ '/guides/admin-operate-simplechat/' | relative_url }})
-- [Safety settings]({{ '/admin/safety/' | relative_url }})
-- [Agents settings]({{ '/admin/agents/' | relative_url }})
+- [Safety settings]({{ '/admin/security/' | relative_url }})
+- [Agents settings]({{ '/admin/agents-actions/' | relative_url }})

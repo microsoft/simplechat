@@ -20,18 +20,26 @@ Use it when an agent should work with a controlled container path without broad 
 
 ## Before you start
 
-- Storage connection string with access to the target container; agents enabled with `enable_semantic_kernel`.
+- One authentication method for the target container: a storage connection string, managed identity access to the storage account, or an account key.
+- For managed identity, the SimpleChat application identity must already have Azure Blob Storage data-plane access to the account or container. Use a read role for list/read-only actions and a write-capable role when uploads are enabled.
+- Agents enabled with `enable_semantic_kernel`.
 - Users also need access to the action through workspace or governance policy where applicable.
 
 ## Configuration overview
 
-Set **Connection String**, **Container Name**, optional **Blob Prefix**, default capabilities, and supported read/upload file types.
+Choose **Authentication Type**:
+
+- **Connection String** stores the full Azure Storage connection string through the normal action secret flow. Choose it when the action needs a self-contained credential and managed identity is not available.
+- **Managed Identity** uses the application's Azure identity with the **Blob Service Endpoint**. Choose it when you want to avoid stored secrets and can grant the app identity the required Storage Blob data role ahead of time.
+- **Account Key** uses the **Blob Service Endpoint** plus a primary or secondary storage account key. Choose it when a full connection string is not desired but key-based access is still required.
+
+Then set **Container Name**, optional **Blob Prefix**, default capabilities, and supported read/upload file types. The endpoint must be an Azure Blob service hostname such as `https://account.blob.core.windows.net`; SimpleChat validates the endpoint before saving and again before building the action client.
 
 Shared wizard steps: [Common action setup steps](../#common-action-setup-steps).
 
 ## Related
 
 - [Actions reference index]({{ '/reference/actions/' | relative_url }})
-- [Agents administration]({{ '/admin/agents/' | relative_url }})
-- [Workspace identities]({{ '/admin/workspace-identities/' | relative_url }})
+- [Agents administration]({{ '/admin/agents-actions/' | relative_url }})
+- [Workspace identities]({{ '/admin/workspaces/' | relative_url }})
 - [Governance]({{ '/admin/governance/' | relative_url }})

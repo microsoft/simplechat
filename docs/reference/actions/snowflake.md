@@ -23,7 +23,7 @@ Use Snowflake when analytics data is stored in Snowflake and users need governed
 - Snowflake **Account Identifier** without the `snowflakecomputing.com` suffix.
 - **Warehouse** and optional default database, schema, role, and user.
 - Password, key-pair private key, OAuth token, or compatible reusable identity.
-- Agents/actions enabled with [`enable_semantic_kernel`]({{ '/admin/agents/' | relative_url }}).
+- Agents/actions enabled with [`enable_semantic_kernel`]({{ '/admin/agents-actions/' | relative_url }}).
 
 ## Configure the action
 

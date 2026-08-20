@@ -28,7 +28,7 @@ Some Admin Settings tabs unlock experiences that depend on earlier tabs. Workspa
 
 ## Step 1: Set tenant identity, notices, and visible app behavior
 
-Start with [General settings]({{ '/admin/general/' | relative_url }}). Publish the approved application title, logo, landing page copy, access-denied message, support destinations, health-check behavior, Terms of Use, AI notice, idle timeout, and upload/session limits. These are first because every user sees them before feature-specific settings matter.
+Start with [General settings]({{ '/admin/appearance/' | relative_url }}). Publish the approved application title, logo, landing page copy, access-denied message, support destinations, health-check behavior, Terms of Use, AI notice, idle timeout, and upload/session limits. These are first because every user sees them before feature-specific settings matter.
 
 {% include media.html src="guides/admin-first-configuration-general.png"
                       alt="General settings page showing tenant branding, terms, support, health check, and session controls."
@@ -50,7 +50,7 @@ Open [AI Models settings]({{ '/admin/ai-models/' | relative_url }}) and configur
 
 ## Step 4: Configure search, extraction, and web evidence boundaries
 
-Use [Search and Extract settings]({{ '/admin/search-extract/' | relative_url }}) next. Configure Azure AI Search, Document Intelligence, chunking, and extraction modes before promoting workspace uploads. If enabling URL Access, Web Search, Deep Research, Speech, or Video Indexer, configure limits, domain policy, roles, and backing service details before turning on user-facing controls.
+Use [Search and Extract settings]({{ '/admin/knowledge/' | relative_url }}) next. Configure Azure AI Search, Document Intelligence, chunking, and extraction modes before promoting workspace uploads. If enabling URL Access, Web Search, Deep Research, Speech, or Video Indexer, configure limits, domain policy, roles, and backing service details before turning on user-facing controls.
 
 ## Step 5: Decide workspace scopes and data policies
 
@@ -63,19 +63,19 @@ Move to [Workspaces settings]({{ '/admin/workspaces/' | relative_url }}) after m
 
 ## Step 6: Add citation storage when source previews are required
 
-Configure [Citations settings]({{ '/admin/citation/' | relative_url }}) when users need richer source previews or tabular source access. Provision and authorize storage before enabling Enhanced Citations. Set tabular preview and large-run confirmation thresholds according to available memory and cost tolerance.
+Configure [Citations settings]({{ '/admin/chat/' | relative_url }}) when users need richer source previews or tabular source access. Provision and authorize storage before enabling Enhanced Citations. Set tabular preview and large-run confirmation thresholds according to available memory and cost tolerance.
 
 ## Step 7: Enable safety review and feedback paths
 
-Use [Safety settings]({{ '/admin/safety/' | relative_url }}) after core chat works. Content Safety needs an Azure AI Content Safety resource or APIM route and matching authentication. Feedback and safety review role requirements should be enabled only after the `SafetyViolationAdmin` and `FeedbackAdmin` assignments are ready.
+Use [Safety settings]({{ '/admin/security/' | relative_url }}) after core chat works. Content Safety needs an Azure AI Content Safety resource or APIM route and matching authentication. Feedback and safety review role requirements should be enabled only after the `SafetyViolationAdmin` and `FeedbackAdmin` assignments are ready.
 
 ## Step 8: Roll out agents, actions, governance, and sync only after foundations pass
 
-Configure [Agents settings]({{ '/admin/agents/' | relative_url }}) after a GPT model works. Use [Governance settings]({{ '/admin/governance/' | relative_url }}) before opening broad user-created endpoints, agents, actions, or MCP destinations. Enable [File Sync settings]({{ '/admin/file-sync/' | relative_url }}) only after target workspace scopes exist and ingestion limits are set.
+Configure [Agents settings]({{ '/admin/agents-actions/' | relative_url }}) after a GPT model works. Use [Governance settings]({{ '/admin/governance/' | relative_url }}) before opening broad user-created endpoints, agents, actions, or MCP destinations. Enable [File Sync settings]({{ '/admin/knowledge/' | relative_url }}) only after target workspace scopes exist and ingestion limits are set.
 
 ## Step 9: Turn on operational controls
 
-Finish the first configuration pass with [Logging settings]({{ '/admin/logging/' | relative_url }}), [Scale settings]({{ '/admin/scale/' | relative_url }}), [Control Center settings]({{ '/admin/control-center-config/' | relative_url }}), and [Backup, Migrate & Restore settings]({{ '/admin/data-management/' | relative_url }}). Logging, backups, cache behavior, Front Door support, and throughput automation should be ready before the environment becomes business critical.
+Finish the first configuration pass with [Logging settings]({{ '/admin/operations/' | relative_url }}), [Scale settings]({{ '/admin/scale/' | relative_url }}), [Control Center settings]({{ '/admin/operations/' | relative_url }}), and [Backup, Migrate & Restore settings]({{ '/admin/backup-recovery/' | relative_url }}). Logging, backups, cache behavior, Front Door support, and throughput automation should be ready before the environment becomes business critical.
 
 ## Verify it worked
 
@@ -89,9 +89,9 @@ Finish the first configuration pass with [Logging settings]({{ '/admin/logging/'
 
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
-| Workspace answers do not use uploaded documents | Embeddings, Azure AI Search, or extraction settings are incomplete | Revisit [AI Models settings]({{ '/admin/ai-models/' | relative_url }}) and [Search and Extract settings]({{ '/admin/search-extract/' | relative_url }}), then re-test ingestion. |
+| Workspace answers do not use uploaded documents | Embeddings, Azure AI Search, or extraction settings are incomplete | Revisit [AI Models settings]({{ '/admin/ai-models/' | relative_url }}) and [Search and Extract settings]({{ '/admin/knowledge/' | relative_url }}), then re-test ingestion. |
 | Users cannot create groups or workflows after the toggle is enabled | The matching Entra app role requirement is on but assignments are missing | Assign the app role or disable the requirement until assignments are complete. |
-| Agent controls appear but agents fail | Agents were enabled before a working GPT endpoint was available | Validate chat model routing, then return to [Agents settings]({{ '/admin/agents/' | relative_url }}). |
+| Agent controls appear but agents fail | Agents were enabled before a working GPT endpoint was available | Validate chat model routing, then return to [Agents settings]({{ '/admin/agents-actions/' | relative_url }}). |
 
 ## Related
 

@@ -22,8 +22,8 @@ Approvals create a checkpoint before sensitive actions execute. Use this page wh
 ## Before you start
 
 - You must have reviewer access for the request type.
-- Agent template approvals depend on `enable_agent_template_gallery`; see [Agents settings]({{ '/admin/agents/' | relative_url }}).
-- Safety and feedback review roles may be governed from [Safety settings]({{ '/admin/safety/' | relative_url }}).
+- Agent template approvals depend on `enable_agent_template_gallery`; see [Agents settings]({{ '/admin/agents-actions/' | relative_url }}).
+- Safety and feedback review roles may be governed from [Safety settings]({{ '/admin/security/' | relative_url }}).
 
 ## Steps
 
@@ -62,5 +62,5 @@ The request status changes in the table. Approved executable requests complete t
 ## Related
 
 - [Create an agent]({{ '/guides/create-an-agent/' | relative_url }})
-- [Agents settings]({{ '/admin/agents/' | relative_url }})
-- [Safety settings]({{ '/admin/safety/' | relative_url }})
+- [Agents settings]({{ '/admin/agents-actions/' | relative_url }})
+- [Safety settings]({{ '/admin/security/' | relative_url }})

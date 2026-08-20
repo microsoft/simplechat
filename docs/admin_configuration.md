@@ -40,41 +40,41 @@ The [Administration settings guide]({{ '/admin/' | relative_url }}) is the canon
 
 
 
-- [General]({{ '/admin/general/' | relative_url }})
+- [General]({{ '/admin/appearance/' | relative_url }})
 
 - [AI models]({{ '/admin/ai-models/' | relative_url }})
 
-- [Search and extract]({{ '/admin/search-extract/' | relative_url }})
+- [Search and extract]({{ '/admin/knowledge/' | relative_url }})
 
 - [Workspaces]({{ '/admin/workspaces/' | relative_url }})
 
-- [File sync]({{ '/admin/file-sync/' | relative_url }})
+- [File sync]({{ '/admin/knowledge/' | relative_url }})
 
-- [Global identities]({{ '/admin/workspace-identities/' | relative_url }})
+- [Global identities]({{ '/admin/workspaces/' | relative_url }})
 
-- [Citations]({{ '/admin/citation/' | relative_url }})
+- [Citations]({{ '/admin/chat/' | relative_url }})
 
-- [Safety]({{ '/admin/safety/' | relative_url }})
+- [Safety]({{ '/admin/security/' | relative_url }})
 
 - [Security]({{ '/admin/security/' | relative_url }})
 
-- [Agents]({{ '/admin/agents/' | relative_url }})
+- [Agents]({{ '/admin/agents-actions/' | relative_url }})
 
 - [Scale]({{ '/admin/scale/' | relative_url }})
 
-- [Control center]({{ '/admin/control-center-config/' | relative_url }})
+- [Control center]({{ '/admin/operations/' | relative_url }})
 
-- [Backup, migrate and restore]({{ '/admin/data-management/' | relative_url }})
+- [Backup, migrate and restore]({{ '/admin/backup-recovery/' | relative_url }})
 
 - [Governance]({{ '/admin/governance/' | relative_url }})
 
-- [Logging]({{ '/admin/logging/' | relative_url }})
+- [Logging]({{ '/admin/operations/' | relative_url }})
 
-- [Send feedback]({{ '/admin/send-feedback/' | relative_url }})
+- [Send feedback]({{ '/admin/help/' | relative_url }})
 
-- [Custom pages]({{ '/admin/custom-pages/' | relative_url }})
+- [Custom pages]({{ '/admin/appearance/' | relative_url }})
 
-- [Latest features]({{ '/admin/latest-features/' | relative_url }})
+- [Latest features]({{ '/admin/help/' | relative_url }})
 
 
 

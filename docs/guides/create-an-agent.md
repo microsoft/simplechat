@@ -21,7 +21,7 @@ Create an agent when a task benefits from consistent behavior, such as policy re
 
 ## Before you start
 
-- Admins must enable `enable_semantic_kernel`; workspace agents also require `per_user_semantic_kernel` and `allow_user_agents` or `allow_group_agents`; see [Agents settings]({{ '/admin/agents/' | relative_url }}).
+- Admins must enable `enable_semantic_kernel`; workspace agents also require `per_user_semantic_kernel` and `allow_user_agents` or `allow_group_agents`; see [Agents settings]({{ '/admin/agents-actions/' | relative_url }}).
 - At least one GPT model endpoint must be configured; see [AI Models]({{ '/admin/ai-models/' | relative_url }}).
 - Upload and process workspace documents first if the agent should use assigned knowledge.
 
@@ -64,4 +64,4 @@ The agent appears in the Agents list. In chat, select **Agents**, open **Select 
 
 - [Create an action]({{ '/guides/create-an-action/' | relative_url }})
 - [Create an agent with actions]({{ '/guides/create-an-agent-with-actions/' | relative_url }})
-- [Agents settings]({{ '/admin/agents/' | relative_url }})
+- [Agents settings]({{ '/admin/agents-actions/' | relative_url }})

@@ -51,5 +51,5 @@ Use Tabular Processing when users ask exact questions about spreadsheets or CSV 
 
 - [SQL Query](../sql-query/)
 - [Chart](../chart/)
-- [Citation settings]({{ '/admin/citation/' | relative_url }})
+- [Citation settings]({{ '/admin/chat/' | relative_url }})
 

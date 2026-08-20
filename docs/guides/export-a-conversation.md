@@ -23,7 +23,7 @@ Export conversations when you need an audit copy, handoff, or transcript for doc
 
 - You must be signed in and able to see the conversations you want to export.
 - A chat model must be available if you want an AI-generated intro summary.
-- If retention or archiving matters, review `enable_conversation_archiving` on [Safety settings]({{ '/admin/safety/' | relative_url }}).
+- If retention or archiving matters, review `enable_conversation_archiving` on [Safety settings]({{ '/admin/security/' | relative_url }}).
 
 ## Steps
 
@@ -63,4 +63,4 @@ A `.json`, `.md`, `.pdf`, or `.zip` file downloads. Open it and confirm it conta
 
 - [Use tags on conversations]({{ '/guides/use-tags-on-conversations/' | relative_url }})
 - [Fork a conversation]({{ '/guides/fork-a-conversation/' | relative_url }})
-- [Safety settings]({{ '/admin/safety/' | relative_url }})
+- [Safety settings]({{ '/admin/security/' | relative_url }})

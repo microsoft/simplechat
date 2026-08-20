@@ -182,65 +182,69 @@ navigation:
         - title: Admin settings overview
           url: /admin/
           icon: bi bi-sliders
-        - title: General
-          url: /admin/general/
-          icon: bi bi-gear
+        - title: Appearance
+          url: /admin/appearance/
+          match: /admin/appearance/
+          icon: bi bi-palette
+        - title: Chat
+          url: /admin/chat/
+          match: /admin/chat/
+          icon: bi bi-chat-square-text
         - title: AI models
           url: /admin/ai-models/
+          match: /admin/ai-models/
           icon: bi bi-cpu
-        - title: Search and extract
-          url: /admin/search-extract/
-          icon: bi bi-search
+        - title: Agents and actions
+          url: /admin/agents-actions/
+          match: /admin/agents-actions/
+          icon: bi bi-robot
         - title: Workspaces
           url: /admin/workspaces/
+          match: /admin/workspaces/
           icon: bi bi-folder2-open
-        - title: File sync
-          url: /admin/file-sync/
-          icon: bi bi-arrow-repeat
-        - title: Workspace identities
-          url: /admin/workspace-identities/
-          icon: bi bi-person-badge
-        - title: Citations
-          url: /admin/citation/
-          icon: bi bi-quote
-        - title: Safety
-          url: /admin/safety/
-          icon: bi bi-shield-check
+        - title: Workflow
+          url: /admin/workflow/
+          match: /admin/workflow/
+          icon: bi bi-diagram-3
+        - title: Knowledge
+          url: /admin/knowledge/
+          match: /admin/knowledge/
+          icon: bi bi-journal-text
         - title: Security
           url: /admin/security/
+          match: /admin/security/
           icon: bi bi-lock
-        - title: Agents
-          url: /admin/agents/
-          icon: bi bi-robot
-        - title: Scale
-          url: /admin/scale/
-          icon: bi bi-speedometer2
-        - title: Control center
-          url: /admin/control-center-config/
-          icon: bi bi-ui-checks-grid
-        - title: Data management
-          url: /admin/data-management/
-          icon: bi bi-database
         - title: Governance
           url: /admin/governance/
+          match: /admin/governance/
           icon: bi bi-clipboard-check
-        - title: Logging
-          url: /admin/logging/
-          icon: bi bi-journal-text
-        - title: Send feedback
-          url: /admin/send-feedback/
-          icon: bi bi-chat-left-text
-        - title: Custom pages
-          url: /admin/custom-pages/
-          icon: bi bi-window-stack
-        - title: Latest features
-          url: /admin/latest-features/
-          icon: bi bi-stars
+        - title: Data lifecycle
+          url: /admin/data-lifecycle/
+          match: /admin/data-lifecycle/
+          icon: bi bi-hourglass-split
+        - title: Backup and recovery
+          url: /admin/backup-recovery/
+          match: /admin/backup-recovery/
+          icon: bi bi-hdd-stack
+        - title: Scale
+          url: /admin/scale/
+          match: /admin/scale/
+          icon: bi bi-speedometer2
+        - title: Operations
+          url: /admin/operations/
+          match: /admin/operations/
+          icon: bi bi-activity
+        - title: Help
+          url: /admin/help/
+          match: /admin/help/
+          icon: bi bi-life-preserver
         - title: Branding and home page
           url: /guides/configure-branding-and-support-settings/
-          icon: bi bi-palette
+          match: /guides/configure-branding-and-support-settings/
+          icon: bi bi-brush
         - title: Full configuration reference
           url: /admin_configuration/
+          match: /admin_configuration/
           icon: bi bi-book
     - title: Deploy and operate
       links:

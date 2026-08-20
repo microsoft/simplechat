@@ -36,7 +36,7 @@ conversation-productivity:
   summary: "Controls chat navigation, appearance, drawers, notifications, and audio cues around conversation work."
   why: "Use these controls to make the chat surface easier to scan and revisit as histories grow. They do not change model behavior, so keep them focused on usability preferences rather than retrieval or security decisions."
   default_state: "Mixed"
-  admin_tab: general
+  admin_tab: appearance
   setting_keys:
     - enable_conversation_contents_drawer
     - enable_left_nav_default
@@ -69,7 +69,7 @@ grounded-document-search:
   summary: "Controls Azure AI Search-backed retrieval, cached search results, and mixed-source evidence reuse in chat."
   why: "Use this when answers must be grounded in workspace documents and citations rather than only model memory. The mixed-source options are staged rollout controls, so enable them deliberately when follow-up questions should reuse previously authorized evidence."
   default_state: "Mixed"
-  admin_tab: search-extract
+  admin_tab: knowledge
   setting_keys:
     - enable_ai_search_apim
     - enable_search_result_caching
@@ -88,7 +88,7 @@ source-history-summaries:
   summary: "Summarizes older conversation context so search and long-running chats can keep useful history."
   why: "Use this when grounded follow-up questions need relevant prior context after the raw conversation window is too large. Leave it off when strict verbatim history is required or summarization cost is not justified."
   default_state: "Disabled"
-  admin_tab: search-extract
+  admin_tab: knowledge
   setting_keys:
     - enable_summarize_content_history_beyond_conversation_history_limit
     - enable_summarize_content_history_for_search
@@ -102,7 +102,7 @@ enhanced-citations:
   summary: "Adds richer source previews and storage-backed citation rendering for documents used in answers."
   why: "Use this when users need to inspect the exact source content behind an answer, especially with Office files, media transcripts, or generated previews. It adds storage and mount dependencies, so standard citations may be enough for simple deployments."
   default_state: "Disabled"
-  admin_tab: citation
+  admin_tab: chat
   setting_keys:
     - enable_enhanced_citations
     - enable_enhanced_citations_mount
@@ -116,7 +116,7 @@ web-search:
   summary: "Adds Bing-backed web search through a configured Azure AI Foundry agent for current external information."
   why: "Use this when users need current public information that is not in workspace documents. Do not use it for sensitive prompts unless users understand that the current message can be sent to Bing for search."
   default_state: "Disabled"
-  admin_tab: search-extract
+  admin_tab: knowledge
   setting_keys:
     - enable_web_search
     - enable_web_search_user_notice
@@ -133,7 +133,7 @@ url-access:
   summary: "Lets chat and workflows fetch approved pasted URLs under admin-controlled limits and domain policy."
   why: "Use this when links are the natural way to bring source pages into an answer. Keep allowlists, blocklists, and URL counts tight because external pages are untrusted input and can change outside your workspace governance."
   default_state: "Disabled"
-  admin_tab: search-extract
+  admin_tab: knowledge
   setting_keys:
     - enable_url_access
   guides:
@@ -149,7 +149,7 @@ deep-research:
   summary: "Adds bounded source-page review and deeper web evidence inspection before web-grounded answers are used."
   why: "Use this when snippets are not enough and users need inspected pages, source trails, and controlled traversal. It should stay bounded by page, depth, rendering, and domain policy because it can fetch more external content than basic web search."
   default_state: "Mixed"
-  admin_tab: search-extract
+  admin_tab: knowledge
   setting_keys:
     - enable_source_review
     - enable_deep_source_review
@@ -213,7 +213,7 @@ file-sync:
   summary: "Lets enabled workspaces ingest content from configured storage sources instead of relying only on manual uploads."
   why: "Use this when workspace documents should track authoritative SMB, Azure Files, or Azure Blob sources. Scope-specific toggles let admins roll out sync gradually because credentials, schedules, and source ownership need governance."
   default_state: "Mixed"
-  admin_tab: file-sync
+  admin_tab: knowledge
   setting_keys:
     - enable_file_sync
     - enable_file_sync_group
@@ -248,7 +248,7 @@ retention-policies:
   summary: "Applies automatic retention rules separately for personal, group, and public workspace content."
   why: "Use this when conversations and documents need lifecycle enforcement instead of relying on manual cleanup. Configure each workspace type separately because personal drafts, group records, and public knowledge usually have different retention expectations."
   default_state: "Disabled"
-  admin_tab: data-management
+  admin_tab: backup-recovery
   setting_keys:
     - enable_retention_policy_group
     - enable_retention_policy_personal
@@ -263,7 +263,7 @@ document-extraction:
   summary: "Controls Document Intelligence, enhanced extraction, formulas, and embedded Office image analysis during ingestion."
   why: "Use enhanced extraction when forms, scans, images, tables, or formulas need richer structure than standard text extraction. Keep cost and latency in mind because higher-fidelity extraction can be slower and depends on additional Azure services."
   default_state: "Mixed"
-  admin_tab: search-extract
+  admin_tab: knowledge
   setting_keys:
     - enable_document_intelligence_apim
     - enable_document_intelligence_formula_extraction
@@ -279,7 +279,7 @@ document-metadata-and-classification:
   summary: "Adds AI-assisted metadata extraction and category labels to workspace documents."
   why: "Use this when users need better filtering, review cues, or document summaries beyond filenames and tags. It is most useful for curated workspaces; small collections may not need the extra extraction step."
   default_state: "Disabled"
-  admin_tab: search-extract
+  admin_tab: knowledge
   setting_keys:
     - enable_document_classification
     - enable_extract_meta_data
@@ -293,7 +293,7 @@ chunk-size-overrides:
   summary: "Lets admins override default extraction chunk sizes by file type for indexing and retrieval."
   why: "Use this when retrieval quality shows that default chunking is too coarse or too fragmented for your documents. Change it cautiously because reprocessing behavior, search relevance, and token cost are all affected."
   default_state: "Disabled"
-  admin_tab: search-extract
+  admin_tab: knowledge
   setting_keys:
     - enable_chunk_size_override
   reference:
@@ -306,7 +306,7 @@ media-file-ingestion:
   summary: "Allows audio and video files to be processed into searchable transcript-style content."
   why: "Use this when meetings, recordings, or media assets hold knowledge that users should search and cite. Keep it disabled unless Speech or Video Indexer dependencies and processing costs are acceptable."
   default_state: "Disabled"
-  admin_tab: search-extract
+  admin_tab: knowledge
   setting_keys:
     - enable_audio_file_support
     - enable_video_file_support
@@ -320,7 +320,7 @@ multimodal-vision:
   summary: "Enables model-based visual analysis for images and visual document content."
   why: "Use this when image content itself matters, not just OCR text. It should be paired with clear model selection and safety expectations because visual analysis can add cost and may describe sensitive images."
   default_state: "Disabled"
-  admin_tab: search-extract
+  admin_tab: knowledge
   setting_keys:
     - enable_multimodal_vision
   reference:
@@ -333,7 +333,7 @@ tabular-analysis:
   summary: "Runs structured CSV and spreadsheet analysis with durable planning, batching, checkpoints, and response controls."
   why: "Use this when users need computed answers, grouped results, exports, or charts from spreadsheet data rather than prose guesses. The many rollout flags exist because large workbook analysis needs reliability controls for planning, retries, batching, and durable checkpoints."
   default_state: "Mixed"
-  admin_tab: agents
+  admin_tab: agents-actions
   setting_keys:
     - enable_analysis_deliverable_contract_telemetry
     - enable_tabular_analyze_durable_preflight
@@ -360,7 +360,7 @@ document-compare:
   summary: "Compares documents across supported formats, including staged one-to-many comparison behavior."
   why: "Use this when users need revision review across PDFs, Office files, or other supported sources instead of manually reading each file. The one-to-many flag should be staged separately because it expands the amount of source material processed in one comparison."
   default_state: "Disabled"
-  admin_tab: search-extract
+  admin_tab: knowledge
   setting_keys:
     - enable_cross_format_compare
     - enable_cross_format_compare_one_to_many
@@ -391,7 +391,7 @@ agents:
   summary: "Enables Semantic Kernel agents, agent discovery, templates, and multi-agent orchestration options."
   why: "Use this when users need specialized assistants with instructions, knowledge, actions, or reusable workflows. Keep basic chat available for simple questions; agents are most valuable when a task needs repeatable behavior or governed tools."
   default_state: "Mixed"
-  admin_tab: agents
+  admin_tab: agents-actions
   setting_keys:
     - enable_semantic_kernel
     - enable_agent_template_gallery
@@ -411,7 +411,7 @@ core-actions:
   summary: "Controls built-in action plugins for HTTP access, math, text transformation, time, waits, fact memory, and embedding utilities."
   why: "Use these actions to give agents small, predictable tools for common tasks without building custom integrations. Disable tools that are not needed in your environment, especially HTTP access, because actions expand what an agent can do beyond plain chat."
   default_state: "Mixed"
-  admin_tab: agents
+  admin_tab: agents-actions
   setting_keys:
     - enable_default_embedding_model_plugin
     - enable_fact_memory_plugin
@@ -461,7 +461,7 @@ content-safety:
   summary: "Screens prompts and content through Azure AI Content Safety with optional API Management routing."
   why: "Use this when prompts, search, image generation, or other AI flows require policy checks before processing. Tune messages and reviewer access carefully so blocked users receive useful guidance without exposing sensitive trigger details."
   default_state: "Disabled"
-  admin_tab: safety
+  admin_tab: security
   setting_keys:
     - enable_content_safety
     - enable_content_safety_apim
@@ -475,7 +475,7 @@ notices-and-terms:
   summary: "Shows AI notices and terms-of-use acknowledgement prompts to users."
   why: "Use this when the app needs explicit user-facing policy language before or during use. Keep messages concise and operationally maintained, because stale legal or AI-use notices reduce trust."
   default_state: "Disabled"
-  admin_tab: general
+  admin_tab: appearance
   setting_keys:
     - enable_ai_notice
     - enable_terms_of_use
@@ -489,7 +489,7 @@ feedback-and-archiving:
   summary: "Collects user feedback, exposes support feedback, and can archive conversations for review or compliance workflows."
   why: "Use feedback when product owners need a structured signal on answer quality or user issues. Add archiving only when audit or compliance needs justify retaining conversation copies beyond ordinary chat history."
   default_state: "Mixed"
-  admin_tab: send-feedback
+  admin_tab: help
   setting_keys:
     - enable_user_feedback
     - enable_support_send_feedback
@@ -504,7 +504,7 @@ support-menu:
   summary: "Adds the support menu, latest-feature pages, and optional documentation links for in-app help."
   why: "Use this when users need discoverable help and release guidance inside SimpleChat. Documentation links should be enabled only when the linked docs are ready for your audience and deployment path."
   default_state: "Mixed"
-  admin_tab: latest-features
+  admin_tab: help
   setting_keys:
     - enable_support_latest_feature_documentation_links
     - enable_support_latest_features
@@ -519,7 +519,7 @@ custom-navigation:
   summary: "Lets admins add trusted in-app custom pages and curated external navigation links."
   why: "Use custom pages for authenticated local guidance, dashboards, forms, or lightweight tools that belong beside chat. Use external links sparingly for trusted destinations; too many links turn the app navigation into a generic portal."
   default_state: "Disabled"
-  admin_tab: custom-pages
+  admin_tab: appearance
   setting_keys:
     - enable_custom_pages
     - enable_external_links
@@ -547,7 +547,7 @@ app-maintenance-and-health:
   summary: "Runs startup and recurring maintenance jobs and exposes optional external health-check behavior."
   why: "Use this so background upkeep such as indexing policy repair and access-index maintenance happens predictably. External and no-auth health checks should be exposed only when platform monitoring requires them and network controls are understood."
   default_state: "Mixed"
-  admin_tab: control-center-config
+  admin_tab: operations
   setting_keys:
     - enable_app_maintenance
     - enable_startup_app_maintenance
@@ -563,7 +563,7 @@ logging-and-diagnostics:
   summary: "Controls diagnostic logging, Application Insights global logging, and user-visible file processing logs."
   why: "Use diagnostics when operators need to troubleshoot ingestion, settings, or runtime behavior. Keep verbose debug logging temporary because it can increase noise and operational cost."
   default_state: "Mixed"
-  admin_tab: logging
+  admin_tab: operations
   setting_keys:
     - enable_appinsights_global_logging
     - enable_debug_logging
@@ -606,7 +606,7 @@ thoughts-display:
   summary: "Shows configured processing-thought information in supported chat flows."
   why: "Use this when users benefit from seeing how a request is being processed or which tool phase is underway. Disable it when a simpler answer-only experience is preferred or when internal processing details should stay hidden."
   default_state: "Enabled"
-  admin_tab: general
+  admin_tab: appearance
   setting_keys:
     - enable_thoughts
   reference:

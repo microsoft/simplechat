@@ -22,7 +22,7 @@ Use notifications to catch workflow activity, shared conversation events, approv
 ## Before you start
 
 - You must be signed in.
-- Desktop conversation notifications require `enable_desktop_notifications` and browser permission; see [Safety settings]({{ '/admin/safety/' | relative_url }}).
+- Desktop conversation notifications require `enable_desktop_notifications` and browser permission; see [Safety settings]({{ '/admin/security/' | relative_url }}).
 - Your personal desktop preference is saved from Profile.
 
 ## Steps
@@ -62,4 +62,4 @@ Unread notifications lose unread styling after being marked read. Filters and se
 
 - [Update profile preferences]({{ '/guides/update-profile-preferences/' | relative_url }})
 - [Trigger a workflow]({{ '/guides/trigger-a-workflow/' | relative_url }})
-- [Safety settings]({{ '/admin/safety/' | relative_url }})
+- [Safety settings]({{ '/admin/security/' | relative_url }})

@@ -24,7 +24,7 @@ Use MCP when a provider already exposes an MCP server and agents should use thos
 - Transport choice: **Streamable HTTP**, **Server-Sent Events**, **WebSocket**, or **Stdio**.
 - Auth details when required: bearer token, API key header, basic auth, reusable identity, or custom headers.
 - Tool exposure policy: load tools, optional prompts, allowed tool names, and large-result handling.
-- Agents/actions enabled with [`enable_semantic_kernel`]({{ '/admin/agents/' | relative_url }}).
+- Agents/actions enabled with [`enable_semantic_kernel`]({{ '/admin/agents-actions/' | relative_url }}).
 
 ## Configure the action
 
@@ -55,5 +55,5 @@ Use MCP when a provider already exposes an MCP server and agents should use thos
 
 - [OpenAPI](../openapi/)
 - [Actions reference index]({{ '/reference/actions/' | relative_url }})
-- [Workspace identities]({{ '/admin/workspace-identities/' | relative_url }})
+- [Workspace identities]({{ '/admin/workspaces/' | relative_url }})
 

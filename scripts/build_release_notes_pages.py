@@ -155,6 +155,26 @@ def make_range_label(releases: tuple[ReleaseSection, ...]) -> str:
     return newest if newest == oldest else f"{newest} – {oldest}"
 
 
+def escape_liquid(text: str) -> str:
+    """Neutralize Liquid syntax that appears literally in release note prose.
+
+    Release notes legitimately quote template syntax when describing template
+    work, for example "`admin_settings.html` `{% block scripts %}`". Jekyll would
+    otherwise parse that as a Liquid tag and fail the build with
+    "Unknown tag 'block'". Wrapping the content in a raw block tells Liquid to
+    emit it verbatim; markdown still renders normally inside a raw block.
+
+    Any literal endraw in the source would close the block early, so it is
+    defanged first. That has never appeared in practice but the generator should
+    not be able to emit a broken page.
+    """
+    if "{%" not in text and "{{" not in text:
+        return text
+
+    safe = text.replace("{% endraw %}", "{%&#32;endraw %}")
+    return "{% raw %}\n" + safe + "\n{% endraw %}"
+
+
 def page_body_for_releases(
     heading: str,
     releases: tuple[ReleaseSection, ...],
@@ -163,7 +183,7 @@ def page_body_for_releases(
     body_parts = [f"# {heading}"]
     if include_back_link:
         body_parts.append("[Back to release notes index]({{ '/explanation/release_notes/' | relative_url }})")
-    body_parts.extend(release.content for release in releases)
+    body_parts.extend(escape_liquid(release.content) for release in releases)
     return "\n\n".join(body_parts)
 
 

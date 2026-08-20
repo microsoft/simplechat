@@ -61,4 +61,4 @@ Each card shows a status message after saving. Reload the app and confirm the pr
 
 - [Manage notifications]({{ '/guides/manage-notifications/' | relative_url }})
 - [Send feedback]({{ '/guides/send-feedback/' | relative_url }})
-- [Safety settings]({{ '/admin/safety/' | relative_url }})
+- [Safety settings]({{ '/admin/security/' | relative_url }})

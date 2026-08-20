@@ -23,7 +23,7 @@ Use chat upload when you need to ask about a file in the moment: a PDF someone s
 
 - Admins must enable `enable_chat_file_uploads`; they may also require `require_member_of_chat_file_upload_user`; see [Workspaces settings]({{ '/admin/workspaces/' | relative_url }}).
 - The file type must be in the accept list shown by the **File** button tooltip.
-- The file must fit within `max_file_size_mb` on [General settings]({{ '/admin/general/' | relative_url }}).
+- The file must fit within `max_file_size_mb` on [General settings]({{ '/admin/appearance/' | relative_url }}).
 
 ## Steps
 
@@ -61,4 +61,4 @@ The response can reference the uploaded file when relevant. If enabled, **Open u
 
 - [Use tags in chat]({{ '/guides/use-tags-in-chat/' | relative_url }})
 - [Create a file sync]({{ '/guides/create-a-file-sync/' | relative_url }})
-- [General settings]({{ '/admin/general/' | relative_url }})
+- [General settings]({{ '/admin/appearance/' | relative_url }})

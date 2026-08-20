@@ -21,7 +21,7 @@ Binding an action to an agent turns a broad tool into a safer task assistant. Us
 
 ## Before you start
 
-- `enable_semantic_kernel` must be on, and the workspace must allow agents and actions; see [Agents settings]({{ '/admin/agents/' | relative_url }}).
+- `enable_semantic_kernel` must be on, and the workspace must allow agents and actions; see [Agents settings]({{ '/admin/agents-actions/' | relative_url }}).
 - Create and test the action first.
 - Decide which capabilities the agent may use before attaching the action.
 
@@ -62,4 +62,4 @@ In chat, select the agent and ask for a task that requires the action. The respo
 
 - [Create an action]({{ '/guides/create-an-action/' | relative_url }})
 - [Create an agent]({{ '/guides/create-an-agent/' | relative_url }})
-- [Agents settings]({{ '/admin/agents/' | relative_url }})
+- [Agents settings]({{ '/admin/agents-actions/' | relative_url }})

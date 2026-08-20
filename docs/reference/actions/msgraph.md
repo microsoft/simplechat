@@ -23,7 +23,7 @@ Use Microsoft Graph when an agent should help with Microsoft 365 work in the use
 - Microsoft Graph permissions and consent appropriate for enabled capabilities.
 - Signed-in users who are allowed to use the action.
 - A decision about risky capabilities, especially **Send mail** and **Create calendar invites**.
-- Agents/actions enabled with [`enable_semantic_kernel`]({{ '/admin/agents/' | relative_url }}).
+- Agents/actions enabled with [`enable_semantic_kernel`]({{ '/admin/agents-actions/' | relative_url }}).
 
 ## Configure the action
 
@@ -51,6 +51,6 @@ Use Microsoft Graph when an agent should help with Microsoft 365 work in the use
 ## Related
 
 - [Actions reference index]({{ '/reference/actions/' | relative_url }})
-- [Agents administration]({{ '/admin/agents/' | relative_url }})
+- [Agents administration]({{ '/admin/agents-actions/' | relative_url }})
 - [Governance]({{ '/admin/governance/' | relative_url }})
 

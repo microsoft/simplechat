@@ -23,7 +23,7 @@ Use SQL Query when the answer depends on exact relational data: joins, filters, 
 - A reachable SQL Server, Azure SQL, PostgreSQL, MySQL, or SQLite database.
 - A connection string or individual **Server**, **Database**, optional **Port**, and SQL Server **ODBC Driver** values.
 - Credentials through **Username & Password**, **Integrated Authentication**, **Managed Identity (Azure)**, **Service Principal (Azure)**, **Connection String Only**, or a compatible **Reusable Identity**.
-- Agents/actions enabled with [`enable_semantic_kernel`]({{ '/admin/agents/' | relative_url }}).
+- Agents/actions enabled with [`enable_semantic_kernel`]({{ '/admin/agents-actions/' | relative_url }}).
 
 ## Configure the action
 
@@ -54,5 +54,5 @@ Use SQL Query when the answer depends on exact relational data: joins, filters, 
 
 - [SQL Schema](../sql-schema/)
 - [Actions reference index]({{ '/reference/actions/' | relative_url }})
-- [Agents administration]({{ '/admin/agents/' | relative_url }})
+- [Agents administration]({{ '/admin/agents-actions/' | relative_url }})
 

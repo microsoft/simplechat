@@ -23,7 +23,7 @@ Use Tableau when users need to find or reason about Tableau assets without switc
 - Tableau Server or Tableau Cloud base **Server URL**.
 - Optional **Site Content URL**; leave blank for the default Tableau Server site.
 - Personal Access Token name/secret or username/password.
-- Agents/actions enabled with [`enable_semantic_kernel`]({{ '/admin/agents/' | relative_url }}).
+- Agents/actions enabled with [`enable_semantic_kernel`]({{ '/admin/agents-actions/' | relative_url }}).
 
 ## Configure the action
 

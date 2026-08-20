@@ -21,7 +21,7 @@ Use URL Access when you already know the exact pages the model should review. It
 
 ## Before you start
 
-- Admins must enable `enable_url_access`; see [Search and Extract]({{ '/admin/search-extract/' | relative_url }}).
+- Admins must enable `enable_url_access`; see [Search and Extract]({{ '/admin/knowledge/' | relative_url }}).
 - The prompt must include valid `http://` or `https://` URLs.
 - Chat warns when the URL count exceeds the configured limit.
 
@@ -61,4 +61,4 @@ The response uses information from the pasted URLs, or SimpleChat warns when too
 
 - [Use deep research]({{ '/guides/use-deep-research/' | relative_url }})
 - [Use web search]({{ '/guides/use-web-search/' | relative_url }})
-- [Search and Extract]({{ '/admin/search-extract/' | relative_url }})
+- [Search and Extract]({{ '/admin/knowledge/' | relative_url }})

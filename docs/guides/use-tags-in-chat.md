@@ -62,4 +62,4 @@ The answer should cite or discuss documents from the selected tag set. The conve
 
 - [Create and manage tags]({{ '/guides/create-and-manage-tags/' | relative_url }})
 - [Lock workspace scope in chat]({{ '/guides/lock-workspace-scope/' | relative_url }})
-- [Agents settings]({{ '/admin/agents/' | relative_url }})
+- [Agents settings]({{ '/admin/agents-actions/' | relative_url }})

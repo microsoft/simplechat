@@ -295,7 +295,7 @@ Now that you're comfortable with document management:
 - [Classify your documents]({{ '/guides/classify-documents/' | relative_url }}) for better organization
 - [Create agents]({{ '/guides/create-your-first-agent/' | relative_url }}) that work with specific document sets
 - Explore [advanced document management]({{ '/guides/add-documents/' | relative_url }}) techniques
-- Learn about [enhanced citations]({{ '/admin/citation/' | relative_url }}) for better document linking
+- Learn about [enhanced citations]({{ '/admin/chat/' | relative_url }}) for better document linking
 
 ---
 

@@ -21,7 +21,7 @@ Use web search when an answer depends on current public information rather than 
 
 ## Before you start
 
-- Admins must enable `enable_web_search` and complete consent/configuration; see [Search and Extract]({{ '/admin/search-extract/' | relative_url }}).
+- Admins must enable `enable_web_search` and complete consent/configuration; see [Search and Extract]({{ '/admin/knowledge/' | relative_url }}).
 - `enable_web_search_user_notice` may show a notice while web search is active.
 - Do not include sensitive content in a web-search prompt.
 
@@ -61,4 +61,4 @@ The answer should use web search when relevant. The notice appears only while we
 
 - [Review pasted URLs]({{ '/guides/review-pasted-urls/' | relative_url }})
 - [Use deep research]({{ '/guides/use-deep-research/' | relative_url }})
-- [Search and Extract]({{ '/admin/search-extract/' | relative_url }})
+- [Search and Extract]({{ '/admin/knowledge/' | relative_url }})

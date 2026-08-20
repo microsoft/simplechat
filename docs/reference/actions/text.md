@@ -32,6 +32,6 @@ Shared wizard steps: [Common action setup steps](../#common-action-setup-steps).
 ## Related
 
 - [Actions reference index]({{ '/reference/actions/' | relative_url }})
-- [Agents administration]({{ '/admin/agents/' | relative_url }})
-- [Workspace identities]({{ '/admin/workspace-identities/' | relative_url }})
+- [Agents administration]({{ '/admin/agents-actions/' | relative_url }})
+- [Workspace identities]({{ '/admin/workspaces/' | relative_url }})
 - [Governance]({{ '/admin/governance/' | relative_url }})

@@ -80,7 +80,7 @@ Open the app URL from the deployment output, sign in, and confirm the applicatio
 | --- | --- | --- |
 | The site starts but native Python commands are being discussed for a container deployment | The runtime model was mixed during setup | Recheck the deployment reference and remove native Python startup assumptions from container App Service paths. |
 | Authentication redirects fail after a routed-domain setup | Front Door or redirect URL configuration is incomplete | Review [Scale settings]({{ '/admin/scale/' | relative_url }}) and validate sign-in through the routed URL after saving. |
-| The app loads but document search fails | Embedding, AI Search, or Document Intelligence configuration is incomplete | Finish [AI Models settings]({{ '/admin/ai-models/' | relative_url }}) and [Search and Extract settings]({{ '/admin/search-extract/' | relative_url }}). |
+| The app loads but document search fails | Embedding, AI Search, or Document Intelligence configuration is incomplete | Finish [AI Models settings]({{ '/admin/ai-models/' | relative_url }}) and [Search and Extract settings]({{ '/admin/knowledge/' | relative_url }}). |
 
 ## Related
 

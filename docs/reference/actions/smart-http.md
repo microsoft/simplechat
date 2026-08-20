@@ -22,7 +22,7 @@ Use Smart HTTP when the user gives a URL and the agent needs page or PDF content
 
 - Network access from the app to target URLs.
 - Document Intelligence configuration if PDF extraction is expected.
-- The global HTTP action controlled by [`enable_http_plugin`]({{ '/admin/agents/' | relative_url }}).
+- The global HTTP action controlled by [`enable_http_plugin`]({{ '/admin/agents-actions/' | relative_url }}).
 - No Smart HTTP-specific panel was confirmed in `_plugin_modal.html`; behavior is implemented in `smart_http_plugin.py`.
 
 ## Configure the action
@@ -50,5 +50,5 @@ Use Smart HTTP when the user gives a URL and the agent needs page or PDF content
 
 - [OpenAPI](../openapi/)
 - [Actions reference index]({{ '/reference/actions/' | relative_url }})
-- [Search and Extract administration]({{ '/admin/search-extract/' | relative_url }})
+- [Search and Extract administration]({{ '/admin/knowledge/' | relative_url }})
 

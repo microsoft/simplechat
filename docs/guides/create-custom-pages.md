@@ -19,7 +19,7 @@ hero_links:
     url: https://github.com/microsoft/simplechat/blob/main/application/single_app/docs/how-to/custom_pages.md
     style: primary
   - label: "Feature explanation"
-    url: /admin/custom-pages/
+    url: /admin/appearance/
     style: secondary
 section: "Guides"
 redirect_from:

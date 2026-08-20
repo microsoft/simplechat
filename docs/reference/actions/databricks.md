@@ -24,7 +24,7 @@ Use Databricks when governed analytics data lives in Databricks and users should
 - **SQL Warehouse ID**.
 - Optional default **Catalog** and **Schema**.
 - Personal access token, bearer token, service principal, managed identity, or compatible reusable identity.
-- Agents/actions enabled with [`enable_semantic_kernel`]({{ '/admin/agents/' | relative_url }}).
+- Agents/actions enabled with [`enable_semantic_kernel`]({{ '/admin/agents-actions/' | relative_url }}).
 
 ## Configure the action
 

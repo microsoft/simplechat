@@ -34,7 +34,7 @@ const VIEWPORTS = [
 const PAGES = [
     { name: "home", path: "/" },
     { name: "admin-index", path: "/admin/" },
-    { name: "admin-search-extract", path: "/admin/search-extract/" },
+    { name: "admin-knowledge", path: "/admin/knowledge/" },
     { name: "release-notes", path: "/explanation/release_notes/" },
     { name: "search", path: "/search/" },
     { name: "media-status", path: "/contributing/media-status/" }
@@ -213,7 +213,9 @@ async function checkMediaPlaceholders(browser) {
     const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
     const page = await context.newPage();
 
-    await page.goto(`${BASE_URL}/admin/safety/`, { waitUntil: "domcontentloaded" });
+    // Use a group page that still has unfilled media slots, so the placeholder
+    // rendering path is genuinely exercised.
+    await page.goto(`${BASE_URL}/admin/backup-recovery/`, { waitUntil: "domcontentloaded" });
 
     const counts = await page.evaluate(() => ({
         placeholders: document.querySelectorAll(".docs-media--placeholder").length,

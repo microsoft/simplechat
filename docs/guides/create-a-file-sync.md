@@ -21,7 +21,7 @@ Use File Sync when important documents already live in a share or storage contai
 
 ## Before you start
 
-- Admins must enable `enable_file_sync` and the target scope toggle: `enable_file_sync_personal`, `enable_file_sync_group`, or `enable_file_sync_public`; see [File Sync settings]({{ '/admin/file-sync/' | relative_url }}).
+- Admins must enable `enable_file_sync` and the target scope toggle: `enable_file_sync_personal`, `enable_file_sync_group`, or `enable_file_sync_public`; see [File Sync settings]({{ '/admin/knowledge/' | relative_url }}).
 - The workspace scope must be enabled on [Workspaces settings]({{ '/admin/workspaces/' | relative_url }}).
 - You need permission to manage sync sources and a readable credential or **Reusable identity**.
 
@@ -66,4 +66,4 @@ The source appears in the Sync list. Imported files later appear on the workspac
 
 - [Create and manage tags]({{ '/guides/create-and-manage-tags/' | relative_url }})
 - [Create a workflow]({{ '/guides/create-a-workflow/' | relative_url }})
-- [File Sync settings]({{ '/admin/file-sync/' | relative_url }})
+- [File Sync settings]({{ '/admin/knowledge/' | relative_url }})

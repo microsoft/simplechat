@@ -23,7 +23,7 @@ Use SQL Schema when an agent must understand table names, column names, types, a
 - A supported SQL database reachable by the app.
 - Credentials with permission to inspect metadata for the relevant schema.
 - A decision about **Include System Tables**; the recommended default is **No**.
-- Agents/actions enabled with [`enable_semantic_kernel`]({{ '/admin/agents/' | relative_url }}).
+- Agents/actions enabled with [`enable_semantic_kernel`]({{ '/admin/agents-actions/' | relative_url }}).
 
 ## Configure the action
 
@@ -53,5 +53,5 @@ Use SQL Schema when an agent must understand table names, column names, types, a
 
 - [SQL Query](../sql-query/)
 - [Actions reference index]({{ '/reference/actions/' | relative_url }})
-- [Agents administration]({{ '/admin/agents/' | relative_url }})
+- [Agents administration]({{ '/admin/agents-actions/' | relative_url }})
 
