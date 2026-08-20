@@ -28,6 +28,8 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from jinja2 import Environment, FileSystemLoader  # noqa: E402
 
+from test_support.versioning import assert_app_version_at_least  # noqa: E402
+
 APP_ROOT = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
     "application",
@@ -221,6 +223,8 @@ def test_render_catches_a_planted_undefined():
 
 
 if __name__ == "__main__":
+    assert_app_version_at_least("0.260.019")
+
     tests = [
         test_admin_settings_renders_without_error,
         test_every_navigation_tab_renders_a_pane,

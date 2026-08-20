@@ -33,6 +33,8 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from jinja2 import Environment, FileSystemLoader, meta  # noqa: E402
 
+from test_support.versioning import assert_app_version_at_least  # noqa: E402
+
 APP_ROOT = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
     "application",
@@ -191,10 +193,51 @@ def test_analyser_detects_a_planted_leak():
     return True
 
 
+def test_a_pane_renders_its_own_values():
+    """Scope analysis proves a name resolves; this proves the value arrives.
+
+    A pane could declare a variable locally, satisfying every scope check, and
+    still derive it from the wrong place. Rendering one pane with real settings
+    and asserting the values reach the inputs closes that gap.
+    """
+    print("Testing a pane renders its own values...")
+
+    source = _read(os.path.join(PANES_DIR, "actions.html"))
+    rendered = Environment().from_string(source).render(
+        admin_landing_tab="actions",
+        settings={
+            "document_action_capabilities": {
+                "analyze": {
+                    "enabled": True,
+                    "chat_max_documents": 25,
+                    "workflow_max_documents": 250,
+                },
+                "comparison": {
+                    "enabled": False,
+                    "chat_max_documents": 10,
+                    "workflow_max_documents": 100,
+                },
+            }
+        },
+    )
+
+    assert 'id="document_action_analyze_chat_max_documents"' in rendered
+    assert 'value="25"' in rendered, "Analyze chat max documents did not render"
+    assert 'value="250"' in rendered, "Analyze workflow max documents did not render"
+    assert 'value="10"' in rendered, "Comparison chat max documents did not render"
+    assert 'value="100"' in rendered, "Comparison workflow max documents did not render"
+
+    print("The actions pane rendered its capability values.")
+    return True
+
+
 if __name__ == "__main__":
+    assert_app_version_at_least("0.260.019")
+
     tests = [
         test_no_pane_borrows_a_variable_from_a_sibling,
         test_every_pane_variable_is_supplied,
+        test_a_pane_renders_its_own_values,
         test_analyser_detects_a_planted_leak,
     ]
     results = []
