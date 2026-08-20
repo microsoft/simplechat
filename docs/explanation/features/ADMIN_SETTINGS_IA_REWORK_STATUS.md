@@ -22,8 +22,30 @@ Development ─── feature/admin-settings-ia ──┬── #1297 stage 1   
                                                       └──► final PR ──► Development
 ```
 
-Current version: **0.260.017**. Fingerprint: **462 field names / 116 card ids**.
+Current version: **0.260.019**. Fingerprint: **462 field names / 116 card ids**.
 Navigation: **14 groups / 44 tabs / 93 sections**. Stages D and E are complete.
+
+### The bug that got through, and why
+
+Splitting one template into 44 partials broke a Jinja rule that never mattered
+before: **`{% set %}` scope does not cross an `{% include %}` boundary.** Three
+variables were left behind when their consuming card moved to another tab.
+
+Every static test passed. Field names, card ids, tag balance, navigation parity,
+modal placement — all green, because **none of them executed the template**.
+
+Two failure modes, and the quiet one is worse:
+
+- Attribute access on a missing name raises and takes the page down.
+- A boolean test on a missing name is **silently false**, so the controls it
+  guards never render and nothing reports a problem. `enable_dai_debug` sat in
+  this state and was only found by auditing for the pattern that caused the crash.
+
+`test_admin_settings_renders.py` now renders the whole page the way Flask does,
+and `test_admin_settings_pane_variable_scope.py` catches the silent variant a
+render cannot. Both are verified against a planted copy of the real bug.
+
+**Rule: a template is not verified until it has been rendered.**
 
 ### Shipped
 

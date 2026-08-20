@@ -2,6 +2,26 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.260.019)**
+
+#### Bug Fixes
+
+*   **Admin Settings Failed To Load**
+    *   Opening Admin Settings returned an error page instead of the settings.
+    *   Three settings groups depended on a value worked out in a different tab. That was fine while Admin Settings was one large page, but each tab is now its own file and a value worked out in one is not available in another.
+    *   Each value is now worked out in the tab that uses it. No setting changed and nothing needs re-entering.
+    *   (Ref: `actions`, `agents`, `cosmos`, `redis-caching` tabs, [Admin Settings Pane Variable Scope Fix](fixes/ADMIN_SETTINGS_PANE_VARIABLE_SCOPE_FIX.md))
+
+*   **Cosmos Debug Controls Were Silently Missing**
+    *   The debug controls and shadow validation diagnostics on the Cosmos tab would never appear, whatever the debug setting was set to, and nothing reported a problem. This came from the same cause as the error above, but with no visible symptom.
+    *   They now appear whenever debug mode is enabled.
+    *   (Ref: `enable_dai_debug`, Scale → Cosmos)
+
+*   **Admin Settings Is Now Tested By Actually Loading It**
+    *   The existing checks read the Admin Settings page as text and all passed, because none of them opened the page. A page can look correct and still fail to load.
+    *   The test suite now builds the whole page the way the app does, so this kind of failure is caught before release rather than on a visit.
+    *   (Ref: `test_admin_settings_renders.py`, `test_admin_settings_pane_variable_scope.py`)
+
 ### **(v0.260.018)**
 
 #### Bug Fixes
