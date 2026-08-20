@@ -27,6 +27,7 @@ Previous Recordings
 - Mar 19th, 2026 - [Recording URL](https://www.youtube.com/watch?v=EpIVCwGXh1E)
 - April 30th, 2026 - [Recording URL](https://www.youtube.com/watch?v=A2QiGNa6pwM)
 - June 11th, 2026 - [Recording URL](https://www.youtube.com/watch?v=gBcm8g4i3rs)
+- July 23rd, 2026 - [Recording URL](https://www.youtube.com/watch?v=6w_ypzkIKqo)
 
 
 ## Contributing
