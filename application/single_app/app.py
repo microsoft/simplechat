@@ -321,6 +321,10 @@ def initialize_application(force=False):
         print("Setting up Application Insights logging...")
         setup_appinsights_logging(settings)
         logging.basicConfig(level=logging.DEBUG)
+        # basicConfig above is a no-op once Azure Monitor owns the root logger,
+        # and that same root handler stops Flask attaching its stderr handler,
+        # so unhandled tracebacks would otherwise never reach the container log.
+        ensure_console_error_logging(app.logger)
         ensure_default_global_agent_exists()
 
         start_background_tasks()

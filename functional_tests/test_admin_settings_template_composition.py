@@ -40,6 +40,16 @@ COMPOSITION_HELPERS = (
     "read_composed_template",
 )
 
+# Tests that read the pane partials straight off disk are asserting on a single
+# pane in isolation. That is the only way to catch a pane depending on a value a
+# sibling pane sets, because composing the parent inlines every pane into one
+# scope and makes such a dependency look satisfied.
+PARTIAL_READER_MARKERS = (
+    "admin/_panes/",
+    '"_panes"',
+    "'_panes'",
+)
+
 
 def test_every_pane_partial_is_balanced():
     """An unbalanced pane silently nests the panes that follow it.
@@ -161,6 +171,8 @@ def test_no_functional_test_reads_the_template_uncomposed():
         if "admin_settings.html" not in source:
             continue
         if any(helper in source for helper in COMPOSITION_HELPERS):
+            continue
+        if any(marker in source for marker in PARTIAL_READER_MARKERS):
             continue
 
         referenced = sorted(

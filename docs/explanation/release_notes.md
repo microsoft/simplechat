@@ -2,6 +2,24 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.260.019)**
+
+#### Bug Fixes
+
+*   **Admin Settings Loads Again**
+    *   Admin Settings returned a 500 error on every request after the settings restructure. The Document Action Capabilities card moved to the Actions tab but the two values it reads stayed behind in the Agents tab, and each tab is rendered separately, so those values were never there when the card asked for them.
+    *   Both values are now defined in the tab that uses them, and a new test renders the two tabs together to keep them there.
+    *   (Ref: `admin/_panes/actions.html`, `admin/_panes/agents.html`, document action capabilities)
+
+*   **Server Errors Are Visible In The App Service Log Again**
+    *   Once Application Insights was configured it took ownership of logging, which had the side effect of stopping Flask writing unhandled errors to the container log. A failing page left nothing behind but its access-log line, so diagnosing it meant querying Application Insights.
+    *   Unhandled errors are now written to both, so the reason for a failure is visible in the App Service log stream.
+    *   (Ref: `functions_appinsights.py`, `ensure_console_error_logging`, App Service console logs)
+
+*   **Document Access Index Diagnostics Appear When Enabled**
+    *   The Cosmos DB tab checked the wrong thing for the debug setting, so the backfill controls, shadow validation metrics and reset option stayed hidden even after an admin turned the setting on.
+    *   (Ref: `admin/_panes/cosmos.html`, `enable_dai_debug`)
+
 ### **(v0.260.018)**
 
 #### Bug Fixes
