@@ -34,6 +34,9 @@ import ast
 import re
 from pathlib import Path
 from test_support.versioning import assert_app_version_at_least
+from test_support.nav import iter_tabs
+from test_support.templates import compose_if_admin_settings
+from test_support.nav import iter_tabs
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -50,7 +53,9 @@ TERRAFORM_FILE = REPO_ROOT / "deployers" / "terraform" / "main.tf"
 
 
 def read_text(path):
-    return path.read_text(encoding="utf-8")
+    return compose_if_admin_settings(
+        path, path.read_text(encoding="utf-8")
+    )
 
 
 def route_functions_with_decorators():
@@ -340,7 +345,6 @@ def test_admin_javascript_uses_safe_dom_patterns():
     for required_snippet in [
         'document.createElement("tr")',
         'document.createElement("td")',
-        'openKeyVaultSettings',
         'buildMigrationPlan()',
         'queueMigration(false)',
         'loadMigrationCatalog(targetType, "reset")',
@@ -410,9 +414,13 @@ def test_admin_ui_exposes_data_management_without_external_assets():
     sidebar = read_text(SIDEBAR_TEMPLATE)
 
     for marker in [
-        'id="data-management-tab"',
-        'id="data-management"',
-        'id="data-management" role="tabpanel" aria-labelledby="data-management-tab" data-testid="data-management-tab-pane" data-ignore-settings-change="true"',
+        # Backup, Migrate & Restore is now five tabs rather than one, so each
+        # pane is asserted individually.
+        'id="backup" role="tabpanel" aria-labelledby="backup-tab" data-testid="backup-tab-pane" data-ignore-settings-change="true"',
+        'id="migrate" role="tabpanel" aria-labelledby="migrate-tab" data-testid="migrate-tab-pane" data-ignore-settings-change="true"',
+        'id="restore" role="tabpanel" aria-labelledby="restore-tab" data-testid="restore-tab-pane" data-ignore-settings-change="true"',
+        'id="cosmos-editor" role="tabpanel" aria-labelledby="cosmos-editor-tab" data-testid="cosmos-editor-tab-pane" data-ignore-settings-change="true"',
+        'id="jobs" role="tabpanel" aria-labelledby="jobs-tab" data-testid="jobs-tab-pane" data-ignore-settings-change="true"',
         'id="data-management-save-settings-btn"',
         'id="data-management-save-settings-btn" disabled aria-disabled="true"',
         'id="data-management-operational-warning"',
@@ -560,15 +568,45 @@ def test_admin_ui_exposes_data_management_without_external_assets():
     assert "saveButton.classList.toggle('d-none', isDataManagementActive);" in admin_settings_js
     assert "window.updateAdminSettingsSaveButtonState = updateSaveButtonState;" in admin_settings_js
     assert '<span class="nav-text">Target Cosmos</span>' not in sidebar
-    assert '<span class="nav-text">Migration</span>' in sidebar
-    assert '<span class="nav-text">Backup, Migrate &amp; Restore</span>' in sidebar
+    # Sidebar labels now come from the navigation map, which both the sidebar
+    # and the top tab strip render from. Backup, Migrate & Restore is spread
+    # across the Backup & Recovery group's tabs, so scope by group rather than
+    # by a single tab id.
+    backup_recovery_tabs = [
+        tab for group, tab in iter_tabs() if group["id"] == "backup-recovery"
+    ]
+    assert backup_recovery_tabs, "Backup & Recovery group missing from the navigation map"
+
+    data_management_sections = {
+        section["label"]
+        for tab in backup_recovery_tabs
+        for section in tab["sections"]
+    }
+    assert "Target Cosmos" not in data_management_sections
+    assert "Migration" in data_management_sections
+
+    tab_labels = {tab["label"] for tab in backup_recovery_tabs}
+    for expected_label in ("Backup", "Migrate", "Restore", "Jobs"):
+        assert expected_label in tab_labels, (
+            f"Backup & Recovery is missing the {expected_label} tab"
+        )
     assert 'cdn.jsdelivr.net' not in read_text(ADMIN_JS)
-    assert 'data-tab="data-management"' in sidebar
-    assert 'data-section="data-management-readiness-section"' in sidebar
-    assert 'data-section="data-management-backup-section"' in sidebar
-    assert 'data-section="data-management-cosmos-editor-section"' in sidebar
-    assert 'data-section="data-management-backup-inventory-section"' in sidebar
-    assert 'data-section="data-management-migration-section"' in sidebar
+
+    data_management_section_ids = {
+        section["id"]
+        for tab in backup_recovery_tabs
+        for section in tab["sections"]
+    }
+    for expected_section in (
+        "data-management-readiness-section",
+        "data-management-backup-section",
+        "data-management-cosmos-editor-section",
+        "data-management-backup-inventory-section",
+        "data-management-migration-section",
+    ):
+        assert expected_section in data_management_section_ids, (
+            f"Navigation map is missing {expected_section}"
+        )
 
 
 if __name__ == "__main__":

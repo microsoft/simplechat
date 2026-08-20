@@ -53,6 +53,7 @@ functions_public_workspaces_stub.get_user_public_workspaces = lambda _user_id: [
 sys.modules.setdefault("functions_public_workspaces", functions_public_workspaces_stub)
 
 import functions_governance as governance
+from test_support.templates import compose_if_admin_settings
 
 
 ROOT_DIR = os.path.dirname(CURRENT_DIR)
@@ -61,7 +62,7 @@ ROOT_DIR = os.path.dirname(CURRENT_DIR)
 def _read_repo_file(*parts):
     path = os.path.join(ROOT_DIR, *parts)
     with open(path, "r", encoding="utf-8") as handle:
-        return handle.read()
+        return compose_if_admin_settings(path, handle.read())
 
 
 def test_ensure_governance_access_allows_when_feature_toggle_disabled():

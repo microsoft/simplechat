@@ -24,6 +24,7 @@ import sys
 import types
 from contextlib import contextmanager
 from test_support.versioning import assert_app_version_at_least
+from test_support.templates import read_admin_settings_template
 
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -799,11 +800,7 @@ def test_wave5b_route_and_admin_contract_are_wired():
         "r",
         encoding="utf-8",
     ).read()
-    admin_template = open(
-        os.path.join(SINGLE_APP_DIR, "templates", "admin_settings.html"),
-        "r",
-        encoding="utf-8",
-    ).read()
+    admin_template = read_admin_settings_template()
     admin_route = open(
         os.path.join(SINGLE_APP_DIR, "route_frontend_admin_settings.py"),
         "r",

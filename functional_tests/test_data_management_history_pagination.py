@@ -35,6 +35,7 @@ sys.path.insert(0, str(APP_ROOT))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from test_support.versioning import compare_simplechat_versions
+from test_support.templates import read_admin_settings_template
 
 
 class FakeHistoryContainer:
@@ -823,9 +824,7 @@ def test_deployers_apply_the_data_management_history_index():
 
 def test_retention_cleanup_button_explains_what_it_does():
     """Give admins hover and expandable guidance before deleting expired backups."""
-    template = (
-        APP_ROOT / "templates" / "admin_settings.html"
-    ).read_text(encoding="utf-8")
+    template = read_admin_settings_template()
 
     cleanup_button_start = template.index("data-management-run-retention-cleanup-btn")
     cleanup_button = template[cleanup_button_start:cleanup_button_start + 600]

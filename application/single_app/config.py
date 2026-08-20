@@ -96,8 +96,16 @@ DOTENV_LOAD_RESULT = load_simplechat_dotenv()
 EXECUTOR_TYPE = 'thread'
 EXECUTOR_MAX_WORKERS = 30
 SESSION_TYPE = 'filesystem'
-VERSION = "0.260.012"
+VERSION = "0.260.019"
 IS_DEVELOPMENT = is_development_env_enabled()
+
+# Opt-out for deployments where App Service Easy Auth is active but the platform
+# /.auth/logout endpoint is not reachable on the public host (for example, when a
+# custom domain or gateway does not route /.auth/* to the App Service origin).
+DISABLE_APP_SERVICE_EASY_AUTH_LOGOUT = os.getenv(
+    'DISABLE_APP_SERVICE_EASY_AUTH_LOGOUT',
+    ''
+).strip().lower() == 'true'
 
 SESSION_COOKIE_SAMESITE = os.getenv('SESSION_COOKIE_SAMESITE', 'Lax')
 SESSION_COOKIE_HTTPONLY = os.getenv('SESSION_COOKIE_HTTPONLY', 'true').lower() != 'false'

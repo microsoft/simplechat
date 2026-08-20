@@ -12,11 +12,12 @@ multi-endpoint model bindings.
 """
 
 import os
+from test_support.templates import compose_if_admin_settings
 
 
 def read_file_text(file_path):
     with open(file_path, "r", encoding="utf-8") as file:
-        return file.read()
+        return compose_if_admin_settings(file_path, file.read())
 
 
 def test_default_model_selection_wiring():

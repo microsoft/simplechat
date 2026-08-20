@@ -6,7 +6,7 @@ import jwt
 import requests
 
 from config import *
-from config import IS_DEVELOPMENT
+from config import DISABLE_APP_SERVICE_EASY_AUTH_LOGOUT
 from functions_activity_logging import log_user_login, record_user_login_session_activity
 from functions_terms_of_use import (
     apply_pending_pre_auth_terms_of_use,
@@ -43,19 +43,36 @@ def build_front_door_urls(front_door_url):
 
 
 def _use_app_service_easy_auth_logout():
-    """Return True when the current request is running behind App Service Easy Auth."""
-    if IS_DEVELOPMENT:
+    """
+    Determine whether logout should route through the App Service Easy Auth endpoint.
+
+    Args:
+        None.
+
+    Returns:
+        bool: True when the current request is being served behind App Service Easy Auth.
+    Raises:
+        None.
+    """
+    if DISABLE_APP_SERVICE_EASY_AUTH_LOGOUT:
+        debug_print("Easy Auth logout disabled by DISABLE_APP_SERVICE_EASY_AUTH_LOGOUT; using local logout.")
         return False
 
     if not os.getenv('WEBSITE_HOSTNAME'):
         return False
 
+    # Easy Auth injects these headers only on requests it actually intercepts, so they are
+    # the reliable per-request signal that /.auth/logout is being served for this host.
     easy_auth_headers = (
         request.headers.get('X-MS-CLIENT-PRINCIPAL'),
         request.headers.get('X-MS-CLIENT-PRINCIPAL-ID'),
         request.headers.get('X-MS-CLIENT-PRINCIPAL-NAME'),
     )
-    return any(easy_auth_headers) or bool(os.getenv('WEBSITE_AUTH_AAD_ALLOWED_TENANTS'))
+    if not any(easy_auth_headers):
+        debug_print("No App Service Easy Auth principal headers on this request; using local logout.")
+        return False
+
+    return True
 
 
 def _build_app_service_easy_auth_logout_url():

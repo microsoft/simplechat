@@ -15,6 +15,7 @@ import os
 import re
 import sys
 import traceback
+from test_support.templates import compose_if_admin_settings
 
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -51,7 +52,7 @@ CLIENT_FLAG_FIX_VERSION = "0.241.110"
 def read_file(path):
     """Read a UTF-8 text file from the repo."""
     with open(path, "r", encoding="utf-8") as file_handle:
-        return file_handle.read()
+        return compose_if_admin_settings(path, file_handle.read())
 
 
 def read_version():

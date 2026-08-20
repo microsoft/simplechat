@@ -1,13 +1,13 @@
 # test_app_service_easy_auth_logout.py
 """
-Functional test for Azure App Service Easy Auth logout recovery.
-Version: 0.260.012
-Implemented in: 0.260.012
+Functional test for Azure App Service Easy Auth logout detection.
+Version: 0.260.019
+Implemented in: 0.260.019
 
-This test ensures Azure-hosted logout routes clear the upstream App Service
-authentication session by redirecting through /.auth/logout before re-entering
-the Flask login flow, while development-mode deployments avoid a missing
-/.auth/logout platform endpoint.
+This test ensures logout routes through /.auth/logout only when App Service Easy Auth is
+actually serving the request, so deployments that are not behind Easy Auth no longer hit a
+404 on the platform logout endpoint, while deployments that are behind it still clear the
+upstream platform session.
 """
 
 from pathlib import Path
@@ -157,7 +157,7 @@ def test_local_logout_uses_app_service_easy_auth_logout():
             "WEBSITE_AUTH_AAD_ALLOWED_TENANTS": "tenant-id",
         },
         clear=False,
-    ), patch.object(route_module, "IS_DEVELOPMENT", False):
+    ), patch.object(route_module, "DISABLE_APP_SERVICE_EASY_AUTH_LOGOUT", False):
         with app.test_request_context(
             "/logout/local",
             base_url="https://example.azurewebsites.net",
@@ -189,7 +189,7 @@ def test_full_logout_uses_app_service_easy_auth_logout():
             "WEBSITE_AUTH_AAD_ALLOWED_TENANTS": "tenant-id",
         },
         clear=False,
-    ), patch.object(route_module, "IS_DEVELOPMENT", False):
+    ), patch.object(route_module, "DISABLE_APP_SERVICE_EASY_AUTH_LOGOUT", False):
         with app.test_request_context(
             "/logout",
             base_url="https://example.azurewebsites.net",
@@ -211,23 +211,101 @@ def test_full_logout_uses_app_service_easy_auth_logout():
     print("App Service Easy Auth full logout redirects through /.auth/logout")
 
 
-def test_development_mode_does_not_use_app_service_easy_auth_logout():
-    """Verify development mode skips Easy Auth logout even when Azure hosting variables exist."""
-    print("Testing development-mode logout avoids App Service Easy Auth redirect...")
+def test_logout_skips_easy_auth_when_platform_headers_absent():
+    """Verify logout stays local when Easy Auth is not actually serving the request.
+
+    This is the reported failure: an App Service deployment that sets
+    WEBSITE_AUTH_AAD_ALLOWED_TENANTS by hand without Easy Auth enabled used to be
+    redirected to /.auth/logout, which returned a 404.
+    """
+    print("Testing logout avoids /.auth/logout when Easy Auth headers are absent...")
 
     app = _build_test_app()
 
     with patch.dict(
         os.environ,
         {
-            "WEBSITE_HOSTNAME": "oigchat-dev.dhs-oig.gov",
+            "WEBSITE_HOSTNAME": "example-dev.contoso.com",
             "WEBSITE_AUTH_AAD_ALLOWED_TENANTS": "tenant-id",
         },
         clear=False,
-    ), patch.object(route_module, "IS_DEVELOPMENT", True), patch.object(route_module, "get_settings", Mock(return_value={})):
+    ), patch.object(route_module, "DISABLE_APP_SERVICE_EASY_AUTH_LOGOUT", False), patch.object(
+        route_module, "get_settings", Mock(return_value={})
+    ):
         with app.test_request_context(
             "/logout/local",
-            base_url="https://oigchat-dev.dhs-oig.gov",
+            base_url="https://example-dev.contoso.com",
+        ):
+            session["user"] = {"name": "Test User"}
+
+            response = app.view_functions["frontend_authentication.local_logout"]()
+
+            assert response.status_code == 302, f"Expected redirect response, got {response.status_code}"
+            assert response.headers.get("Location") == "/", (
+                f"Unexpected local logout redirect: {response.headers.get('Location')}"
+            )
+            assert "user" not in session, f"Expected Flask session to be cleared, got {dict(session)}"
+
+    print("Logout without Easy Auth headers avoids /.auth/logout")
+
+
+def test_easy_auth_logout_still_used_when_headers_present():
+    """Verify Easy Auth logout is preserved wherever Easy Auth genuinely intercepts requests.
+
+    Detection is per request, so a non-production host behind Easy Auth still clears the
+    upstream platform session instead of leaving it alive.
+    """
+    print("Testing Easy Auth logout is preserved on a non-production host...")
+
+    app = _build_test_app()
+
+    with patch.dict(
+        os.environ,
+        {
+            "WEBSITE_HOSTNAME": "example-dev.contoso.com",
+        },
+        clear=False,
+    ), patch.object(route_module, "DISABLE_APP_SERVICE_EASY_AUTH_LOGOUT", False):
+        with app.test_request_context(
+            "/logout/local",
+            base_url="https://example-dev.contoso.com",
+            headers={"X-MS-CLIENT-PRINCIPAL-ID": "user-oid"},
+        ):
+            session["user"] = {"name": "Test User"}
+
+            response = app.view_functions["frontend_authentication.local_logout"]()
+
+            assert response.status_code == 302, f"Expected redirect response, got {response.status_code}"
+            assert response.headers.get("Location") == EXPECTED_EASY_AUTH_LOGOUT, (
+                f"Unexpected local logout redirect: {response.headers.get('Location')}"
+            )
+            assert "user" not in session, f"Expected Flask session to be cleared, got {dict(session)}"
+
+    print("Easy Auth logout preserved when platform headers are present")
+
+
+def test_logout_override_disables_easy_auth_logout():
+    """Verify DISABLE_APP_SERVICE_EASY_AUTH_LOGOUT keeps logout local.
+
+    This is the documented escape hatch for deployments where Easy Auth is active but
+    /.auth/* is not routed through to the App Service origin.
+    """
+    print("Testing DISABLE_APP_SERVICE_EASY_AUTH_LOGOUT override...")
+
+    app = _build_test_app()
+
+    with patch.dict(
+        os.environ,
+        {
+            "WEBSITE_HOSTNAME": "example-dev.contoso.com",
+        },
+        clear=False,
+    ), patch.object(route_module, "DISABLE_APP_SERVICE_EASY_AUTH_LOGOUT", True), patch.object(
+        route_module, "get_settings", Mock(return_value={})
+    ):
+        with app.test_request_context(
+            "/logout/local",
+            base_url="https://example-dev.contoso.com",
             headers={"X-MS-CLIENT-PRINCIPAL-ID": "user-oid"},
         ):
             session["user"] = {"name": "Test User"}
@@ -236,18 +314,20 @@ def test_development_mode_does_not_use_app_service_easy_auth_logout():
 
             assert response.status_code == 302, f"Expected redirect response, got {response.status_code}"
             assert response.headers.get("Location") == "/", (
-                f"Unexpected development local logout redirect: {response.headers.get('Location')}"
+                f"Unexpected overridden logout redirect: {response.headers.get('Location')}"
             )
             assert "user" not in session, f"Expected Flask session to be cleared, got {dict(session)}"
 
-    print("Development-mode local logout avoids /.auth/logout")
+    print("Override keeps logout on the local path")
 
 
 if __name__ == "__main__":
     tests = [
         test_local_logout_uses_app_service_easy_auth_logout,
         test_full_logout_uses_app_service_easy_auth_logout,
-        test_development_mode_does_not_use_app_service_easy_auth_logout,
+        test_logout_skips_easy_auth_when_platform_headers_absent,
+        test_easy_auth_logout_still_used_when_headers_present,
+        test_logout_override_disables_easy_auth_logout,
     ]
 
     results = []

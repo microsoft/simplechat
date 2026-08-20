@@ -13,6 +13,7 @@ handlers that open the requested Chat, Workspace, and Profile workflows.
 from pathlib import Path
 import sys
 from test_support.versioning import assert_app_version_at_least
+from test_support.templates import compose_if_admin_settings
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -29,7 +30,9 @@ PROFILE_TEMPLATE_FILE = REPO_ROOT / "application" / "single_app" / "templates" /
 
 
 def read_text(path: Path) -> str:
-    return path.read_text(encoding="utf-8")
+    return compose_if_admin_settings(
+        path, path.read_text(encoding="utf-8")
+    )
 
 
 def assert_markers(file_path: Path, markers: list[str]) -> None:

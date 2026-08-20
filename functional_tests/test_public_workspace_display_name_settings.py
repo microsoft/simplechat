@@ -16,6 +16,7 @@ import sys
 from types import SimpleNamespace
 
 from jinja2 import Environment
+from test_support.templates import compose_if_admin_settings
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
@@ -29,7 +30,7 @@ TOP_NAV_TEMPLATE = os.path.join(REPO_ROOT, "application", "single_app", "templat
 
 def read_source(path):
     with open(path, "r", encoding="utf-8") as source_file:
-        return source_file.read()
+        return compose_if_admin_settings(path, source_file.read())
 
 
 def assert_contains(source, needle, description):

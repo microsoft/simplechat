@@ -1,0 +1,283 @@
+            <div class="tab-pane fade{% if admin_landing_tab == 'agents' %} show active{% endif %}" id="agents" role="tabpanel" aria-labelledby="agents-tab">
+
+                <p class="text-muted">
+                    Configure AI agents and actions for enhanced functionality. Agents provide AI-driven task automation while Actions extend functionality with custom tools and integrations.
+                </p>
+
+                <div class="alert alert-info d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-3" role="alert">
+                    <div>
+                        <strong>Agent model lifecycle review lives in AI Models.</strong>
+
+                        <div class="small mt-1">
+                            Use AI Models to review inherited agents, selectively override explicit agent model choices, and move agents to newer default models as costs or model releases change.
+                        </div>
+                    </div>
+                    <button type="button" class="btn btn-outline-primary btn-sm align-self-start" data-open-admin-tab="#ai-models">
+                        <i class="bi bi-box-arrow-up-right me-1"></i>Open AI Models
+                    </button>
+                </div>
+
+                <div class="alert alert-warning mb-3" role="alert">
+                    <strong>Note:</strong> All changes to global agents and actions require a restart of the web app to take effect.
+                </div>
+
+                {% set analyze_capability = settings.document_action_capabilities.analyze %}
+                {% set comparison_capability = settings.document_action_capabilities.comparison %}
+                <div class="card p-3 mb-4" id="agents-configuration">
+                    <h5 class="card-title">
+                        <i class="bi bi-robot me-2"></i>Agents Configuration
+                    </h5>
+                    <p class="text-muted small">
+                        Configure AI agents powered by Semantic Kernel for task automation and orchestration.
+                    </p>
+                    <div class="card p-3 mb-3" id="agents-page-customization-card">
+                        <h6 class="mb-2">
+                            <i class="bi bi-palette me-2"></i>Agents Page Customization
+                        </h6>
+                        <p class="text-muted small">Customize the public Agents page hero, color treatment, and optional guidance message.</p>
+                        <div class="row g-3">
+                            <div class="col-lg-6">
+                                <label for="agents_page_title" class="form-label">Hero Title</label>
+                                <input type="text" class="form-control" id="agents_page_title" name="agents_page_title" maxlength="120" value="{{ settings.agents_page_title | default('Find your next AI partner') }}" />
+                            </div>
+                            <div class="col-lg-6">
+                                <label for="agents_page_subtitle" class="form-label">Hero Subtitle</label>
+                                <input type="text" class="form-control" id="agents_page_subtitle" name="agents_page_subtitle" maxlength="240" value="{{ settings.agents_page_subtitle | default('Explore specialized agents built to accelerate how you work.') }}" />
+                            </div>
+                            <div class="col-md-4">
+                                <label for="agents_page_hero_color_mode" class="form-label">Hero Color Mode</label>
+                                <select class="form-select" id="agents_page_hero_color_mode" name="agents_page_hero_color_mode">
+                                    <option value="single" {% if settings.agents_page_hero_color_mode != 'two_tone' %}selected{% endif %}>Single color</option>
+                                    <option value="two_tone" {% if settings.agents_page_hero_color_mode == 'two_tone' %}selected{% endif %}>Two tone gradient</option>
+                                </select>
+                            </div>
+                            <div class="col-md-4">
+                                <label for="agents_page_hero_primary_color" class="form-label">Primary Color</label>
+                                <input type="color" class="form-control form-control-color" id="agents_page_hero_primary_color" name="agents_page_hero_primary_color" value="{{ settings.agents_page_hero_primary_color | default('#0f172a') }}" />
+                            </div>
+                            <div class="col-md-4">
+                                <label for="agents_page_hero_secondary_color" class="form-label">Secondary Color</label>
+                                <input type="color" class="form-control form-control-color" id="agents_page_hero_secondary_color" name="agents_page_hero_secondary_color" value="{{ settings.agents_page_hero_secondary_color | default('#1e293b') }}" />
+                                <div class="form-text">Used when two tone gradient is selected.</div>
+                            </div>
+                            <div class="col-12">
+                                <label for="agents_page_disclaimer_markdown" class="form-label">Disclaimer / Guidance Text <span class="text-muted fw-normal">(Markdown supported)</span></label>
+                                <textarea class="form-control" id="agents_page_disclaimer_markdown" name="agents_page_disclaimer_markdown" rows="4" maxlength="3000" placeholder="Need a new agent? Contact ai-support@example.com.">{{ settings.agents_page_disclaimer_markdown | default('') }}</textarea>
+                                <div class="form-text">Shown below the Agents page hero. Use this for contact details, request guidance, or governance reminders.</div>
+                            </div>
+                            <div class="col-12">
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="agents_page_show_instructions_in_details" name="agents_page_show_instructions_in_details" {% if settings.agents_page_show_instructions_in_details | default(true) %}checked{% endif %} />
+                                    <label class="form-check-label" for="agents_page_show_instructions_in_details">Show agent instructions in Agents page details</label>
+                                </div>
+                                <div class="form-text">When disabled, the Agents tab details popup hides instructions and the catalog API response omits them.</div>
+                            </div>
+                            <div class="col-12">
+                                <hr class="my-2" />
+                                <h6 class="mb-2">Promoted Popular Agents</h6>
+                                <p class="text-muted small mb-3">Highlight selected agents in the Popular tab even before they have usage counts. Users only see promoted agents that are already visible to them.</p>
+                                <textarea class="d-none" id="agents_page_promoted_popular_agents_json" name="agents_page_promoted_popular_agents_json">{{ settings.agents_page_promoted_popular_agents | default([], true) | tojson }}</textarea>
+                                <div class="row g-3 mb-3">
+                                    <div class="col-lg-4">
+                                        <label for="agents_page_promoted_popular_order" class="form-label">Placement</label>
+                                        <select class="form-select" id="agents_page_promoted_popular_order" name="agents_page_promoted_popular_order">
+                                            <option value="before" {% if settings.agents_page_promoted_popular_order | default('before') == 'before' %}selected{% endif %}>Before actual popular agents</option>
+                                            <option value="after" {% if settings.agents_page_promoted_popular_order | default('before') == 'after' %}selected{% endif %}>After actual popular agents</option>
+                                            <option value="mixed" {% if settings.agents_page_promoted_popular_order | default('before') == 'mixed' %}selected{% endif %}>Mixed by usage</option>
+                                        </select>
+                                    </div>
+                                    <div class="col-lg-4">
+                                        <label for="agents_page_promoted_popular_tag_label" class="form-label">Promoted Tag Label</label>
+                                        <input type="text" class="form-control" id="agents_page_promoted_popular_tag_label" name="agents_page_promoted_popular_tag_label" maxlength="40" value="{{ settings.agents_page_promoted_popular_tag_label | default('Promoted') }}" />
+                                    </div>
+                                    <div class="col-lg-4 d-flex align-items-end">
+                                        <div>
+                                            <div class="form-check form-switch">
+                                                <input class="form-check-input" type="checkbox" role="switch" id="agents_page_promoted_popular_tag_enabled" name="agents_page_promoted_popular_tag_enabled" {% if settings.agents_page_promoted_popular_tag_enabled | default(true) %}checked{% endif %} />
+                                                <label class="form-check-label" for="agents_page_promoted_popular_tag_enabled">Show promoted tag</label>
+                                            </div>
+                                            <div class="form-text">When enabled, promoted agents show the configured tag in the Popular tab.</div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="row g-2 align-items-end mb-3">
+                                    <div class="col-lg-9">
+                                        <label for="agents-page-promoted-agent-select" class="form-label">Add Agent</label>
+                                        <select class="form-select" id="agents-page-promoted-agent-select">
+                                            <option value="">Loading available agents...</option>
+                                        </select>
+                                    </div>
+                                    <div class="col-lg-3">
+                                        <button type="button" class="btn btn-outline-primary w-100" id="agents-page-promoted-agent-add">
+                                            <i class="bi bi-plus-lg me-1" aria-hidden="true"></i>Add Agent
+                                        </button>
+                                    </div>
+                                </div>
+                                <div class="table-responsive">
+                                    <table class="table table-sm align-middle mb-2">
+                                        <thead>
+                                            <tr>
+                                                <th scope="col">Agent</th>
+                                                <th scope="col" class="text-nowrap">Show In</th>
+                                                <th scope="col" class="text-end">Actions</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="agents-page-promoted-popular-tbody"></tbody>
+                                    </table>
+                                </div>
+                                <div class="alert alert-info py-2 mb-0" id="agents-page-promoted-popular-empty">No agents are promoted yet.</div>
+                                <div class="alert alert-warning py-2 mt-2 mb-0 d-none" id="agents-page-promoted-popular-load-error" role="status"></div>
+                            </div>
+                        </div>
+                    </div>
+                <div class="mb-3">
+                    <div class="form-check form-switch mb-2">
+                        <input class="form-check-input" type="checkbox" role="switch" id="toggle-enable-agents-agents" name="enable_semantic_kernel" {% if settings.enable_semantic_kernel %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="toggle-enable-agents-agents">Enable Agents</label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Enable the agents system powered by Semantic Kernel for AI-driven task automation and orchestration."></i>
+                        <button type="button" class="btn btn-outline-info btn-sm ms-2 governance-primary-link" data-governance-target="governance_global_agents_usage">Govern Global Agents</button>
+                        <button type="button" class="btn btn-outline-info btn-sm ms-2 governance-primary-link" data-governance-target="governance_global_actions_usage">Govern Global Actions</button>
+                    </div>
+                    <div id="per-user-sk-restart-msg" class="text-muted small mb-2" style="display:none;">Requires a restart to take effect.</div>
+                </div>
+                {% if not settings.enable_semantic_kernel %}
+                    <div class="alert alert-info">
+                        <strong>Agents UI is not available while agents are disabled.</strong>
+                    </div>
+                {% else %}
+                    <div>
+                        <div class="form-check form-switch mb-2">
+                            <input class="form-check-input" type="checkbox" role="switch" id="toggle-per-user-sk" name="per_user_semantic_kernel" {% if settings.per_user_semantic_kernel %}checked{% endif %} {% if not settings.enable_semantic_kernel %}disabled{% endif %}>
+                            <label class="form-check-label ms-2" for="toggle-per-user-sk">Workspace Mode (workspace-specific agents/plugins and disables global configuration)</label>
+                            <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="If enabled, each user gets their own agent/plugin set. If disabled, all users share the same global set."></i>
+                        </div>
+                        {% if settings.per_user_semantic_kernel %}
+                            <!-- Agent Feature Flags -->
+                            <div class="card p-3 mb-3" id="agent-toggles-card">
+                                <h6 class="mb-2">Workspace Feature Toggles</h6>
+                                <div class="form-check form-switch mb-2">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="toggle-allow-user-agents" name="allow_user_agents" {% if settings.allow_user_agents %}checked{% endif %}>
+                                    <label class="form-check-label ms-2" for="toggle-allow-user-agents">Allow User Agents</label>
+                                    <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to create and manage their own workspace-level agents for personal use and customization."></i>
+                                    <button type="button" class="btn btn-outline-info btn-sm ms-2 governance-primary-link" data-governance-target="governance_user_agents">Govern</button>
+                                </div>
+                                <div class="form-check form-switch mb-2">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="toggle-allow-group-agents" name="allow_group_agents" {% if settings.allow_group_agents %}checked{% endif %}>
+                                    <label class="form-check-label ms-2" for="toggle-allow-group-agents">Allow Group Agents</label>
+                                    <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to create and manage group-level agents that can be shared within workgroups and teams."></i>
+                                    <button type="button" class="btn btn-outline-info btn-sm ms-2 governance-primary-link" data-governance-target="governance_group_agents">Govern</button>
+                                </div>
+                                <div class="form-check form-switch mb-2">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="toggle-allow-user-custom-endpoints" name="allow_user_custom_endpoints" {% if settings.allow_user_custom_endpoints %}checked{% endif %}>
+                                    <label class="form-check-label ms-2" for="toggle-allow-user-custom-endpoints">Allow User Custom Endpoints</label>
+                                    <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to configure custom endpoints for their personal workspace agents and model endpoints."></i>
+                                    <button type="button" class="btn btn-outline-info btn-sm ms-2 governance-primary-link" data-governance-target="governance_user_endpoints">Govern</button>
+                                </div>
+                                <div class="form-check form-switch mb-2">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="toggle-allow-group-custom-endpoints" name="allow_group_custom_endpoints" {% if settings.allow_group_custom_endpoints %}checked{% endif %}>
+                                    <label class="form-check-label ms-2" for="toggle-allow-group-custom-endpoints">Allow Group Custom Endpoints</label>
+                                    <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to configure custom endpoints for group workspace agents and model endpoints."></i>
+                                    <button type="button" class="btn btn-outline-info btn-sm ms-2 governance-primary-link" data-governance-target="governance_group_endpoints">Govern</button>
+                                </div>
+                                <div class="form-check form-switch mb-2">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="toggle-merge-global-sk" name="merge_global_semantic_kernel_with_workspace" {% if settings.merge_global_semantic_kernel_with_workspace %}checked{% endif %}>
+                                    <label class="form-check-label ms-2" for="toggle-merge-global-sk">Merge Global Agents/Plugins into Workspace</label>
+                                    <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="If enabled, workspace agents/plugins will include global ones as well."></i>
+                                </div>
+                                <div class="form-check form-switch mb-2">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="toggle-enable-agent-template-gallery" name="enable_agent_template_gallery" {% if settings.enable_agent_template_gallery %}checked{% endif %}>
+                                    <label class="form-check-label ms-2" for="toggle-enable-agent-template-gallery">Enable Agent Template Gallery</label>
+                                    <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow workspace users to browse approved templates and submit their own for review."></i>
+                                </div>
+                            </div>
+                            <!-- End Agent Feature Flags -->
+
+                        {% endif %}
+                        <!-- Orchestration Settings Card -->
+                        <div class="d-flex justify-content-between align-items-center mb-3">
+                            <h4>Agent Orchestration Settings</h4>
+                        </div>
+                        <div class="card p-3 mb-3">
+                            <p class="text-muted mb-1">Configure how the chat system orchestrates agents (single or multi-agent group chat).</p>
+                            <div class="mb-3">
+                                <label for="orchestration_type" class="form-label">Orchestration Type</label>
+                                <select class="form-select" id="orchestration_type" name="orchestration_type"></select>
+                            </div>
+                            <div class="mb-3" id="max_rounds_per_agent_group" style="display:none;">
+                                <label for="max_rounds_per_agent" class="form-label">Max Rounds Per Agent (Group Chat)</label>
+                                <input type="number" class="form-control" id="max_rounds_per_agent" name="max_rounds_per_agent" min="1" value="1">
+                            </div>
+                            <button type="button" class="btn btn-primary" id="save-orchestration-settings-btn">Save Orchestration Settings</button>
+                        </div>
+                        <div class="d-flex justify-content-between align-items-center mb-3">
+                            <h4>Global  Agents</h4>
+                            <div class="d-flex align-items-center gap-2">
+                                <button type="button" class="btn btn-outline-info btn-sm agent-examples-trigger" data-bs-toggle="modal" data-bs-target="#agentExamplesModal" data-trigger-button="#add-agent-btn">
+                                    <i class="bi bi-magic"></i>
+                                    Agent Templates
+                                </button>
+                                <button type="button" class="btn btn-primary" id="add-agent-btn">Add Agent</button>
+                            </div>
+                        </div>
+                        <p class="text-muted small">Disable a global agent to keep it saved for admins while hiding it from runtime selection until it is re-enabled.</p>
+                        <div class="mb-3 d-flex align-items-center">
+                            {% if settings.orchestration_type == "default_agent" %}
+                                <label for="default-agent-select" class="form-label me-2 mb-0">Selected Agent:</label>
+                            {% else %}
+                                <label for="default-agent-select" class="form-label me-2 mb-0">Orchestrator Agent:</label>
+                            {% endif %}
+                            <select id="default-agent-select" class="form-select w-auto" style="min-width:200px;"></select>
+                            <span id="default-agent-select-msg" class="ms-2 text-muted small"></span>
+                        </div>
+                        <table class="table table-bordered" id="agents-table">
+                            <thead>
+                                <tr>
+                                    <th>Name</th>
+                                    <th>Display Name</th>
+                                    <th>Description</th>
+                                    {% if settings.orchestration_type == "default_agent" %}
+                                        <th>Selected Agent</th>
+                                    {% else %}
+                                        <th>Orchestrator Agent</th>
+                                    {% endif %}
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="agents-table-body"></tbody>
+                        </table>
+                    </div>
+                {% endif %}
+                </div>
+
+                {% if settings.enable_agent_template_gallery %}
+                <div class="card p-3 mb-4" id="agent-template-approvals-section">
+                    <div class="row g-3 mb-3">
+                        <div class="col-xl-6">
+                            <div class="form-check form-switch mb-0">
+                                <input class="form-check-input" type="checkbox" role="switch" id="toggle-agent-template-submissions" name="agent_templates_allow_user_submission" {% if settings.agent_templates_allow_user_submission %}checked{% endif %}>
+                                <label class="form-check-label ms-2" for="toggle-agent-template-submissions">Allow User Template Submissions</label>
+                                <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow workspace users to submit their custom agents for review."></i>
+                            </div>
+                        </div>
+                        <div class="col-xl-6">
+                            <div class="form-check form-switch mb-0">
+                                <input class="form-check-input" type="checkbox" role="switch" id="toggle-agent-template-approval" name="agent_templates_require_approval" {% if settings.agent_templates_require_approval %}checked{% endif %}>
+                                <label class="form-check-label ms-2" for="toggle-agent-template-approval">Require Admin Approval</label>
+                                <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Keep user submissions pending until an admin approves them."></i>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-3">
+                        <div>
+                            <h5 class="mb-1">
+                                <i class="bi bi-layers me-2"></i>Agent Template Approvals
+                            </h5>
+                            <p class="text-muted small mb-0">Template submissions are now reviewed from the shared approvals page.</p>
+                        </div>
+                        <a class="btn btn-outline-primary align-self-start align-self-lg-center" href="/approvals#agent-template-approvals">
+                            <i class="bi bi-box-arrow-up-right me-1"></i>Open Approvals Queue
+                        </a>
+                    </div>
+                </div>
+                {% endif %}
+            </div>
