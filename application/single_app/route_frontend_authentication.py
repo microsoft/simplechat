@@ -6,6 +6,7 @@ import jwt
 import requests
 
 from config import *
+from config import IS_DEVELOPMENT
 from functions_activity_logging import log_user_login, record_user_login_session_activity
 from functions_terms_of_use import (
     apply_pending_pre_auth_terms_of_use,
@@ -43,6 +44,9 @@ def build_front_door_urls(front_door_url):
 
 def _use_app_service_easy_auth_logout():
     """Return True when the current request is running behind App Service Easy Auth."""
+    if IS_DEVELOPMENT:
+        return False
+
     if not os.getenv('WEBSITE_HOSTNAME'):
         return False
 
