@@ -2,6 +2,15 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.260.021)**
+
+#### Bug Fixes
+
+*   **Documentation Screenshot Viewer Validates Its Image Source**
+    *   The documentation site's click-to-enlarge screenshot viewer assigned an image URL taken from a data attribute in the page. Because that value flows from page content into a URL, CodeQL flagged it as a potential DOM-based cross-site scripting sink.
+    *   The viewer now resolves the value and requires a same-origin `http` or `https` URL ending in an image extension before using it, so scheme-based payloads such as `javascript:` and `data:` URLs, and any off-site source, are rejected. All documentation media is local, so no legitimate image is affected.
+    *   (Ref: `docs/assets/js/media.js`, `safeMediaUrl`, `ui_tests/test_docs_media_lightbox_source_validation.js`, CodeQL `js/xss-through-dom`)
+
 ### **(v0.260.020)**
 
 #### New Features

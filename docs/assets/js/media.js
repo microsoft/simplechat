@@ -60,12 +60,54 @@
         return overlay !== null && !overlay.classList.contains("d-none");
     }
 
+    /**
+     * Resolve a media source to a safe, same-origin URL.
+     *
+     * The value arrives from a data attribute in the rendered page, so it is DOM
+     * text flowing into a URL sink. Rather than trusting it, resolve it against
+     * the document and require an http(s) same-origin result with an image
+     * extension. That rejects scheme-based payloads such as javascript: and
+     * data: URLs, and rejects off-site sources, which the documentation site
+     * never uses because all media is local.
+     */
+    function safeMediaUrl(rawSource) {
+        if (typeof rawSource !== "string" || rawSource.length === 0) {
+            return null;
+        }
+
+        let resolved;
+        try {
+            resolved = new URL(rawSource, document.baseURI);
+        } catch (error) {
+            return null;
+        }
+
+        if (resolved.protocol !== "http:" && resolved.protocol !== "https:") {
+            return null;
+        }
+
+        if (resolved.origin !== window.location.origin) {
+            return null;
+        }
+
+        if (!/\.(png|jpe?g|gif|svg|webp|avif)$/i.test(resolved.pathname)) {
+            return null;
+        }
+
+        return resolved.href;
+    }
+
     function openOverlay(source, altText) {
+        const safeSource = safeMediaUrl(source);
+        if (safeSource === null) {
+            return;
+        }
+
         lastFocusedElement = document.activeElement;
 
         buildOverlay();
-        overlayImage.src = source;
-        overlayImage.alt = altText || "";
+        overlayImage.src = safeSource;
+        overlayImage.alt = typeof altText === "string" ? altText : "";
         overlay.classList.remove("d-none");
         document.body.classList.add("docs-media-lightbox-open");
 

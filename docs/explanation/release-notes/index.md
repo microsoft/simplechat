@@ -20,6 +20,7 @@ This page includes the latest release notes inline. Older release sections are s
 
 | Version | Page |
 | --- | --- |
+| v0.260.021 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
 | v0.260.020 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
 | v0.260.019 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
 | v0.260.018 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
@@ -31,7 +32,7 @@ This page includes the latest release notes inline. Older release sections are s
 | v0.260.012 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
 | v0.260.011 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
 | v0.260.010 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
-| v0.260.009 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
+| v0.260.009 | [Release notes 0.260 series]({{ '/explanation/release-notes/v0.260/' | relative_url }}) |
 | v0.260.008 | [Release notes 0.260 series]({{ '/explanation/release-notes/v0.260/' | relative_url }}) |
 | v0.260.007 | [Release notes 0.260 series]({{ '/explanation/release-notes/v0.260/' | relative_url }}) |
 | v0.260.006 | [Release notes 0.260 series]({{ '/explanation/release-notes/v0.260/' | relative_url }}) |
@@ -63,6 +64,15 @@ This page includes the latest release notes inline. Older release sections are s
 | v0.235.003 | [Release notes 0.235 series]({{ '/explanation/release-notes/v0.235/' | relative_url }}) |
 
 ## Latest release notes
+
+### **(v0.260.021)**
+
+#### Bug Fixes
+
+*   **Documentation Screenshot Viewer Validates Its Image Source**
+    *   The documentation site's click-to-enlarge screenshot viewer assigned an image URL taken from a data attribute in the page. Because that value flows from page content into a URL, CodeQL flagged it as a potential DOM-based cross-site scripting sink.
+    *   The viewer now resolves the value and requires a same-origin `http` or `https` URL ending in an image extension before using it, so scheme-based payloads such as `javascript:` and `data:` URLs, and any off-site source, are rejected. All documentation media is local, so no legitimate image is affected.
+    *   (Ref: `docs/assets/js/media.js`, `safeMediaUrl`, `ui_tests/test_docs_media_lightbox_source_validation.js`, CodeQL `js/xss-through-dom`)
 
 ### **(v0.260.020)**
 
@@ -355,13 +365,3 @@ This page includes the latest release notes inline. Older release sections are s
     *   The tab strip and the sidebar each maintained the same structure by hand and had diverged: tab order differed between them, and Agents, Custom Pages and Search and Extract each showed a different name depending on which navigation you used.
     *   Both now render from one definition, so a change is made once and appears in both.
     *   (Ref: `admin_settings_nav.py`, `test_admin_settings_nav_map.py`)
-
-### **(v0.260.009)**
-
-#### New Features
-
-*   **Admin Settings Form Field Contract Is Now Enforced**
-    *   Admin Settings submits one form and the backend reads every value by field name, so the set of `name` attributes is the real contract between the template and the settings backend. Renaming or dropping one silently stops that setting from saving, with no error anywhere.
-    *   A new test pins every field name against a committed baseline, and fails the build if one disappears. Adding settings is unaffected; removing one now requires regenerating the baseline in the same commit, which makes it a visible, reviewed decision.
-    *   The same test rejects duplicate field names, which is what prevents a mirrored control from submitting a value twice.
-    *   (Ref: `test_admin_settings_field_contract.py`, `admin_settings_field_baseline.json`)
