@@ -484,7 +484,7 @@
               {% endfor %}
               {% for release_group in admin_latest_feature_release_groups %}
                 {% if release_group.id != 'current_release' %}
-                {% set release_card_id = 'latest-features-previous-release-card' if release_group.id == 'previous_release' else 'latest-features-' ~ release_group.id|replace('_', '-') ~ '-card' %}
+                {% set release_card_id = 'latest-features-' ~ release_group.id|replace('_', '-') ~ '-card' %}
                 <li class="nav-item">
                   <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="latest-features" data-section="{{ release_card_id }}">
                     <i class="bi bi-clock-history me-2" style="font-size: 0.8em;"></i><span class="nav-text">{{ release_group.label|replace(' Features', '') }}</span>

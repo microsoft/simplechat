@@ -110,7 +110,7 @@ def test_index_creation_endpoint():
         
         # Check for index creation endpoint
         required_patterns = [
-            "@app.route('/api/admin/settings/create_index', methods=['POST'])",
+            "@bp.route('/api/admin/settings/create_index', methods=['POST'])",
             "def create_index():",
             "from azure.search.documents.indexes.models import SearchIndex",
             "index = SearchIndex.deserialize(index_definition)",

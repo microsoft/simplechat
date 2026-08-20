@@ -4,6 +4,7 @@ from azure.storage.queue import QueueClient
 from semantic_kernel.functions import kernel_function
 from semantic_kernel_plugins.plugin_invocation_logger import plugin_function_logger
 from azure.identity import DefaultAzureCredential
+from functions_azure_endpoint_validation import validate_azure_queue_endpoint
 
 class QueueStoragePlugin(BasePlugin):
     def __init__(self, manifest: Dict[str, Any]):
@@ -16,12 +17,15 @@ class QueueStoragePlugin(BasePlugin):
         self._metadata = manifest.get('metadata', {})
         if not self.endpoint or not self.auth_type or not self.queue_name:
             raise ValueError("QueueStoragePlugin requires 'endpoint', 'queue_name', and 'auth.type' in the manifest.")
+        # Revalidated immediately before client construction so a stored endpoint cannot direct
+        # application credentials to a non-Storage origin.
+        validated_endpoint = validate_azure_queue_endpoint(self.endpoint)
         if self.auth_type == 'identity':
-            self.queue_client = QueueClient(account_url=self.endpoint, queue_name=self.queue_name, credential=DefaultAzureCredential())
+            self.queue_client = QueueClient(account_url=validated_endpoint, queue_name=self.queue_name, credential=DefaultAzureCredential())
         elif self.auth_type == 'key':
             if not self.key:
                 raise ValueError("QueueStoragePlugin requires 'auth.key' when using key authentication.")
-            self.queue_client = QueueClient(account_url=self.endpoint, queue_name=self.queue_name, credential=self.key)
+            self.queue_client = QueueClient(account_url=validated_endpoint, queue_name=self.queue_name, credential=self.key)
         else:
             raise ValueError(f"Unsupported auth.type: {self.auth_type}")
 

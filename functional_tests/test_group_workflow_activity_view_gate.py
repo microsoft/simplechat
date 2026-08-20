@@ -38,7 +38,7 @@ def _assert_not_contains(content, unexpected, label):
 
 
 def _extract_workflow_activity_route(content):
-    route_marker = "@app.route('/workflow-activity', methods=['GET'])"
+    route_marker = "@bp.route('/workflow-activity', methods=['GET'])"
     start_index = content.find(route_marker)
     if start_index == -1:
         return ""

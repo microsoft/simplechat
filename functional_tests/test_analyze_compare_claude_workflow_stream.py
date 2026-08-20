@@ -225,8 +225,8 @@ def test_chat_document_action_stream_uses_workflow_executor():
     """Validate the chat Analyze/Compare stream path still uses workflow execution."""
     route_text = CHAT_ROUTE.read_text(encoding="utf-8")
     required_markers = [
-        "@app.route('/api/chat/document-action/stream', methods=['POST'])",
-        "@app.route('/api/chat/analyze/stream', methods=['POST'])",
+        "@bp.route('/api/chat/document-action/stream', methods=['POST'])",
+        "@bp.route('/api/chat/analyze/stream', methods=['POST'])",
         "from functions_workflow_runner import _execute_document_action_workflow",
         "execution_result = _execute_document_action_workflow(",
     ]

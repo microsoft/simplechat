@@ -15,6 +15,7 @@ from azure.identity import DefaultAzureCredential
 from semantic_kernel.functions import kernel_function
 
 from functions_appinsights import log_event
+from functions_azure_endpoint_validation import validate_azure_cosmos_endpoint
 from semantic_kernel_plugins.base_plugin import BasePlugin
 from semantic_kernel_plugins.plugin_invocation_logger import plugin_function_logger
 
@@ -310,8 +311,10 @@ class CosmosQueryPlugin(BasePlugin):
             client_cache_key = self._get_client_cache_key()
             client = self._client_cache.get(client_cache_key)
             if client is None:
+                # Revalidated immediately before client construction so a stored endpoint
+                # cannot direct application credentials to a non-Cosmos origin.
                 client = azure_cosmos.CosmosClient(
-                    self.endpoint,
+                    validate_azure_cosmos_endpoint(self.endpoint),
                     credential=self._get_client_credential(),
                     timeout=self.timeout,
                     connection_timeout=self.timeout,
@@ -326,6 +329,8 @@ class CosmosQueryPlugin(BasePlugin):
         missing_fields = []
         if not self.endpoint:
             missing_fields.append("endpoint")
+        else:
+            validate_azure_cosmos_endpoint(self.endpoint)
         if not self.database_name:
             missing_fields.append("database_name")
         if not self.container_name:

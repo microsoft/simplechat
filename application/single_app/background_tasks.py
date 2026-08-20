@@ -245,6 +245,7 @@ def check_logging_timers_once():
 def check_expired_approvals_once():
     """Auto-deny expired approval requests and return the affected count."""
     from functions_approvals import auto_deny_expired_approvals
+    from functions_simplechat_operations import auto_deny_expired_generated_file_approvals
 
     lock_document = acquire_distributed_task_lock('approval_expiry', lease_seconds=1800)
     if not lock_document:
@@ -255,6 +256,18 @@ def check_expired_approvals_once():
         denied_count = auto_deny_expired_approvals()
         if denied_count > 0:
             print(f"Auto-denied {denied_count} expired approval request(s).")
+
+        try:
+            expired_file_count = auto_deny_expired_generated_file_approvals()
+            if expired_file_count > 0:
+                print(f"Auto-denied {expired_file_count} expired generated file approval(s).")
+        except Exception as exc:
+            # Staged file expiry must never take down the Control Center approval sweep.
+            print(f"Error expiring staged generated file approvals: {exc}")
+            log_event(
+                f"Error expiring staged generated file approvals: {exc}",
+                level=logging.ERROR,
+            )
     finally:
         release_distributed_task_lock(lock_document)
 

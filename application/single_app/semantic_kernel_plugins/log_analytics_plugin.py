@@ -11,6 +11,10 @@ from datetime import timedelta
 from semantic_kernel_plugins.base_plugin import BasePlugin
 from semantic_kernel.functions import kernel_function
 from semantic_kernel_plugins.plugin_invocation_logger import plugin_function_logger
+from functions_azure_endpoint_validation import (
+    validate_azure_entra_authority_host,
+    validate_azure_monitor_query_endpoint,
+)
 from config import *
 import json
 import logging
@@ -53,7 +57,9 @@ class LogAnalyticsPlugin(BasePlugin):
     def _init_client(self):
         # Determine authority host for the selected cloud
         if self.cloud == "custom":
-            authority_host = self.authority_host
+            # A custom cloud lets the manifest choose the token authority, so it is revalidated
+            # before any credential is built for it.
+            authority_host = validate_azure_entra_authority_host(self.authority_host)
         elif self.cloud == "usgovernment":
             authority_host = AzureAuthorityHosts.AZURE_GOVERNMENT
         else:
@@ -107,7 +113,13 @@ class LogAnalyticsPlugin(BasePlugin):
                     return AccessToken(token, expires_on)
 
             if self.cloud == "custom":
-                scope = f"{self.endpoint_override}/.default" if self.endpoint_override else "https://api.loganalytics.io/.default"
+                # The override becomes the delegated-token OAuth scope, so it must be a
+                # documented Azure Monitor query resource rather than a caller-chosen one.
+                scope = (
+                    f"{validate_azure_monitor_query_endpoint(self.endpoint_override)}/.default"
+                    if self.endpoint_override
+                    else "https://api.loganalytics.io/.default"
+                )
             elif self.cloud == "usgovernment":
                 scope = "https://api.loganalytics.us/.default"
             else:
@@ -121,7 +133,11 @@ class LogAnalyticsPlugin(BasePlugin):
         # Endpoint selection: prefer additionalFields.cloud, then manifest["endpoint"], then fallback
         endpoint = None
         if self.cloud == "custom":
-            endpoint = self.endpoint_override or self.manifest.get("endpoint")
+            endpoint = (
+                validate_azure_monitor_query_endpoint(self.endpoint_override)
+                if self.endpoint_override
+                else self.manifest.get("endpoint")
+            )
         elif self.cloud == "usgovernment":
             endpoint = "https://api.loganalytics.us"
         elif self.cloud == "public":

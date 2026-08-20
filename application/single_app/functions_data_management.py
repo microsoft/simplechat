@@ -10538,6 +10538,22 @@ def get_data_management_backup_inventory(limit=100):
     ]
 
 
+def _count_data_management_backups(extra_clauses=None, extra_parameters=None):
+    """Count backups with a VALUE aggregate; the Python client cannot serve GROUP BY here."""
+    clauses = ["c.type = @type", "c.operation = @operation"]
+    parameters = [
+        {"name": "@type", "value": DATA_MANAGEMENT_JOB_TYPE},
+        {"name": "@operation", "value": DATA_MANAGEMENT_OPERATION_BACKUP},
+    ]
+    clauses.extend(extra_clauses or [])
+    parameters.extend(extra_parameters or [])
+    rows = _query_data_management_history_items(
+        query=f"SELECT VALUE COUNT(1) FROM c WHERE {' AND '.join(clauses)}",
+        parameters=parameters,
+    )
+    return _safe_int(rows[0], default=0, minimum=0) if rows else 0
+
+
 def _get_data_management_backup_global_summary():
     summary = {
         "full": 0,
@@ -10549,39 +10565,42 @@ def _get_data_management_backup_global_summary():
         "latest_full": None,
         "latest_partial": None,
     }
-    aggregate_query = (
-        "SELECT c.backup_type, c.status, COUNT(1) AS count FROM c "
-        "WHERE c.type = @type AND c.operation = @operation "
-        "GROUP BY c.backup_type, c.status"
-    )
     parameters = [
         {"name": "@type", "value": DATA_MANAGEMENT_JOB_TYPE},
         {"name": "@operation", "value": DATA_MANAGEMENT_OPERATION_BACKUP},
     ]
-    aggregate_rows = _query_data_management_history_items(
-        query=aggregate_query,
-        parameters=parameters,
+    available_clause = "(c.status = @completed OR c.status = @completed_with_warnings)"
+    available_parameters = [
+        {"name": "@completed", "value": DATA_MANAGEMENT_STATUS_COMPLETED},
+        {
+            "name": "@completed_with_warnings",
+            "value": DATA_MANAGEMENT_STATUS_COMPLETED_WITH_WARNINGS,
+        },
+    ]
+
+    summary["total"] = _count_data_management_backups()
+    summary["available"] = _count_data_management_backups(
+        [available_clause],
+        available_parameters,
     )
-    for row in aggregate_rows:
-        if not isinstance(row, dict):
-            continue
-        count = _safe_int(row.get("count"), default=0, minimum=0)
-        status = row.get("status")
-        backup_type = row.get("backup_type")
-        summary["total"] += count
-        if status in {
-            DATA_MANAGEMENT_STATUS_COMPLETED,
-            DATA_MANAGEMENT_STATUS_COMPLETED_WITH_WARNINGS,
-        }:
-            summary["available"] += count
-            if backup_type == DATA_MANAGEMENT_BACKUP_FULL:
-                summary["full"] += count
-            elif backup_type == DATA_MANAGEMENT_BACKUP_PARTIAL:
-                summary["partial"] += count
-        elif status == DATA_MANAGEMENT_STATUS_RUNNING:
-            summary["running"] += count
-        elif status == DATA_MANAGEMENT_STATUS_FAILED:
-            summary["failed"] += count
+    summary["running"] = _count_data_management_backups(
+        ["c.status = @running"],
+        [{"name": "@running", "value": DATA_MANAGEMENT_STATUS_RUNNING}],
+    )
+    summary["failed"] = _count_data_management_backups(
+        ["c.status = @failed"],
+        [{"name": "@failed", "value": DATA_MANAGEMENT_STATUS_FAILED}],
+    )
+    for backup_type, summary_field in (
+        (DATA_MANAGEMENT_BACKUP_FULL, "full"),
+        (DATA_MANAGEMENT_BACKUP_PARTIAL, "partial"),
+    ):
+        summary[summary_field] = _count_data_management_backups(
+            [available_clause, "c.backup_type = @backup_type"],
+            available_parameters + [
+                {"name": "@backup_type", "value": backup_type},
+            ],
+        )
 
     for backup_type, summary_field in (
         (DATA_MANAGEMENT_BACKUP_FULL, "latest_full"),
@@ -13183,6 +13202,7 @@ def _set_job_progress(
     total_steps,
     current_step=None,
     status=DATA_MANAGEMENT_STATUS_RUNNING,
+    step_status=None,
     allow_cancel_requested=False,
 ):
     total_steps = max(1, total_steps)
@@ -13211,11 +13231,25 @@ def _set_job_progress(
         saved_job.get("id"),
         current_step or "progress",
         saved_job,
-        status=status,
+        # A finished step stays "completed" even while the job itself keeps running.
+        status=step_status or status,
         message=message,
         details={"progress": saved_job.get("progress") if isinstance(saved_job.get("progress"), dict) else {}},
     )
     return saved_job
+
+
+def _complete_job_step(job, message, completed_steps, total_steps, current_step, **kwargs):
+    """Advance job progress and stamp the finished step as completed."""
+    return _set_job_progress(
+        job,
+        message,
+        completed_steps,
+        total_steps,
+        current_step=current_step,
+        step_status=DATA_MANAGEMENT_STATUS_COMPLETED,
+        **kwargs,
+    )
 
 
 def _get_backup_fernet(settings, key_reference=None):
@@ -17954,7 +17988,7 @@ def execute_restore_job(job, settings):
         container_client,
         fernet,
     ))
-    _set_job_progress(job, "Cosmos restore step completed", 1, total_steps, current_step="cosmos")
+    _complete_job_step(job, "Cosmos restore step completed", 1, total_steps, "cosmos")
 
     artifacts.extend(_execute_restore_search_resources(
         job,
@@ -17964,7 +17998,7 @@ def execute_restore_job(job, settings):
         container_client,
         fernet,
     ))
-    _set_job_progress(job, "AI Search restore step completed", 2, total_steps, current_step="ai_search")
+    _complete_job_step(job, "AI Search restore step completed", 2, total_steps, "ai_search")
 
     artifacts.extend(_execute_restore_source_blob_resources(
         job,
@@ -17974,7 +18008,7 @@ def execute_restore_job(job, settings):
         container_client,
         fernet,
     ))
-    _set_job_progress(job, "Source blob restore step completed", 3, total_steps, current_step="source_blobs")
+    _complete_job_step(job, "Source blob restore step completed", 3, total_steps, "source_blobs")
 
     warnings = list(restore_state.get("warnings") or [])
     failed_resource_names = [
@@ -18123,7 +18157,7 @@ def execute_backup_job(job, settings):
             warning,
             "Skipped disabled Cosmos backup scope",
         )
-    _set_job_progress(job, "Cosmos DB export step completed", 1, total_steps, current_step="cosmos")
+    _complete_job_step(job, "Cosmos DB export step completed", 1, total_steps, "cosmos")
 
     if backup_plan.get("include_ai_search"):
         artifacts.extend(_execute_backup_search_resources(
@@ -18145,7 +18179,7 @@ def execute_backup_job(job, settings):
             warning,
             "Skipped disabled AI Search backup scope",
         )
-    _set_job_progress(job, "AI Search export step completed", 2, total_steps, current_step="ai_search")
+    _complete_job_step(job, "AI Search export step completed", 2, total_steps, "ai_search")
 
     if backup_plan.get("include_source_blobs"):
         source_blob_service_client = _get_source_blob_service_client()
@@ -18214,7 +18248,7 @@ def execute_backup_job(job, settings):
             warning,
             "Skipped disabled source blob backup scope",
         )
-    _set_job_progress(job, "Source blob export step completed", 3, total_steps, current_step="source_blobs")
+    _complete_job_step(job, "Source blob export step completed", 3, total_steps, "source_blobs")
 
     _assert_backup_job_lease(job)
     artifacts = _backup_state_resource_artifacts(backup_state)
@@ -18405,13 +18439,13 @@ def execute_migration_job(job, settings):
             allow_cancel_requested=True,
         )
         raise
-    _set_job_progress(job, "Validated migration selection plan", 1, total_steps, current_step="plan")
+    _complete_job_step(job, "Validated migration selection plan", 1, total_steps, "plan")
     migration_state = job.get("migration_state") if isinstance(job.get("migration_state"), dict) else migration_state
     _record_data_management_job_event(
         job.get("id"),
         "migration-plan",
         job,
-        status=DATA_MANAGEMENT_STATUS_RUNNING,
+        status=DATA_MANAGEMENT_STATUS_COMPLETED,
         message="Migration selection plan validated",
         details={
             "migration_plan": plan_summary,
@@ -18533,7 +18567,7 @@ def execute_migration_job(job, settings):
                 "Pinned server-owned migration inventory preview",
             )
 
-        _set_job_progress(job, "Migration inventory completed", 2, total_steps, current_step="inventory")
+        _complete_job_step(job, "Migration inventory completed", 2, total_steps, "inventory")
         _set_job_progress(job, "Validating migration destinations", 2, total_steps, current_step="preflight")
         migration_state = _run_data_management_migration_preflight(
             job,
@@ -18541,13 +18575,13 @@ def execute_migration_job(job, settings):
             settings,
             migration_plan,
         )
-        _set_job_progress(job, "Destination migration preflight completed", 3, total_steps, current_step="preflight")
+        _complete_job_step(job, "Destination migration preflight completed", 3, total_steps, "preflight")
         migration_state = job.get("migration_state") if isinstance(job.get("migration_state"), dict) else migration_state
         _record_data_management_job_event(
             job.get("id"),
             "migration-preflight",
             job,
-            status=DATA_MANAGEMENT_STATUS_RUNNING,
+            status=DATA_MANAGEMENT_STATUS_COMPLETED,
             message="Verified source and destination migration access",
             details=migration_state.get("preflight") if isinstance(migration_state.get("preflight"), dict) else {},
         )
@@ -18559,7 +18593,7 @@ def execute_migration_job(job, settings):
             settings,
             migration_plan,
         )
-        _set_job_progress(job, "Destination Cosmos capacity prepared", 4, total_steps, current_step="capacity")
+        _complete_job_step(job, "Destination Cosmos capacity prepared", 4, total_steps, "capacity")
         migration_state = job.get("migration_state") if isinstance(job.get("migration_state"), dict) else migration_state
 
         _set_job_progress(job, "Migrating Cosmos records", 4, total_steps, current_step="cosmos")
@@ -18582,11 +18616,11 @@ def execute_migration_job(job, settings):
                 job.get("id"),
                 f"migration-cosmos-{target_type}",
                 job,
-                status=DATA_MANAGEMENT_STATUS_RUNNING,
+                status=DATA_MANAGEMENT_STATUS_COMPLETED,
                 message=f"Migrated {target_type.replace('_', ' ')} Cosmos records",
                 details={"target_type": target_type, "artifacts": copied},
             )
-        _set_job_progress(job, "Cosmos migration completed", 5, total_steps, current_step="cosmos")
+        _complete_job_step(job, "Cosmos migration completed", 5, total_steps, "cosmos")
         migration_state = job.get("migration_state") if isinstance(job.get("migration_state"), dict) else migration_state
 
         search_artifacts = []
@@ -18631,7 +18665,7 @@ def execute_migration_job(job, settings):
                     )
         migration_state = job.get("migration_state") if isinstance(job.get("migration_state"), dict) else migration_state
         artifacts.extend(search_artifacts)
-        _set_job_progress(job, "AI Search migration completed", 6, total_steps, current_step="ai_search")
+        _complete_job_step(job, "AI Search migration completed", 6, total_steps, "ai_search")
         migration_state = job.get("migration_state") if isinstance(job.get("migration_state"), dict) else migration_state
 
         _set_job_progress(job, "Migrating source document blobs", 6, total_steps, current_step="source_blobs")
@@ -18644,7 +18678,7 @@ def execute_migration_job(job, settings):
         )
         migration_state = job.get("migration_state") if isinstance(job.get("migration_state"), dict) else migration_state
         artifacts.extend(source_blob_artifacts)
-        _set_job_progress(job, "Source blob migration completed", 7, total_steps, current_step="source_blobs")
+        _complete_job_step(job, "Source blob migration completed", 7, total_steps, "source_blobs")
         migration_state = job.get("migration_state") if isinstance(job.get("migration_state"), dict) else migration_state
 
         _set_job_progress(job, "Reconciling source and destination", 7, total_steps, current_step="reconciliation")
@@ -18660,12 +18694,12 @@ def execute_migration_job(job, settings):
         )
         migration_state = job.get("migration_state") if isinstance(job.get("migration_state"), dict) else migration_state
         artifacts.append(reconciliation_artifact)
-        _set_job_progress(job, "Migration reconciliation completed", 8, total_steps, current_step="reconciliation")
+        _complete_job_step(job, "Migration reconciliation completed", 8, total_steps, "reconciliation")
         _record_data_management_job_event(
             job.get("id"),
             "migration-reconciliation",
             job,
-            status=DATA_MANAGEMENT_STATUS_RUNNING,
+            status=DATA_MANAGEMENT_STATUS_COMPLETED,
             message="Reconciled migration source and destination identities",
             details=reconciliation_artifact,
         )
@@ -18743,7 +18777,7 @@ def execute_migration_job(job, settings):
         settings,
         "Migration execution completed",
     )
-    _set_job_progress(job, "Migration execution completed", 10, total_steps, current_step="complete")
+    _complete_job_step(job, "Migration execution completed", 10, total_steps, "complete")
 
     artifact_summaries = summarize_backup_artifacts(artifacts)
     artifact_totals = _backup_artifact_totals(artifact_summaries)

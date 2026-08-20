@@ -57,11 +57,11 @@ def test_chat_api_uses_shared_multi_endpoint_resolution_for_retry_compatibility(
     route_source = read_file_text(ROUTE_FILE)
     chat_route_markers = [
         "@bp.route('/api/chat', methods=['POST'])",
-        "@app.route('/api/chat', methods=['POST'])",
+        "@bp.route('/api/chat', methods=['POST'])",
     ]
     chat_stream_markers = [
         "@bp.route('/api/chat/stream', methods=['POST'])",
-        "@app.route('/api/chat/stream', methods=['POST'])",
+        "@bp.route('/api/chat/stream', methods=['POST'])",
     ]
 
     chat_route_index = find_first_route_marker(route_source, chat_route_markers)

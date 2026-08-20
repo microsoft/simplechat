@@ -17,6 +17,10 @@ import { updateSidebarConversationTitle } from "./chat-sidebar-conversations.js"
 import { getActiveConversationContext, getActiveConversationScope } from "./chat-conversation-scope.js";
 import { escapeHtml, isColorLight, addTargetBlankToExternalLinks, sanitizeHttpUrl } from "./chat-utils.js";
 import { showToast } from "./chat-toast.js";
+import {
+  buildGeneratedFileApprovalBlock,
+  generatedFileApprovalBlocksDownload,
+} from "./chat-file-approvals.js";
 import { autoplayTTSIfEnabled, isTTSAutoplayEnabled, playTTS } from "./chat-tts.js";
 import { saveUserSetting } from "./chat-layout.js";
 import { sendMessageWithStreaming } from "./chat-streaming.js";
@@ -5343,6 +5347,15 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
       backgroundDetailElements.push(rowCountDetail);
     }
 
+    if (outputMetadata?.rows_truncated) {
+      // The completed-artifact layout hides the summary, so partial coverage needs its own badge.
+      const truncatedBadge = document.createElement('span');
+      truncatedBadge.className = 'badge text-bg-warning';
+      truncatedBadge.textContent = 'Partial';
+      truncatedBadge.title = 'The source action reported truncated results, so this file covers only the rows it returned.';
+      header.appendChild(truncatedBadge);
+    }
+
     card.appendChild(header);
 
     if (!isCompletedTabularArtifact) {
@@ -5428,6 +5441,27 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
 
     const actions = document.createElement('div');
     actions.className = 'd-flex flex-wrap gap-2 mt-3';
+
+    // A staged file is withheld from everyone until an approver releases it, so the download
+    // and preview controls are replaced by the approval banner rather than left to fail.
+    const approvalBlock = buildGeneratedFileApprovalBlock(outputMetadata, (decision, payload) => {
+      if (outputMetadata && typeof outputMetadata.approval === 'object') {
+        outputMetadata.approval.state = payload?.approval_state
+          || (decision === 'approve' ? 'approved' : 'denied');
+        outputMetadata.approval.viewer_can_approve = false;
+        outputMetadata.approval.resolved_by_name = payload?.resolved_by_name || '';
+      }
+      const refreshedCard = createGeneratedAnalysisArtifactCard(outputMetadata);
+      if (refreshedCard && card.parentNode) {
+        card.parentNode.replaceChild(refreshedCard, card);
+      }
+    });
+    if (approvalBlock) {
+      card.appendChild(approvalBlock);
+    }
+    if (generatedFileApprovalBlocksDownload(outputMetadata)) {
+      return card;
+    }
 
     if (outputMetadata?.background_export) {
       const backgroundRunId = String(outputMetadata?.export_run_id || outputMetadata?.run_id || '').trim();

@@ -155,6 +155,9 @@ navigation:
         - title: Release Notes
           url: /explanation/release_notes/
           icon: bi bi-clock-history
+        - title: Archived Release Notes
+          url: /explanation/archive_release_notes/
+          icon: bi bi-archive
         - title: Contributing
           url: /contributing/
           icon: bi bi-git

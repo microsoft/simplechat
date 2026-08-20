@@ -99,7 +99,7 @@ def test_release_notifications_backend_and_settings_markers():
         raise AssertionError(f'Missing release notifications frontend markers: {missing_frontend}')
 
     backend_markers = [
-        "@app.route('/api/admin/settings/release_notifications_registration', methods=['POST'])",
+        "@bp.route('/api/admin/settings/release_notifications_registration', methods=['POST'])",
         'def release_notifications_registration():',
         "'release_notifications_registered': True",
         'log_admin_release_notifications_registration(',

@@ -2,8 +2,8 @@
 # test_admin_latest_features_tab.py
 """
 Functional test for admin Latest Features tab.
-Version: 0.250.036
-Implemented in: 0.240.074; 0.240.085; 0.241.002; 0.241.164; 0.241.165; 0.241.166; 0.241.183; 0.241.184; 0.250.001; 0.250.026; 0.250.034; 0.250.036
+Version: 0.260.001
+Implemented in: 0.240.074; 0.240.085; 0.241.002; 0.241.164; 0.241.165; 0.241.166; 0.241.183; 0.241.184; 0.250.001; 0.250.026; 0.250.034; 0.250.036; 0.260.001
 
 This test ensures that the Admin Settings page exposes a data-driven,
 admin-only Latest Features tab while the user-facing support catalog remains
@@ -25,36 +25,90 @@ SUPPORT_CONFIG = os.path.join(REPO_ROOT, 'application', 'single_app', 'support_m
 FEATURE_IMAGE_DIR = os.path.join(REPO_ROOT, 'application', 'single_app', 'static', 'images', 'features')
 
 USER_CURRENT_FEATURE_IDS = [
-    'release_250_ai_access',
-    'release_250_agents_catalog',
-    'release_250_tabular_analysis',
-    'release_250_charts',
-    'release_250_custom_pages',
-    'release_250_tableau_action',
-    'release_250_workflows',
-    'release_250_voice_assisted_inputs',
-    'release_250_m365_actions',
-    'release_250_chat_uploads',
-    'release_250_document_intelligence',
-    'release_250_file_sync',
-    'release_250_conversation_feed',
-    'release_250_group_file_sharing',
-    'release_250_profile_stats',
-    'release_250_databricks_action',
-    'release_250_layered_masking',
-    'release_250_visio_msg_ingestion',
-    'release_250_assigned_knowledge',
-    'release_250_deep_research',
-    'release_250_url_access',
-    'release_250_source_continuity',
-    'release_250_generated_documents',
-    'release_250_multi_inline_image_gen',
-    'release_250_workspace_views',
-    'release_250_follow_up_actions',
-    'release_250_model_agent_avatars',
+    'release_260_enhanced_extraction',
+    'release_260_office_embedded_images',
+    'release_260_workflow_task_sequences',
+    'release_260_mcp_platform',
+    'release_260_yamcs_action',
+    'release_260_rocksdb_action',
+    'release_260_agent_instruction_references',
+    'release_260_action_test_connection',
+    'release_260_azure_blob_file_sync',
+    'release_260_terms_of_use',
+    'release_260_audio_file_support',
+    'release_260_completion_notifications',
+    'release_260_chat_ai_notice',
+    'release_260_conversation_context_grounding',
+    'release_260_used_documents_fork',
+    'release_260_conversation_contents_drawer',
+    'release_260_font_size_zoom',
+    'release_260_message_audio_export',
+    'release_260_public_workspace_display_name',
+    'release_260_chat_scroll_508',
 ]
 
 ADMIN_CURRENT_FEATURE_IDS = [
+    'admin_release_260_data_management',
+    'admin_release_260_keyvault_reminders',
+    'admin_release_260_governance_block_lists',
+    'admin_release_260_model_identity_header',
+    'admin_release_260_per_model_response_length',
+    'admin_release_260_control_center_refresh',
+    'admin_release_260_feedback_safety_lifecycle',
+    'admin_release_260_log_cleanup',
+    'admin_release_260_redis_explorer',
+    'admin_release_260_index_auto_login',
+    'admin_release_260_enhanced_extraction',
+    'admin_release_260_mcp_platform',
+    'admin_release_260_azure_blob_file_sync',
+    'admin_release_260_terms_of_use',
+    'admin_release_260_chat_ai_notice',
+    'admin_release_260_public_workspace_display_name',
+]
+
+USER_CURRENT_FEATURE_IMAGE_FILES = {
+    'release_260_enhanced_extraction': ['release_260_enhanced_extraction_1.png', 'release_260_enhanced_extraction_2.png', 'release_260_enhanced_extraction_3.png'],
+    'release_260_office_embedded_images': ['release_260_office_embedded_images_1.png', 'release_260_office_embedded_images_2.png', 'release_260_office_embedded_images_3.png'],
+    'release_260_workflow_task_sequences': ['release_260_workflow_task_sequences_1.png', 'release_260_workflow_task_sequences_2.png', 'release_260_workflow_task_sequences_3.png'],
+    'release_260_mcp_platform': ['release_260_mcp_platform_1.png', 'release_260_mcp_platform_2.png', 'release_260_mcp_platform_3.png'],
+    'release_260_yamcs_action': ['release_260_yamcs_action_1.png', 'release_260_yamcs_action_2.png', 'release_260_yamcs_action_3.png'],
+    'release_260_rocksdb_action': ['release_260_rocksdb_action_1.png', 'release_260_rocksdb_action_2.png', 'release_260_rocksdb_action_3.png'],
+    'release_260_agent_instruction_references': ['release_260_agent_instruction_references_1.png', 'release_260_agent_instruction_references_2.png', 'release_260_agent_instruction_references_3.png'],
+    'release_260_action_test_connection': ['release_260_action_test_connection_1.png', 'release_260_action_test_connection_2.png', 'release_260_action_test_connection_3.png'],
+    'release_260_azure_blob_file_sync': ['release_260_azure_blob_file_sync_1.png', 'release_260_azure_blob_file_sync_2.png', 'release_260_azure_blob_file_sync_3.png'],
+    'release_260_terms_of_use': ['release_260_terms_of_use_1.png', 'release_260_terms_of_use_2.png', 'release_260_terms_of_use_3.png'],
+    'release_260_audio_file_support': ['release_260_audio_file_support_1.png', 'release_260_audio_file_support_2.png', 'release_260_audio_file_support_3.png'],
+    'release_260_completion_notifications': ['release_260_completion_notifications_1.png', 'release_260_completion_notifications_2.png', 'release_260_completion_notifications_3.png'],
+    'release_260_chat_ai_notice': ['release_260_chat_ai_notice_1.png', 'release_260_chat_ai_notice_2.png', 'release_260_chat_ai_notice_3.png'],
+    'release_260_conversation_context_grounding': ['release_260_conversation_context_grounding_1.png', 'release_260_conversation_context_grounding_2.png', 'release_260_conversation_context_grounding_3.png'],
+    'release_260_used_documents_fork': ['release_260_used_documents_fork_1.png', 'release_260_used_documents_fork_2.png', 'release_260_used_documents_fork_3.png'],
+    'release_260_conversation_contents_drawer': ['release_260_conversation_contents_drawer_1.png', 'release_260_conversation_contents_drawer_2.png', 'release_260_conversation_contents_drawer_3.png'],
+    'release_260_font_size_zoom': ['release_260_font_size_zoom_1.png', 'release_260_font_size_zoom_2.png', 'release_260_font_size_zoom_3.png'],
+    'release_260_message_audio_export': ['release_260_message_audio_export_1.png', 'release_260_message_audio_export_2.png', 'release_260_message_audio_export_3.png'],
+    'release_260_public_workspace_display_name': ['release_260_public_workspace_display_name_1.png', 'release_260_public_workspace_display_name_2.png', 'release_260_public_workspace_display_name_3.png'],
+    'release_260_chat_scroll_508': ['release_260_chat_scroll_508_1.png', 'release_260_chat_scroll_508_2.png', 'release_260_chat_scroll_508_3.png'],
+}
+
+ADMIN_CURRENT_FEATURE_IMAGE_FILES = {
+    'admin_release_260_data_management': ['admin_release_260_data_management.png'],
+    'admin_release_260_keyvault_reminders': ['admin_release_260_keyvault_reminders.png'],
+    'admin_release_260_governance_block_lists': ['admin_release_260_governance_block_lists.png'],
+    'admin_release_260_model_identity_header': ['admin_release_260_model_identity_header.png'],
+    'admin_release_260_per_model_response_length': ['admin_release_260_per_model_response_length.png'],
+    'admin_release_260_control_center_refresh': ['admin_release_260_control_center_refresh.png'],
+    'admin_release_260_feedback_safety_lifecycle': ['admin_release_260_feedback_safety_lifecycle.png'],
+    'admin_release_260_log_cleanup': ['admin_release_260_log_cleanup.png'],
+    'admin_release_260_redis_explorer': ['admin_release_260_redis_explorer.png'],
+    'admin_release_260_index_auto_login': ['admin_release_260_index_auto_login.png'],
+    'admin_release_260_enhanced_extraction': ['admin_release_260_enhanced_extraction.png'],
+    'admin_release_260_mcp_platform': ['admin_release_260_mcp_platform.png'],
+    'admin_release_260_azure_blob_file_sync': ['admin_release_260_azure_blob_file_sync.png'],
+    'admin_release_260_terms_of_use': ['admin_release_260_terms_of_use.png'],
+    'admin_release_260_chat_ai_notice': ['admin_release_260_chat_ai_notice.png'],
+    'admin_release_260_public_workspace_display_name': ['admin_release_260_public_workspace_display_name.png'],
+}
+
+PREVIOUS_ADMIN_FEATURE_IDS = [
     'admin_release_250_azure_openai_identity',
     'admin_release_250_model_endpoint_setup',
     'admin_release_250_governance',
@@ -72,60 +126,6 @@ ADMIN_CURRENT_FEATURE_IDS = [
     'admin_release_250_url_access',
     'admin_release_250_model_endpoint_branding',
     'admin_release_250_bug_fixes',
-]
-
-USER_CURRENT_FEATURE_IMAGE_FILES = {
-    'release_250_ai_access': ['release_250_ai_access.png'],
-    'release_250_agents_catalog': ['release_250_agents_catalog.png'],
-    'release_250_tabular_analysis': ['release_250_tabular_analysis.png'],
-    'release_250_charts': ['release_250_charts.png'],
-    'release_250_custom_pages': ['release_250_custom_pages.png'],
-    'release_250_tableau_action': ['release_250_tableau_action.png'],
-    'release_250_workflows': ['release_250_workflows.png'],
-    'release_250_voice_assisted_inputs': ['release_250_voice_assisted_inputs.png'],
-    'release_250_m365_actions': ['release_250_m365_actions.png'],
-    'release_250_chat_uploads': ['release_250_chat_uploads.png'],
-    'release_250_document_intelligence': ['release_250_document_intelligence.png'],
-    'release_250_file_sync': ['release_250_file_sync.png'],
-    'release_250_conversation_feed': ['release_250_conversation_feed.png'],
-    'release_250_group_file_sharing': ['release_250_group_file_sharing.png'],
-    'release_250_profile_stats': ['release_250_profile_stats.png'],
-    'release_250_databricks_action': ['release_250_databricks_action.png'],
-    'release_250_layered_masking': ['release_250_layered_masking.png'],
-    'release_250_visio_msg_ingestion': ['release_250_visio_msg_ingestion.png'],
-    'release_250_assigned_knowledge': ['release_250_assigned_knowledge.png'],
-    'release_250_deep_research': ['release_250_deep_research.png'],
-    'release_250_url_access': ['release_250_url_access.png'],
-    'release_250_source_continuity': ['release_250_source_continuity.png'],
-    'release_250_generated_documents': ['release_250_generated_documents.png'],
-    'release_250_multi_inline_image_gen': ['release_250_multi_inline_image_gen.png'],
-    'release_250_workspace_views': ['release_250_workspace_views.png'],
-    'release_250_follow_up_actions': ['release_250_follow_up_actions.png'],
-    'release_250_model_agent_avatars': ['release_250_model_agent_avatars.png'],
-}
-
-ADMIN_CURRENT_FEATURE_IMAGE_FILES = {
-    'admin_release_250_agents_catalog': ['admin_release_250_agents_catalog.png'],
-    'admin_release_250_deep_research': ['admin_release_250_deep_research.png'],
-    'admin_release_250_url_access': ['admin_release_250_url_access.png'],
-}
-
-PREVIOUS_ADMIN_FEATURE_IDS = [
-    'release_notifications_status_badge',
-    'guided_tutorials',
-    'background_chat',
-    'gpt_selection',
-    'tabular_analysis',
-    'citation_improvements',
-    'document_versioning',
-    'summaries_export',
-    'agent_operations',
-    'ai_transparency',
-    'fact_memory',
-    'deployment',
-    'redis_key_vault',
-    'send_feedback',
-    'support_menu',
 ]
 
 
@@ -153,22 +153,27 @@ def test_user_latest_features_catalog_release_groups():
         'previous_release',
         'archive_release',
     ]
-    assert release_groups[0]['release_version'] == '0.250.001'
-    assert release_groups[1]['release_version'] == '0.241.001 - 0.241.007'
+    assert release_groups[0]['release_version'] == '0.260.001'
+    assert release_groups[1]['release_version'] == '0.250.001'
+    assert release_groups[2]['release_version'] == '0.239.001 - 0.241.007'
 
     current_feature_ids = [feature['id'] for feature in release_groups[0]['features']]
     assert current_feature_ids == USER_CURRENT_FEATURE_IDS
     assert 'cosmos_autoscale' not in current_feature_ids
+
+    previous_feature_ids = [feature['id'] for feature in release_groups[1]['features']]
+    assert 'release_250_ai_access' in previous_feature_ids, 'v0.250.001 cards should move to the previous tier'
 
     default_visibility = support_config.get_default_support_latest_features_visibility()
     assert 'cosmos_autoscale' not in default_visibility
     assert default_visibility['deployment'] is False
     assert default_visibility['redis_key_vault'] is False
     assert default_visibility['release_250_ai_access'] is True
+    assert all(default_visibility[feature_id] is False for feature_id in USER_CURRENT_FEATURE_IDS), 'v0.260.001 cards ship hidden until their placeholder screenshots are replaced'
 
     first_feature = release_groups[0]['features'][0]
-    assert first_feature['id'] == 'release_250_ai_access'
-    assert first_feature['title'] == 'Personalized Model and Agent Access'
+    assert first_feature['id'] == 'release_260_enhanced_extraction'
+    assert first_feature['title'] == 'Sharper Document Extraction with Figure Descriptions'
 
     for feature in release_groups[0]['features']:
         expected_files = USER_CURRENT_FEATURE_IMAGE_FILES[feature['id']]
@@ -177,6 +182,8 @@ def test_user_latest_features_catalog_release_groups():
         assert feature.get('image') == expected_paths[0], f"Primary image mismatch for {feature['id']}"
         assert feature.get('image_alt'), f"Missing primary image alt text for {feature['id']}"
         assert [image['path'] for image in images] == expected_paths, f"Gallery image paths mismatch for {feature['id']}"
+        assert len(images) == 3, f"Expected three gallery images for {feature['id']}"
+        assert len(feature.get('guidance', [])) >= 5, f"Expected at least five how-to steps for {feature['id']}"
 
     print('User-facing Latest Features catalog release groups are current')
     return True
@@ -189,11 +196,13 @@ def test_admin_latest_features_catalog_release_groups():
     support_config = load_module(SUPPORT_CONFIG, 'support_menu_config_for_admin_latest_features_test')
     release_groups = support_config.get_admin_latest_feature_release_groups_for_settings({})
 
-    assert [group['id'] for group in release_groups] == ['current_release', 'previous_release']
+    assert [group['id'] for group in release_groups] == ['current_release', 'previous_release', 'archive_release']
     assert release_groups[0]['label'] == 'Admin-Managed Latest Features'
     assert release_groups[1]['label'] == 'Previous Release Features'
-    assert release_groups[0]['release_version'] == '0.250.001'
-    assert release_groups[1]['release_version'] == '0.241.001 - 0.241.007'
+    assert release_groups[2]['label'] == 'Archive Release Features'
+    assert release_groups[0]['release_version'] == '0.260.001'
+    assert release_groups[1]['release_version'] == '0.250.001'
+    assert release_groups[2]['release_version'] == '0.241.001 - 0.241.007'
 
     current_feature_ids = [feature['id'] for feature in release_groups[0]['features']]
     assert current_feature_ids == ADMIN_CURRENT_FEATURE_IDS
@@ -207,13 +216,9 @@ def test_admin_latest_features_catalog_release_groups():
         assert feature_id in previous_feature_ids, f'Missing previous admin feature: {feature_id}'
 
     for feature in release_groups[0]['features']:
-        guidance = ' '.join(feature.get('guidance', []))
-        if feature.get('images'):
-            assert 'Screenshot idea:' in guidance, f"Missing screenshot guidance for {feature['id']}"
-        else:
-            assert not feature.get('image'), f"No-media admin feature should not define a primary image: {feature['id']}"
+        assert feature.get('guidance'), f"Missing admin guidance for {feature['id']}"
+        assert len(feature.get('guidance', [])) >= 4, f"Expected at least four admin steps for {feature['id']}"
         assert feature.get('actions'), f"Missing action link for {feature['id']}"
-        assert len(feature.get('actions', [])) >= 2, f"Expected multiple admin action links for {feature['id']}"
         assert any(action.get('admin_tab') for action in feature.get('actions', [])), f"Expected an admin tab link for {feature['id']}"
         if feature['id'] in ADMIN_CURRENT_FEATURE_IMAGE_FILES:
             expected_files = ADMIN_CURRENT_FEATURE_IMAGE_FILES[feature['id']]
@@ -246,7 +251,7 @@ def test_latest_features_template_structure():
         'Screenshot and rollout notes',
         'data-open-admin-tab="{{ action.admin_tab }}"',
         'data-open-admin-section="{{ action.admin_section }}"',
-        'latest-features-previous-release-card',
+        "{% set preview_card_id = 'latest-features-user-preview-' ~ release_group.id|replace('_', '-') ~ '-card' %}",
         '{% set release_collapse_id = release_group.collapse_id %}',
         'id="latestFeatureImageModal"',
         'class="latest-feature-image-frame"',
@@ -313,7 +318,6 @@ def test_latest_features_sidebar_navigation():
         '{{ feature.title }}',
         "release_group.id != 'current_release'",
         'data-section="{{ release_card_id }}"',
-        'latest-features-previous-release-card',
         "{{ release_group.label|replace(' Features', '') }}",
     ]
 
@@ -380,8 +384,12 @@ def test_latest_features_supporting_assets():
         for image_names in ADMIN_CURRENT_FEATURE_IMAGE_FILES.values()
         for image_name in image_names
     ]
-    assert all(image_name.startswith('release_250_') for image_name in current_placeholder_images), 'Current screenshots should be 0.250.001 placeholder filenames'
+    assert all(image_name.startswith('release_260_') for image_name in current_placeholder_images), 'Current screenshots should be 0.260.001 placeholder filenames'
+    assert all(image_name.startswith('admin_release_260_') for image_name in current_admin_images), 'Current admin screenshots should be 0.260.001 placeholder filenames'
     assert 'admin_release_250_deep_research_url_access.png' not in current_admin_images, 'Deep Research and URL Access must use separate admin screenshot assets'
+
+    for image_name in current_placeholder_images + current_admin_images:
+        assert os.path.isfile(os.path.join(FEATURE_IMAGE_DIR, image_name)), f'Missing current release screenshot asset: {image_name}'
 
     required_images = [
         'background_completion_notifications-01.png',

@@ -43,6 +43,7 @@ from functions_authentication import (
 )
 from functions_collaboration import (
     assert_user_can_participate_in_collaboration_conversation,
+    build_conversation_participation_context,
     create_collaboration_message_notifications,
     create_group_collaboration_conversation_record,
     create_personal_collaboration_conversation_record,
@@ -52,16 +53,30 @@ from functions_collaboration import (
     persist_collaboration_message,
 )
 from functions_documents import allowed_file, create_document, process_document_upload_background, update_document
+from functions_generated_file_approvals import (
+    APPROVAL_STATE_APPROVED,
+    APPROVAL_STATE_AUTO_DENIED,
+    APPROVAL_STATE_DENIED,
+    APPROVAL_STATE_PENDING,
+    GENERATED_FILE_APPROVAL_NOTIFICATION_TYPE,
+    apply_generated_file_approval_decision,
+    build_generated_file_approval_client_payload,
+    build_generated_file_approval_metadata,
+    list_expired_pending_generated_file_artifacts,
+    requires_generated_file_approval,
+    user_can_approve_generated_file,
+)
 from functions_chat_bootstrap_cache import bump_chat_bootstrap_global_cache_version
 from functions_group import (
     assert_group_role,
     check_group_status_allows_operation,
     create_group,
     find_group_by_id,
+    get_user_groups,
     get_user_role_in_group,
     require_active_group,
 )
-from functions_notifications import create_notification
+from functions_notifications import create_notification, delete_notifications_by_metadata
 from functions_personal_workflows import save_personal_workflow
 from functions_public_workspaces import (
     check_public_workspace_status_allows_operation,
@@ -1329,8 +1344,9 @@ def delete_generated_chat_artifact_for_user(
     except CosmosResourceNotFoundError:
         return False
 
-    if str(conversation_item.get("user_id") or "").strip() != current_user_id:
-        raise PermissionError("Forbidden")
+    # Shared conversations are owned by their creator, so a participant rolling back their own
+    # generated artifact is authorized through the linked shared conversation instead.
+    build_conversation_participation_context(current_user_id, conversation_item)
     message_metadata = message_item.get("metadata") if isinstance(message_item.get("metadata"), dict) else {}
     if (
         str(message_item.get("conversation_id") or "").strip() != normalized_conversation_id
@@ -2553,6 +2569,433 @@ def _upload_generated_document_for_current_user(
         raise
 
 
+def _get_current_user_summary_or_none(fallback_user_id: str = "") -> Dict[str, str]:
+    """Return a best-effort identity summary for the acting user.
+
+    Background workers run outside a request context, so the caller-supplied id is used as the
+    fallback rather than failing the artifact write.
+    """
+    normalized_fallback_id = str(fallback_user_id or "").strip()
+    try:
+        current_user = get_current_user_info() or {}
+    except Exception:
+        current_user = {}
+
+    resolved_user_id = str(current_user.get("userId") or "").strip() or normalized_fallback_id
+    return {
+        "user_id": resolved_user_id,
+        "display_name": str(current_user.get("displayName") or "").strip(),
+        "email": str(current_user.get("email") or "").strip(),
+    }
+
+
+def _resolve_generated_file_approver_ids(access_context: Dict[str, Any]) -> List[str]:
+    """Return the users allowed to release one staged artifact."""
+    context = access_context if isinstance(access_context, dict) else {}
+    group_id = str(context.get("group_id") or "").strip()
+
+    if not group_id:
+        owner_user_id = str(context.get("owner_user_id") or "").strip()
+        return [owner_user_id] if owner_user_id else []
+
+    group_doc = find_group_by_id(group_id)
+    if not group_doc:
+        return []
+
+    approver_ids = []
+    owner_user_id = str((group_doc.get("owner") or {}).get("id") or "").strip()
+    if owner_user_id:
+        approver_ids.append(owner_user_id)
+    for candidate_id in list(group_doc.get("admins", []) or []) + list(group_doc.get("documentManagers", []) or []):
+        normalized_candidate_id = str(candidate_id or "").strip()
+        if normalized_candidate_id and normalized_candidate_id not in approver_ids:
+            approver_ids.append(normalized_candidate_id)
+    return approver_ids
+
+
+def _notify_generated_file_approval_requested(
+    message_doc: Dict[str, Any],
+    access_context: Dict[str, Any],
+) -> None:
+    """Notify every eligible approver that a participant staged a file for release."""
+    metadata = message_doc.get("metadata") if isinstance(message_doc.get("metadata"), dict) else {}
+    collaboration_conversation_id = str(
+        metadata.get("generated_artifact_approval_collaboration_conversation_id") or ""
+    ).strip()
+    requester_name = str(
+        metadata.get("generated_artifact_approval_requested_by_name") or ""
+    ).strip() or "A participant"
+    file_name = str(message_doc.get("filename") or "").strip() or "a generated file"
+
+    link_url = (
+        f"/chats?conversationId={collaboration_conversation_id}"
+        if collaboration_conversation_id
+        else ""
+    )
+    notification_metadata = {
+        "generated_artifact_message_id": str(message_doc.get("id") or "").strip(),
+        "source_conversation_id": str(message_doc.get("conversation_id") or "").strip(),
+        "collaboration_conversation_id": collaboration_conversation_id,
+        "approval_scope": str(metadata.get("generated_artifact_approval_scope") or "").strip(),
+        "group_id": str(metadata.get("generated_artifact_approval_group_id") or "").strip(),
+    }
+
+    for approver_user_id in _resolve_generated_file_approver_ids(access_context):
+        _create_personal_notification(
+            user_id=approver_user_id,
+            notification_type=GENERATED_FILE_APPROVAL_NOTIFICATION_TYPE,
+            title="File approval requested",
+            message=f"{requester_name} generated {file_name} in a shared conversation and needs your approval.",
+            link_url=link_url,
+            link_context={
+                "conversation_id": collaboration_conversation_id,
+                "conversation_kind": "collaborative",
+            },
+            metadata=notification_metadata,
+        )
+
+
+def list_pending_generated_file_approvals_for_user(user_id: str, limit: int = 50) -> List[Dict[str, Any]]:
+    """Return staged artifacts the supplied user is allowed to release.
+
+    Candidates are narrowed in the query by the approval scopes this user could possibly
+    approve, so the row cap never truncates another user's items ahead of the caller's.
+    """
+    normalized_user_id = str(user_id or "").strip()
+    if not normalized_user_id:
+        return []
+
+    normalized_limit = max(1, min(int(limit or 50), 200))
+    approver_group_ids = []
+    try:
+        for group_doc in get_user_groups(normalized_user_id) or []:
+            group_id = str((group_doc or {}).get("id") or "").strip()
+            if not group_id or group_id in approver_group_ids:
+                continue
+            if str(get_user_role_in_group(group_doc, normalized_user_id) or "").strip() in (
+                "Owner",
+                "Admin",
+                "DocumentManager",
+            ):
+                approver_group_ids.append(group_id)
+    except Exception as exc:
+        log_event(
+            "[GENERATED_FILE_APPROVALS] Failed to resolve approver group scope",
+            {"error": str(exc)},
+            level=logging.WARNING,
+            exceptionTraceback=True,
+        )
+
+    scope_clauses = ["c.metadata.generated_artifact_approval_owner_user_id = @user_id"]
+    parameters = [
+        {"name": "@limit", "value": normalized_limit},
+        {"name": "@pending_state", "value": APPROVAL_STATE_PENDING},
+        {"name": "@user_id", "value": normalized_user_id},
+    ]
+    if approver_group_ids:
+        group_placeholders = []
+        for index, group_id in enumerate(approver_group_ids):
+            placeholder = f"@group_id_{index}"
+            group_placeholders.append(placeholder)
+            parameters.append({"name": placeholder, "value": group_id})
+        scope_clauses.append(
+            f"c.metadata.generated_artifact_approval_group_id IN ({', '.join(group_placeholders)})"
+        )
+
+    query = (
+        "SELECT TOP @limit * FROM c "
+        "WHERE c.role = 'file' "
+        "AND IS_DEFINED(c.metadata.generated_artifact_approval_state) "
+        "AND c.metadata.generated_artifact_approval_state = @pending_state "
+        "AND c.metadata.generated_artifact_approval_requested_by_id != @user_id "
+        f"AND ({' OR '.join(scope_clauses)})"
+    )
+    try:
+        candidates = list(cosmos_messages_container.query_items(
+            query=query,
+            parameters=parameters,
+            enable_cross_partition_query=True,
+        ))
+    except Exception as exc:
+        log_event(
+            "[GENERATED_FILE_APPROVALS] Failed to list pending approvals",
+            {"error": str(exc)},
+            level=logging.ERROR,
+            exceptionTraceback=True,
+        )
+        return []
+
+    pending_approvals = []
+    for candidate in candidates:
+        # The query narrows candidates; authorization is still decided by the shared predicate.
+        if not user_can_approve_generated_file(normalized_user_id, candidate):
+            continue
+        candidate_metadata = candidate.get("metadata") or {}
+        pending_approvals.append({
+            "artifact_message_id": str(candidate.get("id") or "").strip(),
+            "source_conversation_id": str(candidate.get("conversation_id") or "").strip(),
+            "collaboration_conversation_id": str(
+                candidate_metadata.get("generated_artifact_approval_collaboration_conversation_id") or ""
+            ).strip(),
+            "file_name": str(candidate.get("filename") or "").strip(),
+            "output_format": str(candidate_metadata.get("generated_artifact_output_format") or "").strip(),
+            "approval": build_generated_file_approval_client_payload(candidate, normalized_user_id),
+        })
+    return pending_approvals
+
+
+def resolve_generated_file_approval_for_user(
+    user_id: str,
+    source_conversation_id: str,
+    artifact_message_id: str,
+    decision: str,
+) -> Dict[str, Any]:
+    """Approve or deny one staged artifact after re-authorizing the acting user.
+
+    Denial keeps the artifact message so the conversation still shows who declined it, but the
+    stored blob is removed immediately so unapproved content does not linger in storage.
+    """
+    normalized_user_id = str(user_id or "").strip()
+    normalized_conversation_id = str(source_conversation_id or "").strip()
+    normalized_message_id = str(artifact_message_id or "").strip()
+    normalized_decision = str(decision or "").strip().lower()
+
+    if not normalized_user_id or not normalized_conversation_id or not normalized_message_id:
+        raise ValueError("Approval target is incomplete")
+    if normalized_decision not in {APPROVAL_STATE_APPROVED, APPROVAL_STATE_DENIED}:
+        raise ValueError("Approval decision must be approved or denied")
+
+    try:
+        message_item = cosmos_messages_container.read_item(
+            item=normalized_message_id,
+            partition_key=normalized_conversation_id,
+        )
+    except CosmosResourceNotFoundError as exc:
+        raise LookupError("Generated file approval not found") from exc
+
+    metadata = message_item.get("metadata") if isinstance(message_item.get("metadata"), dict) else {}
+    if (
+        str(message_item.get("conversation_id") or "").strip() != normalized_conversation_id
+        or message_item.get("role") != "file"
+        or not metadata.get("is_generated_chat_artifact")
+        or not metadata.get("generated_artifact_approval_required")
+    ):
+        raise LookupError("Generated file approval not found")
+
+    # Re-authorize against the stored approval scope on every call so a client can never
+    # nominate itself as the approver.
+    if not user_can_approve_generated_file(normalized_user_id, message_item):
+        raise PermissionError("You are not allowed to approve this file")
+
+    resolver_summary = _get_current_user_summary_or_none(normalized_user_id)
+    updated_message = apply_generated_file_approval_decision(
+        message_item,
+        normalized_decision,
+        resolver=resolver_summary,
+    )
+
+    if normalized_decision == APPROVAL_STATE_DENIED:
+        delete_blob_backed_chat_message_files([updated_message])
+
+    cosmos_messages_container.upsert_item(updated_message)
+    _clear_generated_file_approval_notifications(normalized_message_id)
+    _notify_generated_file_approval_resolved(updated_message, normalized_decision, resolver_summary)
+
+    log_event(
+        "[GENERATED_FILE_APPROVALS] Resolved staged artifact",
+        {
+            "conversation_id": normalized_conversation_id,
+            "message_id": normalized_message_id,
+            "decision": normalized_decision,
+        },
+        debug_only=True,
+    )
+    return updated_message
+
+
+def _clear_generated_file_approval_notifications(artifact_message_id: str) -> None:
+    """Remove approver notifications once a staged artifact has been resolved."""
+    normalized_message_id = str(artifact_message_id or "").strip()
+    if not normalized_message_id:
+        return
+
+    try:
+        delete_notifications_by_metadata(
+            metadata_filters={"generated_artifact_message_id": normalized_message_id},
+            notification_types=[GENERATED_FILE_APPROVAL_NOTIFICATION_TYPE],
+        )
+    except Exception as exc:
+        log_event(
+            f"[GENERATED_FILE_APPROVALS] Failed to clear approval notifications: {exc}",
+            level=logging.WARNING,
+            exceptionTraceback=True,
+        )
+
+
+def _notify_generated_file_approval_resolved(
+    message_item: Dict[str, Any],
+    decision: str,
+    resolver: Optional[Dict[str, Any]] = None,
+) -> None:
+    """Tell the requester what happened to the file they generated."""
+    metadata = message_item.get("metadata") if isinstance(message_item.get("metadata"), dict) else {}
+    requester_user_id = str(metadata.get("generated_artifact_approval_requested_by_id") or "").strip()
+    if not requester_user_id:
+        return
+
+    collaboration_conversation_id = str(
+        metadata.get("generated_artifact_approval_collaboration_conversation_id") or ""
+    ).strip()
+    file_name = str(message_item.get("filename") or "").strip() or "your generated file"
+    resolver_name = str((resolver or {}).get("display_name") or "").strip() or "An approver"
+    approved = decision == APPROVAL_STATE_APPROVED
+
+    _create_personal_notification(
+        user_id=requester_user_id,
+        notification_type=(
+            "generated_file_approval_approved" if approved else "generated_file_approval_denied"
+        ),
+        title="File approved" if approved else "File not approved",
+        message=(
+            f"{resolver_name} approved {file_name}. It is now available to download."
+            if approved
+            else f"{resolver_name} declined {file_name}."
+        ),
+        link_url=(
+            f"/chats?conversationId={collaboration_conversation_id}"
+            if collaboration_conversation_id
+            else ""
+        ),
+        link_context={
+            "conversation_id": collaboration_conversation_id,
+            "conversation_kind": "collaborative",
+        },
+        metadata={
+            "generated_artifact_message_id": str(message_item.get("id") or "").strip(),
+            "source_conversation_id": str(message_item.get("conversation_id") or "").strip(),
+            "collaboration_conversation_id": collaboration_conversation_id,
+        },
+    )
+
+
+def _collect_generated_artifact_entries(message: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Return the generated-artifact descriptors embedded in one serialized message."""
+    metadata = message.get("metadata") if isinstance(message.get("metadata"), dict) else {}
+    entries = []
+    for collection_key in ("generated_analysis_artifacts", "generated_tabular_outputs"):
+        for entry in metadata.get(collection_key) or []:
+            if isinstance(entry, dict) and str(entry.get("artifact_message_id") or "").strip():
+                entries.append(entry)
+    return entries
+
+
+def attach_generated_file_approval_state(
+    messages: Optional[List[Dict[str, Any]]],
+    viewer_user_id: str,
+) -> Optional[List[Dict[str, Any]]]:
+    """Attach live approval state to generated-file artifacts in serialized messages.
+
+    Approval state is read fresh rather than trusted from the stored assistant metadata so an
+    approver sees actionable controls and a requester sees the current decision after a reload.
+    """
+    normalized_viewer_id = str(viewer_user_id or "").strip()
+    if not messages:
+        return messages
+
+    entries_by_conversation: Dict[str, List[Dict[str, Any]]] = {}
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        for entry in _collect_generated_artifact_entries(message):
+            entry_conversation_id = str(entry.get("conversation_id") or "").strip()
+            if entry_conversation_id:
+                entries_by_conversation.setdefault(entry_conversation_id, []).append(entry)
+
+    if not entries_by_conversation:
+        return messages
+
+    query = (
+        "SELECT c.id, c.conversation_id, c.filename, c.role, c.metadata FROM c "
+        "WHERE c.role = 'file' "
+        "AND IS_DEFINED(c.metadata.generated_artifact_approval_state)"
+    )
+    for entry_conversation_id, entries in entries_by_conversation.items():
+        try:
+            artifact_docs = list(cosmos_messages_container.query_items(
+                query=query,
+                partition_key=entry_conversation_id,
+            ))
+        except Exception as exc:
+            log_event(
+                "[GENERATED_FILE_APPROVALS] Failed to hydrate approval state for a conversation",
+                {"conversation_id": entry_conversation_id, "error": str(exc)},
+                debug_only=True,
+            )
+            continue
+
+        approval_by_message_id = {
+            str(artifact_doc.get("id") or "").strip(): build_generated_file_approval_client_payload(
+                artifact_doc,
+                normalized_viewer_id,
+            )
+            for artifact_doc in artifact_docs
+        }
+        for entry in entries:
+            approval_payload = approval_by_message_id.get(
+                str(entry.get("artifact_message_id") or "").strip()
+            )
+            if approval_payload:
+                entry["approval"] = approval_payload
+
+    return messages
+
+
+def auto_deny_expired_generated_file_approvals() -> int:
+    """Auto-deny staged artifacts whose approval window elapsed and drop their blobs."""
+    expired_artifacts = list_expired_pending_generated_file_artifacts()
+    denied_count = 0
+
+    for message_item in expired_artifacts:
+        message_id = str(message_item.get("id") or "").strip()
+        conversation_id = str(message_item.get("conversation_id") or "").strip()
+        if not message_id or not conversation_id:
+            continue
+
+        try:
+            updated_message = apply_generated_file_approval_decision(
+                message_item,
+                APPROVAL_STATE_AUTO_DENIED,
+                resolver={"display_name": "Automatic expiry"},
+            )
+            delete_blob_backed_chat_message_files([updated_message])
+            cosmos_messages_container.upsert_item(updated_message)
+            _clear_generated_file_approval_notifications(message_id)
+            _notify_generated_file_approval_resolved(
+                updated_message,
+                APPROVAL_STATE_AUTO_DENIED,
+                resolver={"display_name": "Automatic expiry"},
+            )
+            denied_count += 1
+        except Exception as exc:
+            log_event(
+                "[GENERATED_FILE_APPROVALS] Failed to auto-deny an expired staged artifact",
+                {
+                    "conversation_id": conversation_id,
+                    "message_id": message_id,
+                    "error": str(exc),
+                },
+                level=logging.WARNING,
+                exceptionTraceback=True,
+            )
+
+    if denied_count:
+        log_event(
+            "[GENERATED_FILE_APPROVALS] Auto-denied expired staged artifacts",
+            {"artifact_count": denied_count},
+        )
+    return denied_count
+
+
 def _upload_generated_chat_artifact_for_current_user(
     current_user_id: str,
     conversation_id: str,
@@ -2569,8 +3012,23 @@ def _upload_generated_chat_artifact_for_current_user(
     except CosmosResourceNotFoundError as exc:
         raise LookupError(f"Conversation {conversation_id} not found") from exc
 
-    if str(conversation_item.get("user_id") or "").strip() != current_user_id:
-        raise PermissionError("Forbidden")
+    # Shared conversations are backed by a source conversation owned by their creator, so a
+    # participant can never satisfy a plain ownership comparison even though they are a
+    # legitimate member. Authorize against the linked shared conversation instead, then decide
+    # whether this deliverable has to be staged for approval.
+    access_context = build_conversation_participation_context(current_user_id, conversation_item)
+
+    artifact_metadata = artifact_metadata if isinstance(artifact_metadata, dict) else {}
+    approval_metadata = {}
+    if requires_generated_file_approval(
+        access_context,
+        file_name=normalized_file_name,
+        output_format=str(artifact_metadata.get("output_format") or ""),
+    ):
+        approval_metadata = build_generated_file_approval_metadata(
+            access_context,
+            requester=_get_current_user_summary_or_none(current_user_id),
+        )
 
     blob_service_client = CLIENTS.get("storage_account_office_docs_client")
     if not blob_service_client:
@@ -2639,7 +3097,10 @@ def _upload_generated_chat_artifact_for_current_user(
     artifact_capability = str(artifact_metadata.get("capability") or "analysis").strip().lower() or "analysis"
     artifact_output_format = str(artifact_metadata.get("output_format") or file_extension).strip().lower() or file_extension
     artifact_summary = str(artifact_metadata.get("summary") or "").strip()
-    lifecycle_metadata = _build_generated_chat_artifact_lifecycle_metadata(artifact_metadata)
+    lifecycle_metadata = _build_generated_chat_artifact_lifecycle_metadata(
+        artifact_metadata,
+        artifact_run_user_id=current_user_id,
+    )
 
     message_doc = {
         "id": artifact_message_id,
@@ -2660,6 +3121,7 @@ def _upload_generated_chat_artifact_for_current_user(
             "generated_artifact_summary": artifact_summary,
             "generated_artifact_idempotency_key": normalized_idempotency_key or None,
             **lifecycle_metadata,
+            **approval_metadata,
             "thread_info": {
                 "thread_id": current_thread_id,
                 "previous_thread_id": previous_thread_id,
@@ -2669,6 +3131,9 @@ def _upload_generated_chat_artifact_for_current_user(
         },
     }
     cosmos_messages_container.upsert_item(message_doc)
+
+    if approval_metadata:
+        _notify_generated_file_approval_requested(message_doc, access_context)
 
     log_event(
         "[SIMPLE_CHAT] Generated chat artifact saved",
@@ -2680,6 +3145,7 @@ def _upload_generated_chat_artifact_for_current_user(
             "storage_scope": "chat",
             "capability": artifact_capability,
             "output_format": artifact_output_format,
+            "approval_state": approval_metadata.get("generated_artifact_approval_state") or "",
         },
         debug_only=True,
     )
@@ -2692,6 +3158,8 @@ def _upload_generated_chat_artifact_for_current_user(
             "blob_path": blob_path,
             "capability": artifact_capability,
             "output_format": artifact_output_format,
+            "approval_state": approval_metadata.get("generated_artifact_approval_state") or "",
+            "approval_required": bool(approval_metadata),
             **_build_generated_chat_artifact_lifecycle_response(message_doc.get("metadata")),
         },
         "conversation_id": conversation_id,
@@ -2705,7 +3173,10 @@ def _safe_positive_int(value: Any) -> int:
         return 0
 
 
-def _build_generated_chat_artifact_lifecycle_metadata(artifact_metadata: Dict[str, Any]) -> Dict[str, Any]:
+def _build_generated_chat_artifact_lifecycle_metadata(
+    artifact_metadata: Dict[str, Any],
+    artifact_run_user_id: str = "",
+) -> Dict[str, Any]:
     metadata = artifact_metadata if isinstance(artifact_metadata, dict) else {}
     run_id = str(metadata.get("artifact_run_id") or metadata.get("run_id") or "").strip()
     set_id = str(metadata.get("artifact_set_id") or "").strip()
@@ -2727,6 +3198,12 @@ def _build_generated_chat_artifact_lifecycle_metadata(artifact_metadata: Dict[st
         "generated_artifact_run_id": run_id,
         "generated_artifact_set_id": set_id,
         "generated_artifact_member_id": member_id,
+        # Export runs are partitioned by the user who queued them. In a shared conversation the
+        # participant queues the run while the owner may be the one downloading, so the run
+        # owner is recorded here instead of being inferred from the caller.
+        "generated_artifact_run_user_id": str(
+            metadata.get("artifact_run_user_id") or artifact_run_user_id or ""
+        ).strip(),
         "generated_artifact_lifecycle_state": lifecycle_state,
         "generated_artifact_validation_state": validation_state,
         "generated_artifact_publication_generation": _safe_positive_int(
@@ -2782,13 +3259,17 @@ def assert_generated_chat_artifact_is_published_for_user(current_user_id: str, m
     set_id = str(metadata.get("generated_artifact_set_id") or "").strip()
     member_id = str(metadata.get("generated_artifact_member_id") or "").strip()
     conversation_id = str(message_item.get("conversation_id") or "").strip()
+    # Older artifacts predate the recorded run owner, so fall back to the caller for them.
+    run_user_id = str(
+        metadata.get("generated_artifact_run_user_id") or current_user_id or ""
+    ).strip()
     if not run_id or not set_id or not member_id or not conversation_id:
         raise PermissionError("Artifact publication metadata is incomplete")
 
     try:
         run = cosmos_tabular_export_runs_container.read_item(
             item=run_id,
-            partition_key=str(current_user_id or "").strip(),
+            partition_key=run_user_id,
         )
     except CosmosResourceNotFoundError as exc:
         raise PermissionError("Artifact publication run is unavailable") from exc
@@ -2796,7 +3277,7 @@ def assert_generated_chat_artifact_is_published_for_user(current_user_id: str, m
     manifest = run.get("artifact_set_manifest") if isinstance(run.get("artifact_set_manifest"), dict) else {}
     if (
         str(run.get("conversation_id") or "").strip() != conversation_id
-        or str(run.get("user_id") or "").strip() != str(current_user_id or "").strip()
+        or str(run.get("user_id") or "").strip() != run_user_id
         or str(manifest.get("set_id") or "").strip() != set_id
         or str(manifest.get("lifecycle_state") or "").strip().lower() != "completed"
         or str(manifest.get("validation_state") or "").strip().lower() != GENERATED_CHAT_ARTIFACT_VALIDATION_VALIDATED
@@ -2838,8 +3319,9 @@ def commit_generated_chat_artifact_publication_for_user(
         item=normalized_conversation_id,
         partition_key=normalized_conversation_id,
     )
-    if str(conversation_item.get("user_id") or "").strip() != current_user_id:
-        raise PermissionError("Forbidden")
+    # Shared conversations are owned by their creator, so the participant whose export run
+    # produced this artifact must be authorized through the linked shared conversation.
+    build_conversation_participation_context(current_user_id, conversation_item)
     message_item = cosmos_messages_container.read_item(
         item=normalized_message_id,
         partition_key=normalized_conversation_id,
@@ -2883,11 +3365,21 @@ def _resolve_group_upload_target_for_current_user(
     if not allowed:
         raise PermissionError(reason)
 
-    assert_group_role(
-        current_user_id,
-        normalized_group_id,
-        allowed_roles=("Owner", "Admin", "DocumentManager"),
-    )
+    try:
+        assert_group_role(
+            current_user_id,
+            normalized_group_id,
+            allowed_roles=("Owner", "Admin", "DocumentManager"),
+        )
+    except PermissionError as exc:
+        # Workspace writes feed the group search index, so they cannot be staged the way chat
+        # deliverables are. Tell the requester who can complete it instead of failing blankly.
+        group_name = str(group_doc.get("name") or "this group").strip() or "this group"
+        raise PermissionError(
+            f"Saving documents to the {group_name} workspace requires the Owner, Admin, or "
+            "Document Manager role. Ask a document manager to add this file, or request it as "
+            "a downloadable file in the conversation instead."
+        ) from exc
     return normalized_group_id
 
 

@@ -1,6 +1,7 @@
 # Shared (Multi-User) Conversation Reload and Streaming Fix
 
 **Fixed in version: 0.250.224**
+**Hardening added in version: 0.250.227**
 **Tracking issue: [#1281](https://github.com/microsoft/simplechat/issues/1281)**
 
 ## Issue Description
@@ -183,3 +184,56 @@ The resolver is loaded by compiling just its AST node out of `route_backend_coll
 
 * Fix note: this also restores group collaborative conversations, which use the same stream bridge.
 * Feature documentation: `docs/explanation/features/COLLABORATIVE_CONVERSATIONS_FOUNDATION.md`
+
+## Follow-up Hardening (0.250.227)
+
+Three further defects were found while tracing this bug. None of them caused the reported symptoms, so they were kept out of the original fix.
+
+### Stream errors are now always attributed to the shared conversation
+
+`chat-streaming.js` chooses its recovery endpoint from `conversation_kind`:
+
+```js
+if (data.conversation_kind === 'collaborative' && ...loadConversationMessages) {
+    // collaboration endpoint
+} else {
+    loadMessages(data.conversation_id);   // personal endpoint, 404s for shared conversations
+}
+```
+
+None of the seven `_serialize_stream_error()` call sites in the shared stream bridge set `conversation_kind`, so a shared conversation would fall into the `else` branch and hit the same 404 this fix removed.
+
+It could not fire in practice, because the surrounding guard also requires `message_id` and those error payloads never carried one. It was a latent trap rather than a live defect: adding `message_id` to an error payload — a natural change — would have reintroduced the bug.
+
+Rather than adding the field to seven call sites, all shared stream failures now funnel through a single nested helper that cannot omit it:
+
+```python
+def collaboration_stream_error(error_message, **extra_fields):
+    """Serialize a stream error that stays attributed to this shared conversation."""
+    return _serialize_stream_error(
+        error_message,
+        user_message_id=serialized_user_message.get('id'),
+        message_persisted=True,
+        conversation_id=conversation_id,
+        conversation_kind=COLLABORATION_KIND,
+        **extra_fields,
+    )
+```
+
+`test_collaboration_stream_errors_always_carry_conversation_kind` walks the AST of `stream_collaboration_message_api` and asserts exactly one raw `_serialize_stream_error` call remains, that it sets `conversation_kind=COLLABORATION_KIND`, and that every failure path routes through the helper. Adding a new error path without the tag now fails the test.
+
+### Stale `@app.route` assertions repaired across the test suite
+
+The Blueprint migration left production with a single `@app.route` decorator — an example inside a `swagger_wrapper.py` docstring — while 82 test assertions across 40 files still expected the old form.
+
+This is how the streaming defect shipped. `test_collaboration_shared_ai_workflow.py` existed to guard this exact bridge, but broke on line 35 (`@app.route`) and died before reaching line 37, which checked the endpoint lookup. The test that should have caught the bug was already red for an unrelated reason.
+
+59 assertions across 32 files were rewritten to `@bp.route`, each verified against a real `@bp.route` path in `application/single_app` before being changed. 14 occurrences were deliberately left alone because no matching production route exists — those point at routes that appear to have been removed or renamed, which is a different problem and must not be papered over with a passing assertion.
+
+Measured effect on the affected files: **47 failures to 34, with zero newly broken.**
+
+### Dead post-stream reload guard (tracked separately)
+
+`chat-streaming.js:1449` and `:1515` guard on `typeof window.chatMessages?.loadMessages === 'function'`, but `loadMessages` is not among the six functions `chat-messages.js` assigns to `window.chatMessages`, and `git log -S` confirms it never was. The guard has been dead since commit `54e37c87`.
+
+The backend sets `reload_messages: true` when an agent plugin persists extra message documents into Cosmos, so those messages stay invisible until a manual reload. Impact is probably narrow — the final payload renders `image_url` separately — but sizing it needs a repro, and switching on a path that has never executed in production is not a safe blind change. Filed as [#1286](https://github.com/microsoft/simplechat/issues/1286).

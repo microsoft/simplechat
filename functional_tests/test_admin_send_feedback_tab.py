@@ -143,7 +143,7 @@ def test_send_feedback_javascript_and_backend():
         raise AssertionError(f'Missing sidebar tab activation markers: {missing_sidebar}')
 
     backend_markers = [
-        "@app.route('/api/admin/settings/send_feedback_email', methods=['POST'])",
+        "@bp.route('/api/admin/settings/send_feedback_email', methods=['POST'])",
         'def send_feedback_email():',
         'log_admin_feedback_email_submission('
     ]

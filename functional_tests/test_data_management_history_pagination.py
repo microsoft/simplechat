@@ -65,19 +65,16 @@ class FakeHistoryContainer:
             for item in self.documents
             if self._matches(item, query, parameter_map)
         ]
-        if "GROUP BY c.backup_type, c.status" in query:
-            grouped = {}
-            for item in matching:
-                key = (item.get("backup_type"), item.get("status"))
-                grouped[key] = grouped.get(key, 0) + 1
-            return [
-                {
-                    "backup_type": backup_type,
-                    "status": status,
-                    "count": count,
-                }
-                for (backup_type, status), count in grouped.items()
-            ]
+        if "GROUP BY" in query.upper() or "COUNT(1) AS" in query.upper():
+            # The azure-cosmos Python client does not advertise GroupBy or
+            # NonValueAggregate support, so Cosmos rejects these during query
+            # plan negotiation. Mirror that here so the fake cannot mask it.
+            raise RuntimeError(
+                "(BadRequest) Query contains the following features, which the "
+                "calling client does not support: GroupBy NonValueAggregate."
+            )
+        if "SELECT VALUE COUNT(1)" in query.upper():
+            return [len(matching)]
 
         matching.sort(
             key=lambda item: (item.get("created_at", ""), item.get("id", "")),
@@ -98,6 +95,10 @@ class FakeHistoryContainer:
         if "@backup_type" in parameters and item.get("backup_type") != parameters["@backup_type"]:
             return False
         if "@status" in parameters and item.get("status") != parameters["@status"]:
+            return False
+        if "@running" in parameters and item.get("status") != parameters["@running"]:
+            return False
+        if "@failed" in parameters and item.get("status") != parameters["@failed"]:
             return False
         if (
             "@completed" in parameters
@@ -499,6 +500,29 @@ def test_backup_summary_is_global_and_page_independent(monkeypatch):
     assert result["summary"]["latest_partial"]["id"] == "partial-new"
 
 
+def test_backup_summary_avoids_unsupported_group_by_aggregates(monkeypatch):
+    """Keep summary counts on VALUE aggregates the Cosmos Python client can serve."""
+    jobs = [
+        build_job("full-new", "2026-07-30T12:00:00+00:00"),
+        build_job("partial-new", "2026-07-30T11:00:00+00:00", backup_type="partial"),
+    ]
+    container = FakeHistoryContainer(jobs)
+    module = load_data_management_module(monkeypatch, container)
+
+    module.get_data_management_backup_summary(limit=5)
+
+    emitted = [entry["query"].upper() for entry in container.queries]
+    assert emitted, "Backup summary should emit at least one history query."
+    for query in emitted:
+        assert "GROUP BY" not in query, f"Unsupported GROUP BY in history query: {query}"
+        assert "COUNT(1) AS" not in query, f"Unsupported non-VALUE aggregate: {query}"
+
+    count_queries = [query for query in emitted if "COUNT(1)" in query]
+    assert len(count_queries) == 6, "Summary should use one VALUE count per bucket."
+    for query in count_queries:
+        assert "SELECT VALUE COUNT(1)" in query
+
+
 def test_history_provider_index_errors_are_actionable(monkeypatch):
     """Convert missing Cosmos composite-index failures into admin-safe guidance."""
     container = FailingHistoryContainer()
@@ -795,3 +819,23 @@ def test_deployers_apply_the_data_management_history_index():
     assert compare_simplechat_versions(deployer_version, "1.0.24") >= 0, (
         f"Deployer version must include the history index change, got {deployer_version}"
     )
+
+
+def test_retention_cleanup_button_explains_what_it_does():
+    """Give admins hover and expandable guidance before deleting expired backups."""
+    template = (
+        APP_ROOT / "templates" / "admin_settings.html"
+    ).read_text(encoding="utf-8")
+
+    cleanup_button_start = template.index("data-management-run-retention-cleanup-btn")
+    cleanup_button = template[cleanup_button_start:cleanup_button_start + 600]
+    assert 'data-bs-toggle="tooltip"' in cleanup_button
+    assert "retention period" in cleanup_button
+
+    assert 'id="data-management-retention-cleanup-help"' in template
+    assert 'data-bs-target="#data-management-retention-cleanup-help"' in template
+    assert 'aria-label="What does Run Retention Cleanup do?"' in template
+    assert "bi bi-info-circle" in template
+    assert "Keep latest full backup" in template
+    assert "at most 25 backups" in template
+    assert "found no expired backups to delete" in template

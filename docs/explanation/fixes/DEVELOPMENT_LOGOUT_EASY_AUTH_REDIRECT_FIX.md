@@ -1,6 +1,6 @@
 # Development Logout Easy Auth Redirect Fix
 
-Fixed/Implemented in version: **0.250.225**
+Fixed/Implemented in version: **0.260.012**
 
 ## Issue Description
 
@@ -14,7 +14,7 @@ The logout route detected Azure hosting variables and Easy Auth-related signals,
 
 - Modified `application/single_app/route_frontend_authentication.py` so Easy Auth logout routing is skipped when `IS_DEVELOPMENT` is enabled.
 - Preserved the existing Easy Auth logout path for non-development Azure App Service deployments with Easy Auth signals.
-- Updated `application/single_app/config.py` to version `0.250.225`.
+- Updated `application/single_app/config.py` to version `0.260.012`.
 - Added regression coverage in `functional_tests/test_app_service_easy_auth_logout.py` for the development-mode fallback.
 
 ## Validation

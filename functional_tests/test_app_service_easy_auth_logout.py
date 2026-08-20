@@ -1,8 +1,8 @@
 # test_app_service_easy_auth_logout.py
 """
 Functional test for Azure App Service Easy Auth logout recovery.
-Version: 0.250.225
-Implemented in: 0.241.095
+Version: 0.260.012
+Implemented in: 0.260.012
 
 This test ensures Azure-hosted logout routes clear the upstream App Service
 authentication session by redirecting through /.auth/logout before re-entering

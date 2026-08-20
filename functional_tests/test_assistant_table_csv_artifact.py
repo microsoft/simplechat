@@ -2,8 +2,8 @@
 #!/usr/bin/env python3
 """
 Functional test for assistant-rendered table CSV artifacts.
-Version: 0.250.178
-Implemented in: 0.241.050; non-tabular document CSV parsing in 0.250.065; generated file export framework in 0.250.072; updated in 0.250.073; linear fence parsing coverage in 0.250.112; version assertion compatibility updated in 0.250.172; Word function-result serialization restored in 0.250.178
+Version: 0.260.005
+Implemented in: 0.241.050; non-tabular document CSV parsing in 0.250.065; generated file export framework in 0.250.072; updated in 0.250.073; linear fence parsing coverage in 0.250.112; version assertion compatibility updated in 0.250.172; Word function-result serialization restored in 0.250.178; CSV assistant-text preservation in 0.260.005
 
 This test ensures that explicit table-format requests with assistant-rendered
 tables, including CSV rows extracted from non-tabular documents, are converted
@@ -1061,6 +1061,40 @@ Source: ParkingPrint.pdf, Page: 1
     )
 
 
+def test_csv_artifact_card_appends_below_assistant_response():
+    """CSV narratives stream intact, so their card must never hide the assistant message."""
+    print('Testing CSV artifact assistant-text preservation...')
+    assert_app_version_at_least('0.260.005')
+
+    csv_metadata = build_generated_file_artifact_metadata(
+        {
+            'capability': 'file_export',
+            'file_name': 'generated_output_20260819_153747.csv',
+            'output_format': 'csv',
+            'row_count': 3,
+            'summary': 'Generated CSV artifact.',
+        },
+        {'message': {'id': 'artifact-csv', 'file_name': 'generated_output_20260819_153747.csv'}},
+        'conversation-1',
+    )
+    assert_true(
+        csv_metadata['suppress_assistant_text'] is False,
+        'Expected the CSV artifact card to append below the assistant response, not replace it.',
+    )
+
+    background_export_content = read_text(BACKGROUND_EXPORT_FILE)
+    assert_true(
+        'suppress_assistant_text=output_format in ASSISTANT_TEXT_SUPPRESSING_FORMATS' in background_export_content,
+        'Expected background structured exports to reuse the shared assistant-text suppression contract.',
+    )
+
+    chat_route_content = read_text(CHAT_ROUTE_FILE)
+    assert_true(
+        "suppress_streamed_file_payload = requested_streamed_file_format in {'json', 'xml'}" in chat_route_content,
+        'Expected only JSON/XML payloads to be withheld from the streamed assistant text.',
+    )
+
+
 def test_chat_route_wires_assistant_table_artifacts():
     print('Testing chat route assistant-table artifact plumbing...')
 
@@ -1120,12 +1154,13 @@ def test_chat_route_wires_assistant_table_artifacts():
         'Expected workflow model and agent execution to apply the same file-output guidance.',
     )
     assert_true(
-        chat_route_content.count('function_results=agent_citations_list') == 2,
-        'Expected normal and streaming Chat to pass current-turn action results to generated-file exports.',
+        chat_route_content.count('function_results=agent_citations_list') == 4,
+        'Expected normal and streaming Chat to pass current-turn action results to both the '
+        'generated-file export and the assistant JSON/XML export.',
     )
     assert_true(
-        'function_results=execution_result.get(\'agent_citations\') or []' in chat_route_content,
-        'Expected document actions to pass current-turn action results to generated-file exports.',
+        chat_route_content.count('function_results=execution_result.get(\'agent_citations\') or []') == 2,
+        'Expected document actions to pass current-turn action results to both export paths.',
     )
     assert_true(
         'function_results=raw_agent_citations' in workflow_runner_content,
@@ -1177,6 +1212,7 @@ def run_tests() -> bool:
         test_universal_csv_request_variants_are_recognized,
         test_csv_schema_clarification_guidance_is_specific_and_resumable,
         test_workflow_generated_file_artifacts_reuse_shared_contract,
+        test_csv_artifact_card_appends_below_assistant_response,
         test_chat_route_wires_assistant_table_artifacts,
     ]
 

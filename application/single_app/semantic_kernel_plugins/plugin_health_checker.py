@@ -10,8 +10,19 @@ from typing import Dict, Any, List, Optional, Tuple
 from urllib.parse import urlparse
 from semantic_kernel_plugins.base_plugin import BasePlugin
 from functions_appinsights import log_event
+from functions_azure_endpoint_validation import (
+    validate_azure_blob_endpoint,
+    validate_azure_cosmos_endpoint,
+    validate_azure_databricks_endpoint,
+    validate_azure_entra_authority_host,
+    validate_azure_monitor_query_endpoint,
+    validate_azure_queue_endpoint,
+)
 from functions_azure_maps import AZURE_MAPS_DEFAULT_ENDPOINT, AZURE_MAPS_PLUGIN_TYPE
-from functions_blob_storage_operations import BLOB_STORAGE_PLUGIN_TYPE
+from functions_blob_storage_operations import (
+    BLOB_STORAGE_PLUGIN_TYPE,
+    derive_blob_endpoint_from_connection_string,
+)
 from functions_databricks_operations import (
     DATABRICKS_CLOUD_AZURE_COMMERCIAL,
     DATABRICKS_LEGACY_TABLE_PLUGIN_TYPE,
@@ -73,6 +84,7 @@ from functions_mcp_operations import (
     validate_mcp_endpoint_for_transport,
 )
 from functions_simplechat_operations import SIMPLECHAT_DEFAULT_ENDPOINT
+from json_schema_validation import validate_plugin_auth_type_allowed
 from semantic_kernel_plugins.rocksdb_plugin import (
     AUTH_SCHEME_NONE,
     MAX_RESULTS_CEILING,
@@ -88,7 +100,23 @@ from semantic_kernel_plugins.rocksdb_plugin import (
 
 class PluginHealthChecker:
     """Utility class for checking plugin health and validity."""
-    
+
+    @staticmethod
+    def _endpoint_origin_errors(endpoint, validator):
+        """Return validation errors for an endpoint that receives application credentials.
+
+        Actions that authenticate with the application identity must only reach canonical Azure
+        service origins. Without this check a caller-supplied endpoint would receive a token
+        minted for the application's own workload identity.
+        """
+        if not str(endpoint or '').strip():
+            return []
+        try:
+            validator(endpoint)
+        except ValueError as exc:
+            return [str(exc)]
+        return []
+
     @staticmethod
     def validate_plugin_manifest(manifest: Dict[str, Any], plugin_type: str) -> Tuple[bool, List[str]]:
         """
@@ -113,13 +141,24 @@ class PluginHealthChecker:
         for field in required_fields:
             if field not in manifest:
                 errors.append(f"Missing required field: {field}")
-        
+
+        auth_type_error = validate_plugin_auth_type_allowed(manifest)
+        if auth_type_error:
+            errors.append(auth_type_error)
+
         # Validate specific plugin types
         if plugin_type in ['azure_function', 'queue_storage']:
             if 'endpoint' not in manifest:
                 errors.append(f"Plugin type '{plugin_type}' requires 'endpoint' field")
             if 'auth' not in manifest:
                 errors.append(f"Plugin type '{plugin_type}' requires 'auth' field")
+            if plugin_type == 'queue_storage':
+                errors.extend(
+                    PluginHealthChecker._endpoint_origin_errors(
+                        manifest.get('endpoint'),
+                        validate_azure_queue_endpoint,
+                    )
+                )
 
         elif plugin_type == BLOB_STORAGE_PLUGIN_TYPE:
             additional_fields = manifest.get('additionalFields', {})
@@ -139,8 +178,17 @@ class PluginHealthChecker:
                 errors.append("Blob storage plugin requires 'container_name' in additionalFields")
             if auth_type not in {'connection_string', 'identity', 'key'}:
                 errors.append("Blob storage plugin requires auth.type values 'connection_string', 'identity', or 'key'")
-            if auth_type == 'connection_string' and not auth.get('key'):
-                errors.append("Blob storage plugin requires auth.key when auth.type='connection_string'")
+            if auth_type == 'connection_string':
+                if not auth.get('key'):
+                    errors.append("Blob storage plugin requires auth.key when auth.type='connection_string'")
+                else:
+                    derived_endpoint = derive_blob_endpoint_from_connection_string(auth.get('key') or '')
+                    errors.extend(
+                        PluginHealthChecker._endpoint_origin_errors(
+                            derived_endpoint or endpoint,
+                            validate_azure_blob_endpoint,
+                        )
+                    )
             if auth_type == 'key':
                 if not endpoint:
                     errors.append("Blob storage plugin requires an 'endpoint' field when auth.type='key'")
@@ -148,6 +196,10 @@ class PluginHealthChecker:
                     errors.append("Blob storage plugin requires auth.key when auth.type='key'")
             if auth_type == 'identity' and not endpoint:
                 errors.append("Blob storage plugin requires an 'endpoint' field when auth.type='identity'")
+            if auth_type in {'identity', 'key'} and endpoint:
+                errors.extend(
+                    PluginHealthChecker._endpoint_origin_errors(endpoint, validate_azure_blob_endpoint)
+                )
 
         elif plugin_type in {DATABRICKS_PLUGIN_TYPE, DATABRICKS_LEGACY_TABLE_PLUGIN_TYPE}:
             auth = manifest.get('auth', {}) if isinstance(manifest.get('auth'), dict) else {}
@@ -164,6 +216,10 @@ class PluginHealthChecker:
                 errors.append("Databricks plugin currently supports only additionalFields.cloud='azure_commercial'")
             if parsed_endpoint.scheme != 'https' or not parsed_endpoint.netloc:
                 errors.append("Databricks plugin requires an HTTPS workspace endpoint")
+            else:
+                errors.extend(
+                    PluginHealthChecker._endpoint_origin_errors(endpoint, validate_azure_databricks_endpoint)
+                )
             if not additional_fields.get('warehouse_id'):
                 errors.append("Databricks plugin requires additionalFields.warehouse_id")
             if auth_type not in {'key', 'identity', 'servicePrincipal'}:
@@ -347,6 +403,10 @@ class PluginHealthChecker:
 
             if not endpoint:
                 errors.append("Cosmos plugin requires an 'endpoint' field")
+            else:
+                errors.extend(
+                    PluginHealthChecker._endpoint_origin_errors(endpoint, validate_azure_cosmos_endpoint)
+                )
             if not database_name:
                 errors.append("Cosmos plugin requires 'database_name' in additionalFields")
             if not container_name:
@@ -363,8 +423,27 @@ class PluginHealthChecker:
 
         elif plugin_type == 'log_analytics':
             additional_fields = manifest.get('additionalFields', {})
+            if not isinstance(additional_fields, dict):
+                additional_fields = {}
             if 'workspaceId' not in additional_fields:
                 errors.append("Log Analytics plugin requires 'workspaceId' in additionalFields")
+
+            # A custom cloud lets the manifest choose the token authority and the query endpoint.
+            # For delegated auth the endpoint override also becomes the OAuth scope, so both values
+            # must be constrained to documented Azure hosts.
+            if str(additional_fields.get('cloud') or '').strip().lower() == 'custom':
+                errors.extend(
+                    PluginHealthChecker._endpoint_origin_errors(
+                        additional_fields.get('authorityHost'),
+                        validate_azure_entra_authority_host,
+                    )
+                )
+                errors.extend(
+                    PluginHealthChecker._endpoint_origin_errors(
+                        additional_fields.get('endpointOverride'),
+                        validate_azure_monitor_query_endpoint,
+                    )
+                )
 
         elif plugin_type == 'simplechat':
             endpoint = manifest.get('endpoint')

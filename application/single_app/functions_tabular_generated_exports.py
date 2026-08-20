@@ -65,6 +65,7 @@ from functions_tabular_csv_query import (
 )
 from functions_group import assert_group_role
 from functions_generated_file_exports import (
+    ASSISTANT_TEXT_SUPPRESSING_FORMATS,
     normalize_generated_output_format,
     serialize_generated_json,
     serialize_generated_xml,
@@ -1998,6 +1999,38 @@ def _prepare_tabular_source_rows(rows, start_row=0, token_namespace=''):
         ).hex
         prepared_rows.append(prepared_row)
     return prepared_rows
+
+
+def _extend_passthrough_output_field_names(field_names, rows):
+    """Union already-final passthrough row fields so sparse rows still share one schema."""
+    ordered_fields = list(field_names or [])
+    seen_fields = set(ordered_fields)
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        for field_name in row:
+            normalized_field = str(field_name)
+            if normalized_field in seen_fields or is_analysis_internal_lineage_field(normalized_field):
+                continue
+            seen_fields.add(normalized_field)
+            ordered_fields.append(normalized_field)
+    return ordered_fields
+
+
+def _align_passthrough_rows_to_output_fields(rows, public_output_fields):
+    """Give every passthrough row the same field set before schema validation."""
+    aligned_rows = []
+    for row in rows or []:
+        if not isinstance(row, dict):
+            aligned_rows.append(row)
+            continue
+        aligned_row = {
+            TABULAR_EXPORT_INPUT_ROW_TOKEN_FIELD: row.get(TABULAR_EXPORT_INPUT_ROW_TOKEN_FIELD),
+        }
+        for field_name in public_output_fields:
+            aligned_row[field_name] = row.get(field_name, '')
+        aligned_rows.append(aligned_row)
+    return aligned_rows
 
 
 def _normalize_generated_batch_entries(
@@ -9270,7 +9303,7 @@ def _publish_structured_export_artifact(run, descriptor=None):
         generated_file_name,
         output_format,
         preview_rows=_build_structured_export_preview_rows(run_for_output),
-        suppress_assistant_text=True,
+        suppress_assistant_text=output_format in ASSISTANT_TEXT_SUPPRESSING_FORMATS,
     )
     artifact_metadata['artifact_id'] = member_id
     artifact_metadata['member_id'] = member_id
@@ -10214,9 +10247,14 @@ def _build_passthrough_batch_results(run, batch_requests):
     generated_results = []
     for batch_request in batch_requests:
         batch_started_at = time.monotonic()
+        source_rows = batch_request['rows']
+        public_output_fields = (
+            _get_public_fields_from_output_schema(expected_output_schema)
+            or _extend_passthrough_output_field_names([], source_rows)
+        )
         batch_entries, output_schema = _normalize_generated_batch_entries(
-            batch_request['rows'],
-            batch_request['rows'],
+            source_rows,
+            _align_passthrough_rows_to_output_fields(source_rows, public_output_fields),
             expected_output_schema=expected_output_schema,
         )
         if not expected_output_schema:
@@ -11179,6 +11217,7 @@ def queue_tabular_generated_output_run(
         passthrough_input_rows=passthrough_input_rows,
     )
     retry_mode = _select_tabular_retry_mode(rollout_settings, executor_mode)
+    passthrough_output_fields = []
 
     if source_descriptor:
         staged_row_count = _safe_int(source_descriptor.get('expected_row_count'))
@@ -11262,6 +11301,11 @@ def queue_tabular_generated_output_run(
                 start_row=staged_row_count,
                 token_namespace=run_id,
             )
+            if passthrough_input_rows:
+                passthrough_output_fields = _extend_passthrough_output_field_names(
+                    passthrough_output_fields,
+                    prepared_batch_rows,
+                )
             _upload_json_blob(
                 _input_blob_path(normalized_user_id, normalized_conversation_id, run_id, index),
                 prepared_batch_rows,
@@ -11279,6 +11323,15 @@ def queue_tabular_generated_output_run(
 
         if not staged_batch_count or not staged_row_count:
             raise ValueError('At least one source row is required for a background tabular export')
+
+    passthrough_output_schema = (
+        [
+            TABULAR_EXPORT_OUTPUT_ROW_NUMBER_FIELD,
+            TABULAR_EXPORT_OUTPUT_ROW_IDENTITY_FIELD,
+        ] + passthrough_output_fields
+        if passthrough_output_fields
+        else []
+    )
 
     chunk_manifest = _write_chunk_manifest_for_run(
         normalized_user_id,
@@ -11363,9 +11416,14 @@ def queue_tabular_generated_output_run(
         'processed_rows': 0,
         # Only lock the schema up front when real output columns are already known; otherwise
         # defer to batch-1 discovery instead of validating against a lineage-only placeholder.
-        'output_schema': contract_internal_checkpoint_schema if contract_public_output_schema else None,
-        'public_output_schema': contract_public_output_schema,
-        'internal_checkpoint_schema': contract_internal_checkpoint_schema,
+        # Passthrough rows are already final output, so their union schema is known at queue time.
+        'output_schema': (
+            contract_internal_checkpoint_schema
+            if contract_public_output_schema
+            else passthrough_output_schema or None
+        ),
+        'public_output_schema': contract_public_output_schema or passthrough_output_fields,
+        'internal_checkpoint_schema': contract_internal_checkpoint_schema or passthrough_output_schema,
         'lineage_schema': [
             TABULAR_EXPORT_OUTPUT_ROW_NUMBER_FIELD,
             TABULAR_EXPORT_OUTPUT_ROW_IDENTITY_FIELD,
