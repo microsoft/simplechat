@@ -71,6 +71,21 @@ function loadSafeMediaUrl() {
     return sandbox.safeMediaUrl;
 }
 
+/**
+ * Compare origins by parsing, not by string prefix.
+ *
+ * A prefix check such as startsWith(ORIGIN) is weak URL matching: a host like
+ * "microsoft.github.io.example.com" shares the prefix without sharing the
+ * origin. Parsing and comparing the origin field avoids that class of mistake.
+ */
+function isSameOrigin(candidate) {
+    try {
+        return new URL(candidate).origin === ORIGIN;
+    } catch (error) {
+        return false;
+    }
+}
+
 function main() {
     let safeMediaUrl;
     try {
@@ -94,7 +109,7 @@ function main() {
 
     for (const [label, value] of ALLOWED) {
         const result = safeMediaUrl(value);
-        if (typeof result === "string" && result.startsWith(ORIGIN)) {
+        if (typeof result === "string" && isSameOrigin(result)) {
             passed += 1;
         } else {
             failures.push(`should have accepted ${label} (${JSON.stringify(value)}) but returned ${result}`);
