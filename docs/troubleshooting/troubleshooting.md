@@ -16,7 +16,7 @@ hero_pills:
   - Restart only when required
 hero_links:
   - label: Review workflows
-    url: /application_workflows/
+    url: /reference/application-workflows/
     style: primary
   - label: Check admin configuration
     url: /admin_configuration/

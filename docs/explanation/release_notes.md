@@ -1,6 +1,63 @@
 <!-- BEGIN release_notes.md BLOCK -->
 
-For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
+For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
+
+### **(v0.260.021)**
+
+#### Bug Fixes
+
+*   **Documentation Screenshot Viewer Validates Its Image Source**
+    *   The documentation site's click-to-enlarge screenshot viewer assigned an image URL taken from a data attribute in the page. Because that value flows from page content into a URL, CodeQL flagged it as a potential DOM-based cross-site scripting sink.
+    *   The viewer now resolves the value and requires a same-origin `http` or `https` URL ending in an image extension before using it, so scheme-based payloads such as `javascript:` and `data:` URLs, and any off-site source, are rejected. All documentation media is local, so no legitimate image is affected.
+    *   (Ref: `docs/assets/js/media.js`, `safeMediaUrl`, `ui_tests/test_docs_media_lightbox_source_validation.js`, CodeQL `js/xss-through-dom`)
+
+### **(v0.260.020)**
+
+#### New Features
+
+*   **Admin Documentation Rebuilt For The Grouped Settings Layout**
+    *   Admin Settings was reorganized from 18 flat tabs into 14 groups containing 44 tabs and 93 settings sections. The documentation was still written against the old flat layout, so it described tabs that no longer exist and omitted the new ones.
+    *   The admin documentation is now one page per group, with every tab reachable by its own anchor so links to a specific tab keep working. Every retired tab URL redirects to the group that now owns its settings, so existing links and bookmarks continue to resolve.
+    *   (Ref: `docs/admin/`, `application/single_app/admin_settings_nav.py`, `docs/_data/app_surface.yml`)
+
+*   **Collaborating In A Conversation Is Now Documented**
+    *   Added a guide covering shared conversations end to end: sharing a conversation, mentioning a participant with `@` and Tab completion, how shared files are approved before they become available, and what participants can and cannot do.
+    *   The Blob Storage action reference now explains its managed identity and account key options.
+    *   (Ref: `docs/guides/collaborate-in-a-conversation/`, `docs/reference/actions/blob-storage/`, `enable_collaborative_conversations`)
+
+*   **Documentation Site Now Reflects the v0.260.001 Release**
+    *   The documentation site's Latest Release section was a full release behind, still presenting v0.250.001 as current. It now mirrors the same three-tier model the application uses: v0.260.001 as the current release, v0.250.001 as the previous release, and v0.239.001-v0.241.007 in the archive.
+    *   Added 20 feature guides for the v0.260.001 release covering enhanced extraction, embedded Office images, workflow task sequences, the MCP platform, the Yamcs and RocksDB actions, agent instruction references, action test connections, Azure Blob file sync, terms of use, audio file support, completion notifications, the chat AI notice, conversation context grounding, used documents on fork, the conversation contents drawer, font size and zoom, message audio export, public workspace display names, and chat scroll accessibility.
+    *   (Ref: `docs/_data/latest_release_features.yml`, `docs/latest-release/release-260-*`, `application/single_app/support_menu_config.py`)
+
+*   **Placeholder Screenshots Are Now Tracked**
+    *   The v0.260.001 release ships branded "Screenshot pending" placeholder graphics so feature cards render while final captures are pending. Those placeholders are now listed on the documentation media status page with the exact file paths to overwrite, so they are visible work rather than a silent gap.
+    *   (Ref: `docs/_data/media_pending.yml`, `/contributing/media-status/`)
+
+#### User Interface Enhancements
+
+*   **Admin Settings Pages Show Real Screenshots**
+    *   Fourteen admin settings tab pages were rendering "screenshot needed" placeholders even though real screenshots already existed in the repository. Those pages now display the actual screenshots for the General, AI Models, Search and Extract, Workspaces, File Sync, Workspace Identities, Citation, Safety, Security, Agents, Scale, Control Center, Logging, and Send Feedback tabs.
+    *   The four tabs with no captured screenshot still show a placeholder naming the exact file to create, so genuine gaps stay visible.
+    *   (Ref: `docs/admin/`, `docs/images/admin-settings/`)
+
+#### Bug Fixes
+
+*   **Release Notes Pages No Longer Break On Quoted Template Syntax**
+    *   Release notes legitimately quote template syntax when describing template work, such as a Jinja `block` tag. The page generator emitted that verbatim, so the site build failed with an unknown tag error. Quoted template syntax is now escaped in generated pages and renders as literal text.
+    *   (Ref: `scripts/build_release_notes_pages.py`)
+
+*   **Release Notes Links To Internal Engineering Notes**
+    *   Some release note entries linked to the internal feature and fix note trees, which are intentionally not published on the documentation site. Those links now point at the repository.
+    *   (Ref: `docs/explanation/release_notes.md`)
+
+*   **Release Notes Index No Longer Exceeds Its Page Budget**
+    *   The release notes page generator inlined a fixed number of recent releases on its index. The consolidated v0.260.001 rollup is large enough on its own that this pushed the index past the maximum page size and failed generation. The index now fills its inline section by size rather than by count, so a single large rollup cannot break it.
+    *   (Ref: `scripts/build_release_notes_pages.py`)
+
+*   **Archived Release Notes Links**
+    *   The archived release notes page linked to the internal feature and fix note trees, which are intentionally not published on the documentation site. Those links now point at the repository instead.
+    *   (Ref: `docs/explanation/archive_release_notes.md`)
 
 ### **(v0.260.019)**
 
@@ -221,7 +278,7 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   **Overlapping result pages no longer double the row count.** Agents frequently re-request a range from the same start time rather than paging forward, which produced a 1,000-row file for a window holding roughly 500 distinct records. Rows an earlier page of the same action already returned are dropped, while genuinely repeated records inside a single response are preserved.
     *   **Partial data is now labeled.** When an action reports that it truncated its own results, the file carries a **Partial** badge and a note explaining that it covers only the rows the action returned. Agents are also instructed to request the remainder starting after the last row they already hold, rather than repeating the original range.
     *   **CSV, DOCX, PDF, JSON, and XML now behave identically.** All five formats resolve rows the same way, reach back to earlier turns, decline to publish on a clarification turn, and report truncation.
-    *   (Ref: `functions_generated_file_exports.py`, `functions_tabular_generated_exports.py`, `route_backend_chats.py`, `chat-messages.js`, [Generated Artifact Paging, Truncation, and Guidance Carry-Forward Fix](fixes/GENERATED_ARTIFACT_PAGING_AND_GUIDANCE_FIX.md), Refs #1071)
+    *   (Ref: `functions_generated_file_exports.py`, `functions_tabular_generated_exports.py`, `route_backend_chats.py`, `chat-messages.js`, [Generated Artifact Paging, Truncation, and Guidance Carry-Forward Fix](https://github.com/microsoft/simplechat/blob/main/docs/explanation/fixes/GENERATED_ARTIFACT_PAGING_AND_GUIDANCE_FIX.md), Refs #1071)
 
 ### **(v0.260.010)**
 
@@ -348,7 +405,7 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Endpoints are validated when the action is saved and again immediately before the client is built, so actions stored before this release stop working rather than continuing to send credentials.
     *   Log Analytics custom clouds can no longer choose the Microsoft Entra token authority or the OAuth resource used for delegated tokens.
     *   Existing actions using standard Azure hostnames are unaffected. Custom domains, development storage, Azure Stack, and direct private-link hostnames are intentionally rejected, matching the Azure Blob File Sync hardening in v0.250.068.
-    *   (Ref: `functions_azure_endpoint_validation.py`, `plugin_health_checker.py`, `blob_storage_plugin.py`, `queue_storage_plugin.py`, `cosmos_query_plugin.py`, `databricks_plugin.py`, `log_analytics_plugin.py`, [Action App-Identity Endpoint Hardening Fix](fixes/ACTION_APP_IDENTITY_ENDPOINT_HARDENING_FIX.md))
+    *   (Ref: `functions_azure_endpoint_validation.py`, `plugin_health_checker.py`, `blob_storage_plugin.py`, `queue_storage_plugin.py`, `cosmos_query_plugin.py`, `databricks_plugin.py`, `log_analytics_plugin.py`, [Action App-Identity Endpoint Hardening Fix](https://github.com/microsoft/simplechat/blob/main/docs/explanation/fixes/ACTION_APP_IDENTITY_ENDPOINT_HARDENING_FIX.md))
 
 *   **Action Authentication Types Are Now Enforced on the Server**
     *   Each action type's supported authentication methods, declared in its schema definition file, are now enforced when an action is saved or tested. Previously the list was only used to populate the action modal and was never checked by the backend.
@@ -563,6 +620,84 @@ v0.260.001 consolidates all work released after v0.250.001 into one major releas
     *   Added 76 branded "Screenshot pending" placeholders so every v0.260.001 Latest Features card renders a valid local image while final captures are pending.
     *   Placeholders can be replaced in place with real screenshots without changing the catalog configuration.
     *   (Ref: `application/single_app/static/images/features/`, Latest Features image galleries)
+### **(v0.250.231)**
+
+#### Bug Fixes
+
+*   **Missing Release Highlight Screenshots Now Display**
+    *   The Latest Release pages referenced 24 screenshots that were never present in the documentation site, so every one of them rendered as a broken image.
+    *   The images already existed in the application at `application/single_app/static/images/features/`, where the in-app Latest Features gallery reads them. They are now also published with the documentation site, so the release highlight pages show the same screenshots users see in the product.
+    *   (Ref: `docs/images/latest-release/`, `docs/_data/latest_release_features.yml`, Latest Release highlight pages)
+
+*   **Broken Documentation Links Repaired**
+    *   Fixed the remaining broken internal links on the documentation site. Links that pointed at renamed pages now resolve, and links that target files kept in the repository rather than published on the site, such as the Custom Pages developer guide, the Teams app manifest, and a CI workflow, now open on GitHub instead of returning a missing page.
+    *   Removed two references to a ServiceNow multi-action setup guide that was never written.
+    *   The documentation site now has zero broken internal links across 31,649 checked links.
+    *   (Ref: `ui_tests/check_docs_links.js`, ServiceNow guides, Custom Pages guide, upgrade paths guide)
+
+### **(v0.250.230)**
+
+#### New Features
+
+*   **Documentation Site Redesign**
+    *   The documentation site was rebuilt for search, navigation, page simplicity, mobile support, and content coverage.
+    *   Search now indexes page content instead of titles only. Previously 84% of the 986 indexed pages were internal engineering notes, 88% of entries had no description, and no page body text was indexed at all, so a search for "agent" returned mostly internal fix notes. The index is now 165 entries with a description on every one and no engineering notes.
+    *   Added a dedicated search results page with section filters and highlighted excerpts, a `Ctrl+K` shortcut, keyboard navigation, and a full-screen mobile search sheet. Search was previously hidden entirely on phones.
+    *   Navigation was rebuilt so the top bar and sidebar expose the same six sections: Start, Guides, Features, Administration, Deploy and operate, and Reference. Coverage went from 27 links to 74, all verified to resolve.
+    *   (Ref: `docs/search-index.json`, `docs/assets/js/search.js`, `docs/_config.yml` navigation, `docs/search.md`)
+
+*   **Screenshot and Video Placeholders for Documentation**
+    *   Documentation pages can now declare a screenshot or video slot. When the asset does not exist yet the page renders a visible card naming the exact file path to create; adding the file at that path replaces the placeholder automatically on the next build with no configuration or code change.
+    *   Videos render as a local poster card that links out to YouTube or Microsoft Stream, so no video files are committed to the repository and no third-party embed scripts are loaded.
+    *   Added a media status page listing every slot and whether it is filled, as a capture worklist for contributors.
+    *   (Ref: `docs/_includes/media.html`, `docs/_data/media.yml`, `docs/contributing/media-status.md`)
+
+*   **Complete Documentation Coverage of the Application**
+    *   Added one page per admin settings tab covering what the tab controls, why it matters, every setting with its default and governing settings key, prerequisites, and the common tasks admins perform there.
+    *   Added task guides for creating actions, agents, agents with actions, multi-task workflows, triggering workflows, file sync connectors, tags, tags in chat, tags on conversations, and exporting conversations, plus further guides derived from the application surface. Each guide explains what the task does and why before the steps.
+    *   Added a chat interface reference covering all 47 chat controls and an action reference covering all 27 actions.
+    *   Added a feature catalog in which every one of the 111 capability toggles is claimed by exactly one capability entry.
+    *   (Ref: `docs/admin/`, `docs/guides/`, `docs/reference/chat-controls.md`, `docs/reference/actions/`, `docs/_data/features.yml`)
+
+*   **Documentation Coverage Enforcement**
+    *   Added a generated inventory of the application surface and functional tests that fail when a new capability toggle, admin settings tab, action plugin, or chat control ships without documentation, so coverage stays complete as changes land.
+    *   (Ref: `scripts/build_docs_inventory.py`, `functional_tests/test_docs_app_surface_coverage.py`, `functional_tests/test_docs_site_quality.py`)
+
+#### User Interface Enhancements
+
+*   **Documentation Site Works on Phones and Tablets**
+    *   Standardized the responsive breakpoints, which previously mixed `768px` and `767.98px` and left gaps, and exported the desktop breakpoint to JavaScript so it is no longer duplicated by hand.
+    *   Wide tables and long code blocks are now contained in horizontal scroll regions instead of widening the page, images are lazy-loaded with intrinsic sizing, touch targets meet a 44px minimum, and the mobile navigation drawer and search sheet trap and restore focus.
+    *   Verified with browser tests at 360x640, 390x844, 768x1024, 1280x800, and 1920x1080.
+    *   (Ref: `docs/assets/css/main.scss`, `docs/assets/js/sidebar.js`, `ui_tests/test_docs_site_responsive.js`)
+
+*   **Simpler Documentation Pages**
+    *   Landing pages were rewritten from hand-written HTML card markup into plain markdown. The home page previously had 82 blocks of card markup and zero markdown headings, and the features page 119 blocks and zero headings, which meant neither page had a working "On this page" table of contents or heading anchors.
+    *   The FAQ was rebuilt so every question is its own heading with a linkable anchor.
+    *   The decorative page hero, with its gradient banner, pill row, and icon orb, was replaced with a plain documentation header across the 38 pages that used it.
+    *   Split the 452 KB release notes page into per-version-series pages while keeping the existing release notes URL working.
+    *   (Ref: `docs/index.md`, `docs/features.md`, `docs/start/faqs.md`, `scripts/build_release_notes_pages.py`)
+
+*   **Documentation URLs Now Match Their Section**
+    *   Guides previously lived under three different URL spaces that all meant the same thing. Tutorials and how-to guides are consolidated under `/guides/`, orientation pages moved under `/start/`, deployment scenarios under `/deploy/`, and reference pages under `/reference/`.
+    *   **Existing links and bookmarks continue to work.** Every moved page redirects from its old URL, and the URLs the application itself links to were deliberately left unchanged.
+    *   (Ref: documentation navigation, `jekyll-redirect-from`, `ui_tests/check_docs_links.js`)
+
+#### Bug Fixes
+
+*   **Documentation Site No Longer Overflows Horizontally on Desktop**
+    *   The main content region combined a full-width rule with a sidebar offset, so every desktop viewport scrolled sideways by exactly the sidebar width. This was a long-standing defect on the published site.
+    *   (Ref: `.docs-main-content`, `docs/assets/css/main.scss`)
+
+*   **Documentation Section Labels and Page Titles**
+    *   Path-scoped Jekyll defaults used collection names as their type and therefore never applied, so nearly every page fell back to a generic "Docs" section and search facets were meaningless. Three scenario index pages also had a comment above their front matter, so it was never parsed and they were titled with their own file path and rendered through an empty layout.
+    *   (Ref: `docs/_config.yml` defaults, `docs/explanation/scenarios/`)
+
+*   **Documentation Site Loads No Third-Party Assets**
+    *   Removed jQuery, DataTables, marked, DOMPurify, and split.js, none of which the site used, and vendored Bootstrap, Bootstrap Icons, Prism, Lunr, and the site fonts locally with their licenses. The site now makes zero external requests.
+    *   (Ref: `docs/assets/vendor/`, `docs/_layouts/default.html`, local browser asset policy)
+
+### **(v0.250.229)**
 
 #### Bug Fixes
 
@@ -3760,7 +3895,7 @@ The individual patch builds consolidated into v0.260.001 are preserved below for
     *   **OpenAPI Specifications**: 7 OpenAPI YAML files for ServiceNow Incident Management and Knowledge Base APIs (both bearer token and basic auth versions).
     *   **Agent Instructions**: Behavioral instructions optimized for ServiceNow operations (263 lines).
     *   **Key Features**: Integration user creation, role assignment guidance, token management strategies, troubleshooting guide, and production deployment considerations.
-    *   **Documentation Files**: `SERVICENOW_INTEGRATION.md` (760 lines), `SERVICENOW_OAUTH_SETUP.md` (480+ lines), `servicenow_agent_instructions.txt`, and 7 OpenAPI specs in `docs/how-to/agents/ServiceNow/`.
+    *   **Documentation Files**: `SERVICENOW_INTEGRATION.md` (760 lines), `SERVICENOW_OAUTH_SETUP.md` (480+ lines), `servicenow_agent_instructions.txt`, and 7 OpenAPI specs in `docs/guides/servicenow/`.
     *   (Ref: ServiceNow integration, OAuth 2.0, OpenAPI specifications, enterprise integrations)
 
 #### Bug Fixes

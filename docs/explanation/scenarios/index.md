@@ -1,9 +1,8 @@
-# explanation/scenarios/index.md
 ---
-layout: libdoc/page
-title: Scenarios
-order: 130
-category: Scenarios
+layout: page
+title: "Scenarios"
+description: "Worked examples showing how Simple Chat is used for real agent and workspace scenarios."
+section: "Explanation"
 ---
 
 # Scenarios
