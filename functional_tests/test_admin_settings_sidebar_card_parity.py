@@ -15,6 +15,11 @@ from pathlib import Path
 
 from bs4 import BeautifulSoup
 
+from test_support.templates import (
+    read_admin_settings_template,
+    resolve_template_includes,
+)
+from test_support.nav import get_section_ids, get_tab_ids, iter_tabs
 from test_support.versioning import assert_app_version_at_least
 
 
@@ -87,26 +92,29 @@ def _card_title(card):
 
 
 def _navigation_contract():
-    """Parse the admin template, sidebar template, and section alias map."""
-    admin_source = _read(ADMIN_TEMPLATE)
+    """Read the admin template and the navigation map.
+
+    Navigation structure now comes from ``admin_settings_nav.ADMIN_NAV`` rather
+    than from literal sidebar markup, because both the sidebar and the top tab
+    strip render from that one definition. Asserting against the map checks the
+    contract itself instead of one of its two renderings.
+    """
+    admin_source = resolve_template_includes(
+        _read(ADMIN_TEMPLATE), ADMIN_TEMPLATE.parent
+    )
     sidebar_source = _read(SIDEBAR_TEMPLATE)
     script_source = _read(SIDEBAR_SCRIPT)
     admin_soup = BeautifulSoup(admin_source, "html.parser")
     sidebar_soup = BeautifulSoup(sidebar_source, "html.parser")
     section_map = _parse_section_map(script_source)
 
-    tab_targets = {
-        link["data-tab"]
-        for link in sidebar_soup.select(".admin-nav-tab[data-tab]")
-    }
+    tab_targets = set(get_tab_ids())
     section_targets = defaultdict(list)
-    for link in sidebar_soup.select(
-        ".admin-nav-section[data-tab][data-section]"
-    ):
-        raw_target = link["data-section"]
-        section_targets[link["data-tab"]].append(
-            section_map.get(raw_target, raw_target)
-        )
+    for _, tab in iter_tabs():
+        for section in tab["sections"]:
+            section_targets[tab["id"]].append(
+                section_map.get(section["id"], section["id"])
+            )
 
     return {
         "admin_source": admin_source,
@@ -194,11 +202,58 @@ def test_every_static_sidebar_section_target_resolves():
     assert not errors, "\n".join(errors)
 
 
+def test_sidebar_section_map_contains_only_real_aliases():
+    """Keep the sidebar sectionMap free of dead and redundant entries.
+
+    scrollToSection resolves a target with `sectionMap[sectionId] || sectionId`,
+    so an entry that maps a key to itself is a no-op that still has to be
+    maintained. The map had grown to 72 entries, 66 of them no-ops, and one
+    pointing at an element that does not exist anywhere in the template.
+    """
+    print("Testing admin sidebar sectionMap hygiene...")
+
+    script = SIDEBAR_SCRIPT.read_text(encoding="utf-8")
+    composed = read_admin_settings_template()
+
+    section_map = _parse_section_map(script)
+    template_ids = set(re.findall(r'\sid="([^"]+)"', composed))
+    linked_sections = set(get_section_ids())
+
+    identity = sorted(key for key, value in section_map.items() if key == value)
+    assert not identity, (
+        "sectionMap entries that map a key to itself are redundant because "
+        f"scrollToSection already falls back to the raw id: {identity}"
+    )
+
+    dangling = sorted(
+        f"{key} -> {value}"
+        for key, value in section_map.items()
+        if value not in template_ids
+    )
+    assert not dangling, (
+        f"sectionMap targets resolve to elements that do not exist: {dangling}"
+    )
+
+    unreferenced = sorted(
+        key for key in section_map if key not in linked_sections
+    )
+    assert not unreferenced, (
+        "sectionMap aliases that no sidebar link uses should be removed: "
+        f"{unreferenced}"
+    )
+
+    print(f"sectionMap holds {len(section_map)} real alias(es), all resolving.")
+
+
 def test_conditional_agent_template_destination_matches_card():
-    """Keep the optional Agent Template Approvals card and link in sync."""
+    """Keep the optional Agent Template Approvals card and link in sync.
+
+    The card is rendered only when the agent template gallery is enabled, so
+    its navigation entry has to carry the same condition. Otherwise the sidebar
+    offers a destination that does not exist on the page.
+    """
     contract = _navigation_contract()
     card_marker = 'id="agent-template-approvals-section"'
-    link_marker = 'data-section="agent-template-approvals-section"'
 
     card_condition = contract["admin_source"].index(
         "{% if settings.enable_agent_template_gallery %}"
@@ -207,12 +262,18 @@ def test_conditional_agent_template_destination_matches_card():
     card_end = contract["admin_source"].index("{% endif %}", card_position)
     assert card_condition < card_position < card_end
 
-    link_condition = contract["sidebar_source"].index(
-        "{% if app_settings.enable_agent_template_gallery %}"
+    conditioned = {
+        section["id"]: section.get("condition")
+        for _, tab in iter_tabs()
+        for section in tab["sections"]
+    }
+    assert conditioned.get("agent-template-approvals-section") == (
+        "enable_agent_template_gallery"
+    ), (
+        "The Agent Template Approvals nav entry must declare the same "
+        "condition as its card, otherwise the sidebar links to a destination "
+        "that is not rendered."
     )
-    link_position = contract["sidebar_source"].index(link_marker)
-    link_end = contract["sidebar_source"].index("{% endif %}", link_position)
-    assert link_condition < link_position < link_end
 
 
 def test_sidebar_search_no_results_uses_safe_text_rendering():

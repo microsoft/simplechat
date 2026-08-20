@@ -14,6 +14,8 @@ import sys
 import ast
 import traceback
 
+from test_support.templates import compose_if_admin_settings
+
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 
@@ -24,7 +26,7 @@ def _read_file(*path_parts):
         *path_parts
     )
     with open(file_path, 'r', encoding='utf-8') as file_handle:
-        return file_handle.read()
+        return compose_if_admin_settings(file_path, file_handle.read())
 
 
 def _parse_python_file(*path_parts):

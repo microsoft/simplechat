@@ -2,7 +2,192 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.260.018)**
+
+#### Bug Fixes
+
+*   **Setup Walkthrough Lands On The Right Settings Again**
+    *   The guided setup walkthrough sent each step to a named tab. After the Admin Settings restructure, eleven of its twelve steps named tabs that no longer existed, so those steps would have moved nowhere and left the admin looking at whatever was already on screen.
+    *   Each step now names the setting it is about and the tab is worked out from the page, so the walkthrough follows settings wherever they live.
+    *   (Ref: setup walkthrough, `admin_settings.js`, `admin_card_links.js`)
+
+*   **Cosmos Throughput Validation Reveals The Invalid Field**
+    *   When Cosmos throughput values failed validation, the page tried to switch to a tab that no longer exists, so the field needing attention could be left on a hidden tab with no indication of where to look.
+    *   Validation now jumps to wherever the invalid field actually is.
+    *   (Ref: Cosmos throughput validation, `admin_settings.js`)
+
+#### User Interface Enhancements
+
+*   **Admin Settings Restructure Merged With Current Development**
+    *   Version bump covering the merge of the Admin Settings information architecture work with the generated file output fixes developed in parallel. Both reached v0.260.011 independently, so their release notes are combined under that version.
+    *   (Ref: Admin Settings navigation, generated file exports)
+
+### **(v0.260.017)**
+
+#### New Features
+
+*   **All App Role Requirements In One Place**
+    *   Ten settings across seven tabs can each require an Entra app role, which made the overall access policy impossible to read without hunting through the whole of Admin Settings.
+    *   **Security → Access & Roles** now lists every one of them with a switch and a link to the setting in its own tab. Changing a switch here changes the setting itself.
+    *   The list is built from the page, so a new role requirement added anywhere appears here automatically.
+    *   (Ref: `app-role-requirements-section`, `admin_access_roles_roster.js`)
+
+#### User Interface Enhancements
+
+*   **System Settings Card Split To Where Each Setting Belongs**
+    *   One card mixed maximum file size, conversation history, idle timeout, the default system prompt and the access denied message — five unrelated concerns under one heading.
+    *   Maximum File Size is now in **Workspaces → Files & Sharing**, Conversation History and Default System Prompt in **Chat → Chat Experience**, and Access Denied Message in **Security → Access & Roles**.
+    *   What remains in **Security → Session** is the idle timeout, and the card is now named for it.
+    *   Every setting keeps its saved value; nothing needs re-entering.
+    *   (Ref: `idle-timeout-section`, `file-size-limit-section`, `conversation-history-section`, `default-system-prompt-section`, `access-denied-message-section`)
+
+### **(v0.260.016)**
+
+#### User Interface Enhancements
+
+*   **Backup, Migrate & Restore Split Into Five Tabs**
+    *   One tab carried the entire backup, migration, restore, Cosmos editing and job history surface — over 1,600 lines in a single scroll.
+    *   Backup & Recovery now has **Backup** (readiness, backup, schedule, storage, encryption), **Migrate**, **Restore**, **Cosmos Editor** and **Jobs**.
+    *   The save button, status line and operational-hours warning are shared by all five tabs, so they sit above the tabs and stay available wherever you are in the group.
+    *   This completes the Admin Settings restructure: **14 groups and 44 tabs**, from an original 17 flat tabs.
+    *   (Ref: `backup`, `migrate`, `restore`, `cosmos-editor`, `jobs`)
+
+#### Bug Fixes
+
+*   **Backup Dialogs Remain Available From Every Tab**
+    *   The eleven Backup & Recovery dialogs are opened from more than one place and several are opened from code rather than a button. Left inside a tab, a dialog cannot appear while a different tab is showing.
+    *   They now sit outside the tabs, so restore, migration cancel, job detail, the Cosmos editor dialogs and the five setup guides all open wherever they are triggered from.
+    *   (Ref: Backup & Recovery dialogs, `admin_data_management.js`)
+
+*   **Shared Controls Work In Both Navigation Layouts**
+    *   Shared group controls resolve their group from whichever navigation is on screen, so the Backup & Recovery save button is present in the sidebar layout as well as the tab layout.
+    *   (Ref: `data-admin-group-shared`, `admin_sidebar_nav.js`)
+
+### **(v0.260.015)**
+
+#### User Interface Enhancements
+
+*   **AI Models Split By Model Purpose**
+    *   AI Models presented every model setting on one tab. It is now **Model Endpoints** (endpoint and fallback configuration, plus the Chat Model dialog opened from it), **Embeddings** and **Image Generation**.
+    *   (Ref: `model-endpoints`, `embeddings`, `image-generation`)
+
+*   **Agents And Actions Are Now Separate Tabs**
+    *   A single "Agents and Actions" tab carried agent configuration, template approvals, document action capabilities, action configuration and the whole inbound MCP surface.
+    *   It is now **Agents**, **Actions** and **Inbound MCP**.
+    *   Inbound MCP is a large area with its own dialogs and diagnostics, and the whole tab is hidden when the inbound MCP interface is turned off rather than showing an empty tab.
+    *   (Ref: `agents`, `actions`, `inbound-mcp`)
+
+#### Bug Fixes
+
+*   **Model Setup Guide Available From Every Model Tab**
+    *   The Azure OpenAI Model Setup Guide dialog is opened from the endpoints, embeddings and image generation cards. Once those moved to separate tabs it could only have opened from one of them.
+    *   The dialog now sits outside the tabs, so it opens from all three.
+    *   (Ref: `legacyModelDiscoveryIdentityGuideModal`)
+
+*   **Dangling Section Comments Removed**
+    *   Seven tabs ended with a comment labelling a card that had since moved to another tab.
+    *   (Ref: admin settings tab panes)
+
+### **(v0.260.014)**
+
+#### User Interface Enhancements
+
+*   **Knowledge Settings Split By What They Actually Do**
+    *   Search & Extract held eight cards spanning four unrelated jobs, from Bing consent to voice transcription.
+    *   Knowledge now has **Web & Research** (web search, URL access, deep research), **Search Index** (Azure AI Search), **Document Extraction** (document intelligence, chunk sizes, plus metadata extraction and multi-modal vision brought over from Workspaces) and **Audio & Video** (video intelligence, voice conversations), alongside the existing File Sync.
+    *   Voice and video sit under Knowledge rather than Chat because they are extraction pipelines that turn recordings into searchable content.
+    *   (Ref: `web-research`, `search-index`, `extraction`, `audio-video`)
+
+*   **Workspaces Focused On Workspaces**
+    *   Workspaces mixed workspace types with file rules, workflow and extraction settings.
+    *   It is now **Workspace Types** (personal, group, public), **Files & Sharing** (downloads, sharing, and shared conversation file approvals brought over from AI Models) and the existing Global Identities.
+    *   (Ref: `workspace-types`, `files-sharing`)
+
+*   **Workflow Is Its Own Area**
+    *   Workflow drives approvals and assignment across every workspace type and was too large to sit as one card inside Workspaces. It now has its own group.
+    *   (Ref: `workflow`, `workflow-settings-section`)
+
+#### Bug Fixes
+
+*   **Group Workflow Assignment Dialog Could Not Open**
+    *   The Group Workflow Assignment dialog ended up in a different tab from the button that opens it. Because an inactive tab is hidden, the dialog would not have appeared at all.
+    *   The dialog now sits with its button, and a new check verifies this for every dialog in Admin Settings so it cannot happen again.
+    *   (Ref: `groupWorkflowAssignmentModal`, `test_admin_settings_modal_placement.py`)
+
+*   **Misplaced Section Comments In AI Models**
+    *   Two section comments had drifted onto the wrong cards while settings were being regrouped, labelling the embeddings card as processing thoughts.
+    *   (Ref: `ai-models` pane)
+
+### **(v0.260.013)**
+
+#### User Interface Enhancements
+
+*   **General Tab Broken Up Into Focused Tabs**
+    *   General had grown into a catch-all of eleven unrelated cards: branding sat next to health checks, API documentation, terms of use and system settings.
+    *   Appearance now has **Branding** (branding, home page text, appearance), **Notices & Agreements** (classification banner, chat AI notice, terms of use and the user agreement pulled across from Workspaces) and **Pages & Links** (static pages plus external links).
+    *   Health Check and API Documentation moved to Operations, which is now **Logging & Health** — they report on how the app is running rather than how it looks.
+    *   Support moved to Help as its own **Support Menu** tab, next to Send Feedback.
+    *   (Ref: `branding`, `notices`, `custom-pages`, `logging`, `support-menu`)
+
+*   **Security Split Into Five Purposeful Tabs**
+    *   Security held a single Key Vault card while an unrelated Safety tab mixed content filtering with role permissions, which are different jobs.
+    *   Security is now **Access & Roles** (who gets in and with what role), **Secrets** (Key Vault), **Content Safety** (what may be said once you are in), **Session** (idle timeout and related system settings) and **Network** (Azure Front Door).
+    *   (Ref: `access-roles`, `secrets`, `content-safety`, `session`, `network`)
+
+#### Bug Fixes
+
+*   **"Open Key Vault Settings" Link No Longer Depends On A Hardcoded Tab**
+    *   The link from Data Management to Key Vault switched tabs by a hardcoded id, so it silently stopped working whenever that tab was renamed.
+    *   It now uses the standard card link, which finds the owning tab from the page itself and stays correct however the settings are grouped.
+    *   (Ref: `data-management-key-vault-link`, `admin_card_links.js`, `admin_data_management.js`)
+
+*   **Admin Settings Always Opens On A Real Tab**
+    *   The tab shown on arrival was pinned to a specific id in both the markup and the sidebar script. Regrouping settings could leave Admin Settings opening with no tab selected at all.
+    *   The landing tab is now taken from the navigation map, so it follows the settings and can never be Latest Features.
+    *   (Ref: `admin_landing_tab`, `get_landing_tab_id`, `admin_sidebar_nav.js`)
+
+*   **Stale Tab Names In Latest Features**
+    *   Several Latest Features entries pointed readers at tabs by their old names after the settings moved.
+    *   (Ref: `latest-features` pane)
+
+### **(v0.260.012)**
+
+#### User Interface Enhancements
+
+*   **New Data Lifecycle Group For Retention, Classification And Archiving**
+    *   Retention policy, document classification and conversation archiving all decide how long content lives and how it is labelled, but they were split across Workspaces and Safety. They now sit together in a **Data Lifecycle** group with a tab each: **Retention**, **Classification** and **Archiving**.
+    *   Conversation archiving in particular was buried under Safety, which described what it protects against rather than what it does.
+    *   (Ref: navigation map, `retention-policy-section`, `document-classification-section`, `conversation-archiving-section`)
+
+*   **Chat Group Gathers The Settings That Shape A Conversation**
+    *   Settings that change what a conversation looks and behaves like were spread across AI Models, Workspaces and Safety. The **Chat** group now holds them in two tabs.
+    *   **Chat Experience** collects model thought display, chat file uploads (with the conversation contents drawer) and workspace scope lock.
+    *   **Feedback & Alerts** collects user feedback and desktop notifications, which are both about how the app talks back to the user rather than about safety enforcement.
+    *   (Ref: `chat-experience`, `feedback-alerts`, `processing-thoughts-section`, `chat-file-uploads-section`, `workspace-scope-lock-section`, `user-feedback-section`, `desktop-notifications-section`)
+
+*   **Settings Keep Their Values Through The Move**
+    *   Cards were relocated between tabs without renaming a single field, so every saved value is preserved and the form submits exactly the payload it did before.
+    *   Sidebar search still finds a setting by group, tab or card name, so you can reach anything without knowing where it now lives.
+    *   (Ref: admin settings field contract, `admin_settings_nav.py`)
+
 ### **(v0.260.011)**
+
+#### User Interface Enhancements
+
+*   **Governance And Scale Split Into Focused Tabs**
+    *   Governance held five cards covering three different jobs. It is now **Feature Governance** (which features are governed), **Policies** (the policies themselves), and **MCP Governance**.
+    *   Scale mixed cache configuration with Cosmos capacity, and is now **Redis & Caching** and **Cosmos**.
+    *   **Azure Front Door** moved out of Scale into Security, under a new **Network** tab. It configures authentication and redirect flows rather than throughput, so it never belonged with capacity settings.
+    *   Existing links and bookmarks to `#governance` and `#scale` still work and land on the first tab of each group.
+    *   No settings changed. Every option keeps its name and its saved value.
+    *   (Ref: navigation map, `feature-governance`, `governance-policies`, `mcp-governance`, `redis-caching`, `cosmos`, `network`)
+
+#### Bug Fixes
+
+*   **Governance Status Messages No Longer Get Stuck On One Tab**
+    *   The inline governance status message lived inside the Governance pane, so a message raised while working in one area could end up rendered on a tab you were not looking at.
+    *   It now sits outside the tabs and is visible wherever you are in Governance.
+    *   (Ref: `governance-status`, `admin_governance.js`)
 
 #### Bug Fixes
 
@@ -19,6 +204,109 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   **Partial data is now labeled.** When an action reports that it truncated its own results, the file carries a **Partial** badge and a note explaining that it covers only the rows the action returned. Agents are also instructed to request the remainder starting after the last row they already hold, rather than repeating the original range.
     *   **CSV, DOCX, PDF, JSON, and XML now behave identically.** All five formats resolve rows the same way, reach back to earlier turns, decline to publish on a clarification turn, and report truncation.
     *   (Ref: `functions_generated_file_exports.py`, `functions_tabular_generated_exports.py`, `route_backend_chats.py`, `chat-messages.js`, [Generated Artifact Paging, Truncation, and Guidance Carry-Forward Fix](fixes/GENERATED_ARTIFACT_PAGING_AND_GUIDANCE_FIX.md), Refs #1071)
+
+### **(v0.260.010)**
+
+#### New Features
+
+*   **Admin Settings Navigation Is Now Grouped**
+    *   Admin Settings presented 18 tabs in one flat list. Related tabs are now collected under 12 groups such as Appearance, Knowledge, Security and Operations, so the list is scannable and has room to grow.
+    *   In the sidebar, groups are collapsible and remember whether you left them open. In the tab layout, a row of group pills filters the tab strip to one group at a time.
+    *   Opening a tab always reveals its group first, so a deep link or a cross-reference can never land you on a pane whose tab is hidden.
+    *   Sidebar search now matches group names as well as tab and setting names, and expands whatever it needs to show a result.
+    *   No settings moved in this release. Every tab keeps its contents; only the navigation around them changed.
+    *   (Ref: `admin_settings_nav.py`, `_sidebar_nav.html`, `admin_settings.html`, `admin_sidebar_nav.js`)
+
+#### Bug Fixes
+
+*   **Shared Conversation File Approvals Is Reachable From The Sidebar**
+    *   The Shared Conversation File Approvals card had no navigation entry, so it could only be found by scrolling the AI Models tab. It is now listed like every other setting.
+    *   (Ref: `shared-conversation-file-approvals-section`, navigation map)
+
+*   **Navigation Labels And Order Can No Longer Drift**
+    *   The tab strip and the sidebar each maintained the same structure by hand and had diverged: tab order differed between them, and Agents, Custom Pages and Search and Extract each showed a different name depending on which navigation you used.
+    *   Both now render from one definition, so a change is made once and appears in both.
+    *   (Ref: `admin_settings_nav.py`, `test_admin_settings_nav_map.py`)
+
+### **(v0.260.009)**
+
+#### New Features
+
+*   **Admin Settings Form Field Contract Is Now Enforced**
+    *   Admin Settings submits one form and the backend reads every value by field name, so the set of `name` attributes is the real contract between the template and the settings backend. Renaming or dropping one silently stops that setting from saving, with no error anywhere.
+    *   A new test pins every field name against a committed baseline, and fails the build if one disappears. Adding settings is unaffected; removing one now requires regenerating the baseline in the same commit, which makes it a visible, reviewed decision.
+    *   The same test rejects duplicate field names, which is what prevents a mirrored control from submitting a value twice.
+    *   (Ref: `test_admin_settings_field_contract.py`, `admin_settings_field_baseline.json`)
+
+### **(v0.260.008)**
+
+#### New Features
+
+*   **Settings That Need Another Setting Now Say So**
+    *   Some Admin Settings options only work when a different option is enabled, and the two often live in different tabs. That was previously explained only in prose, in a tooltip, or in a warning after saving, so you could switch something on and have nothing happen with no visible reason.
+    *   Affected cards now show an inline notice naming what they need, with a switch to enable the prerequisite without leaving the tab and a link straight to its full configuration.
+    *   **File Sync** announces its **Redis Cache** requirement live, and keeps its save-your-intent behaviour: settings can still be saved and activate once Redis is ready.
+    *   The **FeedbackAdmin** role control is disabled until **User Feedback** is enabled, since the role only governs access to the User Feedback report. The unrelated SafetyViolationAdmin control in the same card stays usable.
+    *   These notices are guidance only. The server still validates every prerequisite.
+    *   (Ref: `admin_settings_dependencies.js`, `data-requires`, File Sync, Permissions)
+
+#### Bug Fixes
+
+*   **Cross-Tab Links In Admin Settings Now Point At The Right Place**
+    *   Links that send you from one Admin Settings tab to a related setting used to name a tab button directly, so they broke silently whenever a tab was renamed or reorganised: no tab opened, and the address bar was left pointing at nothing.
+    *   Two were already wrong. The **Video File Support** and **Audio File Support** references in Citations sent you to the **Workspaces** tab, but those settings live under **Search and Extract**. Both now open the correct card.
+    *   All twelve cross-tab links now name the card they want, and the owning tab is worked out when you click. The destination card is briefly highlighted so it is obvious where you landed.
+    *   (Ref: `admin_card_links.js`, `data-admin-link`, `openAdminCard`, `test_admin_card_links.py`)
+
+*   **User Agreement Preview Sanitized At The Sink**
+    *   The User Agreement preview rendered Markdown through a guarded reassignment, which reads as unsanitized to static analysis and matched the pattern already corrected for the Home Page Text preview.
+    *   Now sanitized inline with `DOMPurify.sanitize(...)` at the point of rendering. `marked` and DOMPurify are both loaded globally, so the availability guards were redundant.
+    *   (Ref: User Agreement, `admin_settings.html` preview handler, DOMPurify)
+
+### **(v0.260.007)**
+
+#### User Interface Enhancements
+
+*   **Latest Features No Longer Opens Every Time You Visit Admin Settings**
+    *   Latest Features was pinned first in both the top tabs and the admin sidebar, and its pane was hard-coded as the default active tab, so a curated release-notes page behaved like the Admin Settings landing page.
+    *   It now sits last in both navigations, after **Send Feedback**, and **General** is the landing tab instead.
+    *   The Latest Features content is unchanged, including its **New** badge and the hide/unhide option.
+    *   (Ref: `admin_settings.html` top-tab strip, `_sidebar_nav.html`, `admin_sidebar_nav.js` default tab)
+
+*   **Global Identities Is No Longer An Unlabelled Widget**
+    *   The Global Identities tab rendered a bare control with no heading or description, unlike every other Admin Settings tab.
+    *   It now has a heading and explains that identities are deployment-wide and that secrets are stored in Key Vault when Key Vault storage is configured.
+    *   (Ref: Global Identities, `workspace-identities-section`, `functions_workspace_identities.py`)
+
+*   **File Sync Is Now Reachable From The Sidebar**
+    *   File Sync is one of the larger settings surfaces but was the only tab with no sidebar submenu, so its sub-areas could not be jumped to or found with sidebar search.
+    *   **Visible Source Types**, **Personal Workspace Sync**, **Group Workspace Sync**, and **Public Workspace Sync** are now sidebar destinations.
+    *   (Ref: File Sync, `_sidebar_nav.html`, `file-sync-submenu`)
+
+#### Bug Fixes
+
+*   **Classification Banner Preview Now Updates As You Type**
+    *   The live preview in Admin Settings never updated, because its script sat between template blocks where Jinja discards it, so the code was never rendered to the page.
+    *   The preview now responds to banner text, background colour, and text colour changes.
+    *   (Ref: Classification Banner, `admin_settings.html` `{% block scripts %}`)
+
+*   **Admin Sidebar Section Map Cleaned Up**
+    *   The sidebar's `sectionMap` had grown to 72 entries, but 66 of them mapped a key to itself, which the existing fallback already handled, and one pointed at an element that no longer exists.
+    *   Reduced to the 6 entries that are genuine aliases. A new test now fails if a redundant, dangling, or unreferenced entry is reintroduced.
+    *   (Ref: `admin_sidebar_nav.js`, `scrollToSection`, `test_admin_settings_sidebar_card_parity.py`)
+
+*   **Home Page Text Preview No Longer Reinterprets Editor Text As HTML**
+    *   The Home Page Text preview in Admin Settings assigned the raw editor contents to `innerHTML` when the Markdown editor had not initialized, so text typed into the editor was reinterpreted as HTML. CodeQL flagged this as `js/xss-through-dom` (high severity).
+    *   The raw fallback now uses `textContent`, which is what the code intended by "just show raw text", and the Markdown path is sanitized inline with `DOMPurify.sanitize(...)` at the sink. DOMPurify is loaded globally from the local vendored bundle, so no external asset is introduced.
+    *   (Ref: Home Page Text, `admin_settings.html` `showPreview`, DOMPurify)
+
+#### Breaking Changes
+
+*   **Admin Settings Template Split Into Per-Tab Partials**
+    *   `admin_settings.html` had grown to 13,526 lines in a single 1 MB file. Each tab pane now lives in `templates/admin/_panes/` and is included by the parent, which keeps the global form, the modals, and the script blocks.
+    *   No settings behaviour changes: every form field name and all 110 configuration card ids are byte-identical, so the submitted payload and the settings backend are untouched.
+    *   **Migration**: code or tests that read `templates/admin_settings.html` directly now see only the parent shell. Use `test_support.templates.read_admin_settings_template()` in functional tests, or `compose_if_admin_settings()` inside a shared file-reading helper. A new contract test fails if a test asserts on a partial-backed card or field without composing the template first.
+    *   (Ref: `templates/admin/_panes/`, `functional_tests/test_support/templates.py`, `test_admin_settings_template_composition.py`)
 
 ### **(v0.260.006)**
 

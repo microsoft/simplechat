@@ -20,6 +20,7 @@ This test ensures that:
 import sys
 import os
 import re
+from test_support.templates import compose_if_admin_settings
 
 # Resolve paths relative to repo root
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -40,7 +41,7 @@ def test_admin_template_has_field():
     errors = []
 
     with open(ADMIN_TEMPLATE, encoding="utf-8") as f:
-        content = f.read()
+        content = compose_if_admin_settings(ADMIN_TEMPLATE, f.read())
 
     # textarea with correct name attribute
     if 'name="access_denied_message"' not in content:

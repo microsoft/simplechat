@@ -1,0 +1,148 @@
+            <div class="tab-pane fade{% if admin_landing_tab == 'embeddings' %} show active{% endif %}" id="embeddings" role="tabpanel" aria-labelledby="embeddings-tab">
+                <div class="card p-3 mb-4" id="embeddings-configuration">
+                    <h5 class="card-title">
+                        <i class="bi bi-vector-pen me-2"></i>Embeddings Configuration
+                    </h5>
+                    <p class="text-muted small">
+                        Configure your embeddings settings. These are used for semantic search, knowledge-base lookups, etc.
+                    </p>
+                    <button type="button" class="btn btn-sm btn-outline-secondary mb-3 align-self-start" data-bs-toggle="modal" data-bs-target="#legacyModelDiscoveryIdentityGuideModal">
+                        <i class="bi bi-question-circle me-1"></i>Setup Guide
+                    </button>
+
+                <div class="form-group form-check form-switch mb-3 d-flex align-items-center">
+                    <input type="checkbox" class="form-check-input me-2" id="enable_embedding_apim"
+                        name="enable_embedding_apim" {% if settings.enable_embedding_apim %}checked{% endif %}>
+                    <label class="form-check-label" for="enable_embedding_apim">Use APIM instead of direct to Azure
+                        OpenAI endpoint</label>
+                    <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Route embedding model requests through Azure API Management instead of directly to Azure OpenAI service for additional governance and monitoring."></i>
+                </div>
+
+                <div id="non_apim_embedding_settings" {% if settings.enable_embedding_apim %}style="display: none;" {%
+                    endif %}>
+                    <div class="card p-3 mb-3">
+                        <div class="mb-3">
+                            <label for="azure_openai_embedding_endpoint" class="form-label">
+                                Azure OpenAI Embedding Endpoint
+                            </label>
+                            <input type="text" class="form-control" id="azure_openai_embedding_endpoint"
+                                name="azure_openai_embedding_endpoint"
+                                value="{{ settings.azure_openai_embedding_endpoint or '' }}">
+                        </div>
+                        <div class="mb-3">
+                            <label for="azure_openai_embedding_authentication_type" class="form-label">
+                                Authentication Type
+                            </label>
+                            <select class="form-select" id="azure_openai_embedding_authentication_type"
+                                name="azure_openai_embedding_authentication_type">
+                                <option value="key" {% if settings.azure_openai_embedding_authentication_type=='key'
+                                    %}selected{% endif %}>
+                                    Key
+                                </option>
+                                <option value="managed_identity" {% if
+                                    settings.azure_openai_embedding_authentication_type=='managed_identity' %}selected{% endif %}>
+                                    Managed Identity
+                                </option>
+                            </select>
+                        </div>
+                        <div class="mb-3">
+                            <label for="azure_openai_embedding_subscription_id" class="form-label">Subscription
+                                ID</label>
+                            <input type="text" class="form-control" id="azure_openai_embedding_subscription_id"
+                                name="azure_openai_embedding_subscription_id"
+                                value="{{ settings.azure_openai_embedding_subscription_id or '' }}">
+                        </div>
+                        <div class="mb-3">
+                            <label for="azure_openai_embedding_resource_group" class="form-label">Resource Group</label>
+                            <input type="text" class="form-control" id="azure_openai_embedding_resource_group"
+                                name="azure_openai_embedding_resource_group"
+                                value="{{ settings.azure_openai_embedding_resource_group or '' }}">
+                        </div>
+                        <div class="mb-3" id="embedding_key_container" {% if
+                            settings.azure_openai_embedding_authentication_type !='key' %}style="display: none;" {%
+                            endif %}>
+                            <label for="azure_openai_embedding_key" class="form-label">Azure OpenAI Embedding
+                                Key</label>
+                            <div class="input-group">
+                                <input type="password" class="form-control" id="azure_openai_embedding_key"
+                                    name="azure_openai_embedding_key"
+                                    value="{{ settings.azure_openai_embedding_key or '' }}">
+                                <button type="button" class="btn btn-outline-secondary"
+                                    id="toggle_embedding_key">Show</button>
+                            </div>
+                        </div>
+                        <div class="mb-3">
+                            <div id="embedding_models_list" class="mt-2 mb-3">
+
+                            </div>
+                            <small>Save pending changes to settings before clicking Fetch Embedding Models</small><br>
+
+                            <input type="hidden" name="embedding_model_json" id="embedding_model_json" />
+
+
+                            <input type="hidden" id="embedding_model" value="{{ settings.embedding_model.selected[0].deploymentName if settings.embedding_model.selected else '' }}" />
+
+
+                            <button type="button" class="btn btn-secondary" id="fetch_embedding_models_btn">
+                                Fetch Embedding Models
+                            </button>
+                        </div>
+                        <a href="#" class="fw-bold text-decoration-none mb-2" data-bs-toggle="collapse"
+                            data-bs-target="#advancedEmbeddingsFields" aria-expanded="false"
+                            aria-controls="advancedEmbeddingsFields">
+                            Show Advanced
+                        </a>
+                        <div class="collapse" id="advancedEmbeddingsFields">
+                            <div class="card card-body mt-2">
+                                <div class="mb-3">
+                                    <label for="azure_openai_embedding_api_version" class="form-label">
+                                        Azure OpenAI Embedding API Version
+                                    </label>
+                                    <input type="text" class="form-control" id="azure_openai_embedding_api_version"
+                                        name="azure_openai_embedding_api_version"
+                                        value="{{ settings.azure_openai_embedding_api_version or '' }}">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="apim_embedding_settings" class="card p-3 mb-3" {% if not settings.enable_embedding_apim
+                    %}style="display: none;" {% endif %}>
+                    <div class="mb-3">
+                        <label for="azure_apim_embedding_endpoint" class="form-label">Azure APIM Endpoint</label>
+                        <input type="text" class="form-control" id="azure_apim_embedding_endpoint"
+                            name="azure_apim_embedding_endpoint"
+                            value="{{ settings.azure_apim_embedding_endpoint or '' }}">
+                    </div>
+                    <div class="mb-3">
+                        <label for="azure_apim_embedding_api_version" class="form-label">Azure APIM API Version</label>
+                        <input type="text" class="form-control" id="azure_apim_embedding_api_version"
+                            name="azure_apim_embedding_api_version"
+                            value="{{ settings.azure_apim_embedding_api_version or '' }}">
+                    </div>
+                    <div class="mb-3">
+                        <label for="azure_apim_embedding_deployment" class="form-label">Azure APIM Deployment</label>
+                        <input type="text" class="form-control" id="azure_apim_embedding_deployment"
+                            name="azure_apim_embedding_deployment"
+                            value="{{ settings.azure_apim_embedding_deployment or '' }}">
+                    </div>
+                    <div class="mb-3">
+                        <label for="azure_apim_embedding_subscription_key" class="form-label">Azure APIM Subscription
+                            Key</label>
+                        <div class="input-group">
+                            <input type="password" class="form-control" id="azure_apim_embedding_subscription_key"
+                                name="azure_apim_embedding_subscription_key"
+                                value="{{ settings.azure_apim_embedding_subscription_key or '' }}">
+                            <button type="button" class="btn btn-outline-secondary"
+                                id="toggle_azure_apim_embedding_subscription_key">Show</button>
+                        </div>
+                    </div>
+                </div>
+
+                <button type="button" class="btn btn-secondary mt-3" id="test_embedding_button">
+                    Test Embedding Connection
+                </button>
+                <div id="test_embedding_result" class="mt-2"></div>
+                </div>
+            </div>

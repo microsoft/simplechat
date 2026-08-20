@@ -1,0 +1,401 @@
+            <div class="tab-pane fade{% if admin_landing_tab == 'model-endpoints' %} show active{% endif %}" id="model-endpoints" role="tabpanel" aria-labelledby="model-endpoints-tab">
+
+                <p class="text-muted">
+                    Configure all AI model settings including GPT for text generation, embeddings for semantic search, and image generation capabilities.
+                </p>
+
+                <div class="card p-3 mb-4" id="multi-endpoint-configuration">
+                    <h5 class="card-title">
+                        <i class="bi bi-hdd-network me-2"></i>Model Endpoints
+                    </h5>
+                    <p class="text-muted small">
+                        Manage multiple AI model endpoints (Azure OpenAI and Azure AI Foundry). When enabled, model selection in chat is driven by these endpoints.
+                    </p>
+
+                    {% if not settings.enable_multi_model_endpoints %}
+                    <div class="form-check form-switch mb-3 d-flex align-items-center">
+                        <input type="checkbox" class="form-check-input me-2" id="enable_multi_model_endpoints" name="enable_multi_model_endpoints" {% if settings.enable_multi_model_endpoints %}checked{% endif %}>
+                        <label class="form-check-label" for="enable_multi_model_endpoints">Enable multi-endpoint model management</label>
+                    </div>
+                    {% endif %}
+
+                    {% if settings.enable_semantic_kernel %}
+                    <div id="agent-default-model-migration-panel" class="border rounded p-3 mt-3">
+                        <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-3">
+                            <div>
+                                <h6 class="mb-1"><i class="bi bi-arrow-repeat me-2"></i>Agent Default Model Review</h6>
+                                <p class="text-muted small mb-0">
+                                    Review local agents in a modal, bulk-bind inherited agents to the saved default model endpoint, and explicitly override selected agent model choices when you need to manage cost or move to newer models.
+                                </p>
+                            </div>
+                            <div class="d-flex flex-wrap gap-2">
+                                <button type="button" class="btn btn-outline-primary btn-sm" id="preview-agent-default-model-migration-btn">
+                                    <i class="bi bi-search me-1"></i>Review And Select Agents
+                                </button>
+                            </div>
+                        </div>
+                        <div id="agent-default-model-migration-status" class="form-text mt-2">
+                            {% if settings.enable_multi_model_endpoints %}
+                            Save your AI model settings before reviewing or migrating agents.
+                            {% else %}
+                            Enable multi-endpoint model management to review and rebind agents to a saved default model.
+                            {% endif %}
+                        </div>
+                        <div id="agent-default-model-migration-callout" class="alert alert-info d-none mt-3 mb-0" role="alert"></div>
+                    </div>
+
+                    <div id="agent-default-model-migration-results" class="d-none mt-3">
+                        <div class="d-flex flex-wrap gap-2 mb-3">
+                            <span class="badge text-bg-primary" id="agent-default-model-ready-count">Ready: 0</span>
+                            <span class="badge text-bg-warning" id="agent-default-model-needs-default-count">Needs Default: 0</span>
+                            <span class="badge text-bg-secondary" id="agent-default-model-manual-count">Manual Review: 0</span>
+                            <span class="badge text-bg-success" id="agent-default-model-migrated-count">Already Migrated: 0</span>
+                        </div>
+                        <div class="small text-muted mb-2" id="agent-default-model-current-label"></div>
+                        <div class="small text-muted">
+                            Open the review modal to search, filter, and selectively rebind agents to the saved default model.
+                        </div>
+                    </div>
+
+                    <div class="modal fade" id="agentDefaultModelMigrationModal" tabindex="-1" aria-labelledby="agentDefaultModelMigrationModalLabel" aria-hidden="true">
+                        <div class="modal-dialog modal-xl modal-dialog-scrollable">
+                            <div class="modal-content">
+                                <div class="modal-header">
+                                    <div>
+                                        <h5 class="modal-title" id="agentDefaultModelMigrationModalLabel">Agent Default Model Review</h5>
+                                        <p class="text-muted small mb-0">
+                                            Search, filter, and explicitly choose which agents should adopt the saved default model. Manual review rows are never selected automatically.
+                                        </p>
+                                    </div>
+                                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                                </div>
+                                <div class="modal-body">
+                                    <div class="row g-2 mb-3">
+                                        <div class="col-lg-5">
+                                            <label for="agent-default-model-migration-search" class="form-label small mb-1">Search Agents</label>
+                                            <input type="search" class="form-control form-control-sm" id="agent-default-model-migration-search" placeholder="Search by scope, agent name, binding, or reason" />
+                                        </div>
+                                        <div class="col-lg-3">
+                                            <label for="agent-default-model-migration-filter" class="form-label small mb-1">Filter</label>
+                                            <select class="form-select form-select-sm" id="agent-default-model-migration-filter">
+                                                <option value="all">All Agents</option>
+                                                <option value="selected">Selected</option>
+                                                <option value="ready_to_migrate">Ready</option>
+                                                <option value="manual_review">Manual Review</option>
+                                                <option value="needs_default_model">Needs Default</option>
+                                                <option value="already_migrated">Already On Default</option>
+                                            </select>
+                                        </div>
+                                        <div class="col-lg-4">
+                                            <label class="form-label small mb-1">Selection Tools</label>
+                                            <div class="d-flex flex-wrap gap-2">
+                                                <button type="button" class="btn btn-outline-primary btn-sm" id="select-ready-agent-default-model-migration-btn">Select Recommended</button>
+                                                <button type="button" class="btn btn-outline-secondary btn-sm" id="select-manual-agent-default-model-migration-btn">Add Review Overrides</button>
+                                                <button type="button" class="btn btn-outline-danger btn-sm" id="clear-agent-default-model-migration-selection-btn">Clear</button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="small text-muted mb-3" id="agent-default-model-migration-selection-summary">No agents selected.</div>
+                                    <div class="table-responsive">
+                                        <table class="table table-sm table-bordered align-middle">
+                                            <thead>
+                                                <tr>
+                                                    <th style="width: 80px;">Select</th>
+                                                    <th>Scope</th>
+                                                    <th>Agent</th>
+                                                    <th>Status</th>
+                                                    <th>Current Binding</th>
+                                                    <th>Reason</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody id="agent-default-model-migration-tbody">
+                                                <tr>
+                                                    <td colspan="6" class="text-center text-muted py-3">Run a review to load migration candidates.</td>
+                                                </tr>
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                                <div class="modal-footer d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-2">
+                                    <div class="small text-muted">
+                                        Review overrides are for intentional changes when you want to replace an agent's explicit model or legacy custom connection with the saved default model.
+                                    </div>
+                                    <div class="d-flex gap-2">
+                                        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Close</button>
+                                        <button type="button" class="btn btn-primary" id="run-agent-default-model-migration-btn">Apply Saved Default To Selected</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    {% else %}
+                    <div id="agent-default-model-migration-disabled-state" class="alert alert-info mt-3" role="alert">
+                        <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-3">
+                            <div>
+                                <h6 class="mb-1"><i class="bi bi-info-circle me-2"></i>Agent Default Model Review</h6>
+                                <p class="small mb-0">
+                                    Enable Agents first to use default-model review in AI Models. Once enabled, admins can use it to move inherited agents to new defaults, selectively override explicit agent model choices, and manage costs as models evolve.
+                                </p>
+                            </div>
+                            <button type="button" class="btn btn-outline-primary btn-sm align-self-start" data-open-admin-tab="#agents">
+                                <i class="bi bi-box-arrow-up-right me-1"></i>Open Agents Settings
+                            </button>
+                        </div>
+                    </div>
+                    {% endif %}
+
+                    <div class="border rounded p-3 mt-3">
+                        <div class="d-flex flex-column flex-lg-row justify-content-between gap-2">
+                            <div>
+                                <h6 class="mb-1"><i class="bi bi-fingerprint me-2"></i>Model Endpoint Identity Header</h6>
+                                <p class="text-muted small mb-0">
+                                    Send a stable HMAC-hashed user key to model endpoint backends for APIM counters, quota policies, or routing policies.
+                                </p>
+                            </div>
+                            <div class="form-check form-switch">
+                                <input
+                                    type="checkbox"
+                                    class="form-check-input"
+                                    id="model_endpoint_identity_header_enabled"
+                                    name="model_endpoint_identity_header_enabled"
+                                    {% if settings.model_endpoint_identity_header_enabled %}checked{% endif %}
+                                />
+                                <label class="form-check-label" for="model_endpoint_identity_header_enabled">Enable header</label>
+                            </div>
+                        </div>
+                        <div class="row g-3 mt-1">
+                            <div class="col-md-6">
+                                <label for="model_endpoint_identity_header_name" class="form-label">Header Name</label>
+                                <input
+                                    type="text"
+                                    class="form-control"
+                                    id="model_endpoint_identity_header_name"
+                                    name="model_endpoint_identity_header_name"
+                                    value="{{ settings.model_endpoint_identity_header_name or 'x-simplechat-identity-key' }}"
+                                />
+                                <div class="form-text">Reserved auth/protocol headers cannot be used.</div>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="model_endpoint_identity_header_value_type" class="form-label">Identity Value</label>
+                                <select class="form-select" id="model_endpoint_identity_header_value_type" name="model_endpoint_identity_header_value_type">
+                                    <option value="user_oid_tenant_id" {% if settings.model_endpoint_identity_header_value_type == 'user_oid_tenant_id' %}selected{% endif %}>User object ID + tenant ID</option>
+                                    <option value="user_oid" {% if settings.model_endpoint_identity_header_value_type == 'user_oid' %}selected{% endif %}>User object ID</option>
+                                    <option value="user_upn_tenant_id" {% if settings.model_endpoint_identity_header_value_type == 'user_upn_tenant_id' %}selected{% endif %}>User UPN + tenant ID</option>
+                                    <option value="user_upn" {% if settings.model_endpoint_identity_header_value_type == 'user_upn' %}selected{% endif %}>User UPN</option>
+                                </select>
+                                <div class="form-text">The selected identity is HMAC-hashed before leaving SimpleChat. Missing identity values omit the header.</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="default-model-selection-wrapper" class="mt-3">
+                        <label for="default-model-selection" class="form-label">Default model for fallbacks</label>
+                        <select class="form-select" id="default-model-selection" aria-label="Default model for fallback selection"></select>
+                        <div class="form-text">
+                            Used for tasks such as conversation summarization, fallback, and other operations when an agent is selected.
+                        </div>
+                    </div>
+
+                    <input type="hidden" name="model_endpoints_json" id="model_endpoints_json" />
+                    <input type="hidden" name="default_model_selection_json" id="default_model_selection_json" />
+
+                    <div id="model-endpoints-wrapper" class="{% if not settings.enable_multi_model_endpoints %}d-none{% endif %}">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <h6 class="mb-0">Global Endpoints</h6>
+                            <div class="d-flex flex-wrap gap-2">
+                                <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#modelEndpointIdentityGuideModal" data-testid="model-endpoint-identity-guide-open">
+                                    <i class="bi bi-question-circle me-1"></i>Setup Guide
+                                </button>
+                                <button type="button" class="btn btn-sm btn-outline-primary" id="add-model-endpoint-btn">
+                                    <i class="bi bi-plus-circle me-1"></i>Add Endpoint
+                                </button>
+                            </div>
+                        </div>
+                        <div class="table-responsive">
+                            <table class="table table-sm table-bordered">
+                                <thead>
+                                    <tr>
+                                        <th>Name</th>
+                                        <th>Provider</th>
+                                        <th>Selected Models</th>
+                                        <th>Status</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="model-endpoints-tbody">
+                                    <!-- Populated by JavaScript -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                    {% if not settings.enable_multi_model_endpoints %}
+                        <button type="button" class="btn btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#legacyModelSettingsModal">
+                            <i class="bi bi-sliders me-1"></i>Open Legacy Model Configuration
+                        </button>
+                    {% endif %}
+                </div>
+
+                <!-- Legacy AI Models Modal -->
+                <div class="modal fade" id="legacyModelSettingsModal" tabindex="-1" aria-labelledby="legacyModelSettingsModalLabel" aria-hidden="true">
+                    <div class="modal-dialog modal-xl modal-dialog-scrollable">
+                        <div class="modal-content">
+                            <div class="modal-header">
+                                <h5 class="modal-title" id="legacyModelSettingsModalLabel">Legacy AI Model Configuration</h5>
+                                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                            </div>
+                            <div class="modal-body">
+                                <!-- Chat Model Section -->
+                                <div class="card p-3 mb-4" id="gpt-configuration">
+                                    <h5 class="card-title">
+                                        <i class="bi bi-chat-text me-2"></i>Chat Model
+                                    </h5>
+                                    <p class="text-muted small">
+                                        Configure your Chat Model settings. These are used for generating AI text responses.
+                                    </p>
+                                    <button type="button" class="btn btn-sm btn-outline-secondary mb-3 align-self-start" data-bs-toggle="modal" data-bs-target="#legacyModelDiscoveryIdentityGuideModal">
+                                        <i class="bi bi-question-circle me-1"></i>Setup Guide
+                                    </button>
+
+                                <div class="form-group form-check form-switch mb-3 d-flex align-items-center">
+                                    <input type="checkbox" class="form-check-input me-2" id="enable_gpt_apim" name="enable_gpt_apim" {%
+                                        if settings.enable_gpt_apim %}checked{% endif %}>
+                                    <label class="form-check-label" for="enable_gpt_apim">Use APIM instead of direct to Azure OpenAI
+                                        endpoint</label>
+                                    <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Route GPT model requests through Azure API Management instead of directly to Azure OpenAI service for additional governance and monitoring."></i>
+                                    <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="APIM provides an additional layer for security, monitoring, and rate limiting. When using APIM, you'll need to manually specify your model names and will not be able to fetch models automatically."></i>
+                                </div>
+
+                                <div id="non_apim_gpt_settings" {% if settings.enable_gpt_apim %}style="display: none;" {% endif %}>
+                                    <div class="card p-3 mb-3">
+                                        <div class="mb-3">
+                                            <label for="azure_openai_gpt_endpoint" class="form-label">
+                                                Azure OpenAI Endpoint
+                                            </label>
+                                            <input type="text" class="form-control" id="azure_openai_gpt_endpoint"
+                                                name="azure_openai_gpt_endpoint" value="{{ settings.azure_openai_gpt_endpoint or '' }}">
+                                        </div>
+                                        <div class="mb-3">
+                                            <label for="azure_openai_gpt_authentication_type" class="form-label">
+                                                Authentication Type
+                                            </label>
+                                            <select class="form-select" id="azure_openai_gpt_authentication_type"
+                                                name="azure_openai_gpt_authentication_type">
+                                                <option value="key" {% if settings.azure_openai_gpt_authentication_type=='key'
+                                                    %}selected{% endif %}>
+                                                    Key
+                                                </option>
+                                                <option value="managed_identity" {% if
+                                                    settings.azure_openai_gpt_authentication_type=='managed_identity' %}selected{% endif
+                                                    %}>
+                                                    Managed Identity
+                                                </option>
+                                            </select>
+                                        </div>
+                                        <div class="mb-3">
+                                            <label for="azure_openai_gpt_subscription_id" class="form-label">Subscription ID</label>
+                                            <input type="text" class="form-control" id="azure_openai_gpt_subscription_id"
+                                                name="azure_openai_gpt_subscription_id"
+                                                value="{{ settings.azure_openai_gpt_subscription_id or '' }}">
+                                        </div>
+                                        <div class="mb-3">
+                                            <label for="azure_openai_gpt_resource_group" class="form-label">Resource Group</label>
+                                            <input type="text" class="form-control" id="azure_openai_gpt_resource_group"
+                                                name="azure_openai_gpt_resource_group"
+                                                value="{{ settings.azure_openai_gpt_resource_group or '' }}">
+                                        </div>
+                                        <div class="mb-3" id="gpt_key_container" {% if settings.azure_openai_gpt_authentication_type
+                                            !='key' %}style="display: none;" {% endif %}>
+                                            <label for="azure_openai_gpt_key" class="form-label">Azure OpenAI GPT Key</label>
+                                            <div class="input-group">
+                                                <input type="password" class="form-control" id="azure_openai_gpt_key"
+                                                    name="azure_openai_gpt_key" value="{{ settings.azure_openai_gpt_key or '' }}">
+                                                <button type="button" class="btn btn-outline-secondary"
+                                                    id="toggle_gpt_key">Show</button>
+                                            </div>
+                                        </div>
+                                        <div class="mb-3">
+                                            <label for="gpt_model" class="form-label">Azure OpenAI Model Selection</label>
+                                            <br><small>Each selected model will be available in the Chat UI as an option for the User. You can select multiple models.</small>
+                                            <br><small>Save Pending Changes to settings before clicking Fetch Models</small>
+                                            <div id="gpt_models_list" class="mt-2 mb-3">
+
+                                            </div>
+
+                                            <small>Save pending changes to settings before clicking Fetch Models</small><br>
+
+                                            <input type="hidden" name="gpt_model_json" id="gpt_model_json" />
+
+
+                                            <input type="hidden" id="gpt_model" value="{{ settings.gpt_model.selected[0].deploymentName if settings.gpt_model.selected else '' }}" />
+
+                                            <button type="button" class="btn btn-secondary" id="fetch_gpt_models_btn">
+                                                Fetch Models
+                                            </button>
+                                        </div>
+                                        <a href="#" class="fw-bold text-decoration-none mb-2" data-bs-toggle="collapse"
+                                            data-bs-target="#advancedGptFields" aria-expanded="false" aria-controls="advancedGptFields">
+                                            Show Advanced
+                                        </a>
+                                        <div class="collapse" id="advancedGptFields">
+                                            <div class="card card-body mt-2">
+                                                <div class="mb-3">
+                                                    <label for="azure_openai_gpt_api_version" class="form-label">
+                                                        Azure OpenAI API Version
+                                                    </label>
+                                                    <input type="text" class="form-control" id="azure_openai_gpt_api_version"
+                                                        name="azure_openai_gpt_api_version"
+                                                        value="{{ settings.azure_openai_gpt_api_version or '' }}">
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div id="apim_gpt_settings" class="card p-3 mb-3" {% if not settings.enable_gpt_apim
+                                    %}style="display: none;" {% endif %}>
+                                    <div class="mb-3">
+                                        <label for="azure_apim_gpt_endpoint" class="form-label">Azure APIM Endpoint</label>
+                                        <input type="text" class="form-control" id="azure_apim_gpt_endpoint"
+                                            name="azure_apim_gpt_endpoint" value="{{ settings.azure_apim_gpt_endpoint or '' }}">
+                                    </div>
+                                    <div class="mb-3">
+                                        <label for="azure_apim_gpt_api_version" class="form-label">Azure APIM API Version</label>
+                                        <input type="text" class="form-control" id="azure_apim_gpt_api_version"
+                                            name="azure_apim_gpt_api_version" value="{{ settings.azure_apim_gpt_api_version or '' }}">
+                                    </div>
+                                    <div class="mb-3">
+                                        <label for="azure_apim_gpt_deployment" class="form-label">Azure APIM Deployment</label>
+                                        <br><small class="text-muted">Each model defined here will be available in the Chat UI as an option for the User. You can include multiple models seperated by a comma (example: gpt-4o, o-1, o-3).</small>
+                                        <br><small class="text-muted">NOTE: The APIM GPT Test is against the first model in the list.</small>
+                                        <input type="text" class="form-control" id="azure_apim_gpt_deployment"
+                                            name="azure_apim_gpt_deployment" value="{{ settings.azure_apim_gpt_deployment or '' }}">
+                                    </div>
+                                    <div class="mb-3">
+                                        <label for="azure_apim_gpt_subscription_key" class="form-label">Azure APIM Subscription
+                                            Key</label>
+                                        <div class="input-group">
+                                            <input type="password" class="form-control" id="azure_apim_gpt_subscription_key"
+                                                name="azure_apim_gpt_subscription_key"
+                                                value="{{ settings.azure_apim_gpt_subscription_key or '' }}">
+                                            <button type="button" class="btn btn-outline-secondary"
+                                                id="toggle_azure_apim_gpt_subscription_key">Show</button>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <button type="button" class="btn btn-secondary mt-3" id="test_gpt_button">
+                                    Test Connection
+                                </button>
+                                <div id="test_gpt_result" class="mt-2"></div>
+                                </div>
+
+                            </div>
+                            <div class="modal-footer">
+                                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                {% include '_multiendpoint_modal.html' %}
+            </div>

@@ -19,6 +19,7 @@ so pane order has no visual or accessibility effect.
 """
 
 import os
+from test_support.templates import compose_if_admin_settings
 
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -30,7 +31,7 @@ ADMIN_ENDPOINTS_JS = os.path.join(REPO_ROOT, "application", "single_app", "stati
 
 def read_file_text(file_path):
     with open(file_path, "r", encoding="utf-8") as file:
-        return file.read()
+        return compose_if_admin_settings(file_path, file.read())
 
 
 def test_workspace_endpoints_tab_order_visibility():

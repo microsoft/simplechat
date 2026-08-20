@@ -16,6 +16,7 @@ Document Intelligence extractor imports its mode normalizer directly.
 
 import sys
 from pathlib import Path
+from test_support.templates import compose_if_admin_settings
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -23,7 +24,10 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 
 def read_repo_file(relative_path):
     """Read a repository file as UTF-8 text."""
-    return (REPO_ROOT / relative_path).read_text(encoding="utf-8")
+    _path = REPO_ROOT / relative_path
+    return compose_if_admin_settings(
+        _path, _path.read_text(encoding="utf-8")
+    )
 
 
 def assert_contains(content, expected_text, description):

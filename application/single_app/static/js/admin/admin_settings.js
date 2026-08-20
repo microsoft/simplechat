@@ -1508,7 +1508,12 @@ function validateCosmosThroughputSettings(options = {}) {
 
     setCosmosThroughputValidationMessage(errors);
     if (options.report && invalidFields.length > 0) {
-        document.getElementById('scale-tab')?.click();
+        // Navigate to wherever the invalid field actually lives rather than to
+        // a named tab, so this keeps working when settings are regrouped.
+        const owningCard = invalidFields[0].closest('.card[id]');
+        if (owningCard && typeof window.openAdminCard === 'function') {
+            window.openAdminCard(owningCard.id);
+        }
         invalidFields[0].focus({ preventScroll: false });
         invalidFields[0].reportValidity();
     }
@@ -9227,31 +9232,6 @@ function clearStatusAlert(statusAlert) {
 }
 
 
-function switchTab(event, tabButtonId) {
-    event.preventDefault();
-    const triggerEl = document.getElementById(tabButtonId);
-    if (triggerEl) {
-        const tabObj = new bootstrap.Tab(triggerEl);
-        tabObj.show();
-        return;
-    }
-
-    const inferredTabId = tabButtonId.replace(/-tab$/, '');
-    if (typeof window.showAdminTab === 'function') {
-        window.showAdminTab(inferredTabId);
-
-        const navLink = document.querySelector(`.admin-nav-tab[data-tab="${inferredTabId}"]`);
-        if (navLink) {
-            document.querySelectorAll('.admin-nav-tab, .admin-nav-section').forEach(link => {
-                link.classList.remove('active');
-            });
-            navLink.classList.add('active');
-        }
-    }
-}
-
-window.switchTab = switchTab;
-
 function togglePassword(btnId, inputId) {
     const btn = document.getElementById(btnId);
     const inp = document.getElementById(inputId);
@@ -10073,111 +10053,55 @@ function findPreviousApplicableStep(currentStep) {
 }
 
 /**
- * Navigate to the appropriate tab based on the walkthrough step
+ * Navigate to the setting a walkthrough step is about.
+ *
+ * Steps used to name a tab id directly, which meant the same knowledge was
+ * recorded twice and went stale the moment a setting moved to another tab.
+ * Steps now name the card they are about, and openAdminCard finds the owning
+ * tab from the page itself, so this cannot drift again.
+ *
  * @param {number} stepNumber - The current step number
  */
 function handleTabNavigation(stepNumber) {
-    // Map steps to tabs that need to be activated
-    const stepToTab = {
-        1: 'general-tab',     // App title and logo (General tab)
-        2: 'ai-models-tab',   // GPT settings (now in AI Models tab)
-        3: 'ai-models-tab',   // GPT model selection (now in AI Models tab)
-        4: 'workspaces-tab',  // Workspace and groups settings
-        5: 'ai-models-tab',   // Embedding settings (now in AI Models tab)
-        6: 'search-extract-tab', // AI Search settings
-        7: 'search-extract-tab', // Document Intelligence settings
-        8: 'search-extract-tab',  // Video support
-        9: 'search-extract-tab',  // Audio support
-        10: 'safety-tab',     // Content safety
-        11: 'safety-tab',     // User feedback and archiving (changed from system-tab)
-        12: 'citation-tab'    // Enhanced Citations and Image Generation
+    // card: the setting this step is about.
+    // focus: an optional finer scroll target inside that card.
+    const stepToCard = {
+        1:  { card: 'branding-section' },
+        2:  { card: 'multi-endpoint-configuration' },
+        3:  { card: 'multi-endpoint-configuration' },
+        4:  { card: 'personal-workspaces-section' },
+        5:  { card: 'embeddings-configuration' },
+        6:  { card: 'azure-ai-search-section' },
+        7:  { card: 'document-intelligence-section' },
+        8:  { card: 'video-intelligence-section', focus: 'enable_video_file_support' },
+        9:  { card: 'ai-voice-chat-section', focus: 'enable_audio_file_support' },
+        10: { card: 'content-safety-section' },
+        11: { card: 'user-feedback-section' },
+        12: { card: 'enhanced-citations-section' },
     };
-    
-    // Activate the appropriate tab
-    const tabId = stepToTab[stepNumber];
-    if (tabId) {
-        // Check if we're using sidebar navigation or tab navigation
-        const sidebarToggle = document.getElementById('admin-settings-toggle');
-        
-        if (sidebarToggle) {
-            // Using sidebar navigation - call showAdminTab function
-            const tabName = tabId.replace('-tab', ''); // Remove '-tab' suffix
-            if (typeof showAdminTab === 'function') {
-                showAdminTab(tabName);
-            } else if (typeof window.showAdminTab === 'function') {
-                window.showAdminTab(tabName);
-            }
-        } else {
-            // Using Bootstrap tabs
-            const tab = document.getElementById(tabId);
-            if (tab) {
-                // Use bootstrap Tab to show the tab
-                const bootstrapTab = new bootstrap.Tab(tab);
-                bootstrapTab.show();
-            }
-        }
-        
-        // Scroll to the relevant section after a small delay to allow tab to switch
-        setTimeout(() => {
-            scrollToRelevantSection(stepNumber, tabId);
-        }, 300);
-    }
-}
 
-/**
- * Scroll to relevant section within a tab based on the step
- * @param {number} stepNumber - The current step number
- * @param {string} tabId - The ID of the tab that was activated
- */
-function scrollToRelevantSection(stepNumber, tabId) {
-    // Define which sections to scroll to for each step
-    let targetElement = null;
-    
-    switch (stepNumber) {
-        case 1: // App title and logo
-            targetElement = document.getElementById('branding-section');
-            break;
-        case 2: // GPT settings
-            targetElement = document.getElementById('gpt-configuration');
-            break;
-        case 3: // GPT model selection
-            targetElement = document.getElementById('gpt_models_list')?.closest('.mb-3');
-            break;
-        case 4: // Workspaces toggle section
-            targetElement = document.getElementById('personal-workspaces-section');
-            break;
-        case 5: // Embedding settings
-            targetElement = document.getElementById('embeddings-configuration');
-            break;
-        case 6: // AI Search settings
-            targetElement = document.getElementById('azure-ai-search-section');
-            break;
-        case 7: // Document Intelligence settings
-            targetElement = document.getElementById('document-intelligence-section');
-            break;
-        case 8: // Video file support
-            targetElement = document.getElementById('enable_video_file_support')?.closest('.form-group');
-            break;
-        case 9: // Audio file support
-            targetElement = document.getElementById('enable_audio_file_support')?.closest('.form-group');
-            break;
-        case 10: // Content safety
-            targetElement = document.getElementById('content-safety-section');
-            break;
-        case 11: // User feedback and archiving
-            targetElement = document.getElementById('user-feedback-section');
-            break;
-        case 12: // Enhanced citations and image generation
-            targetElement = document.getElementById('enhanced-citations-section');
-            break;
-        default:
-            // For other steps, no specific scrolling
-            break;
+    const target = stepToCard[stepNumber];
+    if (!target) {
+        return;
     }
-    
-    // If we found a target element, scroll to it
-    if (targetElement) {
-        targetElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+    const opened = typeof window.openAdminCard === 'function'
+        ? window.openAdminCard(target.card)
+        : false;
+
+    if (!opened) {
+        console.warn(`handleTabNavigation: could not open card "${target.card}" for step ${stepNumber}`);
+        return;
+    }
+
+    if (target.focus) {
+        // openAdminCard scrolls to the card first, so refine afterwards.
+        window.setTimeout(() => {
+            const element = document.getElementById(target.focus);
+            if (element) {
+                element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }
+        }, 400);
     }
 }
 
