@@ -3,6 +3,14 @@ targetScope = 'resourceGroup'
 param location string
 param appName string
 param environment string
+
+@description('Authentication type for Azure Cache for Redis.')
+@allowed([
+  'key'
+  'managed_identity'
+])
+param redisAuthenticationType string = 'managed_identity'
+
 param tags object
 
 param enableDiagLogging bool
@@ -12,6 +20,10 @@ param logAnalyticsId string
 module diagnosticConfigs 'diagnosticSettings.bicep' = if (enableDiagLogging) {
   name: 'diagnosticConfigs'
 }
+
+var redisConfiguration = redisAuthenticationType == 'managed_identity' ? {
+  'aad-enabled': 'true'
+} : {}
 
 // deploy redis cache if required
 resource redisCache 'Microsoft.Cache/Redis@2024-11-01' = {
@@ -25,9 +37,7 @@ resource redisCache 'Microsoft.Cache/Redis@2024-11-01' = {
     }
     enableNonSslPort: false
     minimumTlsVersion: '1.2'
-    redisConfiguration: {
-      'aad-enabled': 'true'
-    }
+    redisConfiguration: redisConfiguration
   }
   tags: tags
 }

@@ -83,7 +83,7 @@ def _render_custom_page_response(slug):
     html_path, error = resolve_custom_page_file(page, "html", html_file)
     if error:
         log_event(
-            "[CustomPages] Unable to resolve custom page HTML.",
+            "[CUSTOM_PAGES] Unable to resolve custom page HTML.",
             extra={"slug": slug, "error": error},
             level=logging.WARNING,
         )
@@ -100,22 +100,22 @@ def _render_custom_page_response(slug):
     )
 
 
-def register_route_custom_pages(app):
-    @app.route("/custom/<slug>", methods=["GET"])
+def register_route_custom_pages(bp):
+    @bp.route("/custom/<slug>", methods=["GET"])
     @swagger_route(security=get_auth_security())
     @login_required
     def custom_page(slug):
         """Render a trusted custom page."""
         return _render_custom_page_response(slug)
 
-    @app.route("/custom/<slug>.html", methods=["GET"])
+    @bp.route("/custom/<slug>.html", methods=["GET"])
     @swagger_route(security=get_auth_security())
     @login_required
     def custom_page_html_alias(slug):
         """Render a trusted custom page from a familiar .html URL alias."""
         return _render_custom_page_response(slug)
 
-    @app.route("/custom/assets/<slug>/<folder>/<path:filename>", methods=["GET"])
+    @bp.route("/custom/assets/<slug>/<folder>/<path:filename>", methods=["GET"])
     @swagger_route(security=get_auth_security())
     @login_required
     def custom_page_asset(slug, folder, filename):
@@ -127,7 +127,7 @@ def register_route_custom_pages(app):
         file_path, error = resolve_custom_page_file(page, folder, filename)
         if error:
             log_event(
-                "[CustomPages] Blocked custom page asset request.",
+                "[CUSTOM_PAGES] Blocked custom page asset request.",
                 extra={"slug": slug, "folder": folder, "filename": filename, "error": error},
                 level=logging.WARNING,
             )
@@ -139,7 +139,7 @@ def register_route_custom_pages(app):
             response.headers["Content-Type"] = "application/javascript"
         return response
 
-    @app.route("/api/custom/<slug>/<path:operation>", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
+    @bp.route("/api/custom/<slug>/<path:operation>", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
     @swagger_route(security=get_auth_security())
     @login_required
     def custom_page_api(slug, operation):
@@ -157,7 +157,7 @@ def register_route_custom_pages(app):
         except NotImplementedError:
             return jsonify({"error": "Custom page API not found"}), 404
 
-    @app.route("/api/admin/custom-pages", methods=["GET"])
+    @bp.route("/api/admin/custom-pages", methods=["GET"])
     @swagger_route(security=get_auth_security())
     @login_required
     @admin_required
@@ -169,7 +169,7 @@ def register_route_custom_pages(app):
         safe_pages = [{key: value for key, value in page.items() if key != "extension"} for page in pages]
         return jsonify({"pages": safe_pages})
 
-    @app.route("/api/admin/custom-pages/developer-guide", methods=["GET"])
+    @bp.route("/api/admin/custom-pages/developer-guide", methods=["GET"])
     @swagger_route(security=get_auth_security())
     @login_required
     @admin_required
@@ -185,14 +185,14 @@ def register_route_custom_pages(app):
             return jsonify({"markdown": markdown_text})
         except Exception as ex:
             log_event(
-                "[CustomPages] Failed to load developer guide.",
+                "[CUSTOM_PAGES] Failed to load developer guide.",
                 extra={"error": str(ex)},
                 level=logging.ERROR,
                 exceptionTraceback=True,
             )
             return jsonify({"error": "Custom Pages developer guide could not be loaded."}), 500
 
-    @app.route("/api/admin/custom-pages", methods=["POST"])
+    @bp.route("/api/admin/custom-pages", methods=["POST"])
     @swagger_route(security=get_auth_security())
     @login_required
     @admin_required
@@ -203,12 +203,12 @@ def register_route_custom_pages(app):
         if errors:
             return jsonify({"error": "; ".join(errors)}), 400
         slug = str(payload.get("slug") or payload.get("id") or "").strip().lower()
-        if get_custom_page(slug, include_python=True):
+        if get_custom_page(slug, include_python=True, use_cache=False):
             return jsonify({"error": "A custom page with this slug already exists."}), 409
         saved = save_custom_page(payload, user_id=_current_admin_user_id())
         return jsonify(saved), 201
 
-    @app.route("/api/admin/custom-pages/request-access-example", methods=["POST"])
+    @bp.route("/api/admin/custom-pages/request-access-example", methods=["POST"])
     @swagger_route(security=get_auth_security())
     @login_required
     @admin_required
@@ -245,7 +245,7 @@ def register_route_custom_pages(app):
         })
         return jsonify({"page": saved, "access_request_button_enabled": True}), 201
 
-    @app.route("/api/admin/custom-pages/<slug>", methods=["PUT"])
+    @bp.route("/api/admin/custom-pages/<slug>", methods=["PUT"])
     @swagger_route(security=get_auth_security())
     @login_required
     @admin_required
@@ -259,7 +259,7 @@ def register_route_custom_pages(app):
         saved = save_custom_page(payload, user_id=_current_admin_user_id())
         return jsonify(saved), 200
 
-    @app.route("/api/admin/custom-pages/<slug>", methods=["DELETE"])
+    @bp.route("/api/admin/custom-pages/<slug>", methods=["DELETE"])
     @swagger_route(security=get_auth_security())
     @login_required
     @admin_required

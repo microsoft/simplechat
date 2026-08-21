@@ -1,0 +1,147 @@
+name: Malicious PR Security Review
+
+on:
+  pull_request:
+    branches:
+      - Development
+    paths:
+      - 'application/**'
+      - 'deployers/**'
+      - 'docker-customization/**'
+      - 'scripts/**'
+      - 'functional_tests/**'
+      - 'ui_tests/**'
+      - 'requirements*.txt'
+      - '**/requirements*.txt'
+      - '**/package.json'
+      - '**/package-lock.json'
+      - '**/npm-shrinkwrap.json'
+      - '**/pnpm-lock.yaml'
+      - '**/yarn.lock'
+      - '**/pyproject.toml'
+      - '**/poetry.lock'
+      - '**/Pipfile'
+      - '**/Pipfile.lock'
+      - '**/Dockerfile'
+      - '.github/workflows/**'
+      - '.github/prompts/**'
+      - '.github/instructions/**'
+      - 'docs/**'
+  workflow_dispatch:
+    inputs:
+      base_ref:
+        description: 'Base ref or SHA for the review range'
+        required: true
+        default: 'Development'
+      head_ref:
+        description: 'Head ref or SHA for the review range. Defaults to the workflow SHA.'
+        required: false
+        default: ''
+      full_file_scan:
+        description: 'Scan full changed files instead of only changed lines'
+        type: boolean
+        required: false
+        default: false
+      verify_release_age:
+        description: 'Query PyPI/npm metadata for the seven-day dependency gate'
+        type: boolean
+        required: false
+        default: true
+      fail_on_findings:
+        description: 'Fail on all findings instead of only blockers'
+        type: boolean
+        required: false
+        default: false
+      fail_on_unverified_release_age:
+        description: 'Fail when dependency release age cannot be verified'
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  malicious-pr-security-review:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Resolve review range
+        id: review-range
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            echo "base_sha=${{ github.event.pull_request.base.sha }}" >> "$GITHUB_OUTPUT"
+            echo "head_sha=${{ github.sha }}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          git fetch --all --prune
+          base_ref="${{ inputs.base_ref }}"
+          head_ref="${{ inputs.head_ref }}"
+          if [[ -z "$head_ref" ]]; then
+            head_ref="${{ github.sha }}"
+          fi
+
+          base_sha="$(git rev-parse "origin/${base_ref}^{commit}" 2>/dev/null || git rev-parse "${base_ref}^{commit}")"
+          head_sha="$(git rev-parse "${head_ref}^{commit}")"
+
+          echo "base_sha=$base_sha" >> "$GITHUB_OUTPUT"
+          echo "head_sha=$head_sha" >> "$GITHUB_OUTPUT"
+
+      - name: Run malicious PR static security review
+        env:
+          BASE_SHA: ${{ steps.review-range.outputs.base_sha }}
+          HEAD_SHA: ${{ steps.review-range.outputs.head_sha }}
+        run: |
+          review_args=(
+            --base-sha "$BASE_SHA"
+            --head-sha "$HEAD_SHA"
+            --report-file artifacts/malicious-pr-security-review.md
+          )
+
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ inputs.full_file_scan }}" == "true" ]]; then
+            review_args+=(--full-file)
+          fi
+
+          if [[ "${{ github.event_name }}" != "workflow_dispatch" || "${{ inputs.verify_release_age }}" == "true" ]]; then
+            review_args+=(--verify-release-age)
+          fi
+
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ inputs.fail_on_findings }}" == "true" ]]; then
+            review_args+=(--fail-on-findings)
+          fi
+
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ inputs.fail_on_unverified_release_age }}" == "true" ]]; then
+            review_args+=(--fail-on-unverified-release-age)
+          fi
+
+          python scripts/check_malicious_pr_security_review.py "${review_args[@]}"
+
+      - name: Publish review summary
+        if: always()
+        run: |
+          if [[ -f artifacts/malicious-pr-security-review.md ]]; then
+            cat artifacts/malicious-pr-security-review.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Malicious PR security review report was not created." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload review report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: malicious-pr-security-review
+          path: artifacts/malicious-pr-security-review.md
+          if-no-files-found: warn

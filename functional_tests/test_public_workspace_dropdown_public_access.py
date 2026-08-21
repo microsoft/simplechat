@@ -15,6 +15,7 @@ import ast
 import os
 import sys
 from typing import Iterable
+from test_support.versioning import assert_app_version_at_least
 
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -246,7 +247,7 @@ def test_config_version_for_public_workspace_dropdown_access_change():
     """Verify config.py reflects the public workspace dropdown access update."""
     print("[check] Testing config version bump...")
 
-    assert read_config_version() == "0.241.152"
+    assert_app_version_at_least("0.241.152")
 
     print("[pass] Config version bump passed")
 

@@ -86,7 +86,11 @@ Always run:
 When Python route files changed:
 
 - Run `python scripts/check_swagger_routes.py <changed-python-files>`.
-- Verify every Flask route has `@swagger_route(security=get_auth_security())` immediately after `@app.route(...)`.
+- Verify every Flask route is registered on a Blueprint, every route-owning Blueprint has an explicit `before_request` auth policy, and every route has `@swagger_route(security=get_auth_security())` immediately after the route decorator.
+- Run the route policy coverage tests:
+  `python functional_tests/route_tests/test_route_blueprint_policy_inventory.py`
+  `python functional_tests/route_tests/test_route_unauthenticated_policy_contract.py`
+  `python functional_tests/route_tests/test_route_policy_test_coverage.py`
 
 When JavaScript, HTML, or Python browser-rendering surfaces changed:
 
@@ -110,6 +114,7 @@ When HTML, CSS, or JavaScript changes affect UI behavior:
 When bug fixes, new features, route changes, API changes, security changes, or UI workflow changes are present:
 
 - Check for matching functional tests under `functional_tests/`.
+- For route changes, check for matching route policy coverage under `functional_tests/route_tests/`.
 - Run relevant functional tests with pytest or directly with Python, matching existing test style.
 - If no relevant test exists, call this out and recommend the missing coverage.
 

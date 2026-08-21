@@ -111,6 +111,21 @@ async function refreshAgentsAndModelsForActiveConversation() {
   await refreshAgentsForActiveConversation();
   await refreshModelSelection();
 }
+
+function scrollConversationViewToBottom() {
+  const container = document.getElementById("chat-messages-container") || document.getElementById("chatbox");
+  if (!container) {
+    return;
+  }
+  // Use animation frames so layout-dependent heights settle first.
+  requestAnimationFrame(() => {
+    container.scrollTop = container.scrollHeight;
+    requestAnimationFrame(() => {
+      container.scrollTop = container.scrollHeight;
+    });
+  });
+}
+
 let selectionModeActive = false; // Track if selection mode is active
 let selectionModeTimer = null; // Timer for auto-hiding checkboxes
 let showHiddenConversations = false; // Track if hidden conversations should be shown
@@ -1671,16 +1686,18 @@ export async function selectConversation(conversationId) {
 
   if (isCollaborativeConversation && window.chatCollaboration?.activateConversation) {
     await window.chatCollaboration.activateConversation(conversationId, metadata);
+    scrollConversationViewToBottom();
   } else {
     window.chatCollaboration?.deactivateConversation?.();
     await loadMessages(conversationId);
     try {
       const streamingModule = await import('./chat-streaming.js');
       await streamingModule.reattachStreamingConversation(conversationId);
+      scrollConversationViewToBottom();
     } catch (error) {
       console.warn('Failed to reattach active stream for conversation:', error);
     }
-    markConversationRead(conversationId, { force: true, suppressErrorToast: true }).catch(error => {
+    markConversationRead(conversationId, { suppressErrorToast: true }).catch(error => {
       console.warn('Failed to clear unread state for conversation:', error);
     });
   }

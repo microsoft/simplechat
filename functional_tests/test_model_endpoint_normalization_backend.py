@@ -1,11 +1,13 @@
 # test_model_endpoint_normalization_backend.py
 """
 Functional test for backend model endpoint normalization.
-Version: 0.239.155
-Implemented in: 0.239.155
+Version: 0.250.109
+Implemented in: 0.239.155; updated in 0.250.109
 
 This test ensures model endpoints are normalized with stable IDs and enabled
-flags so frontend consumers receive consistent identifiers.
+flags so frontend consumers receive consistent identifiers. It also verifies
+per-model response length values are stored as positive integer output-token
+ceilings and invalid values are removed before runtime use.
 """
 
 import os
@@ -31,19 +33,57 @@ def _restore_modules(original_modules):
 def _load_functions_settings_module():
     config_stub = types.ModuleType("config")
     config_stub.json = json
+    config_stub.AZURE_ENVIRONMENT = "public"
 
     appinsights_stub = types.ModuleType("functions_appinsights")
     appinsights_stub.log_event = lambda *args, **kwargs: None
+    appinsights_stub.debug_print = lambda *args, **kwargs: None
+    appinsights_stub.is_debug_enabled = lambda *args, **kwargs: False
 
     cache_stub = types.ModuleType("app_settings_cache")
     cache_stub.get_settings_cache = lambda: None
     cache_stub.update_settings_cache = lambda settings: None
+
+    content_safety_stub = types.ModuleType("functions_content_safety")
+    content_safety_stub.CONTENT_SAFETY_VIOLATION_MESSAGE_DEFAULT = "Content safety policy violation."
+
+    throughput_stub = types.ModuleType("functions_cosmos_throughput")
+    throughput_stub.get_default_cosmos_throughput_settings = lambda: {}
+
+    document_actions_stub = types.ModuleType("functions_document_actions")
+    document_actions_stub.get_default_document_action_capabilities = lambda: {}
+
+    icon_utils_stub = types.ModuleType("functions_icon_utils")
+    icon_utils_stub.normalize_icon_payload = lambda value, field_name="": value if isinstance(value, dict) else {}
+
+    latest_features_stub = types.ModuleType("functions_latest_features_nav")
+    latest_features_stub.LATEST_FEATURES_HIDDEN_VERSION_SETTING = "latest_features_hidden_version"
+
+    mcp_stub = types.ModuleType("functions_mcp_server_config")
+    mcp_stub.INBOUND_MCP_SETTINGS_DEFAULTS = {}
+    mcp_stub.normalize_inbound_mcp_settings = lambda settings: None
+
+    service_health_stub = types.ModuleType("functions_service_health")
+    service_health_stub.get_default_service_health = lambda: {}
+
+    support_menu_stub = types.ModuleType("support_menu_config")
+    support_menu_stub.get_default_support_latest_features_visibility = lambda: {}
+    support_menu_stub.has_visible_support_latest_features = lambda *args, **kwargs: False
+    support_menu_stub.normalize_support_latest_features_visibility = lambda settings: None
 
     original_modules = {}
     for module_name, module_stub in {
         "config": config_stub,
         "functions_appinsights": appinsights_stub,
         "app_settings_cache": cache_stub,
+        "functions_content_safety": content_safety_stub,
+        "functions_cosmos_throughput": throughput_stub,
+        "functions_document_actions": document_actions_stub,
+        "functions_icon_utils": icon_utils_stub,
+        "functions_latest_features_nav": latest_features_stub,
+        "functions_mcp_server_config": mcp_stub,
+        "functions_service_health": service_health_stub,
+        "support_menu_config": support_menu_stub,
     }.items():
         original_modules[module_name] = sys.modules.get(module_name)
         sys.modules[module_name] = module_stub
@@ -67,7 +107,12 @@ def test_model_endpoint_normalization_backend():
             "connection": {"endpoint": "https://foundry.example"},
             "models": [
                 {
-                    "deploymentName": "gpt-4o"
+                    "deploymentName": "gpt-4o",
+                    "response_length": "2048"
+                },
+                {
+                    "deploymentName": "gpt-5.6-luna",
+                    "responseLength": 0
                 }
             ]
         }
@@ -83,6 +128,15 @@ def test_model_endpoint_normalization_backend():
         assert "has_client_secret" not in normalized[0]
         assert normalized[0]["models"][0]["id"] == "gpt-4o"
         assert normalized[0]["models"][0]["enabled"] is True
+        assert normalized[0]["models"][0]["responseLength"] == 2048
+        assert "response_length" not in normalized[0]["models"][0]
+        assert "responseLength" not in normalized[0]["models"][1]
+        assert functions_settings.normalize_model_response_length_from_model(
+            {"max_completion_tokens": "4096"}
+        ) == 4096
+        assert functions_settings.normalize_model_response_length_from_model(
+            {"responseLength": "not-a-number"}
+        ) is None
     finally:
         _restore_modules(original_modules)
 

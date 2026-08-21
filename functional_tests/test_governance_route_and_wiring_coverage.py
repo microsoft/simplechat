@@ -2,8 +2,8 @@
 #!/usr/bin/env python3
 """
 Functional test for governance route and enforcement wiring coverage.
-Version: 0.242.019
-Implemented in: 0.242.011; 0.242.012; 0.242.013; 0.242.014; 0.242.018; 0.242.019
+Version: 0.250.208
+Implemented in: 0.242.011; 0.242.012; 0.242.013; 0.242.014; 0.242.018; 0.242.019; 0.250.204; 0.250.205; 0.250.206; 0.250.207; 0.250.208
 
 This test ensures governance routes are registered and guarded, and that
 updated backend modules include governance enforcement hooks for endpoint,
@@ -12,6 +12,7 @@ agent, and action flows.
 
 import os
 import sys
+from test_support.templates import compose_if_admin_settings
 
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -23,7 +24,7 @@ if SINGLE_APP_DIR not in sys.path:
 def _read(*parts):
     path = os.path.join(ROOT_DIR, *parts)
     with open(path, "r", encoding="utf-8") as handle:
-        return handle.read()
+        return compose_if_admin_settings(path, handle.read())
 
 
 def test_governance_route_registration_and_guards():
@@ -35,7 +36,7 @@ def test_governance_route_registration_and_guards():
     assert "from route_backend_governance import register_route_backend_governance" in app_content, (
         "Expected app.py to import governance route registration"
     )
-    assert "register_route_backend_governance(app)" in app_content, (
+    assert "register_route_blueprint('backend_governance', register_route_backend_governance" in app_content, (
         "Expected governance routes to be registered in app.py"
     )
 
@@ -131,7 +132,7 @@ def test_governance_enforcement_hooks_across_changed_routes():
         assert key in settings_content, f"Missing governance default setting key: {key}"
 
     for marker in [
-        "id=\"governance\"",
+        "id=\"feature-governance\"",
         "governance-feature-policies-table",
         "governance-item-policies-table",
         "governance-item-policy-card-controls",
@@ -141,7 +142,7 @@ def test_governance_enforcement_hooks_across_changed_routes():
         "governance-info-guide-btn",
         "data-bs-target=\"#governanceInfoModal\"",
         "{% include '_governance_info.html' %}",
-        "Delegated item policies are OR combined whitelists",
+        "Delegated item policies are OR combined allow lists with optional block lists",
         "btn btn-outline-info btn-sm ms-2 governance-primary-link",
     ]:
         assert marker in admin_settings_template_content, f"Missing governance UI marker in admin_settings.html: {marker}"
@@ -205,12 +206,40 @@ def test_governance_enforcement_hooks_across_changed_routes():
         "openGovernanceDelegatedItemEditor",
         "governance-item-policy-name",
         "governance-item-policy-id",
+        "governanceItemPolicyEditorContext",
+        "applyGovernanceItemTargetEditState",
+        "Changing the target will move this policy to the selected delegated item when saved",
+        "The policy ID cannot be changed while moving or editing an existing delegated item policy",
         "deleteGovernanceItemPolicyFromContext",
         "renderGovernancePrincipalReviewCell",
         "wireGovernanceItemReviewHandlers",
+        "returnToModalElement.addEventListener('hidden.bs.modal', showAllowListEditor, { once: true })",
+        "allowListModalElement?.addEventListener('hidden.bs.modal', restoreReturnModal, { once: true })",
+        "returnToModal.hide()",
+        "governance-show-item-policy-users-btn",
+        "governance-duplicate-item-policy-btn",
+        "governance-inverse-item-policy-btn",
+        "cloneGovernanceItemPolicyForAction",
+        "openGovernanceItemPolicyUsersModal",
+        "A new policy ID will be assigned when saved",
+        "Allowed and blocked users/groups were swapped",
     ]:
         assert marker in admin_governance_js_content or marker in admin_settings_template_content or marker in frontend_chats_content or marker in agents_content, (
             f"Missing governance UI visibility marker: {marker}"
+        )
+
+    item_policy_table_header_section = admin_settings_template_content.split(
+        'id="governance-item-policies-table"',
+        1,
+    )[1].split('id="governance-item-policies-review-body"', 1)[0]
+    for removed_header in [
+        "<th>Allowed Users</th>",
+        "<th>Allowed Groups</th>",
+        "<th>Blocked Users</th>",
+        "<th>Blocked Groups</th>",
+    ]:
+        assert removed_header not in item_policy_table_header_section, (
+            f"Delegated item policy table should move {removed_header} into the Show Users modal"
         )
 
     assert '<div id="governance-item-policy-form"' not in admin_settings_template_content, (
@@ -231,8 +260,35 @@ def test_governance_enforcement_hooks_across_changed_routes():
         "policy_id",
         "policy_name",
         "resource_label",
+        "def list_item_policies_by_policy_id(policy_id: str)",
+        "def retarget_item_policy(",
     ]:
         assert marker in governance_content or marker in route_content, f"Missing multi-policy delegation marker: {marker}"
+
+    for marker in [
+        "def _item_policy_target_conflicts(",
+        "list_item_policies_by_policy_id(policy_id)",
+        "def _item_policy_target_changed(",
+        "retarget_item_policy(",
+        "This item governance policy ID is already assigned to another delegated item.",
+    ]:
+        assert marker in route_content, f"Missing item policy retarget protection marker: {marker}"
+
+    feature_policy_save_section = route_content.split(
+        "def update_governance_feature_policy_route",
+        1,
+    )[1].split("def _delete_governance_item_policy", 1)[0]
+    assert "_item_policy_target_conflicts(" not in feature_policy_save_section, (
+        "Feature policy saves must not run delegated item retarget conflict checks"
+    )
+
+    item_policy_delete_section = route_content.split(
+        "def _delete_governance_item_policy",
+        1,
+    )[1].split("@bp.route('/api/admin/governance/item-policies/<entity_type>/<item_id>'", 1)[0]
+    assert "_item_policy_target_conflicts(" not in item_policy_delete_section, (
+        "Delegated item policy deletes must not run save-time retarget conflict checks"
+    )
 
     model_endpoint_js_content = _read("application", "single_app", "static", "js", "admin", "admin_model_endpoints.js")
     admin_agents_js_content = _read("application", "single_app", "static", "js", "admin", "admin_agents.js")

@@ -1,9 +1,9 @@
 # test_chat_generated_tabular_output_card.py
 """
 UI test for chat generated tabular output cards.
-Version: 0.241.096
+Version: 0.250.152
 Implemented in: 0.241.033
-Updated in: 0.241.096
+Updated in: 0.241.096; simplified completed artifact cards and bounded View modal in 0.250.151; foreground JSON/XML completed cards in 0.250.152
 
 This test ensures assistant replies with generic generated analysis artifact
 metadata render a reusable export card, preserve untrusted values as text,
@@ -55,7 +55,7 @@ def _wait_for_chatbox_or_skip(page):
 
 @pytest.mark.ui
 def test_chat_generated_tabular_output_card(playwright):
-    """Validate generated tabular output cards render preview data and trigger downloads."""
+    """Validate completed tabular cards stay concise and open bounded previews on demand."""
     _require_ui_env()
 
     download_requests = []
@@ -158,6 +158,8 @@ def test_chat_generated_tabular_output_card(playwright):
                                     source_file_name: 'feedback_comments.xlsx',
                                     selected_sheet: 'Comments',
                                     summary: 'The full export is saved separately so the reply can stay concise. <analysis>',
+                                    suppress_assistant_text: true,
+                                    preview_columns: ['comment_id', 'author', 'comment'],
                                     preview_rows: [
                                         {
                                             comment_id: '001',
@@ -181,15 +183,31 @@ def test_chat_generated_tabular_output_card(playwright):
         )
 
         card = page.locator('.generated-tabular-output-card')
+        message = page.locator('[data-message-id="assistant-generated-output"]')
         expect(card).to_be_visible()
         expect(card).to_contain_text('Generated JSON export')
-        expect(card).to_contain_text('Saved to this chat for download in this conversation.')
         expect(card).to_contain_text('124 rows')
-        expect(card).to_contain_text('Source: feedback_comments.xlsx | Sheet: Comments')
         expect(card).to_contain_text('comments<script>alert(1)</script>.json')
-        expect(card).to_contain_text('The full export is saved separately so the reply can stay concise. <analysis>')
-        expect(card).to_contain_text('Alicia <Admin>')
-        expect(card).to_contain_text('First <tag> comment')
+        expect(card).not_to_contain_text('Saved to this chat for download in this conversation.')
+        expect(card).not_to_contain_text('Source: feedback_comments.xlsx | Sheet: Comments')
+        expect(card).not_to_contain_text('The full export is saved separately so the reply can stay concise. <analysis>')
+        expect(card).not_to_contain_text('Alicia <Admin>')
+        expect(message.locator('.message-text')).to_be_hidden()
+        expect(message.locator('.message-footer')).to_be_hidden()
+
+        view_button = card.get_by_role('button', name='View generated JSON preview', exact=True)
+        expect(view_button).to_be_visible()
+        view_button.click()
+        preview_modal = page.locator('#generated-artifact-preview-modal')
+        expect(preview_modal).to_be_visible()
+        expect(preview_modal.get_by_role('heading', name='Preview: comments<script>alert(1)</script>.json')).to_be_visible()
+        expect(preview_modal).to_contain_text('Alicia <Admin>')
+        expect(preview_modal).to_contain_text('First <tag> comment')
+        expect(preview_modal).to_contain_text('Showing 2 of 124 rows')
+        assert preview_modal.locator('thead th').all_text_contents() == ['comment_id', 'author', 'comment']
+        expect(preview_modal.locator('script')).to_have_count(0)
+        preview_modal.locator('.modal-footer button').click()
+        expect(preview_modal).to_be_hidden()
 
         assert page.locator('.generated-tabular-output-card script').count() == 0
 
@@ -214,6 +232,107 @@ def test_chat_generated_tabular_output_card(playwright):
         assert promote_requests[0]["conversation_id"] == "generated-tabular-output-test"
         assert promote_requests[0]["message_id"] == "generated-export-123"
         assert promote_requests[0]["workspace_scope"] == "personal"
+        assert page_errors == []
+    finally:
+        context.close()
+        browser.close()
+
+
+@pytest.mark.ui
+def test_chat_completed_xml_artifact_uses_view_modal(playwright):
+    """Validate completed XML exports stay concise and render XML only on demand."""
+    _require_ui_env()
+
+    browser = playwright.chromium.launch()
+    context = browser.new_context(
+        storage_state=STORAGE_STATE,
+        viewport={"width": 1440, "height": 900},
+        ignore_https_errors=True,
+    )
+    page = context.new_page()
+    page_errors = []
+    page.on("pageerror", lambda error: page_errors.append(str(error)))
+
+    page.route(
+        "**/api/user/settings",
+        lambda route: _fulfill_json(route, {"selected_agent": None, "settings": {"enable_agents": False}}),
+    )
+    page.route("**/api/get_conversations", lambda route: _fulfill_json(route, {"conversations": []}))
+
+    try:
+        page.goto(f"{BASE_URL}/chats", wait_until="domcontentloaded")
+        _wait_for_chatbox_or_skip(page)
+        page.wait_for_function("() => window.chatMessages && typeof window.chatMessages.appendMessage === 'function'")
+
+        page.evaluate(
+            """
+            async () => {
+                const conversationId = 'generated-xml-card-test';
+                currentConversationId = conversationId;
+                window.currentConversationId = conversationId;
+                const messagesModule = await import('/static/js/chat/chat-messages.js');
+                messagesModule.appendMessage(
+                    'AI',
+                    'I created a downloadable XML file and attached it to this chat.',
+                    null,
+                    'assistant-generated-xml-output',
+                    false,
+                    [],
+                    [],
+                    [],
+                    null,
+                    null,
+                    {
+                        id: 'assistant-generated-xml-output',
+                        role: 'assistant',
+                        content: 'I created a downloadable XML file and attached it to this chat.',
+                        metadata: {
+                            generated_analysis_artifacts: [
+                                {
+                                    capability: 'file_export',
+                                    artifact_message_id: 'generated-xml-export-123',
+                                    conversation_id: conversationId,
+                                    storage_scope: 'chat',
+                                    file_name: 'financial-report.xml',
+                                    output_format: 'xml',
+                                    summary: 'Saved the generated XML output.',
+                                    suppress_assistant_text: true,
+                                    preview_lines: [
+                                        '<FinancialReport>',
+                                        '<ReportId>Q-001</ReportId>',
+                                        '<Note><script>blocked()</script></Note>',
+                                        '</FinancialReport>',
+                                    ],
+                                },
+                            ],
+                        },
+                    },
+                    true
+                );
+            }
+            """
+        )
+
+        message = page.locator('[data-message-id="assistant-generated-xml-output"]')
+        card = message.locator('.generated-tabular-output-card')
+        expect(card).to_be_visible()
+        expect(card).to_contain_text('Generated XML export')
+        expect(card).to_contain_text('financial-report.xml')
+        expect(card).not_to_contain_text('Saved to this chat')
+        expect(card).not_to_contain_text('<FinancialReport>')
+        expect(message.locator('.message-text')).to_be_hidden()
+        expect(message.locator('.message-footer')).to_be_hidden()
+        expect(card.get_by_role('button', name='Download XML')).to_be_visible()
+        view_button = card.get_by_role('button', name='View generated XML preview', exact=True)
+        expect(view_button).to_have_text('View XML')
+        expect(card.get_by_role('button', name='Add to Workspace')).to_be_visible()
+
+        view_button.click()
+        preview_modal = page.locator('#generated-artifact-preview-modal')
+        expect(preview_modal).to_be_visible()
+        expect(preview_modal).to_contain_text('<FinancialReport>')
+        expect(preview_modal).to_contain_text('<script>blocked()</script>')
+        expect(preview_modal.locator('script')).to_have_count(0)
         assert page_errors == []
     finally:
         context.close()

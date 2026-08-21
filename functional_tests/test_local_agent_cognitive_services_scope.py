@@ -10,6 +10,7 @@ while Foundry agents continue using provider-specific scope resolution.
 """
 
 from pathlib import Path
+from test_support.versioning import assert_app_version_at_least
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -60,9 +61,7 @@ def test_local_agent_cognitive_services_scope() -> None:
     assert "load_single_agent_for_kernel(kernel, global_selected_agent_cfg, settings, builtins" in loader_content, (
         "Global local agents should also use the shared loader path."
     )
-    assert 'VERSION = "0.241.007"' in config_content, (
-        "config.py should be updated to version 0.241.007 for this fix."
-    )
+    assert_app_version_at_least("0.241.007")
     assert "Fixed/Implemented in version: **0.241.007**" in fix_doc_content, (
         "Fix documentation should record the implementation version."
     )

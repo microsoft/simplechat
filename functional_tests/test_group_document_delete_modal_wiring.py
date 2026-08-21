@@ -11,6 +11,7 @@ standalone page markup and is not injected through the dynamic status alert.
 import re
 import sys
 from pathlib import Path
+from test_support.versioning import assert_app_version_at_least
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -30,7 +31,7 @@ def test_group_document_delete_modal_wiring() -> bool:
     scripts_start = template_content.index("{% block scripts %}")
     content_markup = template_content[:scripts_start]
 
-    assert 'VERSION = "0.241.004"' in config_content, "Config version marker is not current."
+    assert_app_version_at_least("0.241.004")
 
     for marker in [
         'id="groupDocumentDeleteModal"',

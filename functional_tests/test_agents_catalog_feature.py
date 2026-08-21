@@ -13,6 +13,7 @@ import importlib
 from pathlib import Path
 import sys
 from types import ModuleType, SimpleNamespace
+from test_support.templates import compose_if_admin_settings
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -21,7 +22,10 @@ sys.path.insert(0, str(APP_ROOT))
 
 
 def read_repo_file(relative_path):
-    return (REPO_ROOT / relative_path).read_text(encoding="utf-8")
+    _path = REPO_ROOT / relative_path
+    return compose_if_admin_settings(
+        _path, _path.read_text(encoding="utf-8")
+    )
 
 
 def assert_contains(text, expected, label):
@@ -69,7 +73,7 @@ def test_agents_catalog_routes_and_navigation():
     sidebar = read_repo_file("application/single_app/templates/_sidebar_nav.html")
     short_sidebar = read_repo_file("application/single_app/templates/_sidebar_short_nav.html")
 
-    assert_contains(app_route, "@app.route('/agents'", "Agents page route")
+    assert_contains(app_route, "@bp.route('/agents'", "Agents page route")
     assert_contains(app_route, "@swagger_route(security=get_auth_security())", "Agents route swagger security")
     assert_contains(app_route, "@login_required", "Agents route login guard")
     assert_contains(app_route, "@user_required", "Agents route user guard")

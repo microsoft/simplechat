@@ -341,7 +341,7 @@
     const item = feedbackItemsOnPage.find(f => f.id == feedbackId);
     if (!item) {
         console.error("Could not find feedback data for ID:", feedbackId);
-        alert("Error: Could not load feedback details.");
+        showToast("Error: Could not load feedback details.", 'danger');
         return;
     }
 

@@ -56,6 +56,7 @@ hooks:
         export var_keyVaultUri=${var_keyVaultUri}
         export var_keyVaultName=${var_keyVaultName}
         export var_authenticationType=${var_authenticationType}
+        export var_redisAuthenticationType=${var_redisAuthenticationType}
         export var_openAIEndpoint=${var_openAIEndpoint}
         export var_openAISubscriptionId=${var_openAISubscriptionId}
         export var_openAIResourceGroup=${var_openAIResourceGroup}
@@ -288,6 +289,7 @@ hooks:
             'var_openAIGPTModels',
             'var_openAIResourceGroup',
             'var_openAISubscriptionId',
+            'var_redisAuthenticationType',
             'var_redisCacheHostName',
             'var_rgName',
             'var_searchServiceEndpoint',
@@ -640,10 +642,21 @@ hooks:
                 install_chromium="true"
                 ;;
         esac
+            install_audio_ffmpeg="${SIMPLECHAT_INSTALL_FFMPEG:-true}"
+            install_audio_ffmpeg="$(printf '%s' "${install_audio_ffmpeg}" | tr '[:upper:]' '[:lower:]')"
+            case "${install_audio_ffmpeg}" in
+                true|1|yes|on) install_audio_ffmpeg="true" ;;
+                false|0|no|off) install_audio_ffmpeg="false" ;;
+                *)
+                echo "⚠ Invalid SIMPLECHAT_INSTALL_FFMPEG value '${install_audio_ffmpeg}'. Defaulting to true."
+                install_audio_ffmpeg="true"
+                ;;
+            esac
         echo ""
         echo "Deployment timestamp: ${timestamp}"
         echo "Image: ${var_containerRegistry}/${var_imageName}:${timestamp}"
         echo "Chromium rendering runtime install: ${install_chromium}"
+            echo "Audio FFmpeg runtime install: ${install_audio_ffmpeg}"
 
         echo ""
         echo "[1/4] Stopping web service..."
@@ -665,6 +678,7 @@ hooks:
             --registry ${var_acrName} \
             --file application/single_app/Dockerfile \
             --build-arg INSTALL_PLAYWRIGHT_CHROMIUM=${install_chromium} \
+            --build-arg INSTALL_AUDIO_FFMPEG=${install_audio_ffmpeg} \
             --image ${var_imageName}:${timestamp} \
             --image ${var_imageName}:latest \
             .; then
@@ -729,6 +743,7 @@ hooks:
         Import-AzdHookEnvironment -Names @(
             'AZURE_SUBSCRIPTION_ID',
             'SIMPLECHAT_INSTALL_CHROMIUM',
+            'SIMPLECHAT_INSTALL_FFMPEG',
             'var_acrName',
             'var_containerRegistry',
             'var_cosmosDb_accountName',
@@ -903,10 +918,20 @@ hooks:
                 $installChromium = 'true'
             }
         }
+        $installAudioFfmpeg = if ([string]::IsNullOrWhiteSpace($env:SIMPLECHAT_INSTALL_FFMPEG)) { 'true' } else { $env:SIMPLECHAT_INSTALL_FFMPEG.Trim().ToLowerInvariant() }
+        switch ($installAudioFfmpeg) {
+            { $_ -in @('true', '1', 'yes', 'on') } { $installAudioFfmpeg = 'true'; break }
+            { $_ -in @('false', '0', 'no', 'off') } { $installAudioFfmpeg = 'false'; break }
+            default {
+                Write-Warning "Invalid SIMPLECHAT_INSTALL_FFMPEG value '$installAudioFfmpeg'. Defaulting to true."
+                $installAudioFfmpeg = 'true'
+            }
+        }
         Write-Host ""
         Write-Host "Deployment timestamp: $timestamp"
         Write-Host "Image: $($env:var_containerRegistry)/$($env:var_imageName):$timestamp"
         Write-Host "Chromium rendering runtime install: $installChromium"
+        Write-Host "Audio FFmpeg runtime install: $installAudioFfmpeg"
 
         Write-Host ""
         Write-Host "[1/4] Stopping web service..."
@@ -923,7 +948,7 @@ hooks:
         if ($env:var_enablePrivateNetworking -eq 'true') {
             Write-Host "ℹ ACR public access remains enabled until POST-UP so Azure Container Registry Tasks can complete the build"
         }
-        $runId = az acr build --registry $env:var_acrName --resource-group $rgName --subscription $subscriptionId --file application/single_app/Dockerfile --build-arg "INSTALL_PLAYWRIGHT_CHROMIUM=$installChromium" --image "$($env:var_imageName):$timestamp" --image "$($env:var_imageName):latest" --no-logs --query runId -o tsv .
+        $runId = az acr build --registry $env:var_acrName --resource-group $rgName --subscription $subscriptionId --file application/single_app/Dockerfile --build-arg "INSTALL_PLAYWRIGHT_CHROMIUM=$installChromium" --build-arg "INSTALL_AUDIO_FFMPEG=$installAudioFfmpeg" --image "$($env:var_imageName):$timestamp" --image "$($env:var_imageName):latest" --no-logs --query runId -o tsv .
         if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($runId)) {
             Cleanup-OnError -StepName 'ACR build'
         }

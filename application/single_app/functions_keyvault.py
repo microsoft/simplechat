@@ -2,13 +2,17 @@
 
 import re
 import logging
+from datetime import datetime, timezone
+from urllib.parse import urlparse
 from functions_appinsights import log_event
 from config import *
 from functions_authentication import *
 from functions_settings import *
 from enum import Enum
 import app_settings_cache
+from functions_mcp_operations import MCP_CUSTOM_HEADERS_FIELD, MCP_PLUGIN_TYPE
 from functions_snowflake_operations import SNOWFLAKE_PLUGIN_TYPE, SNOWFLAKE_SENSITIVE_ADDITIONAL_FIELDS
+from functions_yamcs_operations import YAMCS_PLUGIN_TYPE, YAMCS_SENSITIVE_ADDITIONAL_FIELDS
 
 try:
     from azure.identity import DefaultAzureCredential
@@ -70,11 +74,176 @@ AGENT_SENSITIVE_SECRET_FIELDS = [
     },
 ]
 REDACTED_SECRET_VALUE = "***REDACTED***"
+KEY_VAULT_SECRET_REMINDERS_METADATA_FIELD = "key_vault_secret_reminders"
+KEY_VAULT_SECRET_REMINDER_SYNC_FAILED_STATUS = "sync_failed"
+KEY_VAULT_SECRET_REMINDER_SYNCED_STATUS = "synced"
 
 class SecretReturnType(Enum):
     VALUE = "value"
     TRIGGER = "trigger"
     NAME = "name"
+
+
+def _format_key_vault_secret_field_label(path):
+    """Return a readable label for a secret field path."""
+    return ".".join(path).replace("additionalFields.", "").replace("_", " ")
+
+
+def _get_key_vault_secret_expiration_datetime(expires_on):
+    """Return a UTC datetime suitable for Azure Key Vault secret properties."""
+    if isinstance(expires_on, datetime):
+        parsed_datetime = expires_on
+    else:
+        raw_value = str(expires_on or "").strip()
+        if not raw_value:
+            raise ValueError("expires_on is required.")
+        if raw_value.endswith("Z"):
+            raw_value = f"{raw_value[:-1]}+00:00"
+        if len(raw_value) == 10:
+            raw_value = f"{raw_value}T00:00:00+00:00"
+        parsed_datetime = datetime.fromisoformat(raw_value)
+
+    if parsed_datetime.tzinfo is None:
+        return parsed_datetime.replace(tzinfo=timezone.utc)
+    return parsed_datetime.astimezone(timezone.utc)
+
+
+def update_key_vault_secret_expiration(secret_name, expires_on):
+    """Update the expiration metadata on the latest version of a Key Vault secret."""
+    settings = app_settings_cache.get_settings_cache()
+    if not settings.get("enable_key_vault_secret_storage", False):
+        raise ValueError("Key Vault secret storage is not enabled in settings.")
+
+    key_vault_name = settings.get("key_vault_name", None)
+    if not key_vault_name:
+        raise ValueError("Key Vault name is not configured.")
+    if not validate_secret_name_dynamic(secret_name):
+        raise ValueError("Secret name is not a SimpleChat Key Vault reference.")
+
+    key_vault_url = f"https://{key_vault_name}{KEY_VAULT_DOMAIN}"
+    secret_client = SecretClient(vault_url=key_vault_url, credential=get_keyvault_credential())
+    secret_client.update_secret_properties(
+        name=secret_name,
+        expires_on=_get_key_vault_secret_expiration_datetime(expires_on),
+    )
+    log_event(
+        f"Secret '{secret_name}' expiration updated successfully in Key Vault.",
+        level=logging.INFO,
+    )
+    return True
+
+
+def _record_plugin_reminder_sync_status(updated_plugin, path, status, error=""):
+    """Persist reminder sync status in action metadata for save responses and diagnostics."""
+    metadata = updated_plugin.get("metadata")
+    if not isinstance(metadata, dict):
+        metadata = {}
+        updated_plugin["metadata"] = metadata
+    sync_status = metadata.get("key_vault_secret_reminder_sync")
+    if not isinstance(sync_status, dict):
+        sync_status = {}
+        metadata["key_vault_secret_reminder_sync"] = sync_status
+
+    sync_status[".".join(path)] = {
+        "status": status,
+        "error": str(error or "")[:1000],
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def _build_plugin_reminder_context(updated_plugin, path, secret_reference, scope_value, source, scope):
+    """Build the admin inventory context for a plugin secret reminder."""
+    settings = app_settings_cache.get_settings_cache()
+    source_id = updated_plugin.get("id") or scope_value
+    configured_by = (
+        updated_plugin.get("modified_by")
+        or updated_plugin.get("created_by")
+        or updated_plugin.get("user_id")
+        or ""
+    )
+    try:
+        configured_by = configured_by or str(get_current_user_id() or "")
+    except Exception:
+        configured_by = configured_by or ""
+
+    context = {
+        "secret_name": secret_reference,
+        "key_vault_name": settings.get("key_vault_name", ""),
+        "scope": scope,
+        "scope_value": scope_value,
+        "source": source,
+        "source_type": "action",
+        "source_id": source_id,
+        "source_name": updated_plugin.get("name", ""),
+        "source_display_name": updated_plugin.get("displayName") or updated_plugin.get("name", ""),
+        "field_path": ".".join(path),
+        "field_label": _format_key_vault_secret_field_label(path),
+        "configured_by": configured_by,
+        "remediation_url": "/admin/settings?tab=security#keyvault-section",
+    }
+    if scope == "user":
+        context["owner_user_id"] = scope_value
+    elif scope == "group":
+        context["group_id"] = scope_value
+    elif scope == "public":
+        context["public_workspace_id"] = scope_value
+    return context
+
+
+def _sync_plugin_secret_reminder(updated_plugin, path, secret_reference, scope_value, source, scope):
+    """Sync optional expiration reminder metadata for a plugin Key Vault secret reference."""
+    if not validate_secret_name_dynamic(secret_reference):
+        return
+
+    metadata = updated_plugin.get("metadata")
+    if not isinstance(metadata, dict) or not isinstance(metadata.get(KEY_VAULT_SECRET_REMINDERS_METADATA_FIELD), dict):
+        return
+
+    from functions_keyvault_reminders import (
+        mark_key_vault_secret_reminder_disabled,
+        resolve_key_vault_secret_reminder_config,
+        upsert_key_vault_secret_reminder,
+    )
+
+    reminder_config = resolve_key_vault_secret_reminder_config(updated_plugin, path)
+    if reminder_config is None:
+        return
+
+    context = _build_plugin_reminder_context(
+        updated_plugin,
+        path,
+        secret_reference,
+        scope_value,
+        source,
+        scope,
+    )
+
+    if not reminder_config.get("enabled"):
+        mark_key_vault_secret_reminder_disabled(secret_reference, context=context)
+        _record_plugin_reminder_sync_status(updated_plugin, path, "disabled")
+        return
+
+    sync_status = KEY_VAULT_SECRET_REMINDER_SYNCED_STATUS
+    sync_error = ""
+    try:
+        update_key_vault_secret_expiration(secret_reference, reminder_config["expires_on"])
+    except Exception as exc:
+        sync_status = KEY_VAULT_SECRET_REMINDER_SYNC_FAILED_STATUS
+        sync_error = str(exc)
+        log_event(
+            f"Failed to sync Key Vault secret expiration for '{secret_reference}': {exc}",
+            level=logging.ERROR,
+            exceptionTraceback=True,
+        )
+
+    upsert_key_vault_secret_reminder(
+        secret_reference,
+        reminder_config,
+        context,
+        key_vault_sync_status=sync_status,
+        key_vault_sync_error=sync_error,
+    )
+    _record_plugin_reminder_sync_status(updated_plugin, path, sync_status, sync_error)
 
 
 def _normalize_allowed_sources(allowed_sources):
@@ -134,7 +303,7 @@ def _log_secret_reference_context_mismatch(secret_name, context_label, scope_val
         expected_scope_value = clean_name_for_keyvault(str(scope_value))
 
     log_event(
-        f"[KeyVault] Rejected mismatched secret reference for {context_label}.",
+        f"[KEY_VAULT] Rejected mismatched secret reference for {context_label}.",
         extra={
             "context_label": context_label,
             "expected_scope_value": expected_scope_value,
@@ -239,11 +408,24 @@ def _is_snowflake_plugin(plugin_dict):
     return isinstance(plugin_type, str) and plugin_type.lower() == SNOWFLAKE_PLUGIN_TYPE
 
 
+def _is_yamcs_plugin(plugin_dict):
+    """Return True when the plugin manifest is a Yamcs action."""
+    plugin_type = (plugin_dict or {}).get("type", "")
+    return isinstance(plugin_type, str) and plugin_type.lower() == YAMCS_PLUGIN_TYPE
+
+
+def _is_mcp_plugin(plugin_dict):
+    """Return True when the plugin manifest is an MCP action."""
+    plugin_type = (plugin_dict or {}).get("type", "")
+    return isinstance(plugin_type, str) and plugin_type.lower() == MCP_PLUGIN_TYPE
+
+
 def _is_sensitive_plugin_additional_field(plugin_dict, field_name):
     """Return True when an action additional field should be treated as a secret."""
     return (
         _is_sql_sensitive_additional_field(plugin_dict, field_name)
         or (_is_snowflake_plugin(plugin_dict) and field_name in SNOWFLAKE_SENSITIVE_ADDITIONAL_FIELDS)
+        or (_is_yamcs_plugin(plugin_dict) and field_name in YAMCS_SENSITIVE_ADDITIONAL_FIELDS)
     )
 
 
@@ -276,13 +458,18 @@ def _store_plugin_secret_reference(updated_plugin, existing_plugin, path, secret
                     f"Stored Key Vault reference for '{path_label}' no longer matches the expected scope. Re-enter the secret value."
                 )
             _set_nested_dict_value(updated_plugin, path, existing_reference)
+            _sync_plugin_secret_reminder(
+                updated_plugin,
+                path,
+                existing_reference,
+                scope_value,
+                source,
+                scope,
+            )
             return
-        _set_nested_dict_value(
-            updated_plugin,
-            path,
-            build_full_secret_name(secret_name, scope_value, source, scope),
+        raise ValueError(
+            f"Stored Key Vault placeholder for '{path_label}' has no existing secret reference. Re-enter the secret value."
         )
-        return
 
     if validate_secret_name_dynamic(value):
         if not secret_reference_matches_context(
@@ -302,6 +489,14 @@ def _store_plugin_secret_reference(updated_plugin, existing_plugin, path, secret
                 f"Stored Key Vault reference for '{path_label}' does not match the expected scope."
             )
         _set_nested_dict_value(updated_plugin, path, value)
+        _sync_plugin_secret_reminder(
+            updated_plugin,
+            path,
+            value,
+            scope_value,
+            source,
+            scope,
+        )
         return
 
     full_secret_name = store_secret_in_key_vault(
@@ -312,6 +507,51 @@ def _store_plugin_secret_reference(updated_plugin, existing_plugin, path, secret
         scope=scope,
     )
     _set_nested_dict_value(updated_plugin, path, full_secret_name)
+    _sync_plugin_secret_reminder(
+        updated_plugin,
+        path,
+        full_secret_name,
+        scope_value,
+        source,
+        scope,
+    )
+
+
+def _store_mcp_custom_header_references(updated_plugin, existing_plugin, plugin_name, scope_value, scope):
+    """Store or preserve MCP custom header values as individual action-addset secrets."""
+    additional_fields = updated_plugin.get('additionalFields', {})
+    if not isinstance(additional_fields, dict):
+        return
+
+    custom_headers = additional_fields.get(MCP_CUSTOM_HEADERS_FIELD, {})
+    if not isinstance(custom_headers, dict):
+        return
+
+    for header_name, header_value in custom_headers.items():
+        if not header_value:
+            continue
+
+        path = ('additionalFields', MCP_CUSTOM_HEADERS_FIELD, header_name)
+        existing_value = _get_nested_dict_value(existing_plugin or {}, path)
+        if header_value == ui_trigger_word:
+            if existing_value:
+                _set_nested_dict_value(updated_plugin, path, existing_value)
+                continue
+            raise ValueError(f"MCP custom header '{header_name}' must be re-entered before saving.")
+
+        secret_name = _build_plugin_additional_field_secret_name(
+            plugin_name,
+            f"mcp-custom-header-{header_name}",
+        )
+        _store_plugin_secret_reference(
+            updated_plugin,
+            existing_plugin,
+            path,
+            secret_name,
+            scope_value,
+            source="action-addset",
+            scope=scope,
+        )
 
 
 def _store_secret_reference(updated, existing, path, secret_name, scope_value, source, scope):
@@ -343,12 +583,9 @@ def _store_secret_reference(updated, existing, path, secret_name, scope_value, s
                 )
             _set_nested_dict_value(updated, path, existing_reference)
             return
-        _set_nested_dict_value(
-            updated,
-            path,
-            build_full_secret_name(secret_name, scope_value, source, scope),
+        raise ValueError(
+            f"Stored Key Vault placeholder for '{path_label}' has no existing secret reference. Re-enter the secret value."
         )
-        return
 
     if validate_secret_name_dynamic(value):
         if not secret_reference_matches_context(
@@ -401,6 +638,13 @@ def redact_plugin_secret_values(plugin_dict, redaction_value=REDACTED_SECRET_VAL
         new_additional_fields = dict(additional_fields)
         for key, value in additional_fields.items():
             if not value:
+                continue
+            if _is_mcp_plugin(redacted) and key == MCP_CUSTOM_HEADERS_FIELD and isinstance(value, dict):
+                new_additional_fields[key] = {
+                    header_name: redaction_value
+                    for header_name, header_value in value.items()
+                    if header_value
+                }
                 continue
             if key.endswith("__Secret") or _is_sensitive_plugin_additional_field(redacted, key):
                 new_additional_fields[key] = redaction_value
@@ -484,6 +728,69 @@ def retrieve_secret_from_key_vault_by_full_name(full_secret_name):
     except Exception as e:
         log_event(f"Failed to retrieve secret '{full_secret_name}' from Key Vault: {str(e)}", level=logging.ERROR, exceptionTraceback=True)
         return full_secret_name
+
+
+def resolve_secret_reference_version(full_secret_name):
+    """Resolve a dynamic Key Vault secret name to its immutable versioned reference."""
+    settings = app_settings_cache.get_settings_cache()
+    if not settings.get("enable_key_vault_secret_storage", False):
+        return full_secret_name
+
+    key_vault_name = settings.get("key_vault_name", None)
+    if not key_vault_name or not validate_secret_name_dynamic(full_secret_name):
+        return full_secret_name
+
+    try:
+        key_vault_url = f"https://{key_vault_name}{KEY_VAULT_DOMAIN}"
+        secret_client = SecretClient(
+            vault_url=key_vault_url,
+            credential=get_keyvault_credential(),
+        )
+        secret = secret_client.get_secret(full_secret_name)
+        return getattr(secret, "id", None) or full_secret_name
+    except Exception as exc:
+        log_event(
+            f"Failed to resolve Key Vault secret version for '{full_secret_name}': {str(exc)}",
+            level=logging.ERROR,
+            exceptionTraceback=True,
+        )
+        return full_secret_name
+
+
+def retrieve_secret_from_key_vault_by_reference(secret_reference):
+    """Retrieve a dynamic secret name or a version-pinned Key Vault secret URL."""
+    reference = str(secret_reference or "").strip()
+    parsed_reference = urlparse(reference)
+    if not parsed_reference.scheme or not parsed_reference.netloc:
+        return retrieve_secret_from_key_vault_by_full_name(reference)
+
+    settings = app_settings_cache.get_settings_cache()
+    if not settings.get("enable_key_vault_secret_storage", False):
+        return reference
+    key_vault_name = settings.get("key_vault_name", None)
+    expected_host = f"{key_vault_name}{KEY_VAULT_DOMAIN}".lower() if key_vault_name else ""
+    path_parts = [part for part in parsed_reference.path.split("/") if part]
+    if (
+        parsed_reference.scheme.lower() != "https" or
+        parsed_reference.netloc.lower() != expected_host or
+        len(path_parts) != 3 or
+        path_parts[0].lower() != "secrets"
+    ):
+        raise ValueError("Key Vault secret reference is not a valid versioned secret URL.")
+
+    try:
+        secret_client = SecretClient(
+            vault_url=f"https://{key_vault_name}{KEY_VAULT_DOMAIN}",
+            credential=get_keyvault_credential(),
+        )
+        return secret_client.get_secret(path_parts[1], path_parts[2]).value
+    except Exception as exc:
+        log_event(
+            f"Failed to retrieve version-pinned Key Vault secret '{reference}': {str(exc)}",
+            level=logging.ERROR,
+            exceptionTraceback=True,
+        )
+        raise
         
 def retrieve_secret_direct(secret_name, settings=None):
     """
@@ -557,8 +864,8 @@ def store_secret_in_key_vault(secret_name, secret_value, scope_value, source="gl
 
     key_vault_name = settings.get("key_vault_name", None)
     if not key_vault_name:
-        log_event("Key Vault name is not configured.", level=logging.WARNING)
-        return secret_value
+        log_event("Key Vault name is not configured.", level=logging.ERROR)
+        raise ValueError("Key Vault name is not configured.")
 
     if source not in supported_sources:
         log_event(f"Source '{source}' is not supported. Supported sources: {supported_sources}", level=logging.ERROR)
@@ -577,7 +884,7 @@ def store_secret_in_key_vault(secret_name, secret_value, scope_value, source="gl
         return full_secret_name
     except Exception as e:
         log_event(f"Failed to store secret '{full_secret_name}' in Key Vault: {str(e)}", level=logging.ERROR, exceptionTraceback=True)
-        return secret_value
+        raise RuntimeError(f"Failed to store secret '{full_secret_name}' in Key Vault.") from e
 
 def build_full_secret_name(secret_name, scope_value, source, scope):
     """
@@ -658,13 +965,15 @@ def keyvault_agent_save_helper(agent_dict, scope_value, scope="global", existing
                 source,
                 scope,
             )
+        except ValueError:
+            raise
         except Exception as e:
             log_event(
                 f"Failed to store agent key '{'.'.join(path)}' in Key Vault: {e}",
                 level=logging.ERROR,
                 exceptionTraceback=True,
             )
-            raise Exception(f"Failed to store agent key '{'.'.join(path)}' in Key Vault: {e}")
+            raise RuntimeError(f"Failed to store agent key '{'.'.join(path)}' in Key Vault: {e}") from e
     return updated
 
 def keyvault_agent_get_helper(agent_dict, scope_value, scope="global", return_type=SecretReturnType.TRIGGER):
@@ -764,9 +1073,11 @@ def keyvault_plugin_save_helper(plugin_dict, scope_value, scope="global", existi
                     source,
                     scope,
                 )
+            except ValueError:
+                raise
             except Exception as e:
                 log_event(f"Failed to store plugin key in Key Vault: {e}", level=logging.ERROR, exceptionTraceback=True)
-                raise Exception(f"Failed to store plugin key in Key Vault: {e}")
+                raise RuntimeError(f"Failed to store plugin key in Key Vault: {e}") from e
         else:
             log_event(f"Auth type '{auth_type}' does not require Key Vault storage for plugin '{plugin_name}'.", level=logging.INFO)
 
@@ -782,19 +1093,40 @@ def keyvault_plugin_save_helper(plugin_dict, scope_value, scope="global", existi
                         source,
                         scope,
                     )
+                except ValueError:
+                    raise
                 except Exception as e:
                     log_event(
                         f"Failed to store plugin auth secret '{auth_field}' in Key Vault: {e}",
                         level=logging.ERROR,
                         exceptionTraceback=True,
                     )
-                    raise Exception(f"Failed to store plugin auth secret '{auth_field}' in Key Vault: {e}")
+                    raise RuntimeError(f"Failed to store plugin auth secret '{auth_field}' in Key Vault: {e}") from e
 
     # Handle additionalFields dynamic secrets
     additional_fields = updated.get('additionalFields', {})
     if isinstance(additional_fields, dict):
         new_additional_fields = dict(additional_fields)
         updated['additionalFields'] = new_additional_fields
+        if _is_mcp_plugin(updated):
+            try:
+                _store_mcp_custom_header_references(
+                    updated,
+                    existing_plugin,
+                    plugin_name,
+                    scope_value,
+                    scope,
+                )
+            except ValueError:
+                raise
+            except Exception as e:
+                log_event(
+                    f"Failed to store MCP custom header secrets for action '{plugin_name}': {e}",
+                    level=logging.ERROR,
+                    exceptionTraceback=True,
+                )
+                raise RuntimeError(f"Failed to store MCP custom header secrets for action '{plugin_name}': {e}") from e
+
         for k, v in additional_fields.items():
             if not v:
                 continue
@@ -812,9 +1144,11 @@ def keyvault_plugin_save_helper(plugin_dict, scope_value, scope="global", existi
                         addset_source,
                         scope,
                     )
+                except ValueError:
+                    raise
                 except Exception as e:
                     log_event(f"Failed to store plugin additionalField secret '{k}' in Key Vault: {e}", level=logging.ERROR, exceptionTraceback=True)
-                    raise Exception(f"Failed to store plugin additionalField secret '{k}' in Key Vault: {e}")
+                    raise RuntimeError(f"Failed to store plugin additionalField secret '{k}' in Key Vault: {e}") from e
             elif _is_sensitive_plugin_additional_field(updated, k):
                 addset_source = 'action-addset'
                 akv_key = _build_plugin_additional_field_secret_name(plugin_name, k)
@@ -828,13 +1162,15 @@ def keyvault_plugin_save_helper(plugin_dict, scope_value, scope="global", existi
                         addset_source,
                         scope,
                     )
+                except ValueError:
+                    raise
                 except Exception as e:
                     log_event(
                         f"Failed to store plugin additionalField secret '{k}' in Key Vault: {e}",
                         level=logging.ERROR,
                         exceptionTraceback=True,
                     )
-                    raise Exception(f"Failed to store plugin additionalField secret '{k}' in Key Vault: {e}")
+                    raise RuntimeError(f"Failed to store plugin additionalField secret '{k}' in Key Vault: {e}") from e
     return updated
 # Helper to retrieve plugin secrets from Key Vault
 def keyvault_plugin_get_helper(plugin_dict, scope_value, scope="global", return_type=SecretReturnType.TRIGGER):
@@ -891,6 +1227,38 @@ def keyvault_plugin_get_helper(plugin_dict, scope_value, scope="global", return_
     additional_fields = updated.get('additionalFields', {})
     if isinstance(additional_fields, dict):
         new_additional_fields = dict(additional_fields)
+        if _is_mcp_plugin(updated):
+            custom_headers = additional_fields.get(MCP_CUSTOM_HEADERS_FIELD, {})
+            if isinstance(custom_headers, dict):
+                new_custom_headers = dict(custom_headers)
+                for header_name, header_value in custom_headers.items():
+                    if not header_value:
+                        continue
+                    if isinstance(header_value, str) and validate_secret_name_dynamic(header_value):
+                        try:
+                            if return_type == SecretReturnType.VALUE:
+                                new_custom_headers[header_name] = resolve_secret_reference_for_context(
+                                    header_value,
+                                    scope_value=scope_value,
+                                    scope=scope,
+                                    allowed_sources={"action-addset"},
+                                    context_label=f"MCP custom header '{header_name}'",
+                                )
+                            elif return_type == SecretReturnType.NAME:
+                                new_custom_headers[header_name] = header_value
+                            else:
+                                new_custom_headers[header_name] = ui_trigger_word
+                        except Exception as e:
+                            log_event(
+                                f"Failed to retrieve MCP custom header secret '{header_name}' from Key Vault: {e}",
+                                level=logging.ERROR,
+                                exceptionTraceback=True,
+                            )
+                            raise Exception(f"Failed to retrieve MCP custom header secret '{header_name}' from Key Vault: {e}")
+                    elif return_type == SecretReturnType.TRIGGER:
+                        new_custom_headers[header_name] = ui_trigger_word
+                new_additional_fields[MCP_CUSTOM_HEADERS_FIELD] = new_custom_headers
+
         for k, v in additional_fields.items():
             if (k.endswith('__Secret') or _is_sensitive_plugin_additional_field(updated, k)) and v and validate_secret_name_dynamic(v):
                 try:
@@ -960,10 +1328,28 @@ def keyvault_model_endpoint_save_helper(endpoint_dict, scope_value, scope="globa
             if existing_reference:
                 updated_auth[auth_field] = existing_reference
             else:
-                updated_auth.pop(auth_field, None)
+                raise ValueError(
+                    f"Stored Key Vault placeholder for model endpoint '{auth_field}' has no existing secret reference. Re-enter the secret value."
+                )
             continue
 
         if validate_secret_name_dynamic(value):
+            if not secret_reference_matches_context(
+                value,
+                scope_value=scope_value,
+                scope=scope,
+                allowed_sources={source},
+            ):
+                _log_secret_reference_context_mismatch(
+                    value,
+                    f"model endpoint auth field '{auth_field}'",
+                    scope_value=scope_value,
+                    scope=scope,
+                    allowed_sources={source},
+                )
+                raise ValueError(
+                    f"Stored Key Vault reference for model endpoint '{auth_field}' does not match the expected scope."
+                )
             updated_auth[auth_field] = value
             continue
 
@@ -1130,6 +1516,42 @@ def keyvault_plugin_delete_helper(plugin_dict, scope_value, scope="global"):
 
     additional_fields = plugin_dict.get('additionalFields', {})
     if isinstance(additional_fields, dict):
+        if _is_mcp_plugin(plugin_dict):
+            custom_headers = additional_fields.get(MCP_CUSTOM_HEADERS_FIELD, {})
+            if isinstance(custom_headers, dict):
+                for header_name, header_value in custom_headers.items():
+                    if not header_value or not validate_secret_name_dynamic(header_value):
+                        continue
+                    if not secret_reference_matches_context(
+                        header_value,
+                        scope_value=scope_value,
+                        scope=scope,
+                        allowed_sources={"action-addset"},
+                    ):
+                        _log_secret_reference_context_mismatch(
+                            header_value,
+                            f"MCP custom header '{header_name}' deletion",
+                            scope_value=scope_value,
+                            scope=scope,
+                            allowed_sources={"action-addset"},
+                        )
+                        continue
+                    try:
+                        key_vault_url = f"https://{key_vault_name}{KEY_VAULT_DOMAIN}"
+                        log_event(
+                            f"Deleting MCP custom header secret '{header_name}' for action '{plugin_name}' for '{scope}' '{scope_value}'",
+                            level=logging.INFO,
+                        )
+                        client = SecretClient(vault_url=key_vault_url, credential=get_keyvault_credential())
+                        client.begin_delete_secret(header_value)
+                    except Exception as e:
+                        log_event(
+                            f"Error deleting MCP custom header secret '{header_name}' for action '{plugin_name}': {e}",
+                            level=logging.ERROR,
+                            exceptionTraceback=True,
+                        )
+                        raise Exception(f"Error deleting MCP custom header secret '{header_name}' for action '{plugin_name}': {e}")
+
         for k, v in additional_fields.items():
             if (k.endswith('__Secret') or _is_sensitive_plugin_additional_field(plugin_dict, k)) and v and validate_secret_name_dynamic(v):
                 if not secret_reference_matches_context(

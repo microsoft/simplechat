@@ -58,7 +58,7 @@ class SQLQueryPlugin(BasePlugin):
         self._metadata = manifest.get('metadata', {})
         
         # Add comprehensive logging
-        log_event(f"[SQLQueryPlugin] Initializing plugin", extra={
+        log_event(f"[SQL_QUERY_PLUGIN] Initializing plugin", extra={
             "database_type": self.database_type,
             "auth_type": self.auth_type,
             "server": self.server,
@@ -70,13 +70,13 @@ class SQLQueryPlugin(BasePlugin):
             "has_username": bool(self.username),
             "manifest_keys": list(manifest.keys())
         })
-        debug_print(f"[SQLQueryPlugin] Initializing - DB Type: {self.database_type}, Auth: {self.auth_type}, Server: {self.server}, Database: {self.database}, Read-Only: {self.read_only}")
+        debug_print(f"[SQL_QUERY_PLUGIN] Initializing - DB Type: {self.database_type}, Auth: {self.auth_type}, Server: {self.server}, Database: {self.database}, Read-Only: {self.read_only}")
         
         # Validate required configuration
         if not self.connection_string and not (self.server and self.database):
             error_msg = "SQLQueryPlugin requires either 'connection_string' or 'server' and 'database' in the manifest."
-            log_event(f"[SQLQueryPlugin] Configuration error: {error_msg}", extra={"manifest": manifest})
-            debug_print(f"[SQLQueryPlugin] ERROR: {error_msg}")
+            log_event(f"[SQL_QUERY_PLUGIN] Configuration error: {error_msg}", extra={"manifest": manifest})
+            debug_print(f"[SQL_QUERY_PLUGIN] ERROR: {error_msg}")
             raise ValueError(error_msg)
         
         # Set up database-specific configurations
@@ -84,7 +84,7 @@ class SQLQueryPlugin(BasePlugin):
         
         # Initialize connection (lazy loading)
         self._connection = None
-        debug_print(f"[SQLQueryPlugin] Initialization complete")
+        debug_print(f"[SQL_QUERY_PLUGIN] Initialization complete")
 
     def _setup_database_config(self):
         """Setup database-specific configurations and import requirements"""
@@ -124,7 +124,7 @@ class SQLQueryPlugin(BasePlugin):
         """Create database connection based on database type"""
         try:
             debug_print(
-                f"[SQLQueryPlugin] Creating database connection database_type={self.database_type} "
+                f"[SQL_QUERY_PLUGIN] Creating database connection database_type={self.database_type} "
                 f"auth_type={self.auth_type} server={self.server} database={self.database} "
                 f"driver={self.driver or self.supported_databases.get(self.database_type, {}).get('default_driver')} "
                 f"has_connection_string={bool(self.connection_string)} timeout={self.timeout}"
@@ -190,14 +190,14 @@ class SQLQueryPlugin(BasePlugin):
                 return conn
                 
         except ImportError as e:
-            debug_print(f"[SQLQueryPlugin] Database driver import failed database_type={self.database_type} error={e}")
+            debug_print(f"[SQL_QUERY_PLUGIN] Database driver import failed database_type={self.database_type} error={e}")
             raise ImportError(f"Required database driver not installed for {self.database_type}: {e}")
         except Exception as e:
             debug_print(
-                f"[SQLQueryPlugin] Connection failed database_type={self.database_type} server={self.server} "
+                f"[SQL_QUERY_PLUGIN] Connection failed database_type={self.database_type} server={self.server} "
                 f"database={self.database} exception_type={type(e).__name__} message={e}"
             )
-            log_event(f"[SQLQueryPlugin] Connection failed: {e}", extra={"database_type": self.database_type})
+            log_event(f"[SQL_QUERY_PLUGIN] Connection failed: {e}", extra={"database_type": self.database_type})
             raise
 
     @property
@@ -284,7 +284,7 @@ class SQLQueryPlugin(BasePlugin):
                 raise ValueError(f"Invalid query: {validation_result['issues']}")
             
             debug_print(
-                f"[SQLQueryPlugin] Executing query database_type={self.database_type} "
+                f"[SQL_QUERY_PLUGIN] Executing query database_type={self.database_type} "
                 f"query_length={len(cleaned_query)} parameters_present={bool(parameters)} "
                 f"max_rows={max_rows or self.max_rows} timeout={self.timeout}"
             )
@@ -336,17 +336,17 @@ class SQLQueryPlugin(BasePlugin):
                 "query": cleaned_query
             }
             
-            log_event(f"[SQLQueryPlugin] Executed query successfully, returned {len(results)} rows")
+            log_event(f"[SQL_QUERY_PLUGIN] Executed query successfully, returned {len(results)} rows")
             debug_print(
-                f"[SQLQueryPlugin] Query executed successfully row_count={len(results)} "
+                f"[SQL_QUERY_PLUGIN] Query executed successfully row_count={len(results)} "
                 f"columns={len(columns)} truncated={len(results) >= effective_max_rows}"
             )
             return ResultWithMetadata(result_data, self.metadata)
             
         except Exception as e:
-            log_event(f"[SQLQueryPlugin] Error executing query: {e}")
+            log_event(f"[SQL_QUERY_PLUGIN] Error executing query: {e}")
             debug_print(
-                f"[SQLQueryPlugin] Error executing query database_type={self.database_type} "
+                f"[SQL_QUERY_PLUGIN] Error executing query database_type={self.database_type} "
                 f"exception_type={type(e).__name__} message={e}"
             )
             error_result = {
@@ -375,7 +375,7 @@ class SQLQueryPlugin(BasePlugin):
                 raise ValueError(f"Invalid query: {validation_result['issues']}")
             
             debug_print(
-                f"[SQLQueryPlugin] Executing scalar query database_type={self.database_type} "
+                f"[SQL_QUERY_PLUGIN] Executing scalar query database_type={self.database_type} "
                 f"query_length={len(cleaned_query)} parameters_present={bool(parameters)} timeout={self.timeout}"
             )
             conn = self._get_connection()
@@ -409,14 +409,14 @@ class SQLQueryPlugin(BasePlugin):
                 "query": cleaned_query
             }
             
-            log_event(f"[SQLQueryPlugin] Executed scalar query successfully")
-            debug_print("[SQLQueryPlugin] Scalar query executed successfully.")
+            log_event(f"[SQL_QUERY_PLUGIN] Executed scalar query successfully")
+            debug_print("[SQL_QUERY_PLUGIN] Scalar query executed successfully.")
             return ResultWithMetadata(result_data, self.metadata)
             
         except Exception as e:
-            log_event(f"[SQLQueryPlugin] Error executing scalar query: {e}")
+            log_event(f"[SQL_QUERY_PLUGIN] Error executing scalar query: {e}")
             debug_print(
-                f"[SQLQueryPlugin] Error executing scalar query database_type={self.database_type} "
+                f"[SQL_QUERY_PLUGIN] Error executing scalar query database_type={self.database_type} "
                 f"exception_type={type(e).__name__} message={e}"
             )
             error_result = {
@@ -434,11 +434,11 @@ class SQLQueryPlugin(BasePlugin):
             cleaned_query = self._clean_query(query)
             validation_result = self._validate_query(cleaned_query)
             
-            log_event(f"[SQLQueryPlugin] Query validation completed")
+            log_event(f"[SQL_QUERY_PLUGIN] Query validation completed")
             return ResultWithMetadata(validation_result, self.metadata)
             
         except Exception as e:
-            log_event(f"[SQLQueryPlugin] Error validating query: {e}")
+            log_event(f"[SQL_QUERY_PLUGIN] Error validating query: {e}")
             error_result = {
                 "is_valid": False,
                 "issues": [str(e)],
@@ -464,7 +464,7 @@ class SQLQueryPlugin(BasePlugin):
                 raise ValueError(f"Invalid query: {validation_result['issues']}")
             
             debug_print(
-                f"[SQLQueryPlugin] Executing query_database database_type={self.database_type} "
+                f"[SQL_QUERY_PLUGIN] Executing query_database database_type={self.database_type} "
                 f"query_length={len(cleaned_query)} max_rows={max_rows or self.max_rows} timeout={self.timeout}"
             )
             conn = self._get_connection()
@@ -509,17 +509,17 @@ class SQLQueryPlugin(BasePlugin):
                 "query": cleaned_query
             }
             
-            log_event(f"[SQLQueryPlugin] query_database executed successfully, returned {len(results)} rows", extra={"question": question})
+            log_event(f"[SQL_QUERY_PLUGIN] query_database executed successfully, returned {len(results)} rows", extra={"question": question})
             debug_print(
-                f"[SQLQueryPlugin] query_database executed successfully row_count={len(results)} "
+                f"[SQL_QUERY_PLUGIN] query_database executed successfully row_count={len(results)} "
                 f"columns={len(columns)} truncated={len(results) >= effective_max_rows}"
             )
             return ResultWithMetadata(result_data, self.metadata)
             
         except Exception as e:
-            log_event(f"[SQLQueryPlugin] Error in query_database: {e}", extra={"question": question})
+            log_event(f"[SQL_QUERY_PLUGIN] Error in query_database: {e}", extra={"question": question})
             debug_print(
-                f"[SQLQueryPlugin] Error in query_database database_type={self.database_type} "
+                f"[SQL_QUERY_PLUGIN] Error in query_database database_type={self.database_type} "
                 f"exception_type={type(e).__name__} message={e}"
             )
             error_result = {

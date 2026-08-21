@@ -18,6 +18,7 @@ from azure.cosmos import exceptions
 from flask import current_app
 import logging
 from config import cosmos_notifications_container
+from functions_appinsights import log_event
 from functions_group import find_group_by_id
 from functions_debug import debug_print
 from functions_public_workspaces import find_public_workspace_by_id, get_user_public_workspaces
@@ -26,7 +27,12 @@ from functions_public_workspaces import find_public_workspace_by_id, get_user_pu
 TTL_60_DAYS = 60 * 24 * 60 * 60  # 60 days in seconds (5184000)
 ASSIGNMENT_NOTIFICATIONS_PARTITION_KEY = 'assignment-notifications'
 WORKFLOW_ALERT_NOTIFICATION_TYPE = 'workflow_priority_alert'
+KEY_VAULT_SECRET_REMINDER_NOTIFICATION_TYPE = 'key_vault_secret_expiring'
 WORKFLOW_ALERT_PRIORITY_CONFIG = {
+    'info': {
+        'icon': 'bi-info-circle',
+        'color': 'info',
+    },
     'low': {
         'icon': 'bi-bell',
         'color': 'info',
@@ -39,7 +45,16 @@ WORKFLOW_ALERT_PRIORITY_CONFIG = {
         'icon': 'bi-exclamation-triangle',
         'color': 'danger',
     },
+    'critical': {
+        'icon': 'bi-exclamation-octagon',
+        'color': 'danger',
+    },
 }
+# A run that errored is presented differently from a run that found something,
+# independently of how loud the owner made the severity.
+WORKFLOW_ALERT_FAILURE_CATEGORY = 'failure'
+WORKFLOW_ALERT_FAILURE_ICON = 'bi-x-octagon'
+WORKFLOW_ALERT_DELIVERY_NOTIFY_ONLY = 'notify_only'
 
 # Notification type registry for extensibility
 NOTIFICATION_TYPES = {
@@ -159,9 +174,25 @@ NOTIFICATION_TYPES = {
         'icon': 'bi-trash',
         'color': 'secondary'
     },
+    'generated_file_approval_pending': {
+        'icon': 'bi-file-earmark-lock',
+        'color': 'warning'
+    },
+    'generated_file_approval_approved': {
+        'icon': 'bi-file-earmark-check',
+        'color': 'success'
+    },
+    'generated_file_approval_denied': {
+        'icon': 'bi-file-earmark-x',
+        'color': 'danger'
+    },
     WORKFLOW_ALERT_NOTIFICATION_TYPE: {
         'icon': 'bi-bell',
         'color': 'secondary'
+    },
+    KEY_VAULT_SECRET_REMINDER_NOTIFICATION_TYPE: {
+        'icon': 'bi-safe',
+        'color': 'warning'
     }
 }
 
@@ -206,13 +237,32 @@ def _get_workflow_alert_priority(notification):
     return priority
 
 
+def _get_workflow_alert_category(notification):
+    metadata = notification.get('metadata') or {}
+    category = str(metadata.get('category') or 'alert').strip().lower()
+    return category if category in {'alert', WORKFLOW_ALERT_FAILURE_CATEGORY} else 'alert'
+
+
+def _get_workflow_alert_delivery(notification):
+    """Return the delivery style, defaulting to popup so legacy alerts still interrupt."""
+    metadata = notification.get('metadata') or {}
+    delivery = str(metadata.get('delivery') or '').strip().lower()
+    return delivery if delivery in {'notify_only', 'popup'} else 'popup'
+
+
 def _get_notification_type_config(notification):
     notification_type = notification.get('notification_type')
     if notification_type == WORKFLOW_ALERT_NOTIFICATION_TYPE:
-        return WORKFLOW_ALERT_PRIORITY_CONFIG.get(
+        priority_config = WORKFLOW_ALERT_PRIORITY_CONFIG.get(
             _get_workflow_alert_priority(notification),
             NOTIFICATION_TYPES[WORKFLOW_ALERT_NOTIFICATION_TYPE],
         )
+        if _get_workflow_alert_category(notification) == WORKFLOW_ALERT_FAILURE_CATEGORY:
+            return {
+                'icon': WORKFLOW_ALERT_FAILURE_ICON,
+                'color': priority_config.get('color', 'danger'),
+            }
+        return priority_config
 
     return NOTIFICATION_TYPES.get(
         notification_type,
@@ -694,6 +744,8 @@ def get_user_notifications(user_id, page=1, per_page=20, include_read=True, incl
             notif['type_config'] = _get_notification_type_config(notif)
             if notif.get('notification_type') == WORKFLOW_ALERT_NOTIFICATION_TYPE:
                 notif['priority'] = _get_workflow_alert_priority(notif)
+                notif['category'] = _get_workflow_alert_category(notif)
+                notif['delivery'] = _get_workflow_alert_delivery(notif)
             
             filtered_notifications.append(notif)
         
@@ -755,6 +807,42 @@ def get_unread_notification_count(user_id):
         return 0
 
 
+def get_recent_chat_response_notifications(user_id, limit=50):
+    """Return recent personal chat completion event identities for one user."""
+    try:
+        normalized_limit = max(1, min(int(limit or 50), 100))
+    except (TypeError, ValueError):
+        normalized_limit = 50
+
+    try:
+        notifications = list(cosmos_notifications_container.query_items(
+            query=(
+                f"SELECT TOP {normalized_limit} "
+                "c.id, c.created_at, c.link_context, c.metadata "
+                "FROM c WHERE c.user_id = @user_id "
+                "AND c.notification_type = @notification_type "
+                "ORDER BY c.created_at DESC"
+            ),
+            parameters=[
+                {"name": "@user_id", "value": user_id},
+                {"name": "@notification_type", "value": "chat_response_complete"},
+            ],
+            partition_key=user_id,
+        ))
+        return notifications
+    except Exception as e:
+        log_event(
+            "[NOTIFICATIONS] Failed to load recent chat completion events.",
+            extra={
+                "user_id": user_id,
+                "error": str(e),
+            },
+            level=logging.ERROR,
+            exceptionTraceback=True,
+        )
+        raise
+
+
 def get_unread_workflow_priority_notifications(user_id, limit=5):
     """Return the most recent unread workflow alert notifications for a user."""
     try:
@@ -783,11 +871,16 @@ def get_unread_workflow_priority_notifications(user_id, limit=5):
                 continue
             if user_id in notification.get('read_by', []):
                 continue
+            # Quiet severities stay in the notification bell instead of interrupting.
+            if _get_workflow_alert_delivery(notification) == WORKFLOW_ALERT_DELIVERY_NOTIFY_ONLY:
+                continue
 
             notification['message'] = _get_notification_display_message(notification)
             notification['is_read'] = False
             notification['is_dismissed'] = False
             notification['priority'] = _get_workflow_alert_priority(notification)
+            notification['category'] = _get_workflow_alert_category(notification)
+            notification['delivery'] = _get_workflow_alert_delivery(notification)
             notification['type_config'] = _get_notification_type_config(notification)
             unread_notifications.append(notification)
 

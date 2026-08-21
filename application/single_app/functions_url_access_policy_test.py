@@ -171,7 +171,7 @@ def run_url_access_policy_test(
     guidance = REASON_GUIDANCE.get(reason, [])
 
     log_event(
-        "[UrlAccessPolicyTest] URL Access policy test completed",
+        "[URL_ACCESS_POLICY_TEST] URL Access policy test completed",
         extra={
             "allowed": allowed,
             "domain_allowed": domain_allowed,

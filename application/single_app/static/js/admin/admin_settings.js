@@ -1,5 +1,6 @@
 // admin_settings.js
 import { showToast } from "../chat/chat-toast.js";
+import { sanitizeHttpUrl } from "../chat/chat-utils.js";
 
 let gptSelected = window.gptSelected || [];
 let gptAll      = window.gptAll || [];
@@ -11,14 +12,13 @@ let imageSelected = window.imageSelected || [];
 let imageAll      = window.imageAll || [];
 
 let classificationCategories = window.classificationCategories || [];
-let enableDocumentClassification = window.enableDocumentClassification || false;
 
 let externalLinks = window.externalLinks || [];
-let enableExternalLinks = window.enableExternalLinks || false;
 let externalLinksMenuName = window.externalLinksMenuName || 'External Links';
 let agentsPagePromotedPopularAgents = Array.isArray(window.agentsPagePromotedPopularAgents)
     ? window.agentsPagePromotedPopularAgents
     : [];
+let enableSemanticKernel = Boolean(window.enableSemanticKernel);
 let releaseNotificationsRegistration = window.releaseNotificationsRegistration || {
     registered: false,
     name: '',
@@ -36,6 +36,17 @@ let currentCosmosContainers = [];
 let currentCosmosMetricsWindowMinutes = 0;
 let currentCosmosStatusLoaded = false;
 let currentCosmosContainerSort = { field: 'container_name', direction: 'asc' };
+let pendingFileProcessingLogCleanup = null;
+let documentAccessIndexStatusPollId = null;
+let redisExplorerState = {
+    cursor: '0',
+    nextCursor: '0',
+    cursorHistory: [],
+    filter: '',
+    pageSize: 25,
+    loaded: false,
+    selectedKey: ''
+};
 
 const COSMOS_CONTAINER_SORT_FIELDS = new Set([
     'container_name',
@@ -47,6 +58,7 @@ const COSMOS_CONTAINER_SORT_FIELDS = new Set([
 const COSMOS_CONTAINER_TEXT_SORT_FIELDS = new Set(['container_name', 'policy']);
 const COSMOS_THROUGHPUT_SIMPLECHAT_MAX_RU = 10000;
 const COSMOS_THROUGHPUT_PORTAL_MANAGED_MESSAGE = 'Throughput above 10,000 RU/s is monitored only in SimpleChat. Use the Azure portal to change capacity; capacity changes above this level can take 4 to 6 hours.';
+const DOCUMENT_ACCESS_INDEX_STATUS_POLL_INTERVAL_MS = 7500;
 const GROUP_WORKFLOW_ASSIGNMENT_PARSE_DEPTH_LIMIT = 5;
 
 const enableClassificationToggle = document.getElementById('enable_document_classification');
@@ -389,6 +401,19 @@ async function loadPromotedPopularAvailableAgents() {
     if (!promotedPopularAgentsSelect) {
         return;
     }
+    if (!enableSemanticKernel) {
+        agentsPagePromotedAvailableAgents = [];
+        setPromotedPopularLoadError('');
+        promotedPopularAgentsSelect.textContent = '';
+        const option = document.createElement('option');
+        option.value = '';
+        option.textContent = 'Enable Agents to load available agents';
+        promotedPopularAgentsSelect.appendChild(option);
+        if (promotedPopularAgentsAddButton) {
+            promotedPopularAgentsAddButton.disabled = true;
+        }
+        return;
+    }
     try {
         const response = await fetch('/api/agents/catalog?include_usage=true');
         const payload = await response.json().catch(() => ({}));
@@ -463,11 +488,653 @@ function setButtonBusy(button, isBusy, busyText) {
     }
 }
 
+async function copyTextToClipboard(text) {
+    if (!text) {
+        throw new Error('No text was available to copy.');
+    }
+
+    if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+        return;
+    }
+
+    const fallbackTextarea = document.createElement('textarea');
+    fallbackTextarea.value = text;
+    fallbackTextarea.setAttribute('readonly', 'readonly');
+    fallbackTextarea.classList.add('visually-hidden');
+    document.body.append(fallbackTextarea);
+    try {
+        fallbackTextarea.focus();
+        fallbackTextarea.select();
+        if (!document.execCommand('copy')) {
+            throw new Error('Clipboard copy command was not available.');
+        }
+    } finally {
+        fallbackTextarea.remove();
+    }
+}
+
+function setupInboundMcpObservabilityCopyButtons() {
+    document.querySelectorAll('.inbound-mcp-kql-copy-btn').forEach(button => {
+        button.addEventListener('click', async () => {
+            const targetId = button.dataset.kqlTarget || '';
+            const queryText = document.getElementById(targetId)?.textContent || '';
+            try {
+                await copyTextToClipboard(queryText.trim());
+                showToast('Application Insights query copied to clipboard.', 'success');
+            } catch (error) {
+                showToast(error.message || 'Could not copy the Application Insights query.', 'danger');
+            }
+        });
+    });
+}
+
+function setupInboundMcpEasyAuthGuard() {
+    const enableToggle = document.getElementById('enable_inbound_mcp_server');
+    const modalElement = document.getElementById('inboundMcpEasyAuthModal');
+    const confirmCheckbox = document.getElementById('inbound-mcp-easy-auth-confirm');
+    const verifyButton = document.getElementById('inbound-mcp-easy-auth-verify');
+    const statusElement = document.getElementById('inbound-mcp-easy-auth-status');
+    const resultsList = document.getElementById('inbound-mcp-easy-auth-results');
+    const copyScriptButton = document.getElementById('inbound-mcp-copy-script');
+    const scriptCodeElement = document.getElementById('inbound-mcp-easy-auth-script-code');
+
+    if (!enableToggle || !modalElement || !confirmCheckbox || !verifyButton) {
+        return;
+    }
+
+    const modal = bootstrap.Modal.getOrCreateInstance(modalElement);
+    const wasEnabledOnLoad = enableToggle.checked;
+    let easyAuthVerified = wasEnabledOnLoad;
+
+    const setStatus = (message, variant = 'info') => {
+        if (!statusElement) {
+            return;
+        }
+        statusElement.textContent = message || '';
+        statusElement.className = `alert alert-${variant}${message ? '' : ' d-none'}`;
+    };
+
+    const renderResults = endpoints => {
+        if (!resultsList) {
+            return;
+        }
+        resultsList.replaceChildren();
+        if (!Array.isArray(endpoints) || endpoints.length === 0) {
+            resultsList.classList.add('d-none');
+            return;
+        }
+        endpoints.forEach(endpoint => {
+            const item = document.createElement('li');
+            const statusBadge = document.createElement('span');
+            const path = document.createElement('code');
+            const message = document.createElement('span');
+
+            item.className = 'list-group-item d-flex flex-column flex-lg-row gap-2 justify-content-between';
+            statusBadge.className = `badge align-self-start ${endpoint.success ? 'text-bg-success' : 'text-bg-danger'}`;
+            statusBadge.textContent = endpoint.success ? 'OK' : 'Needs fix';
+            path.textContent = endpoint.path || 'Unknown endpoint';
+            message.textContent = endpoint.message || 'No details returned.';
+
+            item.append(statusBadge, path, message);
+            resultsList.append(item);
+        });
+        resultsList.classList.remove('d-none');
+    };
+
+    const resetModalState = () => {
+        confirmCheckbox.checked = false;
+        setButtonBusy(verifyButton, false);
+        verifyButton.disabled = true;
+        setStatus('', 'info');
+        renderResults([]);
+    };
+
+    confirmCheckbox.addEventListener('change', () => {
+        verifyButton.disabled = !confirmCheckbox.checked;
+    });
+
+    copyScriptButton?.addEventListener('click', async () => {
+        const scriptText = scriptCodeElement?.textContent || '';
+        if (!scriptText) {
+            showToast('No PowerShell script was available to copy.', 'warning');
+            return;
+        }
+
+        try {
+            await copyTextToClipboard(scriptText);
+            showToast('PowerShell script copied to clipboard.', 'success');
+        } catch (error) {
+            showToast(error.message || 'Could not copy the PowerShell script.', 'danger');
+        }
+    });
+
+    enableToggle.addEventListener('change', event => {
+        if (!enableToggle.checked || easyAuthVerified) {
+            return;
+        }
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        enableToggle.checked = false;
+        resetModalState();
+        modal.show();
+    });
+
+    verifyButton.addEventListener('click', async () => {
+        if (!confirmCheckbox.checked) {
+            return;
+        }
+
+        setButtonBusy(verifyButton, true, 'Verifying endpoints...');
+        setStatus('Checking unauthenticated access to the inbound MCP endpoints...', 'info');
+        renderResults([]);
+
+        try {
+            const response = await fetch('/api/admin/settings/inbound-mcp/easy-auth-check', {
+                method: 'POST',
+                headers: {
+                    'Accept': 'application/json',
+                    'Content-Type': 'application/json'
+                },
+                credentials: 'same-origin'
+            });
+            const payload = await response.json();
+            renderResults(payload.endpoints);
+
+            if (!response.ok || payload.success !== true) {
+                setStatus(payload.message || 'Easy Auth exclusion verification failed.', 'danger');
+                enableToggle.checked = false;
+                easyAuthVerified = false;
+                return;
+            }
+
+            easyAuthVerified = true;
+            enableToggle.checked = true;
+            setStatus(payload.message || 'Easy Auth exclusions verified.', 'success');
+            markFormAsModified();
+            modal.hide();
+            showToast('Inbound MCP endpoint exclusions verified. Save settings to enable the server.', 'success');
+        } catch (error) {
+            setStatus(error.message || 'Easy Auth exclusion verification failed.', 'danger');
+            enableToggle.checked = false;
+            easyAuthVerified = false;
+        } finally {
+            setButtonBusy(verifyButton, false);
+            verifyButton.disabled = !confirmCheckbox.checked;
+        }
+    });
+
+    adminForm?.addEventListener('submit', event => {
+        if (!enableToggle.checked || easyAuthVerified) {
+            return;
+        }
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        resetModalState();
+        modal.show();
+        showToast('Verify the inbound MCP Easy Auth exclusions before saving.', 'warning');
+    });
+}
+
+const inboundMcpEntryListConfigs = {
+    clients: {
+        hiddenId: 'inbound_mcp_allowed_client_app_entries_json',
+        bodyId: 'inbound-mcp-client-app-entries-body',
+        summaryId: 'inbound-mcp-client-app-entries-summary',
+        modalTitle: 'Client app ID',
+        valueLabel: 'Client app ID',
+        emptyMessage: 'No client app IDs are allowed.',
+        valueHeader: 'Client app ID',
+        requireGuid: true,
+        lowercase: true,
+    },
+    tenants: {
+        hiddenId: 'inbound_mcp_allowed_tenant_entries_json',
+        bodyId: 'inbound-mcp-tenant-entries-body',
+        summaryId: 'inbound-mcp-tenant-entries-summary',
+        modalTitle: 'Tenant ID',
+        valueLabel: 'Tenant ID',
+        emptyMessage: 'Only the configured SimpleChat tenant is allowed.',
+        valueHeader: 'Tenant ID',
+        requireGuid: true,
+        lowercase: true,
+    },
+    sources: {
+        hiddenId: 'inbound_mcp_allowed_source_entries_json',
+        bodyId: 'inbound-mcp-source-entries-body',
+        summaryId: 'inbound-mcp-source-entries-summary',
+        modalTitle: 'Source ID',
+        valueLabel: 'Source value',
+        emptyMessage: 'No explicit source IDs are configured.',
+        valueHeader: 'Source value',
+        requireGuid: false,
+        lowercase: false,
+        disallowWildcard: true,
+    },
+};
+const inboundMcpEntriesByList = {
+    clients: [],
+    tenants: [],
+    sources: [],
+};
+
+function normalizeInboundMcpEntry(candidate, config) {
+    if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) {
+        return null;
+    }
+    let value = normalizeAdminText(candidate.value || candidate.id || candidate.guid || candidate.client_id || candidate.tenant_id || candidate.source_id);
+    if (config.lowercase) {
+        value = value.toLowerCase();
+    }
+    if (!value) {
+        return null;
+    }
+    return {
+        value,
+        description: normalizeAdminText(candidate.description || candidate.label || candidate.name),
+    };
+}
+
+function parseInboundMcpEntries(hiddenField, config) {
+    let parsedEntries = [];
+    try {
+        const parsedValue = JSON.parse(hiddenField?.value || '[]');
+        parsedEntries = Array.isArray(parsedValue) ? parsedValue : [];
+    } catch (error) {
+        parsedEntries = [];
+    }
+
+    const seenValues = new Set();
+    return parsedEntries
+        .map(candidate => normalizeInboundMcpEntry(candidate, config))
+        .filter(Boolean)
+        .filter(entry => {
+            const key = config.lowercase ? entry.value.toLowerCase() : entry.value;
+            if (seenValues.has(key)) {
+                return false;
+            }
+            seenValues.add(key);
+            return true;
+        });
+}
+
+function syncInboundMcpEntryInput(listKey, markModified = true) {
+    const config = inboundMcpEntryListConfigs[listKey];
+    const hiddenField = document.getElementById(config?.hiddenId || '');
+    if (!config || !hiddenField) {
+        return;
+    }
+    hiddenField.value = JSON.stringify(inboundMcpEntriesByList[listKey] || []);
+    if (markModified) {
+        markFormAsModified();
+    }
+}
+
+function createInboundMcpEntryActionButton(iconClass, label, buttonClass, handler) {
+    const button = createIconButton(iconClass, label, buttonClass);
+    button.addEventListener('click', handler);
+    return button;
+}
+
+function renderInboundMcpEntries(listKey) {
+    const config = inboundMcpEntryListConfigs[listKey];
+    const body = document.getElementById(config?.bodyId || '');
+    const summary = document.getElementById(config?.summaryId || '');
+    if (!config || !body) {
+        return;
+    }
+
+    syncInboundMcpEntryInput(listKey, false);
+    body.replaceChildren();
+    const entries = inboundMcpEntriesByList[listKey] || [];
+    if (summary) {
+        summary.textContent = entries.length === 0
+            ? config.emptyMessage
+            : `${entries.length} entr${entries.length === 1 ? 'y' : 'ies'} configured.`;
+    }
+
+    if (entries.length === 0) {
+        const row = document.createElement('tr');
+        const cell = document.createElement('td');
+        cell.colSpan = 3;
+        cell.className = 'text-center text-muted';
+        cell.textContent = config.emptyMessage;
+        row.appendChild(cell);
+        body.appendChild(row);
+        return;
+    }
+
+    entries.forEach((entry, index) => {
+        const row = document.createElement('tr');
+
+        const valueCell = document.createElement('td');
+        const valueCode = document.createElement('code');
+        valueCode.textContent = entry.value;
+        valueCell.appendChild(valueCode);
+
+        const descriptionCell = document.createElement('td');
+        descriptionCell.textContent = entry.description || 'No description';
+        if (!entry.description) {
+            descriptionCell.className = 'text-muted';
+        }
+
+        const actionCell = document.createElement('td');
+        actionCell.className = 'text-end text-nowrap';
+        actionCell.appendChild(createInboundMcpEntryActionButton('bi bi-pencil', `Edit ${config.valueHeader}`, 'btn-outline-secondary', () => {
+            openInboundMcpEntryModal(listKey, index);
+        }));
+        actionCell.appendChild(document.createTextNode(' '));
+        actionCell.appendChild(createInboundMcpEntryActionButton('bi bi-trash', `Remove ${config.valueHeader}`, 'btn-outline-danger', () => {
+            inboundMcpEntriesByList[listKey].splice(index, 1);
+            renderInboundMcpEntries(listKey);
+            syncInboundMcpEntryInput(listKey);
+        }));
+
+        row.appendChild(valueCell);
+        row.appendChild(descriptionCell);
+        row.appendChild(actionCell);
+        body.appendChild(row);
+    });
+}
+
+function openInboundMcpEntryModal(listKey, editIndex = -1) {
+    const config = inboundMcpEntryListConfigs[listKey];
+    const modalElement = document.getElementById('inboundMcpEntryModal');
+    if (!config || !modalElement) {
+        return;
+    }
+
+    const modal = bootstrap.Modal.getOrCreateInstance(modalElement);
+    const title = document.getElementById('inboundMcpEntryModalLabel');
+    const listInput = document.getElementById('inbound-mcp-entry-list-key');
+    const editIndexInput = document.getElementById('inbound-mcp-entry-edit-index');
+    const valueInput = document.getElementById('inbound-mcp-entry-value');
+    const descriptionInput = document.getElementById('inbound-mcp-entry-description');
+    const valueLabel = document.getElementById('inbound-mcp-entry-value-label');
+
+    const existingEntry = editIndex >= 0 ? inboundMcpEntriesByList[listKey]?.[editIndex] : null;
+    if (title) {
+        title.textContent = `${existingEntry ? 'Edit' : 'Add'} ${config.modalTitle}`;
+    }
+    if (valueLabel) {
+        valueLabel.textContent = config.valueLabel;
+    }
+    if (listInput) {
+        listInput.value = listKey;
+    }
+    if (editIndexInput) {
+        editIndexInput.value = String(editIndex);
+    }
+    if (valueInput) {
+        valueInput.value = existingEntry?.value || '';
+        valueInput.classList.remove('is-invalid');
+    }
+    if (descriptionInput) {
+        descriptionInput.value = existingEntry?.description || '';
+    }
+    modal.show();
+    valueInput?.focus();
+}
+
+function saveInboundMcpEntryFromModal() {
+    const listKey = normalizeAdminText(document.getElementById('inbound-mcp-entry-list-key')?.value);
+    const config = inboundMcpEntryListConfigs[listKey];
+    const editIndex = Number(document.getElementById('inbound-mcp-entry-edit-index')?.value || '-1');
+    const valueInput = document.getElementById('inbound-mcp-entry-value');
+    const descriptionInput = document.getElementById('inbound-mcp-entry-description');
+    const valueError = document.getElementById('inbound-mcp-entry-value-error');
+    if (!config || !valueInput) {
+        return;
+    }
+
+    let value = normalizeAdminText(valueInput.value);
+    if (config.lowercase) {
+        value = value.toLowerCase();
+    }
+    let errorMessage = '';
+    if (!value) {
+        errorMessage = 'Value is required.';
+    } else if (config.requireGuid && !isGuidLike(value)) {
+        errorMessage = `${config.valueLabel} must be a GUID.`;
+    } else if (config.disallowWildcard && value === '*') {
+        errorMessage = 'Use wildcard source access in Governance policies; keep this list to explicit source values.';
+    }
+
+    if (errorMessage) {
+        valueInput.classList.add('is-invalid');
+        if (valueError) {
+            valueError.textContent = errorMessage;
+        }
+        return;
+    }
+    valueInput.classList.remove('is-invalid');
+
+    const duplicateIndex = (inboundMcpEntriesByList[listKey] || []).findIndex((entry, index) => {
+        if (index === editIndex) {
+            return false;
+        }
+        const left = config.lowercase ? entry.value.toLowerCase() : entry.value;
+        const right = config.lowercase ? value.toLowerCase() : value;
+        return left === right;
+    });
+    if (duplicateIndex >= 0) {
+        valueInput.classList.add('is-invalid');
+        if (valueError) {
+            valueError.textContent = 'That value is already configured.';
+        }
+        return;
+    }
+
+    const nextEntry = {
+        value,
+        description: normalizeAdminText(descriptionInput?.value),
+    };
+    if (editIndex >= 0 && inboundMcpEntriesByList[listKey]?.[editIndex]) {
+        inboundMcpEntriesByList[listKey][editIndex] = nextEntry;
+    } else {
+        inboundMcpEntriesByList[listKey].push(nextEntry);
+    }
+    renderInboundMcpEntries(listKey);
+    syncInboundMcpEntryInput(listKey);
+    bootstrap.Modal.getInstance(document.getElementById('inboundMcpEntryModal'))?.hide();
+}
+
+function ensureDefaultInboundMcpTenantEntry() {
+    const container = document.getElementById('inbound-mcp-configuration');
+    const defaultTenantId = normalizeAdminText(container?.dataset.defaultTenantId).toLowerCase();
+    if (!defaultTenantId || defaultTenantId.startsWith('<')) {
+        return;
+    }
+    const tenantEntries = inboundMcpEntriesByList.tenants || [];
+    if (tenantEntries.some(entry => entry.value.toLowerCase() === defaultTenantId)) {
+        return;
+    }
+    tenantEntries.unshift({
+        value: defaultTenantId,
+        description: 'SimpleChat tenant',
+    });
+}
+
+function setupInboundMcpEntryEditors() {
+    const configurationSection = document.getElementById('inbound-mcp-configuration');
+    if (!configurationSection) {
+        return;
+    }
+
+    Object.entries(inboundMcpEntryListConfigs).forEach(([listKey, config]) => {
+        const hiddenField = document.getElementById(config.hiddenId);
+        inboundMcpEntriesByList[listKey] = parseInboundMcpEntries(hiddenField, config);
+        renderInboundMcpEntries(listKey);
+    });
+
+    document.querySelectorAll('.inbound-mcp-entry-add-btn').forEach(button => {
+        button.addEventListener('click', () => {
+            openInboundMcpEntryModal(button.dataset.mcpEntryList);
+        });
+    });
+
+    document.getElementById('inbound-mcp-entry-save-btn')?.addEventListener('click', saveInboundMcpEntryFromModal);
+
+    const tenantToggle = document.getElementById('inbound_mcp_allow_external_tenants');
+    const tenantContainer = document.getElementById('inbound-mcp-tenant-list-container');
+    tenantToggle?.addEventListener('change', () => {
+        if (tenantToggle.checked) {
+            ensureDefaultInboundMcpTenantEntry();
+            renderInboundMcpEntries('tenants');
+            syncInboundMcpEntryInput('tenants');
+        }
+        tenantContainer?.classList.toggle('d-none', !tenantToggle.checked);
+    });
+
+    const sourceToggle = document.getElementById('inbound_mcp_allow_all_source_ids');
+    const sourceContainer = document.getElementById('inbound-mcp-source-list-container');
+    const allSourceGovernanceCallout = document.getElementById('inbound-mcp-all-source-governance-callout');
+    const controlledSourceGovernanceCallout = document.getElementById('inbound-mcp-controlled-source-governance-callout');
+    const syncSourceGovernanceCallouts = () => {
+        const allowAllSources = Boolean(sourceToggle?.checked);
+        allSourceGovernanceCallout?.classList.toggle('d-none', !allowAllSources);
+        controlledSourceGovernanceCallout?.classList.toggle('d-none', allowAllSources);
+    };
+    if (sourceToggle && !sourceToggle.checked) {
+        inboundMcpEntriesByList.sources = (inboundMcpEntriesByList.sources || []).filter(entry => entry.value !== '*');
+        renderInboundMcpEntries('sources');
+        syncInboundMcpEntryInput('sources', false);
+    }
+    sourceToggle?.addEventListener('change', () => {
+        if (!sourceToggle.checked) {
+            inboundMcpEntriesByList.sources = (inboundMcpEntriesByList.sources || []).filter(entry => entry.value !== '*');
+            renderInboundMcpEntries('sources');
+            syncInboundMcpEntryInput('sources');
+        }
+        sourceContainer?.classList.toggle('d-none', sourceToggle.checked);
+        syncSourceGovernanceCallouts();
+        markFormAsModified();
+    });
+    syncSourceGovernanceCallouts();
+
+    if (tenantToggle?.checked) {
+        ensureDefaultInboundMcpTenantEntry();
+        renderInboundMcpEntries('tenants');
+        syncInboundMcpEntryInput('tenants', false);
+    }
+}
+
 function setElementText(elementId, value) {
     const element = document.getElementById(elementId);
     if (element) {
         element.textContent = value || 'Not loaded';
     }
+}
+
+function getFileProcessingLogCleanupElements() {
+    return {
+        ageInput: document.getElementById('file-processing-log-cleanup-age'),
+        unitSelect: document.getElementById('file-processing-log-cleanup-unit'),
+        deleteOlderButton: document.getElementById('delete-old-file-processing-logs-btn'),
+        deleteAllButton: document.getElementById('delete-all-file-processing-logs-btn'),
+        modalElement: document.getElementById('fileProcessingLogCleanupModal'),
+        confirmationText: document.getElementById('file-processing-log-cleanup-confirmation'),
+        confirmButton: document.getElementById('confirm-file-processing-log-cleanup-btn')
+    };
+}
+
+function setFileProcessingLogCleanupBusy(elements, isBusy) {
+    elements.ageInput.disabled = isBusy;
+    elements.unitSelect.disabled = isBusy;
+    elements.deleteOlderButton.disabled = isBusy;
+    elements.deleteAllButton.disabled = isBusy;
+    setButtonBusy(elements.confirmButton, isBusy, 'Deleting...');
+}
+
+function showFileProcessingLogCleanupConfirmation(elements, requestPayload, message) {
+    pendingFileProcessingLogCleanup = requestPayload;
+    elements.confirmationText.textContent = message;
+    bootstrap.Modal.getOrCreateInstance(elements.modalElement).show();
+}
+
+async function executeFileProcessingLogCleanup(elements) {
+    if (!pendingFileProcessingLogCleanup) {
+        return;
+    }
+
+    setFileProcessingLogCleanupBusy(elements, true);
+    try {
+        const response = await fetch('/api/admin/settings/file-processing-logs/cleanup', {
+            method: 'POST',
+            headers: {
+                'Accept': 'application/json',
+                'Content-Type': 'application/json'
+            },
+            credentials: 'same-origin',
+            body: JSON.stringify({
+                ...pendingFileProcessingLogCleanup,
+                confirmed: true
+            })
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || !payload.success) {
+            const partialCount = Number.isInteger(payload.deleted_count) && payload.deleted_count > 0
+                ? ` ${payload.deleted_count} log${payload.deleted_count === 1 ? '' : 's'} were deleted before the operation stopped.`
+                : '';
+            throw new Error(`${payload.error || 'Unable to delete file processing logs.'}${partialCount}`);
+        }
+
+        const deletedCount = Number(payload.deleted_count) || 0;
+        bootstrap.Modal.getInstance(elements.modalElement)?.hide();
+        showToast(
+            `${deletedCount} file processing log${deletedCount === 1 ? '' : 's'} deleted.`,
+            'success'
+        );
+        pendingFileProcessingLogCleanup = null;
+    } catch (error) {
+        showToast(error.message || 'Unable to delete file processing logs.', 'danger');
+    } finally {
+        setFileProcessingLogCleanupBusy(elements, false);
+    }
+}
+
+function setupFileProcessingLogCleanup() {
+    const elements = getFileProcessingLogCleanupElements();
+    if (Object.values(elements).some(element => !element)) {
+        return;
+    }
+
+    elements.ageInput.addEventListener('input', () => {
+        elements.ageInput.classList.remove('is-invalid');
+    });
+    elements.deleteOlderButton.addEventListener('click', () => {
+        const age = Number(elements.ageInput.value);
+        if (!Number.isInteger(age) || age < 1) {
+            elements.ageInput.classList.add('is-invalid');
+            elements.ageInput.focus();
+            showToast('Enter a whole-number log age greater than zero.', 'warning');
+            return;
+        }
+
+        const unit = elements.unitSelect.value;
+        const singularUnit = unit.endsWith('s') ? unit.slice(0, -1) : unit;
+        const ageLabel = `${age} ${age === 1 ? singularUnit : unit}`;
+        showFileProcessingLogCleanupConfirmation(
+            elements,
+            { delete_all: false, age, unit },
+            `Delete every file processing log older than ${ageLabel}?`
+        );
+    });
+    elements.deleteAllButton.addEventListener('click', () => {
+        showFileProcessingLogCleanupConfirmation(
+            elements,
+            { delete_all: true },
+            'Delete every stored file processing log?'
+        );
+    });
+    elements.confirmButton.addEventListener('click', () => {
+        executeFileProcessingLogCleanup(elements);
+    });
+    elements.modalElement.addEventListener('hidden.bs.modal', () => {
+        if (!elements.confirmButton.disabled) {
+            pendingFileProcessingLogCleanup = null;
+        }
+    });
 }
 
 function formatNumber(value) {
@@ -479,6 +1146,106 @@ function formatNumber(value) {
         return 'Not available';
     }
     return numericValue.toLocaleString();
+}
+
+function formatRedisStatus(value) {
+    const normalizedValue = String(value || '').trim();
+    if (!normalizedValue) {
+        return 'Not loaded';
+    }
+
+    return normalizedValue
+        .replace(/_/g, ' ')
+        .replace(/\b\w/g, character => character.toUpperCase());
+}
+
+function getRedisMonitoringStatusVariant(value) {
+    const normalizedValue = String(value || '').trim().toLowerCase();
+    if (normalizedValue === 'healthy' || normalizedValue === 'active') {
+        return 'success';
+    }
+    if (['degraded', 'not_configured', 'unavailable'].includes(normalizedValue)) {
+        return 'warning';
+    }
+    if (normalizedValue === 'error') {
+        return 'danger';
+    }
+    return 'secondary';
+}
+
+function setRedisMonitoringMessage(message, variant = 'info') {
+    const messageElement = document.getElementById('redis-monitoring-message');
+    if (!messageElement) {
+        return;
+    }
+
+    messageElement.textContent = message || '';
+    messageElement.className = `alert alert-${variant} small mb-3`;
+    messageElement.classList.toggle('d-none', !message);
+}
+
+function setRedisMonitoringBadge(elementId, value, variant = 'secondary') {
+    const badge = document.getElementById(elementId);
+    if (!badge) {
+        return;
+    }
+
+    const safeVariants = new Set(['primary', 'secondary', 'success', 'danger', 'warning', 'info']);
+    badge.textContent = value || 'Not loaded';
+    badge.className = `badge text-bg-${safeVariants.has(variant) ? variant : 'secondary'}`;
+}
+
+function formatRedisMetric(value, unit) {
+    if (value === null || value === undefined || value === '') {
+        return 'Not available';
+    }
+    const numericValue = Number(value);
+    if (Number.isNaN(numericValue)) {
+        return 'Not available';
+    }
+    return `${numericValue.toLocaleString(undefined, { maximumFractionDigits: 2 })} ${unit}`;
+}
+
+function formatRedisPercent(value) {
+    if (value === null || value === undefined || value === '') {
+        return 'Not available';
+    }
+    const numericValue = Number(value);
+    if (Number.isNaN(numericValue)) {
+        return 'Not available';
+    }
+    return `${numericValue.toLocaleString(undefined, { maximumFractionDigits: 2 })}%`;
+}
+
+function formatRedisMemoryUsage(memory) {
+    const usedMemory = memory?.used_memory_human || formatRedisMetric(memory?.used_memory, 'bytes');
+    const maxMemory = memory?.maxmemory_human || formatRedisMetric(memory?.maxmemory, 'bytes');
+    const usagePercent = formatRedisPercent(memory?.usage_percent);
+
+    if (usedMemory === 'Not available') {
+        return 'Not available';
+    }
+    if (maxMemory === 'Not available' || Number(memory?.maxmemory || 0) === 0) {
+        return `${usedMemory} / no maxmemory limit`;
+    }
+    if (usagePercent === 'Not available') {
+        return `${usedMemory} / ${maxMemory}`;
+    }
+    return `${usedMemory} / ${maxMemory} (${usagePercent})`;
+}
+
+function formatRedisRuntime(value) {
+    return value ? 'Active' : 'Inactive';
+}
+
+function setRedisTestResult(resultDiv, message, variant = 'muted') {
+    if (!resultDiv) {
+        return;
+    }
+
+    const safeVariants = new Set(['success', 'danger', 'muted', 'info']);
+    resultDiv.textContent = message || '';
+    resultDiv.className = `mt-2 text-${safeVariants.has(variant) ? variant : 'muted'}`;
 }
 
 function formatRu(value) {
@@ -739,7 +1506,12 @@ function validateCosmosThroughputSettings(options = {}) {
 
     setCosmosThroughputValidationMessage(errors);
     if (options.report && invalidFields.length > 0) {
-        document.getElementById('scale-tab')?.click();
+        // Navigate to wherever the invalid field actually lives rather than to
+        // a named tab, so this keeps working when settings are regrouped.
+        const owningCard = invalidFields[0].closest('.card[id]');
+        if (owningCard && typeof window.openAdminCard === 'function') {
+            window.openAdminCard(owningCard.id);
+        }
         invalidFields[0].focus({ preventScroll: false });
         invalidFields[0].reportValidity();
     }
@@ -1550,6 +2322,1293 @@ async function convertCosmosThroughputToAutoscale(containerName = '', triggerBut
             setButtonBusy(triggerButton, false);
         }
     }
+}
+
+function renderRedisMonitoringStatus(statusPayload) {
+    const configuration = statusPayload?.configuration || {};
+    const runtime = statusPayload?.runtime || {};
+    const health = statusPayload?.health || {};
+    const memory = statusPayload?.memory || {};
+    const clients = statusPayload?.clients || {};
+    const stats = statusPayload?.stats || {};
+    const keyspace = statusPayload?.keyspace || {};
+    const server = statusPayload?.server || {};
+    const daiCache = statusPayload?.dai_cache || {};
+
+    let configurationText = 'Disabled';
+    let configurationVariant = 'secondary';
+    if (configuration.enabled && configuration.configured) {
+        configurationText = 'Enabled';
+        configurationVariant = 'success';
+    } else if (configuration.enabled) {
+        configurationText = 'Needs host';
+        configurationVariant = 'warning';
+    }
+
+    setRedisMonitoringBadge('redis-monitoring-config-status', configurationText, configurationVariant);
+    setRedisMonitoringBadge(
+        'redis-monitoring-health-status',
+        formatRedisStatus(health.status),
+        getRedisMonitoringStatusVariant(health.status)
+    );
+    setRedisMonitoringBadge(
+        'redis-monitoring-app-cache-status',
+        formatRedisRuntime(runtime.app_cache_using_redis),
+        runtime.app_cache_using_redis ? 'success' : 'secondary'
+    );
+    setRedisMonitoringBadge(
+        'redis-monitoring-session-status',
+        formatRedisRuntime(runtime.session_using_redis),
+        runtime.session_using_redis ? 'success' : 'secondary'
+    );
+
+    setElementText('redis-monitoring-ping-latency', formatRedisMetric(health.ping_latency_ms, 'ms'));
+    setElementText('redis-monitoring-memory-usage', formatRedisMemoryUsage(memory));
+    setElementText(
+        'redis-monitoring-memory-policy',
+        memory.maxmemory_policy ? `Policy: ${memory.maxmemory_policy}` : 'Policy: Not available'
+    );
+    setElementText('redis-monitoring-connected-clients', formatNumber(clients.connected_clients));
+    setElementText('redis-monitoring-ops-per-sec', formatNumber(stats.instantaneous_ops_per_sec));
+    setElementText('redis-monitoring-hit-rate', formatRedisPercent(stats.keyspace_hit_rate_percent));
+    setElementText('redis-monitoring-key-count', formatNumber(keyspace.total_keys));
+    setElementText('redis-monitoring-dai-version-markers', formatNumber(daiCache.version_marker_count));
+    setElementText(
+        'redis-monitoring-dai-version-marker-expiry',
+        `${formatNumber(daiCache.version_marker_no_expiry_count)} no-expiry marker(s)`
+    );
+    setElementText('redis-monitoring-dai-payload-keys', formatNumber(daiCache.payload_key_count));
+    setElementText(
+        'redis-monitoring-dai-version-ttl-policy',
+        `Version TTL: ${formatRedisExplorerTtl(daiCache.version_marker_ttl_seconds)}`
+    );
+    setElementText('redis-monitoring-expired-keys', formatNumber(stats.expired_keys));
+    setElementText('redis-monitoring-evicted-keys', formatNumber(stats.evicted_keys));
+    setElementText('redis-monitoring-fragmentation', formatNumber(memory.mem_fragmentation_ratio));
+    setElementText('redis-monitoring-errors', formatNumber(stats.total_error_replies));
+    setElementText('redis-monitoring-rejected-connections', formatNumber(stats.rejected_connections));
+    setElementText('redis-monitoring-version', server.redis_version || 'Not available');
+    setElementText('redis-monitoring-source', formatRedisStatus(runtime.monitoring_source));
+    setElementText('redis-monitoring-checked-at', statusPayload?.checked_at || 'Not available');
+    setElementText('redis-monitoring-last-error', health.last_error || 'None');
+}
+
+async function loadRedisMonitoringStatus(event = null, options = {}) {
+    const showLoading = options.showLoading !== false;
+    const triggerButton = event?.currentTarget || (showLoading ? document.getElementById('redis-monitoring-refresh-btn') : null);
+    if (triggerButton) {
+        setButtonBusy(triggerButton, true, 'Loading...');
+    }
+    if (showLoading) {
+        setRedisMonitoringMessage('Loading Redis monitoring status...', 'info');
+    }
+
+    try {
+        const response = await fetch('/api/admin/settings/redis-monitoring/status', {
+            method: 'GET',
+            headers: { 'Accept': 'application/json' },
+            credentials: 'same-origin'
+        });
+        const data = await response.json();
+        if (!response.ok) {
+            throw new Error(data.error || 'Failed to load Redis monitoring status.');
+        }
+
+        renderRedisMonitoringStatus(data);
+        if (data.health?.status === 'healthy') {
+            setRedisMonitoringMessage('Redis monitoring status loaded.', 'success');
+        } else if (data.health?.last_error) {
+            setRedisMonitoringMessage(data.health.last_error, data.health.status === 'error' ? 'danger' : 'warning');
+        } else if (showLoading) {
+            setRedisMonitoringMessage('Redis monitoring status loaded.', 'info');
+        }
+    } catch (error) {
+        setRedisMonitoringMessage(error.message || 'Failed to load Redis monitoring status.', 'danger');
+    } finally {
+        if (triggerButton) {
+            setButtonBusy(triggerButton, false);
+        }
+    }
+}
+
+function setRedisExplorerMessage(message, variant = 'info') {
+    const messageElement = document.getElementById('redis-explorer-message');
+    if (!messageElement) {
+        return;
+    }
+
+    messageElement.textContent = message || '';
+    messageElement.className = `alert alert-${variant} small`;
+    messageElement.classList.toggle('d-none', !message);
+}
+
+function formatRedisExplorerTtl(ttlSeconds) {
+    const numericValue = Number(ttlSeconds);
+    if (Number.isNaN(numericValue)) {
+        return 'Not available';
+    }
+    if (numericValue === -2) {
+        return 'Expired or missing';
+    }
+    if (numericValue === -1) {
+        return 'No expiry';
+    }
+    return `${numericValue.toLocaleString()} sec`;
+}
+
+function formatRedisExplorerMemory(bytes) {
+    const numericValue = Number(bytes);
+    if (Number.isNaN(numericValue) || numericValue < 0) {
+        return 'Not available';
+    }
+    if (numericValue >= 1024 * 1024) {
+        return `${(numericValue / (1024 * 1024)).toLocaleString(undefined, { maximumFractionDigits: 2 })} MB`;
+    }
+    if (numericValue >= 1024) {
+        return `${(numericValue / 1024).toLocaleString(undefined, { maximumFractionDigits: 2 })} KB`;
+    }
+    return `${numericValue.toLocaleString()} bytes`;
+}
+
+
+function formatRedisExplorerResolutionLabel(resolution) {
+    if (!resolution) {
+        return '';
+    }
+    if (resolution.resolved && resolution.entity_type) {
+        const entityType = formatRedisStatus(resolution.entity_type);
+        const entityName = resolution.entity_name || resolution.entity_id || 'Unknown';
+        return `${resolution.label || 'SimpleChat entity'}: ${entityType} - ${entityName}`;
+    }
+    return resolution.label || '';
+}
+
+
+function formatRedisExplorerResolutionEntity(resolution) {
+    if (!resolution) {
+        return 'Not resolved';
+    }
+    if (!resolution.resolved) {
+        return formatRedisStatus(resolution.resolution_status || 'unresolved');
+    }
+    const parts = [];
+    if (resolution.entity_type) {
+        parts.push(`Entity: ${formatRedisStatus(resolution.entity_type)}`);
+    }
+    if (resolution.entity_name) {
+        parts.push(`Name: ${resolution.entity_name}`);
+    }
+    if (resolution.entity_status) {
+        parts.push(`Status: ${formatRedisStatus(resolution.entity_status)}`);
+    }
+    if (Number.isFinite(Number(resolution.row_count))) {
+        parts.push(`DAI rows: ${formatNumber(resolution.row_count)}`);
+    }
+    return parts.join(' | ') || 'Resolved';
+}
+
+
+function renderRedisExplorerResolution(resolution) {
+    const resolutionCard = document.getElementById('redis-explorer-resolution-card');
+    if (!resolutionCard) {
+        return;
+    }
+
+    resolutionCard.classList.toggle('d-none', !resolution);
+    if (!resolution) {
+        return;
+    }
+
+    setElementText('redis-explorer-resolution-kind', resolution.label || formatRedisStatus(resolution.kind));
+    setElementText('redis-explorer-resolution-entity', formatRedisExplorerResolutionEntity(resolution));
+    setElementText('redis-explorer-resolution-scope', resolution.scope_key || resolution.cache_hash || resolution.scope_hash || 'No reversible scope key available');
+    setElementText('redis-explorer-resolution-note', resolution.note || 'Resolved from Redis key classification.');
+}
+
+
+function setRedisExplorerPreviewVisible(isVisible) {
+    document.getElementById('redis-explorer-preview-empty')?.classList.toggle('d-none', isVisible);
+    document.getElementById('redis-explorer-preview-panel')?.classList.toggle('d-none', !isVisible);
+}
+
+function resetRedisExplorerPreview() {
+    redisExplorerState.selectedKey = '';
+    setRedisExplorerPreviewVisible(false);
+    setElementText('redis-explorer-preview-key', 'Not loaded');
+    setElementText('redis-explorer-preview-type', 'Not loaded');
+    setElementText('redis-explorer-preview-ttl', 'Not loaded');
+    setElementText('redis-explorer-preview-memory', 'Not loaded');
+    setElementText('redis-explorer-preview-redacted', 'Not loaded');
+    setElementText('redis-explorer-preview-content', 'Not loaded');
+    renderRedisExplorerResolution(null);
+}
+
+function getRedisExplorerScopeLabel() {
+    const filter = (redisExplorerState.filter || '').trim();
+    return filter ? `Filter: "${filter}"` : 'Browsing all keys';
+}
+
+function renderRedisExplorerKeys(payload) {
+    const keyList = document.getElementById('redis-explorer-key-list');
+    if (!keyList) {
+        return;
+    }
+
+    const keys = Array.isArray(payload?.keys) ? payload.keys : [];
+    keyList.replaceChildren();
+    const pageNumber = redisExplorerState.cursorHistory.length + 1;
+    setElementText(
+        'redis-explorer-key-count',
+        `${getRedisExplorerScopeLabel()} | Page ${formatNumber(pageNumber)} | ${formatNumber(keys.length)} key(s)${payload?.has_more ? ' / more available' : ''}`
+    );
+
+    if (keys.length === 0) {
+        const emptyState = document.createElement('div');
+        emptyState.className = 'list-group-item text-muted small';
+        emptyState.textContent = 'No Redis keys matched this page and filter.';
+        keyList.appendChild(emptyState);
+    } else {
+        keys.forEach(item => {
+            const keyButton = document.createElement('button');
+            keyButton.type = 'button';
+            keyButton.className = 'list-group-item list-group-item-action';
+            keyButton.setAttribute('role', 'option');
+
+            const keyName = document.createElement('div');
+            keyName.className = 'fw-semibold text-break';
+            keyName.textContent = item.key || '(empty key)';
+
+            const metadata = document.createElement('div');
+            metadata.className = 'small text-muted';
+            metadata.textContent = [
+                `Type: ${formatRedisStatus(item.type || 'unknown')}`,
+                `TTL: ${formatRedisExplorerTtl(item.ttl_seconds)}`,
+                item.preview_restricted ? 'Preview: restricted' : 'Preview: sanitized'
+            ].join(' | ');
+
+            keyButton.appendChild(keyName);
+            keyButton.appendChild(metadata);
+            const resolutionLabel = formatRedisExplorerResolutionLabel(item.resolution);
+            if (resolutionLabel) {
+                const resolutionMetadata = document.createElement('div');
+                resolutionMetadata.className = 'small text-primary';
+                resolutionMetadata.textContent = resolutionLabel;
+                keyButton.appendChild(resolutionMetadata);
+            }
+            keyButton.addEventListener('click', () => loadRedisExplorerValue(item.key, keyButton));
+            keyList.appendChild(keyButton);
+        });
+    }
+    keyList.scrollTop = 0;
+
+    redisExplorerState.nextCursor = String(payload?.next_cursor || '0');
+    document.getElementById('redis-explorer-prev-btn')?.toggleAttribute(
+        'disabled',
+        redisExplorerState.cursorHistory.length === 0
+    );
+    document.getElementById('redis-explorer-next-btn')?.toggleAttribute(
+        'disabled',
+        !payload?.has_more
+    );
+}
+
+function getRedisExplorerRequestState(options = {}) {
+    const reset = Boolean(options.reset);
+    const filterInput = document.getElementById('redis-explorer-filter');
+    const pageSizeSelect = document.getElementById('redis-explorer-page-size');
+    if (reset) {
+        redisExplorerState.cursor = '0';
+        redisExplorerState.nextCursor = '0';
+        redisExplorerState.cursorHistory = [];
+    }
+    redisExplorerState.filter = filterInput?.value || '';
+    redisExplorerState.pageSize = Number(pageSizeSelect?.value || 25);
+    return {
+        cursor: redisExplorerState.cursor,
+        filter: redisExplorerState.filter,
+        pageSize: redisExplorerState.pageSize
+    };
+}
+
+async function loadRedisExplorerKeys(options = {}) {
+    const triggerButton = options.triggerButton || null;
+    if (triggerButton) {
+        setButtonBusy(triggerButton, true, 'Loading...');
+    }
+    setRedisExplorerMessage('Loading Redis keys...', 'info');
+    resetRedisExplorerPreview();
+
+    try {
+        const requestState = getRedisExplorerRequestState(options);
+        const query = new URLSearchParams({
+            cursor: requestState.cursor,
+            page_size: String(requestState.pageSize),
+            filter: requestState.filter
+        });
+        const response = await fetch(`/api/admin/settings/redis-explorer/keys?${query.toString()}`, {
+            method: 'GET',
+            headers: { 'Accept': 'application/json' },
+            credentials: 'same-origin'
+        });
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+            throw new Error(data.error || data.last_error || 'Failed to load Redis keys.');
+        }
+
+        renderRedisExplorerKeys(data);
+        redisExplorerState.loaded = true;
+        setRedisExplorerMessage(`${getRedisExplorerScopeLabel()} loaded. Select a key to view sanitized preview content.`, 'success');
+    } catch (error) {
+        renderRedisExplorerKeys({ keys: [], has_more: false, next_cursor: '0' });
+        setRedisExplorerMessage(error.message || 'Failed to load Redis keys.', 'danger');
+    } finally {
+        if (triggerButton) {
+            setButtonBusy(triggerButton, false);
+        }
+    }
+}
+
+async function loadRedisExplorerValue(key, triggerButton = null) {
+    if (!key) {
+        return;
+    }
+    if (triggerButton) {
+        setButtonBusy(triggerButton, true, 'Loading...');
+    }
+    setRedisExplorerMessage('Loading sanitized Redis key preview...', 'info');
+
+    try {
+        const response = await fetch('/api/admin/settings/redis-explorer/value', {
+            method: 'POST',
+            headers: {
+                'Accept': 'application/json',
+                'Content-Type': 'application/json'
+            },
+            credentials: 'same-origin',
+            body: JSON.stringify({ key })
+        });
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+            throw new Error(data.error || data.preview || 'Failed to load Redis key preview.');
+        }
+
+        redisExplorerState.selectedKey = key;
+        setRedisExplorerPreviewVisible(true);
+        setElementText('redis-explorer-preview-key', data.key || key);
+        setElementText('redis-explorer-preview-type', formatRedisStatus(data.type || 'unknown'));
+        setElementText('redis-explorer-preview-ttl', formatRedisExplorerTtl(data.ttl_seconds));
+        setElementText('redis-explorer-preview-memory', formatRedisExplorerMemory(data.memory_usage_bytes));
+        setElementText(
+            'redis-explorer-preview-redacted',
+            data.preview_restricted ? 'Restricted' : data.redacted ? 'Redacted' : 'Sanitized'
+        );
+        renderRedisExplorerResolution(data.resolution);
+        setElementText('redis-explorer-preview-content', data.preview || 'No preview available.');
+        const previewContent = document.getElementById('redis-explorer-preview-content');
+        if (previewContent) {
+            previewContent.scrollTop = 0;
+        }
+        setRedisExplorerMessage(
+            data.truncated ? 'Preview loaded and truncated to the safe display limit.' : 'Sanitized preview loaded.',
+            data.preview_restricted || data.redacted || data.truncated ? 'warning' : 'success'
+        );
+    } catch (error) {
+        setRedisExplorerMessage(error.message || 'Failed to load Redis key preview.', 'danger');
+    } finally {
+        if (triggerButton) {
+            setButtonBusy(triggerButton, false);
+        }
+    }
+}
+
+function setupRedisExplorerControls() {
+    const modalElement = document.getElementById('redisExplorerModal');
+    if (!modalElement) {
+        return;
+    }
+
+    modalElement.addEventListener('shown.bs.modal', () => {
+        if (!redisExplorerState.loaded) {
+            loadRedisExplorerKeys({ reset: true });
+        }
+    });
+    document.getElementById('redis-explorer-search-btn')?.addEventListener('click', event => {
+        loadRedisExplorerKeys({ reset: true, triggerButton: event.currentTarget });
+    });
+    document.getElementById('redis-explorer-browse-all-btn')?.addEventListener('click', event => {
+        const filterInput = document.getElementById('redis-explorer-filter');
+        if (filterInput) {
+            filterInput.value = '';
+        }
+        loadRedisExplorerKeys({ reset: true, triggerButton: event.currentTarget });
+    });
+    document.getElementById('redis-explorer-refresh-btn')?.addEventListener('click', event => {
+        loadRedisExplorerKeys({ triggerButton: event.currentTarget });
+    });
+    document.getElementById('redis-explorer-filter')?.addEventListener('keydown', event => {
+        if (event.key === 'Enter') {
+            event.preventDefault();
+            loadRedisExplorerKeys({ reset: true });
+        }
+    });
+    document.getElementById('redis-explorer-page-size')?.addEventListener('change', () => {
+        loadRedisExplorerKeys({ reset: true });
+    });
+    document.getElementById('redis-explorer-next-btn')?.addEventListener('click', event => {
+        redisExplorerState.cursorHistory.push(redisExplorerState.cursor);
+        redisExplorerState.cursor = redisExplorerState.nextCursor || '0';
+        loadRedisExplorerKeys({ triggerButton: event.currentTarget });
+    });
+    document.getElementById('redis-explorer-prev-btn')?.addEventListener('click', event => {
+        redisExplorerState.cursor = redisExplorerState.cursorHistory.pop() || '0';
+        loadRedisExplorerKeys({ triggerButton: event.currentTarget });
+    });
+}
+
+function setupRedisMonitoringControls() {
+    const section = document.getElementById('redis-monitoring-section');
+    if (!section) {
+        return;
+    }
+
+    document.getElementById('redis-monitoring-refresh-btn')?.addEventListener('click', loadRedisMonitoringStatus);
+    setupRedisExplorerControls();
+    loadRedisMonitoringStatus(null, { showLoading: false });
+}
+
+function setDocumentAccessIndexMessage(message, variant = 'info') {
+    const messageElement = document.getElementById('document-access-index-message');
+    if (!messageElement) {
+        return;
+    }
+
+    messageElement.textContent = message || '';
+    messageElement.className = `alert alert-${variant} small mb-3`;
+    messageElement.classList.toggle('d-none', !message);
+}
+
+function formatDocumentAccessIndexStatus(value) {
+    const normalizedValue = String(value || '').trim();
+    if (!normalizedValue) {
+        return 'Not loaded';
+    }
+
+    return normalizedValue
+        .replace(/_/g, ' ')
+        .replace(/\b\w/g, character => character.toUpperCase());
+}
+
+function getDocumentAccessIndexStatusVariant(value) {
+    const normalizedValue = String(value || '').trim().toLowerCase();
+    if (['succeeded', 'skipped_completed', 'completed', 'dry_run_completed', 'reconciled', 'matched', 'aligned'].includes(normalizedValue)) {
+        return 'success';
+    }
+    if (['running', 'in_progress'].includes(normalizedValue)) {
+        return 'primary';
+    }
+    if (['succeeded_with_errors', 'completed_with_errors', 'reconciled_with_errors', 'mismatch', 'missing_expected_indexes'].includes(normalizedValue)) {
+        return 'warning';
+    }
+    if (['failed', 'error'].includes(normalizedValue)) {
+        return 'danger';
+    }
+    return 'secondary';
+}
+
+function setDocumentAccessIndexBadge(elementId, value, variant = 'secondary') {
+    const badge = document.getElementById(elementId);
+    if (!badge) {
+        return;
+    }
+
+    const safeVariants = new Set(['primary', 'secondary', 'success', 'danger', 'warning', 'info']);
+    badge.textContent = value || 'Not loaded';
+    badge.className = `badge text-bg-${safeVariants.has(variant) ? variant : 'secondary'}`;
+}
+
+function formatDocumentAccessIndexBoolean(value, enabledText = 'Enabled', disabledText = 'Disabled') {
+    return value ? enabledText : disabledText;
+}
+
+function formatDocumentAccessIndexList(items) {
+    if (!Array.isArray(items) || items.length === 0) {
+        return 'None';
+    }
+
+    return items.map(item => String(item || '').trim()).filter(Boolean).join(', ') || 'None';
+}
+
+function formatDocumentAccessIndexMetric(value, unit) {
+    if (value === null || value === undefined || value === '') {
+        return 'Not available';
+    }
+    const numericValue = Number(value);
+    if (Number.isNaN(numericValue)) {
+        return 'Not available';
+    }
+    return `${numericValue.toLocaleString(undefined, { maximumFractionDigits: 3 })} ${unit}`;
+}
+
+function formatDocumentAccessIndexPercent(value) {
+    if (value === null || value === undefined || value === '') {
+        return 'Not available';
+    }
+    const numericValue = Number(value);
+    if (Number.isNaN(numericValue)) {
+        return 'Not available';
+    }
+    return `${numericValue.toLocaleString(undefined, { maximumFractionDigits: 2 })}%`;
+}
+
+function formatDocumentAccessIndexMetricPair(sourceValue, projectionValue, unit) {
+    const sourceMetric = formatDocumentAccessIndexMetric(sourceValue, unit);
+    const projectionMetric = formatDocumentAccessIndexMetric(projectionValue, unit);
+    if (sourceMetric === 'Not available' || projectionMetric === 'Not available') {
+        return 'Not available';
+    }
+    return `${sourceMetric} / ${projectionMetric}`;
+}
+
+function formatDocumentAccessIndexSavings(value, unit, positiveLabel, negativeLabel) {
+    if (value === null || value === undefined || value === '') {
+        return 'Not available';
+    }
+    const numericValue = Number(value);
+    if (Number.isNaN(numericValue)) {
+        return 'Not available';
+    }
+    if (Math.abs(numericValue) < 0.001) {
+        return `0 ${unit} difference`;
+    }
+    const label = numericValue > 0 ? positiveLabel : negativeLabel;
+    return `${formatDocumentAccessIndexMetric(Math.abs(numericValue), unit)} ${label}`;
+}
+
+function getDocumentAccessIndexRollingWindow(shadowValidation, windowKey) {
+    const windows = shadowValidation?.rolling_metrics?.windows || {};
+    return windows[windowKey] || {};
+}
+
+function getDocumentAccessIndexReadWindow(readMetrics, windowKey) {
+    const windows = readMetrics?.windows || {};
+    return windows[windowKey] || {};
+}
+
+function getDocumentAccessIndexCacheWindow(cacheMetrics, windowKey) {
+    const windows = cacheMetrics?.windows || {};
+    return windows[windowKey] || {};
+}
+
+function formatConversationCacheOperationCounts(operationCounts) {
+    const entries = Object.entries(operationCounts || {})
+        .filter(([, count]) => Number(count || 0) > 0)
+        .sort(([left], [right]) => left.localeCompare(right));
+    if (entries.length === 0) {
+        return 'No samples';
+    }
+
+    return entries
+        .map(([operation, count]) => `${formatDocumentAccessIndexStatus(operation)}: ${formatNumber(count)}`)
+        .join(', ');
+}
+
+function formatDocumentAccessIndexSampleSummary(windowMetrics) {
+    if (!windowMetrics || Number(windowMetrics.sample_count || 0) === 0) {
+        return 'No samples';
+    }
+
+    const sampleCount = formatNumber(windowMetrics.sample_count || 0);
+    const matchedCount = formatNumber(windowMetrics.matched_count || 0);
+    const mismatchCount = formatNumber(windowMetrics.mismatch_count || 0);
+    const errorCount = formatNumber(windowMetrics.error_count || 0);
+    const comparableCount = formatNumber(windowMetrics.comparable_sample_count || 0);
+    return `${sampleCount} samples (${comparableCount} comparable, ${matchedCount} matched, ${mismatchCount} mismatch, ${errorCount} error)`;
+}
+
+function formatDocumentAccessIndexReadSample(sample) {
+    if (!sample) {
+        return 'No samples';
+    }
+    const status = formatDocumentAccessIndexStatus(sample.status || 'unknown');
+    const operation = formatDocumentAccessIndexStatus(sample.operation || 'read');
+    const scope = sample.source_scope ? ` / ${sample.source_scope}` : '';
+    return `${status} (${operation}${scope})`;
+}
+
+function formatDocumentAccessIndexCacheEvent(sample) {
+    if (!sample) {
+        return 'No cache events';
+    }
+    const eventType = formatDocumentAccessIndexStatus(sample.event_type || 'unknown');
+    const operation = formatDocumentAccessIndexStatus(sample.operation || 'cache');
+    const reason = sample.reason ? ` / ${formatDocumentAccessIndexStatus(sample.reason)}` : '';
+    return `${eventType} (${operation}${reason})`;
+}
+
+function formatDocumentAccessIndexLatencyWindow(windowMetrics) {
+    const averageLatency = formatDocumentAccessIndexMetric(windowMetrics?.elapsed_ms_avg, 'ms');
+    const p95Latency = formatDocumentAccessIndexMetric(windowMetrics?.elapsed_ms_p95, 'ms');
+    if (averageLatency === 'Not available' && p95Latency === 'Not available') {
+        return 'Not available';
+    }
+    return `${averageLatency} / ${p95Latency}`;
+}
+
+function renderConversationCacheStatus(statusPayload) {
+    const conversationCache = statusPayload?.conversation_cache || {};
+    const settings = conversationCache?.settings || {};
+    const metrics = conversationCache?.metrics || {};
+    const cache15m = getDocumentAccessIndexCacheWindow(metrics, '15m');
+    const cacheEnabled = settings.enabled !== false;
+    const ttlSeconds = Number(settings.ttl_seconds ?? 120);
+    const runtimeStatus = cacheEnabled
+        ? (ttlSeconds > 0 ? `Enabled / ${formatDocumentAccessIndexMetric(ttlSeconds, 'sec')}` : 'Enabled / Writes disabled')
+        : 'Disabled';
+
+    setDocumentAccessIndexBadge(
+        'conversation-cache-runtime-status',
+        runtimeStatus,
+        cacheEnabled ? 'success' : 'secondary'
+    );
+    setElementText(
+        'conversation-cache-15m-hit-rate',
+        formatDocumentAccessIndexPercent(cache15m.hit_rate_percent)
+    );
+    setElementText(
+        'conversation-cache-15m-hits-misses',
+        `${formatNumber(cache15m.hit_count || 0)} / ${formatNumber(cache15m.miss_count || 0)}`
+    );
+    setElementText(
+        'conversation-cache-15m-bypasses-errors',
+        `${formatNumber(cache15m.bypass_count || 0)} / ${formatNumber(cache15m.error_count || 0)}`
+    );
+    setElementText(
+        'conversation-cache-15m-writes-invalidations',
+        `${formatNumber(cache15m.write_count || 0)} / ${formatNumber(cache15m.invalidation_count || 0)}`
+    );
+    setElementText(
+        'conversation-cache-15m-operation-counts',
+        formatConversationCacheOperationCounts(cache15m.operation_counts)
+    );
+    setElementText(
+        'conversation-cache-last-event',
+        formatDocumentAccessIndexCacheEvent(metrics.last_event)
+    );
+    setElementText(
+        'conversation-cache-last-invalidation',
+        formatDocumentAccessIndexCacheEvent(metrics.last_invalidation)
+    );
+}
+
+function setCosmosMaintenanceMessage(message, variant = 'info') {
+    const messageElement = document.getElementById('cosmos-maintenance-message');
+    if (!messageElement) {
+        return;
+    }
+
+    messageElement.textContent = message || '';
+    messageElement.className = `alert alert-${variant} small mb-3`;
+    messageElement.classList.toggle('d-none', !message);
+}
+
+function getCosmosIndexingPolicyStatusText(indexingPolicy) {
+    if (!indexingPolicy || Object.keys(indexingPolicy).length === 0) {
+        return 'not_loaded';
+    }
+    if (Number(indexingPolicy.failed_container_count || 0) > 0) {
+        return 'failed';
+    }
+    if (Number(indexingPolicy.containers_missing_expected_indexes || 0) > 0) {
+        return 'missing_expected_indexes';
+    }
+    return 'aligned';
+}
+
+function formatStaleCacheCleanupCategories(categories) {
+    if (!Array.isArray(categories) || categories.length === 0) {
+        return 'No categories';
+    }
+
+    return categories
+        .map(category => {
+            const name = formatDocumentAccessIndexStatus(category.category || 'unknown');
+            const candidates = formatNumber(category.candidate_count || 0);
+            const deleted = formatNumber(category.deleted_count || 0);
+            const failed = formatNumber(category.failed_count || 0);
+            return `${name}: ${candidates} candidates / ${deleted} deleted / ${failed} failed`;
+        })
+        .join('; ');
+}
+
+function renderCosmosMaintenanceStatus(statusPayload) {
+    const indexingPolicy = statusPayload?.cosmos_indexing_policies || {};
+    const cleanup = statusPayload?.stale_cache_cleanup || {};
+    const indexingStatus = getCosmosIndexingPolicyStatusText(indexingPolicy);
+    const cleanupStatus = cleanup.status || 'not_run';
+
+    setDocumentAccessIndexBadge(
+        'cosmos-indexing-policy-status',
+        formatDocumentAccessIndexStatus(indexingStatus),
+        getDocumentAccessIndexStatusVariant(indexingStatus)
+    );
+    setElementText('cosmos-indexing-policy-mode', formatDocumentAccessIndexStatus(indexingPolicy.mode || 'not_loaded'));
+    setElementText('cosmos-indexing-policy-container-count', formatNumber(indexingPolicy.container_count || 0));
+    setElementText(
+        'cosmos-indexing-policy-missing-count',
+        formatNumber(indexingPolicy.containers_missing_expected_indexes || 0)
+    );
+    setElementText('cosmos-indexing-policy-updated-count', formatNumber(indexingPolicy.updated_container_count || 0));
+    setElementText('cosmos-indexing-policy-failed-count', formatNumber(indexingPolicy.failed_container_count || 0));
+    setElementText('cosmos-indexing-policy-last-evaluated', indexingPolicy.evaluated_at || 'Not loaded');
+
+    setDocumentAccessIndexBadge(
+        'stale-cache-cleanup-status',
+        formatDocumentAccessIndexStatus(cleanupStatus),
+        getDocumentAccessIndexStatusVariant(cleanupStatus)
+    );
+    setElementText('stale-cache-cleanup-mode', formatDocumentAccessIndexStatus(cleanup.mode || 'not_run'));
+    setElementText('stale-cache-cleanup-candidates', formatNumber(cleanup.candidate_count || 0));
+    setElementText('stale-cache-cleanup-deleted', formatNumber(cleanup.deleted_count || 0));
+    setElementText('stale-cache-cleanup-failed', formatNumber(cleanup.failed_count || 0));
+    setElementText('stale-cache-cleanup-more-candidates', cleanup.has_more_candidates ? 'Yes' : 'No');
+    setElementText('stale-cache-cleanup-categories', formatStaleCacheCleanupCategories(cleanup.categories));
+    setElementText('stale-cache-cleanup-last-evaluated', cleanup.evaluated_at || 'Not run yet');
+}
+
+function getStaleCacheCleanupStatusFromRunResult(result) {
+    const cleanupStep = Array.isArray(result?.steps)
+        ? result.steps.find(step => step?.name === 'stale_cache_document_cleanup')
+        : null;
+    return cleanupStep?.results || null;
+}
+
+function getCosmosIndexingPolicyStatusFromRunResult(result) {
+    const indexingStep = Array.isArray(result?.steps)
+        ? result.steps.find(step => step?.name === 'cosmos_indexing_policy_maintenance')
+        : null;
+    return indexingStep?.results || null;
+}
+
+function getNormalizedDocumentAccessIndexStatus(status) {
+    return String(status || '').trim().toLowerCase();
+}
+
+function isDocumentAccessIndexBackfillRunning(status) {
+    return getNormalizedDocumentAccessIndexStatus(status) === 'running';
+}
+
+function isDocumentAccessIndexBackfillInProgress(status) {
+    return getNormalizedDocumentAccessIndexStatus(status) === 'in_progress';
+}
+
+function stopDocumentAccessIndexPolling() {
+    if (documentAccessIndexStatusPollId) {
+        window.clearInterval(documentAccessIndexStatusPollId);
+        documentAccessIndexStatusPollId = null;
+    }
+}
+
+function startDocumentAccessIndexPolling() {
+    if (documentAccessIndexStatusPollId) {
+        return;
+    }
+
+    documentAccessIndexStatusPollId = window.setInterval(() => {
+        loadDocumentAccessIndexStatus(null, { showLoading: false });
+    }, DOCUMENT_ACCESS_INDEX_STATUS_POLL_INTERVAL_MS);
+}
+
+function getDocumentAccessIndexBackfillStatusFromRunResult(result) {
+    const backfillStep = Array.isArray(result?.steps)
+        ? result.steps.find(step => step?.name === 'document_access_index_backfill')
+        : null;
+    return backfillStep?.results?.current_status || null;
+}
+
+async function fetchAppMaintenanceStatus(errorMessage = 'Failed to load app maintenance status.') {
+    const response = await fetch('/api/admin/settings/app-maintenance/status', {
+        method: 'GET',
+        headers: { 'Accept': 'application/json' },
+        credentials: 'same-origin'
+    });
+    const data = await response.json();
+    if (!response.ok) {
+        throw new Error(data.error || errorMessage);
+    }
+    return data;
+}
+
+function renderDocumentAccessIndexStatus(statusPayload) {
+    const backfillStatus = statusPayload?.document_access_index_backfill || statusPayload;
+    const state = backfillStatus?.state || {};
+    const settings = backfillStatus?.settings || {};
+    const shadowValidation = backfillStatus?.shadow_validation || {};
+    const maintenance = backfillStatus?.maintenance || {};
+    const readMetrics = backfillStatus?.read_metrics || {};
+    const cacheMetrics = backfillStatus?.cache_metrics || {};
+    const statusText = String(state.status || 'not_started');
+
+    setDocumentAccessIndexBadge(
+        'document-access-index-container-status',
+        formatDocumentAccessIndexBoolean(settings.container_enabled, 'Enabled', 'Disabled'),
+        settings.container_enabled ? 'success' : 'secondary'
+    );
+    setDocumentAccessIndexBadge(
+        'document-access-index-write-through-status',
+        formatDocumentAccessIndexBoolean(settings.write_through_enabled, 'Enabled', 'Disabled'),
+        settings.write_through_enabled ? 'success' : 'secondary'
+    );
+    setDocumentAccessIndexBadge(
+        'document-access-index-read-status',
+        settings.reads_enabled ? 'Enabled' : 'Disabled',
+        settings.reads_enabled ? 'success' : 'secondary'
+    );
+    setDocumentAccessIndexBadge(
+        'document-access-index-cache-status',
+        settings.cache_enabled ? `Enabled / ${formatDocumentAccessIndexMetric(settings.cache_ttl_seconds, 'sec')}` : 'Disabled',
+        settings.cache_enabled ? 'success' : 'secondary'
+    );
+    setDocumentAccessIndexBadge(
+        'document-access-index-shadow-status',
+        settings.shadow_validation_enabled ? 'Enabled' : 'Disabled',
+        settings.shadow_validation_enabled ? 'warning' : 'secondary'
+    );
+    setDocumentAccessIndexBadge(
+        'document-access-index-backfill-status',
+        formatDocumentAccessIndexStatus(statusText),
+        getDocumentAccessIndexStatusVariant(statusText)
+    );
+    setDocumentAccessIndexBadge(
+        'document-access-index-maintenance-mode',
+        maintenance.auto_maintenance_enabled ? 'Automatic' : 'Disabled',
+        maintenance.auto_maintenance_enabled ? 'success' : 'secondary'
+    );
+
+    setElementText('document-access-index-repair-count', formatNumber(backfillStatus?.repair_required_count));
+    setElementText(
+        'document-access-index-maintenance-next-action',
+        formatDocumentAccessIndexStatus(maintenance.next_action || 'monitor')
+    );
+    setElementText(
+        'document-access-index-maintenance-more-work',
+        maintenance.has_more_work ? 'Yes' : 'No'
+    );
+    setElementText(
+        'document-access-index-maintenance-active-interval',
+        formatDocumentAccessIndexMetric(maintenance.active_interval_seconds, 'sec')
+    );
+    const read15m = getDocumentAccessIndexReadWindow(readMetrics, '15m');
+    const cache15m = getDocumentAccessIndexCacheWindow(cacheMetrics, '15m');
+    setElementText('document-access-index-read-15m-attempts', formatNumber(read15m.sample_count || 0));
+    setElementText(
+        'document-access-index-cache-15m-hit-rate',
+        formatDocumentAccessIndexPercent(cache15m.hit_rate_percent)
+    );
+    setElementText(
+        'document-access-index-cache-15m-hits-misses',
+        `${formatNumber(cache15m.hit_count || 0)} / ${formatNumber(cache15m.miss_count || 0)}`
+    );
+    setElementText(
+        'document-access-index-cache-15m-bypasses-errors',
+        `${formatNumber(cache15m.bypass_count || 0)} / ${formatNumber(cache15m.error_count || 0)}`
+    );
+    setElementText(
+        'document-access-index-cache-15m-invalidations',
+        formatNumber(cache15m.invalidation_count || 0)
+    );
+    setElementText('document-access-index-read-15m-served', formatNumber(read15m.served_from_index_count || 0));
+    setElementText('document-access-index-read-15m-fallbacks', formatNumber(read15m.source_fallback_count || 0));
+    setElementText(
+        'document-access-index-read-15m-fallback-rate',
+        formatDocumentAccessIndexPercent(read15m.fallback_rate_percent)
+    );
+    setElementText(
+        'document-access-index-read-15m-ru',
+        formatDocumentAccessIndexMetric(read15m.request_charge, 'RU')
+    );
+    setElementText(
+        'document-access-index-read-15m-latency',
+        formatDocumentAccessIndexLatencyWindow(read15m)
+    );
+    setElementText(
+        'document-access-index-read-last-fallback',
+        formatDocumentAccessIndexReadSample(readMetrics.last_fallback_sample)
+    );
+    setElementText(
+        'document-access-index-read-last-sample',
+        formatDocumentAccessIndexReadSample(readMetrics.last_sample)
+    );
+    setElementText(
+        'document-access-index-cache-last-event',
+        formatDocumentAccessIndexCacheEvent(cacheMetrics.last_event)
+    );
+    setDocumentAccessIndexBadge(
+        'document-access-index-shadow-last-status',
+        formatDocumentAccessIndexStatus(shadowValidation.status || 'not_run'),
+        getDocumentAccessIndexStatusVariant(shadowValidation.status || 'not_run')
+    );
+    setElementText(
+        'document-access-index-shadow-mismatches',
+        `${formatNumber(shadowValidation.missing_count || 0)} missing / ${formatNumber(shadowValidation.extra_count || 0)} extra`
+    );
+    setElementText(
+        'document-access-index-shadow-ru-comparison',
+        formatDocumentAccessIndexMetricPair(shadowValidation.source_query_ru, shadowValidation.validation_index_ru, 'RU')
+    );
+    setElementText(
+        'document-access-index-shadow-validation-ru',
+        formatDocumentAccessIndexMetric(shadowValidation.validation_index_ru, 'RU')
+    );
+    setElementText(
+        'document-access-index-shadow-candidate-ru',
+        formatDocumentAccessIndexMetric(shadowValidation.candidate_read_ru, 'RU')
+    );
+    setElementText(
+        'document-access-index-shadow-wave5-ru-savings',
+        formatDocumentAccessIndexSavings(shadowValidation.estimated_wave5_ru_savings, 'RU', 'less', 'more')
+    );
+    setElementText(
+        'document-access-index-shadow-ms-comparison',
+        formatDocumentAccessIndexMetricPair(shadowValidation.source_query_ms, shadowValidation.candidate_read_ms, 'ms')
+    );
+    setElementText(
+        'document-access-index-shadow-ms-savings',
+        formatDocumentAccessIndexSavings(shadowValidation.estimated_wave5_ms_savings, 'ms', 'faster', 'slower')
+    );
+    const rolling5m = getDocumentAccessIndexRollingWindow(shadowValidation, '5m');
+    const rolling15m = getDocumentAccessIndexRollingWindow(shadowValidation, '15m');
+    setElementText(
+        'document-access-index-rolling-5m-ru-comparison',
+        formatDocumentAccessIndexMetricPair(rolling5m.source_query_ru, rolling5m.candidate_read_ru, 'RU')
+    );
+    setElementText(
+        'document-access-index-rolling-5m-wave5-ru-savings',
+        formatDocumentAccessIndexSavings(rolling5m.estimated_wave5_ru_savings, 'RU', 'less', 'more')
+    );
+    setElementText(
+        'document-access-index-rolling-15m-ru-comparison',
+        formatDocumentAccessIndexMetricPair(rolling15m.source_query_ru, rolling15m.candidate_read_ru, 'RU')
+    );
+    setElementText(
+        'document-access-index-rolling-15m-wave5-ru-savings',
+        formatDocumentAccessIndexSavings(rolling15m.estimated_wave5_ru_savings, 'RU', 'less', 'more')
+    );
+    setElementText(
+        'document-access-index-rolling-15m-validation-overhead',
+        formatDocumentAccessIndexMetric(rolling15m.validation_index_ru, 'RU')
+    );
+    setElementText(
+        'document-access-index-rolling-15m-samples',
+        formatDocumentAccessIndexSampleSummary(rolling15m)
+    );
+    setElementText('document-access-index-current-scope', state.current_source_scope || 'None');
+    setElementText('document-access-index-completed-scopes', formatDocumentAccessIndexList(state.completed_source_scopes));
+    setElementText('document-access-index-total-processed', formatNumber(state.total_documents_processed || 0));
+    setElementText('document-access-index-total-failed', formatNumber(state.total_documents_failed || 0));
+    setElementText('document-access-index-total-upserted', formatNumber(state.total_rows_upserted || 0));
+    setElementText('document-access-index-total-deleted', formatNumber(state.total_rows_deleted || 0));
+    setElementText('document-access-index-last-completed', state.last_completed_at || 'Not completed yet');
+    setElementText('document-access-index-last-error', state.last_error || 'None');
+
+    const runButton = document.getElementById('document-access-index-run-batch-btn');
+    const resetButton = document.getElementById('document-access-index-reset-btn');
+    if (runButton) {
+        runButton.disabled = settings.container_enabled === false;
+    }
+    if (resetButton) {
+        resetButton.disabled = settings.container_enabled === false;
+    }
+
+    if (isDocumentAccessIndexBackfillRunning(statusText)) {
+        startDocumentAccessIndexPolling();
+    } else {
+        stopDocumentAccessIndexPolling();
+    }
+}
+
+async function loadDocumentAccessIndexStatus(event = null, options = {}) {
+    const showLoading = options.showLoading !== false;
+    const triggerButton = event?.currentTarget || (showLoading ? document.getElementById('document-access-index-refresh-btn') : null);
+    const isConversationCacheTrigger = triggerButton?.id === 'conversation-cache-refresh-btn';
+    if (triggerButton) {
+        setButtonBusy(triggerButton, true, 'Loading...');
+    }
+    if (showLoading) {
+        setDocumentAccessIndexMessage(
+            isConversationCacheTrigger ? 'Loading conversation cache metrics...' : 'Loading document access index status...',
+            'info'
+        );
+    }
+
+    try {
+        const data = await fetchAppMaintenanceStatus('Failed to load document access index status.');
+
+        renderDocumentAccessIndexStatus(data);
+        renderConversationCacheStatus(data);
+        renderCosmosMaintenanceStatus(data);
+        if (showLoading) {
+            setDocumentAccessIndexMessage(
+                isConversationCacheTrigger ? 'Conversation cache metrics loaded.' : 'Document access index status loaded.',
+                'success'
+            );
+        }
+    } catch (error) {
+        setDocumentAccessIndexMessage(
+            error.message || (
+                isConversationCacheTrigger
+                    ? 'Failed to load conversation cache metrics.'
+                    : 'Failed to load document access index status.'
+            ),
+            'danger'
+        );
+        stopDocumentAccessIndexPolling();
+    } finally {
+        if (triggerButton) {
+            setButtonBusy(triggerButton, false);
+        }
+    }
+}
+
+async function loadCosmosMaintenanceStatus(event = null, options = {}) {
+    const showLoading = options.showLoading !== false;
+    const triggerButton = event?.currentTarget || (showLoading ? document.getElementById('cosmos-maintenance-refresh-btn') : null);
+    if (triggerButton) {
+        setButtonBusy(triggerButton, true, 'Loading...');
+    }
+    if (showLoading) {
+        setCosmosMaintenanceMessage('Loading Cosmos maintenance status...', 'info');
+    }
+
+    try {
+        const data = await fetchAppMaintenanceStatus('Failed to load Cosmos maintenance status.');
+        renderDocumentAccessIndexStatus(data);
+        renderConversationCacheStatus(data);
+        renderCosmosMaintenanceStatus(data);
+        if (showLoading) {
+            setCosmosMaintenanceMessage('Cosmos maintenance status loaded.', 'success');
+        }
+    } catch (error) {
+        setCosmosMaintenanceMessage(error.message || 'Failed to load Cosmos maintenance status.', 'danger');
+    } finally {
+        if (triggerButton) {
+            setButtonBusy(triggerButton, false);
+        }
+    }
+}
+
+async function runStaleCacheCleanup(options = {}) {
+    const applyChanges = Boolean(options.applyChanges);
+    const triggerButton = options.triggerButton || document.getElementById(
+        applyChanges ? 'stale-cache-cleanup-apply-confirm-btn' : 'stale-cache-cleanup-dry-run-btn'
+    );
+    if (triggerButton) {
+        setButtonBusy(triggerButton, true, applyChanges ? 'Deleting...' : 'Scanning...');
+    }
+    setCosmosMaintenanceMessage(
+        applyChanges ? 'Deleting one bounded batch of stale cache documents...' : 'Scanning for stale cache cleanup candidates...',
+        'info'
+    );
+
+    try {
+        const response = await fetch('/api/admin/settings/app-maintenance/run', {
+            method: 'POST',
+            headers: {
+                'Accept': 'application/json',
+                'Content-Type': 'application/json'
+            },
+            credentials: 'same-origin',
+            body: JSON.stringify({
+                apply_cosmos_indexing_policies: false,
+                run_document_access_index_backfill: false,
+                run_stale_cache_cleanup: true,
+                apply_stale_cache_cleanup: applyChanges
+            })
+        });
+        const data = await response.json();
+        const cleanupResult = getStaleCacheCleanupStatusFromRunResult(data);
+        if (cleanupResult) {
+            renderCosmosMaintenanceStatus({ stale_cache_cleanup: cleanupResult });
+        }
+        if (!response.ok || !data.success) {
+            throw new Error(data.error || 'Stale cache cleanup failed.');
+        }
+
+        const candidates = formatNumber(cleanupResult?.candidate_count || 0);
+        const deleted = formatNumber(cleanupResult?.deleted_count || 0);
+        const message = applyChanges
+            ? `Stale cache cleanup deleted ${deleted} document(s) from ${candidates} candidate(s).`
+            : `Stale cache cleanup dry run found ${candidates} candidate document(s).`;
+        setCosmosMaintenanceMessage(message, cleanupResult?.has_more_candidates ? 'warning' : 'success');
+        showToast(message, cleanupResult?.has_more_candidates ? 'warning' : 'success');
+
+        const modalElement = document.getElementById('staleCacheCleanupApplyModal');
+        if (applyChanges && modalElement) {
+            bootstrap.Modal.getInstance(modalElement)?.hide();
+        }
+        await loadCosmosMaintenanceStatus(null, { showLoading: false });
+    } catch (error) {
+        setCosmosMaintenanceMessage(error.message || 'Stale cache cleanup failed.', 'danger');
+        showToast(error.message || 'Stale cache cleanup failed.', 'danger');
+    } finally {
+        if (triggerButton) {
+            setButtonBusy(triggerButton, false);
+        }
+    }
+}
+
+async function runCosmosIndexingPolicyApply(options = {}) {
+    const triggerButton = options.triggerButton || document.getElementById('cosmos-indexing-policy-apply-confirm-btn');
+    if (triggerButton) {
+        setButtonBusy(triggerButton, true, 'Applying...');
+    }
+    setCosmosMaintenanceMessage(
+        'Submitting missing Cosmos composite index updates. Index transformation may continue asynchronously in Azure Cosmos DB.',
+        'info'
+    );
+
+    try {
+        const response = await fetch('/api/admin/settings/app-maintenance/run', {
+            method: 'POST',
+            headers: {
+                'Accept': 'application/json',
+                'Content-Type': 'application/json'
+            },
+            credentials: 'same-origin',
+            body: JSON.stringify({
+                apply_cosmos_indexing_policies: true,
+                run_document_access_index_backfill: false,
+                run_stale_cache_cleanup: false
+            })
+        });
+        const data = await response.json();
+        const indexingResult = getCosmosIndexingPolicyStatusFromRunResult(data);
+        if (indexingResult) {
+            renderCosmosMaintenanceStatus({ cosmos_indexing_policies: indexingResult });
+        }
+        if (!response.ok || !data.success) {
+            throw new Error(data.error || 'Cosmos indexing policy update failed.');
+        }
+
+        const updated = formatNumber(indexingResult?.updated_container_count || 0);
+        const missing = formatNumber(indexingResult?.containers_missing_expected_indexes || 0);
+        const message = Number(indexingResult?.updated_container_count || 0) > 0
+            ? `Cosmos indexing policy update submitted for ${updated} container(s). Refresh later to monitor transformation status.`
+            : `Cosmos indexing policies are already aligned. Missing expected indexes: ${missing}.`;
+        setCosmosMaintenanceMessage(message, 'success');
+        showToast(message, 'success');
+
+        const modalElement = document.getElementById('cosmosIndexingPolicyApplyModal');
+        if (modalElement) {
+            bootstrap.Modal.getInstance(modalElement)?.hide();
+        }
+        await loadCosmosMaintenanceStatus(null, { showLoading: false });
+    } catch (error) {
+        setCosmosMaintenanceMessage(error.message || 'Cosmos indexing policy update failed.', 'danger');
+        showToast(error.message || 'Cosmos indexing policy update failed.', 'danger');
+    } finally {
+        if (triggerButton) {
+            setButtonBusy(triggerButton, false);
+        }
+    }
+}
+
+async function runDocumentAccessIndexBackfillBatch(options = {}) {
+    const reset = Boolean(options.reset);
+    const triggerButton = options.triggerButton || document.getElementById(reset ? 'document-access-index-reset-confirm-btn' : 'document-access-index-run-batch-btn');
+    if (triggerButton) {
+        setButtonBusy(triggerButton, true, reset ? 'Resetting...' : 'Running...');
+    }
+    setDocumentAccessIndexMessage(reset ? 'Resetting backfill checkpoint and running one batch...' : 'Running one document access backfill batch...', 'info');
+
+    try {
+        const response = await fetch('/api/admin/settings/app-maintenance/run', {
+            method: 'POST',
+            headers: {
+                'Accept': 'application/json',
+                'Content-Type': 'application/json'
+            },
+            credentials: 'same-origin',
+            body: JSON.stringify({
+                apply_cosmos_indexing_policies: false,
+                run_document_access_index_backfill: true,
+                reset_document_access_index_backfill: reset
+            })
+        });
+        const data = await response.json();
+        const currentStatus = getDocumentAccessIndexBackfillStatusFromRunResult(data);
+        if (currentStatus) {
+            renderDocumentAccessIndexStatus(currentStatus);
+        }
+        if (!response.ok || !data.success) {
+            throw new Error(data.error || 'Document access index backfill batch failed.');
+        }
+
+        const status = currentStatus?.state?.status || 'completed';
+        const statusVariant = getDocumentAccessIndexStatusVariant(status);
+        if (isDocumentAccessIndexBackfillRunning(status)) {
+            setDocumentAccessIndexMessage('Backfill batch is still running. Status will refresh automatically.', 'info');
+        } else if (isDocumentAccessIndexBackfillInProgress(status)) {
+            setDocumentAccessIndexMessage('Backfill batch completed and more documents remain. Run another batch or leave scheduled backfill enabled to continue during maintenance.', 'info');
+        } else if (statusVariant === 'danger' || statusVariant === 'warning') {
+            setDocumentAccessIndexMessage('Backfill batch completed with errors. Review the repair backlog and last error details.', 'warning');
+        } else {
+            setDocumentAccessIndexMessage('Document access index backfill batch completed.', 'success');
+        }
+        showToast(
+            statusVariant === 'danger' || statusVariant === 'warning'
+                ? 'Document access index backfill batch completed with errors.'
+                : 'Document access index backfill batch completed.',
+            statusVariant === 'danger' ? 'danger' : statusVariant === 'warning' ? 'warning' : 'success'
+        );
+
+        const modalElement = document.getElementById('documentAccessIndexResetModal');
+        if (reset && modalElement) {
+            bootstrap.Modal.getInstance(modalElement)?.hide();
+        }
+    } catch (error) {
+        setDocumentAccessIndexMessage(error.message || 'Document access index backfill batch failed.', 'danger');
+        showToast(error.message || 'Document access index backfill batch failed.', 'danger');
+        stopDocumentAccessIndexPolling();
+    } finally {
+        if (triggerButton) {
+            setButtonBusy(triggerButton, false);
+        }
+    }
+}
+
+function setupDocumentAccessIndexControls() {
+    const section = document.getElementById('document-access-index-section');
+    if (!section) {
+        return;
+    }
+
+    document.getElementById('document-access-index-refresh-btn')?.addEventListener('click', loadDocumentAccessIndexStatus);
+    document.getElementById('conversation-cache-refresh-btn')?.addEventListener('click', loadDocumentAccessIndexStatus);
+    document.getElementById('document-access-index-run-batch-btn')?.addEventListener('click', event => {
+        runDocumentAccessIndexBackfillBatch({ triggerButton: event.currentTarget });
+    });
+    document.getElementById('document-access-index-reset-confirm-btn')?.addEventListener('click', event => {
+        runDocumentAccessIndexBackfillBatch({ reset: true, triggerButton: event.currentTarget });
+    });
+    loadDocumentAccessIndexStatus(null, { showLoading: false });
+}
+
+function setupCosmosMaintenanceControls() {
+    const section = document.getElementById('cosmos-maintenance-section');
+    if (!section) {
+        return;
+    }
+
+    document.getElementById('cosmos-maintenance-refresh-btn')?.addEventListener('click', loadCosmosMaintenanceStatus);
+    document.getElementById('cosmos-indexing-policy-apply-confirm-btn')?.addEventListener('click', event => {
+        runCosmosIndexingPolicyApply({ triggerButton: event.currentTarget });
+    });
+    document.getElementById('stale-cache-cleanup-dry-run-btn')?.addEventListener('click', event => {
+        runStaleCacheCleanup({ applyChanges: false, triggerButton: event.currentTarget });
+    });
+    document.getElementById('stale-cache-cleanup-apply-confirm-btn')?.addEventListener('click', event => {
+        runStaleCacheCleanup({ applyChanges: true, triggerButton: event.currentTarget });
+    });
 }
 
 function setupCosmosThroughputControls() {
@@ -2861,6 +4920,143 @@ function setupFileDownloadAssignments() {
     }).setup();
 }
 
+function setKeyVaultReminderStatus(message, variant = 'info') {
+    const statusElement = document.getElementById('key-vault-reminders-status-message');
+    if (!statusElement) {
+        return;
+    }
+
+    statusElement.textContent = message || '';
+    statusElement.className = `alert alert-${variant}${message ? '' : ' d-none'}`;
+}
+
+function appendKeyVaultReminderCell(row, text, className = '') {
+    const cell = document.createElement('td');
+    if (className) {
+        cell.className = className;
+    }
+    cell.textContent = text || '';
+    row.appendChild(cell);
+}
+
+function formatKeyVaultReminderExpiry(reminder) {
+    const expiresOn = reminder.expires_on || 'Unknown';
+    if (typeof reminder.days_until_expiry !== 'number') {
+        return expiresOn;
+    }
+    if (reminder.days_until_expiry < 0) {
+        return `${expiresOn} (${Math.abs(reminder.days_until_expiry)} days expired)`;
+    }
+    if (reminder.days_until_expiry === 0) {
+        return `${expiresOn} (today)`;
+    }
+    return `${expiresOn} (${reminder.days_until_expiry} days)`;
+}
+
+function renderKeyVaultReminderInventory(reminders) {
+    const tableBody = document.getElementById('key-vault-reminders-table-body');
+    if (!tableBody) {
+        return;
+    }
+
+    tableBody.replaceChildren();
+    if (!Array.isArray(reminders) || reminders.length === 0) {
+        const row = document.createElement('tr');
+        const cell = document.createElement('td');
+        cell.colSpan = 8;
+        cell.className = 'text-muted';
+        cell.textContent = 'No Key Vault reminder inventory entries match the current filters.';
+        row.appendChild(cell);
+        tableBody.appendChild(row);
+        return;
+    }
+
+    reminders.forEach(reminder => {
+        const row = document.createElement('tr');
+        const sourceLabel = reminder.source_display_name || reminder.source_name || reminder.source_id || '';
+        const fieldLabel = reminder.field_label || reminder.field_path || '';
+        const statusLabel = reminder.key_vault_sync_status === 'sync_failed'
+            ? `${reminder.status || 'sync_failed'}: ${reminder.key_vault_sync_error || 'Key Vault sync failed'}`
+            : (reminder.status || '');
+
+        appendKeyVaultReminderCell(row, formatKeyVaultReminderExpiry(reminder));
+        appendKeyVaultReminderCell(row, `${reminder.scope || ''}: ${reminder.scope_value || ''}`);
+        appendKeyVaultReminderCell(row, sourceLabel);
+        appendKeyVaultReminderCell(row, fieldLabel);
+        appendKeyVaultReminderCell(row, reminder.contact_email || '');
+        appendKeyVaultReminderCell(row, statusLabel);
+        appendKeyVaultReminderCell(row, reminder.id || '', 'font-monospace small');
+        appendKeyVaultReminderCell(row, reminder.secret_name || '', 'font-monospace small');
+        tableBody.appendChild(row);
+    });
+}
+
+async function loadKeyVaultReminderInventory() {
+    const refreshButton = document.getElementById('key-vault-reminders-refresh');
+    const searchInput = document.getElementById('key-vault-reminders-search');
+    const statusSelect = document.getElementById('key-vault-reminders-status');
+    const params = new URLSearchParams();
+    if (searchInput?.value.trim()) {
+        params.set('search', searchInput.value.trim());
+    }
+    if (statusSelect?.value) {
+        params.set('status', statusSelect.value);
+    }
+
+    setKeyVaultReminderStatus('Loading Key Vault reminder inventory...', 'info');
+    if (refreshButton) {
+        refreshButton.disabled = true;
+    }
+
+    try {
+        const response = await fetch(`/api/admin/settings/key-vault/secret-reminders?${params.toString()}`);
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+            throw new Error(data.error || 'Failed to load Key Vault reminder inventory.');
+        }
+        renderKeyVaultReminderInventory(data.reminders || []);
+        setKeyVaultReminderStatus(`Loaded ${Array.isArray(data.reminders) ? data.reminders.length : 0} reminder entries.`, 'success');
+    } catch (error) {
+        renderKeyVaultReminderInventory([]);
+        setKeyVaultReminderStatus(error.message || 'Failed to load Key Vault reminder inventory.', 'danger');
+    } finally {
+        if (refreshButton) {
+            refreshButton.disabled = false;
+        }
+    }
+}
+
+async function runKeyVaultReminderSweep() {
+    const runButton = document.getElementById('key-vault-reminders-run');
+    setKeyVaultReminderStatus('Running Key Vault reminder sweep...', 'info');
+    if (runButton) {
+        runButton.disabled = true;
+    }
+
+    try {
+        const response = await fetch('/api/admin/settings/key-vault/secret-reminders/run', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+        });
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+            throw new Error(data.error || 'Failed to run Key Vault reminder sweep.');
+        }
+        const result = data.result || {};
+        setKeyVaultReminderStatus(
+            `Reminder sweep checked ${result.checked || 0} entries and created ${result.notifications_created || 0} notifications.`,
+            'success'
+        );
+        await loadKeyVaultReminderInventory();
+    } catch (error) {
+        setKeyVaultReminderStatus(error.message || 'Failed to run Key Vault reminder sweep.', 'danger');
+    } finally {
+        if (runButton) {
+            runButton.disabled = false;
+        }
+    }
+}
+
 document.addEventListener('DOMContentLoaded', () => {
     setupAdminFormAutofillMetadata();
 
@@ -2929,7 +5125,14 @@ document.addEventListener('DOMContentLoaded', () => {
     // --- NEW: Chunk size controls ---
     setupChunkSizeControls();
 
+    setupRedisMonitoringControls();
+    setupCosmosMaintenanceControls();
+    setupDocumentAccessIndexControls();
     setupCosmosThroughputControls();
+    setupFileProcessingLogCleanup();
+    setupInboundMcpEntryEditors();
+    setupInboundMcpObservabilityCopyButtons();
+    setupInboundMcpEasyAuthGuard();
     
     // --- Setup form change tracking ---
     setupFormChangeTracking();
@@ -3342,7 +5545,6 @@ window.selectEmbeddingModel = (deploymentName, modelName) => {
     renderEmbeddingModels();
     updateEmbeddingHiddenInput();
     markFormAsModified();    // mark form as modified
-    //alert(`Selected embedding model: ${deploymentName}`);
 };
 
 function updateEmbeddingHiddenInput() {
@@ -3390,7 +5592,6 @@ window.selectImageModel = (deploymentName, modelName) => {
     renderImageModels();
     updateImageHiddenInput();
     markFormAsModified();    // mark form as modified
-    // alert(`Selected image model: ${deploymentName}`);
 };
 
 function updateImageHiddenInput() {
@@ -3617,7 +5818,7 @@ function handleSaveClassification(row, indexAttr, isNew) {
 
     // Basic validation
     if (!newLabel) {
-        alert('Label cannot be empty.');
+        showToast('Label cannot be empty.', 'warning');
         labelInput?.focus();
         return;
     }
@@ -3859,41 +6060,93 @@ function renderExternalLinks() {
  */
 function createExternalLinkRow(link, index, isNew = false) {
     const row = document.createElement('tr');
-    row.setAttribute('data-index', index);
+    row.dataset.index = String(index);
 
     if (isNew) {
-        // Create an editable row for new links
-        row.innerHTML = `
-            <td>
-                <input type="text" class="form-control form-control-sm external-link-label-input" 
-                       value="${escapeHtml(link.label)}" placeholder="Link Label">
-            </td>
-            <td>
-                <input type="url" class="form-control form-control-sm external-link-url-input" 
-                       value="${escapeHtml(link.url)}" placeholder="https://example.com">
-            </td>
-            <td>
-                <button type="button" class="btn btn-sm btn-success external-link-save-btn" data-index="${index}">Save</button>
-                <button type="button" class="btn btn-sm btn-secondary ms-1 external-link-cancel-btn" data-index="${index}">Cancel</button>
-            </td>
-        `;
+        populateExternalLinkEditorRow(row, link, index);
     } else {
-        // Create a read-only row for existing links
-        row.innerHTML = `
-            <td class="external-link-label">${escapeHtml(link.label)}</td>
-            <td class="external-link-url">
-                <a href="${escapeHtml(link.url)}" target="_blank" rel="noopener noreferrer">
-                    ${escapeHtml(link.url)}
-                </a>
-            </td>
-            <td>
-                <button type="button" class="btn btn-sm btn-outline-primary external-link-edit-btn" data-index="${index}">Edit</button>
-                <button type="button" class="btn btn-sm btn-outline-danger ms-1 external-link-delete-btn" data-index="${index}">Delete</button>
-            </td>
-        `;
+        const labelCell = document.createElement('td');
+        labelCell.className = 'external-link-label';
+        labelCell.textContent = link.label;
+
+        const urlCell = document.createElement('td');
+        urlCell.className = 'external-link-url';
+        const safeUrl = sanitizeHttpUrl(link.url);
+        if (safeUrl) {
+            const anchor = document.createElement('a');
+            anchor.href = safeUrl;
+            anchor.target = '_blank';
+            anchor.rel = 'noopener noreferrer';
+            anchor.textContent = link.url;
+            urlCell.appendChild(anchor);
+        } else {
+            urlCell.textContent = link.url;
+        }
+
+        const actionsCell = document.createElement('td');
+        actionsCell.className = 'text-nowrap';
+
+        const moveUpButton = createIconButton('bi bi-arrow-up', `Move ${link.label} up`);
+        moveUpButton.classList.add('external-link-move-up-btn');
+        moveUpButton.dataset.index = String(index);
+        moveUpButton.disabled = index === 0;
+
+        const moveDownButton = createIconButton('bi bi-arrow-down', `Move ${link.label} down`);
+        moveDownButton.classList.add('external-link-move-down-btn', 'ms-1');
+        moveDownButton.dataset.index = String(index);
+        moveDownButton.disabled = index === externalLinks.length - 1;
+
+        const editButton = document.createElement('button');
+        editButton.type = 'button';
+        editButton.className = 'btn btn-sm btn-outline-primary ms-1 external-link-edit-btn';
+        editButton.dataset.index = String(index);
+        editButton.textContent = 'Edit';
+
+        const deleteButton = document.createElement('button');
+        deleteButton.type = 'button';
+        deleteButton.className = 'btn btn-sm btn-outline-danger ms-1 external-link-delete-btn';
+        deleteButton.dataset.index = String(index);
+        deleteButton.textContent = 'Delete';
+
+        actionsCell.append(moveUpButton, moveDownButton, editButton, deleteButton);
+        row.append(labelCell, urlCell, actionsCell);
     }
 
     return row;
+}
+
+function populateExternalLinkEditorRow(row, link, index) {
+    const labelCell = document.createElement('td');
+    const labelInput = document.createElement('input');
+    labelInput.type = 'text';
+    labelInput.className = 'form-control form-control-sm external-link-label-input';
+    labelInput.value = link.label;
+    labelInput.placeholder = 'Link Label';
+    labelCell.appendChild(labelInput);
+
+    const urlCell = document.createElement('td');
+    const urlInput = document.createElement('input');
+    urlInput.type = 'url';
+    urlInput.className = 'form-control form-control-sm external-link-url-input';
+    urlInput.value = link.url;
+    urlInput.placeholder = 'https://example.com';
+    urlCell.appendChild(urlInput);
+
+    const actionsCell = document.createElement('td');
+    const saveButton = document.createElement('button');
+    saveButton.type = 'button';
+    saveButton.className = 'btn btn-sm btn-success external-link-save-btn';
+    saveButton.dataset.index = String(index);
+    saveButton.textContent = 'Save';
+
+    const cancelButton = document.createElement('button');
+    cancelButton.type = 'button';
+    cancelButton.className = 'btn btn-sm btn-secondary ms-1 external-link-cancel-btn';
+    cancelButton.dataset.index = String(index);
+    cancelButton.textContent = 'Cancel';
+
+    actionsCell.append(saveButton, cancelButton);
+    row.replaceChildren(labelCell, urlCell, actionsCell);
 }
 
 /**
@@ -3927,8 +6180,8 @@ function handleAddExternalLink() {
  * @param {Event} event - The click event.
  */
 function handleExternalLinksAction(event) {
-    const target = event.target;
-    if (!target.matches('button')) return;
+    const target = event.target.closest('button');
+    if (!target) return;
 
     const row = target.closest('tr');
     if (!row) return;
@@ -3944,7 +6197,32 @@ function handleExternalLinksAction(event) {
         handleCancelExternalLink(row, indexAttr, isNew);
     } else if (target.classList.contains('external-link-delete-btn')) {
         handleDeleteExternalLink(row, indexAttr, isNew);
+    } else if (target.classList.contains('external-link-move-up-btn')) {
+        handleMoveExternalLink(indexAttr, -1);
+    } else if (target.classList.contains('external-link-move-down-btn')) {
+        handleMoveExternalLink(indexAttr, 1);
     }
+}
+
+function handleMoveExternalLink(indexAttr, direction) {
+    const index = Number.parseInt(indexAttr, 10);
+    const destinationIndex = index + direction;
+
+    if (
+        !Number.isInteger(index)
+        || ![-1, 1].includes(direction)
+        || destinationIndex < 0
+        || destinationIndex >= externalLinks.length
+    ) {
+        return;
+    }
+
+    [externalLinks[index], externalLinks[destinationIndex]] = [
+        externalLinks[destinationIndex],
+        externalLinks[index],
+    ];
+    renderExternalLinks();
+    markFormAsModified();
 }
 
 /**
@@ -3952,25 +6230,11 @@ function handleExternalLinksAction(event) {
  * @param {HTMLTableRowElement} row - The table row to make editable.
  */
 function handleEditExternalLink(row) {
-    const index = parseInt(row.getAttribute('data-index'));
+    const index = Number.parseInt(row.dataset.index, 10);
     const link = externalLinks[index];
     if (!link) return;
 
-    // Replace the row content with editable inputs
-    row.innerHTML = `
-        <td>
-            <input type="text" class="form-control form-control-sm external-link-label-input" 
-                   value="${escapeHtml(link.label)}" placeholder="Link Label">
-        </td>
-        <td>
-            <input type="url" class="form-control form-control-sm external-link-url-input" 
-                   value="${escapeHtml(link.url)}" placeholder="https://example.com">
-        </td>
-        <td>
-            <button type="button" class="btn btn-sm btn-success external-link-save-btn" data-index="${index}">Save</button>
-            <button type="button" class="btn btn-sm btn-secondary ms-1 external-link-cancel-btn" data-index="${index}">Cancel</button>
-        </td>
-    `;
+    populateExternalLinkEditorRow(row, link, index);
 
     // Focus on the label input
     const labelInput = row.querySelector('.external-link-label-input');
@@ -3998,13 +6262,13 @@ function handleSaveExternalLink(row, indexAttr, isNew) {
 
     // Validation
     if (!label) {
-        alert('Please enter a label for the link.');
+        showToast('Please enter a label for the link.', 'warning');
         labelInput.focus();
         return;
     }
 
     if (!url) {
-        alert('Please enter a URL for the link.');
+        showToast('Please enter a URL for the link.', 'warning');
         urlInput.focus();
         return;
     }
@@ -4013,7 +6277,7 @@ function handleSaveExternalLink(row, indexAttr, isNew) {
     try {
         new URL(url);
     } catch (e) {
-        alert('Please enter a valid URL (e.g., https://example.com).');
+        showToast('Please enter a valid URL (e.g., https://example.com).', 'warning');
         urlInput.focus();
         return;
     }
@@ -4021,26 +6285,16 @@ function handleSaveExternalLink(row, indexAttr, isNew) {
     const linkData = { label, url };
 
     if (isNew) {
-        // Add new link to the array
         externalLinks.push(linkData);
-        const newIndex = externalLinks.length - 1;
-        
-        // Replace the row with a read-only version
-        const newRow = createExternalLinkRow(linkData, newIndex, false);
-        row.parentNode.replaceChild(newRow, row);
     } else {
-        // Update existing link
-        const index = parseInt(indexAttr);
-        if (index >= 0 && index < externalLinks.length) {
-            externalLinks[index] = linkData;
-            
-            // Replace the row with a read-only version
-            const updatedRow = createExternalLinkRow(linkData, index, false);
-            row.parentNode.replaceChild(updatedRow, row);
+        const index = Number.parseInt(indexAttr, 10);
+        if (index < 0 || index >= externalLinks.length) {
+            return;
         }
+        externalLinks[index] = linkData;
     }
 
-    updateExternalLinksJsonInput();
+    renderExternalLinks();
     markFormAsModified();
 }
 
@@ -4514,10 +6768,10 @@ function setupToggles() {
     const enableRedisCache = document.getElementById('enable_redis_cache');
     const redisSettingsDiv = document.getElementById('redis_cache_settings');
     if (enableRedisCache && redisSettingsDiv) {
-        // Set initial state
-        redisSettingsDiv.style.display = enableRedisCache.checked ? 'block' : 'none';
+        updateRedisCanonicalCacheVisibility(enableRedisCache.checked);
         enableRedisCache.addEventListener('change', function () {
-            redisSettingsDiv.style.display = this.checked ? 'block' : 'none';
+            updateRedisCanonicalCacheVisibility(this.checked);
+            markFormAsModified();
         });
     }
 
@@ -4560,6 +6814,59 @@ function setupToggles() {
         documentIntelligenceAutoSamplePages.addEventListener('input', markFormAsModified);
     }
 
+    const enableEnhancedExtraction = document.getElementById('enable_enhanced_extraction');
+    const enhancedExtractionSettings = document.getElementById('enhanced_extraction_settings');
+    const updateEnhancedExtractionControls = () => {
+        if (!enableEnhancedExtraction || !enhancedExtractionSettings) {
+            return;
+        }
+        enhancedExtractionSettings.classList.toggle('d-none', !enableEnhancedExtraction.checked);
+    };
+    if (enableEnhancedExtraction) {
+        updateEnhancedExtractionControls();
+        enableEnhancedExtraction.addEventListener('change', function () {
+            updateEnhancedExtractionControls();
+            // Turning Enhanced on defaults to Auto so it upgrades only when structure is detected.
+            if (this.checked && documentIntelligenceExtractionMode && documentIntelligenceExtractionMode.value === 'read') {
+                documentIntelligenceExtractionMode.value = 'auto';
+                updateDocumentIntelligenceAutoControls();
+            }
+            markFormAsModified();
+        });
+    }
+
+    const contentUnderstandingAuthType = document.getElementById('azure_content_understanding_authentication_type');
+    const contentUnderstandingKeyContainer = document.getElementById('azure_content_understanding_key_container');
+    const updateContentUnderstandingAuthControls = () => {
+        if (!contentUnderstandingAuthType || !contentUnderstandingKeyContainer) {
+            return;
+        }
+        contentUnderstandingKeyContainer.classList.toggle('d-none', contentUnderstandingAuthType.value === 'managed_identity');
+    };
+    if (contentUnderstandingAuthType) {
+        updateContentUnderstandingAuthControls();
+        contentUnderstandingAuthType.addEventListener('change', function () {
+            updateContentUnderstandingAuthControls();
+            markFormAsModified();
+        });
+    }
+
+    const enableOfficeEmbeddedImageAnalysis = document.getElementById('enable_office_embedded_image_analysis');
+    const officeEmbeddedImageOptions = document.getElementById('office_embedded_image_options');
+    const updateOfficeEmbeddedImageControls = () => {
+        if (!enableOfficeEmbeddedImageAnalysis || !officeEmbeddedImageOptions) {
+            return;
+        }
+        officeEmbeddedImageOptions.classList.toggle('d-none', !enableOfficeEmbeddedImageAnalysis.checked);
+    };
+    if (enableOfficeEmbeddedImageAnalysis) {
+        updateOfficeEmbeddedImageControls();
+        enableOfficeEmbeddedImageAnalysis.addEventListener('change', function () {
+            updateOfficeEmbeddedImageControls();
+            markFormAsModified();
+        });
+    }
+
     const enableContentSafetyCheckbox = document.getElementById('enable_content_safety');
     if (enableContentSafetyCheckbox) {
         enableContentSafetyCheckbox.addEventListener('change', function() {
@@ -4580,12 +6887,43 @@ function setupToggles() {
 
     const enableKeyVaultCheckbox = document.getElementById('enable_key_vault_secret_storage');
     if (enableKeyVaultCheckbox) {
+        const keyVaultSettings = document.getElementById('key_vault_settings');
+        if (keyVaultSettings) {
+            keyVaultSettings.classList.toggle('d-none', !enableKeyVaultCheckbox.checked);
+        }
         enableKeyVaultCheckbox.addEventListener('change', function() {
-            const keyVaultSettings = document.getElementById('key_vault_settings');
-            keyVaultSettings.style.display = this.checked ? 'block' : 'none';
+            if (keyVaultSettings) {
+                keyVaultSettings.classList.toggle('d-none', !this.checked);
+            }
             markFormAsModified();
         });
     }
+
+    const enableKeyVaultRemindersCheckbox = document.getElementById('enable_key_vault_secret_expiration_reminders');
+    const keyVaultReminderSettings = document.getElementById('key_vault_expiration_reminder_settings');
+    if (enableKeyVaultRemindersCheckbox && keyVaultReminderSettings) {
+        keyVaultReminderSettings.classList.toggle('d-none', !enableKeyVaultRemindersCheckbox.checked);
+        enableKeyVaultRemindersCheckbox.addEventListener('change', function() {
+            keyVaultReminderSettings.classList.toggle('d-none', !this.checked);
+            markFormAsModified();
+        });
+    }
+
+    document.getElementById('key-vault-reminders-refresh')?.addEventListener('click', () => {
+        void loadKeyVaultReminderInventory();
+    });
+    document.getElementById('key-vault-reminders-run')?.addEventListener('click', () => {
+        void runKeyVaultReminderSweep();
+    });
+    document.getElementById('key-vault-reminders-search')?.addEventListener('keydown', event => {
+        if (event.key === 'Enter') {
+            event.preventDefault();
+            void loadKeyVaultReminderInventory();
+        }
+    });
+    document.getElementById('key-vault-reminders-status')?.addEventListener('change', () => {
+        void loadKeyVaultReminderInventory();
+    });
 
     const enableWebSearch = document.getElementById('enable_web_search');
     const webSearchFoundrySettings = document.getElementById('web_search_foundry_settings');
@@ -4673,6 +7011,16 @@ function setupToggles() {
     if (enableWebSearchUserNotice && webSearchUserNoticeSettings) {
         enableWebSearchUserNotice.addEventListener('change', function() {
             toggleVisibility(webSearchUserNoticeSettings, this.checked);
+            markFormAsModified();
+        });
+    }
+
+    const enableAiNotice = document.getElementById('enable_ai_notice');
+    const aiNoticeSettings = document.getElementById('ai_notice_settings');
+    if (enableAiNotice && aiNoticeSettings) {
+        toggleVisibility(aiNoticeSettings, enableAiNotice.checked);
+        enableAiNotice.addEventListener('change', function() {
+            toggleVisibility(aiNoticeSettings, this.checked);
             markFormAsModified();
         });
     }
@@ -5578,6 +7926,14 @@ function setupTestButtons() {
         url_access_blocked_domains: getFieldValue('url_access_blocked_domains')
     });
 
+    const buildEnhancedCitationsStoragePayload = () => ({
+        test_type: 'enhanced_citations_storage',
+        enabled: isFieldChecked('enable_enhanced_citations'),
+        authentication_type: getFieldValue('office_docs_authentication_type') || 'key',
+        connection_string: getFieldValue('office_docs_storage_account_url'),
+        blob_endpoint: getFieldValue('office_docs_storage_account_blob_endpoint')
+    });
+
     const runAdminTestRequest = async (payload) => {
         const response = await fetch('/api/admin/settings/test_connection', {
             method: 'POST',
@@ -5637,6 +7993,28 @@ function setupTestButtons() {
         });
     };
 
+    const renderEnhancedCitationsStorageTestData = (container, response, data) => {
+        if (response.ok && data.success !== false) {
+            const isWarning = data.status === 'warning';
+            renderAdminTestResult(container, {
+                variant: isWarning ? 'warning' : 'success',
+                title: isWarning ? 'Enhanced Citations storage is reachable with warnings' : 'Enhanced Citations storage test passed',
+                message: data.message,
+                details: data.details,
+                guidance: data.guidance
+            });
+            return;
+        }
+
+        renderAdminTestResult(container, {
+            variant: 'danger',
+            title: 'Enhanced Citations storage test failed',
+            message: data.message || data.error || 'Error testing Enhanced Citations storage.',
+            details: data.details,
+            guidance: data.guidance
+        });
+    };
+
     const runWebSearchTest = async (button) => {
         const resultDiv = document.getElementById('test_web_search_result');
         renderAdminTestLoading(resultDiv, 'Running Web Search test...');
@@ -5675,6 +8053,25 @@ function setupTestButtons() {
         }
     };
 
+    const runEnhancedCitationsStorageTest = async (button) => {
+        const resultDiv = document.getElementById('test_enhanced_citations_storage_result');
+        renderAdminTestLoading(resultDiv, 'Testing Enhanced Citations storage...');
+        setButtonBusy(button, true, 'Testing...');
+
+        try {
+            const { response, data } = await runAdminTestRequest(buildEnhancedCitationsStoragePayload());
+            renderEnhancedCitationsStorageTestData(resultDiv, response, data);
+        } catch (error) {
+            renderAdminTestResult(resultDiv, {
+                variant: 'danger',
+                title: 'Enhanced Citations storage test failed',
+                message: error.message
+            });
+        } finally {
+            setButtonBusy(button, false);
+        }
+    };
+
     const testWebSearchBtn = document.getElementById('test_web_search_button');
     if (testWebSearchBtn) {
         testWebSearchBtn.addEventListener('click', () => runWebSearchTest(testWebSearchBtn));
@@ -5688,6 +8085,11 @@ function setupTestButtons() {
     const testUrlAccessPolicyBtn = document.getElementById('test_url_access_policy_button');
     if (testUrlAccessPolicyBtn) {
         testUrlAccessPolicyBtn.addEventListener('click', () => runUrlAccessPolicyTest(testUrlAccessPolicyBtn));
+    }
+
+    const testEnhancedCitationsStorageBtn = document.getElementById('test_enhanced_citations_storage_button');
+    if (testEnhancedCitationsStorageBtn) {
+        testEnhancedCitationsStorageBtn.addEventListener('click', () => runEnhancedCitationsStorageTest(testEnhancedCitationsStorageBtn));
     }
 
     const testGptBtn = document.getElementById('test_gpt_button');
@@ -5744,7 +8146,7 @@ function setupTestButtons() {
     if (testRedisBtn) {
         testRedisBtn.addEventListener('click', async () => {
             const resultDiv = document.getElementById('test_redis_result');
-            resultDiv.innerHTML = 'Testing Redis...';
+            setRedisTestResult(resultDiv, 'Testing Redis...', 'muted');
 
             const payload = {
                 test_type: 'redis',
@@ -5761,12 +8163,13 @@ function setupTestButtons() {
                 });
                 const data = await resp.json();
                 if (resp.ok) {
-                    resultDiv.innerHTML = `<span class="text-success">${data.message}</span>`;
+                    setRedisTestResult(resultDiv, data.message || 'Redis connection successful.', 'success');
+                    loadRedisMonitoringStatus(null, { showLoading: false });
                 } else {
-                    resultDiv.innerHTML = `<span class="text-danger">${data.error || 'Error testing Redis'}</span>`;
+                    setRedisTestResult(resultDiv, data.error || 'Error testing Redis', 'danger');
                 }
             } catch (err) {
-                resultDiv.innerHTML = `<span class="text-danger">Error: ${err.message}</span>`;
+                setRedisTestResult(resultDiv, `Error: ${err.message}`, 'danger');
             }
         });
     }
@@ -6016,6 +8419,44 @@ function setupTestButtons() {
         });
     }
 
+    const testContentUnderstandingBtn = document.getElementById('test_content_understanding_button');
+    if (testContentUnderstandingBtn) {
+        testContentUnderstandingBtn.addEventListener('click', async () => {
+            const resultDiv = document.getElementById('test_content_understanding_result');
+            resultDiv.className = 'mt-2';
+            resultDiv.textContent = 'Testing Content Understanding...';
+
+            const payload = {
+                test_type: 'content_understanding',
+                endpoint: document.getElementById('azure_content_understanding_endpoint')?.value || '',
+                authentication_type: document.getElementById('azure_content_understanding_authentication_type')?.value || 'key',
+                key: document.getElementById('azure_content_understanding_key')?.value || '',
+                api_version: document.getElementById('azure_content_understanding_api_version')?.value || '',
+                analyzer_id: document.getElementById('azure_content_understanding_analyzer_id')?.value || '',
+                image_analyzer_id: document.getElementById('azure_content_understanding_image_analyzer_id')?.value || ''
+            };
+
+            try {
+                const resp = await fetch('/api/admin/settings/test_connection', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const data = await resp.json();
+                if (resp.ok) {
+                    resultDiv.className = 'mt-2 text-success';
+                    resultDiv.textContent = data.message;
+                } else {
+                    resultDiv.className = 'mt-2 text-danger';
+                    resultDiv.textContent = data.error || 'Error testing Content Understanding';
+                }
+            } catch (err) {
+                resultDiv.className = 'mt-2 text-danger';
+                resultDiv.textContent = `Error: ${err.message}`;
+            }
+        });
+    }
+
     const testKeyVaultBtn = document.getElementById('test_key_vault_button');
     if (testKeyVaultBtn) {
         testKeyVaultBtn.addEventListener('click', async () => {
@@ -6058,12 +8499,23 @@ function setupTestButtons() {
             }
 
             const enableApim = document.getElementById('enable_gpt_apim').checked;
+            const selectedVisionOption = getSelectedVisionModelOption();
 
             const payload = {
                 test_type: 'multimodal_vision',
                 enable_apim: enableApim,
                 vision_model: visionModel
             };
+
+            if (!enableApim && selectedVisionOption?.dataset?.endpointId && selectedVisionOption?.dataset?.modelId) {
+                payload.multi_endpoint = {
+                    endpoint_id: selectedVisionOption.dataset.endpointId,
+                    model_id: selectedVisionOption.dataset.modelId,
+                    provider: selectedVisionOption.dataset.provider || '',
+                    model_name: selectedVisionOption.dataset.modelName || '',
+                    deployment_name: visionModel
+                };
+            }
 
             if (enableApim) {
                 payload.apim = {
@@ -6309,7 +8761,7 @@ function updateRedisCanonicalCacheVisibility(isEnabled) {
     const redisSettingsDiv = document.getElementById('redis_cache_settings');
 
     if (redisSettingsDiv) {
-        redisSettingsDiv.style.display = isEnabled ? 'block' : 'none';
+        redisSettingsDiv.classList.toggle('d-none', !isEnabled);
     }
 }
 
@@ -6778,31 +9230,6 @@ function clearStatusAlert(statusAlert) {
 }
 
 
-function switchTab(event, tabButtonId) {
-    event.preventDefault();
-    const triggerEl = document.getElementById(tabButtonId);
-    if (triggerEl) {
-        const tabObj = new bootstrap.Tab(triggerEl);
-        tabObj.show();
-        return;
-    }
-
-    const inferredTabId = tabButtonId.replace(/-tab$/, '');
-    if (typeof window.showAdminTab === 'function') {
-        window.showAdminTab(inferredTabId);
-
-        const navLink = document.querySelector(`.admin-nav-tab[data-tab="${inferredTabId}"]`);
-        if (navLink) {
-            document.querySelectorAll('.admin-nav-tab, .admin-nav-section').forEach(link => {
-                link.classList.remove('active');
-            });
-            navLink.classList.add('active');
-        }
-    }
-}
-
-window.switchTab = switchTab;
-
 function togglePassword(btnId, inputId) {
     const btn = document.getElementById(btnId);
     const inp = document.getElementById(inputId);
@@ -6937,56 +9364,88 @@ const visionToggle = document.getElementById('enable_multimodal_vision');
 const visionModelDiv = document.getElementById('multimodal_vision_model_settings');
 const visionSelect = document.getElementById('multimodal_vision_model');
 
+function isVisionCapableModelName(...modelNames) {
+    return modelNames.some(modelName => {
+        const normalizedName = String(modelName || '')
+            .trim()
+            .toLowerCase()
+            .replace(/[\s_.]+/g, '-');
+
+        return (
+            normalizedName.includes('vision') ||
+            normalizedName.includes('gpt-4o') ||
+            normalizedName.includes('gpt-4-1') ||
+            normalizedName.includes('gpt-4-5') ||
+            /(?:^|-)gpt-(?:[5-9]|\d{2,})(?:-|$)/.test(normalizedName) ||
+            /(?:^|-)o\d+(?:-|$)/.test(normalizedName)
+        );
+    });
+}
+
+function getSelectedVisionModelOption() {
+    if (!visionSelect) {
+        return null;
+    }
+
+    return visionSelect.options[visionSelect.selectedIndex] || null;
+}
+
 function populateVisionModels() {
     if (!visionSelect) return;
-  
-    // remember previously chosen value
-    const prev = visionSelect.getAttribute('data-prev') || '';
 
-    // clear out old options (except the placeholder)
+    const prev = visionSelect.getAttribute('data-prev') || '';
     visionSelect.innerHTML = '<option value="">Select a vision-capable model...</option>';
 
-    if (document.getElementById('enable_gpt_apim').checked) {
-        // use comma-separated APIM deployments
-        const text = document.getElementById('azure_apim_gpt_deployment').value || '';
-        text.split(',')
-                .map(s => s.trim())
-                .filter(s => s)
-                .forEach(d => {
-                    const opt = new Option(d, d);
-                    visionSelect.add(opt);
-                });
-    } else {
-        // use direct GPT selected deployments - filter for vision-capable models
-        (window.gptSelected || []).forEach(m => {
-            // Only include models with vision capabilities
-            // Vision-enabled models per Azure OpenAI docs:
-            // - o-series reasoning models (o1, o3, etc.)
-            // - GPT-5 series
-            // - GPT-4.1 series
-            // - GPT-4.5
-            // - GPT-4o series (gpt-4o, gpt-4o-mini)
-            // - GPT-4 vision models (gpt-4-vision, gpt-4-turbo-vision)
-            const modelNameLower = (m.modelName || '').toLowerCase();
-            const isVisionCapable =
-                modelNameLower.includes('vision') ||
-                modelNameLower.includes('gpt-4o') ||
-                modelNameLower.includes('gpt-4.1') ||
-                modelNameLower.includes('gpt-4.5') ||
-                modelNameLower.includes('gpt-5') ||
-                modelNameLower.match(/^o\d+/) ||
-                modelNameLower.includes('o1-') ||
-                modelNameLower.includes('o3-');
+    // Prefer multi-endpoint model list when available
+    const multiEnabled = window.enableMultiModelEndpoints === true;
+    const endpoints = Array.isArray(window.modelEndpoints) ? window.modelEndpoints : [];
 
-            if (isVisionCapable) {
+    if (multiEnabled && endpoints.length > 0) {
+        endpoints
+            .filter(ep => ep && ep.enabled)
+            .forEach(ep => {
+                (ep.models || [])
+                    .filter(m => m && m.enabled && isVisionCapableModelName(
+                        m.modelName,
+                        m.displayName,
+                        m.deploymentName,
+                        m.deployment,
+                        m.name
+                    ))
+                    .forEach(m => {
+                        const value = m.deploymentName;
+                        const label = m.modelName
+                            ? `${m.displayName || m.deploymentName} (${m.modelName})`
+                            : (m.displayName || m.deploymentName);
+                        const opt = new Option(label, value);
+                        opt.dataset.endpointId = ep.id || '';
+                        opt.dataset.modelId = m.id || '';
+                        opt.dataset.provider = ep.provider || '';
+                        opt.dataset.modelName = m.modelName || '';
+                        visionSelect.add(opt);
+                    });
+            });
+    } else if (document.getElementById('enable_gpt_apim') && document.getElementById('enable_gpt_apim').checked) {
+        // Legacy APIM-based GPT configuration
+        const text = (document.getElementById('azure_apim_gpt_deployment')?.value || '');
+        text.split(',')
+            .map(s => s.trim())
+            .filter(s => s && isVisionCapableModelName(s))
+            .forEach(d => {
+                const opt = new Option(d, d);
+                visionSelect.add(opt);
+            });
+    } else {
+        // Legacy single-endpoint GPT configuration using window.gptSelected
+        (window.gptSelected || [])
+            .filter(m => isVisionCapableModelName(m.modelName))
+            .forEach(m => {
                 const label = `${m.deploymentName} (${m.modelName})`;
                 const opt = new Option(label, m.deploymentName);
                 visionSelect.add(opt);
-            }
-        });
+            });
     }
 
-    // restore previous
     if (prev) {
         visionSelect.value = prev;
     }
@@ -7143,16 +9602,20 @@ document.addEventListener('DOMContentLoaded', () => {
                 })
                 .then(resp => {
                     if (resp.status === 'success') {
-                        alert(resp.message || `Successfully ${action === 'create' ? 'created' : 'fixed'} ${type} index!`);
+                        showToast(
+                            resp.message || `Successfully ${action === 'create' ? 'created' : 'fixed'} ${type} index!`,
+                            'success',
+                            { persist: true }
+                        );
                         window.location.reload();
                     } else {
-                        alert(`Failed to ${action} ${type} index: ${resp.error}`);
+                        showToast(`Failed to ${action} ${type} index: ${resp.error}`, 'danger');
                         fixBtn.disabled = false;
                         fixBtn.textContent = `${action === 'create' ? 'Create' : 'Fix'} ${type} Index`;
                     }
                 })
                 .catch(err => {
-                    alert(`Error ${action === 'create' ? 'creating' : 'fixing'} ${type} index: ${err.message || err}`);
+                    showToast(`Error ${action === 'create' ? 'creating' : 'fixing'} ${type} index: ${err.message || err}`, 'danger');
                     fixBtn.disabled = false;
                     fixBtn.textContent = `${action === 'create' ? 'Create' : 'Fix'} ${type} Index`;
                 });
@@ -7167,6 +9630,7 @@ togglePassword('toggle_image_gen_key', 'azure_openai_image_gen_key');
 togglePassword('toggle_content_safety_key', 'content_safety_key');
 togglePassword('toggle_search_key', 'azure_ai_search_key');
 togglePassword('toggle_docintel_key', 'azure_document_intelligence_key');
+togglePassword('toggle_content_understanding_key', 'azure_content_understanding_key');
 togglePassword('toggle_azure_apim_gpt_subscription_key', 'azure_apim_gpt_subscription_key');
 togglePassword('toggle_azure_apim_embedding_subscription_key', 'azure_apim_embedding_subscription_key');
 togglePassword('toggle_azure_apim_image_gen_subscription_key', 'azure_apim_image_gen_subscription_key');
@@ -7587,111 +10051,55 @@ function findPreviousApplicableStep(currentStep) {
 }
 
 /**
- * Navigate to the appropriate tab based on the walkthrough step
+ * Navigate to the setting a walkthrough step is about.
+ *
+ * Steps used to name a tab id directly, which meant the same knowledge was
+ * recorded twice and went stale the moment a setting moved to another tab.
+ * Steps now name the card they are about, and openAdminCard finds the owning
+ * tab from the page itself, so this cannot drift again.
+ *
  * @param {number} stepNumber - The current step number
  */
 function handleTabNavigation(stepNumber) {
-    // Map steps to tabs that need to be activated
-    const stepToTab = {
-        1: 'general-tab',     // App title and logo (General tab)
-        2: 'ai-models-tab',   // GPT settings (now in AI Models tab)
-        3: 'ai-models-tab',   // GPT model selection (now in AI Models tab)
-        4: 'workspaces-tab',  // Workspace and groups settings
-        5: 'ai-models-tab',   // Embedding settings (now in AI Models tab)
-        6: 'search-extract-tab', // AI Search settings
-        7: 'search-extract-tab', // Document Intelligence settings
-        8: 'search-extract-tab',  // Video support
-        9: 'search-extract-tab',  // Audio support
-        10: 'safety-tab',     // Content safety
-        11: 'safety-tab',     // User feedback and archiving (changed from system-tab)
-        12: 'citation-tab'    // Enhanced Citations and Image Generation
+    // card: the setting this step is about.
+    // focus: an optional finer scroll target inside that card.
+    const stepToCard = {
+        1:  { card: 'branding-section' },
+        2:  { card: 'multi-endpoint-configuration' },
+        3:  { card: 'multi-endpoint-configuration' },
+        4:  { card: 'personal-workspaces-section' },
+        5:  { card: 'embeddings-configuration' },
+        6:  { card: 'azure-ai-search-section' },
+        7:  { card: 'document-intelligence-section' },
+        8:  { card: 'video-intelligence-section', focus: 'enable_video_file_support' },
+        9:  { card: 'ai-voice-chat-section', focus: 'enable_audio_file_support' },
+        10: { card: 'content-safety-section' },
+        11: { card: 'user-feedback-section' },
+        12: { card: 'enhanced-citations-section' },
     };
-    
-    // Activate the appropriate tab
-    const tabId = stepToTab[stepNumber];
-    if (tabId) {
-        // Check if we're using sidebar navigation or tab navigation
-        const sidebarToggle = document.getElementById('admin-settings-toggle');
-        
-        if (sidebarToggle) {
-            // Using sidebar navigation - call showAdminTab function
-            const tabName = tabId.replace('-tab', ''); // Remove '-tab' suffix
-            if (typeof showAdminTab === 'function') {
-                showAdminTab(tabName);
-            } else if (typeof window.showAdminTab === 'function') {
-                window.showAdminTab(tabName);
-            }
-        } else {
-            // Using Bootstrap tabs
-            const tab = document.getElementById(tabId);
-            if (tab) {
-                // Use bootstrap Tab to show the tab
-                const bootstrapTab = new bootstrap.Tab(tab);
-                bootstrapTab.show();
-            }
-        }
-        
-        // Scroll to the relevant section after a small delay to allow tab to switch
-        setTimeout(() => {
-            scrollToRelevantSection(stepNumber, tabId);
-        }, 300);
-    }
-}
 
-/**
- * Scroll to relevant section within a tab based on the step
- * @param {number} stepNumber - The current step number
- * @param {string} tabId - The ID of the tab that was activated
- */
-function scrollToRelevantSection(stepNumber, tabId) {
-    // Define which sections to scroll to for each step
-    let targetElement = null;
-    
-    switch (stepNumber) {
-        case 1: // App title and logo
-            targetElement = document.getElementById('branding-section');
-            break;
-        case 2: // GPT settings
-            targetElement = document.getElementById('gpt-configuration');
-            break;
-        case 3: // GPT model selection
-            targetElement = document.getElementById('gpt_models_list')?.closest('.mb-3');
-            break;
-        case 4: // Workspaces toggle section
-            targetElement = document.getElementById('personal-workspaces-section');
-            break;
-        case 5: // Embedding settings
-            targetElement = document.getElementById('embeddings-configuration');
-            break;
-        case 6: // AI Search settings
-            targetElement = document.getElementById('azure-ai-search-section');
-            break;
-        case 7: // Document Intelligence settings
-            targetElement = document.getElementById('document-intelligence-section');
-            break;
-        case 8: // Video file support
-            targetElement = document.getElementById('enable_video_file_support')?.closest('.form-group');
-            break;
-        case 9: // Audio file support
-            targetElement = document.getElementById('enable_audio_file_support')?.closest('.form-group');
-            break;
-        case 10: // Content safety
-            targetElement = document.getElementById('content-safety-section');
-            break;
-        case 11: // User feedback and archiving
-            targetElement = document.getElementById('user-feedback-section');
-            break;
-        case 12: // Enhanced citations and image generation
-            targetElement = document.getElementById('enhanced-citations-section');
-            break;
-        default:
-            // For other steps, no specific scrolling
-            break;
+    const target = stepToCard[stepNumber];
+    if (!target) {
+        return;
     }
-    
-    // If we found a target element, scroll to it
-    if (targetElement) {
-        targetElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+    const opened = typeof window.openAdminCard === 'function'
+        ? window.openAdminCard(target.card)
+        : false;
+
+    if (!opened) {
+        console.warn(`handleTabNavigation: could not open card "${target.card}" for step ${stepNumber}`);
+        return;
+    }
+
+    if (target.focus) {
+        // openAdminCard scrolls to the card first, so refine afterwards.
+        window.setTimeout(() => {
+            const element = document.getElementById(target.focus);
+            if (element) {
+                element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }
+        }, 400);
     }
 }
 
@@ -8057,7 +10465,18 @@ function setupWalkthroughFieldListeners() {
             {selector: '#document_intelligence_auto_sample_pages', event: 'input'},
             {selector: '#azure_apim_document_intelligence_endpoint', event: 'input'},
             {selector: '#azure_apim_document_intelligence_subscription_key', event: 'input'},
-            {selector: '#enable_document_intelligence_apim', event: 'change'}
+            {selector: '#enable_document_intelligence_apim', event: 'change'},
+            {selector: '#enable_enhanced_extraction', event: 'change'},
+            {selector: '#azure_content_understanding_endpoint', event: 'input'},
+            {selector: '#azure_content_understanding_key', event: 'input'},
+            {selector: '#azure_content_understanding_authentication_type', event: 'change'},
+            {selector: '#azure_content_understanding_api_version', event: 'input'},
+            {selector: '#azure_content_understanding_analyzer_id', event: 'input'},
+            {selector: '#azure_content_understanding_image_analyzer_id', event: 'input'},
+            {selector: '#enable_office_embedded_image_analysis', event: 'change'},
+            {selector: '#enable_document_intelligence_formula_extraction', event: 'change'},
+            {selector: '#office_embedded_image_min_pixels', event: 'input'},
+            {selector: '#office_embedded_image_max_per_document', event: 'input'}
         ],
         8: [ // Video settings
             {selector: '#enable_video_file_support', event: 'change'},

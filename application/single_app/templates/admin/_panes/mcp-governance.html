@@ -1,0 +1,91 @@
+            <div class="tab-pane fade{% if admin_landing_tab == 'mcp-governance' %} show active{% endif %}" id="mcp-governance" role="tabpanel" aria-labelledby="mcp-governance-tab">
+                <div class="card p-3 mb-3" id="governance-mcp-destination-section">
+                    <h5>
+                        <i class="bi bi-diagram-3 me-2"></i>MCP Action Destination Governance
+                    </h5>
+                    <p class="text-muted mb-2">
+                        Restrict outbound remote MCP servers by destination pattern and scope. Destination policies reuse delegated item policies, so admins can allow all users, specific users, or workspace groups for each approved destination.
+                    </p>
+                    <div class="row g-3 align-items-start">
+                        <div class="col-lg-4">
+                            <div class="form-check form-switch mb-2">
+                                <input class="form-check-input" type="checkbox" role="switch" id="enable_mcp_destination_governance" name="enable_mcp_destination_governance" {% if settings.enable_mcp_destination_governance %}checked{% endif %}>
+                                <label class="form-check-label ms-2" for="enable_mcp_destination_governance">Enforce MCP Destination Allowlist</label>
+                            </div>
+                            <div class="form-check form-switch mb-2">
+                                <input class="form-check-input" type="checkbox" role="switch" id="mcp_block_unsafe_destinations" name="mcp_block_unsafe_destinations" {% if settings.mcp_block_unsafe_destinations %}checked{% endif %}>
+                                <label class="form-check-label ms-2" for="mcp_block_unsafe_destinations">Block Private/Local Literal IP Destinations</label>
+                            </div>
+                            <div class="form-text">
+                                Save with the main Settings button. Unsafe literal-IP blocking can be enabled even before the allowlist is enforced.
+                            </div>
+                        </div>
+                        <div class="col-lg-5">
+                            <div class="small fw-semibold mb-1">Supported destination patterns</div>
+                            <ul class="small text-muted mb-0">
+                                <li><code>*</code> for any remote MCP destination after identity/auth checks.</li>
+                                <li><code>preconfiguration:microsoft_learn</code> or <code>preset:generic</code>.</li>
+                                <li><code>*.contoso.com</code>, <code>https://example.com/mcp*</code>, or <code>transport:streamable-http</code>.</li>
+                                <li><code>group:&lt;group-id&gt;::preconfiguration:github</code> for one group-specific override.</li>
+                            </ul>
+                        </div>
+                        <div class="col-lg-3">
+                            <div class="d-grid gap-2 governance-policy-action-list">
+                                <div class="input-group input-group-sm">
+                                    <button type="button" class="btn btn-outline-primary flex-grow-1 governance-new-mcp-destination-policy-btn" data-governance-mcp-destination-entity="mcp_personal_destination">New Personal Destination Policy</button>
+                                    <button type="button" class="btn btn-outline-info governance-policy-help-btn" data-governance-help-key="mcp_personal_destination" aria-label="About personal MCP destination policies" title="About personal MCP destination policies">
+                                        <i class="bi bi-info-circle" aria-hidden="true"></i>
+                                    </button>
+                                </div>
+                                <div class="input-group input-group-sm">
+                                    <button type="button" class="btn btn-outline-primary flex-grow-1 governance-new-mcp-destination-policy-btn" data-governance-mcp-destination-entity="mcp_group_destination">New Group Destination Policy</button>
+                                    <button type="button" class="btn btn-outline-info governance-policy-help-btn" data-governance-help-key="mcp_group_destination" aria-label="About group MCP destination policies" title="About group MCP destination policies">
+                                        <i class="bi bi-info-circle" aria-hidden="true"></i>
+                                    </button>
+                                </div>
+                                <div class="input-group input-group-sm">
+                                    <button type="button" class="btn btn-outline-primary flex-grow-1 governance-new-mcp-destination-policy-btn" data-governance-mcp-destination-entity="mcp_global_destination">New Global Destination Policy</button>
+                                    <button type="button" class="btn btn-outline-info governance-policy-help-btn" data-governance-help-key="mcp_global_destination" aria-label="About global MCP destination policies" title="About global MCP destination policies">
+                                        <i class="bi bi-info-circle" aria-hidden="true"></i>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card p-3 mb-3" id="governance-inbound-mcp-section">
+                    <h5>
+                        <i class="bi bi-box-arrow-in-down-right me-2"></i>Inbound MCP Source Governance
+                    </h5>
+                    <p class="text-muted mb-2">
+                        Control which delegated users and groups can use SimpleChat as an inbound MCP server through source-scoped policies.
+                    </p>
+                    <div class="alert alert-warning py-2 small" role="alert">
+                        Quick-create inbound MCP policies open in restricted user/group mode by default. Only use "Allow all users" when every delegated user with the required Entra role and delegated scope should be able to satisfy that policy.
+                    </div>
+                    <div class="row g-3 align-items-start">
+                        <div class="col-lg-7">
+                            <div class="small fw-semibold mb-1">Policy required for inbound MCP</div>
+                            <ul class="small text-muted mb-2">
+                                <li><code>inbound_mcp_source</code> with delegated item <code>*</code>: allows selected users or groups to use any accepted source ID.</li>
+                                <li><code>inbound_mcp_source</code> with a configured source ID: allows selected users or groups to use only requests with that source value.</li>
+                            </ul>
+                            <div class="small text-muted">
+                                Client, tenant, delegated scope, and Entra role checks remain in Inbound MCP configuration. The source ID comes from the configured header when present and is advisory unless a trusted gateway sets or validates it.
+                            </div>
+                        </div>
+                        <div class="col-lg-5">
+                            <div class="d-grid gap-2 governance-policy-action-list">
+                                <div class="input-group input-group-sm">
+                                    <button type="button" class="btn btn-outline-primary flex-grow-1 governance-new-inbound-mcp-policy-btn" data-governance-inbound-mcp-entity="inbound_mcp_source">New Inbound MCP Source Access Policy</button>
+                                    <button type="button" class="btn btn-outline-info governance-policy-help-btn" data-governance-help-key="inbound_mcp_source" aria-label="About inbound MCP source policies" title="About inbound MCP source policies">
+                                        <i class="bi bi-info-circle" aria-hidden="true"></i>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+            </div>

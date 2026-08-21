@@ -9,12 +9,13 @@ import logging
 import re
 from typing import Any, Dict, List, Optional, Sequence, Union
 
-from azure.cosmos import CosmosClient
+import azure.cosmos as azure_cosmos
 from azure.cosmos.exceptions import CosmosHttpResponseError
 from azure.identity import DefaultAzureCredential
 from semantic_kernel.functions import kernel_function
 
 from functions_appinsights import log_event
+from functions_azure_endpoint_validation import validate_azure_cosmos_endpoint
 from semantic_kernel_plugins.base_plugin import BasePlugin
 from semantic_kernel_plugins.plugin_invocation_logger import plugin_function_logger
 
@@ -34,7 +35,7 @@ class ResultWithMetadata:
 class CosmosQueryPlugin(BasePlugin):
     """Read-only Azure Cosmos DB for NoSQL query plugin."""
 
-    _client_cache: Dict[str, CosmosClient] = {}
+    _client_cache: Dict[str, azure_cosmos.CosmosClient] = {}
 
     def __init__(self, manifest: Dict[str, Any]):
         super().__init__(manifest)
@@ -69,7 +70,7 @@ class CosmosQueryPlugin(BasePlugin):
         self._validate_configuration()
 
         log_event(
-            "[CosmosQueryPlugin] Initialized plugin",
+            "[COSMOS_QUERY_PLUGIN] Initialized plugin",
             extra={
                 "endpoint": self.endpoint,
                 "database_name": self.database_name,
@@ -225,7 +226,7 @@ class CosmosQueryPlugin(BasePlugin):
             }
 
             log_event(
-                "[CosmosQueryPlugin] Query executed successfully",
+                "[COSMOS_QUERY_PLUGIN] Query executed successfully",
                 extra={
                     "database_name": self.database_name,
                     "container_name": self.container_name,
@@ -239,7 +240,7 @@ class CosmosQueryPlugin(BasePlugin):
             return ResultWithMetadata(result, self.metadata)
         except CosmosHttpResponseError as exc:
             log_event(
-                f"[CosmosQueryPlugin] Cosmos query failed: {exc}",
+                f"[COSMOS_QUERY_PLUGIN] Cosmos query failed: {exc}",
                 extra={
                     "database_name": self.database_name,
                     "container_name": self.container_name,
@@ -261,7 +262,7 @@ class CosmosQueryPlugin(BasePlugin):
             )
         except Exception as exc:
             log_event(
-                f"[CosmosQueryPlugin] Unexpected query failure: {exc}",
+                f"[COSMOS_QUERY_PLUGIN] Unexpected query failure: {exc}",
                 extra={
                     "database_name": self.database_name,
                     "container_name": self.container_name,
@@ -310,8 +311,10 @@ class CosmosQueryPlugin(BasePlugin):
             client_cache_key = self._get_client_cache_key()
             client = self._client_cache.get(client_cache_key)
             if client is None:
-                client = CosmosClient(
-                    self.endpoint,
+                # Revalidated immediately before client construction so a stored endpoint
+                # cannot direct application credentials to a non-Cosmos origin.
+                client = azure_cosmos.CosmosClient(
+                    validate_azure_cosmos_endpoint(self.endpoint),
                     credential=self._get_client_credential(),
                     timeout=self.timeout,
                     connection_timeout=self.timeout,
@@ -326,6 +329,8 @@ class CosmosQueryPlugin(BasePlugin):
         missing_fields = []
         if not self.endpoint:
             missing_fields.append("endpoint")
+        else:
+            validate_azure_cosmos_endpoint(self.endpoint)
         if not self.database_name:
             missing_fields.append("database_name")
         if not self.container_name:

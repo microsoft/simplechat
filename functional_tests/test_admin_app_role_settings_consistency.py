@@ -16,6 +16,8 @@ import os
 import re
 import sys
 import traceback
+from test_support.versioning import assert_app_version_at_least
+from test_support.templates import compose_if_admin_settings
 
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -91,7 +93,7 @@ LEGACY_APP_ROLE_VALUES = {
 def read_file(path):
     """Read a UTF-8 text file from the repo."""
     with open(path, "r", encoding="utf-8") as file_handle:
-        return file_handle.read()
+        return compose_if_admin_settings(path, file_handle.read())
 
 
 def read_current_version():
@@ -144,7 +146,7 @@ def test_versions_are_updated():
 
     current_version = read_current_version()
 
-    assert current_version == CURRENT_VERSION, f"Expected config VERSION {CURRENT_VERSION}, found {current_version}"
+    assert_app_version_at_least(CURRENT_VERSION)
 
     print("Version updates passed")
 

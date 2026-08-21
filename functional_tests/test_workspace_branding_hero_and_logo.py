@@ -17,6 +17,7 @@ public workspace manage pages.
 
 import os
 import sys
+from test_support.versioning import assert_app_version_at_least
 
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -151,8 +152,8 @@ def test_workspace_models_and_routes_include_branding_fields():
             '"heroColor": normalize_workspace_hero_color',
             'logo_metadata = get_workspace_logo_metadata(g)',
             '**logo_metadata,',
-            '@app.route("/api/groups/<group_id>/logo", methods=["GET"])',
-            '@app.route("/api/groups/<group_id>/logo", methods=["POST"])',
+            '@bp.route("/api/groups/<group_id>/logo", methods=["GET"])',
+            '@bp.route("/api/groups/<group_id>/logo", methods=["POST"])',
         ],
         "group route",
     )
@@ -162,8 +163,8 @@ def test_workspace_models_and_routes_include_branding_fields():
             '"heroColor": normalize_workspace_hero_color',
             'logo_metadata = get_workspace_logo_metadata(ws)',
             '**logo_metadata,',
-            '@app.route("/api/public_workspaces/<ws_id>/logo", methods=["GET"])',
-            '@app.route("/api/public_workspaces/<ws_id>/logo", methods=["POST"])',
+            '@bp.route("/api/public_workspaces/<ws_id>/logo", methods=["GET"])',
+            '@bp.route("/api/public_workspaces/<ws_id>/logo", methods=["POST"])',
         ],
         "public workspace route",
     )
@@ -317,7 +318,7 @@ def test_config_version_is_bumped_for_workspace_hero_layout_changes():
     print("[check] Testing config version bump...")
 
     config_content = read_file(CONFIG_FILE)
-    assert 'VERSION = "0.241.177"' in config_content, "Expected config.py version 0.241.177"
+    assert_app_version_at_least("0.241.177")
 
     print("[pass] Config version bump passed")
 

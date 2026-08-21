@@ -54,7 +54,15 @@ class ModelEndpointBehavior:
 
     @property
     def is_openai_reasoning_model(self) -> bool:
-        return self.normalized_deployment_name.startswith(OPENAI_REASONING_MODEL_PREFIXES)
+        normalized_model_name = (
+            self.normalized_deployment_name
+            .replace("_", "-")
+            .replace(" ", "-")
+        )
+        return (
+            normalized_model_name.startswith(OPENAI_REASONING_MODEL_PREFIXES)
+            or "gpt-5" in normalized_model_name
+        )
 
     @property
     def is_foundry_non_openai_model(self) -> bool:
@@ -75,6 +83,10 @@ class ModelEndpointBehavior:
         if not normalized_reasoning_effort or normalized_reasoning_effort.lower() == "none":
             return ""
         return normalized_reasoning_effort if self.is_openai_reasoning_model else ""
+
+    @property
+    def response_length_parameter(self) -> str:
+        return "max_completion_tokens" if self.is_openai_reasoning_model else "max_tokens"
 
 
 def normalize_endpoint_text(endpoint: Any) -> str:
@@ -219,13 +231,20 @@ def extract_chat_completion_response_text(response: Any) -> str:
     return normalize_chat_completion_text(getattr(message, "content", None))
 
 
-def build_openai_style_chat_client(token_or_key: str, base_url: str, api_version: Any = ""):
+def build_openai_style_chat_client(
+    token_or_key: str,
+    base_url: str,
+    api_version: Any = "",
+    default_headers: Dict[str, str] | None = None,
+):
     """Build an OpenAI-compatible chat client for Foundry data-plane endpoints."""
     request_api_version = resolve_openai_style_request_api_version(api_version)
     client_kwargs: Dict[str, Any] = {
         "api_key": token_or_key,
         "base_url": normalize_openai_style_base_url(base_url),
     }
+    if default_headers:
+        client_kwargs["default_headers"] = default_headers
     if request_api_version:
         client_kwargs["default_query"] = {"api-version": request_api_version}
     return OpenAIStyleChatCompletionClient(OpenAI(**client_kwargs))
@@ -249,6 +268,7 @@ def build_anthropic_chat_client(
     endpoint: str,
     api_key: str = "",
     bearer_token: str = "",
+    extra_headers: Dict[str, str] | None = None,
     timeout: int = 90,
 ):
     """Build a chat-completions-shaped adapter over the Anthropic messages protocol."""
@@ -256,6 +276,7 @@ def build_anthropic_chat_client(
         endpoint=endpoint,
         api_key=api_key,
         bearer_token=bearer_token,
+        extra_headers=extra_headers,
         timeout=timeout,
     )
 
@@ -263,10 +284,19 @@ def build_anthropic_chat_client(
 class AnthropicChatCompletionClient:
     """Adapter that exposes Anthropic messages through chat.completions.create."""
 
-    def __init__(self, *, endpoint: str, api_key: str = "", bearer_token: str = "", timeout: int = 90):
+    def __init__(
+        self,
+        *,
+        endpoint: str,
+        api_key: str = "",
+        bearer_token: str = "",
+        extra_headers: Dict[str, str] | None = None,
+        timeout: int = 90,
+    ):
         self.endpoint = normalize_anthropic_messages_url(endpoint)
         self.api_key = api_key
         self.bearer_token = bearer_token
+        self.extra_headers = extra_headers or {}
         self.timeout = timeout
         self.chat = SimpleNamespace(completions=SimpleNamespace(create=self.create))
 
@@ -301,6 +331,10 @@ class AnthropicChatCompletionClient:
             headers["x-api-key"] = self.api_key
         else:
             raise ValueError("Anthropic model endpoints require an API key or bearer token.")
+        existing_header_names = {header_name.lower() for header_name in headers}
+        for header_name, header_value in self.extra_headers.items():
+            if header_name.lower() not in existing_header_names:
+                headers[header_name] = header_value
         return headers
 
     def _build_payload(self, kwargs: Dict[str, Any]) -> Dict[str, Any]:
@@ -506,7 +540,7 @@ class AnthropicChatCompletionClient:
                 try:
                     event_payload = json.loads(event_data)
                 except json.JSONDecodeError:
-                    debug_print(f"[ModelEndpoint] Ignoring invalid Anthropic stream payload: {event_data[:200]}")
+                    debug_print(f"[MODEL_ENDPOINT] Ignoring invalid Anthropic stream payload: {event_data[:200]}")
                     continue
 
                 event_type = event_payload.get("type")
@@ -573,6 +607,7 @@ class AnthropicSemanticKernelChatCompletion(ChatCompletionClientBase):
     endpoint: str
     api_key: str = ""
     bearer_token: str = ""
+    extra_headers: Dict[str, str] = Field(default_factory=dict)
     timeout: int = 90
     prompt_execution_settings: OpenAIChatPromptExecutionSettings | None = Field(default=None)
 
@@ -584,6 +619,7 @@ class AnthropicSemanticKernelChatCompletion(ChatCompletionClientBase):
         endpoint: str,
         api_key: str = "",
         bearer_token: str = "",
+        extra_headers: Dict[str, str] | None = None,
         timeout: int = 90,
     ):
         super().__init__(
@@ -592,6 +628,7 @@ class AnthropicSemanticKernelChatCompletion(ChatCompletionClientBase):
             endpoint=endpoint,
             api_key=api_key,
             bearer_token=bearer_token,
+            extra_headers=extra_headers or {},
             timeout=timeout,
         )
 
@@ -760,6 +797,7 @@ class AnthropicSemanticKernelChatCompletion(ChatCompletionClientBase):
             endpoint=self.endpoint,
             api_key=self.api_key,
             bearer_token=self.bearer_token,
+            extra_headers=self.extra_headers,
             timeout=self.timeout,
         )
 

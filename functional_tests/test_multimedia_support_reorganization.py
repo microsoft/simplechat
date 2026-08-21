@@ -15,6 +15,8 @@ This test ensures that:
 import os
 import sys
 
+from test_support.templates import compose_if_admin_settings
+
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 
@@ -29,8 +31,9 @@ def test_multimedia_support_move():
         )
 
         with open(admin_settings_path, 'r', encoding='utf-8') as file_handle:
-            content = file_handle.read()
-
+            content = compose_if_admin_settings(
+                admin_settings_path, file_handle.read()
+            )
         search_extract_section = content.find('id="search-extract" role="tabpanel"')
         multimedia_support_section = content.find('id="video-intelligence-section"')
 

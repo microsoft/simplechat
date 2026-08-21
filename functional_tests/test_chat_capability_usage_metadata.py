@@ -12,6 +12,7 @@ workspace search, Analyze, Compare, Web Search, and Deep Research usage.
 import ast
 import sys
 from pathlib import Path
+from test_support.versioning import assert_app_version_at_least
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -130,7 +131,7 @@ def test_capability_usage_is_wired_to_chat_paths_and_drawer():
     chat_messages_source = read_text(CHAT_MESSAGES_JS)
     config_source = read_text(CONFIG_FILE)
 
-    assert 'VERSION = "0.241.123"' in config_source
+    assert_app_version_at_least("0.241.123")
     assert "user_metadata['capability_usage'] = _build_capability_usage_metadata(" in route_source
     assert "'capability_usage': assistant_capability_usage," in route_source
     assert "'capability_usage': document_action_capability_usage," in route_source

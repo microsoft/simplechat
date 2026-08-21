@@ -17,7 +17,7 @@ jobs:
 
     steps:
     - name: Azure Container Registry Login
-      uses: Azure/docker-login@v2
+      uses: Azure/docker-login@15c4aadf093404726ab2ff205b2cdd33fa6d054c # v2
       with:
         # Container registry username
         username: ${{ secrets.ACR_USERNAME_NADOYLE }}
@@ -36,7 +36,7 @@ jobs:
           | cut -c1-128)
         echo "BRANCH_TAG=$SAFE" >> "$GITHUB_ENV"
 
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@a37ce9120846195fa4ece8f58b268e6043cb2f26 # v3.7.0
     - name: Build the Docker image
       run:         
         docker build . --file application/single_app/Dockerfile --tag ${{ secrets.ACR_LOGIN_SERVER_NADOYLE }}/simple-chat-dev:$(date +'%Y-%m-%d')_${BRANCH_TAG}_$GITHUB_RUN_NUMBER;

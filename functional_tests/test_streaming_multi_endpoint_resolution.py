@@ -2,12 +2,13 @@
 #!/usr/bin/env python3
 """
 Functional test for streaming multi-endpoint model resolution.
-Version: 0.239.200
-Implemented in: 0.239.200
+Version: 0.250.109
+Implemented in: 0.239.200; updated in 0.250.109
 
 This test ensures streaming requests resolve selected models by endpoint and
 model identifiers, hydrate saved endpoint auth, and build provider-aware
-clients for Azure OpenAI and Foundry selections.
+clients for Azure OpenAI and Foundry selections. It also verifies the selected
+model's response length is resolved and applied to chat completion params.
 """
 
 import os
@@ -51,6 +52,24 @@ def test_streaming_multi_endpoint_resolution_wiring():
     )
     assert 'active_group_ids=active_group_ids' in content, (
         'Expected streaming group context to be supplied when resolving scoped model endpoints.'
+    )
+    assert 'model_response_length = normalize_model_response_length_from_model(model_cfg)' in content, (
+        'Expected model endpoint resolution to read per-model response length.'
+    )
+    assert 'gpt_response_length' in content, (
+        'Expected resolved response length to flow through chat generation state.'
+    )
+    assert '_apply_response_length_for_model(' in content, (
+        'Expected chat completion params to apply per-model response length.'
+    )
+    assert 'response_length_parameter = response_length_parameter or ModelEndpointBehavior(provider, model_name).response_length_parameter' in content, (
+        'Expected model behavior helper to choose max_tokens vs max_completion_tokens.'
+    )
+    assert 'gpt_response_length_parameter' in content, (
+        'Expected resolved response length parameter to flow through chat generation state.'
+    )
+    assert '_build_model_endpoint_behavior_name(model_cfg, deployment)' in content, (
+        'Expected parameter selection to consider model display/model/deployment aliases.'
     )
 
     print('✅ Streaming multi-endpoint model resolution wiring verified.')

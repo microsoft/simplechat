@@ -2,8 +2,8 @@
 #!/usr/bin/env python3
 """
 Functional test for model endpoint protocol inference.
-Version: 0.250.006
-Implemented in: 0.241.179; updated in 0.250.006
+Version: 0.250.109
+Implemented in: 0.241.179; updated in 0.250.109
 
 This test ensures that Foundry model endpoint runtime calls infer Claude as
 Anthropic messages, OpenAI-compatible Foundry endpoints as /openai/v1, and
@@ -30,6 +30,7 @@ from model_endpoint_clients import (  # noqa: E402
     AnthropicSemanticKernelChatCompletion,
     extract_chat_completion_response_text,
     infer_model_endpoint_protocol,
+    ModelEndpointBehavior,
     normalize_anthropic_messages_url,
     normalize_chat_completion_text,
     normalize_openai_style_base_url,
@@ -88,6 +89,31 @@ def test_model_endpoint_protocol_inference():
         infer_model_endpoint_protocol("aoai", azure_openai_endpoint, "gpt-4o"),
         MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI,
         "Azure OpenAI endpoints should keep the Azure OpenAI protocol",
+    )
+    assert_equal(
+        ModelEndpointBehavior("aoai", "gpt-5.6-luna").response_length_parameter,
+        "max_completion_tokens",
+        "GPT-5 models should use max_completion_tokens for response length",
+    )
+    assert_equal(
+        ModelEndpointBehavior("aoai", "N-gpt-5.6-terra").response_length_parameter,
+        "max_completion_tokens",
+        "GPT-5 aliases embedded in deployment names should use max_completion_tokens",
+    )
+    assert_equal(
+        ModelEndpointBehavior("aoai", "luna-deployment GPT 5.6 Luna").response_length_parameter,
+        "max_completion_tokens",
+        "GPT-5 aliases from model display names should use max_completion_tokens",
+    )
+    assert_equal(
+        ModelEndpointBehavior("aoai", "o4-mini").response_length_parameter,
+        "max_completion_tokens",
+        "o-series models should use max_completion_tokens for response length",
+    )
+    assert_equal(
+        ModelEndpointBehavior("aoai", "gpt-4o").response_length_parameter,
+        "max_tokens",
+        "Non-reasoning chat models should use max_tokens for response length",
     )
 
     assert_equal(

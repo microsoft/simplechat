@@ -159,6 +159,8 @@ def get_changed_lines(file_path: Path, base_sha: str, head_sha: str) -> set[int]
             check=False,
             capture_output=True,
             text=True,
+            encoding='utf-8',
+            errors='replace',
         )
     except OSError:
         return None

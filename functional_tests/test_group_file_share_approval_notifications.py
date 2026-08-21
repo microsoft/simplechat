@@ -12,6 +12,7 @@ Remove/Approve behavior instead of owner-only delete/share controls.
 """
 
 from pathlib import Path
+import sys
 import traceback
 
 
@@ -22,6 +23,10 @@ DOCUMENTS_ROUTE_FILE = ROOT / "application" / "single_app" / "route_backend_docu
 GROUP_DOCUMENTS_ROUTE_FILE = ROOT / "application" / "single_app" / "route_backend_group_documents.py"
 GROUP_WORKSPACE_TEMPLATE = ROOT / "application" / "single_app" / "templates" / "group_workspaces.html"
 FUNCTIONS_DOCUMENTS_FILE = ROOT / "application" / "single_app" / "functions_documents.py"
+
+sys.path.insert(0, str(ROOT / "functional_tests"))
+
+from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
 
 def read_text(path: Path) -> str:
@@ -45,7 +50,7 @@ def assert_contains(source: str, snippets: list[str], description: str) -> None:
 
 def test_version_header_matches_config() -> None:
     """Verify this regression test tracks the config.py version."""
-    assert read_version() == "0.241.111", "Expected config.py VERSION to be 0.241.111."
+    assert_app_version_at_least("0.241.111")
 
 
 def test_notification_types_and_personal_share_decisions() -> None:

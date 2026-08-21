@@ -11,12 +11,20 @@ from collaboration_models import (
     normalize_collaboration_user,
 )
 from functions_appinsights import log_event
+from functions_ai_notice import (
+    AI_NOTICE_USER_SETTINGS_KEY,
+    build_ai_notice_dismissal_record,
+)
 from functions_authentication import *
 from functions_group import (
     check_group_status_allows_operation,
     get_user_groups,
     get_user_role_in_group,
     update_active_group_for_user,
+)
+from functions_latest_features_nav import (
+    LATEST_FEATURES_HIDDEN_VERSION_SETTING,
+    normalize_latest_features_hidden_version,
 )
 from functions_public_workspaces import update_active_public_workspace_for_user
 from functions_settings import *
@@ -88,7 +96,7 @@ def _is_current_actor_admin():
 
 def _log_profile_relationship_check_error(check_name, actor_user_id, target_user_id, error):
     log_event(
-        f'[UserProfile] {check_name} relationship check failed closed',
+        f'[USER_PROFILE] {check_name} relationship check failed closed',
         extra={
             'actor_user_id': actor_user_id,
             'target_user_id': target_user_id,
@@ -224,7 +232,7 @@ def _authorize_user_profile_access(target_user_id):
         return actor_user_id, normalized_target_user_id
 
     log_event(
-        '[UserProfile] Denied cross-user profile lookup',
+        '[USER_PROFILE] Denied cross-user profile lookup',
         extra={
             'actor_user_id': actor_user_id,
             'target_user_id': normalized_target_user_id,
@@ -247,13 +255,13 @@ def _user_profile_not_found_response():
     return jsonify({'error': 'User not found or access denied'}), 404
 
 
-def register_route_backend_users(app):
+def register_route_backend_users(bp):
     """
     This route will expose GET /api/userSearch?query=<searchTerm> which calls
     Microsoft Graph to find users by displayName, mail, userPrincipalName, etc.
     """
 
-    @app.route("/api/userSearch", methods=["GET"])
+    @bp.route("/api/userSearch", methods=["GET"])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -315,7 +323,7 @@ def register_route_backend_users(app):
                 "details": error_details
             }), getattr(e.response, 'status_code', 500) # Use response status code if available
 
-    @app.route("/api/user/info/<user_id>", methods=["GET"])
+    @bp.route("/api/user/info/<user_id>", methods=["GET"])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -342,7 +350,7 @@ def register_route_backend_users(app):
             pass
         except Exception as ex:
             log_event(
-                '[UserProfile] Failed to load user info',
+                '[USER_PROFILE] Failed to load user info',
                 extra={
                     'target_user_id': _normalize_user_lookup_id(user_id),
                     'error_type': type(ex).__name__,
@@ -357,7 +365,7 @@ def register_route_backend_users(app):
                 return jsonify(graph_user_info), 200
         except requests.exceptions.RequestException as ex:
             log_event(
-                "[Users] Graph user info lookup failed",
+                "[USERS] Graph user info lookup failed",
                 level=logging.WARNING,
                 extra={
                     "target_user_id": normalized_user_id,
@@ -368,7 +376,7 @@ def register_route_backend_users(app):
 
         return _user_profile_not_found_response()
 
-    @app.route('/api/user/collaboration-suggestions', methods=['GET'])
+    @bp.route('/api/user/collaboration-suggestions', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -448,7 +456,7 @@ def register_route_backend_users(app):
 
         return jsonify({'results': suggestions[:limit]}), 200
     
-    @app.route('/api/user/settings', methods=['GET', 'POST'])
+    @bp.route('/api/user/settings', methods=['GET', 'POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required # Assuming this decorator confirms a valid user exists
@@ -502,13 +510,21 @@ def register_route_backend_users(app):
                     # Chat UI settings
                     'navbar_layout', 'chatLayout', 'showChatTitle', 'chatSplitSizes',
                     'deepResearchDefaultEnabled',
-                    'sidebarToggleStyle', 'sidebarMenuState',
+                    'aiNoticeDismissal',
+                    'sidebarToggleStyle', 'sidebarMenuState', 'fontSizePreference',
+                    'conversationContentsDrawerEnabled',
+                    LATEST_FEATURES_HIDDEN_VERSION_SETTING,
                     # Microphone permission settings
                     'microphonePermissionPreference', 'microphonePermissionState',
                     # Text-to-speech settings
                     'ttsEnabled', 'ttsVoice', 'ttsSpeed', 'ttsAutoplay',
+                    # AI response completion audio settings
+                    'chatCompletionAudioEnabled', 'chatCompletionAudioMuted',
+                    'chatCompletionAudioSound', 'chatCompletionAudioVolume',
                     # Tutorial visibility settings
                     'showTutorialButtons',
+                    # Desktop conversation notification settings
+                    'desktopNotificationsEnabled',
                     'recentCollaborators',
                     # Personal workspace settings managed by other backend/frontend flows
                     'personal_model_endpoints', 'tag_definitions',
@@ -537,6 +553,62 @@ def register_route_backend_users(app):
                         return jsonify({"error": "Invalid sidebar toggle style"}), 400
                     settings_to_update["sidebarToggleStyle"] = sidebar_toggle_style
 
+                if "fontSizePreference" in settings_to_update:
+                    font_size_preference = str(
+                        settings_to_update.get("fontSizePreference") or ""
+                    ).strip().lower()
+                    if font_size_preference not in FONT_SIZE_PREFERENCES:
+                        return jsonify({"error": "Invalid font size preference"}), 400
+                    settings_to_update["fontSizePreference"] = font_size_preference
+
+                if "conversationContentsDrawerEnabled" in settings_to_update:
+                    if not isinstance(settings_to_update["conversationContentsDrawerEnabled"], bool):
+                        return jsonify({"error": "Invalid conversation contents drawer preference"}), 400
+
+                for boolean_key in (
+                    "chatCompletionAudioEnabled",
+                    "chatCompletionAudioMuted",
+                ):
+                    if (
+                        boolean_key in settings_to_update
+                        and not isinstance(settings_to_update[boolean_key], bool)
+                    ):
+                        return jsonify({"error": f"Invalid {boolean_key} preference"}), 400
+
+                if "chatCompletionAudioSound" in settings_to_update:
+                    selected_sound = str(
+                        settings_to_update.get("chatCompletionAudioSound") or ""
+                    ).strip().lower()
+                    if selected_sound not in CHAT_COMPLETION_AUDIO_SOUND_IDS:
+                        return jsonify({"error": "Invalid completion audio sound"}), 400
+                    settings_to_update["chatCompletionAudioSound"] = selected_sound
+
+                if "chatCompletionAudioVolume" in settings_to_update:
+                    volume = settings_to_update.get("chatCompletionAudioVolume")
+                    if isinstance(volume, bool):
+                        return jsonify({"error": "Invalid completion audio volume"}), 400
+                    try:
+                        volume = int(volume)
+                    except (TypeError, ValueError):
+                        return jsonify({"error": "Invalid completion audio volume"}), 400
+                    if volume < 1 or volume > 10:
+                        return jsonify({"error": "Completion audio volume must be between 1 and 10"}), 400
+                    settings_to_update["chatCompletionAudioVolume"] = volume
+
+                if "desktopNotificationsEnabled" in settings_to_update:
+                    if not isinstance(settings_to_update["desktopNotificationsEnabled"], bool):
+                        return jsonify({"error": "Invalid desktop notification preference"}), 400
+
+                if AI_NOTICE_USER_SETTINGS_KEY in settings_to_update:
+                    try:
+                        settings_to_update[AI_NOTICE_USER_SETTINGS_KEY] = (
+                            build_ai_notice_dismissal_record(
+                                settings_to_update[AI_NOTICE_USER_SETTINGS_KEY]
+                            )
+                        )
+                    except ValueError:
+                        return jsonify({"error": "Invalid AI notice dismissal"}), 400
+
                 if "sidebarMenuState" in settings_to_update:
                     sidebar_menu_state = settings_to_update.get("sidebarMenuState")
                     allowed_sidebar_menu_keys = {
@@ -556,6 +628,14 @@ def register_route_backend_users(app):
                             normalized_sidebar_menu_state[key] = value.strip().lower() == "true"
 
                     settings_to_update["sidebarMenuState"] = normalized_sidebar_menu_state
+
+                if LATEST_FEATURES_HIDDEN_VERSION_SETTING in settings_to_update:
+                    hidden_version = normalize_latest_features_hidden_version(
+                        settings_to_update.get(LATEST_FEATURES_HIDDEN_VERSION_SETTING)
+                    )
+                    if hidden_version is not None and hidden_version != VERSION:
+                        return jsonify({"error": "Invalid Latest Features hidden version"}), 400
+                    settings_to_update[LATEST_FEATURES_HIDDEN_VERSION_SETTING] = hidden_version
 
                 active_group_updated = False
                 active_public_workspace_updated = False
@@ -618,7 +698,7 @@ def register_route_backend_users(app):
             print(f"Error retrieving settings for user {user_id}: {e}")
             return jsonify({"error": "Failed to retrieve user settings"}), 500
 
-    @app.route('/api/user/profile-image/<user_id>', methods=['GET'])
+    @bp.route('/api/user/profile-image/<user_id>', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -644,7 +724,7 @@ def register_route_backend_users(app):
             }), 404
         except Exception as ex:
             log_event(
-                '[UserProfile] Failed to load profile image',
+                '[USER_PROFILE] Failed to load profile image',
                 extra={
                     'target_user_id': _normalize_user_lookup_id(user_id),
                     'error_type': type(ex).__name__,

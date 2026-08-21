@@ -1,5 +1,7 @@
 {% extends "base.html" %}
-{% block title %} Public Workspaces - {{ app_settings.app_title }} {% endblock %}
+{% from "_supported_file_types_modal.html" import supported_file_types_modal %}
+{% set public_workspace_labels = app_settings.public_workspace_labels %}
+{% block title %} {{ public_workspace_labels.plural }} - {{ app_settings.app_title }} {% endblock %}
 {% block head %}
 <link rel="stylesheet" href="/static/css/simplemde.min.css" />
 <link rel="stylesheet" href="/static/css/workspace-responsive.css" />
@@ -196,14 +198,14 @@
   <div class="workspace-hero-card d-none" id="active-public-hero">
     <div class="row align-items-center g-3">
       <div class="col-auto">
-        <img class="workspace-hero-logo d-none" id="active-public-hero-logo" alt="Active public workspace logo">
+        <img class="workspace-hero-logo d-none" id="active-public-hero-logo" alt="Active {{ public_workspace_labels.lower_singular }} logo">
         <div class="workspace-hero-placeholder" id="active-public-hero-initial">P</div>
       </div>
       <div class="col">
-        <div class="small text-uppercase opacity-75">Active Public Workspace</div>
+        <div class="small text-uppercase opacity-75">Active {{ public_workspace_labels.singular }}</div>
         <h3 class="mb-1" id="active-public-hero-name">No active workspace selected</h3>
         <p class="mb-1 opacity-90"><i class="bi bi-person-circle me-2"></i><strong>Owner:</strong> <span id="active-public-hero-owner">-</span></p>
-        <p class="mb-0 opacity-75" id="active-public-hero-description">Choose an active public workspace to see its profile.</p>
+        <p class="mb-0 opacity-75" id="active-public-hero-description">Choose an active {{ public_workspace_labels.lower_singular }} to see its profile.</p>
       </div>
     </div>
   </div>
@@ -235,9 +237,9 @@
     <div class="col-auto" id="public-selector-actions">
       <div class="d-flex flex-wrap gap-2 justify-content-lg-end align-items-center h-100">
         <a class="btn btn-sm btn-outline-primary d-none" id="manage-active-public-btn" href="#">
-          <i class="bi bi-gear me-1"></i>Manage Public Workspace
+          <i class="bi bi-gear me-1"></i>Manage {{ public_workspace_labels.singular }}
         </a>
-        <button class="btn btn-sm btn-outline-secondary" id="btn-my-publics" title="My Public Workspaces" aria-label="My Public Workspaces">My Workspaces</button>
+        <button class="btn btn-sm btn-outline-secondary" id="btn-my-publics" title="My {{ public_workspace_labels.plural }}" aria-label="My {{ public_workspace_labels.plural }}">My Workspaces</button>
       </div>
     </div>
   </div>
@@ -249,10 +251,10 @@
 
   <ul class="nav nav-tabs" id="publicWorkspaceTab" role="tablist">
     <li class="nav-item" role="presentation">
-      <button class="nav-link active" id="public-docs-tab-btn" data-bs-toggle="tab" data-bs-target="#public-docs-tab" type="button" role="tab">Documents</button>
+      <button class="nav-link active" id="public-docs-tab-btn" data-bs-toggle="tab" data-bs-target="#public-docs-tab" title="Browse and manage {{ public_workspace_labels.lower_singular }} files with metadata filters, tags, folder views, extraction changes, and chat grounding when permitted." type="button" role="tab">Documents</button>
     </li>
     <li class="nav-item" role="presentation">
-      <button class="nav-link" id="public-prompts-tab-btn" data-bs-toggle="tab" data-bs-target="#public-prompts-tab" type="button" role="tab">Prompts</button>
+      <button class="nav-link" id="public-prompts-tab-btn" data-bs-toggle="tab" data-bs-target="#public-prompts-tab" title="Manage reusable prompts associated with this {{ public_workspace_labels.lower_singular }}, with list and card views for quick review." type="button" role="tab">Prompts</button>
     </li>
   </ul>
 
@@ -261,14 +263,14 @@
     <div class="tab-pane fade show active" id="public-docs-tab" role="tabpanel">
       <div class="card p-3 my-3">
         <div class="mb-3" id="upload-public-section" style="display:none">
-          <div id="upload-area" class="upload-area text-center p-4 border border-2 border-dashed rounded bg-light" style="cursor:pointer; transition: border-color 0.2s;">
+          <div id="upload-area" class="upload-area workspace-upload-area text-center py-2 px-3 border border-2 border-dashed rounded bg-light" style="cursor:pointer; transition: border-color 0.2s;">
             <input type="file" id="file-input" multiple style="display:none;" />
             <div class="upload-area-content">
-              <i class="bi bi-cloud-arrow-up display-4 text-primary mb-2"></i>
+              <i class="bi bi-cloud-arrow-up text-primary mb-1"></i>
               <div class="fw-bold">Drag & drop files here or <span class="text-primary text-decoration-underline">click to browse</span></div>
-              <div class="small text-muted mt-1">
-                {{ allowed_extensions }}
-              </div>
+              <button type="button" class="btn btn-link btn-sm p-0 mt-1 workspace-upload-supported-types-trigger" data-bs-toggle="modal" data-bs-target="#publicSupportedFileTypesModal">
+                View all supported file types
+              </button>
             </div>
           </div>
           <span id="upload-status" class="ms-2 text-muted small" style="display:none;"></span>
@@ -386,6 +388,9 @@
                     <li><button type="button" class="dropdown-item" title="Extract selected PDFs again with Enhanced extraction. Enhanced preserves tables, page structure, forms, and checkbox states." onclick="reprocessPublicSelectedDocumentExtraction('layout')">Extract Again as Enhanced</button></li>
                 </ul>
               </div>
+              <button type="button" class="btn btn-sm btn-warning ms-2 d-none" id="public-extract-selected-metadata-btn">
+                <i class="bi bi-magic me-1"></i>Extract Metadata
+              </button>
               <button type="button" class="btn btn-sm btn-info ms-2" id="public-bulk-tag-btn"
                       data-bs-toggle="modal" data-bs-target="#publicBulkTagModal">
                 <i class="bi bi-tags me-1"></i>Tag Selected
@@ -851,6 +856,7 @@
     </div>
   </div>
 </div>
+{{ supported_file_types_modal('publicSupportedFileTypesModal', 'Supported file types', allowed_extension_categories) }}
 
 {% endblock %}
 {% block scripts %}

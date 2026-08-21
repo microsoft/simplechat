@@ -8,6 +8,7 @@ from functions_group import find_group_by_id
 from functions_public_workspaces import find_public_workspace_by_id
 from functions_documents import get_document_metadata
 from functions_collaboration import get_collaboration_conversation
+from functions_conversation_cache import invalidate_conversation_cache_for_item
 from functions_debug import debug_print
 
 def get_user_info_by_id(user_id):
@@ -138,8 +139,34 @@ def _extract_document_id_from_search_result(doc):
     return chunk_identifier
 
 
-def _build_last_grounded_document_refs(document_map):
+def _build_last_grounded_document_refs(document_map, source_continuity_refs=None):
     """Build the exact reusable grounded document set for the latest search-backed turn."""
+    if isinstance(source_continuity_refs, list):
+        safe_continuity_refs = []
+        for raw_ref in source_continuity_refs[:100]:
+            if not isinstance(raw_ref, dict):
+                continue
+            document_id = str(raw_ref.get('document_id') or '').strip()
+            scope = str(raw_ref.get('scope') or '').strip().lower()
+            scope_id = str(raw_ref.get('scope_id') or '').strip()
+            if not document_id or not scope or not scope_id:
+                continue
+            safe_ref = {
+                key: raw_ref.get(key)
+                for key in (
+                    'document_id', 'scope', 'scope_id', 'group_id',
+                    'public_workspace_id', 'user_id', 'source_role',
+                    'requested_order', 'source_kind', 'engine',
+                    'source_version', 'status', 'coverage',
+                    'selection_origin', 'action_mode',
+                    'citation_count', 'artifact_count',
+                )
+                if raw_ref.get(key) is not None
+            }
+            safe_continuity_refs.append(safe_ref)
+        if safe_continuity_refs:
+            return safe_continuity_refs
+
     grounded_refs = []
 
     for document_id, doc_info in document_map.items():
@@ -173,6 +200,7 @@ def _add_document_metadata_entry(document_map, document_id, scope_info, chunk_id
                                  classification='None', file_name=None):
     """Add or merge a document-level metadata entry used by conversation tagging."""
     normalized_document_id = str(document_id or '').strip()
+    normalized_file_name = str(file_name or '').strip()
     scope_info = scope_info if isinstance(scope_info, dict) else {}
     scope_type = str(scope_info.get('scope') or '').strip()
     scope_id = str(scope_info.get('id') or '').strip()
@@ -187,8 +215,16 @@ def _add_document_metadata_entry(document_map, document_id, scope_info, chunk_id
             },
             'chunk_ids': [],
             'classification': classification or 'None',
-            'file_name': file_name or 'Unknown Document'
+            'file_name': normalized_file_name or 'Unknown Document'
         }
+
+    existing_file_name = document_map[normalized_document_id].get('file_name')
+    if (
+        normalized_file_name
+        and normalized_file_name != 'Unknown Document'
+        and (not existing_file_name or existing_file_name == 'Unknown Document')
+    ):
+        document_map[normalized_document_id]['file_name'] = normalized_file_name
 
     normalized_chunk_id = str(chunk_id or '').strip()
     if normalized_chunk_id and normalized_chunk_id not in document_map[normalized_document_id]['chunk_ids']:
@@ -272,7 +308,8 @@ def collect_conversation_metadata(user_message, conversation_id, user_id, active
                                 image_gen_enabled=False, selected_documents=None, 
                                 selected_agent=None, selected_agent_details=None, search_results=None, web_search_results=None,
                                 conversation_item=None, additional_participants=None,
-                                active_group_ids=None, active_public_workspace_id=None, active_public_workspace_ids=None):
+                                active_group_ids=None, active_public_workspace_id=None, active_public_workspace_ids=None,
+                                source_continuity_refs=None):
     """
     Collect comprehensive metadata for a conversation based on the user's interaction.
     
@@ -643,8 +680,17 @@ def collect_conversation_metadata(user_message, conversation_id, user_id, active
             # Update the existing document entry with chunk IDs
             existing_doc['chunk_ids'] = existing_chunks
             
-            # Ensure existing document has title and scope name if missing
-            if 'title' not in existing_doc or not existing_doc.get('title'):
+            # Ensure existing document has user-facing title and filename metadata.
+            needs_title = not existing_doc.get('title')
+            existing_file_name = str(existing_doc.get('file_name') or '').strip()
+            needs_file_name = not existing_file_name or existing_file_name == 'Unknown Document'
+            collected_file_name = str(doc_info.get('file_name') or '').strip()
+            has_collected_file_name = (
+                collected_file_name
+                and collected_file_name != 'Unknown Document'
+            )
+            doc_metadata = None
+            if needs_title or (needs_file_name and not has_collected_file_name):
                 doc_scope = doc_info['scope']
                 scope_type = doc_scope['scope']
                 scope_id = doc_scope['id']
@@ -656,9 +702,21 @@ def collect_conversation_metadata(user_message, conversation_id, user_id, active
                     doc_metadata = get_document_metadata(document_id, user_id, public_workspace_id=scope_id)
                 else:  # personal
                     doc_metadata = get_document_metadata(document_id, user_id)
-                
-                if doc_metadata:
-                    existing_doc['title'] = doc_metadata.get('title') or doc_metadata.get('file_name', 'Unknown Document')
+
+            if needs_title:
+                existing_doc['title'] = (
+                    (doc_metadata or {}).get('title')
+                    or (doc_metadata or {}).get('file_name')
+                    or collected_file_name
+                    or 'Unknown Document'
+                )
+            if needs_file_name:
+                existing_doc['file_name'] = (
+                    (doc_metadata or {}).get('file_name')
+                    or collected_file_name
+                    or existing_doc.get('title')
+                    or 'Unknown Document'
+                )
             
             # Ensure scope has name if missing
             if isinstance(existing_doc.get('scope'), dict) and 'name' not in existing_doc['scope']:
@@ -694,8 +752,11 @@ def collect_conversation_metadata(user_message, conversation_id, user_id, active
                 doc_metadata = get_document_metadata(document_id, user_id)
             
             doc_title = "Unknown Document"
+            doc_file_name = str(doc_info.get('file_name') or '').strip()
             if doc_metadata:
                 doc_title = doc_metadata.get('title') or doc_metadata.get('file_name', 'Unknown Document')
+                doc_file_name = doc_metadata.get('file_name') or doc_file_name
+            doc_file_name = doc_file_name or doc_title
             
             # Get scope name
             scope_name = "Unknown"
@@ -713,6 +774,7 @@ def collect_conversation_metadata(user_message, conversation_id, user_id, active
                 "category": "document",
                 "document_id": document_id,
                 "title": doc_title,
+                "file_name": doc_file_name,
                 "scope": {
                     "type": scope_type,
                     "id": scope_id,
@@ -735,8 +797,11 @@ def collect_conversation_metadata(user_message, conversation_id, user_id, active
             current_tags[semantic_key] = semantic_tag    # Update the tags array
     conversation_item['tags'] = list(current_tags.values())
 
-    if document_map:
-        conversation_item['last_grounded_document_refs'] = _build_last_grounded_document_refs(document_map)
+    if document_map or source_continuity_refs:
+        conversation_item['last_grounded_document_refs'] = _build_last_grounded_document_refs(
+            document_map,
+            source_continuity_refs=source_continuity_refs,
+        )
 
     # --- Scope Lock Logic ---
     current_scope_locked = conversation_item.get('scope_locked')
@@ -861,6 +926,7 @@ def update_conversation_with_metadata(conversation_id, metadata_updates):
         else:
             conversation_item['last_updated'] = updated_at
             cosmos_conversations_container.upsert_item(conversation_item)
+        invalidate_conversation_cache_for_item(conversation_item, reason="conversation_metadata_updated")
         
         return True
         

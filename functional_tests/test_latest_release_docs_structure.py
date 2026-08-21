@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Functional test for latest-release documentation structure.
-Version: 0.250.034
-Implemented in: 0.241.002; 0.241.003; 0.241.164; 0.241.165; 0.241.166; 0.241.167; 0.241.183; 0.241.184; 0.250.001; 0.250.034
+Version: 0.260.001
+Implemented in: 0.241.002; 0.241.003; 0.241.164; 0.241.165; 0.241.166; 0.241.167; 0.241.183; 0.241.184; 0.250.001; 0.250.034; 0.250.035; 0.250.036; 0.250.041; 0.250.042; 0.250.043; 0.250.044; 0.250.045; 0.250.046; 0.250.047
 
 This test ensures the docs/latest-release landing page is driven by the latest
 release YAML data, exposes current, previous, and earlier release sections, and
@@ -13,6 +13,7 @@ from pathlib import Path
 import sys
 
 import yaml
+from test_support.versioning import assert_app_version_at_least
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -22,62 +23,53 @@ LATEST_RELEASE_INDEX = REPO_ROOT / "docs" / "latest-release" / "index.md"
 LATEST_RELEASE_DIR = REPO_ROOT / "docs" / "latest-release"
 LATEST_RELEASE_IMAGE_DIR = REPO_ROOT / "docs" / "images" / "latest-release"
 ADMIN_CONFIGURATION_DOC = REPO_ROOT / "docs" / "admin_configuration.md"
+ADMIN_DOCS_DIR = REPO_ROOT / "docs" / "admin"
 ADMIN_SETTINGS_IMAGE_DIR = REPO_ROOT / "docs" / "images" / "admin-settings"
 
 CURRENT_GUIDES = {
-    'release-250-ai-access.md': 'Personalized Model and Agent Access',
-    'release-250-tabular-analysis.md': 'Improved Tabular Analysis',
-    'release-250-custom-pages.md': 'Custom Pages',
-    'release-250-tableau-action.md': 'Tableau Action',
-    'release-250-workflows.md': 'Personal and Group Workflows',
-    'release-250-voice-assisted-inputs.md': 'Voice-Assisted Form Inputs',
-    'release-250-m365-actions.md': 'Microsoft 365 Actions',
-    'release-250-chat-uploads.md': 'Workspace-Backed Chat Uploads and Paste Support',
-    'release-250-document-intelligence.md': 'Enhanced Document Intelligence',
-    'release-250-file-sync.md': 'File Sync for SMB and Azure Files',
-    'release-250-conversation-feed.md': 'Faster Conversation Lists',
-    'release-250-group-file-sharing.md': 'Group File Sharing and Approvals',
-    'release-250-profile-stats.md': 'Profile, Stats, and Preferences',
-    'release-250-databricks-action.md': 'Databricks Action',
-    'release-250-layered-masking.md': 'Layered Message Masking',
-    'release-250-visio-msg-ingestion.md': 'Visio and Outlook MSG File Support',
-    'release-250-assigned-knowledge.md': 'Assigned Knowledge for Agents',
-    'release-250-deep-research.md': 'Deep Research and Source Review',
-    'release-250-url-access.md': 'URL Access in Chat',
-    'release-250-source-continuity.md': 'Conversation Source Continuity',
-    'release-250-generated-documents.md': 'Generated Markdown, Word, and PowerPoint Files',
-    'release-250-multi-inline-image-gen.md': 'Multi Inline Image Generation',
-    'release-250-workspace-views.md': 'Workspace Cards and Folder Views',
-    'release-250-follow-up-actions.md': 'Assistant Follow-Up Actions',
-    'release-250-model-agent-avatars.md': 'Model and Agent Avatars',
+    'release-260-enhanced-extraction.md': 'Sharper Document Extraction with Figure Descriptions',
+    'release-260-office-embedded-images.md': 'Pictures Inside Word and PowerPoint Are Now Searchable',
+    'release-260-workflow-task-sequences.md': 'Multi-Step Workflows With Alert Rules',
+    'release-260-mcp-platform.md': 'Model Context Protocol Connections',
+    'release-260-yamcs-action.md': 'Yamcs Mission Control Integration',
+    'release-260-rocksdb-action.md': 'RocksDB Key-Value Store Action',
+    'release-260-agent-instruction-references.md': 'Reference Actions and Knowledge Directly in Agent Instructions',
+    'release-260-action-test-connection.md': 'Test Connection Before You Save an Action',
+    'release-260-azure-blob-file-sync.md': 'Sync Documents From Azure Blob Storage',
+    'release-260-terms-of-use.md': 'Terms of Use Acceptance',
+    'release-260-audio-file-support.md': 'Upload Almost Any Audio File',
+    'release-260-completion-notifications.md': 'Know When a Long Answer Finishes',
+    'release-260-chat-ai-notice.md': 'AI Usage Guidance in Chat',
+    'release-260-conversation-context-grounding.md': 'See Exactly What Shaped Each Answer',
+    'release-260-used-documents-fork.md': 'Used Documents View and Conversation Forking',
+    'release-260-conversation-contents-drawer.md': 'Jump Back to Any Earlier Prompt',
+    'release-260-font-size-zoom.md': 'Choose Your Text Size',
+    'release-260-message-audio-export.md': 'Download a Response as Audio',
+    'release-260-public-workspace-display-name.md': 'Public Workspace Can Carry Your Own Name',
+    'release-260-chat-scroll-508.md': 'Chat Stops Yanking You to the Bottom',
 }
 
 CURRENT_GUIDE_IMAGES = {
-    'release-250-ai-access': ['release_250_ai_access.png'],
-    'release-250-tabular-analysis': ['release_250_tabular_analysis.png'],
-    'release-250-custom-pages': ['release_250_custom_pages.png'],
-    'release-250-tableau-action': ['release_250_tableau_action.png'],
-    'release-250-workflows': ['release_250_workflows.png'],
-    'release-250-voice-assisted-inputs': ['release_250_voice_assisted_inputs.png'],
-    'release-250-m365-actions': ['release_250_m365_actions.png'],
-    'release-250-chat-uploads': ['release_250_chat_uploads.png'],
-    'release-250-document-intelligence': ['release_250_document_intelligence.png'],
-    'release-250-file-sync': ['release_250_file_sync.png'],
-    'release-250-conversation-feed': ['release_250_conversation_feed.png'],
-    'release-250-group-file-sharing': ['release_250_group_file_sharing.png'],
-    'release-250-profile-stats': ['release_250_profile_stats.png'],
-    'release-250-databricks-action': ['release_250_databricks_action.png'],
-    'release-250-layered-masking': ['release_250_layered_masking.png'],
-    'release-250-visio-msg-ingestion': ['release_250_visio_msg_ingestion.png'],
-    'release-250-assigned-knowledge': ['release_250_assigned_knowledge.png'],
-    'release-250-deep-research': ['release_250_deep_research.png'],
-    'release-250-url-access': ['release_250_url_access.png'],
-    'release-250-source-continuity': ['release_250_source_continuity.png'],
-    'release-250-generated-documents': ['release_250_generated_documents.png'],
-    'release-250-multi-inline-image-gen': ['release_250_multi_inline_image_gen.png'],
-    'release-250-workspace-views': ['release_250_workspace_views.png'],
-    'release-250-follow-up-actions': ['release_250_follow_up_actions.png'],
-    'release-250-model-agent-avatars': ['release_250_model_agent_avatars.png'],
+    'release-260-enhanced-extraction': ['release_260_enhanced_extraction_1.png', 'release_260_enhanced_extraction_2.png', 'release_260_enhanced_extraction_3.png'],
+    'release-260-office-embedded-images': ['release_260_office_embedded_images_1.png', 'release_260_office_embedded_images_2.png', 'release_260_office_embedded_images_3.png'],
+    'release-260-workflow-task-sequences': ['release_260_workflow_task_sequences_1.png', 'release_260_workflow_task_sequences_2.png', 'release_260_workflow_task_sequences_3.png'],
+    'release-260-mcp-platform': ['release_260_mcp_platform_1.png', 'release_260_mcp_platform_2.png', 'release_260_mcp_platform_3.png'],
+    'release-260-yamcs-action': ['release_260_yamcs_action_1.png', 'release_260_yamcs_action_2.png', 'release_260_yamcs_action_3.png'],
+    'release-260-rocksdb-action': ['release_260_rocksdb_action_1.png', 'release_260_rocksdb_action_2.png', 'release_260_rocksdb_action_3.png'],
+    'release-260-agent-instruction-references': ['release_260_agent_instruction_references_1.png', 'release_260_agent_instruction_references_2.png', 'release_260_agent_instruction_references_3.png'],
+    'release-260-action-test-connection': ['release_260_action_test_connection_1.png', 'release_260_action_test_connection_2.png', 'release_260_action_test_connection_3.png'],
+    'release-260-azure-blob-file-sync': ['release_260_azure_blob_file_sync_1.png', 'release_260_azure_blob_file_sync_2.png', 'release_260_azure_blob_file_sync_3.png'],
+    'release-260-terms-of-use': ['release_260_terms_of_use_1.png', 'release_260_terms_of_use_2.png', 'release_260_terms_of_use_3.png'],
+    'release-260-audio-file-support': ['release_260_audio_file_support_1.png', 'release_260_audio_file_support_2.png', 'release_260_audio_file_support_3.png'],
+    'release-260-completion-notifications': ['release_260_completion_notifications_1.png', 'release_260_completion_notifications_2.png', 'release_260_completion_notifications_3.png'],
+    'release-260-chat-ai-notice': ['release_260_chat_ai_notice_1.png', 'release_260_chat_ai_notice_2.png', 'release_260_chat_ai_notice_3.png'],
+    'release-260-conversation-context-grounding': ['release_260_conversation_context_grounding_1.png', 'release_260_conversation_context_grounding_2.png', 'release_260_conversation_context_grounding_3.png'],
+    'release-260-used-documents-fork': ['release_260_used_documents_fork_1.png', 'release_260_used_documents_fork_2.png', 'release_260_used_documents_fork_3.png'],
+    'release-260-conversation-contents-drawer': ['release_260_conversation_contents_drawer_1.png', 'release_260_conversation_contents_drawer_2.png'],
+    'release-260-font-size-zoom': ['release_260_font_size_zoom_1.png', 'release_260_font_size_zoom_2.png', 'release_260_font_size_zoom_3.png'],
+    'release-260-message-audio-export': ['release_260_message_audio_export_1.png', 'release_260_message_audio_export_2.png', 'release_260_message_audio_export_3.png'],
+    'release-260-public-workspace-display-name': ['release_260_public_workspace_display_name_1.png', 'release_260_public_workspace_display_name_2.png', 'release_260_public_workspace_display_name_3.png'],
+    'release-260-chat-scroll-508': ['release_260_chat_scroll_508_1.png', 'release_260_chat_scroll_508_2.png', 'release_260_chat_scroll_508_3.png'],
 }
 
 ADMIN_SETTINGS_IMAGES = [
@@ -109,50 +101,46 @@ def test_latest_release_docs_structure() -> bool:
     index_content = read_text(LATEST_RELEASE_INDEX)
     release_data = yaml.safe_load(read_text(LATEST_RELEASE_DATA))
 
-    assert 'VERSION = "0.250.034"' in config_content, "Config version marker is not current."
+    assert_app_version_at_least("0.250.047")
 
     required_index_markers = [
         'layout: latest-release-index',
         'title: "Latest Release Highlights"',
-        'SimpleChat v0.250.001',
-        'v0.241.001-v0.241.007',
+        'SimpleChat v0.260.001',
+        'v0.250.001',
         'v0.239.001',
     ]
     missing_index_markers = [marker for marker in required_index_markers if marker not in index_content]
     assert not missing_index_markers, f"Missing latest-release index markers: {missing_index_markers}"
 
     assert release_data["current_release"]["slugs"] == [
-        'release-250-ai-access',
-        'release-250-tabular-analysis',
-        'release-250-custom-pages',
-        'release-250-tableau-action',
-        'release-250-workflows',
-        'release-250-voice-assisted-inputs',
-        'release-250-m365-actions',
-        'release-250-chat-uploads',
-        'release-250-document-intelligence',
-        'release-250-file-sync',
-        'release-250-conversation-feed',
-        'release-250-group-file-sharing',
-        'release-250-profile-stats',
-        'release-250-databricks-action',
-        'release-250-layered-masking',
-        'release-250-visio-msg-ingestion',
-        'release-250-assigned-knowledge',
-        'release-250-deep-research',
-        'release-250-url-access',
-        'release-250-source-continuity',
-        'release-250-generated-documents',
-        'release-250-multi-inline-image-gen',
-        'release-250-workspace-views',
-        'release-250-follow-up-actions',
-        'release-250-model-agent-avatars',
+        'release-260-enhanced-extraction',
+        'release-260-office-embedded-images',
+        'release-260-workflow-task-sequences',
+        'release-260-mcp-platform',
+        'release-260-yamcs-action',
+        'release-260-rocksdb-action',
+        'release-260-agent-instruction-references',
+        'release-260-action-test-connection',
+        'release-260-azure-blob-file-sync',
+        'release-260-terms-of-use',
+        'release-260-audio-file-support',
+        'release-260-completion-notifications',
+        'release-260-chat-ai-notice',
+        'release-260-conversation-context-grounding',
+        'release-260-used-documents-fork',
+        'release-260-conversation-contents-drawer',
+        'release-260-font-size-zoom',
+        'release-260-message-audio-export',
+        'release-260-public-workspace-display-name',
+        'release-260-chat-scroll-508',
     ]
 
     previous_groups = release_data["previous_release_groups"]
-    assert previous_groups[0]["release_version"] == "0.241.001 - 0.241.007"
-    assert previous_groups[1]["release_version"] == "0.239.001"
-    assert "guided-tutorials" in previous_groups[0]["slugs"]
+    assert previous_groups[0]["release_version"] == "0.250.001"
+    assert previous_groups[1]["release_version"] == "0.239.001 - 0.241.007"
+    assert "release-250-ai-access" in previous_groups[0]["slugs"]
+    assert "guided-tutorials" in previous_groups[1]["slugs"]
     assert "export-conversation" in previous_groups[1]["slugs"]
 
     lookup = release_data["lookup"]
@@ -172,16 +160,22 @@ def test_latest_release_docs_structure() -> bool:
             assert image.get("label") != "Feature Guide", f"Redundant docs Feature Guide image remains: {slug}"
             assert "feature_card" not in image["path"], f"Redundant docs feature-card asset remains: {slug}"
             image_path = LATEST_RELEASE_IMAGE_DIR / image["path"].replace("/images/latest-release/", "")
-            if not image_path.name.startswith("release_250_"):
-                assert image_path.exists(), f"Missing docs image asset: {image['path']}"
+            assert image_path.exists(), f"Missing docs image asset: {image['path']}"
 
     admin_configuration_content = read_text(ADMIN_CONFIGURATION_DOC)
+    admin_tab_content = "\n".join(read_text(path) for path in sorted(ADMIN_DOCS_DIR.glob("*.md")))
+    admin_docs_content = f"{admin_configuration_content}\n{admin_tab_content}"
     assert "## Admin Settings Execution Guide" in admin_configuration_content, "Admin execution guide missing."
     for image_name in ADMIN_SETTINGS_IMAGES:
         image_path = ADMIN_SETTINGS_IMAGE_DIR / image_name
-        image_reference = f"./images/admin-settings/{image_name}"
+        image_references = [
+            f"./images/admin-settings/{image_name}",
+            f"admin-settings/{image_name}",
+        ]
         assert image_path.exists(), f"Missing admin settings docs image: {image_name}"
-        assert image_reference in admin_configuration_content, f"Admin settings doc missing image reference: {image_name}"
+        assert any(reference in admin_docs_content for reference in image_references), (
+            f"Admin settings docs missing image reference: {image_name}"
+        )
 
     for file_name, title in CURRENT_GUIDES.items():
         guide_path = LATEST_RELEASE_DIR / file_name

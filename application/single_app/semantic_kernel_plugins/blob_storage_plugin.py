@@ -11,6 +11,7 @@ from semantic_kernel.functions import kernel_function
 
 from functions_appinsights import log_event
 from functions_debug import debug_print
+from functions_azure_endpoint_validation import validate_azure_blob_endpoint
 from functions_blob_storage_operations import (
     BLOB_STORAGE_CAPABILITY_DEFINITIONS,
     BLOB_STORAGE_PLUGIN_TYPE,
@@ -197,14 +198,23 @@ class BlobStoragePlugin(BasePlugin):
 
     def _build_service_client(self) -> BlobServiceClient:
         debug_print(
-            f"[BlobStoragePlugin] Building Blob service client endpoint={self.endpoint} "
+            f"[BLOB_STORAGE_PLUGIN] Building Blob service client endpoint={self.endpoint} "
             f"container={self.container_name} auth_type={self.auth_type} prefix={self.blob_prefix or '<none>'}"
         )
         if self.auth_type == "connection_string":
+            # Revalidate the derived endpoint so a stored connection string cannot point the
+            # SDK at a non-Storage origin.
+            validate_azure_blob_endpoint(
+                derive_blob_endpoint_from_connection_string(self.connection_string) or self.endpoint
+            )
             return BlobServiceClient.from_connection_string(self.connection_string)
+
+        # Revalidated immediately before client construction so actions stored before this
+        # check, or mutated afterwards, cannot receive application credentials.
+        validated_endpoint = validate_azure_blob_endpoint(self.endpoint)
         if self.auth_type == "identity":
-            return BlobServiceClient(account_url=self.endpoint, credential=DefaultAzureCredential())
-        return BlobServiceClient(account_url=self.endpoint, credential=self.auth_key)
+            return BlobServiceClient(account_url=validated_endpoint, credential=DefaultAzureCredential())
+        return BlobServiceClient(account_url=validated_endpoint, credential=self.auth_key)
 
     def _resolve_effective_prefix(self, prefix: str = "") -> str:
         default_prefix = self.blob_prefix
@@ -278,7 +288,7 @@ class BlobStoragePlugin(BasePlugin):
 
         try:
             debug_print(
-                f"[BlobStoragePlugin] Listing blobs container={self.container_name} "
+                f"[BLOB_STORAGE_PLUGIN] Listing blobs container={self.container_name} "
                 f"prefix={effective_prefix or '<none>'} max_results={effective_max_results}"
             )
             iterator = self.container_client.list_blobs(name_starts_with=effective_prefix or None)
@@ -289,7 +299,7 @@ class BlobStoragePlugin(BasePlugin):
                 blobs.append(self._build_list_item(blob))
 
             debug_print(
-                f"[BlobStoragePlugin] Blob listing succeeded container={self.container_name} "
+                f"[BLOB_STORAGE_PLUGIN] Blob listing succeeded container={self.container_name} "
                 f"count={len(blobs)} has_more={has_more}"
             )
             return {
@@ -301,18 +311,18 @@ class BlobStoragePlugin(BasePlugin):
                 "has_more": has_more,
             }
         except ResourceNotFoundError:
-            debug_print(f"[BlobStoragePlugin] Blob container not found during list container={self.container_name}.")
+            debug_print(f"[BLOB_STORAGE_PLUGIN] Blob container not found during list container={self.container_name}.")
             return self._error_response(
                 f"Blob container '{self.container_name}' was not found.",
                 error_type="not_found",
             )
         except AzureError as exc:
             debug_print(
-                f"[BlobStoragePlugin] Failed to list blobs container={self.container_name} "
+                f"[BLOB_STORAGE_PLUGIN] Failed to list blobs container={self.container_name} "
                 f"exception_type={type(exc).__name__} message={exc}"
             )
             log_event(
-                f"[BlobStoragePlugin] Failed to list container contents: {exc}",
+                f"[BLOB_STORAGE_PLUGIN] Failed to list container contents: {exc}",
                 level=logging.ERROR,
                 exceptionTraceback=True,
             )
@@ -334,7 +344,7 @@ class BlobStoragePlugin(BasePlugin):
 
         try:
             debug_print(
-                f"[BlobStoragePlugin] Reading blob container={self.container_name} "
+                f"[BLOB_STORAGE_PLUGIN] Reading blob container={self.container_name} "
                 f"blob_name={effective_blob_name}"
             )
             blob_client = self.container_client.get_blob_client(effective_blob_name)
@@ -355,7 +365,7 @@ class BlobStoragePlugin(BasePlugin):
                 )
 
             debug_print(
-                f"[BlobStoragePlugin] Blob read succeeded container={self.container_name} "
+                f"[BLOB_STORAGE_PLUGIN] Blob read succeeded container={self.container_name} "
                 f"blob_name={effective_blob_name} bytes={len(data)}"
             )
             return {
@@ -369,7 +379,7 @@ class BlobStoragePlugin(BasePlugin):
             }
         except ResourceNotFoundError:
             debug_print(
-                f"[BlobStoragePlugin] Blob not found container={self.container_name} "
+                f"[BLOB_STORAGE_PLUGIN] Blob not found container={self.container_name} "
                 f"blob_name={effective_blob_name}"
             )
             return self._error_response(
@@ -378,11 +388,11 @@ class BlobStoragePlugin(BasePlugin):
             )
         except AzureError as exc:
             debug_print(
-                f"[BlobStoragePlugin] Failed to read blob container={self.container_name} "
+                f"[BLOB_STORAGE_PLUGIN] Failed to read blob container={self.container_name} "
                 f"blob_name={effective_blob_name} exception_type={type(exc).__name__} message={exc}"
             )
             log_event(
-                f"[BlobStoragePlugin] Failed to read blob content: {exc}",
+                f"[BLOB_STORAGE_PLUGIN] Failed to read blob content: {exc}",
                 level=logging.ERROR,
                 exceptionTraceback=True,
             )
@@ -411,7 +421,7 @@ class BlobStoragePlugin(BasePlugin):
 
         try:
             debug_print(
-                f"[BlobStoragePlugin] Uploading blob container={self.container_name} "
+                f"[BLOB_STORAGE_PLUGIN] Uploading blob container={self.container_name} "
                 f"blob_name={effective_blob_name} overwrite={bool(overwrite)} content_length={len(content or '')}"
             )
             blob_client = self.container_client.get_blob_client(effective_blob_name)
@@ -421,7 +431,7 @@ class BlobStoragePlugin(BasePlugin):
                 content_settings=ContentSettings(content_type=get_blob_storage_content_type(file_type)),
             )
             debug_print(
-                f"[BlobStoragePlugin] Blob upload succeeded container={self.container_name} "
+                f"[BLOB_STORAGE_PLUGIN] Blob upload succeeded container={self.container_name} "
                 f"blob_name={effective_blob_name} overwrite={bool(overwrite)}"
             )
             return {
@@ -434,18 +444,18 @@ class BlobStoragePlugin(BasePlugin):
                 "content_length": len(content),
             }
         except ResourceNotFoundError:
-            debug_print(f"[BlobStoragePlugin] Blob container not found during upload container={self.container_name}.")
+            debug_print(f"[BLOB_STORAGE_PLUGIN] Blob container not found during upload container={self.container_name}.")
             return self._error_response(
                 f"Blob container '{self.container_name}' was not found.",
                 error_type="not_found",
             )
         except AzureError as exc:
             debug_print(
-                f"[BlobStoragePlugin] Failed to upload blob container={self.container_name} "
+                f"[BLOB_STORAGE_PLUGIN] Failed to upload blob container={self.container_name} "
                 f"blob_name={effective_blob_name} exception_type={type(exc).__name__} message={exc}"
             )
             log_event(
-                f"[BlobStoragePlugin] Failed to upload blob content: {exc}",
+                f"[BLOB_STORAGE_PLUGIN] Failed to upload blob content: {exc}",
                 level=logging.ERROR,
                 exceptionTraceback=True,
             )

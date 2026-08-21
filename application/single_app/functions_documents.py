@@ -2,22 +2,76 @@
 
 import re
 import shutil
+import subprocess
 import traceback
 import zipfile
 from io import BytesIO
 from flask import make_response
+from azure.core.exceptions import ResourceExistsError
 from config import *
 from functions_appinsights import log_event
+from functions_document_access_index import (
+    DOCUMENT_ACCESS_SCOPE_GROUP,
+    DOCUMENT_ACCESS_SCOPE_PERSONAL,
+    DOCUMENT_ACCESS_SCOPE_PUBLIC,
+    delete_document_access_index_for_document_fail_open,
+    is_document_access_shadow_validation_enabled,
+    query_items_with_cosmos_diagnostics,
+    sync_document_access_index_for_document_fail_open,
+    validate_document_access_index_shadow,
+)
+from functions_data_management_search_write_fence import (
+    DataManagementSearchWritesFrozenError,
+    hold_data_management_search_write_slot,
+)
 from functions_visio import build_visio_page_markdown, parse_vsdx_pages
 from functions_content import *
+from functions_office_media import extract_office_embedded_images_with_diagnostics
+from functions_content_understanding import analyze_image_with_content_understanding
 from functions_settings import *
 from functions_search import *
 from functions_logging import *
 from functions_authentication import *
 from functions_debug import *
 from functions_keyvault import SecretReturnType, keyvault_model_endpoint_get_helper
+from functions_model_endpoint_identity_header import build_model_endpoint_identity_headers
 from functions_model_endpoint_runtime import MODEL_ENDPOINT_PROVIDER_ALLOWLIST, build_model_endpoint_sync_chat_client
 import azure.cognitiveservices.speech as speechsdk
+
+_AUDIO_RUNTIME_CAPABILITIES_CACHE = None
+
+
+class DocumentSearchAclProjectionDeferredError(RuntimeError):
+    """Raised when an authorization-reducing Search ACL update must be retried safely."""
+
+
+def _search_indexing_results_succeeded(results):
+    """Return whether Azure AI Search acknowledged every requested document mutation."""
+    normalized_results = list(results or [])
+    return bool(normalized_results) and all(
+        bool(
+            result.get("succeeded", result.get("status", False))
+            if isinstance(result, dict) else
+            getattr(result, "succeeded", getattr(result, "status", False))
+        )
+        for result in normalized_results
+    )
+
+
+def _execute_document_search_write(search_client, operation_name, *args, **kwargs):
+    """Serialize bounded target Search writes with an active Data Management migration fence."""
+    kwargs.update({
+        "connection_timeout": 30,
+        "read_timeout": 30,
+        "retry_total": 0,
+    })
+    with hold_data_management_search_write_slot(cosmos_data_management_jobs_container):
+        results = getattr(search_client, operation_name)(*args, **kwargs)
+    if not _search_indexing_results_succeeded(results):
+        raise RuntimeError(
+            f"Azure AI Search did not acknowledge every {operation_name} document mutation."
+        )
+    return results
 
 def allowed_file(filename, allowed_extensions=None):
     if not allowed_extensions:
@@ -75,18 +129,31 @@ def _resolve_model_endpoint_scope(provider, auth_settings, endpoint=None):
     return "https://ai.azure.com/.default"
 
 
-def _build_model_endpoint_client(auth_settings, provider, endpoint, api_version, deployment_name):
+def _build_model_endpoint_client(
+    auth_settings,
+    provider,
+    endpoint,
+    api_version,
+    deployment_name,
+    *,
+    settings=None,
+    endpoint_config=None,
+    identity_context=None,
+):
     client, _ = build_model_endpoint_sync_chat_client(
         auth_settings,
         provider,
         endpoint,
         api_version,
         deployment_name=deployment_name,
+        settings=settings,
+        endpoint_config=endpoint_config,
+        identity_context=identity_context,
     )
     return client
 
 
-def _resolve_metadata_extraction_client(settings):
+def _resolve_metadata_extraction_client(settings, identity_context=None):
     selection = _normalize_model_endpoint_selection(settings.get("metadata_extraction_model_selection"))
 
     if (
@@ -127,17 +194,28 @@ def _resolve_metadata_extraction_client(settings):
         if not endpoint or not api_version or not deployment:
             raise ValueError("Selected metadata extraction endpoint is missing endpoint, API version, or deployment configuration.")
 
-        return _build_model_endpoint_client(auth_settings, provider, endpoint, api_version, deployment), deployment
+        return _build_model_endpoint_client(
+            auth_settings,
+            provider,
+            endpoint,
+            api_version,
+            deployment,
+            settings=settings,
+            endpoint_config=endpoint_cfg,
+            identity_context=identity_context,
+        ), deployment
 
     gpt_model = settings.get('metadata_extraction_model')
     if not gpt_model:
         raise ValueError("No metadata extraction model is selected.")
 
+    extra_headers = build_model_endpoint_identity_headers(settings, identity_context=identity_context)
     if settings.get('enable_gpt_apim', False):
         return AzureOpenAI(
             api_version=settings.get('azure_apim_gpt_api_version'),
             azure_endpoint=settings.get('azure_apim_gpt_endpoint'),
-            api_key=settings.get('azure_apim_gpt_subscription_key')
+            api_key=settings.get('azure_apim_gpt_subscription_key'),
+            default_headers=extra_headers or None,
         ), gpt_model
 
     if settings.get('azure_openai_gpt_authentication_type') == 'managed_identity':
@@ -148,13 +226,15 @@ def _resolve_metadata_extraction_client(settings):
         return AzureOpenAI(
             api_version=settings.get('azure_openai_gpt_api_version'),
             azure_endpoint=settings.get('azure_openai_gpt_endpoint'),
-            azure_ad_token_provider=token_provider
+            azure_ad_token_provider=token_provider,
+            default_headers=extra_headers or None,
         ), gpt_model
 
     return AzureOpenAI(
         api_version=settings.get('azure_openai_gpt_api_version'),
         azure_endpoint=settings.get('azure_openai_gpt_endpoint'),
-        api_key=settings.get('azure_openai_gpt_key')
+        api_key=settings.get('azure_openai_gpt_key'),
+        default_headers=extra_headers or None,
     ), gpt_model
 
 
@@ -174,6 +254,16 @@ DI_SELECTION_MARK_PATTERNS = (
 )
 DI_MARKDOWN_TABLE_SEPARATOR_PATTERN = re.compile(r'(?m)^\s*\|(?:\s*:?-{3,}:?\s*\|)+\s*$')
 DI_MARKDOWN_TABLE_ROW_PATTERN = re.compile(r'(?m)^\s*\|.+\|\s*$')
+# Document Intelligence Layout emits figures as markdown <figure> blocks or image tags. Auto mode
+# treats them as a signal that Enhanced extraction is worth the extra cost, because Content
+# Understanding is the only engine that describes figures.
+DI_MARKDOWN_FIGURE_PATTERN = re.compile(r'(<figure\b|</figure>|!\[[^\]]*\]\()', re.IGNORECASE)
+# Budget for image content merged into an existing chunk. The cap is token-oriented, so it is
+# converted with a conservative characters-per-token estimate before being used as a length limit.
+OFFICE_IMAGE_MERGE_CHARS_PER_TOKEN = 4
+OFFICE_IMAGE_MERGE_UTILIZATION = 0.9
+OFFICE_IMAGE_MERGE_FALLBACK_CAP = 16384
+OFFICE_IMAGE_MERGE_MIN_CHAR_LIMIT = 4000
 
 
 def is_pdf_file_name(file_name):
@@ -210,12 +300,360 @@ def _get_document_intelligence_auto_layout_reason(sampled_pages):
         return 'selection marks or checkbox states detected in the sampled pages'
     if DI_MARKDOWN_TABLE_ROW_PATTERN.search(sampled_text) and DI_MARKDOWN_TABLE_SEPARATOR_PATTERN.search(sampled_text):
         return 'table structure detected in the sampled pages'
+    if DI_MARKDOWN_FIGURE_PATTERN.search(sampled_text):
+        return 'figures or images detected in the sampled pages'
     return ''
+
+
+def _analyze_single_embedded_image(image_path, extraction_engine, image_extraction_mode, settings):
+    """Analyze one extracted Office image with the active engine and return its text."""
+    if extraction_engine == EXTRACTION_ENGINE_CONTENT_UNDERSTANDING:
+        return analyze_image_with_content_understanding(image_path, settings=settings)
+
+    image_pages = extract_content_with_azure_di(image_path, extraction_mode=image_extraction_mode)
+    return "\n\n".join(
+        str(page.get('content', '') or '').strip()
+        for page in image_pages or []
+        if isinstance(page, dict) and str(page.get('content', '') or '').strip()
+    ).strip()
+
+
+def _describe_embedded_image_skips(diagnostics):
+    """Render skip counts as a short, admin-readable explanation."""
+    reasons = diagnostics.get('skipped_reasons') or {}
+    if not reasons:
+        return ''
+    friendly = {
+        'below_minimum_pixels': 'too small',
+        'below_minimum_bytes': 'too small',
+        'duplicate_image': 'duplicates',
+        'unsupported_format': 'unsupported format',
+        'unreadable_image': 'unreadable',
+        'unreadable_or_oversized': 'unreadable or oversized',
+        'per_document_cap_reached': 'over the per-document cap',
+        'write_failed': 'could not be written',
+        'unsafe_entry_name': 'unsafe file name',
+    }
+    parts = []
+    for reason, count in sorted(reasons.items(), key=lambda item: -item[1]):
+        label = friendly.get(reason, reason.replace('_', ' '))
+        parts.append(f"{count} {label}")
+    return ", ".join(parts)
+
+
+def _build_office_embedded_image_chunks(
+    file_path,
+    settings,
+    update_callback,
+):
+    """Analyze images embedded in an Office file and return placeable content blocks.
+
+    Neither engine describes figures inside Office files, so the images are pulled out of the
+    package and analyzed individually with whichever engine backs the admin's selected mode. Each
+    result carries the position metadata needed to merge it back into the chunk it came from,
+    rather than being appended to the end of the document.
+
+    Returns ``(image_blocks, analyzed_count, extraction_engine, total_body_words)``.
+    """
+    if not settings.get('enable_office_embedded_image_analysis', True):
+        return [], 0, EXTRACTION_ENGINE_DOCUMENT_INTELLIGENCE, 0
+
+    min_pixels = normalize_office_embedded_image_min_pixels(
+        settings.get('office_embedded_image_min_pixels')
+    )
+    max_images = normalize_office_embedded_image_max_per_document(
+        settings.get('office_embedded_image_max_per_document')
+    )
+    if max_images <= 0:
+        return [], 0, EXTRACTION_ENGINE_DOCUMENT_INTELLIGENCE, 0
+
+    # Embedded images are images, so they follow the image side of the admin's configured mode.
+    admin_extraction_mode = get_effective_document_intelligence_pdf_image_extraction_mode(settings)
+    image_extraction_mode = 'read' if admin_extraction_mode == 'read' else 'layout'
+    extraction_engine, _ = _resolve_extraction_engine_for_mode(image_extraction_mode, settings)
+
+    chunks = []
+    analyzed_count = 0
+    temp_image_dir = None
+    total_body_words = 0
+
+    try:
+        temp_image_dir = tempfile.mkdtemp(prefix='office_images_')
+        embedded_images, image_diagnostics = extract_office_embedded_images_with_diagnostics(
+            file_path,
+            temp_image_dir,
+            min_pixels=min_pixels,
+            max_images=max_images,
+        )
+
+        candidate_count = image_diagnostics.get('candidates', 0)
+        total_body_words = image_diagnostics.get('total_body_words', 0)
+        if not embedded_images:
+            # Say so explicitly. Otherwise "no images in this file" and "images found but all
+            # skipped" look identical in the workspace log, which is the common confusion.
+            if candidate_count:
+                skip_summary = _describe_embedded_image_skips(image_diagnostics)
+                update_callback(
+                    status=(
+                        f"Found {candidate_count} embedded image(s), none analyzable"
+                        + (f" ({skip_summary})" if skip_summary else "")
+                    ),
+                    office_embedded_image_count=0,
+                    office_embedded_image_candidates=candidate_count,
+                    office_embedded_image_skipped=image_diagnostics.get('skipped', 0),
+                )
+                log_event(
+                    f"[OFFICE_EMBEDDED_IMAGES] {os.path.basename(file_path)}: "
+                    f"{candidate_count} candidate(s), none analyzable. {image_diagnostics}",
+                    level=logging.WARNING,
+                )
+            else:
+                update_callback(
+                    status="No embedded images found in this document",
+                    office_embedded_image_count=0,
+                    office_embedded_image_candidates=0,
+                )
+            return [], 0, extraction_engine, total_body_words
+
+        engine_label = (
+            "Content Understanding"
+            if extraction_engine == EXTRACTION_ENGINE_CONTENT_UNDERSTANDING
+            else "Document Intelligence"
+        )
+        total_images = len(embedded_images)
+        update_callback(
+            status=f"Analyzing {total_images} of {candidate_count} embedded image(s) with {engine_label}..."
+        )
+
+        for image_index, embedded_image in enumerate(embedded_images, start=1):
+            update_callback(
+                status=f"Analyzing embedded image {image_index} of {total_images} with {engine_label}..."
+            )
+            try:
+                analysis_text = _analyze_single_embedded_image(
+                    embedded_image['path'],
+                    extraction_engine,
+                    image_extraction_mode,
+                    settings,
+                )
+            except Exception as image_error:
+                log_event(
+                    f"[OFFICE_EMBEDDED_IMAGES] Failed to analyze {embedded_image.get('name')}: {image_error}",
+                    level=logging.WARNING,
+                )
+                analysis_text = ''
+
+            # Text drawn inside a vector diagram is recovered during rasterization, so a figure
+            # still contributes searchable labels even when the engine returns nothing.
+            embedded_text = str(embedded_image.get('embedded_text') or '').strip()
+            body_parts = []
+            if analysis_text:
+                body_parts.append(analysis_text)
+            if embedded_text and embedded_text not in analysis_text:
+                body_parts.append(f"Text labels in this figure:\n{embedded_text}")
+
+            if not body_parts:
+                continue
+
+            location_label = ''
+            slide_number = embedded_image.get('slide_number')
+            if slide_number:
+                location_label = f" on slide {slide_number}"
+
+            heading = (
+                f"### Embedded image {image_index} of {total_images}: "
+                f"{embedded_image.get('name')}{location_label}"
+            )
+            chunks.append({
+                'content': f"{heading}\n\n" + "\n\n".join(body_parts),
+                'slide_number': embedded_image.get('slide_number'),
+                'word_offset': embedded_image.get('word_offset'),
+                'position_known': bool(embedded_image.get('position_known')),
+                'name': embedded_image.get('name'),
+            })
+            analyzed_count += 1
+
+        if analyzed_count:
+            skip_summary = _describe_embedded_image_skips(image_diagnostics)
+            update_callback(
+                status=(
+                    f"Analyzed {analyzed_count} of {candidate_count} embedded image(s) with {engine_label}."
+                    + (f" Skipped: {skip_summary}." if skip_summary else "")
+                ),
+                office_embedded_image_candidates=candidate_count,
+                office_embedded_image_skipped=image_diagnostics.get('skipped', 0),
+            )
+    except Exception as embedded_image_error:
+        log_event(
+            f"[OFFICE_EMBEDDED_IMAGES] Embedded image analysis failed for "
+            f"{os.path.basename(file_path)}: {embedded_image_error}",
+            level=logging.WARNING,
+        )
+    finally:
+        if temp_image_dir and os.path.isdir(temp_image_dir):
+            shutil.rmtree(temp_image_dir, ignore_errors=True)
+
+    return chunks, analyzed_count, extraction_engine, total_body_words
+
+
+def _resolve_embedded_image_chunk_index(image_block, chunks, total_body_words):
+    """Return the index of the chunk an embedded image belongs to.
+
+    PowerPoint images carry a slide number, which maps onto the chunk covering that slide. Word
+    images carry a word offset, which is mapped proportionally rather than absolutely because the
+    extractor's word count will not match the raw document body exactly; a proportional mapping
+    keeps images spread across the document instead of clustering them at the front. Images with no
+    position at all, which is the case for legacy binary Office formats, anchor to the final chunk
+    so no page number is invented beyond the end of the document.
+    """
+    if not chunks:
+        return None
+
+    slide_number = image_block.get('slide_number')
+    if slide_number:
+        best_index = 0
+        for index, chunk in enumerate(chunks):
+            try:
+                page_number = int(chunk.get('page_number') or 0)
+            except (TypeError, ValueError):
+                continue
+            if page_number <= slide_number:
+                best_index = index
+        return best_index
+
+    word_offset = image_block.get('word_offset')
+    if word_offset is not None and total_body_words > 0:
+        relative_position = float(word_offset) / float(total_body_words)
+        relative_position = min(max(relative_position, 0.0), 1.0)
+        index = int(relative_position * len(chunks))
+        return min(index, len(chunks) - 1)
+
+    return len(chunks) - 1
+
+
+def _merge_embedded_images_into_chunks(final_chunks, image_blocks, total_body_words, settings):
+    """Merge analyzed images into the chunk they came from.
+
+    Chunk ids are derived from the page number, so two chunks sharing a page number overwrite each
+    other in the search index. Image content is therefore appended to the existing chunk's content
+    rather than emitted as a second chunk, which is also what keeps a figure searchable alongside
+    the text it belongs to.
+
+    Returns ``(merged_chunks, merged_count, overflow_blocks)``.
+    """
+    if not image_blocks:
+        return final_chunks, 0, []
+
+    merged_chunks = [dict(chunk) for chunk in final_chunks]
+    if not merged_chunks:
+        return merged_chunks, 0, list(image_blocks)
+
+    try:
+        chunk_size_cap = int(get_chunk_size_cap(settings))
+    except Exception:
+        chunk_size_cap = OFFICE_IMAGE_MERGE_FALLBACK_CAP
+    merged_char_limit = max(
+        OFFICE_IMAGE_MERGE_MIN_CHAR_LIMIT,
+        int(chunk_size_cap * OFFICE_IMAGE_MERGE_CHARS_PER_TOKEN * OFFICE_IMAGE_MERGE_UTILIZATION),
+    )
+
+    merged_count = 0
+    overflow_blocks = []
+
+    for image_block in image_blocks:
+        content = str(image_block.get('content') or '').strip()
+        if not content:
+            continue
+
+        target_index = _resolve_embedded_image_chunk_index(image_block, merged_chunks, total_body_words)
+        if target_index is None:
+            overflow_blocks.append(image_block)
+            continue
+
+        target_chunk = merged_chunks[target_index]
+        existing_content = str(target_chunk.get('content') or '')
+
+        # Keep merged chunks under the embedding budget; anything that does not fit spills rather
+        # than silently producing an oversized chunk.
+        if len(existing_content) + len(content) + 2 > merged_char_limit:
+            overflow_blocks.append(image_block)
+            continue
+
+        target_chunk['content'] = (
+            f"{existing_content.rstrip()}\n\n{content}" if existing_content.strip() else content
+        )
+        merged_count += 1
+
+    return merged_chunks, merged_count, overflow_blocks
+
+
+def _append_overflow_image_chunks(merged_chunks, overflow_blocks):
+    """Append images that could not fit their origin chunk, numbered past the existing chunks."""
+    if not overflow_blocks:
+        return merged_chunks
+
+    next_page_number = max(
+        (int(chunk.get('page_number') or 0) for chunk in merged_chunks),
+        default=0,
+    ) + 1
+
+    for offset, image_block in enumerate(overflow_blocks):
+        content = str(image_block.get('content') or '').strip()
+        if not content:
+            continue
+        merged_chunks.append({
+            'page_number': next_page_number + offset,
+            'content': content,
+        })
+
+    return merged_chunks
+
+
+def _assert_unique_chunk_page_numbers(chunks, document_id):
+    """Warn when chunks share a page number, which would overwrite entries in the search index."""
+    seen_page_numbers = set()
+    duplicates = set()
+    for chunk in chunks:
+        page_number = chunk.get('page_number')
+        if page_number in seen_page_numbers:
+            duplicates.add(page_number)
+        seen_page_numbers.add(page_number)
+
+    if duplicates:
+        log_event(
+            f"[OFFICE_EMBEDDED_IMAGES] Duplicate chunk page numbers for document {document_id}: "
+            f"{sorted(duplicates)}. Chunk ids are derived from the page number, so these would "
+            "overwrite each other in the search index.",
+            level=logging.ERROR,
+        )
+    return not duplicates
+
+
+def _resolve_extraction_engine_for_mode(extraction_mode, settings):
+    """Resolve which engine backs the given extraction mode, plus a human-readable reason."""
+    return resolve_extraction_engine_for_mode(extraction_mode, settings)
+
+
+def _extract_pages_with_extraction_engine(
+    file_path,
+    extraction_mode,
+    extraction_engine,
+    settings=None,
+    pages=None,
+):
+    """Extract page content with the resolved engine, falling back to Document Intelligence Layout."""
+    return extract_content_with_extraction_engine(
+        file_path,
+        extraction_mode=extraction_mode,
+        extraction_engine=extraction_engine,
+        settings=settings,
+        pages=pages,
+    )
 
 
 def _resolve_document_intelligence_auto_mode(temp_file_path, is_pdf, is_image, page_count, sample_pages, update_callback):
     if is_image:
-        return 'layout', 'image input benefits from Enhanced extraction for spatial structure and selection marks'
+        return 'layout', 'image input benefits from Enhanced extraction for figures, spatial structure, and selection marks'
 
     if not is_pdf:
         return 'read', 'Auto mode is only evaluated for PDFs and images'
@@ -230,7 +668,7 @@ def _resolve_document_intelligence_auto_mode(temp_file_path, is_pdf, is_image, p
             pages=page_range
         )
     except Exception as e:
-        log_event(f"[document_intelligence_auto] Layout sampling failed; falling back to Read: {e}", level=logging.WARNING)
+        log_event(f"[DOCUMENT_INTELLIGENCE_AUTO] Layout sampling failed; falling back to Read: {e}", level=logging.WARNING)
         return 'read', 'Layout sampling failed, so Auto fell back to Read'
 
     layout_reason = _get_document_intelligence_auto_layout_reason(sampled_pages)
@@ -459,6 +897,37 @@ def _get_blob_service_client():
     return blob_service_client
 
 
+def _ensure_blob_container_ready(blob_service_client, container_name):
+    """Create the Enhanced Citations target container on demand if it is missing."""
+    if not container_name:
+        raise ValueError("Blob container name is required")
+
+    container_client = blob_service_client.get_container_client(container_name)
+    try:
+        container_client.create_container()
+        log_event(
+            "[ENHANCED_CITATIONS] Created blob storage container during upload.",
+            extra={"container_name": container_name},
+            level=logging.INFO,
+        )
+    except ResourceExistsError:
+        pass
+    except HttpResponseError as exc:
+        if getattr(exc, "status_code", None) != 409:
+            log_event(
+                "[ENHANCED_CITATIONS] Blob storage container readiness check failed during upload.",
+                extra={
+                    "container_name": container_name,
+                    "error_type": type(exc).__name__,
+                    "status_code": getattr(exc, "status_code", None),
+                },
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            raise
+    return container_client
+
+
 def _blob_exists(container_name, blob_path):
     if not container_name or not blob_path:
         return False
@@ -675,7 +1144,7 @@ def sort_documents(documents, sort_by="_ts", sort_order="DESC"):
     return sorted(documents or [], key=sort_key, reverse=reverse)
 
 
-def _query_accessible_documents(user_id, group_id=None, public_workspace_id=None):
+def _query_accessible_documents(user_id, group_id=None, public_workspace_id=None, collect_diagnostics=False):
     cosmos_container = _get_documents_container(group_id=group_id, public_workspace_id=public_workspace_id)
 
     if public_workspace_id is not None:
@@ -712,13 +1181,26 @@ def _query_accessible_documents(user_id, group_id=None, public_workspace_id=None
             {"name": "@user_id_prefix", "value": f"{user_id},"}
         ]
 
-    return list(
-        cosmos_container.query_items(
-            query=query,
-            parameters=parameters,
-            enable_cross_partition_query=True,
-        )
+    documents, diagnostics = query_items_with_cosmos_diagnostics(
+        cosmos_container,
+        diagnostics_label='source_documents',
+        collect_diagnostics=collect_diagnostics,
+        query=query,
+        parameters=parameters,
+        enable_cross_partition_query=True,
     )
+    if collect_diagnostics:
+        return documents, diagnostics
+    return documents
+
+
+def _upsert_document_and_sync_access_index(cosmos_container, document_item, operation):
+    persisted_document = cosmos_container.upsert_item(document_item)
+    sync_document_access_index_for_document_fail_open(
+        persisted_document if isinstance(persisted_document, dict) else document_item,
+        operation=operation,
+    )
+    return persisted_document if isinstance(persisted_document, dict) else document_item
 
 
 def _build_archived_scope_value(scope_value):
@@ -760,7 +1242,11 @@ def set_document_chunk_visibility(document_item, active=True):
 
         documents_to_update.append(chunk_item)
 
-    search_client.upload_documents(documents=documents_to_update)
+    _execute_document_search_write(
+        search_client,
+        "upload_documents",
+        documents=documents_to_update,
+    )
     return len(documents_to_update)
 
 
@@ -812,7 +1298,11 @@ def normalize_document_revision_families(user_id, group_id=None, public_workspac
                     update_occurred = True
 
             if update_occurred:
-                cosmos_container.upsert_item(document_item)
+                _upsert_document_and_sync_access_index(
+                    cosmos_container,
+                    document_item,
+                    operation='document_revision_normalized',
+                )
                 changes_made = True
 
     return changes_made
@@ -982,7 +1472,11 @@ def create_document(file_name, user_id, document_id, num_file_chunks, status, gr
                 update_existing_document = True
 
             if update_existing_document:
-                cosmos_container.upsert_item(existing_document)
+                _upsert_document_and_sync_access_index(
+                    cosmos_container,
+                    existing_document,
+                    operation='document_revision_archived',
+                )
 
         if is_public_workspace:
             document_metadata = {
@@ -1083,7 +1577,11 @@ def create_document(file_name, user_id, document_id, num_file_chunks, status, gr
                 "tags": carried_forward.get("tags", [])
             }
 
-        cosmos_container.upsert_item(document_metadata)
+        _upsert_document_and_sync_access_index(
+            cosmos_container,
+            document_metadata,
+            operation='document_created',
+        )
 
         add_file_task_to_file_processing_log(
             document_id,
@@ -1195,8 +1693,8 @@ def save_video_chunk(
     """
     from functions_debug import debug_print
 
-    debug_print(f"[VIDEO CHUNK] Saving video chunk for document: {document_id}, start_time: {start_time}")
-    debug_print(f"[VIDEO CHUNK] Transcript length: {len(page_text_content)}, OCR length: {len(ocr_chunk_text)}")
+    debug_print(f"[VIDEO_CHUNK] Saving video chunk for document: {document_id}, start_time: {start_time}")
+    debug_print(f"[VIDEO_CHUNK] Transcript length: {len(page_text_content)}, OCR length: {len(ocr_chunk_text)}")
 
     try:
         current_time = datetime.now(timezone.utc).isoformat()
@@ -1207,11 +1705,11 @@ def save_video_chunk(
         h, m, s = start_time.split(':')
         seconds = int(h) * 3600 + int(m) * 60 + int(float(s))
 
-        debug_print(f"[VIDEO CHUNK] Converted start_time {start_time} to {seconds} seconds")
+        debug_print(f"[VIDEO_CHUNK] Converted start_time {start_time} to {seconds} seconds")
 
         # 1) generate embedding on the transcript text
         try:
-            debug_print(f"[VIDEO CHUNK] Generating embedding for transcript text")
+            debug_print(f"[VIDEO_CHUNK] Generating embedding for transcript text")
             result = generate_embedding(page_text_content)
 
             # Handle both tuple (new) and single value (backward compatibility)
@@ -1220,16 +1718,16 @@ def save_video_chunk(
             else:
                 embedding = result
 
-            debug_print(f"[VIDEO CHUNK] Embedding generated successfully")
-            print(f"[VideoChunk] EMBEDDING OK for {document_id}@{start_time}", flush=True)
+            debug_print(f"[VIDEO_CHUNK] Embedding generated successfully")
+            print(f"[VIDEO_CHUNK] EMBEDDING OK for {document_id}@{start_time}", flush=True)
         except Exception as e:
-            debug_print(f"[VIDEO CHUNK] Embedding generation failed: {str(e)}")
-            print(f"[VideoChunk] EMBEDDING ERROR for {document_id}@{start_time}: {e}", flush=True)
+            debug_print(f"[VIDEO_CHUNK] Embedding generation failed: {str(e)}")
+            print(f"[VIDEO_CHUNK] EMBEDDING ERROR for {document_id}@{start_time}: {e}", flush=True)
             return
 
         # 2) build chunk document
         try:
-            debug_print(f"[VIDEO CHUNK] Retrieving document metadata")
+            debug_print(f"[VIDEO_CHUNK] Retrieving document metadata")
             if is_public_workspace:
                 meta = get_document_metadata(
                     document_id=document_id,
@@ -1248,11 +1746,11 @@ def save_video_chunk(
                     user_id=user_id
                 )
             version = meta.get("version", 1) if meta else 1
-            debug_print(f"[VIDEO CHUNK] Document version: {version}")
+            debug_print(f"[VIDEO_CHUNK] Document version: {version}")
 
             # Use integer seconds to build a safe document key
             chunk_id = f"{document_id}_{seconds}"
-            debug_print(f"[VIDEO CHUNK] Generated chunk ID: {chunk_id}")
+            debug_print(f"[VIDEO_CHUNK] Generated chunk ID: {chunk_id}")
 
             chunk = {
                 "id":                   chunk_id,
@@ -1271,40 +1769,44 @@ def save_video_chunk(
             if is_public_workspace:
                 chunk["public_workspace_id"] = public_workspace_id
                 client = CLIENTS["search_client_public"]
-                debug_print(f"[VIDEO CHUNK] Using public search client for public_workspace_id: {public_workspace_id}")
+                debug_print(f"[VIDEO_CHUNK] Using public search client for public_workspace_id: {public_workspace_id}")
             elif is_group:
                 chunk["group_id"] = group_id
                 client = CLIENTS["search_client_group"]
-                debug_print(f"[VIDEO CHUNK] Using group search client for group_id: {group_id}")
+                debug_print(f"[VIDEO_CHUNK] Using group search client for group_id: {group_id}")
             else:
                 # Get shared_user_ids from document metadata for personal documents
                 shared_user_ids = meta.get('shared_user_ids', []) if meta else []
                 chunk["user_id"] = user_id
                 chunk["shared_user_ids"] = shared_user_ids
                 client = CLIENTS["search_client_user"]
-                debug_print(f"[VIDEO CHUNK] Using user search client for user_id: {user_id}, shared_user_ids: {shared_user_ids}")
+                debug_print(f"[VIDEO_CHUNK] Using user search client for user_id: {user_id}, shared_user_ids: {shared_user_ids}")
 
-            debug_print(f"[VIDEO CHUNK] Built chunk document with ID: {chunk_id}")
-            print(f"[VideoChunk] CHUNK BUILT {chunk_id}", flush=True)
+            debug_print(f"[VIDEO_CHUNK] Built chunk document with ID: {chunk_id}")
+            print(f"[VIDEO_CHUNK] CHUNK BUILT {chunk_id}", flush=True)
 
         except Exception as e:
-            debug_print(f"[VIDEO CHUNK] Error building chunk document: {str(e)}")
-            print(f"[VideoChunk] CHUNK BUILD ERROR for {document_id}@{start_time}: {e}", flush=True)
+            debug_print(f"[VIDEO_CHUNK] Error building chunk document: {str(e)}")
+            print(f"[VIDEO_CHUNK] CHUNK BUILD ERROR for {document_id}@{start_time}: {e}", flush=True)
             return
 
         # 3) upload to search index
         try:
-            debug_print(f"[VIDEO CHUNK] Uploading chunk to search index")
-            client.upload_documents(documents=[chunk])
-            debug_print(f"[VIDEO CHUNK] Upload successful for chunk: {chunk_id}")
-            print(f"[VideoChunk] UPLOAD OK for {chunk_id}", flush=True)
+            debug_print(f"[VIDEO_CHUNK] Uploading chunk to search index")
+            _execute_document_search_write(
+                client,
+                "upload_documents",
+                documents=[chunk],
+            )
+            debug_print(f"[VIDEO_CHUNK] Upload successful for chunk: {chunk_id}")
+            print(f"[VIDEO_CHUNK] UPLOAD OK for {chunk_id}", flush=True)
         except Exception as e:
-            debug_print(f"[VIDEO CHUNK] Upload to search index failed: {str(e)}")
-            print(f"[VideoChunk] UPLOAD ERROR for {chunk_id}: {e}", flush=True)
+            debug_print(f"[VIDEO_CHUNK] Upload to search index failed: {str(e)}")
+            print(f"[VIDEO_CHUNK] UPLOAD ERROR for {chunk_id}: {e}", flush=True)
 
     except Exception as e:
-        debug_print(f"[VIDEO CHUNK] Unexpected error processing chunk: {str(e)}")
-        print(f"[VideoChunk] UNEXPECTED ERROR for {document_id}@{start_time}: {e}", flush=True)
+        debug_print(f"[VIDEO_CHUNK] Unexpected error processing chunk: {str(e)}")
+        print(f"[VIDEO_CHUNK] UNEXPECTED ERROR for {document_id}@{start_time}: {e}", flush=True)
 
 def process_video_document(
     document_id,
@@ -1322,9 +1824,9 @@ def process_video_document(
     """
     from functions_debug import debug_print
 
-    debug_print(f"[VIDEO INDEXER] Starting video processing for file: {original_filename}")
-    debug_print(f"[VIDEO INDEXER] Document ID: {document_id}, User ID: {user_id}, Group ID: {group_id}, Public Workspace ID: {public_workspace_id}")
-    debug_print(f"[VIDEO INDEXER] Temp file path: {temp_file_path}")
+    debug_print(f"[VIDEO_INDEXER] Starting video processing for file: {original_filename}")
+    debug_print(f"[VIDEO_INDEXER] Document ID: {document_id}, User ID: {user_id}, Group ID: {group_id}, Public Workspace ID: {public_workspace_id}")
+    debug_print(f"[VIDEO_INDEXER] Temp file path: {temp_file_path}")
 
     def to_seconds(ts: str) -> float:
         parts = ts.split(':')
@@ -1338,15 +1840,15 @@ def process_video_document(
 
     settings = get_settings()
     if not settings.get("enable_video_file_support", False):
-        debug_print("[VIDEO INDEXER] Video file support is disabled in settings")
+        debug_print("[VIDEO_INDEXER] Video file support is disabled in settings")
         print("[VIDEO] indexing disabled in settings", flush=True)
         update_callback(status="VIDEO: indexing disabled")
         return 0
 
-    debug_print("[VIDEO INDEXER] Video file support is enabled, proceeding with indexing")
+    debug_print("[VIDEO_INDEXER] Video file support is enabled, proceeding with indexing")
 
     if settings.get("enable_enhanced_citations", False):
-        debug_print("[VIDEO INDEXER] Enhanced citations enabled, uploading to blob storage")
+        debug_print("[VIDEO_INDEXER] Enhanced citations enabled, uploading to blob storage")
         update_callback(status="Uploading video for enhanced citations...")
         try:
             # this helper is already in your file below
@@ -1359,10 +1861,10 @@ def process_video_document(
                 group_id,
                 public_workspace_id
             )
-            debug_print(f"[VIDEO INDEXER] Blob upload successful: {blob_path}")
+            debug_print(f"[VIDEO_INDEXER] Blob upload successful: {blob_path}")
             update_callback(status=f"Enhanced citations: video at {blob_path}")
         except Exception as e:
-            debug_print(f"[VIDEO INDEXER] Blob upload failed: {str(e)}")
+            debug_print(f"[VIDEO_INDEXER] Blob upload failed: {str(e)}")
             print(f"[VIDEO] BLOB UPLOAD ERROR: {e}", flush=True)
             update_callback(status=f"VIDEO: blob upload failed → {e}")
 
@@ -1372,7 +1874,7 @@ def process_video_document(
         settings["video_indexer_account_id"]
     )
 
-    debug_print(f"[VIDEO INDEXER] Configuration - Endpoint: {vi_ep}, Location: {vi_loc}, Account ID: {vi_acc}")
+    debug_print(f"[VIDEO_INDEXER] Configuration - Endpoint: {vi_ep}, Location: {vi_loc}, Account ID: {vi_acc}")
 
     # Validate required settings for managed identity authentication
     required_settings = {
@@ -1384,23 +1886,23 @@ def process_video_document(
         "video_indexer_account_name": settings.get("video_indexer_account_name")
     }
 
-    debug_print(f"[VIDEO INDEXER] Managed identity authentication requires: endpoint, location, account_id, resource_group, subscription_id, account_name")
+    debug_print(f"[VIDEO_INDEXER] Managed identity authentication requires: endpoint, location, account_id, resource_group, subscription_id, account_name")
 
     missing_settings = [key for key, value in required_settings.items() if not value]
     if missing_settings:
-        debug_print(f"[VIDEO INDEXER] ERROR: Missing required settings: {missing_settings}")
+        debug_print(f"[VIDEO_INDEXER] ERROR: Missing required settings: {missing_settings}")
         update_callback(status=f"VIDEO: missing settings - {', '.join(missing_settings)}")
         return 0
 
-    debug_print("[VIDEO INDEXER] All required settings are present")
+    debug_print("[VIDEO_INDEXER] All required settings are present")
 
     # 1) Auth
     try:
-        debug_print("[VIDEO INDEXER] Attempting to acquire authentication token")
+        debug_print("[VIDEO_INDEXER] Attempting to acquire authentication token")
         token = get_video_indexer_account_token(settings)
-        debug_print(f"[VIDEO INDEXER] Authentication successful, token length: {len(token) if token else 0}")
+        debug_print(f"[VIDEO_INDEXER] Authentication successful, token length: {len(token) if token else 0}")
     except Exception as e:
-        debug_print(f"[VIDEO INDEXER] Authentication failed: {str(e)}")
+        debug_print(f"[VIDEO_INDEXER] Authentication failed: {str(e)}")
         print(f"[VIDEO] AUTH ERROR: {e}", flush=True)
         update_callback(status=f"VIDEO: auth failed → {e}")
         return 0
@@ -1418,36 +1920,36 @@ def process_video_document(
             "indexingPreset": "Default",  # Includes video + audio insights
             "streamingPreset": "NoStreaming"
         }
-        debug_print(f"[VIDEO INDEXER] Using managed identity access token authentication")
+        debug_print(f"[VIDEO_INDEXER] Using managed identity access token authentication")
 
-        debug_print(f"[VIDEO INDEXER] Upload URL: {url}")
-        debug_print(f"[VIDEO INDEXER] Upload params: {params}")
-        debug_print(f"[VIDEO INDEXER] Starting file upload for: {original_filename}")
+        debug_print(f"[VIDEO_INDEXER] Upload URL: {url}")
+        debug_print(f"[VIDEO_INDEXER] Upload params: {params}")
+        debug_print(f"[VIDEO_INDEXER] Starting file upload for: {original_filename}")
 
         with open(temp_file_path, "rb") as f:
             resp = requests.post(url, params=params, headers=headers, files={"file": f})
 
-        debug_print(f"[VIDEO INDEXER] Upload response status: {resp.status_code}")
+        debug_print(f"[VIDEO_INDEXER] Upload response status: {resp.status_code}")
 
         if resp.status_code != 200:
-            debug_print(f"[VIDEO INDEXER] Upload response text: {resp.text}")
+            debug_print(f"[VIDEO_INDEXER] Upload response text: {resp.text}")
 
         resp.raise_for_status()
         response_data = resp.json()
-        debug_print(f"[VIDEO INDEXER] Upload response keys: {list(response_data.keys())}")
+        debug_print(f"[VIDEO_INDEXER] Upload response keys: {list(response_data.keys())}")
 
         vid = response_data.get("id")
         if not vid:
-            debug_print(f"[VIDEO INDEXER] ERROR: No video ID in response: {response_data}")
+            debug_print(f"[VIDEO_INDEXER] ERROR: No video ID in response: {response_data}")
             raise ValueError("no video ID returned")
 
-        debug_print(f"[VIDEO INDEXER] Upload successful, video ID: {vid}")
+        debug_print(f"[VIDEO_INDEXER] Upload successful, video ID: {vid}")
         print(f"[VIDEO] UPLOAD OK, videoId={vid}", flush=True)
         update_callback(status=f"VIDEO: uploaded id={vid}")
 
         try:
             # Update the document's metadata with the video indexer ID
-            debug_print(f"[VIDEO INDEXER] Updating document metadata with video_indexer_id: {vid}")
+            debug_print(f"[VIDEO_INDEXER] Updating document metadata with video_indexer_id: {vid}")
             update_document(
                 document_id=document_id,
                 user_id=user_id,
@@ -1455,21 +1957,21 @@ def process_video_document(
                 public_workspace_id=public_workspace_id,
                 video_indexer_id=vid
             )
-            debug_print(f"[VIDEO INDEXER] Document metadata updated successfully")
+            debug_print(f"[VIDEO_INDEXER] Document metadata updated successfully")
         except Exception as e:
-            debug_print(f"[VIDEO INDEXER] Failed to update document metadata: {str(e)}")
+            debug_print(f"[VIDEO_INDEXER] Failed to update document metadata: {str(e)}")
             print(f"[VIDEO] Failed to update document metadata with video_indexer_id: {e}", flush=True)
 
     except requests.exceptions.RequestException as e:
-        debug_print(f"[VIDEO INDEXER] Upload request failed: {str(e)}")
+        debug_print(f"[VIDEO_INDEXER] Upload request failed: {str(e)}")
         if hasattr(e, 'response') and e.response is not None:
-            debug_print(f"[VIDEO INDEXER] Upload error response status: {e.response.status_code}")
-            debug_print(f"[VIDEO INDEXER] Upload error response text: {e.response.text}")
+            debug_print(f"[VIDEO_INDEXER] Upload error response status: {e.response.status_code}")
+            debug_print(f"[VIDEO_INDEXER] Upload error response text: {e.response.text}")
         print(f"[VIDEO] UPLOAD ERROR: {e}", flush=True)
         update_callback(status=f"VIDEO: upload failed → {e}")
         return 0
     except Exception as e:
-        debug_print(f"[VIDEO INDEXER] Upload unexpected error: {str(e)}")
+        debug_print(f"[VIDEO_INDEXER] Upload unexpected error: {str(e)}")
         print(f"[VIDEO] UPLOAD ERROR: {e}", flush=True)
         update_callback(status=f"VIDEO: upload failed → {e}")
         return 0
@@ -1481,53 +1983,53 @@ def process_video_document(
         f"?accessToken={token}"
     )
     poll_headers = {}
-    debug_print(f"[VIDEO INDEXER] Using managed identity access token for polling")
-    debug_print(f"[VIDEO INDEXER] Requesting full insights (no filtering)")
+    debug_print(f"[VIDEO_INDEXER] Using managed identity access token for polling")
+    debug_print(f"[VIDEO_INDEXER] Requesting full insights (no filtering)")
 
-    debug_print(f"[VIDEO INDEXER] Index polling URL: {index_url}")
-    debug_print(f"[VIDEO INDEXER] Starting processing polling for video ID: {vid}")
+    debug_print(f"[VIDEO_INDEXER] Index polling URL: {index_url}")
+    debug_print(f"[VIDEO_INDEXER] Starting processing polling for video ID: {vid}")
 
     poll_count = 0
     max_polls = 180  # 90 minutes maximum (30 second intervals)
 
     while True:
         poll_count += 1
-        debug_print(f"[VIDEO INDEXER] Polling attempt {poll_count}/{max_polls}")
+        debug_print(f"[VIDEO_INDEXER] Polling attempt {poll_count}/{max_polls}")
 
         try:
             r = requests.get(index_url, headers=poll_headers)
-            debug_print(f"[VIDEO INDEXER] Poll response status: {r.status_code}")
+            debug_print(f"[VIDEO_INDEXER] Poll response status: {r.status_code}")
 
             if r.status_code in (401, 404):
-                debug_print(f"[VIDEO INDEXER] Poll returned {r.status_code}, waiting 30s and retrying")
+                debug_print(f"[VIDEO_INDEXER] Poll returned {r.status_code}, waiting 30s and retrying")
                 time.sleep(30)
                 continue
             if r.status_code == 429:
                 retry_after = int(r.headers.get("Retry-After", 30))
-                debug_print(f"[VIDEO INDEXER] Rate limited, waiting {retry_after}s")
+                debug_print(f"[VIDEO_INDEXER] Rate limited, waiting {retry_after}s")
                 time.sleep(retry_after)
                 continue
             if r.status_code == 504:
-                debug_print(f"[VIDEO INDEXER] Timeout received, waiting 30s and retrying")
+                debug_print(f"[VIDEO_INDEXER] Timeout received, waiting 30s and retrying")
                 time.sleep(30)
                 continue
 
             r.raise_for_status()
             data = r.json()
-            debug_print(f"[VIDEO INDEXER] Poll response keys: {list(data.keys())}")
+            debug_print(f"[VIDEO_INDEXER] Poll response keys: {list(data.keys())}")
 
         except requests.exceptions.RequestException as e:
-            debug_print(f"[VIDEO INDEXER] Poll request failed: {str(e)}")
+            debug_print(f"[VIDEO_INDEXER] Poll request failed: {str(e)}")
             if hasattr(e, 'response') and e.response is not None:
-                debug_print(f"[VIDEO INDEXER] Poll error response status: {e.response.status_code}")
-                debug_print(f"[VIDEO INDEXER] Poll error response text: {e.response.text}")
+                debug_print(f"[VIDEO_INDEXER] Poll error response status: {e.response.status_code}")
+                debug_print(f"[VIDEO_INDEXER] Poll error response text: {e.response.text}")
             if poll_count >= max_polls:
                 update_callback(status="VIDEO: polling timeout")
                 return 0
             time.sleep(30)
             continue
         except Exception as e:
-            debug_print(f"[VIDEO INDEXER] Poll unexpected error: {str(e)}")
+            debug_print(f"[VIDEO_INDEXER] Poll unexpected error: {str(e)}")
             if poll_count >= max_polls:
                 update_callback(status="VIDEO: polling timeout")
                 return 0
@@ -1538,38 +2040,38 @@ def process_video_document(
         prog = info.get("processingProgress", "0%").rstrip("%")
         state = info.get("state", "").lower()
 
-        debug_print(f"[VIDEO INDEXER] Processing progress: {prog}%, State: {state}")
+        debug_print(f"[VIDEO_INDEXER] Processing progress: {prog}%, State: {state}")
         update_callback(status=f"VIDEO: {prog}%")
 
         if state == "failed":
-            debug_print(f"[VIDEO INDEXER] Processing failed for video ID: {vid}")
+            debug_print(f"[VIDEO_INDEXER] Processing failed for video ID: {vid}")
             update_callback(status="VIDEO: indexing failed")
             return 0
         if prog == "100":
-            debug_print(f"[VIDEO INDEXER] Processing completed for video ID: {vid}")
+            debug_print(f"[VIDEO_INDEXER] Processing completed for video ID: {vid}")
             break
 
         if poll_count >= max_polls:
-            debug_print(f"[VIDEO INDEXER] Maximum polling attempts reached for video ID: {vid}")
+            debug_print(f"[VIDEO_INDEXER] Maximum polling attempts reached for video ID: {vid}")
             update_callback(status="VIDEO: processing timeout")
             return 0
 
         time.sleep(30)
 
     # 4) Extract transcript & OCR
-    debug_print(f"[VIDEO INDEXER] Starting insights extraction for video ID: {vid}")
-    debug_print(f"[VIDEO INDEXER] Extracting insights from completed video")
+    debug_print(f"[VIDEO_INDEXER] Starting insights extraction for video ID: {vid}")
+    debug_print(f"[VIDEO_INDEXER] Extracting insights from completed video")
 
     insights = info.get("insights", {})
     if not insights:
-        debug_print(f"[VIDEO INDEXER] ERROR: No insights object in response")
-        debug_print(f"[VIDEO INDEXER] Response info keys: {list(info.keys())}")
+        debug_print(f"[VIDEO_INDEXER] ERROR: No insights object in response")
+        debug_print(f"[VIDEO_INDEXER] Response info keys: {list(info.keys())}")
         return 0
 
     # Get video duration from insights (primary) or info (fallback)
     video_duration = insights.get("duration") or info.get("duration", "00:00:00")
     video_duration_seconds = to_seconds(video_duration) if video_duration else 0
-    debug_print(f"[VIDEO INDEXER] Video duration: {video_duration} ({video_duration_seconds} seconds)")
+    debug_print(f"[VIDEO_INDEXER] Video duration: {video_duration} ({video_duration_seconds} seconds)")
 
     # Log raw insights JSON for complete visibility (debug only)
     import json
@@ -1585,7 +2087,7 @@ def process_video_document(
         print(f"[VIDEO] Could not serialize insights to JSON: {e}", flush=True)
     print(f"[VIDEO] ===== END RAW INSIGHTS =====\n", flush=True)
 
-    debug_print(f"[VIDEO INDEXER] Insights keys available: {list(insights.keys())}")
+    debug_print(f"[VIDEO_INDEXER] Insights keys available: {list(insights.keys())}")
     print(f"[VIDEO] Available insight types: {', '.join(list(insights.keys())[:15])}...", flush=True)
 
     # Debug: Show sample structures for all insight types
@@ -1605,48 +2107,48 @@ def process_video_document(
 
     labels_data_debug = insights.get("labels", [])
     if labels_data_debug:
-        debug_print(f"[VIDEO INDEXER] LABELS sample: {labels_data_debug[0]}")
+        debug_print(f"[VIDEO_INDEXER] LABELS sample: {labels_data_debug[0]}")
 
     topics_data_debug = insights.get("topics", [])
     if topics_data_debug:
-        debug_print(f"[VIDEO INDEXER] TOPICS sample: {topics_data_debug[0]}")
+        debug_print(f"[VIDEO_INDEXER] TOPICS sample: {topics_data_debug[0]}")
 
     audio_effects_data_debug = insights.get("audioEffects", [])
     if audio_effects_data_debug:
-        debug_print(f"[VIDEO INDEXER] AUDIO_EFFECTS sample: {audio_effects_data_debug[0]}")
+        debug_print(f"[VIDEO_INDEXER] AUDIO_EFFECTS sample: {audio_effects_data_debug[0]}")
 
     emotions_data_debug = insights.get("emotions", [])
     if emotions_data_debug:
-        debug_print(f"[VIDEO INDEXER] EMOTIONS sample: {emotions_data_debug[0]}")
+        debug_print(f"[VIDEO_INDEXER] EMOTIONS sample: {emotions_data_debug[0]}")
 
     sentiments_data_debug = insights.get("sentiments", [])
     if sentiments_data_debug:
-        debug_print(f"[VIDEO INDEXER] SENTIMENTS sample: {sentiments_data_debug[0]}")
+        debug_print(f"[VIDEO_INDEXER] SENTIMENTS sample: {sentiments_data_debug[0]}")
 
     scenes_data_debug = insights.get("scenes", [])
     if scenes_data_debug:
-        debug_print(f"[VIDEO INDEXER] SCENES sample: {scenes_data_debug[0]}")
+        debug_print(f"[VIDEO_INDEXER] SCENES sample: {scenes_data_debug[0]}")
 
     shots_data_debug = insights.get("shots", [])
     if shots_data_debug:
-        debug_print(f"[VIDEO INDEXER] SHOTS sample: {shots_data_debug[0]}")
+        debug_print(f"[VIDEO_INDEXER] SHOTS sample: {shots_data_debug[0]}")
 
     faces_data_debug = insights.get("faces", [])
     if faces_data_debug:
-        debug_print(f"[VIDEO INDEXER] FACES sample: {faces_data_debug[0]}")
+        debug_print(f"[VIDEO_INDEXER] FACES sample: {faces_data_debug[0]}")
 
     namedLocations_data_debug = insights.get("namedLocations", [])
     if namedLocations_data_debug:
-        debug_print(f"[VIDEO INDEXER] NAMED_LOCATIONS sample: {namedLocations_data_debug[0]}")
+        debug_print(f"[VIDEO_INDEXER] NAMED_LOCATIONS sample: {namedLocations_data_debug[0]}")
 
     # Check for other potential label sources
     brands_data_debug = insights.get("brands", [])
     if brands_data_debug:
-        debug_print(f"[VIDEO INDEXER] BRANDS sample: {brands_data_debug[0]}")
+        debug_print(f"[VIDEO_INDEXER] BRANDS sample: {brands_data_debug[0]}")
 
     visualContentModeration_debug = insights.get("visualContentModeration", [])
     if visualContentModeration_debug:
-        debug_print(f"[VIDEO INDEXER] VISUAL_MODERATION sample: {visualContentModeration_debug[0]}")
+        debug_print(f"[VIDEO_INDEXER] VISUAL_MODERATION sample: {visualContentModeration_debug[0]}")
 
     # Show total counts for all available insights
     print(f"[VIDEO] COUNTS:", flush=True)
@@ -1670,23 +2172,23 @@ def process_video_document(
     speakers_data = insights.get("speakers", [])
     detected_objects_data = insights.get("detectedObjects", [])
 
-    debug_print(f"[VIDEO INDEXER] Transcript segments found: {len(transcript)}")
-    debug_print(f"[VIDEO INDEXER] OCR blocks found: {len(ocr_blocks)}")
-    debug_print(f"[VIDEO INDEXER] Keywords found: {len(keywords_data)}")
-    debug_print(f"[VIDEO INDEXER] Labels found: {len(labels_data)}")
-    debug_print(f"[VIDEO INDEXER] Topics found: {len(topics_data)}")
-    debug_print(f"[VIDEO INDEXER] Audio effects found: {len(audio_effects_data)}")
-    debug_print(f"[VIDEO INDEXER] Emotions found: {len(emotions_data)}")
-    debug_print(f"[VIDEO INDEXER] Sentiments found: {len(sentiments_data)}")
-    debug_print(f"[VIDEO INDEXER] Named people found: {len(named_people_data)}")
-    debug_print(f"[VIDEO INDEXER] Named locations found: {len(named_locations_data)}")
-    debug_print(f"[VIDEO INDEXER] Speakers found: {len(speakers_data)}")
-    debug_print(f"[VIDEO INDEXER] Detected objects found: {len(detected_objects_data)}")
-    debug_print(f"[VIDEO INDEXER] Insights extracted - Transcript: {len(transcript)}, OCR: {len(ocr_blocks)}, Keywords: {len(keywords_data)}, Labels: {len(labels_data)}, Topics: {len(topics_data)}, Audio: {len(audio_effects_data)}, Emotions: {len(emotions_data)}, Sentiments: {len(sentiments_data)}, People: {len(named_people_data)}, Locations: {len(named_locations_data)}, Objects: {len(detected_objects_data)}")
+    debug_print(f"[VIDEO_INDEXER] Transcript segments found: {len(transcript)}")
+    debug_print(f"[VIDEO_INDEXER] OCR blocks found: {len(ocr_blocks)}")
+    debug_print(f"[VIDEO_INDEXER] Keywords found: {len(keywords_data)}")
+    debug_print(f"[VIDEO_INDEXER] Labels found: {len(labels_data)}")
+    debug_print(f"[VIDEO_INDEXER] Topics found: {len(topics_data)}")
+    debug_print(f"[VIDEO_INDEXER] Audio effects found: {len(audio_effects_data)}")
+    debug_print(f"[VIDEO_INDEXER] Emotions found: {len(emotions_data)}")
+    debug_print(f"[VIDEO_INDEXER] Sentiments found: {len(sentiments_data)}")
+    debug_print(f"[VIDEO_INDEXER] Named people found: {len(named_people_data)}")
+    debug_print(f"[VIDEO_INDEXER] Named locations found: {len(named_locations_data)}")
+    debug_print(f"[VIDEO_INDEXER] Speakers found: {len(speakers_data)}")
+    debug_print(f"[VIDEO_INDEXER] Detected objects found: {len(detected_objects_data)}")
+    debug_print(f"[VIDEO_INDEXER] Insights extracted - Transcript: {len(transcript)}, OCR: {len(ocr_blocks)}, Keywords: {len(keywords_data)}, Labels: {len(labels_data)}, Topics: {len(topics_data)}, Audio: {len(audio_effects_data)}, Emotions: {len(emotions_data)}, Sentiments: {len(sentiments_data)}, People: {len(named_people_data)}, Locations: {len(named_locations_data)}, Objects: {len(detected_objects_data)}")
 
     if len(transcript) == 0:
-        debug_print(f"[VIDEO INDEXER] WARNING: No transcript data available")
-        debug_print(f"[VIDEO INDEXER] Available insights keys: {list(insights.keys())}")
+        debug_print(f"[VIDEO_INDEXER] WARNING: No transcript data available")
+        debug_print(f"[VIDEO_INDEXER] Available insights keys: {list(insights.keys())}")
 
     # Build context lists for transcript and OCR
     speech_context = [
@@ -1747,21 +2249,21 @@ def process_video_document(
         for inst in obj.get("instances", [])
     ]
 
-    debug_print(f"[VIDEO INDEXER] Speech context items: {len(speech_context)}")
-    debug_print(f"[VIDEO INDEXER] OCR context items: {len(ocr_context)}")
-    debug_print(f"[VIDEO INDEXER] Keywords context items: {len(keywords_context)}")
-    debug_print(f"[VIDEO INDEXER] Labels context items: {len(labels_context)}")
-    debug_print(f"[VIDEO INDEXER] Topics context items: {len(topics_context)}")
-    debug_print(f"[VIDEO INDEXER] Audio effects context items: {len(audio_effects_context)}")
-    debug_print(f"[VIDEO INDEXER] Emotions context items: {len(emotions_context)}")
-    debug_print(f"[VIDEO INDEXER] Sentiments context items: {len(sentiments_context)}")
-    debug_print(f"[VIDEO INDEXER] Named people context items: {len(named_people_context)}")
-    debug_print(f"[VIDEO INDEXER] Named locations context items: {len(named_locations_context)}")
-    debug_print(f"[VIDEO INDEXER] Detected objects context items: {len(detected_objects_context)}")
-    debug_print(f"[VIDEO INDEXER] Context built - Speech: {len(speech_context)}, OCR: {len(ocr_context)}, Keywords: {len(keywords_context)}, Labels: {len(labels_context)}, People: {len(named_people_context)}, Locations: {len(named_locations_context)}, Objects: {len(detected_objects_context)}")
+    debug_print(f"[VIDEO_INDEXER] Speech context items: {len(speech_context)}")
+    debug_print(f"[VIDEO_INDEXER] OCR context items: {len(ocr_context)}")
+    debug_print(f"[VIDEO_INDEXER] Keywords context items: {len(keywords_context)}")
+    debug_print(f"[VIDEO_INDEXER] Labels context items: {len(labels_context)}")
+    debug_print(f"[VIDEO_INDEXER] Topics context items: {len(topics_context)}")
+    debug_print(f"[VIDEO_INDEXER] Audio effects context items: {len(audio_effects_context)}")
+    debug_print(f"[VIDEO_INDEXER] Emotions context items: {len(emotions_context)}")
+    debug_print(f"[VIDEO_INDEXER] Sentiments context items: {len(sentiments_context)}")
+    debug_print(f"[VIDEO_INDEXER] Named people context items: {len(named_people_context)}")
+    debug_print(f"[VIDEO_INDEXER] Named locations context items: {len(named_locations_context)}")
+    debug_print(f"[VIDEO_INDEXER] Detected objects context items: {len(detected_objects_context)}")
+    debug_print(f"[VIDEO_INDEXER] Context built - Speech: {len(speech_context)}, OCR: {len(ocr_context)}, Keywords: {len(keywords_context)}, Labels: {len(labels_context)}, People: {len(named_people_context)}, Locations: {len(named_locations_context)}, Objects: {len(detected_objects_context)}")
 
     if len(speech_context) > 0:
-        debug_print(f"[VIDEO INDEXER] First speech item: {speech_context[0]}")
+        debug_print(f"[VIDEO_INDEXER] First speech item: {speech_context[0]}")
 
     # Sort all contexts by timestamp
     speech_context.sort(key=lambda x: to_seconds(x["start"]))
@@ -1776,21 +2278,21 @@ def process_video_document(
     named_locations_context.sort(key=lambda x: to_seconds(x["start"]))
     detected_objects_context.sort(key=lambda x: to_seconds(x["start"]))
 
-    debug_print(f"[VIDEO INDEXER] Starting 30-second chunk processing")
-    debug_print(f"[VIDEO INDEXER] Starting time-based chunk processing - Video duration: {video_duration_seconds}s")
-    debug_print(f"[VIDEO INDEXER] Available insights - Speech: {len(speech_context)}, OCR: {len(ocr_context)}, Keywords: {len(keywords_context)}, Labels: {len(labels_context)}")
+    debug_print(f"[VIDEO_INDEXER] Starting 30-second chunk processing")
+    debug_print(f"[VIDEO_INDEXER] Starting time-based chunk processing - Video duration: {video_duration_seconds}s")
+    debug_print(f"[VIDEO_INDEXER] Available insights - Speech: {len(speech_context)}, OCR: {len(ocr_context)}, Keywords: {len(keywords_context)}, Labels: {len(labels_context)}")
 
     # Check if we have any content at all
     total_insights = len(speech_context) + len(ocr_context) + len(keywords_context) + len(labels_context) + len(topics_context) + len(audio_effects_context) + len(emotions_context) + len(sentiments_context) + len(named_people_context) + len(named_locations_context) + len(detected_objects_context)
 
     if total_insights == 0 and video_duration_seconds == 0:
-        debug_print(f"[VIDEO INDEXER] ERROR: No insights and no duration information available")
+        debug_print(f"[VIDEO_INDEXER] ERROR: No insights and no duration information available")
         update_callback(status="VIDEO: no data available")
         return 0
 
     # Use video duration to create time-based chunks, even without speech
     if video_duration_seconds == 0:
-        debug_print(f"[VIDEO INDEXER] WARNING: No video duration available, estimating from insights")
+        debug_print(f"[VIDEO_INDEXER] WARNING: No video duration available, estimating from insights")
         # Estimate duration from the latest timestamp in any insight
         max_timestamp = 0
         for context_list in [speech_context, ocr_context, keywords_context, labels_context, topics_context, audio_effects_context, emotions_context, sentiments_context, named_people_context, named_locations_context, detected_objects_context]:
@@ -1798,11 +2300,11 @@ def process_video_document(
                 max_ts = max(to_seconds(item["start"]) for item in context_list)
                 max_timestamp = max(max_timestamp, max_ts)
         video_duration_seconds = max_timestamp + 30  # Add buffer
-        debug_print(f"[VIDEO INDEXER] Estimated duration: {video_duration_seconds}s")
+        debug_print(f"[VIDEO_INDEXER] Estimated duration: {video_duration_seconds}s")
 
     # Create chunks based on time intervals (30 seconds each)
     num_chunks = int(video_duration_seconds / 30) + (1 if video_duration_seconds % 30 > 0 else 0)
-    debug_print(f"[VIDEO INDEXER] Will create {num_chunks} time-based chunks")
+    debug_print(f"[VIDEO_INDEXER] Will create {num_chunks} time-based chunks")
 
     total = 0
     idx_s = 0
@@ -1833,7 +2335,7 @@ def process_video_document(
         window_start = chunk_num * 30.0
         window_end = min((chunk_num + 1) * 30.0, video_duration_seconds)
 
-        debug_print(f"[VIDEO INDEXER] Chunk {chunk_num + 1} window: {window_start}s to {window_end}s")
+        debug_print(f"[VIDEO_INDEXER] Chunk {chunk_num + 1} window: {window_start}s to {window_end}s")
 
         # Collect speech for this time window
         speech_lines = []
@@ -1850,7 +2352,7 @@ def process_video_document(
         if idx_s < n_s and to_seconds(speech_context[idx_s]["start"]) < window_end:
             idx_s += 1
 
-        debug_print(f"[VIDEO INDEXER] Chunk {chunk_num + 1} speech lines collected: {len(speech_lines)}")
+        debug_print(f"[VIDEO_INDEXER] Chunk {chunk_num + 1} speech lines collected: {len(speech_lines)}")
 
         # Collect OCR for this time window
         ocr_lines = []
@@ -1866,7 +2368,7 @@ def process_video_document(
         if idx_o < n_o and to_seconds(ocr_context[idx_o]["start"]) < window_end:
             idx_o += 1
 
-        debug_print(f"[VIDEO INDEXER] Chunk {chunk_num + 1} OCR lines collected: {len(ocr_lines)}")
+        debug_print(f"[VIDEO_INDEXER] Chunk {chunk_num + 1} OCR lines collected: {len(ocr_lines)}")
 
         # Collect keywords for this time window
         chunk_keywords = []
@@ -2019,7 +2521,7 @@ def process_video_document(
 
             if insight_parts:
                 chunk_text = f"{chunk_text}\n\n{' | '.join(insight_parts)}"
-                debug_print(f"[VIDEO INDEXER] Chunk {chunk_num + 1} enhanced with {len(insight_parts)} insight types")
+                debug_print(f"[VIDEO_INDEXER] Chunk {chunk_num + 1} enhanced with {len(insight_parts)} insight types")
         else:
             # No speech - build chunk text from other insights
             insight_parts = []
@@ -2045,22 +2547,22 @@ def process_video_document(
                 insight_parts.append(f"Objects: {', '.join(chunk_objects)}")
 
             chunk_text = ". ".join(insight_parts) if insight_parts else "[No content detected]"
-            debug_print(f"[VIDEO INDEXER] Chunk {chunk_num + 1} has no speech, using insights as text: {chunk_text[:100]}...")
+            debug_print(f"[VIDEO_INDEXER] Chunk {chunk_num + 1} has no speech, using insights as text: {chunk_text[:100]}...")
 
-        debug_print(f"[VIDEO INDEXER] Chunk {chunk_num + 1} at timestamp {start_ts}")
-        debug_print(f"[VIDEO INDEXER] Chunk {chunk_num + 1} text length: {len(chunk_text)}, OCR text length: {len(ocr_text)}")
-        debug_print(f"[VIDEO INDEXER] Chunk {chunk_num + 1} insights - Keywords: {len(chunk_keywords)}, Labels: {len(chunk_labels)}, Topics: {len(chunk_topics)}, Audio: {len(chunk_audio_effects)}, Emotions: {len(chunk_emotions)}, Sentiments: {len(chunk_sentiments)}, People: {len(chunk_people)}, Locations: {len(chunk_locations)}, Objects: {len(chunk_objects)}")
-        debug_print(f"[VIDEO INDEXER] Chunk {chunk_num + 1}: timestamp={start_ts}, text_len={len(chunk_text)}, ocr_len={len(ocr_text)}, insights={len(chunk_keywords)}kw/{len(chunk_labels)}lbl/{len(chunk_topics)}top")
+        debug_print(f"[VIDEO_INDEXER] Chunk {chunk_num + 1} at timestamp {start_ts}")
+        debug_print(f"[VIDEO_INDEXER] Chunk {chunk_num + 1} text length: {len(chunk_text)}, OCR text length: {len(ocr_text)}")
+        debug_print(f"[VIDEO_INDEXER] Chunk {chunk_num + 1} insights - Keywords: {len(chunk_keywords)}, Labels: {len(chunk_labels)}, Topics: {len(chunk_topics)}, Audio: {len(chunk_audio_effects)}, Emotions: {len(chunk_emotions)}, Sentiments: {len(chunk_sentiments)}, People: {len(chunk_people)}, Locations: {len(chunk_locations)}, Objects: {len(chunk_objects)}")
+        debug_print(f"[VIDEO_INDEXER] Chunk {chunk_num + 1}: timestamp={start_ts}, text_len={len(chunk_text)}, ocr_len={len(ocr_text)}, insights={len(chunk_keywords)}kw/{len(chunk_labels)}lbl/{len(chunk_topics)}top")
 
         # Skip truly empty chunks (no content at all)
         if chunk_text == "[No content detected]" and not any([chunk_keywords, chunk_labels, chunk_topics, chunk_audio_effects, chunk_emotions, chunk_sentiments, chunk_people, chunk_locations, chunk_objects]):
-            debug_print(f"[VIDEO INDEXER] Chunk {chunk_num + 1} is completely empty, skipping")
+            debug_print(f"[VIDEO_INDEXER] Chunk {chunk_num + 1} is completely empty, skipping")
             continue
 
         update_callback(current_file_chunk=chunk_num+1, status=f"VIDEO: saving chunk @ {start_ts}")
 
         try:
-            debug_print(f"[VIDEO INDEXER] Calling save_video_chunk for chunk {chunk_num + 1}")
+            debug_print(f"[VIDEO_INDEXER] Calling save_video_chunk for chunk {chunk_num + 1}")
             save_video_chunk(
                 page_text_content=chunk_text,
                 ocr_chunk_text=ocr_text,
@@ -2071,13 +2573,13 @@ def process_video_document(
                 group_id=group_id,
                 public_workspace_id=public_workspace_id
             )
-            debug_print(f"[VIDEO INDEXER] Chunk {chunk_num + 1} saved successfully")
+            debug_print(f"[VIDEO_INDEXER] Chunk {chunk_num + 1} saved successfully")
             total += 1
         except Exception as e:
-            debug_print(f"[VIDEO INDEXER] Failed to save chunk {chunk_num + 1}: {str(e)}")
-            debug_print(f"[VIDEO INDEXER] Chunk save traceback: {traceback.format_exc()}")
+            debug_print(f"[VIDEO_INDEXER] Failed to save chunk {chunk_num + 1}: {str(e)}")
+            debug_print(f"[VIDEO_INDEXER] Chunk save traceback: {traceback.format_exc()}")
 
-    debug_print(f"[VIDEO INDEXER] Chunk processing complete - Total chunks saved: {total}")
+    debug_print(f"[VIDEO_INDEXER] Chunk processing complete - Total chunks saved: {total}")
 
     # Extract metadata if enabled and chunks were processed
     settings = get_settings()
@@ -2411,7 +2913,11 @@ def update_document(**kwargs):
 
         # 5. Upsert the document if changes were made
         if update_occurred:
-            cosmos_container.upsert_item(existing_document)
+            _upsert_document_and_sync_access_index(
+                cosmos_container,
+                existing_document,
+                operation='document_updated',
+            )
 
     except CosmosResourceNotFoundError as e:
         # Error already logged where it was first detected
@@ -2633,7 +3139,11 @@ def save_chunks(page_text_content, page_number, file_name, user_id, document_id,
         else:
             search_client = CLIENTS["search_client_user"]
         # Upload as a single-document list
-        search_client.upload_documents(documents=[chunk_document])
+        _execute_document_search_write(
+            search_client,
+            "upload_documents",
+            documents=[chunk_document],
+        )
 
     except Exception as e:
         print(f"Error uploading chunk document for document {document_id}: {e}")
@@ -2688,7 +3198,7 @@ def save_chunks_batch(chunks_data, user_id, document_id, group_id=None, public_w
 
         version = metadata.get("version") if metadata.get("version") else 1
     except Exception as e:
-        log_event(f"[save_chunks_batch] Error retrieving metadata for document {document_id}: {repr(e)}", level=logging.ERROR)
+        log_event(f"[SAVE_CHUNKS_BATCH] Error retrieving metadata for document {document_id}: {repr(e)}", level=logging.ERROR)
         raise
 
     # Generate all embeddings in batches
@@ -2696,7 +3206,7 @@ def save_chunks_batch(chunks_data, user_id, document_id, group_id=None, public_w
     try:
         embedding_results = generate_embeddings_batch(texts)
     except Exception as e:
-        log_event(f"[save_chunks_batch] Error generating batch embeddings for document {document_id}: {e}", level=logging.ERROR)
+        log_event(f"[SAVE_CHUNKS_BATCH] Error generating batch embeddings for document {document_id}: {e}", level=logging.ERROR)
         raise
 
     # Check for vision analysis once
@@ -2819,10 +3329,14 @@ def save_chunks_batch(chunks_data, user_id, document_id, group_id=None, public_w
         upload_batch_size = 32
         for i in range(0, len(chunk_documents), upload_batch_size):
             sub_batch = chunk_documents[i:i + upload_batch_size]
-            search_client.upload_documents(documents=sub_batch)
+            _execute_document_search_write(
+                search_client,
+                "upload_documents",
+                documents=sub_batch,
+            )
 
     except Exception as e:
-        log_event(f"[save_chunks_batch] Error uploading batch to AI Search for document {document_id}: {e}", level=logging.ERROR)
+        log_event(f"[SAVE_CHUNKS_BATCH] Error uploading batch to AI Search for document {document_id}: {e}", level=logging.ERROR)
         raise
 
     return total_token_usage
@@ -2988,7 +3502,11 @@ def update_chunk_metadata(chunk_id, user_id, group_id=None, public_workspace_id=
                 else:
                     chunk_item[field] = kwargs[field]
 
-        search_client.upload_documents(documents=[chunk_item])
+        _execute_document_search_write(
+            search_client,
+            "upload_documents",
+            documents=[chunk_item],
+        )
 
     except Exception as e:
         print(f"Error updating chunk metadata for chunk {chunk_id}: {e}")
@@ -3173,12 +3691,38 @@ def get_ordered_document_chunks(document_id, user_id, group_id=None, public_work
 
 def get_documents(user_id, group_id=None, public_workspace_id=None):
     try:
-        documents = _query_accessible_documents(
-            user_id=user_id,
-            group_id=group_id,
-            public_workspace_id=public_workspace_id,
-        )
+        collect_shadow_metrics = is_document_access_shadow_validation_enabled()
+        if collect_shadow_metrics:
+            documents, source_query_metrics = _query_accessible_documents(
+                user_id=user_id,
+                group_id=group_id,
+                public_workspace_id=public_workspace_id,
+                collect_diagnostics=True,
+            )
+        else:
+            documents = _query_accessible_documents(
+                user_id=user_id,
+                group_id=group_id,
+                public_workspace_id=public_workspace_id,
+            )
+            source_query_metrics = None
         current_documents = sort_documents(select_current_documents(documents))
+        source_scope = DOCUMENT_ACCESS_SCOPE_PERSONAL
+        shadow_group_ids = None
+        if public_workspace_id is not None:
+            source_scope = DOCUMENT_ACCESS_SCOPE_PUBLIC
+        elif group_id is not None:
+            source_scope = DOCUMENT_ACCESS_SCOPE_GROUP
+            shadow_group_ids = [group_id]
+        validate_document_access_index_shadow(
+            current_documents,
+            source_scope=source_scope,
+            user_id=user_id,
+            group_ids=shadow_group_ids,
+            public_workspace_id=public_workspace_id,
+            source_query_metrics=source_query_metrics,
+            context='functions_documents.get_documents',
+        )
         return jsonify({"documents": current_documents}), 200
     except Exception as e:
         return jsonify({'error': f'Error retrieving documents: {str(e)}'}), 500
@@ -3328,7 +3872,7 @@ def delete_document(user_id, document_id, group_id=None, public_workspace_id=Non
     """Delete a document from the user's documents in Cosmos DB and blob storage if enhanced citations are enabled."""
     from functions_debug import debug_print
 
-    debug_print(f"[DELETE DOCUMENT] Starting deletion for document: {document_id}, user: {user_id}, group: {group_id}, public_workspace: {public_workspace_id}")
+    debug_print(f"[DELETE_DOCUMENT] Starting deletion for document: {document_id}, user: {user_id}, group: {group_id}, public_workspace: {public_workspace_id}")
 
     is_group = group_id is not None
     is_public_workspace = public_workspace_id is not None
@@ -3408,6 +3952,10 @@ def delete_document(user_id, document_id, group_id=None, public_workspace_id=Non
             item=document_id,
             partition_key=document_id
         )
+        delete_document_access_index_for_document_fail_open(
+            document_item,
+            operation='document_deleted',
+        )
 
     except CosmosResourceNotFoundError:
         raise Exception("Document not found")
@@ -3480,7 +4028,11 @@ def delete_document_revision(user_id, document_id, delete_mode="all_versions", g
                 public_workspace_id=public_workspace_id,
             )
             set_document_chunk_visibility(promoted_document, active=True)
-            cosmos_container.upsert_item(promoted_document)
+            _upsert_document_and_sync_access_index(
+                cosmos_container,
+                promoted_document,
+                operation='document_revision_promoted',
+            )
             promoted_document_id = promoted_document.get('id')
 
     return {
@@ -3551,7 +4103,7 @@ def get_chat_upload_workspace_documents_for_conversation(user_id, conversation_i
                     document_item['workspace_scope'] = 'group'
                     visible_group_documents.append(document_item)
         except Exception as group_visibility_error:
-            debug_print(f"[ChatUploadWorkspaceContext] Failed to resolve group chat uploads: {group_visibility_error}")
+            debug_print(f"[CHAT_UPLOAD_WORKSPACE_CONTEXT] Failed to resolve group chat uploads: {group_visibility_error}")
 
     documents = personal_documents + visible_group_documents
     return sort_documents(select_current_documents(documents))
@@ -3719,15 +4271,19 @@ def sync_chat_upload_workspace_document_sharing_for_collaboration(conversation_d
             continue
 
         document_item['last_updated'] = current_time
-        cosmos_user_documents_container.upsert_item(document_item)
+        persisted_document = _upsert_document_and_sync_access_index(
+            cosmos_user_documents_container,
+            document_item,
+            operation='chat_upload_collaboration_share_synced',
+        )
         try:
             set_document_chunk_visibility(
-                document_item,
-                active=str(document_item.get('search_visibility_state') or 'active').strip().lower() != 'archived',
+                persisted_document,
+                active=str(persisted_document.get('search_visibility_state') or 'active').strip().lower() != 'archived',
             )
         except Exception as chunk_sync_error:
             log_event(
-                f"[ChatUploadCollaborationSharing] Failed to sync search chunks for document {document_id}: {chunk_sync_error}",
+                f"[CHAT_UPLOAD_COLLABORATION_SHARING] Failed to sync search chunks for document {document_id}: {chunk_sync_error}",
                 extra={
                     'document_id': document_id,
                     'collaboration_conversation_id': normalized_collaboration_conversation_id,
@@ -3864,7 +4420,11 @@ def delete_document_chunks(document_id, group_id=None, public_workspace_id=None)
         documents_to_delete = [{"id": doc_id} for doc_id in ids_to_delete]
         batch = IndexDocumentsBatch()
         batch.add_delete_actions(documents_to_delete)
-        result = search_client.index_documents(batch)
+        result = _execute_document_search_write(
+            search_client,
+            "index_documents",
+            batch,
+        )
     except Exception as e:
         raise
 
@@ -3875,7 +4435,9 @@ def delete_document_version_chunks(document_id, version, group_id=None, public_w
 
     search_client = CLIENTS["search_client_public"] if is_public_workspace else CLIENTS["search_client_group"] if is_group else CLIENTS["search_client_user"]
 
-    search_client.delete_documents(
+    _execute_document_search_write(
+        search_client,
+        "delete_documents",
         actions=[
             {"@search.action": "delete", "id": chunk['id']} for chunk in
             search_client.search(
@@ -4315,7 +4877,7 @@ def extract_document_metadata(document_id, user_id, group_id=None, public_worksp
                     json.dumps(meta_data),
                     user_id,
                     document_id=document_id,
-                    top_n=12,
+                    top_n=50,
                     doc_scope=document_scope
                 )
             elif document_scope == "group":
@@ -4323,7 +4885,7 @@ def extract_document_metadata(document_id, user_id, group_id=None, public_worksp
                     json.dumps(meta_data),
                     user_id,
                     document_id=document_id,
-                    top_n=12,
+                    top_n=50,
                     doc_scope=document_scope,
                     active_group_id=scope_id
                 )
@@ -4332,7 +4894,7 @@ def extract_document_metadata(document_id, user_id, group_id=None, public_worksp
                     json.dumps(meta_data),
                     user_id,
                     document_id=document_id,
-                    top_n=12,
+                    top_n=50,
                     doc_scope=document_scope,
                     active_public_workspace_id=scope_id
                 )
@@ -4344,7 +4906,7 @@ def extract_document_metadata(document_id, user_id, group_id=None, public_worksp
                         json.dumps(meta_data),
                         user_id,
                         document_id=document_id,
-                        top_n=12,
+                        top_n=50,
                         doc_scope="public",
                         active_public_workspace_id=public_workspace_id
                     )
@@ -4364,7 +4926,10 @@ def extract_document_metadata(document_id, user_id, group_id=None, public_worksp
 
     # --- Step 5: Prepare GPT Client ---
     try:
-        gpt_client, gpt_model = _resolve_metadata_extraction_client(settings)
+        gpt_client, gpt_model = _resolve_metadata_extraction_client(
+            settings,
+            identity_context={'user_id': user_id},
+        )
     except Exception as e:
         add_file_task_to_file_processing_log(
             document_id=document_id,
@@ -4895,14 +5460,16 @@ def upload_to_blob(temp_file_path, user_id, document_id, blob_filename, update_c
                 public_workspace_id=public_workspace_id,
             )
             if archived_blob_path:
-                cosmos_container.upsert_item(previous_document)
+                _upsert_document_and_sync_access_index(
+                    cosmos_container,
+                    previous_document,
+                    operation='document_blob_archived',
+                )
 
         blob_service_client = _get_blob_service_client()
 
-        blob_client = blob_service_client.get_blob_client(
-            container=storage_account_container_name,
-            blob=blob_path
-        )
+        container_client = _ensure_blob_container_ready(blob_service_client, storage_account_container_name)
+        blob_client = container_client.get_blob_client(blob_path)
 
         metadata = {
             "document_id": str(document_id),
@@ -4925,14 +5492,28 @@ def upload_to_blob(temp_file_path, user_id, document_id, blob_filename, update_c
         current_document["enhanced_citations"] = bool(mark_enhanced_citations)
         if current_document.get("archived_blob_path") is None:
             current_document["archived_blob_path"] = None
-        cosmos_container.upsert_item(current_document)
+        _upsert_document_and_sync_access_index(
+            cosmos_container,
+            current_document,
+            operation='document_blob_uploaded',
+        )
 
         print(f"Successfully uploaded {blob_filename} to blob storage at {blob_path}")
         return blob_path
 
     except Exception as e:
-        print(f"Error uploading {blob_filename} to Blob Storage: {str(e)}")
-        raise Exception(f"Error uploading {blob_filename} to Blob Storage: {str(e)}")
+        log_event(
+            "[ENHANCED_CITATIONS] Blob upload failed.",
+            extra={
+                "document_id": document_id,
+                "group_scope": group_id is not None,
+                "public_workspace_scope": public_workspace_id is not None,
+                "error_type": type(e).__name__,
+            },
+            level=logging.ERROR,
+            exceptionTraceback=True,
+        )
+        raise RuntimeError(f"Error uploading {blob_filename} to Blob Storage.") from e
 
 def process_txt(document_id, user_id, temp_file_path, original_filename, enable_enhanced_citations, update_callback, group_id=None, public_workspace_id=None):
     """Processes plain text files."""
@@ -5008,7 +5589,7 @@ def process_txt(document_id, user_id, temp_file_path, original_filename, enable_
 
     return total_chunks_saved, total_embedding_tokens, embedding_model_name
 
-def process_xml(document_id, user_id, temp_file_path, original_filename, enable_enhanced_citations, update_callback, group_id=None, public_workspace_id=None):
+def _process_xml_with_token_usage(document_id, user_id, temp_file_path, original_filename, enable_enhanced_citations, update_callback, group_id=None, public_workspace_id=None):
     """Processes XML files using RecursiveCharacterTextSplitter for structured content."""
     is_group = group_id is not None
     is_public_workspace = public_workspace_id is not None
@@ -5064,7 +5645,16 @@ def process_xml(document_id, user_id, temp_file_path, original_filename, enable_
         for idx, chunk_content in enumerate(final_chunks, start=1):
             # Skip empty chunks
             if not chunk_content or not chunk_content.strip():
-                print(f"Skipping empty XML chunk {idx}/{initial_chunk_count}")
+                log_event(
+                    '[DOCUMENTS] Skipping empty XML chunk',
+                    {
+                        'document_id': document_id,
+                        'file_name': original_filename,
+                        'chunk_index': idx,
+                        'chunk_count': initial_chunk_count,
+                    },
+                    debug_only=True,
+                )
                 continue
 
             update_callback(
@@ -5096,10 +5686,29 @@ def process_xml(document_id, user_id, temp_file_path, original_filename, enable_
         # Final update with actual chunks saved
         if total_chunks_saved != initial_chunk_count:
             update_callback(number_of_pages=total_chunks_saved)
-            print(f"Adjusted final chunk count from {initial_chunk_count} to {total_chunks_saved} after skipping empty chunks.")
+            log_event(
+                '[DOCUMENTS] Adjusted XML chunk count after skipping empty chunks',
+                {
+                    'document_id': document_id,
+                    'file_name': original_filename,
+                    'initial_chunk_count': initial_chunk_count,
+                    'total_chunks_saved': total_chunks_saved,
+                },
+                debug_only=True,
+            )
 
     except Exception as e:
-        print(f"Error during XML processing for {original_filename}: {type(e).__name__}: {e}")
+        log_event(
+            '[DOCUMENTS] XML processing failed',
+            {
+                'document_id': document_id,
+                'file_name': original_filename,
+                'error_type': type(e).__name__,
+                'error': str(e),
+            },
+            level=logging.ERROR,
+            exceptionTraceback=True,
+        )
         raise Exception(f"Failed processing XML file {original_filename}: {e}")
 
     return total_chunks_saved, total_embedding_tokens, embedding_model_name
@@ -5388,92 +5997,17 @@ def process_doc(document_id, user_id, temp_file_path, original_filename, enable_
     return total_chunks_saved, total_embedding_tokens, embedding_model_name
 
 def process_xml(document_id, user_id, temp_file_path, original_filename, enable_enhanced_citations, update_callback, group_id=None, public_workspace_id=None):
-    """Processes XML files using RecursiveCharacterTextSplitter for structured content."""
-    is_group = group_id is not None
-    is_public_workspace = public_workspace_id is not None
-
-    update_callback(status="Processing XML file...")
-    total_chunks_saved = 0
-    # Character-based chunking for XML structure preservation, capped by embedding context
-    chunk_config = get_chunk_size_config(get_settings())
-    max_chunk_size_chars = chunk_config.get('xml', {}).get('value', 4000)
-
-    if enable_enhanced_citations:
-        args = {
-            "temp_file_path": temp_file_path,
-            "user_id": user_id,
-            "document_id": document_id,
-            "blob_filename": original_filename,
-            "update_callback": update_callback
-        }
-
-        if is_group:
-            args["group_id"] = group_id
-        elif is_public_workspace:
-            args["public_workspace_id"] = public_workspace_id
-
-        upload_to_blob(**args)
-
-    try:
-        # Read XML content
-        try:
-            with open(temp_file_path, 'r', encoding='utf-8') as f:
-                xml_content = f.read()
-        except Exception as e:
-            raise Exception(f"Error reading XML file {original_filename}: {e}")
-
-        # Use RecursiveCharacterTextSplitter with XML-aware separators
-        # This preserves XML structure better than simple word splitting
-        xml_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=max_chunk_size_chars,
-            chunk_overlap=0,
-            length_function=len,
-            separators=["\n\n", "\n", ">", " ", ""],  # XML-friendly separators
-            is_separator_regex=False
-        )
-
-        # Split the XML content
-        final_chunks = xml_splitter.split_text(xml_content)
-
-        initial_chunk_count = len(final_chunks)
-        update_callback(number_of_pages=initial_chunk_count)
-
-        for idx, chunk_content in enumerate(final_chunks, start=1):
-            # Skip empty chunks
-            if not chunk_content or not chunk_content.strip():
-                print(f"Skipping empty XML chunk {idx}/{initial_chunk_count}")
-                continue
-
-            update_callback(
-                current_file_chunk=idx,
-                status=f"Saving chunk {idx}/{initial_chunk_count}..."
-            )
-            args = {
-                "page_text_content": chunk_content,
-                "page_number": total_chunks_saved + 1,
-                "file_name": original_filename,
-                "user_id": user_id,
-                "document_id": document_id
-            }
-
-            if is_public_workspace:
-                args["public_workspace_id"] = public_workspace_id
-            elif is_group:
-                args["group_id"] = group_id
-
-            save_chunks(**args)
-            total_chunks_saved += 1
-
-        # Final update with actual chunks saved
-        if total_chunks_saved != initial_chunk_count:
-            update_callback(number_of_pages=total_chunks_saved)
-            print(f"Adjusted final chunk count from {initial_chunk_count} to {total_chunks_saved} after skipping empty chunks.")
-
-    except Exception as e:
-        print(f"Error during XML processing for {original_filename}: {type(e).__name__}: {e}")
-        raise Exception(f"Failed processing XML file {original_filename}: {e}")
-
-    return total_chunks_saved
+    """Processes XML files using the consolidated token-aware XML pipeline."""
+    return _process_xml_with_token_usage(
+        document_id,
+        user_id,
+        temp_file_path,
+        original_filename,
+        enable_enhanced_citations,
+        update_callback,
+        group_id=group_id,
+        public_workspace_id=public_workspace_id,
+    )
 
 def process_yaml(document_id, user_id, temp_file_path, original_filename, enable_enhanced_citations, update_callback, group_id=None, public_workspace_id=None):
     """Processes YAML files using RecursiveCharacterTextSplitter for structured content."""
@@ -6540,7 +7074,7 @@ def process_tabular(document_id, user_id, temp_file_path, original_filename, fil
             update_callback(number_of_pages=1, status=f"Indexing schema summary for {original_filename}...")
         except Exception as schema_error:
             log_event(
-                f"[process_tabular] Error building bounded schema summary for {original_filename}; using compact fallback summary: {schema_error}",
+                f"[PROCESS_TABULAR] Error building bounded schema summary for {original_filename}; using compact fallback summary: {schema_error}",
                 level=logging.WARNING,
             )
             schema_summary = _build_minimal_tabular_summary(
@@ -6566,7 +7100,7 @@ def process_tabular(document_id, user_id, temp_file_path, original_filename, fil
                 ) from schema_index_error
 
             log_event(
-                f"[process_tabular] Retrying compact schema summary for {original_filename} after schema summary indexing error: {schema_index_error}",
+                f"[PROCESS_TABULAR] Retrying compact schema summary for {original_filename} after schema summary indexing error: {schema_index_error}",
                 level=logging.WARNING,
             )
             update_callback(number_of_pages=1, status=f"Retrying compact schema summary for {original_filename}...")
@@ -6656,7 +7190,7 @@ def process_tabular(document_id, user_id, temp_file_path, original_filename, fil
                 total_chunks_saved = accumulated_total_chunks
 
         except pandas.errors.EmptyDataError:
-            log_event(f"[process_tabular] Warning: Tabular file or sheet is empty: {original_filename}", level=logging.WARNING)
+            log_event(f"[PROCESS_TABULAR] Warning: Tabular file or sheet is empty: {original_filename}", level=logging.WARNING)
             update_callback(status=f"Warning: File/sheet is empty - {original_filename}", number_of_pages=0)
         except Exception as e:
             raise Exception(f"Failed processing Tabular file {original_filename}: {e}")
@@ -6778,7 +7312,7 @@ def process_visio(document_id, user_id, temp_file_path, original_filename, enabl
                     update_callback(status="Final metadata extraction yielded no new info")
         except Exception as metadata_error:
             log_event(
-                f"[process_visio] Error extracting final metadata for Visio document {document_id}: {metadata_error}",
+                f"[PROCESS_VISIO] Error extracting final metadata for Visio document {document_id}: {metadata_error}",
                 level=logging.WARNING,
             )
             update_callback(status="Processing complete (metadata extraction warning)")
@@ -6830,18 +7364,27 @@ def process_di_document(document_id, user_id, temp_file_path, original_filename,
         print(f"Warning: Failed to extract initial metadata for {original_filename}: {e}")
         # Continue processing even if metadata fails
 
-    # --- DI Processing Logic ---
+    # --- Extraction Engine Resolution ---
+    # Standard extraction is always Document Intelligence prebuilt-read. Enhanced prefers Content
+    # Understanding, falling back to Document Intelligence prebuilt-layout when it is unavailable.
     settings = get_settings() # Assuming get_settings is accessible
     chunk_config = get_chunk_size_config(settings)
+    enhanced_extraction_enabled = is_enhanced_extraction_enabled(settings)
     document_intelligence_extraction_mode = 'read'
     document_intelligence_requested_mode = 'read'
     document_intelligence_auto_sample_pages = get_document_intelligence_auto_sample_pages(settings)
     document_intelligence_auto_reason = ''
+    extraction_engine = EXTRACTION_ENGINE_DOCUMENT_INTELLIGENCE
+    extraction_engine_reason = ''
     if is_pdf or is_image:
         if extraction_mode_override:
             document_intelligence_requested_mode = normalize_document_intelligence_manual_extraction_mode(extraction_mode_override)
         else:
-            document_intelligence_requested_mode = get_document_intelligence_pdf_image_extraction_mode(settings)
+            document_intelligence_requested_mode = get_effective_document_intelligence_pdf_image_extraction_mode(settings)
+
+        if document_intelligence_requested_mode != 'read' and not enhanced_extraction_enabled:
+            document_intelligence_requested_mode = 'read'
+            extraction_engine_reason = 'Enhanced extraction is disabled, so Standard extraction was used'
 
         if document_intelligence_requested_mode == 'auto':
             document_intelligence_extraction_mode, document_intelligence_auto_reason = _resolve_document_intelligence_auto_mode(
@@ -6856,11 +7399,20 @@ def process_di_document(document_id, user_id, temp_file_path, original_filename,
             document_intelligence_extraction_mode = document_intelligence_requested_mode
             document_intelligence_auto_reason = ''
 
+        resolved_engine, resolved_engine_reason = _resolve_extraction_engine_for_mode(
+            document_intelligence_extraction_mode,
+            settings,
+        )
+        extraction_engine = resolved_engine
+        extraction_engine_reason = resolved_engine_reason or extraction_engine_reason
+
         update_callback(
             document_intelligence_extraction_mode=document_intelligence_extraction_mode,
             document_intelligence_extraction_mode_requested=document_intelligence_requested_mode,
             document_intelligence_auto_sample_pages=document_intelligence_auto_sample_pages,
             document_intelligence_auto_reason=document_intelligence_auto_reason,
+            extraction_engine=extraction_engine,
+            extraction_engine_reason=extraction_engine_reason,
         )
 
     di_limit_bytes = 500 * 1024 * 1024
@@ -6965,29 +7517,44 @@ def process_di_document(document_id, user_id, temp_file_path, original_filename,
             except Exception as e:
                 raise Exception(f"Error extracting content from {chunk_effective_filename} with the legacy PowerPoint extractor: {str(e)}")
         else:
-            # Send chunk to Azure DI
-            update_callback(status=f"Sending {chunk_effective_filename} to Azure Document Intelligence...")
+            # Send chunk to the resolved extraction engine
+            engine_label = (
+                "Azure AI Content Understanding"
+                if extraction_engine == EXTRACTION_ENGINE_CONTENT_UNDERSTANDING
+                else "Azure Document Intelligence"
+            )
+            update_callback(status=f"Sending {chunk_effective_filename} to {engine_label}...")
             try:
-                di_extracted_pages = extract_content_with_azure_di(
+                di_extracted_pages, engine_used, engine_fallback_reason = _extract_pages_with_extraction_engine(
                     chunk_path,
-                    extraction_mode=document_intelligence_extraction_mode
+                    extraction_mode=document_intelligence_extraction_mode,
+                    extraction_engine=extraction_engine,
+                    settings=settings,
                 )
+                if engine_fallback_reason:
+                    extraction_engine = engine_used
+                    extraction_engine_reason = engine_fallback_reason
+                    update_callback(
+                        extraction_engine=engine_used,
+                        extraction_engine_reason=engine_fallback_reason,
+                    )
+
                 num_di_pages = len(di_extracted_pages)
                 conceptual_pages = num_di_pages if not is_image else 1 # Image is one conceptual item
 
                 if not di_extracted_pages and not is_image:
-                    print(f"Warning: Azure DI returned no content pages for {chunk_effective_filename}.")
-                    status_msg = f"Azure DI found no content in {chunk_effective_filename}."
+                    print(f"Warning: {engine_label} returned no content pages for {chunk_effective_filename}.")
+                    status_msg = f"{engine_label} found no content in {chunk_effective_filename}."
                     # Update page count to 0 if nothing found, otherwise keep previous estimate or conceptual count
                     update_callback(number_of_pages=0 if idx == num_file_chunks else conceptual_pages, status=status_msg)
                 elif not di_extracted_pages and is_image:
-                    print(f"Info: Azure DI processed image {chunk_effective_filename}, but extracted no text.")
+                    print(f"Info: {engine_label} processed image {chunk_effective_filename}, but extracted no text.")
                     update_callback(number_of_pages=conceptual_pages, status=f"Processed image {chunk_effective_filename} (no text found).")
                 else:
-                     update_callback(number_of_pages=conceptual_pages, status=f"Received {num_di_pages} content page(s)/slide(s) from Azure DI for {chunk_effective_filename}.")
+                     update_callback(number_of_pages=conceptual_pages, status=f"Received {num_di_pages} content page(s)/slide(s) from {engine_label} for {chunk_effective_filename}.")
 
             except Exception as e:
-                raise Exception(f"Error extracting content from {chunk_effective_filename} with Azure DI: {str(e)}")
+                raise Exception(f"Error extracting content from {chunk_effective_filename} with {engine_label}: {str(e)}")
 
         # --- Multi-Modal Vision Analysis (for images only) - Must happen BEFORE save_chunks ---
         if is_image and enable_enhanced_citations and idx == 1:  # Only run once for first chunk
@@ -7075,6 +7642,53 @@ def process_di_document(document_id, user_id, temp_file_path, original_filename,
                  if 'page_number' not in di_extracted_pages[0]: di_extracted_pages[0]['page_number'] = 1
                  final_chunks_to_save = di_extracted_pages
             else: final_chunks_to_save = [] # No text extracted
+
+        # --- Embedded Office image analysis (DOCX/DOC/PPTX/PPT) ---
+        # Neither extraction engine describes figures inside Office files, so embedded images are
+        # analyzed separately and merged back into the chunk they came from. Merging rather than
+        # appending keeps a figure searchable alongside its surrounding text, and avoids inventing
+        # page numbers past the end of the document.
+        if is_word or is_ppt:
+            image_blocks, embedded_image_count, embedded_image_engine, embedded_total_words = (
+                _build_office_embedded_image_chunks(
+                    chunk_path,
+                    settings,
+                    update_callback,
+                )
+            )
+
+            if image_blocks:
+                final_chunks_to_save, merged_image_count, overflow_image_blocks = (
+                    _merge_embedded_images_into_chunks(
+                        final_chunks_to_save,
+                        image_blocks,
+                        embedded_total_words,
+                        settings,
+                    )
+                )
+                final_chunks_to_save = _append_overflow_image_chunks(
+                    final_chunks_to_save, overflow_image_blocks
+                )
+                _assert_unique_chunk_page_numbers(final_chunks_to_save, document_id)
+
+                update_callback(
+                    number_of_pages=len(final_chunks_to_save),
+                    office_embedded_image_count=embedded_image_count,
+                    office_embedded_image_merged=merged_image_count,
+                    office_embedded_image_engine=embedded_image_engine,
+                )
+                if overflow_image_blocks:
+                    update_callback(
+                        status=(
+                            f"Merged {merged_image_count} embedded image(s) into their source "
+                            f"chunk; {len(overflow_image_blocks)} exceeded the chunk size budget "
+                            "and were appended."
+                        )
+                    )
+                else:
+                    update_callback(
+                        status=f"Merged {merged_image_count} embedded image(s) into their source chunk."
+                    )
 
         # Save Final Chunks to Search Index
         num_final_chunks = len(final_chunks_to_save)
@@ -7181,12 +7795,12 @@ def process_di_document(document_id, user_id, temp_file_path, original_filename,
 
 
 def validate_document_reprocess_source(document_item, user_id=None, group_id=None, public_workspace_id=None):
-    """Validate that a PDF has a stored source blob available for DI extraction changes."""
+    """Validate that a PDF or image has a stored source blob available for extraction changes."""
     if not document_item:
         return False, "Document not found."
 
-    if not is_pdf_file_name(document_item.get('file_name')):
-        return False, "Only PDF documents can change extraction between Standard and Enhanced."
+    if not is_pdf_or_image_file_name(document_item.get('file_name')):
+        return False, "Only PDF and image documents can change extraction between Standard and Enhanced."
 
     container_name, blob_path = get_document_blob_storage_info(
         document_item,
@@ -7195,13 +7809,13 @@ def validate_document_reprocess_source(document_item, user_id=None, group_id=Non
         public_workspace_id=public_workspace_id,
     )
     if not container_name or not blob_path:
-        return False, "Source PDF is unavailable. Re-upload this PDF before changing extraction."
+        return False, "Source file is unavailable. Re-upload this document before changing extraction."
 
     try:
         if not _blob_exists(container_name, blob_path):
-            return False, "Stored source PDF was not found in Blob Storage. Re-upload this PDF before changing extraction."
+            return False, "Stored source file was not found in Blob Storage. Re-upload this document before changing extraction."
     except Exception as e:
-        return False, f"Unable to validate stored source PDF: {str(e)}"
+        return False, f"Unable to validate stored source file: {str(e)}"
 
     return True, ""
 
@@ -7214,14 +7828,16 @@ def _download_document_source_to_temp_file(document_item, user_id=None, group_id
         public_workspace_id=public_workspace_id,
     )
     if not container_name or not blob_path:
-        raise FileNotFoundError("Source PDF is unavailable.")
+        raise FileNotFoundError("Source file is unavailable.")
+
+    file_suffix = os.path.splitext(str(document_item.get('file_name') or ''))[-1].lower() or '.pdf'
 
     blob_service_client = _get_blob_service_client()
     blob_client = blob_service_client.get_blob_client(container=container_name, blob=blob_path)
     temp_file_path = None
 
     try:
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as temp_file:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=file_suffix) as temp_file:
             temp_file_path = temp_file.name
             download_stream = blob_client.download_blob()
             for chunk in download_stream.chunks():
@@ -7234,7 +7850,7 @@ def _download_document_source_to_temp_file(document_item, user_id=None, group_id
 
 
 def process_document_reprocess_extraction_background(document_id, user_id, target_extraction_mode, group_id=None, public_workspace_id=None):
-    """Extract a stored PDF again with an explicit Standard/Enhanced mode."""
+    """Extract a stored PDF or image again with an explicit Standard/Enhanced mode."""
     is_group = group_id is not None
     is_public_workspace = public_workspace_id is not None
     target_mode = normalize_document_intelligence_manual_extraction_mode(target_extraction_mode)
@@ -7270,6 +7886,13 @@ def process_document_reprocess_extraction_background(document_id, user_id, targe
             raise ValueError(validation_message)
 
         original_filename = document_item.get('file_name') or f'{document_id}.pdf'
+        source_file_ext = os.path.splitext(original_filename)[-1].lower() or '.pdf'
+        target_engine, target_engine_reason = _resolve_extraction_engine_for_mode(target_mode, get_settings())
+        target_engine_label = (
+            "Content Understanding"
+            if target_engine == EXTRACTION_ENGINE_CONTENT_UNDERSTANDING
+            else "Document Intelligence"
+        )
         update_doc_callback(
             status=f"Queued to extract again with {target_mode_label}",
             percentage_complete=0,
@@ -7280,6 +7903,8 @@ def process_document_reprocess_extraction_background(document_id, user_id, targe
             document_intelligence_extraction_mode_requested=target_mode,
             document_intelligence_auto_sample_pages=get_document_intelligence_auto_sample_pages(get_settings()),
             document_intelligence_auto_reason='Manual extraction change requested',
+            extraction_engine=target_engine,
+            extraction_engine_reason=target_engine_reason,
         )
 
         temp_file_path = _download_document_source_to_temp_file(
@@ -7292,13 +7917,13 @@ def process_document_reprocess_extraction_background(document_id, user_id, targe
         update_doc_callback(status=f"Deleting existing chunks before extracting again with {target_mode_label}...")
         delete_document_chunks(document_id, group_id=group_id, public_workspace_id=public_workspace_id)
 
-        update_doc_callback(status=f"Extracting PDF again with Document Intelligence {target_mode_label}...")
+        update_doc_callback(status=f"Extracting again with {target_engine_label} {target_mode_label}...")
         result = process_di_document(
             document_id=document_id,
             user_id=user_id,
             temp_file_path=temp_file_path,
             original_filename=original_filename,
-            file_ext='.pdf',
+            file_ext=source_file_ext,
             enable_enhanced_citations=bool(document_item.get('enhanced_citations')),
             update_callback=update_doc_callback,
             group_id=group_id,
@@ -7315,7 +7940,7 @@ def process_document_reprocess_extraction_background(document_id, user_id, targe
 
         final_update_args = {
             "number_of_pages": total_chunks_saved,
-            "status": _resolve_processing_complete_status(total_chunks_saved, '.pdf', tuple('.' + ext for ext in IMAGE_EXTENSIONS), tuple('.' + ext for ext in TABULAR_EXTENSIONS), 'disabled'),
+            "status": _resolve_processing_complete_status(total_chunks_saved, source_file_ext, tuple('.' + ext for ext in IMAGE_EXTENSIONS), tuple('.' + ext for ext in TABULAR_EXTENSIONS), 'disabled'),
             "percentage_complete": 100,
             "current_file_chunk": None,
         }
@@ -7325,7 +7950,7 @@ def process_document_reprocess_extraction_background(document_id, user_id, targe
             final_update_args["embedding_model_deployment_name"] = embedding_model_name
         update_doc_callback(**final_update_args)
 
-        print(f"Document {document_id} extracted again successfully with Document Intelligence {target_mode}.")
+        print(f"Document {document_id} extracted again successfully with {target_engine_label} {target_mode}.")
     except Exception as e:
         print(f"Error extracting document {document_id} again: {repr(e)}\nTraceback:\n{traceback.format_exc()}")
         try:
@@ -7345,12 +7970,89 @@ def process_document_reprocess_extraction_background(document_id, user_id, targe
 def _get_content_type(path: str) -> str:
     ext = os.path.splitext(path)[1].lower()
     mapping = {
-        '.wav': 'audio/wav',
-        '.mp3': 'audio/mpeg',
+        '.3ga': 'audio/3gpp',
+        '.aac': 'audio/aac',
+        '.ac3': 'audio/ac3',
+        '.aif': 'audio/aiff',
+        '.aifc': 'audio/aiff',
+        '.aiff': 'audio/aiff',
+        '.amr': 'audio/amr',
+        '.ape': 'audio/x-ape',
+        '.au': 'audio/basic',
+        '.caf': 'audio/x-caf',
+        '.dts': 'audio/vnd.dts',
+        '.f4a': 'audio/mp4',
+        '.flac': 'audio/flac',
         '.m4a': 'audio/mp4',
-        '.mp4': 'audio/mp4'
+        '.m4b': 'audio/mp4',
+        '.m4r': 'audio/mp4',
+        '.mka': 'audio/x-matroska',
+        '.mp2': 'audio/mpeg',
+        '.mp3': 'audio/mpeg',
+        '.mpa': 'audio/mpeg',
+        '.mp4': 'audio/mp4',
+        '.oga': 'audio/ogg',
+        '.ogg': 'audio/ogg',
+        '.opus': 'audio/opus',
+        '.spx': 'audio/ogg',
+        '.wav': 'audio/wav',
+        '.weba': 'audio/webm',
+        '.wma': 'audio/x-ms-wma',
+        '.wv': 'audio/x-wavpack'
     }
     return mapping.get(ext, 'application/octet-stream')
+
+
+def get_audio_runtime_capabilities(force_refresh: bool = False):
+    """Return cached runtime support details for audio upload transcoding."""
+    global _AUDIO_RUNTIME_CAPABILITIES_CACHE
+    if _AUDIO_RUNTIME_CAPABILITIES_CACHE is not None and not force_refresh:
+        return dict(_AUDIO_RUNTIME_CAPABILITIES_CACHE)
+
+    supported_extensions = sorted(f'.{extension}' for extension in AUDIO_EXTENSIONS)
+    source_extensions = sorted(
+        f'.{extension}'
+        for extension in AUDIO_FAST_TRANSCRIPTION_SOURCE_EXTENSIONS
+        if extension in AUDIO_EXTENSIONS
+    )
+    ffmpeg_path = shutil.which('ffmpeg') or ''
+    ffprobe_path = shutil.which('ffprobe') or ''
+
+    capabilities = {
+        'ffmpeg_available': False,
+        'ffprobe_available': bool(ffprobe_path),
+        'broad_transcoding_available': False,
+        'ffmpeg_path': ffmpeg_path,
+        'ffprobe_path': ffprobe_path,
+        'ffmpeg_version': '',
+        'supported_extensions': supported_extensions,
+        'direct_transcription_extensions': source_extensions,
+        'recommended_container_packages': ['ffmpeg', 'ffprobe'],
+        'message': 'FFmpeg was not found in this app runtime; audio uploads use Azure Speech source-file fallback only.',
+    }
+
+    if ffmpeg_path:
+        capabilities['ffmpeg_available'] = True
+        try:
+            ffmpeg_result = subprocess.run(
+                [ffmpeg_path, '-hide_banner', '-version'],
+                capture_output=True,
+                check=True,
+                text=True,
+                timeout=5,
+            )
+            version_line = (ffmpeg_result.stdout or '').splitlines()[0] if ffmpeg_result.stdout else ''
+            capabilities.update({
+                'broad_transcoding_available': True,
+                'ffmpeg_version': version_line,
+                'message': 'FFmpeg runtime detected; broad audio transcoding is available before Azure Speech transcription.',
+            })
+        except Exception as runtime_error:
+            capabilities['message'] = f"FFmpeg was found, but runtime validation failed: {str(runtime_error)[:220]}"
+
+    _AUDIO_RUNTIME_CAPABILITIES_CACHE = capabilities
+    return dict(capabilities)
+
 
 def _split_audio_file(input_path: str, chunk_seconds: int = 540) -> List[str]:
     """
@@ -7373,20 +8075,60 @@ def _split_audio_file(input_path: str, chunk_seconds: int = 540) -> List[str]:
                 f='segment',
                 segment_time=chunk_seconds,
                 reset_timestamps=1,
-                map='0'
+                map='0:a:0',
+                ac='1'
             )
             .run(quiet=True, overwrite_output=True)
         )
     except Exception as e:
-        print(f"[Error] FFmpeg segmentation to WAV failed for '{input_path}': {e}")
+        print(f"[ERROR] FFmpeg segmentation to WAV failed for '{input_path}': {e}")
         raise RuntimeError(f"Segmentation failed: {e}")
 
     chunks = sorted(glob.glob(f"{base}_chunk_*.wav"))
     if not chunks:
-        print(f"[Error] No WAV chunks produced for '{input_path}'.")
+        print(f"[ERROR] No WAV chunks produced for '{input_path}'.")
         raise RuntimeError(f"No chunks produced by ffmpeg for file '{input_path}'")
     print(f"Produced {len(chunks)} WAV chunks: {chunks}")
     return chunks
+
+
+def _is_missing_ffmpeg_error(error) -> bool:
+    error_text = str(error or '').lower()
+    missing_binary_markers = (
+        'no such file or directory',
+        'the system cannot find the file specified',
+        'cannot find the file specified',
+        'not recognized as an internal or external command',
+    )
+    return 'ffmpeg' in error_text and any(marker in error_text for marker in missing_binary_markers)
+
+
+def _transcribe_audio_with_fast_api(audio_path, upload_filename, content_type, settings, endpoint, locale):
+    url = f"{endpoint}/speechtotext/transcriptions:transcribe?api-version=2024-11-15"
+    with open(audio_path, 'rb') as audio_f:
+        files = {
+            'audio': (upload_filename, audio_f, content_type),
+            'definition': (None, json.dumps({'locales': [locale]}), 'application/json')
+        }
+        if settings.get("speech_service_authentication_type") == "managed_identity":
+            credential = DefaultAzureCredential()
+            token = credential.get_token(cognitive_services_scope)
+            headers = {'Authorization': f'Bearer {token.token}'}
+        else:
+            key = settings.get("speech_service_key", "")
+            headers = {'Ocp-Apim-Subscription-Key': key}
+
+        resp = requests.post(url, headers=headers, files=files)
+    try:
+        resp.raise_for_status()
+    except Exception as e:
+        print(f"[ERROR] HTTP error for {audio_path}: {e}")
+        raise
+
+    result = resp.json()
+    phrases = result.get('combinedPhrases', [])
+    print(f"[DEBUG] Received {len(phrases)} phrases")
+    return [p.get('text', '').strip() for p in phrases if p.get('text')]
 
 # Azure Speech SDK helper to get speech config with fresh token
 def _get_speech_config(settings, endpoint: str, locale: str):
@@ -7403,7 +8145,7 @@ def _get_speech_config(settings, endpoint: str, locale: str):
         speech_config = speechsdk.SpeechConfig(endpoint=endpoint, subscription=key)
 
     speech_config.speech_recognition_language = locale
-    print(f"[Debug] Speech config obtained successfully", flush=True)
+    print(f"[DEBUG] Speech config obtained successfully", flush=True)
     return speech_config
 
 
@@ -7431,7 +8173,7 @@ def get_speech_synthesis_config(settings, endpoint: str, location: str):
 
         speech_config = speechsdk.SpeechConfig(endpoint=endpoint, subscription=key)
 
-    print(f"[Debug] Speech synthesis config obtained successfully", flush=True)
+    print(f"[DEBUG] Speech synthesis config obtained successfully", flush=True)
     return speech_config
 
 def process_audio_document(
@@ -7467,33 +8209,45 @@ def process_audio_document(
     if file_size > 300 * 1024 * 1024:
         raise ValueError("Audio exceeds 300 MB limit.")
 
-    # 2) split to WAV chunks
-    update_callback(status="Preparing audio for transcription…")
-    chunk_paths = _split_audio_file(temp_file_path, chunk_seconds=540)
-
-    # 3) transcribe each WAV chunk
+    # 2) prepare speech configuration
     settings = get_settings()
     endpoint = settings.get("speech_service_endpoint", "").rstrip('/')
     locale = settings.get("speech_service_locale", "en-US")
 
+    # 3) split to WAV chunks unless fast transcription can use the source file directly
+    update_callback(status="Preparing audio for transcription…")
+    chunk_paths = []
+    use_source_audio_for_fast_api = False
+    try:
+        chunk_paths = _split_audio_file(temp_file_path, chunk_seconds=540)
+    except RuntimeError as split_error:
+        if AZURE_ENVIRONMENT not in ("usgovernment", "custom") and _is_missing_ffmpeg_error(split_error):
+            use_source_audio_for_fast_api = True
+            print(
+                "[WARNING] FFmpeg executable unavailable; using source audio with Azure Speech fast transcription API."
+            )
+        else:
+            raise
+
+    # 4) transcribe audio
     all_phrases: List[str] = []
 
     # Fast Transcription API not yet available in sovereign clouds, so use SDK
     if AZURE_ENVIRONMENT in ("usgovernment", "custom"):
         for idx, chunk_path in enumerate(chunk_paths, start=1):
-            print(f"[Debug] Transcribing chunk {idx}: {chunk_path}")
+            print(f"[DEBUG] Transcribing chunk {idx}: {chunk_path}")
 
             # Get fresh config (tokens expire after ~1 hour)
             try:
                 speech_config = _get_speech_config(settings, endpoint, locale)
             except Exception as e:
-                print(f"[Error] Failed to get speech config for chunk {idx}: {e}")
+                print(f"[ERROR] Failed to get speech config for chunk {idx}: {e}")
                 raise RuntimeError(f"Speech configuration failed for chunk {idx}: {e}")
 
             try:
                 audio_config = speechsdk.AudioConfig(filename=chunk_path)
             except Exception as e:
-                print(f"[Error] Failed to load audio file {chunk_path}: {e}")
+                print(f"[ERROR] Failed to load audio file {chunk_path}: {e}")
                 raise RuntimeError(f"Audio file loading failed: {e}")
 
             try:
@@ -7502,7 +8256,7 @@ def process_audio_document(
                     audio_config=audio_config
                 )
             except Exception as e:
-                print(f"[Error] Failed to create speech recognizer for chunk {idx}: {e}")
+                print(f"[ERROR] Failed to create speech recognizer for chunk {idx}: {e}")
                 raise RuntimeError(f"Speech recognizer creation failed: {e}")
 
             # Use continuous recognition instead of recognize_once
@@ -7513,30 +8267,30 @@ def process_audio_document(
 
             def stop_cb(evt):
                 nonlocal done
-                print(f"[Debug] Session stopped for chunk {idx}")
+                print(f"[DEBUG] Session stopped for chunk {idx}")
                 done = True
 
             def recognized_cb(evt):
                 try:
                     if evt.result.reason == speechsdk.ResultReason.RecognizedSpeech:
                         all_results.append(evt.result.text)
-                        print(f"[Debug] Recognized: {evt.result.text}")
+                        print(f"[DEBUG] Recognized: {evt.result.text}")
                     elif evt.result.reason == speechsdk.ResultReason.NoMatch:
-                        print(f"[Debug] No speech recognized in segment")
+                        print(f"[DEBUG] No speech recognized in segment")
                 except Exception as e:
-                    print(f"[Error] Error in recognized callback: {e}")
+                    print(f"[ERROR] Error in recognized callback: {e}")
                     # Don't fail on individual recognition errors
 
             def canceled_cb(evt):
                 nonlocal done, error_occurred, error_message
-                print(f"[Debug] Recognition canceled for chunk {idx}: {evt.cancellation_details.reason}")
+                print(f"[DEBUG] Recognition canceled for chunk {idx}: {evt.cancellation_details.reason}")
 
                 if evt.cancellation_details.reason == speechsdk.CancellationReason.Error:
                     error_occurred = True
                     error_message = evt.cancellation_details.error_details
-                    print(f"[Error] Recognition error: {error_message}")
+                    print(f"[ERROR] Recognition error: {error_message}")
                 elif evt.cancellation_details.reason == speechsdk.CancellationReason.EndOfStream:
-                    print(f"[Debug] End of audio stream reached")
+                    print(f"[DEBUG] End of audio stream reached")
 
                 done = True
 
@@ -7547,7 +8301,7 @@ def process_audio_document(
                 speech_recognizer.canceled.connect(canceled_cb)
 
                 # Start continuous recognition
-                print(f"[Debug] Starting continuous recognition for chunk {idx}")
+                print(f"[DEBUG] Starting continuous recognition for chunk {idx}")
                 speech_recognizer.start_continuous_recognition()
 
                 # Wait for completion with timeout
@@ -7557,7 +8311,7 @@ def process_audio_document(
 
                 while not done:
                     if time.time() - start_time > timeout_seconds:
-                        print(f"[Error] Recognition timeout for chunk {idx}")
+                        print(f"[ERROR] Recognition timeout for chunk {idx}")
                         error_occurred = True
                         error_message = f"Recognition timed out after {timeout_seconds} seconds"
                         break
@@ -7566,9 +8320,9 @@ def process_audio_document(
                 # Stop recognition
                 try:
                     speech_recognizer.stop_continuous_recognition()
-                    print(f"[Debug] Stopped continuous recognition for chunk {idx}")
+                    print(f"[DEBUG] Stopped continuous recognition for chunk {idx}")
                 except Exception as e:
-                    print(f"[Warning] Error stopping recognition for chunk {idx}: {e}")
+                    print(f"[WARNING] Error stopping recognition for chunk {idx}: {e}")
                     # Continue even if stop fails
 
                 # Check for errors after completion
@@ -7578,16 +8332,16 @@ def process_audio_document(
                 # Add all recognized phrases to the overall list
                 if all_results:
                     all_phrases.extend(all_results)
-                    print(f"[Debug] Total phrases from chunk {idx}: {len(all_results)}")
+                    print(f"[DEBUG] Total phrases from chunk {idx}: {len(all_results)}")
                 else:
-                    print(f"[Warning] No speech recognized in {chunk_path}")
+                    print(f"[WARNING] No speech recognized in {chunk_path}")
                     # Continue to next chunk - empty result is not necessarily an error
 
             except RuntimeError as e:
                 # Re-raise runtime errors (these are our custom errors)
                 raise
             except Exception as e:
-                print(f"[Error] Unexpected error during recognition for chunk {idx}: {e}")
+                print(f"[ERROR] Unexpected error during recognition for chunk {idx}: {e}")
                 raise RuntimeError(f"Recognition failed unexpectedly for chunk {idx}: {e}")
             finally:
                 # Cleanup: disconnect callbacks and dispose recognizer
@@ -7596,7 +8350,7 @@ def process_audio_document(
                     speech_recognizer.session_stopped.disconnect_all()
                     speech_recognizer.canceled.disconnect_all()
                 except Exception as e:
-                    print(f"[Warning] Error disconnecting callbacks for chunk {idx}: {e}")
+                    print(f"[WARNING] Error disconnecting callbacks for chunk {idx}: {e}")
 
             # # Get fresh config (tokens expire after ~1 hour)
             # speech_config = _get_speech_config(settings, endpoint, locale)
@@ -7619,45 +8373,39 @@ def process_audio_document(
 
     else:
         # Use the fast-transcription API if not in sovereign or custom cloud
-        url = f"{endpoint}/speechtotext/transcriptions:transcribe?api-version=2024-11-15"
-        for idx, chunk_path in enumerate(chunk_paths, start=1):
-            update_callback(current_file_chunk=idx, status=f"Transcribing chunk {idx}/{len(chunk_paths)}…")
-            print(f"[Debug] Transcribing WAV chunk: {chunk_path}")
+        if use_source_audio_for_fast_api:
+            update_callback(current_file_chunk=1, status="Transcribing audio with Azure Speech…")
+            print(f"[DEBUG] Transcribing source audio: {temp_file_path}")
+            all_phrases += _transcribe_audio_with_fast_api(
+                temp_file_path,
+                original_filename,
+                _get_content_type(original_filename or temp_file_path),
+                settings,
+                endpoint,
+                locale
+            )
+        else:
+            for idx, chunk_path in enumerate(chunk_paths, start=1):
+                update_callback(current_file_chunk=idx, status=f"Transcribing chunk {idx}/{len(chunk_paths)}…")
+                print(f"[DEBUG] Transcribing WAV chunk: {chunk_path}")
+                all_phrases += _transcribe_audio_with_fast_api(
+                    chunk_path,
+                    os.path.basename(chunk_path),
+                    'audio/wav',
+                    settings,
+                    endpoint,
+                    locale
+                )
 
-            with open(chunk_path, 'rb') as audio_f:
-                files = {
-                    'audio': (os.path.basename(chunk_path), audio_f, 'audio/wav'),
-                    'definition': (None, json.dumps({'locales':[locale]}), 'application/json')
-                }
-                if settings.get("speech_service_authentication_type") == "managed_identity":
-                    credential = DefaultAzureCredential()
-                    token = credential.get_token(cognitive_services_scope)
-                    headers = {'Authorization': f'Bearer {token.token}'}
-                else:
-                    key = settings.get("speech_service_key", "")
-                    headers = {'Ocp-Apim-Subscription-Key': key}
-
-                resp = requests.post(url, headers=headers, files=files)
-            try:
-                resp.raise_for_status()
-            except Exception as e:
-                print(f"[Error] HTTP error for {chunk_path}: {e}")
-                raise
-
-            result = resp.json()
-            phrases = result.get('combinedPhrases', [])
-            print(f"[Debug] Received {len(phrases)} phrases")
-            all_phrases += [p.get('text','').strip() for p in phrases if p.get('text')]
-
-    # 4) cleanup WAV chunks
+    # 5) cleanup WAV chunks
     for p in chunk_paths:
         try:
             os.remove(p)
             print(f"Removed chunk: {p}")
         except Exception as e:
-            print(f"[Warning] Could not remove chunk {p}: {e}")
+            print(f"[WARNING] Could not remove chunk {p}: {e}")
 
-    # 5) stitch and save transcript chunks
+    # 6) stitch and save transcript chunks
     full_text = ' '.join(all_phrases).strip()
     words = full_text.split()
     chunk_settings = get_chunk_size_config(settings)
@@ -7709,7 +8457,7 @@ def process_audio_document(
     else:
         update_callback(number_of_pages=total_pages, status="Audio transcription complete", percentage_complete=100, current_file_chunk=None)
 
-    print("[Info] Audio transcription complete")
+    print("[INFO] Audio transcription complete")
     return total_pages
 
 def _build_document_scope_args(document_id, user_id, group_id=None, public_workspace_id=None):
@@ -7878,7 +8626,7 @@ def sync_chat_upload_workspace_attachment_status(document_metadata):
         return True
     except Exception as sync_error:
         log_event(
-            f"[ChatUpload] Unable to sync workspace attachment status for document {document_id}: {sync_error}",
+            f"[CHAT_UPLOAD] Unable to sync workspace attachment status for document {document_id}: {sync_error}",
             level=logging.WARNING,
             exceptionTraceback=True,
         )
@@ -8012,6 +8760,13 @@ def queue_personal_workspace_upload_from_temp_file(
                 cosmos_user_documents_container.delete_item(
                     item=workspace_document_id,
                     partition_key=workspace_document_id,
+                )
+                delete_document_access_index_for_document_fail_open(
+                    {
+                        'id': workspace_document_id,
+                        'user_id': user_id,
+                    },
+                    operation='queued_personal_document_cleanup',
                 )
             except Exception as cleanup_error:
                 debug_print(f"Failed to clean up queued workspace document metadata: {cleanup_error}")
@@ -8163,6 +8918,13 @@ def queue_group_workspace_upload_from_temp_file(
                     item=workspace_document_id,
                     partition_key=workspace_document_id,
                 )
+                delete_document_access_index_for_document_fail_open(
+                    {
+                        'id': workspace_document_id,
+                        'group_id': group_id,
+                    },
+                    operation='queued_group_document_cleanup',
+                )
             except Exception as cleanup_error:
                 debug_print(f"Failed to clean up queued group workspace document metadata: {cleanup_error}")
         if workspace_temp_file_path and os.path.exists(workspace_temp_file_path) and not temp_file_queued:
@@ -8209,7 +8971,7 @@ def _run_final_metadata_extraction(document_id, user_id, total_chunks_saved, ena
         return "no_new_info"
     except Exception as metadata_error:
         log_event(
-            f"[DocumentMetadataExtraction] Error extracting final metadata for document {document_id}: {metadata_error}",
+            f"[DOCUMENT_METADATA_EXTRACTION] Error extracting final metadata for document {document_id}: {metadata_error}",
             extra={
                 "document_id": document_id,
                 "group_id": group_id,
@@ -8820,7 +9582,11 @@ def share_document_with_user(document_id, owner_user_id, target_user_id):
             document_item['last_updated'] = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
 
             # Update the document
-            cosmos_user_documents_container.upsert_item(document_item)
+            _upsert_document_and_sync_access_index(
+                cosmos_user_documents_container,
+                document_item,
+                operation='document_shared_with_user',
+            )
 
             # Update all chunks with the new shared_user_ids
             try:
@@ -8881,37 +9647,41 @@ def unshare_document_from_user(document_id, owner_user_id, target_user_id):
         # Remove all entries for the target user (by oid prefix)
         new_shared_user_ids = [entry for entry in shared_user_ids if not entry.startswith(f"{target_user_id},")]
         if len(new_shared_user_ids) != len(shared_user_ids):
-            document_item['shared_user_ids'] = new_shared_user_ids
-            document_item['last_updated'] = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
-            # Update the document
-            cosmos_user_documents_container.upsert_item(document_item)
-
-            # Update all chunks with the new shared_user_ids
+            # A revoked user must never retain search access after the API reports success.
+            # Update every chunk projection before committing the authoritative Cosmos ACL.
+            chunks = get_all_chunks(document_id, actual_owner_id)
             try:
-                chunks = get_all_chunks(document_id, actual_owner_id)
                 for chunk in chunks:
                     chunk_id = chunk.get('id')
-                    if chunk_id:
-                        try:
-                            update_chunk_metadata(
-                                chunk_id=chunk_id,
-                                user_id=actual_owner_id,
-                                group_id=None,
-                                public_workspace_id=None,
-                                document_id=document_id,
-                                shared_user_ids=new_shared_user_ids
-                            )
-                        except Exception as chunk_e:
-                            print(f"Warning: Failed to update chunk {chunk_id}: {chunk_e}")
-                            # Continue with other chunks
-            except Exception as e:
-                print(f"Warning: Failed to update chunks for document {document_id}: {e}")
-                # Don't fail the whole operation if chunk update fails
+                    if not chunk_id:
+                        continue
+                    update_chunk_metadata(
+                        chunk_id=chunk_id,
+                        user_id=actual_owner_id,
+                        group_id=None,
+                        public_workspace_id=None,
+                        document_id=document_id,
+                        shared_user_ids=new_shared_user_ids
+                    )
+            except DataManagementSearchWritesFrozenError as exc:
+                raise DocumentSearchAclProjectionDeferredError(
+                    "Document access was not changed because target Search writes are temporarily frozen. Retry after the migration finishes."
+                ) from exc
+
+            document_item['shared_user_ids'] = new_shared_user_ids
+            document_item['last_updated'] = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+            _upsert_document_and_sync_access_index(
+                cosmos_user_documents_container,
+                document_item,
+                operation='document_unshared_from_user',
+            )
 
         return True
 
     except CosmosResourceNotFoundError:
         return False
+    except DocumentSearchAclProjectionDeferredError:
+        raise
     except Exception as e:
         print(f"Error unsharing document {document_id}: {e}")
         return False
@@ -9047,7 +9817,11 @@ def share_document_with_group(document_id, owner_group_id, target_group_id):
             document_item['last_updated'] = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
 
             # Update the document
-            cosmos_group_documents_container.upsert_item(document_item)
+            _upsert_document_and_sync_access_index(
+                cosmos_group_documents_container,
+                document_item,
+                operation='document_shared_with_group',
+            )
             return True
 
         return True  # Already shared
@@ -9086,7 +9860,11 @@ def unshare_document_from_group(document_id, owner_group_id, target_group_id):
             document_item['last_updated'] = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
 
             # Update the document
-            cosmos_group_documents_container.upsert_item(document_item)
+            _upsert_document_and_sync_access_index(
+                cosmos_group_documents_container,
+                document_item,
+                operation='document_unshared_from_group',
+            )
 
         return True
 
@@ -9337,13 +10115,81 @@ def validate_tag_color(color, tag_name):
     return True, None, normalized_color
 
 
+def get_workspace_tag_definitions(user_id, group_id=None, public_workspace_id=None):
+    """Return tag definition metadata for a personal, group, or public workspace."""
+    # Local imports avoid circular initialization with workspace/settings helpers.
+    if public_workspace_id is not None:
+        from functions_public_workspaces import find_public_workspace_by_id
+        ws_doc = find_public_workspace_by_id(public_workspace_id)
+        workspace_tag_defs = (ws_doc or {}).get('tag_definitions', {})
+    elif group_id is not None:
+        from functions_group import find_group_by_id
+        group_doc = find_group_by_id(group_id)
+        workspace_tag_defs = (group_doc or {}).get('tag_definitions', {})
+    else:
+        from functions_settings import get_user_settings
+        user_settings = get_user_settings(user_id)
+        settings_dict = user_settings.get('settings', {})
+        tag_definitions = settings_dict.get('tag_definitions', {})
+        workspace_tag_defs = tag_definitions.get('personal', {})
+
+    return workspace_tag_defs if isinstance(workspace_tag_defs, dict) else {}
+
+
+def build_workspace_tags_from_counts(tag_counts, user_id, group_id=None, public_workspace_id=None):
+    """
+    Merge normalized tag counts with workspace tag definitions and safe colors.
+    Returns: [{'name': 'tag1', 'count': 5, 'color': '#3b82f6'}, ...]
+    """
+    normalized_counts = {}
+    for tag_name, count in (tag_counts or {}).items():
+        normalized_tag = normalize_tag(tag_name)
+        if not normalized_tag:
+            continue
+        try:
+            normalized_count = int(count or 0)
+        except (TypeError, ValueError):
+            normalized_count = 0
+        normalized_counts[normalized_tag] = normalized_counts.get(normalized_tag, 0) + normalized_count
+
+    workspace_tag_defs = get_workspace_tag_definitions(
+        user_id,
+        group_id=group_id,
+        public_workspace_id=public_workspace_id,
+    )
+
+    results = []
+    for tag_name, count in normalized_counts.items():
+        tag_def = workspace_tag_defs.get(tag_name, {})
+        if not isinstance(tag_def, dict):
+            tag_def = {}
+        results.append({
+            'name': tag_name,
+            'count': count,
+            'color': get_safe_tag_color(tag_def.get('color'), tag_name)
+        })
+
+    for tag_name, tag_def in workspace_tag_defs.items():
+        normalized_tag = normalize_tag(tag_name)
+        if not normalized_tag or normalized_tag in normalized_counts:
+            continue
+        if not isinstance(tag_def, dict):
+            tag_def = {}
+        results.append({
+            'name': normalized_tag,
+            'count': 0,
+            'color': get_safe_tag_color(tag_def.get('color'), tag_name)
+        })
+
+    results.sort(key=lambda x: (-x['count'], x['name']))
+    return results
+
+
 def get_workspace_tags(user_id, group_id=None, public_workspace_id=None):
     """
     Get all unique tags used in a workspace with document counts.
     Returns: [{'name': 'tag1', 'count': 5, 'color': '#3b82f6'}, ...]
     """
-    from functions_settings import get_user_settings
-
     is_group = group_id is not None
     is_public_workspace = public_workspace_id is not None
 
@@ -9408,47 +10254,12 @@ def get_workspace_tags(user_id, group_id=None, public_workspace_id=None):
                 if normalized_tag:
                     tag_counts[normalized_tag] = tag_counts.get(normalized_tag, 0) + 1
 
-        # Get tag definitions (colors) from the appropriate source
-        if is_public_workspace:
-            # Read from public workspace record (shared across all users)
-            from functions_public_workspaces import find_public_workspace_by_id
-            ws_doc = find_public_workspace_by_id(public_workspace_id)
-            workspace_tag_defs = (ws_doc or {}).get('tag_definitions', {})
-        elif is_group:
-            # Read from group record (shared across all group members)
-            from functions_group import find_group_by_id
-            group_doc = find_group_by_id(group_id)
-            workspace_tag_defs = (group_doc or {}).get('tag_definitions', {})
-        else:
-            # Personal: read from user settings
-            user_settings = get_user_settings(user_id)
-            settings_dict = user_settings.get('settings', {})
-            tag_definitions = settings_dict.get('tag_definitions', {})
-            workspace_tag_defs = tag_definitions.get('personal', {})
-
-        # Build result with colors from used tags
-        results = []
-        for tag_name, count in tag_counts.items():
-            tag_def = workspace_tag_defs.get(tag_name, {})
-            results.append({
-                'name': tag_name,
-                'count': count,
-                'color': get_safe_tag_color(tag_def.get('color'), tag_name)
-            })
-
-        # Add defined tags that haven't been used yet (count = 0)
-        for tag_name, tag_def in workspace_tag_defs.items():
-            if tag_name not in tag_counts:
-                results.append({
-                    'name': tag_name,
-                    'count': 0,
-                    'color': get_safe_tag_color(tag_def.get('color'), tag_name)
-                })
-
-        # Sort by count descending, then name ascending
-        results.sort(key=lambda x: (-x['count'], x['name']))
-
-        return results
+        return build_workspace_tags_from_counts(
+            tag_counts,
+            user_id,
+            group_id=group_id,
+            public_workspace_id=public_workspace_id,
+        )
 
     except Exception as e:
         print(f"Error getting workspace tags: {e}")

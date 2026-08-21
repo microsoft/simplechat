@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 """
 Test the fixed query approach - separate count and size queries.
+Version: 0.250.047
+
+CosmosClient module import cleanup updated in: 0.250.047
 """
 
 import os
 import sys
-from azure.cosmos import CosmosClient
+import azure.cosmos as azure_cosmos
 
 def test_fixed_queries():
     """Test the fixed query approach with separate count and size queries."""
@@ -14,7 +17,7 @@ def test_fixed_queries():
     endpoint = os.getenv('AZURE_COSMOS_ENDPOINT', '')
     key = os.getenv('AZURE_COSMOS_KEY', '')
 
-    client = CosmosClient(endpoint, key, consistency_level="Session")
+    client = azure_cosmos.CosmosClient(endpoint, key, consistency_level="Session")
     
     database = client.get_database_client("SimpleChat")
     conversations_container = database.get_container_client("conversations")

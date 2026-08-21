@@ -12,7 +12,7 @@ import logging
 import os
 from urllib.parse import urlparse
 
-from azure.cosmos import CosmosClient
+import azure.cosmos as azure_cosmos
 from azure.cosmos.exceptions import CosmosResourceNotFoundError
 from azure.identity import ClientSecretCredential, DefaultAzureCredential, get_bearer_token_provider
 from dotenv import load_dotenv
@@ -165,7 +165,7 @@ def fetch_settings_from_cosmos(database_name, container_name, settings_id):
         raise ValueError("AZURE_COSMOS_ENDPOINT and AZURE_COSMOS_KEY must be set in the .env file.")
 
     logging.info("Connecting to Cosmos DB endpoint: %s", urlparse(cosmos_endpoint).hostname)
-    client = CosmosClient(cosmos_endpoint, credential=cosmos_key)
+    client = azure_cosmos.CosmosClient(cosmos_endpoint, credential=cosmos_key)
     logging.info("Using Cosmos database=%s container=%s settings_id=%s", database_name, container_name, settings_id)
     database = client.get_database_client(database_name)
     try:

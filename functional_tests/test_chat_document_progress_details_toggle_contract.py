@@ -11,6 +11,7 @@ expanded through a persisted toggle state.
 """
 
 from pathlib import Path
+from test_support.versioning import assert_app_version_at_least
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -26,9 +27,7 @@ def test_chat_document_progress_details_toggle_contract():
     chats_css_content = read_text("application/single_app/static/css/chats.css")
     ui_test_content = read_text("ui_tests/test_chat_document_progress_details_toggle.py")
 
-    assert 'VERSION = "0.241.037"' in config_content, (
-        "Expected config.py version 0.241.037 for the chat document progress details toggle."
-    )
+    assert_app_version_at_least("0.241.037")
     assert "progressDetailsExpandedStates" in thoughts_content, (
         "Expected the progress detail expanded state to persist across streaming re-renders."
     )

@@ -15,6 +15,7 @@ from semantic_kernel.functions import kernel_function
 
 from functions_appinsights import log_event
 from functions_debug import debug_print
+from functions_azure_endpoint_validation import validate_azure_databricks_endpoint
 from functions_databricks_operations import (
     DATABRICKS_ALLOWED_READ_STATEMENTS,
     DATABRICKS_AZURE_COMMERCIAL_TOKEN_SCOPE,
@@ -154,6 +155,8 @@ class DatabricksPlugin(BasePlugin):
         parsed_endpoint = urlparse(self.endpoint)
         if parsed_endpoint.scheme != "https" or not parsed_endpoint.netloc:
             raise ValueError("Databricks action requires an HTTPS workspace URL endpoint.")
+        # Revalidated before any managed-identity token is minted for this workspace URL.
+        validate_azure_databricks_endpoint(self.endpoint)
         if not self.warehouse_id:
             raise ValueError("Databricks action requires additionalFields.warehouse_id.")
         if self.auth_type not in {"key", "identity", "servicePrincipal"}:
@@ -166,7 +169,7 @@ class DatabricksPlugin(BasePlugin):
 
     def _get_access_token(self) -> str:
         debug_print(
-            f"[DatabricksPlugin] Resolving access token auth_type={self.auth_type} "
+            f"[DATABRICKS_PLUGIN] Resolving access token auth_type={self.auth_type} "
             f"endpoint={self.endpoint} warehouse_id_present={bool(self.warehouse_id)}"
         )
         if self.auth_type == "key":
@@ -178,6 +181,8 @@ class DatabricksPlugin(BasePlugin):
                 client_secret=str(self._auth.get("key") or ""),
             )
             return credential.get_token(DATABRICKS_AZURE_COMMERCIAL_TOKEN_SCOPE).token
+        # Revalidate before minting an application-identity token for this workspace URL.
+        validate_azure_databricks_endpoint(self.endpoint)
         credential = DefaultAzureCredential()
         return credential.get_token(DATABRICKS_AZURE_COMMERCIAL_TOKEN_SCOPE).token
 
@@ -260,7 +265,7 @@ class DatabricksPlugin(BasePlugin):
             payload["schema"] = self.schema
 
         debug_print(
-            f"[DatabricksPlugin] Submitting statement endpoint={self.endpoint} "
+            f"[DATABRICKS_PLUGIN] Submitting statement endpoint={self.endpoint} "
             f"warehouse_id_present={bool(self.warehouse_id)} first_word={self._first_word(statement) if hasattr(self, '_first_word') else ''} "
             f"statement_length={len(statement)} timeout={self.timeout} wait_timeout={self.wait_timeout}"
         )
@@ -271,7 +276,7 @@ class DatabricksPlugin(BasePlugin):
             timeout=self.timeout,
         )
         debug_print(
-            f"[DatabricksPlugin] Statement submit response status={response.status_code} "
+            f"[DATABRICKS_PLUGIN] Statement submit response status={response.status_code} "
             f"url={self._statement_url()}"
         )
         response.raise_for_status()
@@ -289,7 +294,7 @@ class DatabricksPlugin(BasePlugin):
         while time.time() < deadline:
             time.sleep(1)
             debug_print(
-                f"[DatabricksPlugin] Polling statement status statement_id={statement_id} "
+                f"[DATABRICKS_PLUGIN] Polling statement status statement_id={statement_id} "
                 f"current_state={state} timeout={self.timeout}"
             )
             response = requests.get(
@@ -298,7 +303,7 @@ class DatabricksPlugin(BasePlugin):
                 timeout=self.timeout,
             )
             debug_print(
-                f"[DatabricksPlugin] Statement poll response status={response.status_code} "
+                f"[DATABRICKS_PLUGIN] Statement poll response status={response.status_code} "
                 f"statement_id={statement_id}"
             )
             response.raise_for_status()
@@ -359,7 +364,7 @@ class DatabricksPlugin(BasePlugin):
             statement_response = self._submit_statement(statement)
             result = self._normalize_statement_response(statement_response, statement)
             debug_print(
-                f"[DatabricksPlugin] Statement execution completed success={result.get('success')} "
+                f"[DATABRICKS_PLUGIN] Statement execution completed success={result.get('success')} "
                 f"status={result.get('status')} statement_id={result.get('statement_id')} "
                 f"row_count={result.get('row_count')}"
             )
@@ -367,11 +372,11 @@ class DatabricksPlugin(BasePlugin):
         except RequestException as exc:
             response = getattr(exc, "response", None)
             debug_print(
-                f"[DatabricksPlugin] Databricks request failed endpoint={self.endpoint} "
+                f"[DATABRICKS_PLUGIN] Databricks request failed endpoint={self.endpoint} "
                 f"status={getattr(response, 'status_code', None)} exception_type={type(exc).__name__} message={exc}"
             )
             log_event(
-                f"[DatabricksPlugin] Databricks request failed: {exc}",
+                f"[DATABRICKS_PLUGIN] Databricks request failed: {exc}",
                 extra={"endpoint": self.endpoint, "plugin_name": self.manifest.get("name")},
                 level=logging.ERROR,
                 exceptionTraceback=True,
@@ -379,11 +384,11 @@ class DatabricksPlugin(BasePlugin):
             return self._error_response("Databricks request failed.", error_type="request", query=statement)
         except Exception as exc:
             debug_print(
-                f"[DatabricksPlugin] Databricks statement execution failed endpoint={self.endpoint} "
+                f"[DATABRICKS_PLUGIN] Databricks statement execution failed endpoint={self.endpoint} "
                 f"exception_type={type(exc).__name__} message={exc}"
             )
             log_event(
-                f"[DatabricksPlugin] Databricks statement execution failed: {exc}",
+                f"[DATABRICKS_PLUGIN] Databricks statement execution failed: {exc}",
                 extra={"endpoint": self.endpoint, "plugin_name": self.manifest.get("name")},
                 level=logging.ERROR,
                 exceptionTraceback=True,

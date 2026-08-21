@@ -22,6 +22,7 @@
     };
 
     let editModalInstance = null;
+    let deleteModalInstance = null;
 
     function clearElement(element) {
         if (!element) {
@@ -128,6 +129,7 @@
         const params = new URLSearchParams();
         const status = document.getElementById('filterStatus')?.value || '';
         const action = document.getElementById('filterAction')?.value || '';
+        const archiveState = document.getElementById('filterSafetyArchive')?.value || 'active';
 
         if (includePagination) {
             params.set('page', String(state.currentPage));
@@ -140,6 +142,7 @@
         if (action) {
             params.set('action', action);
         }
+        params.set('archive', archiveState);
 
         return params;
     }
@@ -317,14 +320,43 @@
         return cell;
     }
 
-    function createViewButton(logId) {
+    function createActionButton(logId, action, label, iconClass, variant) {
         const button = document.createElement('button');
         button.type = 'button';
-        button.className = 'btn btn-sm btn-primary';
+        button.className = `btn btn-sm btn-${variant}`;
         button.dataset.logId = logId || '';
-        button.appendChild(createIcon('bi bi-eye me-1'));
-        button.appendChild(document.createTextNode('View'));
+        button.dataset.action = action;
+        button.title = label;
+        button.setAttribute('aria-label', label);
+        button.appendChild(createIcon(iconClass));
+        if (action === 'view') {
+            button.firstChild.classList.add('me-1');
+            button.appendChild(document.createTextNode(label));
+        }
         return button;
+    }
+
+    function createSafetyActions(item) {
+        const actions = document.createElement('div');
+        actions.className = 'btn-group btn-group-sm';
+        actions.setAttribute('role', 'group');
+        actions.setAttribute('aria-label', 'Safety violation actions');
+        actions.appendChild(createActionButton(item.id, 'view', 'View', 'bi bi-eye', 'primary'));
+        actions.appendChild(createActionButton(
+            item.id,
+            item.isArchived ? 'unarchive' : 'archive',
+            item.isArchived ? 'Unarchive' : 'Archive',
+            item.isArchived ? 'bi bi-arrow-counterclockwise' : 'bi bi-archive',
+            'outline-secondary',
+        ));
+        actions.appendChild(createActionButton(
+            item.id,
+            'delete',
+            'Delete',
+            'bi bi-trash',
+            'outline-danger',
+        ));
+        return actions;
     }
 
     function getInitialViewMode() {
@@ -596,7 +628,7 @@
 
             const viewCell = document.createElement('td');
             viewCell.className = 'table-details-cell';
-            viewCell.appendChild(createViewButton(item.id));
+            viewCell.appendChild(createSafetyActions(item));
             row.appendChild(viewCell);
 
             tbody.appendChild(row);
@@ -648,7 +680,7 @@
             footerMeta.className = 'review-card-meta';
             footerMeta.textContent = item.notes ? 'Notes added' : 'No notes yet';
             footer.appendChild(footerMeta);
-            footer.appendChild(createViewButton(item.id));
+            footer.appendChild(createSafetyActions(item));
 
             card.appendChild(header);
             card.appendChild(message);
@@ -694,6 +726,17 @@
         return editModalInstance;
     }
 
+    function getDeleteModalInstance() {
+        if (!deleteModalInstance && typeof bootstrap !== 'undefined') {
+            const modalElement = document.getElementById('deleteSafetyModal');
+            if (modalElement) {
+                deleteModalInstance = new bootstrap.Modal(modalElement);
+            }
+        }
+
+        return deleteModalInstance;
+    }
+
     async function openEditModal(logId) {
         const item = state.items.find(function (entry) {
             return entry.id === logId;
@@ -713,6 +756,14 @@
         document.getElementById('editNotes').value = item.notes || '';
         document.getElementById('editLogId').value = item.id || '';
         setTextContent('safetyEditStatus', '');
+        const archiveButton = document.getElementById('archiveSafetyBtn');
+        if (archiveButton) {
+            archiveButton.dataset.archived = item.isArchived ? 'true' : 'false';
+            const label = archiveButton.querySelector('span');
+            if (label) {
+                label.textContent = item.isArchived ? 'Unarchive' : 'Archive';
+            }
+        }
         updateRemediationFields(item, true);
 
         const modalInstance = getEditModalInstance();
@@ -774,13 +825,94 @@
         await refreshSafetyView();
     }
 
+    function getLifecycleResultMessage(result) {
+        return result.audit_warning || result.message || 'Safety violation updated successfully.';
+    }
+
+    async function updateSafetyArchiveState(logId, archived) {
+        const result = await fetchJson(`/api/safety/logs/${encodeURIComponent(logId)}/archive`, {
+            method: 'PATCH',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ archived: archived }),
+        });
+
+        const modalInstance = getEditModalInstance();
+        if (modalInstance && state.activeItem?.id === logId) {
+            modalInstance.hide();
+        }
+        showPageStatus(getLifecycleResultMessage(result), result.audit_warning ? 'warning' : 'success');
+        await refreshSafetyView();
+    }
+
+    function openDeleteModal(logId) {
+        const item = state.items.find(function (entry) {
+            return entry.id === logId;
+        });
+        if (!item) {
+            return;
+        }
+
+        state.activeItem = item;
+        const modalInstance = getDeleteModalInstance();
+        if (modalInstance) {
+            modalInstance.show();
+        }
+    }
+
+    async function deleteSafetyViolation() {
+        const logId = state.activeItem?.id || '';
+        if (!logId) {
+            return;
+        }
+
+        const confirmButton = document.getElementById('confirmDeleteSafetyBtn');
+        if (confirmButton) {
+            confirmButton.disabled = true;
+        }
+
+        try {
+            const result = await fetchJson(`/api/safety/logs/${encodeURIComponent(logId)}`, {
+                method: 'DELETE',
+            });
+            const deleteModal = getDeleteModalInstance();
+            if (deleteModal) {
+                deleteModal.hide();
+            }
+            const editModal = getEditModalInstance();
+            if (editModal) {
+                editModal.hide();
+            }
+            if (state.items.length === 1 && state.currentPage > 1) {
+                state.currentPage -= 1;
+            }
+            showPageStatus(getLifecycleResultMessage(result), result.audit_warning ? 'warning' : 'success');
+            await refreshSafetyView();
+        } finally {
+            if (confirmButton) {
+                confirmButton.disabled = false;
+            }
+        }
+    }
+
     function handleSafetyActionClick(event) {
         const actionButton = event.target.closest('button[data-log-id]');
         if (!actionButton) {
             return;
         }
 
-        openEditModal(actionButton.dataset.logId || '');
+        const logId = actionButton.dataset.logId || '';
+        const action = actionButton.dataset.action || 'view';
+        if (action === 'archive' || action === 'unarchive') {
+            updateSafetyArchiveState(logId, action === 'archive').catch(function (error) {
+                showPageStatus(error.message, 'danger');
+            });
+        } else if (action === 'delete') {
+            openDeleteModal(logId);
+        } else {
+            openEditModal(logId);
+        }
     }
 
     function attachEventListeners() {
@@ -794,6 +926,9 @@
         const actionSelect = document.getElementById('editAction');
         const listViewRadio = document.getElementById('safety-view-list');
         const cardsViewRadio = document.getElementById('safety-view-cards');
+        const archiveButton = document.getElementById('archiveSafetyBtn');
+        const deleteButton = document.getElementById('deleteSafetyBtn');
+        const confirmDeleteButton = document.getElementById('confirmDeleteSafetyBtn');
 
         if (tableBody) {
             tableBody.addEventListener('click', handleSafetyActionClick);
@@ -823,11 +958,15 @@
             clearFiltersButton.addEventListener('click', function () {
                 const statusSelect = document.getElementById('filterStatus');
                 const actionFilterSelect = document.getElementById('filterAction');
+                const archiveSelect = document.getElementById('filterSafetyArchive');
                 if (statusSelect) {
                     statusSelect.value = '';
                 }
                 if (actionFilterSelect) {
                     actionFilterSelect.value = '';
+                }
+                if (archiveSelect) {
+                    archiveSelect.value = 'active';
                 }
                 state.currentPage = 1;
                 clearPageStatus();
@@ -861,6 +1000,34 @@
                 }
 
                 updateRemediationFields(state.activeItem, false);
+            });
+        }
+
+        if (archiveButton) {
+            archiveButton.addEventListener('click', function () {
+                const logId = document.getElementById('editLogId')?.value || '';
+                const archived = archiveButton.dataset.archived !== 'true';
+                updateSafetyArchiveState(logId, archived).catch(function (error) {
+                    const statusElement = document.getElementById('safetyEditStatus');
+                    if (statusElement) {
+                        statusElement.textContent = error.message;
+                    }
+                });
+            });
+        }
+
+        if (deleteButton) {
+            deleteButton.addEventListener('click', function () {
+                const logId = document.getElementById('editLogId')?.value || '';
+                openDeleteModal(logId);
+            });
+        }
+
+        if (confirmDeleteButton) {
+            confirmDeleteButton.addEventListener('click', function () {
+                deleteSafetyViolation().catch(function (error) {
+                    showPageStatus(error.message, 'danger');
+                });
             });
         }
 

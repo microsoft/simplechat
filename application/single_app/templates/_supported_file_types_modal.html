@@ -1,0 +1,30 @@
+<!-- templates/_supported_file_types_modal.html -->
+{% macro supported_file_types_modal(modal_id, title, allowed_extension_categories) %}
+<div class="modal fade" id="{{ modal_id }}" tabindex="-1" aria-labelledby="{{ modal_id }}Label" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="{{ modal_id }}Label">{{ title }}</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="row g-3">
+                    {% for category in allowed_extension_categories %}
+                    <section class="col-md-6" aria-labelledby="{{ modal_id }}-category-{{ loop.index }}">
+                        <h6 class="fw-semibold" id="{{ modal_id }}-category-{{ loop.index }}">{{ category.name }}</h6>
+                        <div class="supported-file-type-list">
+                            {% for extension in category.extensions %}
+                            <span class="badge text-bg-light border">.{{ extension }}</span>
+                            {% endfor %}
+                        </div>
+                    </section>
+                    {% endfor %}
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endmacro %}

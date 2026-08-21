@@ -10,6 +10,7 @@ current-only versus all-versions choice.
 """
 
 import os
+from test_support.versioning import assert_app_version_at_least
 
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
@@ -162,7 +163,7 @@ def test_document_revision_fix_documentation_and_version_alignment():
     config_content = read_file_text(CONFIG_FILE)
     fix_doc_content = read_file_text(FIX_DOC)
 
-    assert 'VERSION = "0.240.022"' in config_content, 'Expected config.py version 0.240.022'
+    assert_app_version_at_least("0.240.022")
     assert 'Fixed/Implemented in version: **0.240.022**' in fix_doc_content, (
         'Fix documentation should reference version 0.240.022.'
     )

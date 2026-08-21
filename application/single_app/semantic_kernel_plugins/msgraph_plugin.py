@@ -784,7 +784,7 @@ class MSGraphPlugin(BasePlugin):
         if exception is not None:
             error_payload["details"] = str(exception)
 
-        debug_print(f"[MSGraphPlugin] {operation_name} failed: {error_payload}")
+        debug_print(f"[MS_GRAPH_PLUGIN] {operation_name} failed: {error_payload}")
         return error_payload
 
     def _shape_graph_result(self, operation_name: str, payload: Any, max_items: int) -> Dict[str, Any]:
@@ -825,7 +825,7 @@ class MSGraphPlugin(BasePlugin):
     ) -> Dict[str, Any]:
         token, scopes, token_error = self._get_token(operation_name, default_scopes)
         if token_error:
-            debug_print(f"[MSGraphPlugin] {operation_name} token acquisition failed: {token_error}")
+            debug_print(f"[MS_GRAPH_PLUGIN] {operation_name} token acquisition failed: {token_error}")
             return token_error
 
         url = path if path.startswith("http") else f"{self._endpoint}{path}"
@@ -846,7 +846,7 @@ class MSGraphPlugin(BasePlugin):
         while next_url and pages_fetched < self.MAX_PAGES_PER_REQUEST:
             request_params = next_params if next_url == url else None
             try:
-                debug_print(f"[MSGraphPlugin] {operation_name} requesting {next_url} params={request_params}")
+                debug_print(f"[MS_GRAPH_PLUGIN] {operation_name} requesting {next_url} params={request_params}")
                 response = requests.request(
                     method.upper(),
                     next_url,

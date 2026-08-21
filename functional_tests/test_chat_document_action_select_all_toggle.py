@@ -11,6 +11,7 @@ folder-backed document action is active.
 """
 
 from pathlib import Path
+from test_support.versioning import assert_app_version_at_least
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -28,9 +29,7 @@ def test_chat_document_action_select_all_toggle_wiring() -> None:
     chat_messages_content = read_text("application/single_app/static/js/chat/chat-messages.js")
     chat_template_content = read_text("application/single_app/templates/chats.html")
 
-    assert 'VERSION = "0.241.095"' in config_content, (
-        "Expected config.py version 0.241.095 for the chat document select-all toggle update."
-    )
+    assert_app_version_at_least("0.241.095")
     assert 'const documentActionSelect = document.getElementById("document-action-select");' in chat_documents_content, (
         "Expected the chat document picker to inspect the current document action selection."
     )

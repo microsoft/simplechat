@@ -5,6 +5,7 @@ from typing import Annotated, Any, Dict
 from semantic_kernel.functions import kernel_function
 
 from functions_authentication import get_current_user_id
+from functions_agent_document_citations import annotate_document_search_payload
 from functions_search import SEARCH_DEFAULT_TOP_N, SEARCH_MAX_TOP_N, normalize_search_scope, normalize_search_top_n
 from functions_search_service import (
     SUMMARY_DEFAULT_FINAL_TARGET,
@@ -133,7 +134,10 @@ class DocumentSearchPlugin(BasePlugin):
     @plugin_function_logger('DocumentSearchPlugin')
     @kernel_function(
         name='search_documents',
-        description='Run hybrid document search over accessible workspaces and return chunk-level results with document ids.',
+        description=(
+            'Run hybrid document search over accessible workspaces and return chunk-level results with document ids. '
+            'Every result carries a "citation" value; copy it verbatim into your answer whenever you use that excerpt.'
+        ),
     )
     def search_documents(
         self,
@@ -146,15 +150,18 @@ class DocumentSearchPlugin(BasePlugin):
         active_public_workspace_id: Annotated[str, 'Optional public workspace id when searching public content.'] = '',
     ) -> Annotated[dict, 'Search results and request metadata.']:
         try:
-            return run_document_search(
-                query=query,
-                user_id=self._get_user_id(),
-                top_n=self._resolve_top_n(top_n),
-                doc_scope=self._resolve_doc_scope(doc_scope),
-                document_ids=document_ids,
-                tags_filter=tags_filter,
-                active_group_ids=active_group_ids,
-                active_public_workspace_id=active_public_workspace_id,
+            return annotate_document_search_payload(
+                run_document_search(
+                    query=query,
+                    user_id=self._get_user_id(),
+                    top_n=self._resolve_top_n(top_n),
+                    doc_scope=self._resolve_doc_scope(doc_scope),
+                    document_ids=document_ids,
+                    tags_filter=tags_filter,
+                    active_group_ids=active_group_ids,
+                    active_public_workspace_id=active_public_workspace_id,
+                ),
+                'search_documents',
             )
         except Exception as e:
             return {'error': str(e)}
@@ -163,7 +170,10 @@ class DocumentSearchPlugin(BasePlugin):
     @plugin_function_logger('DocumentSearchPlugin')
     @kernel_function(
         name='retrieve_document_chunks',
-        description='Retrieve ordered chunks for one accessible document, optionally selecting one window of chunks.',
+        description=(
+            'Retrieve ordered chunks for one accessible document, optionally selecting one window of chunks. '
+            'Every chunk carries a "citation" value; copy it verbatim into your answer whenever you use that chunk.'
+        ),
     )
     def retrieve_document_chunks(
         self,
@@ -177,16 +187,19 @@ class DocumentSearchPlugin(BasePlugin):
         active_public_workspace_id: Annotated[str, 'Optional public workspace id when resolving public content.'] = '',
     ) -> Annotated[dict, 'Ordered chunks and window metadata for one document.']:
         try:
-            return get_document_chunks_payload(
-                document_id=document_id,
-                user_id=self._get_user_id(),
-                doc_scope=self._resolve_doc_scope(doc_scope),
-                active_group_ids=active_group_ids,
-                active_public_workspace_id=active_public_workspace_id,
-                window_unit=self._resolve_window_unit(window_unit),
-                window_size=self._resolve_optional_window_value(window_size, 'default_window_size'),
-                window_percent=self._resolve_optional_window_value(window_percent, 'default_window_percent'),
-                window_number=window_number if int(window_number or 0) > 0 else None,
+            return annotate_document_search_payload(
+                get_document_chunks_payload(
+                    document_id=document_id,
+                    user_id=self._get_user_id(),
+                    doc_scope=self._resolve_doc_scope(doc_scope),
+                    active_group_ids=active_group_ids,
+                    active_public_workspace_id=active_public_workspace_id,
+                    window_unit=self._resolve_window_unit(window_unit),
+                    window_size=self._resolve_optional_window_value(window_size, 'default_window_size'),
+                    window_percent=self._resolve_optional_window_value(window_percent, 'default_window_percent'),
+                    window_number=window_number if int(window_number or 0) > 0 else None,
+                ),
+                'retrieve_document_chunks',
             )
         except Exception as e:
             return {'error': str(e)}
@@ -195,7 +208,10 @@ class DocumentSearchPlugin(BasePlugin):
     @plugin_function_logger('DocumentSearchPlugin')
     @kernel_function(
         name='summarize_document',
-        description='Summarize one accessible document hierarchically across ordered chunk windows, with optional focus guidance.',
+        description=(
+            'Summarize one accessible document hierarchically across ordered chunk windows, with optional focus guidance. '
+            'The payload carries a "citation" value; copy it verbatim into your answer when you use the summary.'
+        ),
     )
     def summarize_document(
         self,
@@ -211,18 +227,21 @@ class DocumentSearchPlugin(BasePlugin):
         active_public_workspace_id: Annotated[str, 'Optional public workspace id when resolving public content.'] = '',
     ) -> Annotated[dict, 'Final summary text plus stage and window metadata.']:
         try:
-            return summarize_document_content(
-                document_id=document_id,
-                user_id=self._get_user_id(),
-                doc_scope=self._resolve_doc_scope(doc_scope),
-                active_group_ids=active_group_ids,
-                active_public_workspace_id=active_public_workspace_id,
-                focus_instructions=self._resolve_focus_instructions(focus_instructions),
-                final_target_length=self._resolve_target_length(final_target_length, 'default_final_target_length', SUMMARY_DEFAULT_FINAL_TARGET),
-                window_target_length=self._resolve_target_length(window_target_length, 'default_window_target_length', SUMMARY_DEFAULT_WINDOW_SUMMARY_TARGET),
-                window_unit=self._resolve_window_unit(window_unit),
-                window_size=self._resolve_optional_window_value(window_size, 'default_window_size'),
-                window_percent=self._resolve_optional_window_value(window_percent, 'default_window_percent'),
+            return annotate_document_search_payload(
+                summarize_document_content(
+                    document_id=document_id,
+                    user_id=self._get_user_id(),
+                    doc_scope=self._resolve_doc_scope(doc_scope),
+                    active_group_ids=active_group_ids,
+                    active_public_workspace_id=active_public_workspace_id,
+                    focus_instructions=self._resolve_focus_instructions(focus_instructions),
+                    final_target_length=self._resolve_target_length(final_target_length, 'default_final_target_length', SUMMARY_DEFAULT_FINAL_TARGET),
+                    window_target_length=self._resolve_target_length(window_target_length, 'default_window_target_length', SUMMARY_DEFAULT_WINDOW_SUMMARY_TARGET),
+                    window_unit=self._resolve_window_unit(window_unit),
+                    window_size=self._resolve_optional_window_value(window_size, 'default_window_size'),
+                    window_percent=self._resolve_optional_window_value(window_percent, 'default_window_percent'),
+                ),
+                'summarize_document',
             )
         except Exception as e:
             return {'error': str(e)}

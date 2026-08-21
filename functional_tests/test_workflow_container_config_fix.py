@@ -11,6 +11,7 @@ workflow storage helpers.
 """
 
 from pathlib import Path
+from test_support.versioning import assert_app_version_at_least
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -24,9 +25,7 @@ def test_workflow_container_config_contract():
     config_content = read_text("application/single_app/config.py")
     workflow_store_content = read_text("application/single_app/functions_personal_workflows.py")
 
-    assert 'VERSION = "0.241.036"' in config_content, (
-        "Expected config.py version 0.241.036 for the workflow container config fix."
-    )
+    assert_app_version_at_least("0.241.036")
     assert "cosmos_personal_workflows_container," in workflow_store_content, (
         "Expected workflow helpers to import the plural workflows container symbol."
     )

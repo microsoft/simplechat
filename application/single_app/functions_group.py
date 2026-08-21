@@ -5,6 +5,7 @@ import functions_authentication
 import functions_settings
 from typing import Iterable
 
+from functions_chat_bootstrap_cache import bump_chat_bootstrap_global_cache_version
 from functions_workspace_branding import DEFAULT_WORKSPACE_HERO_COLOR
 
 
@@ -41,10 +42,15 @@ def create_group(name, description):
         ],
         "pendingUsers": [],
         "disable_file_downloads": False,
+        "retention_policy": {
+            "conversation_retention_days": "default",
+            "document_retention_days": "default"
+        },
         "createdDate": now_str,
         "modifiedDate": now_str
     }
     cosmos_groups_container.create_item(group_doc)
+    bump_chat_bootstrap_global_cache_version(reason="group_created")
     return group_doc
 
 def search_groups(search_query, user_id):
@@ -99,7 +105,7 @@ def search_all_groups(search_query, limit=10):
         parameters=params,
         enable_cross_partition_query=True
     ))
-    return results[:max(1, min(int(limit or 10), 25))]
+    return results[:max(1, min(int(limit or 10), 50))]
 
 def get_user_groups(user_id):
     """
@@ -222,6 +228,7 @@ def delete_group(group_id):
     Deletes a group from Cosmos DB. Typically only owner can do this.
     """
     cosmos_groups_container.delete_item(item=group_id, partition_key=group_id)
+    bump_chat_bootstrap_global_cache_version(reason="group_deleted")
 
 def is_user_in_group(group_doc, user_id):
     """
@@ -338,4 +345,5 @@ def update_group_model_endpoints(group_id: str, endpoints):
     group_doc["model_endpoints"] = endpoints
     group_doc["modifiedDate"] = datetime.utcnow().isoformat()
     cosmos_groups_container.upsert_item(group_doc)
+    bump_chat_bootstrap_global_cache_version(reason="group_model_endpoints_updated")
     return group_doc

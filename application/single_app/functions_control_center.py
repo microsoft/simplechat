@@ -1,23 +1,31 @@
 # functions_control_center.py
 """
 Functions for Control Center operations including scheduled auto-refresh.
-Version: 0.241.029
+Version: 0.250.102
 """
 
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
 from config import cosmos_user_settings_container, cosmos_groups_container
 from functions_debug import debug_print
 from functions_settings import get_settings, update_settings
 from functions_appinsights import log_event
 
 
-CONTROL_CENTER_DEFAULT_AUTO_REFRESH_HOUR = 6
+CONTROL_CENTER_DEFAULT_AUTO_REFRESH_HOUR = 2
 CONTROL_CENTER_DEFAULT_AUTO_REFRESH_MINUTE = 0
-CONTROL_CENTER_DEFAULT_AUTO_REFRESH_TIME = '06:00'
+CONTROL_CENTER_DEFAULT_AUTO_REFRESH_TIME = '02:00'
+CONTROL_CENTER_DEFAULT_AUTO_REFRESH_TIMEZONE = 'America/New_York'
 
 
-def normalize_control_center_auto_refresh_time(schedule_time=None, schedule_hour=None, schedule_minute=None):
-    """Return a normalized UTC daily refresh schedule."""
+def normalize_control_center_auto_refresh_time(
+    schedule_time=None,
+    schedule_hour=None,
+    schedule_minute=None,
+    schedule_timezone=None,
+):
+    """Return a normalized daily refresh rule with an IANA timezone."""
     normalized_hour = CONTROL_CENTER_DEFAULT_AUTO_REFRESH_HOUR
     normalized_minute = CONTROL_CENTER_DEFAULT_AUTO_REFRESH_MINUTE
 
@@ -47,10 +55,21 @@ def normalize_control_center_auto_refresh_time(schedule_time=None, schedule_hour
         except (TypeError, ValueError):
             pass
 
+    normalized_timezone = (
+        schedule_timezone.strip()
+        if isinstance(schedule_timezone, str) and schedule_timezone.strip()
+        else CONTROL_CENTER_DEFAULT_AUTO_REFRESH_TIMEZONE
+    )
+    try:
+        ZoneInfo(normalized_timezone)
+    except (ZoneInfoNotFoundError, ValueError):
+        normalized_timezone = CONTROL_CENTER_DEFAULT_AUTO_REFRESH_TIMEZONE
+
     return {
         'hour': normalized_hour,
         'minute': normalized_minute,
         'time': f"{normalized_hour:02d}:{normalized_minute:02d}",
+        'timezone': normalized_timezone,
     }
 
 
@@ -61,11 +80,12 @@ def get_control_center_auto_refresh_schedule(settings=None):
         settings.get('control_center_auto_refresh_time'),
         settings.get('control_center_auto_refresh_hour'),
         settings.get('control_center_auto_refresh_minute'),
+        settings.get('control_center_auto_refresh_timezone'),
     )
 
 
 def calculate_next_control_center_auto_refresh_run(settings=None, current_time=None):
-    """Calculate the next UTC daily Control Center auto-refresh run time."""
+    """Calculate the next daily Control Center refresh as a UTC datetime."""
     current_time = current_time or datetime.now(timezone.utc)
     if current_time.tzinfo is None:
         current_time = current_time.replace(tzinfo=timezone.utc)
@@ -73,16 +93,18 @@ def calculate_next_control_center_auto_refresh_run(settings=None, current_time=N
         current_time = current_time.astimezone(timezone.utc)
 
     schedule = get_control_center_auto_refresh_schedule(settings)
-    next_run = current_time.replace(
+    schedule_timezone = ZoneInfo(schedule['timezone'])
+    local_current_time = current_time.astimezone(schedule_timezone)
+    next_run_local = local_current_time.replace(
         hour=schedule['hour'],
         minute=schedule['minute'],
         second=0,
         microsecond=0,
     )
-    if next_run <= current_time:
-        next_run += timedelta(days=1)
+    if next_run_local <= local_current_time:
+        next_run_local += timedelta(days=1)
 
-    return next_run
+    return next_run_local.astimezone(timezone.utc)
 
 
 def parse_control_center_auto_refresh_datetime(timestamp_value):
@@ -101,6 +123,27 @@ def parse_control_center_auto_refresh_datetime(timestamp_value):
         return parsed_datetime.astimezone(timezone.utc)
     except (TypeError, ValueError):
         return None
+
+
+def is_control_center_auto_refresh_due(settings=None, current_time=None):
+    """Return whether an enabled schedule has reached its saved UTC next run."""
+    settings = settings or {}
+    if not settings.get('control_center_auto_refresh_enabled', True):
+        return False
+
+    next_run = parse_control_center_auto_refresh_datetime(
+        settings.get('control_center_auto_refresh_next_run')
+    )
+    if not next_run:
+        return False
+
+    current_time = current_time or datetime.now(timezone.utc)
+    if current_time.tzinfo is None:
+        current_time = current_time.replace(tzinfo=timezone.utc)
+    else:
+        current_time = current_time.astimezone(timezone.utc)
+
+    return current_time >= next_run
 
 
 def execute_control_center_refresh(manual_execution=False):
@@ -196,6 +239,7 @@ def execute_control_center_refresh(manual_execution=False):
                 settings['control_center_auto_refresh_time'] = schedule['time']
                 settings['control_center_auto_refresh_hour'] = schedule['hour']
                 settings['control_center_auto_refresh_minute'] = schedule['minute']
+                settings['control_center_auto_refresh_timezone'] = schedule['timezone']
 
                 # Calculate next scheduled auto-refresh time if enabled
                 if settings.get('control_center_auto_refresh_enabled', True):

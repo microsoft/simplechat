@@ -7,12 +7,14 @@
         viewMode: 'list',
         items: [],
         userCache: {},
+        activeItem: null,
     };
 
     const FEEDBACK_VIEW_STORAGE_KEY = 'simplechat.admin.feedback.viewMode';
 
     let editModalInstance = null;
     let retestModalInstance = null;
+    let deleteModalInstance = null;
 
     function clearElement(element) {
         if (!element) {
@@ -31,6 +33,16 @@
         }
 
         element.textContent = value == null || value === '' ? '-' : String(value);
+    }
+
+    function showPageStatus(message, variant) {
+        const alertElement = document.getElementById('feedbackPageStatusAlert');
+        if (!alertElement) {
+            return;
+        }
+
+        alertElement.textContent = message;
+        alertElement.className = `alert alert-${variant || 'info'} mb-3`;
     }
 
     function formatDateTime(value) {
@@ -104,6 +116,7 @@
         const params = new URLSearchParams();
         const type = document.getElementById('filterFeedbackType')?.value || '';
         const acknowledged = document.getElementById('filterAcknowledged')?.value || '';
+        const archiveState = document.getElementById('filterFeedbackArchive')?.value || 'active';
 
         if (includePagination) {
             params.set('page', String(state.currentPage));
@@ -116,6 +129,7 @@
         if (acknowledged) {
             params.set('ack', acknowledged);
         }
+        params.set('archive', archiveState);
 
         return params;
     }
@@ -210,15 +224,43 @@
         return cell;
     }
 
-    function createViewButton(feedbackId) {
+    function createActionButton(feedbackId, action, label, iconClass, variant) {
         const button = document.createElement('button');
         button.type = 'button';
-        button.className = 'btn btn-sm btn-primary';
+        button.className = `btn btn-sm btn-${variant}`;
         button.dataset.feedbackId = feedbackId || '';
-        button.dataset.action = 'view';
-        button.appendChild(createIcon('bi bi-eye me-1'));
-        button.appendChild(document.createTextNode('View'));
+        button.dataset.action = action;
+        button.title = label;
+        button.setAttribute('aria-label', label);
+        button.appendChild(createIcon(iconClass));
+        if (action === 'view') {
+            button.firstChild.classList.add('me-1');
+            button.appendChild(document.createTextNode(label));
+        }
         return button;
+    }
+
+    function createFeedbackActions(item) {
+        const actions = document.createElement('div');
+        actions.className = 'btn-group btn-group-sm';
+        actions.setAttribute('role', 'group');
+        actions.setAttribute('aria-label', 'Feedback actions');
+        actions.appendChild(createActionButton(item.id, 'view', 'View', 'bi bi-eye', 'primary'));
+        actions.appendChild(createActionButton(
+            item.id,
+            item.isArchived ? 'unarchive' : 'archive',
+            item.isArchived ? 'Unarchive' : 'Archive',
+            item.isArchived ? 'bi bi-arrow-counterclockwise' : 'bi bi-archive',
+            'outline-secondary',
+        ));
+        actions.appendChild(createActionButton(
+            item.id,
+            'delete',
+            'Delete',
+            'bi bi-trash',
+            'outline-danger',
+        ));
+        return actions;
     }
 
     function appendCardDetail(parent, label, value) {
@@ -379,7 +421,7 @@
 
             const viewCell = document.createElement('td');
             viewCell.className = 'table-details-cell';
-            viewCell.appendChild(createViewButton(item.id));
+            viewCell.appendChild(createFeedbackActions(item));
             row.appendChild(viewCell);
 
             tbody.appendChild(row);
@@ -433,7 +475,7 @@
             footerMeta.className = 'review-card-meta';
             footerMeta.textContent = adminReview.reviewTimestamp ? `Reviewed ${formatDateTime(adminReview.reviewTimestamp)}` : 'Waiting for review';
             footer.appendChild(footerMeta);
-            footer.appendChild(createViewButton(item.id));
+            footer.appendChild(createFeedbackActions(item));
 
             card.appendChild(header);
             card.appendChild(prompt);
@@ -492,6 +534,17 @@
         return retestModalInstance;
     }
 
+    function getDeleteModalInstance() {
+        if (!deleteModalInstance && typeof bootstrap !== 'undefined') {
+            const modalElement = document.getElementById('deleteFeedbackModal');
+            if (modalElement) {
+                deleteModalInstance = new bootstrap.Modal(modalElement);
+            }
+        }
+
+        return deleteModalInstance;
+    }
+
     async function openEditModal(feedbackId) {
         const item = state.items.find(function (entry) {
             return entry.id === feedbackId;
@@ -500,6 +553,7 @@
             return;
         }
 
+        state.activeItem = item;
         const userInfo = await lookupUserInfo(item.userId);
         const adminReview = item.adminReview || {};
 
@@ -515,6 +569,14 @@
         document.getElementById('editActionTaken').value = adminReview.actionTaken || '';
         document.getElementById('editFeedbackId').value = item.id || '';
         setTextContent('feedbackEditStatus', '');
+        const archiveButton = document.getElementById('archiveFeedbackBtn');
+        if (archiveButton) {
+            archiveButton.dataset.archived = item.isArchived ? 'true' : 'false';
+            const label = archiveButton.querySelector('span');
+            if (label) {
+                label.textContent = item.isArchived ? 'Unarchive' : 'Archive';
+            }
+        }
 
         const modalInstance = getEditModalInstance();
         if (modalInstance) {
@@ -599,6 +661,77 @@
         await refreshFeedbackView();
     }
 
+    function getLifecycleResultMessage(result) {
+        return result.audit_warning || result.message || 'Feedback updated successfully.';
+    }
+
+    async function updateFeedbackArchiveState(feedbackId, archived) {
+        const result = await fetchJson(`/feedback/review/${encodeURIComponent(feedbackId)}/archive`, {
+            method: 'PATCH',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ archived: archived }),
+        });
+
+        const modalInstance = getEditModalInstance();
+        if (modalInstance && state.activeItem?.id === feedbackId) {
+            modalInstance.hide();
+        }
+        showPageStatus(getLifecycleResultMessage(result), result.audit_warning ? 'warning' : 'success');
+        await refreshFeedbackView();
+    }
+
+    function openDeleteModal(feedbackId) {
+        const item = state.items.find(function (entry) {
+            return entry.id === feedbackId;
+        });
+        if (!item) {
+            return;
+        }
+
+        state.activeItem = item;
+        const modalInstance = getDeleteModalInstance();
+        if (modalInstance) {
+            modalInstance.show();
+        }
+    }
+
+    async function deleteFeedback() {
+        const feedbackId = state.activeItem?.id || '';
+        if (!feedbackId) {
+            return;
+        }
+
+        const confirmButton = document.getElementById('confirmDeleteFeedbackBtn');
+        if (confirmButton) {
+            confirmButton.disabled = true;
+        }
+
+        try {
+            const result = await fetchJson(`/feedback/review/${encodeURIComponent(feedbackId)}`, {
+                method: 'DELETE',
+            });
+            const deleteModal = getDeleteModalInstance();
+            if (deleteModal) {
+                deleteModal.hide();
+            }
+            const editModal = getEditModalInstance();
+            if (editModal) {
+                editModal.hide();
+            }
+            if (state.items.length === 1 && state.currentPage > 1) {
+                state.currentPage -= 1;
+            }
+            showPageStatus(getLifecycleResultMessage(result), result.audit_warning ? 'warning' : 'success');
+            await refreshFeedbackView();
+        } finally {
+            if (confirmButton) {
+                confirmButton.disabled = false;
+            }
+        }
+    }
+
     function handleFeedbackActionClick(event) {
         const actionButton = event.target.closest('button[data-feedback-id]');
         if (!actionButton) {
@@ -609,6 +742,12 @@
         const action = actionButton.dataset.action || 'view';
         if (action === 'retest') {
             openRetestModal(feedbackId);
+        } else if (action === 'archive' || action === 'unarchive') {
+            updateFeedbackArchiveState(feedbackId, action === 'archive').catch(function (error) {
+                showPageStatus(error.message, 'danger');
+            });
+        } else if (action === 'delete') {
+            openDeleteModal(feedbackId);
         } else {
             openEditModal(feedbackId);
         }
@@ -625,6 +764,9 @@
         const retestButton = document.getElementById('retestFeedbackBtn');
         const listViewRadio = document.getElementById('feedback-view-list');
         const cardsViewRadio = document.getElementById('feedback-view-cards');
+        const archiveButton = document.getElementById('archiveFeedbackBtn');
+        const deleteButton = document.getElementById('deleteFeedbackBtn');
+        const confirmDeleteButton = document.getElementById('confirmDeleteFeedbackBtn');
 
         if (tableBody) {
             tableBody.addEventListener('click', handleFeedbackActionClick);
@@ -653,11 +795,15 @@
             clearFiltersButton.addEventListener('click', function () {
                 const typeSelect = document.getElementById('filterFeedbackType');
                 const acknowledgedSelect = document.getElementById('filterAcknowledged');
+                const archiveSelect = document.getElementById('filterFeedbackArchive');
                 if (typeSelect) {
                     typeSelect.value = '';
                 }
                 if (acknowledgedSelect) {
                     acknowledgedSelect.value = '';
+                }
+                if (archiveSelect) {
+                    archiveSelect.value = 'active';
                 }
                 state.currentPage = 1;
                 refreshFeedbackView();
@@ -687,6 +833,34 @@
             retestButton.addEventListener('click', function () {
                 const feedbackId = document.getElementById('editFeedbackId')?.value || '';
                 openRetestModal(feedbackId);
+            });
+        }
+
+        if (archiveButton) {
+            archiveButton.addEventListener('click', function () {
+                const feedbackId = document.getElementById('editFeedbackId')?.value || '';
+                const archived = archiveButton.dataset.archived !== 'true';
+                updateFeedbackArchiveState(feedbackId, archived).catch(function (error) {
+                    const statusElement = document.getElementById('feedbackEditStatus');
+                    if (statusElement) {
+                        statusElement.textContent = error.message;
+                    }
+                });
+            });
+        }
+
+        if (deleteButton) {
+            deleteButton.addEventListener('click', function () {
+                const feedbackId = document.getElementById('editFeedbackId')?.value || '';
+                openDeleteModal(feedbackId);
+            });
+        }
+
+        if (confirmDeleteButton) {
+            confirmDeleteButton.addEventListener('click', function () {
+                deleteFeedback().catch(function (error) {
+                    showPageStatus(error.message, 'danger');
+                });
             });
         }
 

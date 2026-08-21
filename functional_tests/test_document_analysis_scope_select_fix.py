@@ -10,6 +10,7 @@ for both chat and workflow execution.
 """
 
 from pathlib import Path
+from test_support.versioning import assert_app_version_at_least
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -26,9 +27,7 @@ def test_document_analysis_scope_select_fix_wiring():
     workflow_runner_content = read_text("application/single_app/functions_workflow_runner.py")
     fix_doc_content = read_text("docs/explanation/fixes/DOCUMENT_ANALYSIS_SCOPE_SELECT_FIX.md")
 
-    assert 'VERSION = "0.241.023"' in config_content, (
-        "Expected config.py version 0.241.023 for the analysis scope-select fix."
-    )
+    assert_app_version_at_least("0.241.023")
     assert "scope_field = 'public_workspace_id' if public_workspace_id is not None else ('group_id' if group_id is not None else 'user_id')" in documents_content, (
         "Expected ordered chunk retrieval to choose the scope-specific Azure Search field."
     )

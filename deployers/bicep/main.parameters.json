@@ -6,6 +6,9 @@
     "location": {
       "value": "${AZURE_LOCATION}"
     },
+    "redisLocation": {
+      "value": "${REDIS_LOCATION}"
+    },
     "cloudEnvironment": {
       "value": "${env_AZURE_CLOUD_ENVIRONMENT}"
     },
@@ -21,6 +24,12 @@
     "imageName": {
       "value": "${CONTAINER_IMAGE_NAME}"
     },
+    "deployNativePythonWebApp": {
+      "value": "${DEPLOY_NATIVE_PYTHON_WEBAPP}"
+    },
+    "nativeWebAppName": {
+      "value": "${NATIVE_WEBAPP_NAME}"
+    },
     "enterpriseAppClientId": {
       "value": "${ENTERPRISE_APP_CLIENT_ID}"
     },
@@ -32,6 +41,9 @@
     },
     "authenticationType": {
       "value": "${AUTHENTICATION_TYPE}"
+    },
+    "redisAuthenticationType": {
+      "value": "${REDIS_AUTHENTICATION_TYPE}"
     },
     "configureApplicationPermissions": {
       "value": "${CONFIGURE_APPLICATION_PERMISSIONS}"

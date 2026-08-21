@@ -76,7 +76,7 @@ class FactMemoryPlugin:
             or (requested_scope_id and requested_scope_id != authorized_scope['scope_id'])
         ):
             log_event(
-                '[FactMemoryPlugin] Overriding mismatched fact-memory scope in tool call.',
+                '[FACT_MEMORY_PLUGIN] Overriding mismatched fact-memory scope in tool call.',
                 extra={
                     'requested_scope_type': requested_scope_type,
                     'requested_scope_id': requested_scope_id,
@@ -88,7 +88,7 @@ class FactMemoryPlugin:
 
         if requested_conversation_id and requested_conversation_id != authorized_scope['conversation_id']:
             log_event(
-                '[FactMemoryPlugin] Overriding mismatched fact-memory conversation_id in tool call.',
+                '[FACT_MEMORY_PLUGIN] Overriding mismatched fact-memory conversation_id in tool call.',
                 extra={
                     'requested_conversation_id': requested_conversation_id,
                     'authorized_conversation_id': authorized_scope['conversation_id'],

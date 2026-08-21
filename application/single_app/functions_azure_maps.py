@@ -63,10 +63,10 @@ def decode_tile_proxy_token(tile_proxy_token: str, *, allow_expired: bool = Fals
         decrypted_payload = _build_fernet_cipher().decrypt(normalized_token.encode("utf-8"))
         payload = json.loads(decrypted_payload.decode("utf-8"))
     except InvalidToken:
-        log_event("[AzureMaps] Rejected an invalid Azure Maps tile proxy token.", level=logging.WARNING)
+        log_event("[AZURE_MAPS] Rejected an invalid Azure Maps tile proxy token.", level=logging.WARNING)
         return None
     except (json.JSONDecodeError, UnicodeDecodeError) as exc:
-        log_event(f"[AzureMaps] Failed to decode Azure Maps tile proxy token payload: {exc}", level=logging.WARNING)
+        log_event(f"[AZURE_MAPS] Failed to decode Azure Maps tile proxy token payload: {exc}", level=logging.WARNING)
         return None
 
     subscription_key = str(payload.get("subscription_key") or "").strip()
@@ -77,7 +77,7 @@ def decode_tile_proxy_token(tile_proxy_token: str, *, allow_expired: bool = Fals
     try:
         expires_at = datetime.fromisoformat(expires_at_raw.replace("Z", "+00:00"))
     except ValueError:
-        log_event("[AzureMaps] Azure Maps tile proxy token had an invalid expiration timestamp.", level=logging.WARNING)
+        log_event("[AZURE_MAPS] Azure Maps tile proxy token had an invalid expiration timestamp.", level=logging.WARNING)
         return None
 
     if expires_at.tzinfo is None:
@@ -85,7 +85,7 @@ def decode_tile_proxy_token(tile_proxy_token: str, *, allow_expired: bool = Fals
 
     is_expired = expires_at <= datetime.now(timezone.utc)
     if is_expired and not allow_expired:
-        log_event("[AzureMaps] Rejected an expired Azure Maps tile proxy token.", level=logging.INFO)
+        log_event("[AZURE_MAPS] Rejected an expired Azure Maps tile proxy token.", level=logging.INFO)
         return None
 
     return {

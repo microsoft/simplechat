@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
 """
 Debug script for message count issue with specific user ID
-Version: 0.230.022
+Version: 0.250.047
+Implemented in: 0.230.022
+CosmosClient module import cleanup updated in: 0.250.047
 
 This script will test the actual queries against the database containers.
 """
 
 import sys
 import os
-from azure.cosmos import CosmosClient
+import azure.cosmos as azure_cosmos
 
 def debug_message_count_for_user():
     """Debug message count queries for specific user"""
@@ -34,7 +36,7 @@ def debug_message_count_for_user():
         endpoint = os.getenv('AZURE_COSMOS_ENDPOINT', '')
         key = os.getenv('AZURE_COSMOS_KEY', '')
 
-        client = CosmosClient(endpoint, key, consistency_level="Session")
+        client = azure_cosmos.CosmosClient(endpoint, key, consistency_level="Session")
 
         conversations = list(client.get_database_client("SimpleChat").get_container_client("conversations").query_items(
             query=conversations_query,

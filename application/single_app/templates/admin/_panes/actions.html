@@ -1,0 +1,210 @@
+            <div class="tab-pane fade{% if admin_landing_tab == 'actions' %} show active{% endif %}" id="actions" role="tabpanel" aria-labelledby="actions-tab">
+                {# These live here, not in the Agents pane, because sibling
+                   {% include %} panes each render in their own scope: a value
+                   set in one pane is not visible to the next one. #}
+                {% set analyze_capability = settings.document_action_capabilities.analyze %}
+                {% set comparison_capability = settings.document_action_capabilities.comparison %}
+                <div class="card p-3 mb-4" id="document-action-capabilities-card">
+                    <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-3 mb-3">
+                        <div>
+                            <h5 class="mb-1"><i class="bi bi-files me-2"></i>Document Action Capabilities</h5>
+                            <p class="text-muted small mb-0">Configure the document actions shown in the <strong>Action</strong> dropdown in Chat and Workflow. These controls live in the Agents and Actions tab, but remain separate from the global agent and custom action cards below.</p>
+                        </div>
+                        <span class="badge text-bg-light border align-self-start align-self-lg-center">Chat: 2-300 | Workflow: 2-1000</span>
+                    </div>
+                    <div class="alert alert-light border small mb-3" role="alert">
+                        Use these settings to explicitly allow Analyze and Document Comparison in the Chat and Workflow <strong>Action</strong> dropdowns without bundling them into the global agent or custom action configuration cards below.
+                    </div>
+                    <div class="row g-3">
+                        <div class="col-xl-6">
+                            <div class="border rounded-3 p-3 h-100">
+                                <div class="form-check form-switch mb-3">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="document_action_analyze_enabled" name="document_action_analyze_enabled" {% if analyze_capability.enabled %}checked{% endif %}>
+                                    <label class="form-check-label ms-2" for="document_action_analyze_enabled">Enable Analyze</label>
+                                    <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to run deterministic analysis across selected documents in chat and workflows."></i>
+                                </div>
+                                <div class="mb-3">
+                                    <div class="d-flex justify-content-between align-items-center mb-1">
+                                        <label for="document_action_analyze_chat_max_documents" class="form-label mb-0">Chat max documents</label>
+                                        <span id="document_action_analyze_chat_max_documents_value" class="small text-muted fw-semibold">{{ analyze_capability.chat_max_documents }}</span>
+                                    </div>
+                                    <div class="row g-2 align-items-center">
+                                        <div class="col-lg-8">
+                                            <input type="range" class="form-range document-action-capability-range" id="document_action_analyze_chat_max_documents_range" min="2" max="300" step="1" value="{{ analyze_capability.chat_max_documents }}" data-range-sync="document_action_analyze_chat_max_documents" data-range-display="document_action_analyze_chat_max_documents_value" />
+                                        </div>
+                                        <div class="col-lg-4">
+                                            <input type="number" class="form-control" id="document_action_analyze_chat_max_documents" name="document_action_analyze_chat_max_documents" min="2" max="300" value="{{ analyze_capability.chat_max_documents }}" />
+                                        </div>
+                                    </div>
+                                    <div class="d-flex justify-content-between small text-muted">
+                                        <span>2</span>
+                                        <span>300</span>
+                                    </div>
+                                </div>
+                                <div>
+                                    <div class="d-flex justify-content-between align-items-center mb-1">
+                                        <label for="document_action_analyze_workflow_max_documents" class="form-label mb-0">Workflow max documents</label>
+                                        <span id="document_action_analyze_workflow_max_documents_value" class="small text-muted fw-semibold">{{ analyze_capability.workflow_max_documents }}</span>
+                                    </div>
+                                    <div class="row g-2 align-items-center">
+                                        <div class="col-lg-8">
+                                            <input type="range" class="form-range document-action-capability-range" id="document_action_analyze_workflow_max_documents_range" min="2" max="1000" step="1" value="{{ analyze_capability.workflow_max_documents }}" data-range-sync="document_action_analyze_workflow_max_documents" data-range-display="document_action_analyze_workflow_max_documents_value" />
+                                        </div>
+                                        <div class="col-lg-4">
+                                            <input type="number" class="form-control" id="document_action_analyze_workflow_max_documents" name="document_action_analyze_workflow_max_documents" min="2" max="1000" value="{{ analyze_capability.workflow_max_documents }}" />
+                                        </div>
+                                    </div>
+                                    <div class="d-flex justify-content-between small text-muted">
+                                        <span>2</span>
+                                        <span>1000</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-xl-6">
+                            <div class="border rounded-3 p-3 h-100">
+                                <div class="form-check form-switch mb-3">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="document_action_comparison_enabled" name="document_action_comparison_enabled" {% if comparison_capability.enabled %}checked{% endif %}>
+                                    <label class="form-check-label ms-2" for="document_action_comparison_enabled">Enable Document Comparison</label>
+                                    <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to compare one baseline document against one or more selected documents in chat and workflows."></i>
+                                </div>
+                                <div class="mb-3">
+                                    <div class="d-flex justify-content-between align-items-center mb-1">
+                                        <label for="document_action_comparison_chat_max_documents" class="form-label mb-0">Chat max documents</label>
+                                        <span id="document_action_comparison_chat_max_documents_value" class="small text-muted fw-semibold">{{ comparison_capability.chat_max_documents }}</span>
+                                    </div>
+                                    <div class="row g-2 align-items-center">
+                                        <div class="col-lg-8">
+                                            <input type="range" class="form-range document-action-capability-range" id="document_action_comparison_chat_max_documents_range" min="2" max="300" step="1" value="{{ comparison_capability.chat_max_documents }}" data-range-sync="document_action_comparison_chat_max_documents" data-range-display="document_action_comparison_chat_max_documents_value" />
+                                        </div>
+                                        <div class="col-lg-4">
+                                            <input type="number" class="form-control" id="document_action_comparison_chat_max_documents" name="document_action_comparison_chat_max_documents" min="2" max="300" value="{{ comparison_capability.chat_max_documents }}" />
+                                        </div>
+                                    </div>
+                                    <div class="d-flex justify-content-between small text-muted">
+                                        <span>2</span>
+                                        <span>300</span>
+                                    </div>
+                                </div>
+                                <div>
+                                    <div class="d-flex justify-content-between align-items-center mb-1">
+                                        <label for="document_action_comparison_workflow_max_documents" class="form-label mb-0">Workflow max documents</label>
+                                        <span id="document_action_comparison_workflow_max_documents_value" class="small text-muted fw-semibold">{{ comparison_capability.workflow_max_documents }}</span>
+                                    </div>
+                                    <div class="row g-2 align-items-center">
+                                        <div class="col-lg-8">
+                                            <input type="range" class="form-range document-action-capability-range" id="document_action_comparison_workflow_max_documents_range" min="2" max="1000" step="1" value="{{ comparison_capability.workflow_max_documents }}" data-range-sync="document_action_comparison_workflow_max_documents" data-range-display="document_action_comparison_workflow_max_documents_value" />
+                                        </div>
+                                        <div class="col-lg-4">
+                                            <input type="number" class="form-control" id="document_action_comparison_workflow_max_documents" name="document_action_comparison_workflow_max_documents" min="2" max="1000" value="{{ comparison_capability.workflow_max_documents }}" />
+                                        </div>
+                                    </div>
+                                    <div class="d-flex justify-content-between small text-muted">
+                                        <span>2</span>
+                                        <span>1000</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Agents Configuration Section -->
+                <div class="card p-3 mb-4" id="actions-configuration">
+                    <h5 class="card-title">
+                        <i class="bi bi-plugin me-2"></i>Global Actions Configuration
+                    </h5>
+                    <p class="text-muted small">
+                        Configure custom actions and tools to extend functionality with integrations and specialized capabilities.
+                    </p>
+
+                    {% if not settings.enable_semantic_kernel %}
+                        <div class="alert alert-info">
+                            <strong>Actions are not available while agents are disabled.</strong> Enable agents above to configure actions.
+                        </div>
+                    {% else %}
+                        <div>
+                            <div class="d-flex justify-content-between align-items-center mb-3">
+                                <h6>Global Actions</h6>
+                                <button type="button" class="btn btn-primary btn-sm" id="add-plugin-btn">Add Action</button>
+                            </div>
+                            <p class="text-muted small">Disable a global action to keep the configuration without exposing it to runtime action loading until it is re-enabled.</p>
+                            {% if settings.per_user_semantic_kernel %}
+                            <!-- Action Feature Flags -->
+                                <div class="card p-3 mb-3" id="plugin-feature-toggles">
+                                    <h6 class="mb-2">Workspace Action Feature Toggles</h6>
+                                    <div class="form-check form-switch mb-2">
+                                        <input class="form-check-input" type="checkbox" role="switch" id="toggle-allow-user-plugins" name="allow_user_plugins" {% if settings.allow_user_plugins %}checked{% endif %}>
+                                        <label class="form-check-label ms-2" for="toggle-allow-user-plugins">Allow Personal Actions</label>
+                                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to create and manage their own workspace-level actions/plugins for personal use."></i>
+                                        <button type="button" class="btn btn-outline-info btn-sm ms-2 governance-primary-link" data-governance-target="governance_user_actions">Govern</button>
+                                    </div>
+                                    <div class="form-check form-switch mb-2">
+                                        <input class="form-check-input" type="checkbox" role="switch" id="toggle-allow-group-plugins" name="allow_group_plugins" {% if settings.allow_group_plugins %}checked{% endif %}>
+                                        <label class="form-check-label ms-2" for="toggle-allow-group-plugins">Allow Group Actions</label>
+                                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to create and manage group-level actions/plugins that can be shared within workgroups."></i>
+                                        <button type="button" class="btn btn-outline-info btn-sm ms-2 governance-primary-link" data-governance-target="governance_group_actions">Govern</button>
+                                    </div>
+                                </div>
+                            {% endif %}
+
+                            <!-- Core Plugin Toggles -->
+                            <div class="card p-3 mb-3" id="core-plugin-toggles">
+                                <h6 class="mb-2">Core Action Toggles</h6>
+                                <div class="form-check form-switch mb-2">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="toggle-time-plugin" name="enable_time_plugin" {% if settings.enable_time_plugin %}checked{% endif %}>
+                                    <label class="form-check-label ms-2" for="toggle-time-plugin">Enable Time Action</label>
+                                    <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Enables agents to get current date, time, and perform time-related calculations and conversions."></i>
+                                </div>
+                                <div class="form-check form-switch mb-2">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="toggle-http-plugin" name="enable_http_plugin" {% if settings.enable_http_plugin %}checked{% endif %}>
+                                    <label class="form-check-label ms-2" for="toggle-http-plugin">Enable HTTP Action</label>
+                                    <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Enables agents to make HTTP requests to websites for data retrieval and integration."></i>
+                                </div>
+                                <div class="form-check form-switch mb-2">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="toggle-wait-plugin" name="enable_wait_plugin" {% if settings.enable_wait_plugin %}checked{% endif %}>
+                                    <label class="form-check-label ms-2" for="toggle-wait-plugin">Enable Wait Action</label>
+                                    <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Enables agents to pause execution for specified time periods, useful for delays and timing control in workflows."></i>
+                                </div>
+                                <div class="form-check form-switch mb-2">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="toggle-math-plugin" name="enable_math_plugin" {% if settings.enable_math_plugin %}checked{% endif %}>
+                                    <label class="form-check-label ms-2" for="toggle-math-plugin">Enable Math Action</label>
+                                    <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Enables agents to perform mathematical calculations, solve equations, and handle complex mathematical operations."></i>
+                                </div>
+                                <div class="form-check form-switch mb-2">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="toggle-text-plugin" name="enable_text_plugin" {% if settings.enable_text_plugin %}checked{% endif %}>
+                                    <label class="form-check-label ms-2" for="toggle-text-plugin">Enable Text Action</label>
+                                    <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Enables agents to perform text processing operations like formatting, validation, and manipulation of strings and text content."></i>
+                                </div>
+                                <div class="form-check form-switch mb-2">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="toggle-default-embedding-model-plugin" name="enable_default_embedding_model_plugin" {% if settings.enable_default_embedding_model_plugin %}checked{% endif %}>
+                                    <label class="form-check-label ms-2" for="toggle-default-embedding-model-plugin">Enable Default Embedding Model Action</label>
+                                    <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Enables agents to access and use the default embedding model for text similarity and vector operations."></i>
+                                </div>
+                                <div class="form-check form-switch mb-2">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="toggle-fact-memory-plugin" name="enable_fact_memory_plugin" {% if settings.enable_fact_memory_plugin %}checked{% endif %}>
+                                    <label class="form-check-label ms-2" for="toggle-fact-memory-plugin">Enable Fact Memory Action</label>
+                                    <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Enables agents to store and retrieve facts and information across conversations for improved memory and context retention."></i>
+                                </div>
+                                <div class="mb-2" id="tabular-processing-toggle-wrapper">
+                                    <div class="d-flex align-items-center">
+                                        <span class="fw-semibold">Tabular Processing Action</span>
+                                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Agents can analyze tabular data files (CSV, XLSX) using pandas for aggregations, filtering, and full dataset operations. This action is automatically enabled whenever Enhanced Citations is enabled."></i>
+                                    </div>
+                                    <small class="text-muted d-block ms-4" id="tabular-processing-dependency-note">Automatically enabled when Enhanced Citations is enabled</small>
+                                </div>
+                            </div>
+                            <table class="table table-bordered" id="plugins-table">
+                                <thead>
+                                    <tr>
+                                        <th>Display Name</th>
+                                        <th>Description</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="admin-plugins-table-body"></tbody>
+                            </table>
+                        </div>
+                    {% endif %}
+                </div>
+            </div>

@@ -386,7 +386,7 @@ class AzureMapsOpenLayersPlugin(BasePlugin):
             }
         except Exception as exc:
             log_event(
-                f"[AzureMapsPlugin] Failed to build Azure Maps visualization: {exc}",
+                f"[AZURE_MAPS_PLUGIN] Failed to build Azure Maps visualization: {exc}",
                 level=logging.ERROR,
                 exceptionTraceback=True,
             )

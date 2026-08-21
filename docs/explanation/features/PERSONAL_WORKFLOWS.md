@@ -1,7 +1,7 @@
 # Personal Workflows
 
 Implemented in version: **0.241.024**
-Enhanced in versions: **0.241.029**, **0.241.033**, **0.241.034**, **0.241.035**, **0.241.036**, **0.241.106**, **0.241.179**, **0.241.193**, **0.241.194**
+Enhanced in versions: **0.241.029**, **0.241.033**, **0.241.034**, **0.241.035**, **0.241.036**, **0.241.106**, **0.241.179**, **0.241.193**, **0.241.194**, **0.250.062**
 
 Implemented in version: **0.241.106** for workflow access governance.
 
@@ -11,11 +11,13 @@ Personal Workflows add an optional workspace capability that lets a user save re
 
 Fixed/Implemented in version: **0.241.193** for configurable workflow agent action limits.
 Enhanced in version: **0.241.194** with admin capacity guidance for high action limits.
+Fixed/Implemented in version: **0.250.062** for active workflow cancellation.
 
 Related version updates:
 - `application/single_app/config.py` reported version `0.241.106` for workflow access governance.
 - `application/single_app/config.py` reported version `0.241.193` for workflow action limit configuration.
 - `application/single_app/config.py` now reports version `0.241.194` for workflow action limit capacity guidance.
+- `application/single_app/config.py` now reports version `0.250.062` for active workflow cancellation.
 
 Dependencies:
 - `application/single_app/functions_personal_workflows.py`
@@ -59,6 +61,7 @@ Configuration options:
 - Scheduled workflows can be paused without deleting the workflow definition.
 - Users can assign a workflow alert priority of `high`, `medium`, `low`, or `none` for global pop-up notifications after each run.
 - Users can create, edit, delete, manually run, and inspect run history from the workspace tab.
+- Active runs expose `Cancel` controls in the workspace row or card, run history, and workflow activity view. Cancellation is persisted against the active run ID and the workflow returns to idle after the runner records terminal `cancelled` state.
 
 File structure:
 - Backend storage and validation: `application/single_app/functions_personal_workflows.py`
@@ -87,9 +90,11 @@ User workflow:
 6. Choose a workflow alert priority when you want the run to generate a global pop-up alert modal.
 7. Choose `Manual` or `Interval Schedule` and configure the interval when needed.
 8. Save the workflow and use `Run` to trigger it immediately or let the scheduler pick it up.
+9. Use `Cancel` while a run is active to stop it. The runner stops before starting further File Sync sources, URL access, document analysis, model or agent calls, artifacts, notifications, or other downstream work. An already in-flight external call is allowed to return before cancellation is finalized.
 
 Integration points:
 - Manual runs call `POST /api/user/workflows/<workflow_id>/run`.
+- Cancelling the active run calls `POST /api/user/workflows/<workflow_id>/cancel`; a run opened from history or activity can be cancelled through `POST /api/user/workflows/<workflow_id>/runs/<run_id>/cancel`.
 - Run history is read from `GET /api/user/workflows/<workflow_id>/runs`.
 - Scheduler execution uses the same runner path as manual execution.
 
@@ -99,11 +104,13 @@ Functional coverage:
 - `functional_tests/test_personal_workflows_feature.py` verifies backend wiring, scheduler integration, workspace UI references, and admin toggle presence.
 - `functional_tests/test_workflow_access_controls.py` verifies workflow defaults, role helpers, route decorators, UI gating snippets, app role deployment definitions, and documentation.
 - `functional_tests/test_workflow_auto_invoke_attempt_settings.py` verifies workflow action limit defaults, admin save wiring, Semantic Kernel loader wiring, and workflow runner scoping.
+- `functional_tests/test_workflow_cancellation.py` verifies cancellation persistence, run ownership checks, personal and group item transitions, runner terminal state, scheduler wiring, and activity contracts.
 
 UI coverage:
 - `ui_tests/test_workspace_workflows_tab.py` validates desktop and mobile rendering, workflow history modal behavior, and new workflow submission from the workspace modal.
 - `ui_tests/test_workflow_priority_alert_modal.py` validates the global workflow alert modal and mark-read flow.
 - `ui_tests/test_admin_workflow_settings_access.py` validates the Admin Settings workflow action limit control.
+- `ui_tests/test_workflow_cancellation_controls.py` executes the shared workflow and activity modules against personal and group scoped APIs to validate active-run cancellation controls.
 
 Performance and limitations:
 - Group workflow support is available separately through the `Group Workflows` feature.

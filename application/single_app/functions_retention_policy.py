@@ -6,11 +6,12 @@ Retention Policy Management
 This module handles automated deletion of aged conversations and documents
 based on configurable retention policies for personal, group, and public workspaces.
 
-Version: 0.237.005
+Version: 0.250.103
 Implemented in: 0.234.067
 Updated in: 0.236.012 - Fixed race condition handling for NotFound errors during deletion
 Updated in: 0.237.004 - Fixed critical bug where conversations with null/undefined last_activity_at were deleted regardless of age
 Updated in: 0.237.005 - Fixed field name: use last_updated (actual field) instead of last_activity_at (non-existent)
+Updated in: 0.250.103 - Applied retention by conversation ownership across current, legacy, and collaboration stores
 """
 
 from config import *
@@ -20,10 +21,18 @@ from functions_public_workspaces import get_user_public_workspaces, cosmos_publi
 from functions_documents import delete_document, delete_document_chunks
 from functions_simplechat_operations import delete_blob_backed_chat_message_files
 from functions_activity_logging import log_conversation_deletion, log_conversation_archival
+from functions_collaboration import delete_collaboration_conversation_for_retention
+from functions_conversation_cache import invalidate_conversation_cache_for_item
 from functions_notifications import create_notification, create_group_notification, create_public_workspace_notification
+from functions_thoughts import archive_thoughts_for_conversation, delete_thoughts_for_conversation
 from functions_debug import debug_print
 from functions_appinsights import log_event
 from datetime import datetime, timezone, timedelta
+
+
+GROUP_SINGLE_USER_CHAT_TYPES = {'group', 'group-single-user', 'group_single_user'}
+PERSONAL_MULTI_USER_CHAT_TYPE = 'personal_multi_user'
+GROUP_MULTI_USER_CHAT_TYPE = 'group_multi_user'
 
 
 def get_all_user_settings():
@@ -125,6 +134,351 @@ def resolve_retention_value(value, workspace_type, retention_type, settings=None
         return int(value)
     except (ValueError, TypeError):
         return 'none'
+
+
+def _parse_retention_timestamp(value):
+    """Return a timezone-aware activity timestamp or None when the value is invalid."""
+    if not isinstance(value, str) or not value.strip():
+        return None
+
+    normalized_value = value.strip()
+    if normalized_value.endswith('Z'):
+        normalized_value = f"{normalized_value[:-1]}+00:00"
+
+    try:
+        parsed_value = datetime.fromisoformat(normalized_value)
+    except ValueError:
+        return None
+
+    if parsed_value.tzinfo is None:
+        return parsed_value.replace(tzinfo=timezone.utc)
+    return parsed_value.astimezone(timezone.utc)
+
+
+def _get_primary_group_id(conversation_item):
+    """Return the group that governs a single-user conversation."""
+    for context_item in list((conversation_item or {}).get('context', []) or []):
+        if not isinstance(context_item, dict):
+            continue
+        if context_item.get('type') != 'primary' or context_item.get('scope') != 'group':
+            continue
+        return str(context_item.get('id') or '').strip()
+    return str((conversation_item or {}).get('group_id') or '').strip()
+
+
+def _is_group_single_user_conversation(conversation_item):
+    chat_type = str((conversation_item or {}).get('chat_type') or '').strip().lower()
+    return chat_type in GROUP_SINGLE_USER_CHAT_TYPES or bool(_get_primary_group_id(conversation_item))
+
+
+def _is_converted_conversation_source(conversation_item):
+    return bool(str((conversation_item or {}).get('collaboration_conversation_id') or '').strip())
+
+
+def _is_aged_conversation(conversation_item, timestamp_field, cutoff_date):
+    activity_at = _parse_retention_timestamp((conversation_item or {}).get(timestamp_field))
+    return activity_at is not None and activity_at < cutoff_date
+
+
+def _build_group_scope_query(timestamp_field):
+    return f"""
+        SELECT * FROM c
+        WHERE (
+            c.group_id = @scope_id
+            OR (
+                IS_ARRAY(c.context)
+                AND EXISTS(
+                SELECT VALUE context_item
+                FROM context_item IN c.context
+                WHERE context_item.type = 'primary'
+                AND context_item.scope = 'group'
+                AND context_item.id = @scope_id
+                )
+            )
+        )
+        AND IS_DEFINED(c.{timestamp_field})
+        AND IS_STRING(c.{timestamp_field})
+        AND c.{timestamp_field} < @cutoff_date
+    """
+
+
+def _build_conversation_retention_sources(
+    workspace_type,
+    cutoff_iso,
+    user_id=None,
+    group_id=None,
+    public_workspace_id=None,
+):
+    """Describe the backing stores governed by a workspace retention policy."""
+    if workspace_type == 'personal':
+        return [
+            {
+                'name': 'personal_single_user',
+                'container': cosmos_conversations_container,
+                'messages_container': cosmos_messages_container,
+                'timestamp_field': 'last_updated',
+                'query': """
+                    SELECT * FROM c
+                    WHERE c.user_id = @scope_id
+                    AND IS_DEFINED(c.last_updated)
+                    AND IS_STRING(c.last_updated)
+                    AND c.last_updated < @cutoff_date
+                """,
+                'parameters': [
+                    {'name': '@scope_id', 'value': user_id},
+                    {'name': '@cutoff_date', 'value': cutoff_iso},
+                ],
+                'matches_scope': lambda item: (
+                    not _is_group_single_user_conversation(item)
+                    and not _is_converted_conversation_source(item)
+                ),
+            },
+            {
+                'name': PERSONAL_MULTI_USER_CHAT_TYPE,
+                'container': cosmos_collaboration_conversations_container,
+                'timestamp_field': 'updated_at',
+                'query': """
+                    SELECT * FROM c
+                    WHERE c.chat_type = @chat_type
+                    AND c.created_by_user_id = @scope_id
+                    AND IS_DEFINED(c.updated_at)
+                    AND IS_STRING(c.updated_at)
+                    AND c.updated_at < @cutoff_date
+                """,
+                'parameters': [
+                    {'name': '@chat_type', 'value': PERSONAL_MULTI_USER_CHAT_TYPE},
+                    {'name': '@scope_id', 'value': user_id},
+                    {'name': '@cutoff_date', 'value': cutoff_iso},
+                ],
+                'matches_scope': lambda item: (
+                    item.get('chat_type') == PERSONAL_MULTI_USER_CHAT_TYPE
+                    and item.get('created_by_user_id') == user_id
+                ),
+                'collaboration': True,
+            },
+        ]
+
+    if workspace_type == 'group':
+        group_parameters = [
+            {'name': '@scope_id', 'value': group_id},
+            {'name': '@cutoff_date', 'value': cutoff_iso},
+        ]
+        return [
+            {
+                'name': 'legacy_group',
+                'container': cosmos_group_conversations_container,
+                'messages_container': cosmos_group_messages_container,
+                'timestamp_field': 'last_updated',
+                'query': _build_group_scope_query('last_updated'),
+                'parameters': group_parameters,
+                'matches_scope': lambda item: (
+                    _get_primary_group_id(item) == group_id
+                    and not _is_converted_conversation_source(item)
+                ),
+            },
+            {
+                'name': 'group_single_user',
+                'container': cosmos_conversations_container,
+                'messages_container': cosmos_messages_container,
+                'timestamp_field': 'last_updated',
+                'query': _build_group_scope_query('last_updated'),
+                'parameters': group_parameters,
+                'matches_scope': lambda item: (
+                    _is_group_single_user_conversation(item)
+                    and _get_primary_group_id(item) == group_id
+                    and not _is_converted_conversation_source(item)
+                ),
+            },
+            {
+                'name': GROUP_MULTI_USER_CHAT_TYPE,
+                'container': cosmos_collaboration_conversations_container,
+                'timestamp_field': 'updated_at',
+                'query': """
+                    SELECT * FROM c
+                    WHERE c.chat_type = @chat_type
+                    AND c.scope.group_id = @scope_id
+                    AND IS_DEFINED(c.updated_at)
+                    AND IS_STRING(c.updated_at)
+                    AND c.updated_at < @cutoff_date
+                """,
+                'parameters': [
+                    {'name': '@chat_type', 'value': GROUP_MULTI_USER_CHAT_TYPE},
+                    {'name': '@scope_id', 'value': group_id},
+                    {'name': '@cutoff_date', 'value': cutoff_iso},
+                ],
+                'matches_scope': lambda item: (
+                    item.get('chat_type') == GROUP_MULTI_USER_CHAT_TYPE
+                    and str((item.get('scope') or {}).get('group_id') or '').strip() == group_id
+                ),
+                'collaboration': True,
+            },
+        ]
+
+    return [
+        {
+            'name': 'public',
+            'container': cosmos_public_conversations_container,
+            'messages_container': cosmos_public_messages_container,
+            'timestamp_field': 'last_updated',
+            'query': """
+                SELECT * FROM c
+                WHERE c.public_workspace_id = @scope_id
+                AND IS_DEFINED(c.last_updated)
+                AND IS_STRING(c.last_updated)
+                AND c.last_updated < @cutoff_date
+            """,
+            'parameters': [
+                {'name': '@scope_id', 'value': public_workspace_id},
+                {'name': '@cutoff_date', 'value': cutoff_iso},
+            ],
+            'matches_scope': lambda item: item.get('public_workspace_id') == public_workspace_id,
+        },
+    ]
+
+
+def _delete_standard_conversation_for_retention(
+    conversation_item,
+    source,
+    workspace_type,
+    archiving_enabled,
+    cutoff_date,
+):
+    """Archive and delete a non-collaboration conversation and its dependent records."""
+    conversation_id = conversation_item.get('id')
+    conversation_title = conversation_item.get('title', 'Untitled')
+    container = source['container']
+    messages_container = source['messages_container']
+
+    selected_conversation_item = conversation_item
+    try:
+        live_conversation_item = container.read_item(
+            item=conversation_id,
+            partition_key=conversation_id,
+        )
+    except CosmosResourceNotFoundError:
+        return {
+            'id': conversation_id,
+            'title': conversation_title,
+            source['timestamp_field']: selected_conversation_item.get(
+                source['timestamp_field']
+            ),
+            'already_deleted': True,
+        }
+
+    if (
+        not source['matches_scope'](live_conversation_item)
+        or not _is_aged_conversation(
+            live_conversation_item,
+            source['timestamp_field'],
+            cutoff_date,
+        )
+    ):
+        return None
+
+    if (
+        live_conversation_item.get(source['timestamp_field'])
+        != selected_conversation_item.get(source['timestamp_field'])
+    ):
+        return None
+
+    conversation_item = live_conversation_item
+
+    if archiving_enabled:
+        archived_item = dict(conversation_item)
+        archived_item['archived_at'] = datetime.now(timezone.utc).isoformat()
+        archived_item['archived_by_retention_policy'] = True
+        archived_item['retention_source'] = source['name']
+        cosmos_archived_conversations_container.upsert_item(archived_item)
+
+        log_conversation_archival(
+            user_id=conversation_item.get('user_id'),
+            conversation_id=conversation_id,
+            title=conversation_title,
+            workspace_type=workspace_type,
+            context=conversation_item.get('context', []),
+            tags=conversation_item.get('tags', []),
+            group_id=_get_primary_group_id(conversation_item) or None,
+            public_workspace_id=conversation_item.get('public_workspace_id'),
+            additional_context={'deletion_reason': 'retention_policy'},
+        )
+
+    messages = list(messages_container.query_items(
+        query='SELECT * FROM c WHERE c.conversation_id = @conversation_id',
+        parameters=[{'name': '@conversation_id', 'value': conversation_id}],
+        partition_key=conversation_id,
+    ))
+
+    if not archiving_enabled:
+        delete_blob_backed_chat_message_files(messages, raise_on_error=True)
+
+    for message_item in messages:
+        if archiving_enabled:
+            archived_message = dict(message_item)
+            archived_message['archived_at'] = datetime.now(timezone.utc).isoformat()
+            archived_message['archived_by_retention_policy'] = True
+            archived_message['retention_source'] = source['name']
+            cosmos_archived_messages_container.upsert_item(archived_message)
+
+        try:
+            messages_container.delete_item(
+                item=message_item.get('id'),
+                partition_key=conversation_id,
+            )
+        except CosmosResourceNotFoundError:
+            debug_print(
+                f"[RETENTION_POLICY] Message {message_item.get('id')} was already deleted"
+            )
+
+    thought_user_id = conversation_item.get('user_id')
+    if archiving_enabled:
+        archive_thoughts_for_conversation(
+            conversation_id,
+            thought_user_id,
+            raise_on_error=True,
+        )
+    else:
+        delete_thoughts_for_conversation(
+            conversation_id,
+            thought_user_id,
+            raise_on_error=True,
+        )
+
+    log_conversation_deletion(
+        user_id=conversation_item.get('user_id'),
+        conversation_id=conversation_id,
+        title=conversation_title,
+        workspace_type=workspace_type,
+        context=conversation_item.get('context', []),
+        tags=conversation_item.get('tags', []),
+        is_archived=archiving_enabled,
+        is_bulk_operation=True,
+        group_id=_get_primary_group_id(conversation_item) or None,
+        public_workspace_id=conversation_item.get('public_workspace_id'),
+        additional_context={
+            'deletion_reason': 'retention_policy',
+            'retention_source': source['name'],
+        },
+    )
+
+    try:
+        container.delete_item(
+            item=conversation_id,
+            partition_key=conversation_id,
+        )
+    except CosmosResourceNotFoundError:
+        debug_print(
+            f"[RETENTION_POLICY] Conversation {conversation_id} was already deleted"
+        )
+
+    invalidate_conversation_cache_for_item(
+        conversation_item,
+        reason='retention_policy_deleted',
+    )
+    return {
+        'id': conversation_id,
+        'title': conversation_title,
+        source['timestamp_field']: conversation_item.get(source['timestamp_field']),
+    }
 
 
 def execute_retention_policy(workspace_scopes=None, manual_execution=False):
@@ -489,7 +843,7 @@ def process_public_retention():
 
 def delete_aged_conversations(retention_days, workspace_type='personal', user_id=None, group_id=None, public_workspace_id=None):
     """
-    Delete conversations that exceed the retention period based on last_updated.
+    Delete conversations governed by a workspace policy across all backing stores.
     
     Args:
         retention_days (int): Number of days to retain conversations
@@ -503,171 +857,108 @@ def delete_aged_conversations(retention_days, workspace_type='personal', user_id
     """
     settings = get_settings()
     archiving_enabled = settings.get('enable_conversation_archiving', False)
-    
-    # Determine which container to use
-    if workspace_type == 'group':
-        container = cosmos_group_conversations_container
-        partition_field = 'group_id'
-        partition_value = group_id
-    elif workspace_type == 'public':
-        container = cosmos_public_conversations_container
-        partition_field = 'public_workspace_id'
-        partition_value = public_workspace_id
-    else:
-        container = cosmos_conversations_container
-        partition_field = 'user_id'
-        partition_value = user_id
-    
-    # Calculate cutoff date
     cutoff_date = datetime.now(timezone.utc) - timedelta(days=retention_days)
     cutoff_iso = cutoff_date.isoformat()
-    
-    # Query for aged conversations
-    # ONLY delete conversations that have a valid last_updated that is older than the cutoff
-    # Conversations with null/undefined last_updated should be SKIPPED (not deleted)
-    # This prevents accidentally deleting new conversations that haven't had their timestamp set
-    query = f"""
-        SELECT c.id, c.title, c.last_updated, c.{partition_field}
-        FROM c
-        WHERE c.{partition_field} = @partition_value
-        AND IS_DEFINED(c.last_updated) 
-        AND NOT IS_NULL(c.last_updated)
-        AND c.last_updated < @cutoff_date
-    """
-    
-    parameters = [
-        {"name": "@partition_value", "value": partition_value},
-        {"name": "@cutoff_date", "value": cutoff_iso}
-    ]
-    
-    debug_print(f"Querying aged conversations: workspace_type={workspace_type}, partition_field={partition_field}, partition_value={partition_value}, cutoff_date={cutoff_iso}, retention_days={retention_days}")
-    
-    try:
-        aged_conversations = list(container.query_items(
-            query=query,
-            parameters=parameters,
-            enable_cross_partition_query=True
-        ))
-        debug_print(f"Found {len(aged_conversations)} aged conversations for {workspace_type} workspace")
-    except Exception as query_error:
-        log_event("delete_aged_conversations_query_error", {"error": str(query_error), "workspace_type": workspace_type, "partition_value": partition_value})
-        debug_print(f"Error querying aged conversations for {workspace_type} (partition_value={partition_value}): {query_error}")
-        return {'count': 0, 'details': []}
-    
     deleted_details = []
-    
-    for conv in aged_conversations:
+    sources = _build_conversation_retention_sources(
+        workspace_type,
+        cutoff_iso,
+        user_id=user_id,
+        group_id=group_id,
+        public_workspace_id=public_workspace_id,
+    )
+
+    for source in sources:
         try:
-            conversation_id = conv.get('id')
-            conversation_title = conv.get('title', 'Untitled')
-            
-            # Read full conversation for archiving/logging
+            candidates = list(source['container'].query_items(
+                query=source['query'],
+                parameters=source['parameters'],
+                enable_cross_partition_query=True,
+            ))
+        except Exception as query_error:
+            log_event(
+                "[RETENTION_POLICY] Conversation query failed",
+                {
+                    'error': str(query_error),
+                    'workspace_type': workspace_type,
+                    'retention_source': source['name'],
+                },
+            )
+            debug_print(
+                f"[RETENTION_POLICY] Failed querying {source['name']}: {query_error}"
+            )
+            continue
+
+        aged_conversations = [
+            candidate
+            for candidate in candidates
+            if source['matches_scope'](candidate)
+            and _is_aged_conversation(
+                candidate,
+                source['timestamp_field'],
+                cutoff_date,
+            )
+        ]
+        debug_print(
+            f"[RETENTION_POLICY] Found {len(aged_conversations)} aged "
+            f"{source['name']} conversations for {workspace_type}"
+        )
+
+        for conversation_item in aged_conversations:
+            conversation_id = conversation_item.get('id', 'unknown')
             try:
-                conversation_item = container.read_item(
-                    item=conversation_id,
-                    partition_key=conversation_id
+                if source.get('collaboration'):
+                    deletion_detail = delete_collaboration_conversation_for_retention(
+                        conversation_item,
+                        workspace_type=workspace_type,
+                        archiving_enabled=archiving_enabled,
+                    )
+                else:
+                    deletion_detail = _delete_standard_conversation_for_retention(
+                        conversation_item,
+                        source,
+                        workspace_type,
+                        archiving_enabled,
+                        cutoff_date,
+                    )
+
+                if deletion_detail is None:
+                    debug_print(
+                        f"[RETENTION_POLICY] Skipped {conversation_id} because it "
+                        "changed after selection"
+                    )
+                    continue
+
+                deleted_details.append(deletion_detail)
+                debug_print(
+                    f"[RETENTION_POLICY] Deleted {source['name']} conversation "
+                    f"{conversation_id}"
                 )
             except CosmosResourceNotFoundError:
-                # Conversation was already deleted (race condition) - this is fine, skip to next
-                debug_print(f"Conversation {conversation_id} already deleted (not found during read), skipping")
+                debug_print(
+                    f"[RETENTION_POLICY] Conversation {conversation_id} was already deleted"
+                )
                 deleted_details.append({
                     'id': conversation_id,
-                    'title': conversation_title,
-                    'last_updated': conv.get('last_updated'),
-                    'already_deleted': True
+                    'title': conversation_item.get('title', 'Untitled'),
+                    source['timestamp_field']: conversation_item.get(source['timestamp_field']),
+                    'already_deleted': True,
                 })
-                continue
-            
-            # Archive if enabled
-            if archiving_enabled:
-                archived_item = dict(conversation_item)
-                archived_item["archived_at"] = datetime.now(timezone.utc).isoformat()
-                archived_item["archived_by_retention_policy"] = True
-                cosmos_archived_conversations_container.upsert_item(archived_item)
-                
-                log_conversation_archival(
-                    user_id=conversation_item.get('user_id'),
-                    conversation_id=conversation_id,
-                    title=conversation_title,
-                    workspace_type=workspace_type,
-                    context=conversation_item.get('context', []),
-                    tags=conversation_item.get('tags', []),
-                    group_id=conversation_item.get('group_id'),
-                    public_workspace_id=conversation_item.get('public_workspace_id')
+            except Exception as deletion_error:
+                log_event(
+                    "[RETENTION_POLICY] Conversation deletion failed",
+                    {
+                        'error': str(deletion_error),
+                        'conversation_id': conversation_id,
+                        'workspace_type': workspace_type,
+                        'retention_source': source['name'],
+                    },
                 )
-            
-            # Delete messages
-            
-            if workspace_type == 'group':
-                messages_container = cosmos_group_messages_container
-            elif workspace_type == 'public':
-                messages_container = cosmos_public_messages_container
-            else:
-                messages_container = cosmos_messages_container
-            
-            message_query = f"SELECT * FROM c WHERE c.conversation_id = @conversation_id"
-            message_params = [{"name": "@conversation_id", "value": conversation_id}]
-            
-            messages = list(messages_container.query_items(
-                query=message_query,
-                parameters=message_params,
-                partition_key=conversation_id
-            ))
+                debug_print(
+                    f"[RETENTION_POLICY] Failed deleting {conversation_id}: "
+                    f"{deletion_error}"
+                )
 
-            if not archiving_enabled and workspace_type == 'personal':
-                delete_blob_backed_chat_message_files(messages)
-            
-            for msg in messages:
-                if archiving_enabled:
-                    archived_msg = dict(msg)
-                    archived_msg["archived_at"] = datetime.now(timezone.utc).isoformat()
-                    archived_msg["archived_by_retention_policy"] = True
-                    cosmos_archived_messages_container.upsert_item(archived_msg)
-                
-                try:
-                    messages_container.delete_item(msg['id'], partition_key=conversation_id)
-                except CosmosResourceNotFoundError:
-                    # Message was already deleted - this is fine, continue
-                    debug_print(f"Message {msg['id']} already deleted (not found), skipping")
-            
-            # Log deletion
-            log_conversation_deletion(
-                user_id=conversation_item.get('user_id'),
-                conversation_id=conversation_id,
-                title=conversation_title,
-                workspace_type=workspace_type,
-                context=conversation_item.get('context', []),
-                tags=conversation_item.get('tags', []),
-                is_archived=archiving_enabled,
-                is_bulk_operation=True,
-                group_id=conversation_item.get('group_id'),
-                public_workspace_id=conversation_item.get('public_workspace_id'),
-                additional_context={'deletion_reason': 'retention_policy'}
-            )
-            
-            # Delete conversation
-            try:
-                container.delete_item(
-                    item=conversation_id,
-                    partition_key=conversation_id
-                )
-            except CosmosResourceNotFoundError:
-                # Conversation was already deleted after we read it (race condition) - this is fine
-                debug_print(f"Conversation {conversation_id} already deleted (not found during delete)")
-            
-            deleted_details.append({
-                'id': conversation_id,
-                'title': conversation_title,
-                'last_updated': conv.get('last_updated')
-            })
-            
-            debug_print(f"Deleted conversation {conversation_id} ({conversation_title}) due to retention policy")
-            
-        except Exception as e:
-            conv_id = conv.get('id', 'unknown') if conv else 'unknown'
-            log_event("delete_aged_conversations_deletion_error", {"error": str(e), "conversation_id": conv_id, "workspace_type": workspace_type})
-            debug_print(f"Error deleting conversation {conv_id}: {e}")
-    
     return {
         'count': len(deleted_details),
         'details': deleted_details
