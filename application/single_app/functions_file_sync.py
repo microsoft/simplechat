@@ -39,8 +39,15 @@ from functions_authentication import get_graph_authority, get_graph_base_url, ge
 from functions_azure_endpoint_validation import (
     AZURE_STORAGE_ENDPOINT_SUFFIXES,
     azure_storage_endpoint_suffix_for_hostname,
+    validate_azure_file_endpoint,
 )
 from functions_debug import debug_print
+from functions_outbound_http import (
+    OutboundHttpPolicyError,
+    normalize_public_https_url,
+    normalize_same_origin_https_url,
+    request_public_https,
+)
 from functions_documents import (
     allowed_file,
     create_document,
@@ -665,11 +672,10 @@ def _normalize_azure_file_url(value: Any) -> Tuple[str, List[str]]:
         raw_url = f"https://{raw_url}"
 
     parsed_url = urlparse(raw_url)
-    if parsed_url.scheme != "https" or not parsed_url.netloc:
-        raise ValueError("Azure Files sources require an HTTPS file service or share URL")
+    account_url = validate_azure_file_endpoint(raw_url)
 
     path_parts = [unquote(path_part) for path_part in parsed_url.path.split("/") if path_part]
-    return f"{parsed_url.scheme}://{parsed_url.netloc}".rstrip("/"), path_parts
+    return account_url, path_parts
 
 
 def _normalize_azure_share_name(value: Any) -> str:
@@ -2618,8 +2624,17 @@ def _onedrive_headers() -> Dict[str, str]:
 
 
 def _graph_get_json(path_or_url: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    url = path_or_url if str(path_or_url or "").startswith("http") else get_graph_endpoint(path_or_url)
-    response = requests.get(url, headers=_onedrive_headers(), params=params, timeout=30)
+    raw_url = str(path_or_url or "").strip()
+    candidate_url = raw_url if urlparse(raw_url).scheme else get_graph_endpoint(raw_url)
+    url = normalize_same_origin_https_url(candidate_url, get_graph_base_url())
+    # codeql[py/partial-ssrf]
+    response = requests.get(
+        url,
+        headers=_onedrive_headers(),
+        params=params,
+        timeout=30,
+        allow_redirects=False,
+    )
     if response.status_code >= 400:
         try:
             error_body = response.json()
@@ -2706,7 +2721,7 @@ def _iter_onedrive_children(source: Dict[str, Any], item_id: Optional[str] = Non
     next_url = _onedrive_children_path(source, item_id=item_id, selected_path=selected_path)
     items = []
     while next_url and len(items) < max_items:
-        payload = _graph_get_json(next_url, params=params if not str(next_url).startswith("http") else None)
+        payload = _graph_get_json(next_url, params=params if not urlparse(str(next_url)).scheme else None)
         items.extend(payload.get("value") or [])
         next_url = payload.get("@odata.nextLink")
     return items[:max_items]
@@ -2802,7 +2817,26 @@ def _stage_onedrive_file(source: Dict[str, Any], remote_file: Dict[str, Any]) ->
     temp_dir = "/sc-temp-files" if os.path.exists("/sc-temp-files") else None
     sha256_hash = hashlib.sha256()
     download_url = get_graph_endpoint(_onedrive_user_path(source, f"/drive/items/{quote(item_id, safe='')}/content"))
-    response = requests.get(download_url, headers={"Authorization": f"Bearer {_get_graph_app_token()}"}, stream=True, timeout=120, allow_redirects=True)
+    response = requests.get(
+        download_url,
+        headers={"Authorization": f"Bearer {_get_graph_app_token()}"},
+        stream=True,
+        timeout=120,
+        allow_redirects=False,
+    )
+    if response.status_code in {301, 302, 303, 307, 308}:
+        redirect_location = str(response.headers.get("Location") or "").strip()
+        response.close()
+        try:
+            safe_download_url = normalize_public_https_url(redirect_location)
+            response = request_public_https(
+                "GET",
+                safe_download_url,
+                stream=True,
+                timeout=120,
+            )
+        except OutboundHttpPolicyError as error:
+            raise ValueError("OneDrive returned an unsafe file download location") from error
     if response.status_code >= 400:
         raise ValueError(f"OneDrive file download failed with {response.status_code}")
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix, dir=temp_dir) as temp_file:
@@ -2832,6 +2866,7 @@ def _get_azure_files_service_client(source: Dict[str, Any]):
     account_url = connection.get("account_url") or ""
     if not account_url:
         raise ValueError("Azure Files source is missing an account URL")
+    safe_account_url = validate_azure_file_endpoint(account_url)
     if auth_type == "client_secret":
         client_id = auth.get("identity") or ""
         client_secret = _resolved_auth_secret(auth)
@@ -2847,7 +2882,8 @@ def _get_azure_files_service_client(source: Dict[str, Any]):
         credential = DefaultAzureCredential(managed_identity_client_id=auth.get("managed_identity_client_id") or None)
     else:
         raise ValueError("Azure Files sources require managed identity, service principal, or connection string authentication")
-    return ShareServiceClient(account_url=account_url, credential=credential)
+    # codeql[py/partial-ssrf]
+    return ShareServiceClient(account_url=safe_account_url, credential=credential)
 
 
 def _get_azure_files_share_client(source: Dict[str, Any]):

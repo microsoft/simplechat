@@ -2,13 +2,14 @@
 # test_file_sync_onedrive_personal.py
 """
 Functional test for personal OneDrive File Sync support.
-Version: 0.250.072
+Version: 0.260.029
 Implemented in: 0.241.128
 Updated in: 0.250.067
 Updated in: 0.250.068
 Updated in: 0.250.069
 Updated in: 0.250.070
 Updated in: 0.250.072
+Updated in: 0.260.029
 
 This test ensures OneDrive sync source code remains wired as personal-only File
 Sync support while the admin source-type control keeps OneDrive marked as coming
@@ -49,7 +50,7 @@ def test_version_and_source_defaults():
     settings_text = read_text("application/single_app/functions_settings.py")
     file_sync_text = read_text("application/single_app/functions_file_sync.py")
 
-    assert_app_version_at_least("0.250.072")
+    assert_app_version_at_least("0.260.029")
     assert "FILE_SYNC_SOURCE_TYPE_ONEDRIVE = \"onedrive\"" in file_sync_text
     assert "FILE_SYNC_SOURCE_TYPE_ONEDRIVE" in file_sync_text
     assert "FILE_SYNC_SOURCE_TYPE_ONEDRIVE: {\"client_secret\"}" in file_sync_text
@@ -85,7 +86,13 @@ def test_onedrive_backend_provider_wiring():
     assert "remote_change_token" in file_sync_text
     assert "selected_paths" in file_sync_text
     assert "onedrive://" in file_sync_text
-    assert "requests.get(download_url" in file_sync_text
+    assert "response = requests.get(" in file_sync_text
+    assert "download_url," in file_sync_text
+    assert "normalize_same_origin_https_url(candidate_url, get_graph_base_url())" in file_sync_text
+    assert "allow_redirects=False" in file_sync_text
+    assert 'headers={"Authorization": f"Bearer {_get_graph_app_token()}"}' in file_sync_text
+    assert "safe_download_url = normalize_public_https_url(redirect_location)" in file_sync_text
+    assert 'request_public_https(\n                "GET",\n                safe_download_url' in file_sync_text
 
 
 def test_global_connector_identity_supports_cloud_drive_sync():

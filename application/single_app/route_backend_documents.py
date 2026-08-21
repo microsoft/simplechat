@@ -1,5 +1,7 @@
 # route_backend_documents.py
 
+from urllib.parse import quote
+
 from config import *
 from functions_authentication import *
 from functions_documents import *
@@ -2162,7 +2164,7 @@ def register_route_backend_documents(bp):
                         approval_status = entry.get('approval_status', 'unknown')
                         try:
                             # Get user details from Microsoft Graph
-                            graph_url = get_graph_endpoint(f"/users/{oid}")
+                            graph_url = get_graph_endpoint(f"/users/{quote(str(oid), safe='')}")
                             response = requests.get(graph_url, headers=headers)
                             
                             if response.status_code == 200:

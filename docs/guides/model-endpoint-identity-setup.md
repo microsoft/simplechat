@@ -94,6 +94,11 @@ The modal provider decides which discovery API and token scope Simple Chat uses.
 | `Foundry (classic)` | Existing classic Foundry project agents and model deployments | `https://<foundry-resource>.services.ai.azure.com/api/projects/<project>` or the project base endpoint plus **Foundry Project Name** | The Foundry project when the portal exposes project-scoped access, otherwise the backing Foundry resource/account |
 | `New Foundry` | Application-based Foundry runtime, New Foundry agents, and OpenAI-compatible project model deployments | The same Foundry project endpoint shape used by the New Foundry project | The Foundry project when the portal exposes project-scoped access, otherwise the backing Foundry resource/account |
 
+Foundry discovery accepts only canonical HTTPS `services.ai.azure.*` resource hosts and an optional
+`/api/projects/<project>` path. SimpleChat validates this destination immediately before attaching a
+managed-identity or service-principal token, including requests made from personal and group endpoint
+configuration screens.
+
 For APIM, choose the provider that matches the backend service and select API key authentication when APIM expects a subscription key or other shared key. API key authentication can run inference, but it cannot use **Fetch Models** for Azure OpenAI ARM discovery or Foundry project discovery.
 
 ## Choose API Versions

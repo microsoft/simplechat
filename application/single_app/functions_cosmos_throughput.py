@@ -838,6 +838,24 @@ def _get_arm_resource_kind(resource_path):
     return 'unknown'
 
 
+def _validate_arm_resource_path(resource_path):
+    """Return a relative Cosmos ARM path that cannot alter the configured ARM origin."""
+    normalized_path = str(resource_path or '').strip()
+    parsed_path = urlparse(normalized_path)
+    if (
+        not normalized_path.startswith('/subscriptions/')
+        or parsed_path.scheme
+        or parsed_path.netloc
+        or parsed_path.params
+        or parsed_path.query
+        or parsed_path.fragment
+        or '\\' in normalized_path
+        or any(character in normalized_path for character in ('\r', '\n'))
+    ):
+        raise CosmosThroughputError('Invalid Cosmos ARM resource path.')
+    return normalized_path
+
+
 def _build_arm_request_context(refresh_id='', resource_kind='unknown'):
     credential_start = time.perf_counter()
     _log_refresh_event(
@@ -862,7 +880,8 @@ def _build_arm_request_context(refresh_id='', resource_kind='unknown'):
 
 def _arm_request(method, resource_path, payload=None, refresh_id='', request_context=None):
     request_start = time.perf_counter()
-    resource_kind = _get_arm_resource_kind(resource_path)
+    safe_resource_path = _validate_arm_resource_path(resource_path)
+    resource_kind = _get_arm_resource_kind(safe_resource_path)
 
     _log_refresh_event(
         '[CosmosThroughput] ARM request starting.',
@@ -873,9 +892,9 @@ def _arm_request(method, resource_path, payload=None, refresh_id='', request_con
     request_context = request_context or _build_arm_request_context(refresh_id=refresh_id, resource_kind=resource_kind)
     credential_elapsed_ms = request_context.get('credential_elapsed_ms', 0)
 
-    separator = '&' if '?' in resource_path else '?'
+    separator = '&' if '?' in safe_resource_path else '?'
     request_url = (
-        f"{request_context['resource_manager_endpoint']}{resource_path}"
+        f"{request_context['resource_manager_endpoint']}{safe_resource_path}"
         f"{separator}api-version={COSMOS_THROUGHPUT_ARM_API_VERSION}"
     )
 
@@ -885,6 +904,8 @@ def _arm_request(method, resource_path, payload=None, refresh_id='', request_con
         extra={'method': method, 'resource_kind': resource_kind},
     )
     try:
+        # The ARM origin is deployment-controlled and the resource path is relative and encoded.
+        # codeql[py/partial-ssrf]
         response = requests.request(
             method,
             request_url,
@@ -894,6 +915,7 @@ def _arm_request(method, resource_path, payload=None, refresh_id='', request_con
             },
             json=payload,
             timeout=30,
+            allow_redirects=False,
         )
     except Exception as exc:
         _log_refresh_event(

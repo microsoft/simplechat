@@ -20,6 +20,7 @@ from typing import Any, Dict, List, Optional
 import requests
 
 from functions_appinsights import log_event
+from functions_azure_endpoint_validation import validate_azure_maps_endpoint
 from functions_azure_maps import (
     AZURE_MAPS_DEFAULT_ENDPOINT,
     AZURE_MAPS_DEFAULT_LANGUAGE,
@@ -28,6 +29,7 @@ from functions_azure_maps import (
     AZURE_MAPS_TILE_API_VERSION,
 )
 from functions_mcp_operations import MCP_CUSTOM_HEADERS_FIELD
+from functions_outbound_http import OutboundHttpPolicyError, request_public_https
 
 ACTION_CONNECTION_TEST_MAX_TIMEOUT_SECONDS = 20
 ACTION_CONNECTION_TEST_MIN_TIMEOUT_SECONDS = 1
@@ -228,15 +230,15 @@ def test_openapi_connection(manifest: Dict[str, Any]) -> Dict[str, Any]:
 
     probe = _build_openapi_probe_request(manifest)
     try:
-        response = requests.get(
+        response = request_public_https(
+            "GET",
             base_url,
             headers=probe["headers"],
             params=probe["params"] or None,
             auth=probe["basic_auth"],
             timeout=timeout,
-            allow_redirects=True,
         )
-    except requests.RequestException as exc:
+    except (requests.RequestException, OutboundHttpPolicyError) as exc:
         result = build_failure_result(
             f"The API base URL could not be reached: {sanitize_connection_error(exc, manifest)}",
             status=502,
@@ -271,12 +273,17 @@ def test_azure_maps_connection(manifest: Dict[str, Any]) -> Dict[str, Any]:
     """Validate an Azure Maps action by fetching a single base road tile."""
     auth = manifest.get("auth") if isinstance(manifest.get("auth"), dict) else {}
     subscription_key = str(auth.get("key") or "").strip()
-    endpoint = str(manifest.get("endpoint") or AZURE_MAPS_DEFAULT_ENDPOINT).strip().rstrip("/")
+    raw_endpoint = str(manifest.get("endpoint") or AZURE_MAPS_DEFAULT_ENDPOINT).strip()
 
     if not subscription_key:
         return build_failure_result("An Azure Maps subscription key is required before testing this action.")
+    try:
+        endpoint = validate_azure_maps_endpoint(raw_endpoint)
+    except ValueError as exc:
+        return build_failure_result(str(exc))
 
     try:
+        # codeql[py/partial-ssrf]
         response = requests.get(
             f"{endpoint}/map/tile",
             params={
@@ -291,6 +298,7 @@ def test_azure_maps_connection(manifest: Dict[str, Any]) -> Dict[str, Any]:
                 "subscription-key": subscription_key,
             },
             timeout=ACTION_CONNECTION_TEST_DEFAULT_TIMEOUT_SECONDS,
+            allow_redirects=False,
         )
     except requests.RequestException as exc:
         result = build_failure_result(

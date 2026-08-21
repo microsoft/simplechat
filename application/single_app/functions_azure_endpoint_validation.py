@@ -15,7 +15,7 @@ and File Sync can all import it without creating import cycles.
 import ipaddress
 import re
 from typing import Any, Iterable, Tuple
-from urllib.parse import ParseResult, urlparse
+from urllib.parse import ParseResult, quote, unquote, urlparse
 
 # Azure Storage service suffixes for the public, US Government, China, and Germany clouds.
 AZURE_STORAGE_ENDPOINT_SUFFIXES = (
@@ -47,6 +47,17 @@ AZURE_ENTRA_AUTHORITY_HOSTS = (
     "login.chinacloudapi.cn",
     "login.microsoftonline.de",
 )
+AZURE_FOUNDRY_ENDPOINT_SUFFIXES = (
+    "services.ai.azure.com",
+    "services.ai.azure.us",
+    "services.ai.azure.cn",
+    "services.ai.azure.de",
+)
+AZURE_MAPS_ENDPOINT_HOSTS = (
+    "atlas.microsoft.com",
+    "atlas.azure.us",
+    "atlas.azure.cn",
+)
 
 AZURE_BLOB_SERVICE_LABEL = "blob"
 AZURE_QUEUE_SERVICE_LABEL = "queue"
@@ -58,6 +69,8 @@ DNS_LABEL_PATTERN = re.compile(r"^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$")
 DNS_NAME_PATTERN = re.compile(
     r"^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$"
 )
+KEY_VAULT_NAME_PATTERN = re.compile(r"^[a-z][a-z0-9-]{1,22}[a-z0-9]$")
+FOUNDRY_PROJECT_NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._~-]{0,127}$")
 
 AZURE_BLOB_ENDPOINT_ERROR = (
     "Blob Storage actions require an HTTPS Azure Blob service endpoint such as "
@@ -82,6 +95,21 @@ AZURE_MONITOR_QUERY_ENDPOINT_ERROR = (
 AZURE_AUTHORITY_HOST_ERROR = (
     "Log Analytics actions require a supported Microsoft Entra authority host such as "
     "login.microsoftonline.com"
+)
+AZURE_FILE_ENDPOINT_ERROR = (
+    "Azure Files requires an HTTPS Azure File service endpoint such as "
+    "https://account.file.core.windows.net"
+)
+AZURE_FOUNDRY_ENDPOINT_ERROR = (
+    "Foundry requires an HTTPS Azure AI Foundry endpoint such as "
+    "https://resource.services.ai.azure.com"
+)
+AZURE_MAPS_ENDPOINT_ERROR = (
+    "Azure Maps requires a supported HTTPS endpoint such as https://atlas.microsoft.com"
+)
+AZURE_KEY_VAULT_NAME_ERROR = (
+    "Key Vault names must be 3-24 lowercase letters, numbers, or hyphens, start with a letter, "
+    "and end with a letter or number"
 )
 
 
@@ -202,6 +230,11 @@ def validate_azure_queue_endpoint(value: Any) -> str:
     return _validate_storage_endpoint(value, AZURE_QUEUE_SERVICE_LABEL, AZURE_QUEUE_ENDPOINT_ERROR)
 
 
+def validate_azure_file_endpoint(value: Any) -> str:
+    """Return a canonical Azure Files service origin, or raise ValueError."""
+    return _validate_storage_endpoint(value, AZURE_FILE_SERVICE_LABEL, AZURE_FILE_ENDPOINT_ERROR)
+
+
 def validate_azure_cosmos_endpoint(value: Any) -> str:
     """Return a canonical Azure Cosmos DB origin, or raise ValueError."""
     _, hostname = parse_azure_https_endpoint(
@@ -248,3 +281,58 @@ def validate_azure_entra_authority_host(value: Any) -> str:
     if hostname not in AZURE_ENTRA_AUTHORITY_HOSTS:
         raise ValueError(AZURE_AUTHORITY_HOST_ERROR)
     return hostname
+
+
+def validate_azure_foundry_endpoint(value: Any, allow_project_path: bool = False) -> str:
+    """Return a canonical Azure AI Foundry origin or project endpoint."""
+    parsed_url, hostname = parse_azure_https_endpoint(value, AZURE_FOUNDRY_ENDPOINT_ERROR)
+    resource_name, endpoint_suffix = _match_endpoint_suffix(
+        hostname,
+        "",
+        AZURE_FOUNDRY_ENDPOINT_SUFFIXES,
+        AZURE_FOUNDRY_ENDPOINT_ERROR,
+    )
+    if not DNS_LABEL_PATTERN.match(resource_name):
+        raise ValueError(AZURE_FOUNDRY_ENDPOINT_ERROR)
+
+    origin = f"https://{resource_name}.{endpoint_suffix}"
+    path = parsed_url.path.rstrip("/")
+    if not path:
+        return origin
+    if not allow_project_path:
+        raise ValueError(AZURE_FOUNDRY_ENDPOINT_ERROR)
+
+    path_parts = [unquote(part) for part in path.split("/") if part]
+    if (
+        len(path_parts) != 3
+        or path_parts[:2] != ["api", "projects"]
+        or not FOUNDRY_PROJECT_NAME_PATTERN.match(path_parts[2])
+    ):
+        raise ValueError(AZURE_FOUNDRY_ENDPOINT_ERROR)
+    project_name = quote(path_parts[2], safe="-._~")
+    return f"{origin}/api/projects/{project_name}"
+
+
+def validate_azure_content_understanding_endpoint(value: Any) -> str:
+    """Return a canonical Azure AI Foundry origin for Content Understanding."""
+    return validate_azure_foundry_endpoint(value, allow_project_path=False)
+
+
+def validate_azure_maps_endpoint(value: Any) -> str:
+    """Return a supported Azure Maps origin, or raise ValueError."""
+    _, hostname = parse_azure_https_endpoint(value, AZURE_MAPS_ENDPOINT_ERROR)
+    if hostname not in AZURE_MAPS_ENDPOINT_HOSTS:
+        raise ValueError(AZURE_MAPS_ENDPOINT_ERROR)
+    return f"https://{hostname}"
+
+
+def build_azure_key_vault_endpoint(vault_name: Any, endpoint_suffix: Any) -> str:
+    """Build a canonical Key Vault origin from a validated name and trusted cloud suffix."""
+    normalized_name = str(vault_name or "").strip().lower()
+    if not KEY_VAULT_NAME_PATTERN.match(normalized_name):
+        raise ValueError(AZURE_KEY_VAULT_NAME_ERROR)
+
+    normalized_suffix = str(endpoint_suffix or "").strip().lower()
+    if not normalized_suffix.startswith(".") or not DNS_NAME_PATTERN.match(normalized_suffix[1:]):
+        raise ValueError("The configured Key Vault endpoint suffix is invalid")
+    return f"https://{normalized_name}{normalized_suffix}"

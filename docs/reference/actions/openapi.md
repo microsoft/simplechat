@@ -25,6 +25,12 @@ Use OpenAPI when an HTTP API has a maintained OpenAPI spec and users need agents
 - Authentication details: no auth, API key, bearer token, basic auth, OAuth2 access token, or compatible reusable identity.
 - Agents/actions enabled with [`enable_semantic_kernel`]({{ '/admin/agents-actions/' | relative_url }}).
 
+The base URL must use HTTPS on port 443 with a public DNS hostname. SimpleChat rejects IP literals,
+embedded URL credentials, local or private network destinations, and hostnames that resolve to any
+non-public address. Redirects are revalidated and must remain on the original origin so configured
+credentials are never forwarded to another host. APIs reachable only through private DNS or custom
+ports are not supported by this action.
+
 ## Configure the action
 
 1. Choose **OpenAPI**.
@@ -49,6 +55,7 @@ Use OpenAPI when an HTTP API has a maintained OpenAPI spec and users need agents
 | Operation names are hard for the agent to choose | The spec has missing or ambiguous operation IDs. | Improve operation IDs and summaries, then re-upload. |
 | Authentication fails | Wrong auth type, header name, token, or query parameter is configured. | Match modal auth fields to the API security scheme. |
 | Spec upload fails | File is invalid JSON/YAML or too large. | Validate the spec and keep it under the documented upload limit. |
+| Connection is rejected before the API responds | The base URL is not public HTTPS, resolves to a non-public address, or redirects to another origin. | Use the API's canonical public HTTPS origin and keep redirects on that origin. |
 
 ## Related
 

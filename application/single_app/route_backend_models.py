@@ -10,6 +10,7 @@ from functions_keyvault import SecretReturnType, keyvault_model_endpoint_cleanup
 from functions_settings import *
 from foundry_agent_runtime import FoundryAgentUserAuthenticationRequired, list_foundry_agents_from_endpoint, list_foundry_workflows_from_endpoint, list_new_foundry_agents_from_endpoint, resolve_foundry_project_base, resolve_foundry_project_api_version, build_project_credential, resolve_authority
 from functions_appinsights import log_event
+from functions_azure_endpoint_validation import validate_azure_foundry_endpoint
 from model_endpoint_clients import (
     MODEL_ENDPOINT_PROTOCOL_ANTHROPIC,
     MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI,
@@ -332,6 +333,7 @@ def register_route_backend_models(bp):
         }
 
         base = resolve_foundry_project_base(endpoint, project_name)
+        base = validate_azure_foundry_endpoint(base, allow_project_path=True)
         params = {
             "api-version": resolve_foundry_project_api_version(api_version),
             "deploymentType": "ModelDeployment"
@@ -339,7 +341,14 @@ def register_route_backend_models(bp):
         url = f"{base}/deployments"
         log_models_debug(f"Foundry project deployments URL={url}")
 
-        response = requests.get(url, headers=headers, params=params, timeout=30)
+        # codeql[py/partial-ssrf]
+        response = requests.get(
+            url,
+            headers=headers,
+            params=params,
+            timeout=30,
+            allow_redirects=False,
+        )
         response.raise_for_status()
         payload = response.json()
         return payload.get("value", [])

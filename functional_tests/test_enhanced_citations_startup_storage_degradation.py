@@ -2,8 +2,9 @@
 #!/usr/bin/env python3
 """
 Functional test for Enhanced Citations startup storage degradation.
-Version: 0.250.126
+Version: 0.260.029
 Implemented in: 0.250.126
+Updated in: 0.260.029
 
 This test ensures Enhanced Citations storage stays an optional dependency during
 startup and that storage container readiness is handled by feature/admin paths.
@@ -51,9 +52,9 @@ def test_startup_storage_initialization_is_non_blocking():
     startup_source = get_function_source(CONFIG_PATH, "_initialize_enhanced_citations_storage_client")
 
     assert_app_version_at_least(
-        "0.250.126",
+        "0.260.029",
         repo_root=REPO_ROOT,
-        reason="Enhanced Citations startup storage degradation fix requires this version or newer.",
+        reason="Enhanced Citations storage endpoint hardening requires this version or newer.",
     )
     if ".exists(" in startup_source:
         raise AssertionError("Startup initialization must not call container exists().")
@@ -65,6 +66,10 @@ def test_startup_storage_initialization_is_non_blocking():
         raise AssertionError("Startup initialization failures must be surfaced as degraded status.")
     if "except Exception as exc" not in startup_source:
         raise AssertionError("Optional storage client setup must not be able to fail app startup.")
+
+    builder_source = get_function_source(CONFIG_PATH, "build_enhanced_citations_blob_service_client")
+    if "validate_azure_blob_endpoint(blob_endpoint)" not in builder_source:
+        raise AssertionError("Managed identity storage must reject non-Azure Blob endpoints.")
 
     print("Startup initialization is non-blocking for Enhanced Citations storage.")
 

@@ -2,8 +2,9 @@
 # test_action_app_identity_endpoint_hardening.py
 """
 Functional test for action app-identity endpoint hardening.
-Version: 0.260.006
+Version: 0.260.029
 Implemented in: 0.260.006
+Updated in: 0.260.029
 
 Actions can be configured with a caller-supplied endpoint while authenticating with the
 application's own workload identity. This test ensures such endpoints are constrained to
@@ -82,7 +83,7 @@ def test_version_and_definition_contract():
     """Validate the version bump and the blob storage auth type declaration."""
     import json
 
-    assert_app_version_at_least("0.260.006")
+    assert_app_version_at_least("0.260.029")
 
     definition = json.loads(read_text("application/single_app/static/json/schemas/blob_storage.definition.json"))
     allowed = definition["allowedAuthTypes"]
@@ -90,9 +91,10 @@ def test_version_and_definition_contract():
 
 
 def test_blob_and_queue_endpoint_allowlist():
-    """Blob and queue endpoints must be canonical Azure Storage origins."""
+    """Blob, queue, and file endpoints must be canonical Azure Storage origins."""
     from functions_azure_endpoint_validation import (
         validate_azure_blob_endpoint,
+        validate_azure_file_endpoint,
         validate_azure_queue_endpoint,
     )
 
@@ -100,6 +102,7 @@ def test_blob_and_queue_endpoint_allowlist():
     assert validate_azure_blob_endpoint("https://acct.blob.core.usgovcloudapi.net/") == "https://acct.blob.core.usgovcloudapi.net"
     assert validate_azure_blob_endpoint("https://acct.blob.core.chinacloudapi.cn") == "https://acct.blob.core.chinacloudapi.cn"
     assert validate_azure_queue_endpoint("https://acct.queue.core.windows.net") == "https://acct.queue.core.windows.net"
+    assert validate_azure_file_endpoint("https://acct.file.core.windows.net") == "https://acct.file.core.windows.net"
 
     for hostile_endpoint in HOSTILE_ENDPOINTS:
         try:
@@ -112,6 +115,7 @@ def test_blob_and_queue_endpoint_allowlist():
     for mismatched_endpoint, validator in (
         ("https://acct.queue.core.windows.net", validate_azure_blob_endpoint),
         ("https://acct.blob.core.windows.net", validate_azure_queue_endpoint),
+        ("https://acct.blob.core.windows.net", validate_azure_file_endpoint),
     ):
         try:
             validator(mismatched_endpoint)
@@ -155,6 +159,47 @@ def test_cosmos_databricks_and_monitor_endpoint_allowlist():
         except ValueError:
             continue
         raise AssertionError(f"{validator.__name__} should have rejected {hostile_value}")
+
+
+def test_foundry_maps_and_key_vault_endpoint_allowlists():
+    """Credentialed Azure clients must only receive canonical service destinations."""
+    from functions_azure_endpoint_validation import (
+        build_azure_key_vault_endpoint,
+        validate_azure_content_understanding_endpoint,
+        validate_azure_foundry_endpoint,
+        validate_azure_maps_endpoint,
+    )
+
+    assert validate_azure_content_understanding_endpoint(
+        "https://resource.services.ai.azure.com/"
+    ) == "https://resource.services.ai.azure.com"
+    assert validate_azure_foundry_endpoint(
+        "https://resource.services.ai.azure.us/api/projects/project-one/",
+        allow_project_path=True,
+    ) == "https://resource.services.ai.azure.us/api/projects/project-one"
+    assert validate_azure_maps_endpoint("https://atlas.microsoft.com/") == "https://atlas.microsoft.com"
+    assert build_azure_key_vault_endpoint("vault-one", ".vault.azure.net") == "https://vault-one.vault.azure.net"
+
+    rejected_values = (
+        (validate_azure_content_understanding_endpoint, "https://evil.example.com"),
+        (validate_azure_content_understanding_endpoint, "https://resource.services.ai.azure.com/api/projects/p"),
+        (validate_azure_content_understanding_endpoint, "https://resource.services.ai.azure.com.evil.example"),
+        (validate_azure_maps_endpoint, "https://169.254.169.254"),
+        (validate_azure_maps_endpoint, "https://atlas.microsoft.com.evil.example"),
+    )
+    for validator, hostile_value in rejected_values:
+        try:
+            validator(hostile_value)
+        except ValueError:
+            continue
+        raise AssertionError(f"{validator.__name__} should have rejected {hostile_value}")
+
+    for hostile_name in ("evil.example", "vault/path", "vault@evil", "-vault", "vault-"):
+        try:
+            build_azure_key_vault_endpoint(hostile_name, ".vault.azure.net")
+        except ValueError:
+            continue
+        raise AssertionError(f"Key Vault name should have been rejected: {hostile_name}")
 
 
 def test_allowed_auth_types_are_enforced_server_side():
@@ -236,6 +281,14 @@ def test_manifest_validation_rejects_hostile_endpoints():
         {**databricks_manifest, "endpoint": "https://adb-1234567890123456.7.azuredatabricks.net"},
         "databricks",
     )
+
+    maps_manifest = {
+        "name": "maps",
+        "type": "azure_maps_openlayers",
+        "auth": {"type": "key", "key": "fake-key"},
+    }
+    assert not is_valid({**maps_manifest, "endpoint": "https://attacker.invalid"}, "azure_maps_openlayers")
+    assert is_valid({**maps_manifest, "endpoint": "https://atlas.microsoft.com"}, "azure_maps_openlayers")
 
 
 def test_log_analytics_custom_cloud_is_constrained():
@@ -320,6 +373,12 @@ def test_runtime_validation_is_wired_into_credentialed_clients():
     databricks_source = read_text("application/single_app/semantic_kernel_plugins/databricks_plugin.py")
     log_analytics_source = read_text("application/single_app/semantic_kernel_plugins/log_analytics_plugin.py")
     plugin_routes_source = read_text("application/single_app/route_backend_plugins.py")
+    config_source = read_text("application/single_app/config.py")
+    file_sync_source = read_text("application/single_app/functions_file_sync.py")
+    action_tests_source = read_text("application/single_app/functions_action_connection_tests.py")
+    model_routes_source = read_text("application/single_app/route_backend_models.py")
+    settings_routes_source = read_text("application/single_app/route_backend_settings.py")
+    key_vault_source = read_text("application/single_app/functions_keyvault.py")
 
     assert "validate_azure_blob_endpoint" in blob_source
     assert "account_url=self.endpoint" not in blob_source
@@ -333,6 +392,13 @@ def test_runtime_validation_is_wired_into_credentialed_clients():
     assert "authority_host = self.authority_host" not in log_analytics_source
     # The Cosmos test-connection route builds its own client and must validate independently.
     assert "validate_azure_cosmos_endpoint" in plugin_routes_source
+    assert "safe_blob_endpoint = validate_azure_blob_endpoint(blob_endpoint)" in config_source
+    assert "safe_account_url = validate_azure_file_endpoint(account_url)" in file_sync_source
+    assert "endpoint = validate_azure_maps_endpoint(raw_endpoint)" in action_tests_source
+    assert "base = validate_azure_foundry_endpoint(base, allow_project_path=True)" in model_routes_source
+    assert "build_azure_key_vault_endpoint(vault_name, KEY_VAULT_DOMAIN)" in settings_routes_source
+    assert "def _build_key_vault_endpoint(vault_name):" in key_vault_source
+    assert 'f"https://{key_vault_name}{KEY_VAULT_DOMAIN}"' not in key_vault_source
 
 
 def test_blob_storage_modal_exposes_identity_and_key():
@@ -374,6 +440,7 @@ if __name__ == "__main__":
         test_version_and_definition_contract,
         test_blob_and_queue_endpoint_allowlist,
         test_cosmos_databricks_and_monitor_endpoint_allowlist,
+        test_foundry_maps_and_key_vault_endpoint_allowlists,
         test_allowed_auth_types_are_enforced_server_side,
         test_manifest_validation_rejects_hostile_endpoints,
         test_log_analytics_custom_cloud_is_constrained,

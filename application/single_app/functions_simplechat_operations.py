@@ -3502,14 +3502,17 @@ def _get_directory_user_by_id(user_id: str) -> Optional[Dict[str, str]]:
     if not token:
         raise PermissionError("Could not acquire access token")
 
+    # The fixed Graph origin and fully encoded directory object ID constrain this path.
+    # codeql[py/partial-ssrf]
     response = requests.get(
-        get_graph_endpoint(f"/users/{quote(normalized_user_id)}"),
+        get_graph_endpoint(f"/users/{quote(normalized_user_id, safe='')}"),
         headers={
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
         },
         params={"$select": "id,displayName,mail,userPrincipalName"},
         timeout=20,
+        allow_redirects=False,
     )
     if response.status_code == 404:
         return None
@@ -3558,8 +3561,6 @@ def _normalize_directory_user(raw_user: Dict[str, Any]) -> Optional[Dict[str, st
         "displayName": display_name,
         "email": email,
     }
-
-
 def _escape_odata_value(value: str) -> str:
     return str(value or "").replace("'", "''").strip()
 

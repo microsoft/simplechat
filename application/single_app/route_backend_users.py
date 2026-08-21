@@ -72,7 +72,14 @@ def _get_graph_user_info_by_id(user_id):
         "$select": "id,displayName,mail,userPrincipalName"
     }
 
-    response = requests.get(user_endpoint, headers=headers, params=params)
+    # The fixed Graph origin and fully encoded, authorized object ID constrain this path.
+    # codeql[py/partial-ssrf]
+    response = requests.get(
+        user_endpoint,
+        headers=headers,
+        params=params,
+        allow_redirects=False,
+    )
     response.raise_for_status()
     user = response.json() or {}
     graph_user_id = user.get("id") or normalized_user_id

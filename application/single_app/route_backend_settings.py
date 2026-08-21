@@ -18,6 +18,7 @@ from functions_activity_logging import (
     log_user_support_feedback_email_submission,
 )
 from functions_appinsights import log_event
+from functions_azure_endpoint_validation import build_azure_key_vault_endpoint
 from functions_cosmos_throughput import (
     calculate_manual_to_autoscale_target,
     calculate_manual_scale_target,
@@ -2052,18 +2053,15 @@ def _test_key_vault_connection(payload):
         return jsonify({'error': 'Key Vault name is required'}), 400
 
     try:
-        vault_url = f"https://{vault_name}{KEY_VAULT_DOMAIN}"
+        vault_url = build_azure_key_vault_endpoint(vault_name, KEY_VAULT_DOMAIN)
 
         if client_id:
             credential = DefaultAzureCredential(managed_identity_client_id=client_id)
         else:
             credential = DefaultAzureCredential()
 
-        if AZURE_ENVIRONMENT == "custom":
-            #TODO: Needs to be tested with a custom environment
-            kv_client = SecretClient(vault_url=vault_url, credential=credential)
-        else:
-            kv_client = SecretClient(vault_url=vault_url, credential=credential)
+        # codeql[py/full-ssrf]
+        kv_client = SecretClient(vault_url=vault_url, credential=credential)
 
         # Perform a simple list operation to verify connectivity
         secrets = kv_client.list_properties_of_secrets()

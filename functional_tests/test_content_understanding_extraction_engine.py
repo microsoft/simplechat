@@ -2,8 +2,9 @@
 # test_content_understanding_extraction_engine.py
 """
 Functional test for Enhanced extraction backed by Azure AI Content Understanding.
-Version: 0.250.224
+Version: 0.260.029
 Implemented in: 0.250.221
+Updated in: 0.260.029
 
 This test ensures that the Content Understanding client parses analyzer results into the same
 page shape Document Intelligence returns, that Enhanced extraction resolves to the right engine
@@ -301,6 +302,57 @@ def test_government_cloud_blocks_content_understanding():
         raise AssertionError(f"Unexpected environment gate message: {message}")
 
     print("Environment gate test passed!")
+    return True
+
+
+def test_content_understanding_destinations_are_constrained():
+    """Configured and server-returned URLs must stay on the selected Foundry resource."""
+    print("Testing Content Understanding destination validation...")
+
+    content_understanding, _ = load_content_understanding_module()
+    config = {
+        "endpoint": "https://example.services.ai.azure.com",
+        "key": "fake-key",
+        "authentication_type": "key",
+        "api_version": "2025-11-01",
+        "analyzer_id": "prebuilt-documentSearch",
+    }
+    content_understanding._validate_config(config)
+
+    safe_location = content_understanding._canonicalize_operation_location(
+        "https://example.services.ai.azure.com/contentunderstanding/operations/job-1?api-version=2025-11-01",
+        config,
+    )
+    if not safe_location.startswith(
+        "https://example.services.ai.azure.com/contentunderstanding/operations/job-1"
+    ):
+        raise AssertionError(f"Unexpected canonical operation URL: {safe_location}")
+
+    hostile_values = (
+        "https://169.254.169.254",
+        "https://example.services.ai.azure.com.evil.example",
+    )
+    for hostile_endpoint in hostile_values:
+        hostile_config = dict(config, endpoint=hostile_endpoint)
+        try:
+            content_understanding._validate_config(hostile_config)
+        except content_understanding.ContentUnderstandingNotConfiguredError:
+            continue
+        raise AssertionError(f"Hostile endpoint should have been rejected: {hostile_endpoint}")
+
+    for hostile_location in (
+        "https://evil.example/contentunderstanding/operations/job-1",
+        "https://example.services.ai.azure.com/metadata/identity/oauth2/token",
+        "https://example.services.ai.azure.com/contentunderstanding/%2e%2e/metadata",
+        "http://example.services.ai.azure.com/contentunderstanding/operations/job-1",
+    ):
+        try:
+            content_understanding._canonicalize_operation_location(hostile_location, config)
+        except content_understanding.ContentUnderstandingError:
+            continue
+        raise AssertionError(f"Hostile operation URL should have been rejected: {hostile_location}")
+
+    print("Content Understanding destination validation passed!")
     return True
 
 
@@ -792,7 +844,7 @@ def test_formula_extraction_is_opt_in_and_layout_only():
 def test_version_is_at_least_implementation_version():
     """The app version must be at or beyond the version this feature shipped in."""
     print("Testing application version...")
-    assert_app_version_at_least("0.250.221")
+    assert_app_version_at_least("0.260.029")
     print("Version test passed!")
     return True
 

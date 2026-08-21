@@ -2,6 +2,15 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.260.029)**
+
+#### Bug Fixes
+
+*   **Credentialed Outbound Requests Stay On Approved Destinations**
+    *   Hardened OpenAPI actions, Content Understanding, Foundry model discovery, Key Vault, Enhanced Citations storage, Azure Files, Azure Maps, OneDrive, Microsoft Graph, and Cosmos throughput management against server-side request forgery.
+    *   OpenAPI calls now require public HTTPS on port 443, reject local and private DNS results, ignore environment proxies, and revalidate every redirect without forwarding credentials across origins. Azure and Microsoft service clients independently validate canonical service endpoints at the final network boundary, including older stored configurations.
+    *   (Ref: `functions_outbound_http.py`, `functions_azure_endpoint_validation.py`, CodeQL critical SSRF findings, [#1335](https://github.com/microsoft/simplechat/pull/1335))
+
 ### **(v0.260.025)**
 
 #### Bug Fixes

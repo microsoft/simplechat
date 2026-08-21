@@ -1,5 +1,7 @@
 # route_backend_public_workspaces.py
 
+from urllib.parse import quote
+
 from config import *
 from functions_authentication import *
 from functions_chat_bootstrap_cache import bump_chat_bootstrap_global_cache_version
@@ -65,7 +67,7 @@ def get_user_details_from_graph(user_id):
         if not token:
             return {"displayName": "", "email": ""}
 
-        user_endpoint = get_graph_endpoint(f"/users/{user_id}")
+        user_endpoint = get_graph_endpoint(f"/users/{quote(str(user_id), safe='')}")
             
         headers = {
             "Authorization": f"Bearer {token}",
@@ -76,7 +78,14 @@ def get_user_details_from_graph(user_id):
             "$select": "id,displayName,mail,userPrincipalName"
         }
 
-        response = requests.get(user_endpoint, headers=headers, params=params)
+        # The fixed Graph origin and fully encoded directory object ID constrain this path.
+        # codeql[py/partial-ssrf]
+        response = requests.get(
+            user_endpoint,
+            headers=headers,
+            params=params,
+            allow_redirects=False,
+        )
         response.raise_for_status()
 
         user_data = response.json()

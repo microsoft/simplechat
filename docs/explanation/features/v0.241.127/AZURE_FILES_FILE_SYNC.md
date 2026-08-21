@@ -16,6 +16,10 @@ Implemented in version: **0.241.127**
 
 The connector stores `source_type: "azure_files"` and a connection payload with `account_url`, `share_name`, `directory_path`, and `share_url`. Sync runs list files through the Azure Files SDK, stage downloads into the same temporary-file pipeline as SMB sync, and persist synced document metadata with the Azure Files source type.
 
+The file service URL is canonicalized before save and validated again before SDK client creation.
+It must use an Azure Files hostname such as `https://account.file.core.windows.net`; arbitrary hosts,
+IP literals, URL credentials, nonstandard ports, query strings, and fragments are rejected.
+
 Supported reusable workspace identity authentication methods for Azure Files are:
 
 - Managed identity

@@ -15,12 +15,14 @@ import json
 import logging
 import os
 import time
+from urllib.parse import parse_qsl, quote, unquote, urlencode, urlparse, urlunparse
 
 import requests
 from azure.identity import DefaultAzureCredential
 
 from config import AZURE_ENVIRONMENT, cognitive_services_scope
 from functions_appinsights import log_event
+from functions_azure_endpoint_validation import validate_azure_content_understanding_endpoint
 from functions_debug import debug_print
 import functions_settings
 
@@ -131,16 +133,62 @@ def _validate_config(config):
         raise ContentUnderstandingNotConfiguredError(
             "Content Understanding endpoint is not configured."
         )
+    try:
+        config['endpoint'] = validate_azure_content_understanding_endpoint(config['endpoint'])
+    except ValueError as error:
+        raise ContentUnderstandingNotConfiguredError(str(error)) from error
 
 
 def _build_analyze_binary_url(config, analyzer_id, page_range=None):
-    url = (
-        f"{config['endpoint']}/contentunderstanding/analyzers/{analyzer_id}:analyzeBinary"
-        f"?api-version={config['api_version']}"
-    )
+    encoded_analyzer_id = quote(str(analyzer_id or '').strip(), safe='-._~')
+    query_params = {'api-version': config['api_version']}
     if page_range:
-        url = f"{url}&range={page_range}"
+        query_params['range'] = page_range
+    url = (
+        f"{config['endpoint']}/contentunderstanding/analyzers/{encoded_analyzer_id}:analyzeBinary"
+        f"?{urlencode(query_params)}"
+    )
     return url
+
+
+def _canonicalize_operation_location(operation_location, config):
+    """Return a same-origin Content Understanding polling URL, or raise."""
+    raw_location = str(operation_location or '').strip()
+    parsed_location = urlparse(raw_location)
+    parsed_endpoint = urlparse(config['endpoint'])
+    try:
+        parsed_port = parsed_location.port
+    except ValueError as error:
+        raise ContentUnderstandingError(
+            "Content Understanding returned an invalid Operation-Location header."
+        ) from error
+
+    if (
+        parsed_location.scheme != 'https'
+        or parsed_location.hostname != parsed_endpoint.hostname
+        or parsed_port not in (None, 443)
+        or parsed_location.username is not None
+        or parsed_location.password is not None
+        or parsed_location.fragment
+    ):
+        raise ContentUnderstandingError(
+            "Content Understanding returned an unsafe Operation-Location header."
+        )
+
+    path_parts = [part for part in parsed_location.path.split('/') if part]
+    decoded_parts = [unquote(part) for part in path_parts]
+    if not path_parts or path_parts[0].lower() != 'contentunderstanding':
+        raise ContentUnderstandingError(
+            "Content Understanding returned an unexpected Operation-Location path."
+        )
+    if any(part in {'.', '..'} for part in decoded_parts):
+        raise ContentUnderstandingError(
+            "Content Understanding returned an unsafe Operation-Location path."
+        )
+
+    safe_path = '/' + '/'.join(quote(part, safe='-._~:') for part in path_parts)
+    safe_query = urlencode(parse_qsl(parsed_location.query, keep_blank_values=True))
+    return urlunparse(('https', parsed_endpoint.netloc, safe_path, '', safe_query, ''))
 
 
 def _describe_http_error(response):
@@ -202,11 +250,13 @@ def analyze_file_with_content_understanding(
         + (f" range={page_range}" if page_range else "")
     )
 
+    # codeql[py/partial-ssrf]
     response = requests.post(
         submit_url,
         headers=headers,
         data=file_bytes,
         timeout=CONTENT_UNDERSTANDING_SUBMIT_TIMEOUT_SECONDS,
+        allow_redirects=False,
     )
 
     if response.status_code >= 400:
@@ -236,6 +286,7 @@ def analyze_file_with_content_understanding(
 def _poll_analysis_result(operation_location, config, max_wait_seconds):
     """Poll a Content Understanding operation until it succeeds, fails, or times out."""
     poll_headers = _build_auth_headers(config)
+    poll_url = _canonicalize_operation_location(operation_location, config)
     start_time = time.time()
 
     while True:
@@ -247,10 +298,12 @@ def _poll_analysis_result(operation_location, config, max_wait_seconds):
 
         time.sleep(CONTENT_UNDERSTANDING_POLL_INTERVAL_SECONDS)
 
+        # codeql[py/partial-ssrf]
         poll_response = requests.get(
-            operation_location,
+            poll_url,
             headers=poll_headers,
             timeout=CONTENT_UNDERSTANDING_POLL_TIMEOUT_SECONDS,
+            allow_redirects=False,
         )
         if poll_response.status_code >= 400:
             raise ContentUnderstandingError(_describe_http_error(poll_response))
@@ -556,8 +609,10 @@ def test_content_understanding_connection(config_override, sample_file_path=None
 
     config = _resolve_config(config_override=config_override)
 
-    if not config['endpoint']:
-        return False, "Content Understanding endpoint is required."
+    try:
+        _validate_config(config)
+    except ContentUnderstandingNotConfiguredError as config_error:
+        return False, str(config_error)
     if config['authentication_type'] == 'key' and not config['key']:
         return False, "Content Understanding key is required when key authentication is selected."
 
@@ -566,17 +621,17 @@ def test_content_understanding_connection(config_override, sample_file_path=None
     except ContentUnderstandingError as auth_error:
         return False, str(auth_error)
 
-    analyzer_id = config['analyzer_id']
-    analyzer_url = (
-        f"{config['endpoint']}/contentunderstanding/analyzers/{analyzer_id}"
-        f"?api-version={config['api_version']}"
-    )
+    analyzer_id = quote(config['analyzer_id'], safe='-._~')
+    analyzer_url = f"{config['endpoint']}/contentunderstanding/analyzers/{analyzer_id}"
 
     try:
+        # codeql[py/partial-ssrf]
         response = requests.get(
             analyzer_url,
             headers=headers,
+            params={'api-version': config['api_version']},
             timeout=CONTENT_UNDERSTANDING_POLL_TIMEOUT_SECONDS,
+            allow_redirects=False,
         )
     except requests.RequestException as request_error:
         return False, f"Content Understanding connection error: {request_error}"

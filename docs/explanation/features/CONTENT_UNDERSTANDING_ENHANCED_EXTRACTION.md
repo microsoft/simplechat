@@ -76,6 +76,11 @@ and `extraction_engine_reason`, and are surfaced in workspace tooltips.
 | Poll | `GET` the `Operation-Location` response header until `status` is `Succeeded`, `Failed`, or `Canceled`. |
 | Auth | `Ocp-Apim-Subscription-Key: <key>` or `Authorization: Bearer <token>` for the `https://cognitiveservices.azure.com/.default` scope. |
 
+The configured endpoint must be the canonical root of an Azure AI Foundry resource under a
+supported `services.ai.azure.*` hostname. Paths, URL credentials, custom ports, query strings, and
+lookalike suffixes are rejected. Polling follows only `Operation-Location` URLs on that same Foundry
+origin and under the `/contentunderstanding/` namespace.
+
 Per-page content is reconstructed by slicing the content-level `markdown` string with each page's
 `spans` (`{offset, length}`). Figure descriptions from `figures[]` are attributed to the page whose
 span range contains the figure offset, and are skipped when the description is already inlined in

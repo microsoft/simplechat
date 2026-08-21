@@ -5,6 +5,7 @@ import logging
 from datetime import datetime, timezone
 from urllib.parse import urlparse
 from functions_appinsights import log_event
+from functions_azure_endpoint_validation import build_azure_key_vault_endpoint
 from config import *
 from functions_authentication import *
 from functions_settings import *
@@ -78,6 +79,10 @@ KEY_VAULT_SECRET_REMINDERS_METADATA_FIELD = "key_vault_secret_reminders"
 KEY_VAULT_SECRET_REMINDER_SYNC_FAILED_STATUS = "sync_failed"
 KEY_VAULT_SECRET_REMINDER_SYNCED_STATUS = "synced"
 
+
+def _build_key_vault_endpoint(vault_name):
+    return build_azure_key_vault_endpoint(vault_name, KEY_VAULT_DOMAIN)
+
 class SecretReturnType(Enum):
     VALUE = "value"
     TRIGGER = "trigger"
@@ -120,7 +125,7 @@ def update_key_vault_secret_expiration(secret_name, expires_on):
     if not validate_secret_name_dynamic(secret_name):
         raise ValueError("Secret name is not a SimpleChat Key Vault reference.")
 
-    key_vault_url = f"https://{key_vault_name}{KEY_VAULT_DOMAIN}"
+    key_vault_url = _build_key_vault_endpoint(key_vault_name)
     secret_client = SecretClient(vault_url=key_vault_url, credential=get_keyvault_credential())
     secret_client.update_secret_properties(
         name=secret_name,
@@ -719,7 +724,7 @@ def retrieve_secret_from_key_vault_by_full_name(full_secret_name):
         return full_secret_name
 
     try:
-        key_vault_url = f"https://{key_vault_name}{KEY_VAULT_DOMAIN}"
+        key_vault_url = _build_key_vault_endpoint(key_vault_name)
         secret_client = SecretClient(vault_url=key_vault_url, credential=get_keyvault_credential())
 
         retrieved_secret = secret_client.get_secret(full_secret_name)
@@ -741,7 +746,7 @@ def resolve_secret_reference_version(full_secret_name):
         return full_secret_name
 
     try:
-        key_vault_url = f"https://{key_vault_name}{KEY_VAULT_DOMAIN}"
+        key_vault_url = _build_key_vault_endpoint(key_vault_name)
         secret_client = SecretClient(
             vault_url=key_vault_url,
             credential=get_keyvault_credential(),
@@ -780,7 +785,7 @@ def retrieve_secret_from_key_vault_by_reference(secret_reference):
 
     try:
         secret_client = SecretClient(
-            vault_url=f"https://{key_vault_name}{KEY_VAULT_DOMAIN}",
+            vault_url=_build_key_vault_endpoint(key_vault_name),
             credential=get_keyvault_credential(),
         )
         return secret_client.get_secret(path_parts[1], path_parts[2]).value
@@ -830,7 +835,7 @@ def retrieve_secret_direct(secret_name, settings=None):
         raise ValueError("secret_name must not be empty.")
 
     try:
-        key_vault_url = f"https://{key_vault_name}{KEY_VAULT_DOMAIN}"
+        key_vault_url = _build_key_vault_endpoint(key_vault_name)
         # Pass settings through so get_keyvault_credential doesn't call the uninitialised cache.
         secret_client = SecretClient(vault_url=key_vault_url, credential=get_keyvault_credential(settings=settings))
         retrieved = secret_client.get_secret(secret_name)
@@ -877,7 +882,7 @@ def store_secret_in_key_vault(secret_name, secret_value, scope_value, source="gl
     full_secret_name = build_full_secret_name(secret_name, scope_value, source, scope)
 
     try:
-        key_vault_url = f"https://{key_vault_name}{KEY_VAULT_DOMAIN}"
+        key_vault_url = _build_key_vault_endpoint(key_vault_name)
         secret_client = SecretClient(vault_url=key_vault_url, credential=get_keyvault_credential())
         secret_client.set_secret(full_secret_name, secret_value)
         log_event(f"Secret '{full_secret_name}' stored successfully in Key Vault.", level=logging.INFO)
@@ -1417,7 +1422,7 @@ def keyvault_model_endpoint_delete_helper(endpoint_dict, scope_value, scope="glo
     if not isinstance(auth, dict):
         return endpoint_dict
 
-    key_vault_url = f"https://{key_vault_name}{KEY_VAULT_DOMAIN}"
+    key_vault_url = _build_key_vault_endpoint(key_vault_name)
     client = SecretClient(vault_url=key_vault_url, credential=get_keyvault_credential())
     for auth_field in MODEL_ENDPOINT_SENSITIVE_AUTH_FIELDS:
         secret_name = auth.get(auth_field)
@@ -1506,7 +1511,7 @@ def keyvault_plugin_delete_helper(plugin_dict, scope_value, scope="global"):
                     )
                     continue
                 try:
-                    key_vault_url = f"https://{key_vault_name}{KEY_VAULT_DOMAIN}"
+                    key_vault_url = _build_key_vault_endpoint(key_vault_name)
                     log_event(f"Deleting action auth secret '{auth_field}' for action '{plugin_name}' for '{scope}' '{scope_value}'", level=logging.INFO)
                     client = SecretClient(vault_url=key_vault_url, credential=get_keyvault_credential())
                     client.begin_delete_secret(secret_name)
@@ -1537,7 +1542,7 @@ def keyvault_plugin_delete_helper(plugin_dict, scope_value, scope="global"):
                         )
                         continue
                     try:
-                        key_vault_url = f"https://{key_vault_name}{KEY_VAULT_DOMAIN}"
+                        key_vault_url = _build_key_vault_endpoint(key_vault_name)
                         log_event(
                             f"Deleting MCP custom header secret '{header_name}' for action '{plugin_name}' for '{scope}' '{scope_value}'",
                             level=logging.INFO,
@@ -1569,7 +1574,7 @@ def keyvault_plugin_delete_helper(plugin_dict, scope_value, scope="global"):
                     )
                     continue
                 try:
-                    key_vault_url = f"https://{key_vault_name}{KEY_VAULT_DOMAIN}"
+                    key_vault_url = _build_key_vault_endpoint(key_vault_name)
                     log_event(f"Deleting action additionalField secret '{k}' for action '{plugin_name}' for '{scope}' '{scope_value}'", level=logging.INFO)
                     client = SecretClient(vault_url=key_vault_url, credential=get_keyvault_credential())
                     client.begin_delete_secret(v)
@@ -1615,7 +1620,7 @@ def keyvault_agent_delete_helper(agent_dict, scope_value, scope="global"):
         if not secret_name or not validate_secret_name_dynamic(secret_name):
             continue
         try:
-            key_vault_url = f"https://{key_vault_name}{KEY_VAULT_DOMAIN}"
+            key_vault_url = _build_key_vault_endpoint(key_vault_name)
             log_event(f"Deleting agent secret '{secret_name}' for agent '{agent_name}' for '{scope}' '{scope_value}'", level=logging.INFO)
             client = SecretClient(vault_url=key_vault_url, credential=get_keyvault_credential())
             client.begin_delete_secret(secret_name)

@@ -2,8 +2,9 @@
 # test_action_connection_test_secret_redaction.py
 """
 Functional test for action connection test error sanitization.
-Version: 0.250.217
+Version: 0.260.029
 Implemented in: 0.250.217
+Updated in: 0.260.029
 
 This test ensures that action Test Connection failures never echo stored
 credentials back to the browser. It covers manifest-sourced secrets, generic
@@ -22,6 +23,8 @@ import types
 
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+APP_ROOT = os.path.join(REPO_ROOT, "application", "single_app")
+sys.path.insert(0, APP_ROOT)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from test_support.versioning import assert_app_version_at_least  # noqa: E402
@@ -76,8 +79,8 @@ def test_manifest_secrets_are_redacted():
 
     try:
         assert_app_version_at_least(
-            "0.250.217",
-            reason="Action connection test sanitization was added in 0.250.217.",
+            "0.260.029",
+            reason="Action connection test destination hardening was added in 0.260.029.",
         )
 
         module = _load_tester_module()

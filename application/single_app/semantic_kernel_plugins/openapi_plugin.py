@@ -58,6 +58,11 @@ from semantic_kernel_plugins.base_plugin import BasePlugin
 from semantic_kernel.functions import kernel_function
 from semantic_kernel_plugins.plugin_invocation_logger import plugin_function_logger
 from functions_debug import debug_print
+from functions_outbound_http import (
+    OutboundHttpPolicyError,
+    normalize_public_https_url,
+    request_public_https,
+)
 
 
 OPENAPI_REDACTED_VALUE = "***REDACTED***"
@@ -186,7 +191,7 @@ class OpenApiPlugin(BasePlugin):
         
         self.openapi_spec_path = openapi_spec_path
         self.openapi_spec_content = openapi_spec_content
-        self.base_url = base_url.rstrip('/')  # Remove trailing slash
+        self.base_url = normalize_public_https_url(base_url, resolve_dns=False).rstrip('/')
         self.auth = auth or {}
         self.manifest = manifest or {}
         
@@ -1072,26 +1077,26 @@ class OpenApiPlugin(BasePlugin):
             logging.info(f"[OPEN_API_PLUGIN] Query params: {_redact_openapi_value(query_params)}")
             
             if method.lower() == 'get':
-                response = requests.get(full_url, headers=headers, params=query_params, timeout=30)
+                response = request_public_https('GET', full_url, headers=headers, params=query_params, timeout=30)
                 # Log the actual URL that was requested
                 debug_print(f"Actual GET request URL: {_redact_openapi_url(response.url)}")
                 debug_print(f"Response status: {response.status_code}")
                 logging.info(f"[OPEN_API_PLUGIN] Actual GET request URL: {_redact_openapi_url(response.url)}")
             elif method.lower() == 'post':
-                response = requests.post(full_url, headers=headers, params=query_params, json=kwargs, timeout=30)
+                response = request_public_https('POST', full_url, headers=headers, params=query_params, json=kwargs, timeout=30)
                 logging.info(f"[OPEN_API_PLUGIN] Actual POST request URL: {_redact_openapi_url(response.url)}")
             elif method.lower() == 'put':
-                response = requests.put(full_url, headers=headers, params=query_params, json=kwargs, timeout=30)
+                response = request_public_https('PUT', full_url, headers=headers, params=query_params, json=kwargs, timeout=30)
                 logging.info(f"[OPEN_API_PLUGIN] Actual PUT request URL: {_redact_openapi_url(response.url)}")
             elif method.lower() == 'delete':
-                response = requests.delete(full_url, headers=headers, params=query_params, timeout=30)
+                response = request_public_https('DELETE', full_url, headers=headers, params=query_params, timeout=30)
                 logging.info(f"[OPEN_API_PLUGIN] Actual DELETE request URL: {_redact_openapi_url(response.url)}")
             elif method.lower() == 'patch':
-                response = requests.patch(full_url, headers=headers, params=query_params, json=kwargs, timeout=30)
+                response = request_public_https('PATCH', full_url, headers=headers, params=query_params, json=kwargs, timeout=30)
                 logging.info(f"[OPEN_API_PLUGIN] Actual PATCH request URL: {_redact_openapi_url(response.url)}")
             else:
                 # Default to GET for unknown methods
-                response = requests.get(full_url, headers=headers, params=query_params, timeout=30)
+                response = request_public_https('GET', full_url, headers=headers, params=query_params, timeout=30)
                 logging.info(f"[OPEN_API_PLUGIN] Actual GET request URL: {_redact_openapi_url(response.url)}")
             
             debug_print(f"Response status: {response.status_code}")
@@ -1189,7 +1194,7 @@ class OpenApiPlugin(BasePlugin):
                 
                 return error_result
                 
-        except requests.exceptions.RequestException as req_error:
+        except (requests.exceptions.RequestException, OutboundHttpPolicyError) as req_error:
             redacted_request_error = _redact_openapi_string(str(req_error))
             debug_print(f"Request exception: {redacted_request_error}")
             logging.error(f"[OPEN_API_PLUGIN] Request error for {operation_id}: {redacted_request_error}")

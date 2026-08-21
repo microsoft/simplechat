@@ -2,12 +2,13 @@
 # test_cosmos_throughput_autoscale_logic.py
 """
 Functional test for Cosmos throughput autoscale decision logic.
-Version: 0.241.199
+Version: 0.260.029
 Implemented in: 0.241.147; container policy enforcement added in 0.241.153; container metric guardrail added in 0.241.155; manual-to-autoscale conversion added in 0.241.159; migrateToAutoscale ARM action fix added in 0.241.160; save validation added in 0.241.161; access validation added in 0.241.162
 Enhanced in: 0.241.183 with detailed access validation diagnostics for partial Azure permission failures.
 Enhanced in: 0.241.184 with neutral container-targeted throughput status language.
 Enhanced in: 0.241.194 with dedicated container scale-up-to-max coverage when mixed database and container throughput exist.
 Enhanced in: 0.241.199 with SimpleChat's 10,000 RU/s scaling support ceiling and portal-managed monitoring coverage.
+Updated in: 0.260.029 with fixed-origin ARM resource path validation.
 
 This test ensures that Cosmos DB throughput automation scales the shared
 SimpleChat database up and down using separate thresholds, cooldowns, and
@@ -869,6 +870,31 @@ def test_status_returns_partial_failure_details_for_validate_access():
     assert status['containers'][0]['is_scalable'] is True
 
 
+def test_arm_resource_paths_cannot_change_the_management_origin():
+    """ARM request paths must remain relative, encoded Cosmos resource IDs."""
+    valid_path = (
+        "/subscriptions/subscription-id/resourceGroups/group-name/providers/"
+        "Microsoft.DocumentDB/databaseAccounts/account/sqlDatabases/db/throughputSettings/default"
+    )
+    assert cosmos_throughput._validate_arm_resource_path(valid_path) == valid_path
+
+    invalid_paths = (
+        "https://attacker.example/subscriptions/subscription-id",
+        "//attacker.example/subscriptions/subscription-id",
+        "/subscriptions/subscription-id?api-version=attacker",
+        "/subscriptions/subscription-id#fragment",
+        "/subscriptions/subscription-id\\evil",
+        "/subscriptions/subscription-id\nevil",
+        "/providers/Microsoft.DocumentDB/databaseAccounts/account",
+    )
+    for invalid_path in invalid_paths:
+        try:
+            cosmos_throughput._validate_arm_resource_path(invalid_path)
+        except CosmosThroughputError:
+            continue
+        raise AssertionError(f"Unsafe ARM resource path should have been rejected: {invalid_path!r}")
+
+
 if __name__ == "__main__":
     tests = [
         test_scales_up_when_utilization_is_high,
@@ -899,6 +925,7 @@ if __name__ == "__main__":
         test_access_validation_uses_neutral_container_targeted_language,
         test_access_validation_reports_partial_azure_failures,
         test_status_returns_partial_failure_details_for_validate_access,
+        test_arm_resource_paths_cannot_change_the_management_origin,
     ]
     results = []
     for test in tests:

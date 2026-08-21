@@ -15,6 +15,7 @@ from functions_azure_endpoint_validation import (
     validate_azure_cosmos_endpoint,
     validate_azure_databricks_endpoint,
     validate_azure_entra_authority_host,
+    validate_azure_maps_endpoint,
     validate_azure_monitor_query_endpoint,
     validate_azure_queue_endpoint,
 )
@@ -528,6 +529,13 @@ class PluginHealthChecker:
             auth = manifest.get('auth', {}) if isinstance(manifest.get('auth'), dict) else {}
             if not endpoint:
                 errors.append(f"Azure Maps plugin requires an 'endpoint' field (use {AZURE_MAPS_DEFAULT_ENDPOINT})")
+            else:
+                errors.extend(
+                    PluginHealthChecker._endpoint_origin_errors(
+                        endpoint,
+                        validate_azure_maps_endpoint,
+                    )
+                )
             if auth.get('type') != 'key':
                 errors.append("Azure Maps plugin requires auth.type='key'")
             if not auth.get('key'):
