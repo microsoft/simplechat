@@ -118,6 +118,8 @@ End-user cards should carry three images. Use placeholder images labeled "Screen
 
 While a release set still has placeholder screenshots, ship its end-user cards **hidden** so no one sees a "Screenshot pending" tile. Add a loop in `get_default_support_latest_features_visibility()` defaulting the new catalog's ids to `False`, and remove that loop once every card has a real capture. Admin-facing cards stay visible throughout, because admins are the ones producing the screenshots. Tests that assert card structure must then opt the cards in explicitly via `support_latest_features_visibility` rather than relying on defaults.
 
+Replacing the placeholders later is its own pass. Use `capture-latest-features-screenshots.prompt.md`, which covers capture technique, PII blurring, caption reconciliation, and publishing the cards.
+
 When adding image metadata:
 
 - Use descriptive `alt`, `title`, `caption`, and `label` text.
