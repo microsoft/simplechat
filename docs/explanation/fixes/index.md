@@ -38,3 +38,4 @@ category: Version History
 - [Collaboration Mention Tab Autocomplete Fix](COLLABORATION_MENTION_TAB_AUTOCOMPLETE_FIX.md)
 - [Generated Artifact Paging, Truncation, and Guidance Carry-Forward Fix](GENERATED_ARTIFACT_PAGING_AND_GUIDANCE_FIX.md)
 - [Admin Settings Pane Variable Scope Fix](ADMIN_SETTINGS_PANE_VARIABLE_SCOPE_FIX.md)
+- [Inline Media Cited-Only Gating Fix](INLINE_MEDIA_CITED_ONLY_GATING_FIX.md)
