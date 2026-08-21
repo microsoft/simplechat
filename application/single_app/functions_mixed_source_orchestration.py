@@ -412,7 +412,15 @@ def normalize_document_context_request(
 
 
 def should_run_tabular_evidence(user_question, has_narrative_sources=False):
-    """Return whether a mixed-source question needs tabular data or schema evidence."""
+    """Return whether an in-scope tabular source should be computed for this question.
+
+    Evidence gathering is additive. When an authorized tabular source is in scope the
+    tabular engine runs unless the question unambiguously targets a narrative artifact,
+    because deciding which evidence is relevant belongs to the synthesis step rather
+    than to this gate. Indexed tabular chunks carry only a truncated schema preview, so
+    skipping computation leaves the model with a handful of preview rows that can never
+    support a numeric conclusion.
+    """
     normalized_question = " ".join(str(user_question or "").strip().lower().split())
     if not normalized_question:
         return True
@@ -430,10 +438,12 @@ def should_run_tabular_evidence(user_question, has_narrative_sources=False):
         "across the files", "across the documents", "across the sources",
         "mixed sources",
     )
-    narrative_markers = (
+    # Only artifact markers suppress computation. Topic words such as "report" or
+    # "policy" describe subject matter, not which engine can answer, and previously
+    # suppressed computation over spreadsheets that held the requested values.
+    narrative_artifact_markers = (
         "pdf", "docx", "word document", "presentation", "powerpoint",
-        "paragraph", "section", "policy", "procedure", "contract",
-        "agreement", "memo", "letter", "narrative", "prose", "report",
+        "paragraph", "section",
     )
 
     if any(marker in normalized_question for marker in tabular_markers):
@@ -441,12 +451,8 @@ def should_run_tabular_evidence(user_question, has_narrative_sources=False):
     if any(marker in normalized_question for marker in collective_markers):
         return True
     if has_narrative_sources and any(
-        marker in normalized_question for marker in narrative_markers
+        marker in normalized_question for marker in narrative_artifact_markers
     ):
-        return False
-    if normalized_question in {"summarize", "summary", "summarize the selected sources"}:
-        return True
-    if has_narrative_sources:
         return False
     return True
 
@@ -1413,7 +1419,14 @@ def execute_tabular_evidence_sources(
                 source_kind=SOURCE_KIND_TABULAR,
                 engine=EVIDENCE_ENGINE_TABULAR_TOOLS,
                 status=EVIDENCE_STATUS_SKIPPED,
-                summary="Tabular processing was not needed for this narrative-only request.",
+                summary=(
+                    "Tabular computation was not run for this source, so its full table was "
+                    "never read. Any indexed excerpt from this source contains only a "
+                    "truncated schema preview of the first few rows. Do not derive counts, "
+                    "totals, averages, minimums, maximums, trends, or any other numeric "
+                    "conclusion from those preview rows. Call the tabular analysis action if "
+                    "values from this source are required."
+                ),
                 coverage={
                     "selection_mode": normalized_selection_mode,
                     "terminal": True,
@@ -1921,6 +1934,11 @@ def build_mixed_source_evidence_handoff(
             "and tabular tool citations; do not convert computed table facts into unsupported narrative claims. "
             "When selection_mode is selected, current selected-source evidence supersedes prior document "
             "grounding; do not use prior source claims to fill missing current coverage. "
+            "This handoff is your starting evidence, not your only means of gathering evidence: if you have "
+            "actions available and this handoff does not contain what the question needs, call the appropriate "
+            "action to obtain it and reason over the handoff and the action results together before answering. "
+            "Never derive numeric conclusions from an indexed preview of a tabular source whose evidence status "
+            "is not completed; obtain those values from a computed tabular result instead. "
             f"{partial_coverage_instruction}\n\n{serialized_payload}"
         ),
         "mixed_source_coverage": coverage,

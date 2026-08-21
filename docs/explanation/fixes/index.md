@@ -39,3 +39,4 @@ category: Version History
 - [Generated Artifact Paging, Truncation, and Guidance Carry-Forward Fix](GENERATED_ARTIFACT_PAGING_AND_GUIDANCE_FIX.md)
 - [Admin Settings Pane Variable Scope Fix](ADMIN_SETTINGS_PANE_VARIABLE_SCOPE_FIX.md)
 - [Inline Media Cited-Only Gating Fix](INLINE_MEDIA_CITED_ONLY_GATING_FIX.md)
+- [Agent Actions With Workspace Evidence Fix](AGENT_ACTIONS_WITH_WORKSPACE_EVIDENCE_FIX.md)
