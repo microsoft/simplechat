@@ -102,10 +102,8 @@ ADMIN_CURRENT_FEATURE_IMAGE_FILES = {
     'admin_release_260_model_identity_header': ['admin_release_260_model_identity_header.png'],
     'admin_release_260_per_model_response_length': ['admin_release_260_per_model_response_length.png'],
     'admin_release_260_control_center_refresh': ['admin_release_260_control_center_refresh.png'],
-    'admin_release_260_feedback_safety_lifecycle': ['admin_release_260_feedback_safety_lifecycle.png'],
     'admin_release_260_log_cleanup': ['admin_release_260_log_cleanup.png'],
     'admin_release_260_redis_explorer': ['admin_release_260_redis_explorer.png'],
-    'admin_release_260_index_auto_login': ['admin_release_260_index_auto_login.png'],
     'admin_release_260_enhanced_extraction': ['admin_release_260_enhanced_extraction.png'],
     'admin_release_260_mcp_platform': ['admin_release_260_mcp_platform.png'],
     'admin_release_260_azure_blob_file_sync': ['admin_release_260_azure_blob_file_sync.png'],
@@ -113,6 +111,14 @@ ADMIN_CURRENT_FEATURE_IMAGE_FILES = {
     'admin_release_260_chat_ai_notice': ['admin_release_260_chat_ai_notice.png'],
     'admin_release_260_public_workspace_display_name': ['admin_release_260_public_workspace_display_name.png'],
 }
+
+# These settings have no admin pane of their own to photograph: auto-login is an
+# environment variable, and the record lifecycle controls only appear once real
+# feedback or safety rows exist.
+ADMIN_FEATURES_WITHOUT_SCREENSHOTS = [
+    'admin_release_260_feedback_safety_lifecycle',
+    'admin_release_260_index_auto_login',
+]
 
 PREVIOUS_ADMIN_FEATURE_IDS = [
     'admin_release_250_azure_openai_identity',
@@ -238,6 +244,9 @@ def test_admin_latest_features_catalog_release_groups():
             images = feature.get('images', [])
             assert feature.get('image') == expected_paths[0], f"Primary admin image mismatch for {feature['id']}"
             assert [image['path'] for image in images] == expected_paths, f"Admin gallery image paths mismatch for {feature['id']}"
+        elif feature['id'] in ADMIN_FEATURES_WITHOUT_SCREENSHOTS:
+            assert not feature.get('images'), f"Expected no screenshot slot for {feature['id']}"
+            assert not feature.get('image'), f"Expected no primary image for {feature['id']}"
 
     print('Admin Latest Features catalog release groups are current')
     return True

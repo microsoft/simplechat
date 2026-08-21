@@ -1653,7 +1653,7 @@ _SUPPORT_RELEASE_260_FEATURE_CATALOG = [
         images=[
             {'title': 'Choose an MCP Preset', 'label': 'MCP Presets', 'caption': 'Presets and admin-curated catalogs replace hand-typed MCP server configuration.'},
             {'title': 'Test the Connection', 'label': 'Test Connection', 'caption': 'Verify the MCP server responds before saving the action.'},
-            {'title': 'Use MCP Tools in Chat', 'label': 'MCP in Chat', 'caption': 'An agent holding an MCP action can call those tools during a conversation.'},
+            {'title': 'Review the MCP Configuration', 'label': 'MCP Summary', 'caption': 'The final step lists the transport, preset, timeouts, and the exact tools the action will expose.'},
         ],
     ),
     _latest_feature_card(
@@ -1679,7 +1679,7 @@ _SUPPORT_RELEASE_260_FEATURE_CATALOG = [
         images=[
             {'title': 'Configure the Yamcs Action', 'label': 'Yamcs Setup', 'caption': 'A dedicated panel collects the server address, authentication method, and optional archive SQL access.'},
             {'title': 'Verify With Test Connection', 'label': 'Connection Test', 'caption': 'Confirm SimpleChat can reach the Yamcs instance before relying on the action.'},
-            {'title': 'Ask About Telemetry', 'label': 'Telemetry Q&A', 'caption': 'An agent with the Yamcs action can answer questions about telemetry, events, and alarms.'},
+            {'title': 'Review the Yamcs Configuration', 'label': 'Configuration Summary', 'caption': 'The summary confirms the instance, processor, authentication, TLS, limits, and archive SQL state before saving.'},
         ],
     ),
     _latest_feature_card(
@@ -1705,7 +1705,7 @@ _SUPPORT_RELEASE_260_FEATURE_CATALOG = [
         images=[
             {'title': 'Configure the RocksDB Action', 'label': 'RocksDB Setup', 'caption': 'Point the action at the HTTP and JSON service fronting your key-value store.'},
             {'title': 'Choose an Authentication Mode', 'label': 'Auth Options', 'caption': 'No-auth, bearer token, and API key authentication are all supported.'},
-            {'title': 'Query Keys From Chat', 'label': 'Key Lookup', 'caption': 'Ask an agent for a specific key or a range scan across a key prefix.'},
+            {'title': 'Review the Keyspace Configuration', 'label': 'Keyspace Summary', 'caption': 'The summary confirms read-only access, encodings, limits, and the key prefixes the model is told about.'},
         ],
     ),
     _latest_feature_card(
@@ -2228,7 +2228,7 @@ _ADMIN_RELEASE_260_FEATURE_CATALOG = [
             {'label': 'Open Safety', 'description': 'Manage safety violation archive and delete lifecycle.', 'href': '#safety', 'admin_tab': '#safety', 'icon': 'bi-shield-exclamation'},
             {'label': 'Open Send Feedback', 'description': 'Review feedback records affected by archive and delete lifecycle controls.', 'href': '#send-feedback', 'admin_tab': '#send-feedback', 'icon': 'bi-chat-left-text'},
         ],
-        image_label='Record Lifecycle',
+        include_media=False,
     ),
     _latest_feature_card(
         'admin_release_260_log_cleanup',
@@ -2282,7 +2282,7 @@ _ADMIN_RELEASE_260_FEATURE_CATALOG = [
         actions=[
             {'label': 'Open Security', 'description': 'Review Entra SSO and home-page auto-login behavior.', 'href': '#security', 'admin_tab': '#security', 'icon': 'bi-shield-lock'},
         ],
-        image_label='SSO Redirect',
+        include_media=False,
     ),
     _latest_feature_card(
         'admin_release_260_enhanced_extraction',
