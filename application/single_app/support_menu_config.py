@@ -1906,9 +1906,9 @@ _SUPPORT_RELEASE_260_FEATURE_CATALOG = [
             {'label': 'Open Chat', 'description': 'Send a message and open the Conversation Context citation on the response.', 'href': '/chats#chatbox', 'icon': 'bi-chat-dots'},
         ],
         images=[
-            {'title': 'Context Citation on a Response', 'label': 'Context Citation', 'caption': 'Every answer carries a Conversation Context citation alongside its document sources.'},
-            {'title': 'Model and Version Detail', 'label': 'Model Detail', 'caption': 'See the exact model and SimpleChat version that produced the response.'},
-            {'title': 'Scope and Documents', 'label': 'Scope Detail', 'caption': 'Workspace scope, selected documents, agent, and capability state are all recorded.'},
+            {'title': 'Context Citation on a Response', 'label': 'Context Citation', 'caption': 'Every answer carries a Conversation Context citation alongside Conversation History and Instruction Memory.'},
+            {'title': 'Document Sources', 'label': 'Document Sources', 'caption': 'Statements drawn from a workspace document cite the source file and the page they came from.'},
+            {'title': 'Scope and Generation Detail', 'label': 'Generation Detail', 'caption': 'The detail panel records the model, workspace action, retrieval flags, and agent citations behind the answer.'},
         ],
     ),
     _latest_feature_card(
@@ -2035,9 +2035,9 @@ _SUPPORT_RELEASE_260_FEATURE_CATALOG = [
             {'label': 'Open Profile', 'description': 'Confirm the same workspace name appears on your profile.', 'href': '/profile', 'icon': 'bi-person-gear'},
         ],
         images=[
-            {'title': 'Renamed in Chat Scope', 'label': 'Scope Selector', 'caption': 'The organization-chosen name replaces the default Public Workspace label.'},
+            {'title': 'Set the End-User Label', 'label': 'Display Name', 'caption': 'An optional display name replaces Public Workspace everywhere end users see it.'},
             {'title': 'Consistent Across Navigation', 'label': 'Navigation', 'caption': 'The same label appears in navigation, profile, and directory pages.'},
-            {'title': 'Behavior Is Unchanged', 'label': 'Same Behavior', 'caption': 'Only the label changes; documents, links, and citations work exactly as before.'},
+            {'title': 'Behavior Is Unchanged', 'label': 'Same Behavior', 'caption': 'Chat scope selection, documents, and citations work exactly as before; only the label changes.'},
         ],
     ),
     _latest_feature_card(
