@@ -127,15 +127,17 @@ Admin-only cards are not controlled by user-facing visibility toggles. They are 
 
 Stored choices are merged over defaults, so disabling an older card remains honored after the v0.260.001 tier shift.
 
-The 20 new v0.260.001 cards ship **hidden**. Their screenshots are still placeholders, so publishing them immediately would show end users a page full of "Screenshot pending" tiles. The intended rollout is:
+The v0.260.001 cards ship **visible**. They were hidden while their screenshots were
+still branded placeholders, so end users would not land on a page of "Screenshot
+pending" tiles. Every card now carries real captures, so the default-hidden loop in
+`get_default_support_latest_features_visibility()` has been removed and admins only
+need to intervene to hide a card they do not want.
 
-1. Replace `release_260_<slug>_1.png`, `_2.png`, and `_3.png` for a card with real captures.
-2. Open **Admin Settings > General > User-Facing Latest Features** and tick that card.
-3. Save, then confirm it on **Support > Latest Features** as an end user.
-
-Until a card is enabled, end users continue to see the previous and archive tiers, which carry real screenshots. Admins still see all 16 v0.260.001 admin cards in the Latest Features tab, since admins are the ones capturing the screenshots.
-
-Once every card is published, the `for item in _SUPPORT_RELEASE_260_FEATURE_CATALOG` loop in `get_default_support_latest_features_visibility()` can be dropped so future tenants get the cards on by default.
+Two admin cards render without a screenshot at all. `admin_release_260_index_auto_login`
+documents `ENABLE_AUTO_LOGIN_ON_INDEX`, an environment variable with no admin pane, and
+`admin_release_260_feedback_safety_lifecycle` describes controls that only appear once
+real feedback or safety rows exist. Both pass `include_media=False` rather than shipping
+a placeholder.
 
 The **Latest Features** admin tab also carries a read-only preview of the user-facing catalog. Each non-current tier renders as a collapsible panel whose cards show a **Shared with Users** or **Hidden from Users** badge, so an admin can review exactly what the previous and archive tiers look like without leaving Admin Settings. Its element ids are namespaced `latest-features-user-preview-*` and `latestFeaturesUserPreview*` so they never collide with the admin-facing release-group cards.
 

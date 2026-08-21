@@ -18,6 +18,7 @@ plugins:
   - jekyll-seo-tag
   - jekyll-sitemap
   - jekyll-relative-links
+  - jekyll-redirect-from
 
 # Permalinks (pretty URLs)
 permalink: pretty
@@ -46,114 +47,274 @@ classification_banner:
   color: "#ffc107"
 
 # Navigation configuration
+#
+# The top bar and the sidebar deliberately expose the SAME six sections. The
+# previous configuration had a four-item top bar that did not match the five
+# sidebar groups, so the two navigations contradicted each other and roughly
+# 130 published pages were unreachable from either one.
 navigation:
   show_sections: true
   main_links:
-    - title: Guide
-      url: /tutorials/
-      match: /tutorials/
+    - title: Start
+      url: /
+      icon: bi bi-house
+    - title: Guides
+      url: /guides/
+      match: /guides/
       icon: bi bi-signpost-split
-    - title: API
+    - title: Features
+      url: /features/
+      match: /features/
+      icon: bi bi-stars
+    - title: Administration
+      url: /admin/
+      match: /admin/
+      icon: bi bi-sliders
+    - title: Deploy and operate
+      url: /reference/deploy/
+      match: /reference/deploy/
+      icon: bi bi-cloud-arrow-up
+    - title: Reference
       url: /reference/api_reference/
-      match: /reference/
+      match: /reference/api_reference/
       icon: bi bi-braces
-    - title: Examples
-      url: /explanation/scenarios/
-      match: /explanation/scenarios/
-      icon: bi bi-collection-play
-    - title: Changelog
-      url: /explanation/release_notes/
-      match: /explanation/release_notes/
-      icon: bi bi-clock-history
   sidebar_sections:
-    - title: Start here
+    - title: Start
       links:
         - title: Overview
           url: /
           icon: bi bi-house-fill
-        - title: Getting Started
-          url: /setup_instructions/
+        - title: What is Simple Chat
+          url: /start/about/
+          icon: bi bi-info-circle
+        - title: Choose a deployment path
+          url: /start/deployment-options/
           icon: bi bi-rocket-takeoff
-        - title: Feature Map
-          url: /features/
-          icon: bi bi-stars
-        - title: Latest Release
-          url: /latest-release/
-          match: /latest-release/
-          icon: bi bi-megaphone
-        - title: FAQ
-          url: /faqs/
-          icon: bi bi-question-circle
-    - title: Learn the product
-      links:
-        - title: Tutorials
-          url: /tutorials/
-          match: /tutorials/
-          icon: bi bi-mortarboard
-        - title: Application Workflows
-          url: /application_workflows/
-          icon: bi bi-diagram-3
-        - title: Add Documents
-          url: /how-to/add_documents/
-          icon: bi bi-file-earmark-arrow-up
-        - title: Create Agents
-          url: /how-to/create_agents/
-          icon: bi bi-robot
-        - title: Solution Demos
-          url: /demos/
-          icon: bi bi-play-circle
-    - title: Operate on Azure
-      links:
-        - title: Admin Configuration
-          url: /admin_configuration/
-          icon: bi bi-sliders
-        - title: Admin UI Settings
-          url: /how-to/admin_ui_settings/
-          icon: bi bi-palette
-        - title: Deployment Reference
-          url: /reference/deploy/
-          match: /reference/deploy/
-          icon: bi bi-cloud-arrow-up
-        - title: Application Scaling
-          url: /application_scaling/
-          icon: bi bi-speedometer2
-        - title: Enterprise Networking
-          url: /how-to/enterprise_networking/
-          icon: bi bi-diagram-2
-        - title: Troubleshooting
-          url: /troubleshooting/
-          icon: bi bi-wrench-adjustable-circle
-    - title: Extend and integrate
-      links:
-        - title: External Applications
-          url: /external_apps_overview/
-          icon: bi bi-window-stack
-        - title: ServiceNow Guides
-          url: /how-to/agents/ServiceNow/
-          match: /how-to/agents/ServiceNow/
-          icon: bi bi-plug
-        - title: Managed Identity
-          url: /how-to/use_managed_identity/
-          icon: bi bi-person-badge
-        - title: API Reference
-          url: /reference/api_reference/
-          icon: bi bi-braces
-        - title: Feature Reference
-          url: /reference/features/
-          icon: bi bi-grid-1x2
-    - title: Deep reference
-      links:
         - title: Architecture
           url: /explanation/architecture/
           icon: bi bi-diagram-3
-        - title: Design Principles
-          url: /explanation/design_principles/
-          icon: bi bi-lightbulb
-        - title: Feature Guidance
+        - title: FAQ
+          url: /start/faqs/
+          icon: bi bi-question-circle
+        - title: Search the docs
+          url: /search/
+          icon: bi bi-search
+    - title: Guides
+      links:
+        - title: All guides
+          url: /guides/
+          match: /guides/
+          icon: bi bi-list-check
+        - title: Tutorials
+          url: /guides/
+          match: /guides/
+          icon: bi bi-mortarboard
+        - title: Getting started
+          url: /guides/getting-started/
+          icon: bi bi-play-circle
+        - title: Create an action
+          url: /guides/create-an-action/
+          icon: bi bi-lightning-charge
+        - title: Create an agent
+          url: /guides/create-an-agent/
+          icon: bi bi-robot
+        - title: Agent with actions
+          url: /guides/create-an-agent-with-actions/
+          icon: bi bi-cpu
+        - title: Create a workflow
+          url: /guides/create-a-workflow/
+          icon: bi bi-diagram-3
+        - title: Trigger a workflow
+          url: /guides/trigger-a-workflow/
+          icon: bi bi-play-btn
+        - title: Create a file sync
+          url: /guides/create-a-file-sync/
+          icon: bi bi-arrow-repeat
+        - title: Create and manage tags
+          url: /guides/create-and-manage-tags/
+          icon: bi bi-tags
+        - title: Use tags in chat
+          url: /guides/use-tags-in-chat/
+          icon: bi bi-chat-square-text
+        - title: Tag conversations
+          url: /guides/use-tags-on-conversations/
+          icon: bi bi-bookmarks
+        - title: Export a conversation
+          url: /guides/export-a-conversation/
+          icon: bi bi-download
+        - title: Upload documents in chat
+          url: /guides/upload-documents-in-chat/
+          icon: bi bi-file-earmark-arrow-up
+        - title: All how-to guides
+          url: /guides/
+          icon: bi bi-journal-code
+        - title: ServiceNow guides
+          url: /guides/servicenow/
+          match: /guides/servicenow/
+          icon: bi bi-plug
+        - title: Use managed identity
+          url: /guides/use-managed-identity/
+          icon: bi bi-person-badge
+        - title: Solution demos
+          url: /guides/solution-demos/
+          icon: bi bi-collection-play
+    - title: Features
+      links:
+        - title: Feature map
+          url: /features/
+          icon: bi bi-stars
+        - title: Feature reference
+          url: /reference/features/
+          icon: bi bi-grid-1x2
+        - title: Latest release highlights
+          url: /latest-release/
+          match: /latest-release/
+          icon: bi bi-megaphone
+        - title: Feature guidance
           url: /explanation/feature_guidance/
           icon: bi bi-signpost
-        - title: Release Notes
+        - title: Scenarios
+          url: /explanation/scenarios/
+          match: /explanation/scenarios/
+          icon: bi bi-lightbulb
+    - title: Administration
+      links:
+        - title: Admin settings overview
+          url: /admin/
+          icon: bi bi-sliders
+        - title: Appearance
+          url: /admin/appearance/
+          match: /admin/appearance/
+          icon: bi bi-palette
+        - title: Chat
+          url: /admin/chat/
+          match: /admin/chat/
+          icon: bi bi-chat-square-text
+        - title: AI models
+          url: /admin/ai-models/
+          match: /admin/ai-models/
+          icon: bi bi-cpu
+        - title: Agents and actions
+          url: /admin/agents-actions/
+          match: /admin/agents-actions/
+          icon: bi bi-robot
+        - title: Workspaces
+          url: /admin/workspaces/
+          match: /admin/workspaces/
+          icon: bi bi-folder2-open
+        - title: Workflow
+          url: /admin/workflow/
+          match: /admin/workflow/
+          icon: bi bi-diagram-3
+        - title: Knowledge
+          url: /admin/knowledge/
+          match: /admin/knowledge/
+          icon: bi bi-journal-text
+        - title: Security
+          url: /admin/security/
+          match: /admin/security/
+          icon: bi bi-lock
+        - title: Governance
+          url: /admin/governance/
+          match: /admin/governance/
+          icon: bi bi-clipboard-check
+        - title: Data lifecycle
+          url: /admin/data-lifecycle/
+          match: /admin/data-lifecycle/
+          icon: bi bi-hourglass-split
+        - title: Backup and recovery
+          url: /admin/backup-recovery/
+          match: /admin/backup-recovery/
+          icon: bi bi-hdd-stack
+        - title: Scale
+          url: /admin/scale/
+          match: /admin/scale/
+          icon: bi bi-speedometer2
+        - title: Operations
+          url: /admin/operations/
+          match: /admin/operations/
+          icon: bi bi-activity
+        - title: Help
+          url: /admin/help/
+          match: /admin/help/
+          icon: bi bi-life-preserver
+        - title: Branding and home page
+          url: /guides/configure-branding-and-support-settings/
+          match: /guides/configure-branding-and-support-settings/
+          icon: bi bi-brush
+        - title: Full configuration reference
+          url: /admin_configuration/
+          match: /admin_configuration/
+          icon: bi bi-book
+    - title: Deploy and operate
+      links:
+        - title: Deployment reference
+          url: /reference/deploy/
+          match: /reference/deploy/
+          icon: bi bi-cloud-arrow-up
+        - title: Manual setup
+          url: /setup_instructions_manual/
+          icon: bi bi-tools
+        - title: Special setup scenarios
+          url: /deploy/special-scenarios/
+          icon: bi bi-sliders2
+        - title: Upgrade paths
+          url: /guides/upgrade-paths/
+          icon: bi bi-arrow-up-circle
+        - title: Enterprise networking
+          url: /guides/enterprise-networking/
+          icon: bi bi-diagram-2
+        - title: Scale on Azure
+          url: /guides/scale-simplechat-on-azure/
+          icon: bi bi-graph-up-arrow
+        - title: Docker customization
+          url: /guides/docker-customization/
+          icon: bi bi-box
+        - title: Model endpoint identity
+          url: /guides/model-endpoint-identity-setup/
+          icon: bi bi-hdd-network
+        - title: Speech managed identity
+          url: /guides/azure-speech-managed-identity-setup/
+          icon: bi bi-mic
+        - title: Running locally
+          url: /explanation/running_simplechat_locally/
+          icon: bi bi-laptop
+        - title: Running in production
+          url: /explanation/running_simplechat_azure_production/
+          icon: bi bi-cloud-check
+        - title: Troubleshooting
+          url: /troubleshooting/
+          icon: bi bi-wrench-adjustable-circle
+    - title: Reference
+      links:
+        - title: API reference
+          url: /reference/api_reference/
+          icon: bi bi-braces
+        - title: Chat interface reference
+          url: /reference/chat-controls/
+          icon: bi bi-ui-radios
+        - title: Actions reference
+          url: /reference/actions/
+          match: /reference/actions/
+          icon: bi bi-lightning-charge
+        - title: Admin configuration reference
+          url: /admin_configuration/
+          icon: bi bi-card-list
+        - title: External applications
+          url: /reference/external-applications/
+          icon: bi bi-window-stack
+        - title: Application workflows
+          url: /reference/application-workflows/
+          icon: bi bi-diagram-3
+        - title: Design principles
+          url: /explanation/design_principles/
+          icon: bi bi-lightbulb
+        - title: Explanation index
+          url: /explanation/
+          icon: bi bi-journals
+        - title: Release notes
           url: /explanation/release_notes/
+          match: /explanation/release
           icon: bi bi-clock-history
         - title: Archived Release Notes
           url: /explanation/archive_release_notes/
@@ -161,6 +322,9 @@ navigation:
         - title: Contributing
           url: /contributing/
           icon: bi bi-git
+        - title: Media status
+          url: /contributing/media-status/
+          icon: bi bi-images
   external_links:
     - title: GitHub Repository
       url: https://github.com/microsoft/simplechat
@@ -179,21 +343,21 @@ sass:
   style: compressed
 
 # Collections
+#
+# The previous config declared tutorials/guides/reference/explanation collections,
+# but no matching _tutorials/_how-to/_reference/_explanation directories exist, so
+# they were always empty. Those pages are ordinary pages under docs/ and are given
+# their section labels through path-scoped defaults below.
 collections:
-  tutorials:
+  features:
     output: true
-    permalink: /:collection/:name/
-  how-to:
-    output: true
-    permalink: /:collection/:name/
-  reference:
-    output: true
-    permalink: /:collection/:name/
-  explanation:
-    output: true
-    permalink: /:collection/:name/
+    permalink: /features/:name/
 
 # Default layouts and settings
+#
+# Path-scoped defaults must use type "pages" for regular directories. The previous
+# config used the collection label as the type, so these defaults never applied and
+# every page fell back to the generic "Docs" section in search results.
 defaults:
   - scope:
       path: ""
@@ -208,35 +372,69 @@ defaults:
       layout: page
       show_nav: true
   - scope:
-      path: "tutorials"
-      type: "tutorials"
+      path: "start"
+      type: "pages"
     values:
-      layout: page
-      section: "tutorials"
-      show_nav: true
+      section: "Start"
   - scope:
-      path: "how-to"
-      type: "how-to"
+      path: "guides"
+      type: "pages"
     values:
-      layout: page
-      section: "how-to"
-      show_nav: true
+      section: "Guides"
+  - scope:
+      path: "admin"
+      type: "pages"
+    values:
+      section: "Administration"
+  - scope:
+      path: "deploy"
+      type: "pages"
+    values:
+      section: "Deploy & Operate"
   - scope:
       path: "reference"
-      type: "reference"
+      type: "pages"
     values:
-      layout: page
-      section: "reference"
-      show_nav: true
+      section: "Reference"
   - scope:
       path: "explanation"
-      type: "explanation"
+      type: "pages"
     values:
-      layout: page
-      section: "explanation"
+      section: "Explanation"
+  - scope:
+      path: "latest-release"
+      type: "pages"
+    values:
+      section: "Release Highlights"
+  - scope:
+      path: "tutorials"
+      type: "pages"
+    values:
+      section: "Guides"
+  - scope:
+      path: "how-to"
+      type: "pages"
+    values:
+      section: "Guides"
+  - scope:
+      path: "troubleshooting"
+      type: "pages"
+    values:
+      section: "Deploy & Operate"
+  - scope:
+      path: ""
+      type: "features"
+    values:
+      layout: feature
+      section: "Features"
       show_nav: true
 
 # Exclude from processing
+#
+# The explanation/features and explanation/fixes trees hold ~830 internal
+# engineering notes. They stay in the repository and remain readable on GitHub,
+# but publishing them made up 84% of the search index and buried real docs.
+# See docs/explanation/features/DOCUMENTATION_SITE_REDESIGN.md.
 exclude:
   - _site/
   - .sass-cache/
@@ -249,3 +447,8 @@ exclude:
   - vendor/cache/
   - vendor/gems/
   - vendor/ruby/
+  - explanation/features/
+  - explanation/fixes/
+  - explanation/release_notes.md
+  - README-THEME.md
+  - theme-documentation.md

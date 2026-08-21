@@ -1,4 +1,9 @@
             <div class="tab-pane fade{% if admin_landing_tab == 'actions' %} show active{% endif %}" id="actions" role="tabpanel" aria-labelledby="actions-tab">
+                {# These live here, not in the Agents pane, because sibling
+                   {% include %} panes each render in their own scope: a value
+                   set in one pane is not visible to the next one. #}
+                {% set analyze_capability = settings.document_action_capabilities.analyze %}
+                {% set comparison_capability = settings.document_action_capabilities.comparison %}
                 <div class="card p-3 mb-4" id="document-action-capabilities-card">
                     <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-3 mb-3">
                         <div>

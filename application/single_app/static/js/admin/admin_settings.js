@@ -12,10 +12,8 @@ let imageSelected = window.imageSelected || [];
 let imageAll      = window.imageAll || [];
 
 let classificationCategories = window.classificationCategories || [];
-let enableDocumentClassification = window.enableDocumentClassification || false;
 
 let externalLinks = window.externalLinks || [];
-let enableExternalLinks = window.enableExternalLinks || false;
 let externalLinksMenuName = window.externalLinksMenuName || 'External Links';
 let agentsPagePromotedPopularAgents = Array.isArray(window.agentsPagePromotedPopularAgents)
     ? window.agentsPagePromotedPopularAgents

@@ -4523,7 +4523,9 @@ def build_search_augmentation_system_prompt(retrieved_content):
                         Retrieved Excerpts:
                         {retrieved_content}
 
-                        Base your answer only on information supported by the retrieved excerpts and any computed tool-backed results included elsewhere in this conversation context. If the answer is not supported by that information, say so.
+                        These excerpts are your starting evidence, not your only means of gathering evidence. If you have actions or tools available and the excerpts do not contain what the question needs, call the appropriate action to obtain it, then reason over the retrieved excerpts and the action results together. Gather the evidence you are capable of gathering before declining to answer.
+                        Ground every claim in a retrieved excerpt, in computed tool-backed results included elsewhere in this conversation context, or in a result you obtained by calling an action. Never estimate, infer, or fabricate values that none of those sources support; if the evidence is still missing after you have used the actions available to you, say so.
+                        Excerpts drawn from a spreadsheet or other tabular source contain only a truncated schema preview of that file, not its data. Never derive counts, totals, averages, minimums, maximums, trends, or any other numeric conclusion from those preview rows; obtain such values from a computed tabular result instead.
                         If computed tabular results are provided in another system message, treat them as authoritative for row-level values, calculations, and numeric conclusions. Do not say that you lack direct access to the data when those computed results are present.
 
                         Example

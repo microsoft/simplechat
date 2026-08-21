@@ -3,6 +3,7 @@
 import logging
 import os
 import re
+import sys
 import threading
 from datetime import date, datetime
 from typing import Any, Dict, Optional, Tuple
@@ -14,6 +15,8 @@ import app_settings_cache
 _appinsights_logger = None
 _azure_monitor_configured = False
 _logging_settings_load_state = threading.local()
+CONSOLE_ERROR_HANDLER_ATTRIBUTE = "_simplechat_console_error_handler"
+CONSOLE_ERROR_LOG_FORMAT = "[%(asctime)s] %(levelname)s in %(name)s: %(message)s"
 REDACTED_LOG_VALUE = "***REDACTED***"
 MAX_LOG_STRING_LENGTH = 8192
 SENSITIVE_LOG_KEY_FRAGMENTS = (
@@ -629,3 +632,54 @@ def setup_appinsights_logging(settings):
         print(f"[AZURE_MONITOR] Failed to setup Application Insights: {e}")
         _azure_monitor_configured = False
         # Don't re-raise the exception, just continue without Application Insights
+
+
+def ensure_console_error_logging(logger):
+    """
+    Guarantee that a logger writes ERROR records to stderr.
+
+    Flask only attaches its own stderr handler when ``logging.Logger`` finds no
+    level handler anywhere up the hierarchy. ``configure_azure_monitor`` attaches
+    a handler to the root logger, which also turns ``logging.basicConfig`` into a
+    no-op, so unhandled request tracebacks are delivered to Application Insights
+    and never printed. On App Service that leaves nothing but the access-log line
+    in the container log, which makes 500s effectively invisible.
+
+    The handler is attached to the supplied logger rather than to root, and is
+    pinned at ERROR, so library DEBUG output is never echoed to the console.
+
+    Args:
+        logger (logging.Logger): Logger to attach the stderr handler to,
+            typically ``app.logger``.
+
+    Returns:
+        logging.Handler: The console handler now attached to the logger, or
+        ``None`` when no logger was supplied.
+
+    Raises:
+        None: Handler setup failures are reported and swallowed so that logging
+        configuration can never prevent the application from starting.
+    """
+    if logger is None:
+        return None
+
+    try:
+        for existing_handler in logger.handlers:
+            if getattr(existing_handler, CONSOLE_ERROR_HANDLER_ATTRIBUTE, False):
+                return existing_handler
+
+        console_handler = logging.StreamHandler(sys.stderr)
+        console_handler.setLevel(logging.ERROR)
+        console_handler.setFormatter(logging.Formatter(CONSOLE_ERROR_LOG_FORMAT))
+        setattr(console_handler, CONSOLE_ERROR_HANDLER_ATTRIBUTE, True)
+        logger.addHandler(console_handler)
+
+        # A logger left at NOTSET defers to the root level, which Azure Monitor
+        # may have raised above ERROR, so pin it low enough to emit tracebacks.
+        if logger.level == logging.NOTSET or logger.level > logging.ERROR:
+            logger.setLevel(logging.ERROR)
+
+        return console_handler
+    except Exception as handler_error:
+        print(f"[AZURE_MONITOR] Failed to attach console error handler: {handler_error}")
+        return None

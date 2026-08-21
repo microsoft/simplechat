@@ -13,7 +13,7 @@
                             <button type="button" class="btn btn-outline-secondary btn-sm" id="document-access-index-refresh-btn">
                                 <i class="bi bi-arrow-clockwise me-1" aria-hidden="true"></i>Refresh Status
                             </button>
-                            {% if enable_dai_debug %}
+                            {% if settings.enable_dai_debug %}
                             <button type="button" class="btn btn-outline-primary btn-sm" id="document-access-index-run-batch-btn">
                                 <i class="bi bi-play-circle me-1" aria-hidden="true"></i>Run One Backfill Batch
                             </button>
@@ -27,7 +27,7 @@
                     <div class="alert alert-info small mb-3">
                         <i class="bi bi-info-circle me-2" aria-hidden="true"></i>
                         Document access projection maintenance is automatic. The background scheduler repairs fail-open projection records first, then runs bounded backfill batches repeatedly while work remains. Production read metrics below show DAI-served reads, Redis cache hits, source fallbacks, RU, and latency without requiring shadow validation.
-                        {% if enable_dai_debug %}Debug controls and shadow validation diagnostics are visible because <code>enable_dai_debug</code> is enabled in app settings.{% endif %}
+                        {% if settings.enable_dai_debug %}Debug controls and shadow validation diagnostics are visible because <code>enable_dai_debug</code> is enabled in app settings.{% endif %}
                     </div>
 
                     <div id="document-access-index-message" class="alert alert-info d-none" role="status" aria-live="polite"></div>
@@ -57,7 +57,7 @@
                                 <span class="badge text-bg-secondary" id="document-access-index-cache-status">Not loaded</span>
                             </div>
                         </div>
-                        {% if enable_dai_debug %}
+                        {% if settings.enable_dai_debug %}
                         <div class="col-md-6 col-xl-3">
                             <div class="border rounded p-2 h-100">
                                 <div class="small text-muted">Shadow Validation</div>
@@ -91,7 +91,7 @@
                         </div>
                     </div>
 
-                    {% if enable_dai_debug %}
+                    {% if settings.enable_dai_debug %}
                     <div class="border rounded p-3 mb-3" data-testid="document-access-index-debug-controls">
                         <h6 class="mb-3">Automatic Maintenance and Diagnostics</h6>
                         <div class="row g-3 align-items-start">
@@ -327,7 +327,7 @@
                                 Production read metrics are lightweight in-process counters for the current app worker. Application Insights logs remain the durable fleet-wide source for fallback warnings and query failures.
                             </div>
                         </div>
-                        {% if enable_dai_debug %}
+                        {% if settings.enable_dai_debug %}
                         <div class="col-md-6 col-xl-3">
                             <div class="border rounded p-2 h-100">
                                 <div class="small text-muted">Last Shadow Result</div>
@@ -653,7 +653,7 @@
                     </div>
                 </div>
 
-                {% if enable_dai_debug %}
+                {% if settings.enable_dai_debug %}
                 <div class="modal fade" id="documentAccessIndexResetModal" tabindex="-1" aria-labelledby="documentAccessIndexResetModalLabel" aria-hidden="true">
                     <div class="modal-dialog">
                         <div class="modal-content">

@@ -2292,7 +2292,6 @@
     if (!Array.isArray(window.classificationCategories)) {
         window.classificationCategories = [];
     }
-    window.enableDocumentClassification = "{{ enable_document_classification }}";
 
     // *** NEW: External Links Data ***
     window.externalLinks = {{ settings.external_links|default([], true)|tojson(indent=None)|safe }};
@@ -2300,7 +2299,6 @@
     if (!Array.isArray(window.externalLinks)) {
         window.externalLinks = [];
     }
-    window.enableExternalLinks = "{{ enable_external_links }}";
     window.externalLinksMenuName = "{{ settings.external_links_menu_name or 'External Links' }}";
     window.externalLinksForceMenu = "{{ settings.external_links_force_menu }}";
     window.agentsPagePromotedPopularAgents = {{ settings.agents_page_promoted_popular_agents | default([], true) | tojson(indent=None) }};

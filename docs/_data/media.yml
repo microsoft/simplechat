@@ -1,0 +1,91 @@
+# media.yml
+#
+# Registry of every screenshot and video slot in the documentation site.
+#
+# ---------------------------------------------------------------------------
+# HOW TO ADD A SCREENSHOT OR VIDEO
+# ---------------------------------------------------------------------------
+#
+# You do NOT need to edit this file to add an image. Pages render a visible
+# placeholder card telling you the exact filename to create. Drop the file at
+# that path and the placeholder is replaced automatically on the next build.
+#
+#   1. Open any docs page that shows a placeholder card.
+#   2. The card shows the expected path, for example:
+#        docs/images/admin/general-tab.png
+#   3. Save your screenshot at exactly that path.
+#   4. Done. No YAML edit, no code change.
+#
+# Register a slot here when you want it tracked on the shot list at
+# /contributing/media-status/ so it shows up as an outstanding item until the
+# asset exists.
+#
+# ---------------------------------------------------------------------------
+# ENTRY SCHEMA
+# ---------------------------------------------------------------------------
+#
+# <slot-id>:
+#   type:      image | video          (required)
+#   title:     Short human title      (required)
+#   file:      path under docs/images/, e.g. "admin/general-tab.png"
+#              Required for type: image.
+#   alt:       Accessible description of the image. Required for type: image.
+#              Describe what the reader learns from it, not "screenshot of X".
+#   caption:   Optional caption rendered under the figure.
+#   capture:   What the person taking the screenshot or recording the video
+#              should show. This text appears inside the placeholder card, so
+#              write it as an instruction. Strongly recommended.
+#   width:     Intrinsic pixel width  (recommended, prevents layout shift)
+#   height:    Intrinsic pixel height (recommended, prevents layout shift)
+#   group:     Grouping key for the shot list, e.g. "admin", "guides"
+#
+# Video-only fields:
+#   poster:    path under docs/images/, e.g. "video-posters/admin-deploy.png"
+#   url:       YouTube or Microsoft Stream watch URL. Omit while the video is
+#              still planned; the card renders a "planned" state instead.
+#   duration:  Display string such as "8:24"
+#
+# ---------------------------------------------------------------------------
+# CONVENTIONS
+# ---------------------------------------------------------------------------
+#
+# Images live under        docs/images/<group>/<slug>.png
+# Video posters live under docs/images/video-posters/<slug>.png
+#
+# Videos are never embedded as iframes and never committed as MP4 files. They
+# render as a local poster card that links out to YouTube or Microsoft Stream,
+# which keeps the repository small and avoids third-party embed scripts.
+#
+# Recommended capture width for UI screenshots is 1600px at 2x DPI. Crop to the
+# relevant region rather than capturing the whole desktop.
+#
+# ---------------------------------------------------------------------------
+
+# Seed entries. The scaffolding scripts append to this file as sections are
+# built out; these establish the pattern and prove the placeholder rendering.
+
+admin-settings-overview:
+  type: image
+  title: "Admin Settings landing view"
+  file: "admin/admin-settings-overview.png"
+  alt: "The Admin Settings page showing the tab strip across the top of the settings panel."
+  capture: "Open Admin Settings and capture the full tab strip so every tab name is legible."
+  group: admin
+  width: 1600
+  height: 900
+
+admin-video-series:
+  type: video
+  title: "Admin video series: deploy, configure, update, operate"
+  poster: "video-posters/admin-series.png"
+  capture: "Recording planned. Cover deployment, first-run configuration, upgrading, and a walkthrough of each Admin Settings tab."
+  group: admin
+  duration: ""
+
+user-video-agents-actions:
+  type: video
+  title: "User video: building agents and actions"
+  poster: "video-posters/user-agents-actions.png"
+  capture: "Recording planned. Cover what an action is and why you would use one, then build an agent that calls it end to end."
+  group: guides
+  duration: ""

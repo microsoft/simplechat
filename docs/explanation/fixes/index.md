@@ -7,6 +7,7 @@ category: Version History
 ---
 
 - [Chat Document Search File Name and Divider Artifact Fix](CHAT_DOCUMENT_SEARCH_FILENAME_AND_DIVIDER_FIX.md)
+- [Semantic Kernel Startup Request Context Fix](SEMANTIC_KERNEL_STARTUP_REQUEST_CONTEXT_FIX.md)
 - [Data Management Restore Route Endpoint Collision Fix](DATA_MANAGEMENT_RESTORE_ROUTE_ENDPOINT_COLLISION_FIX.md)
 - [Font Size and 200 Percent Zoom Fix](FONT_SIZE_AND_200_PERCENT_ZOOM_FIX.md)
 - [Public Workspace Prompt Migration Fix](PUBLIC_WORKSPACE_PROMPT_MIGRATION_FIX.md)
@@ -37,3 +38,6 @@ category: Version History
 - [Collaboration Mention Tab Autocomplete Fix](COLLABORATION_MENTION_TAB_AUTOCOMPLETE_FIX.md)
 - [Generated Artifact Paging, Truncation, and Guidance Carry-Forward Fix](GENERATED_ARTIFACT_PAGING_AND_GUIDANCE_FIX.md)
 - [Easy Auth Logout Detection Fix](EASY_AUTH_LOGOUT_DETECTION_FIX.md)
+- [Admin Settings Pane Variable Scope Fix](ADMIN_SETTINGS_PANE_VARIABLE_SCOPE_FIX.md)
+- [Inline Media Cited-Only Gating Fix](INLINE_MEDIA_CITED_ONLY_GATING_FIX.md)
+- [Agent Actions With Workspace Evidence Fix](AGENT_ACTIONS_WITH_WORKSPACE_EVIDENCE_FIX.md)
