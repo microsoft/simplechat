@@ -2,8 +2,8 @@
 # test_mixed_source_chat_search_consistency.py
 """
 Functional test for mixed-source Chat and Search consistency.
-Version: 0.250.064
-Implemented in: 0.250.064
+Version: 0.260.023
+Implemented in: 0.250.064; additive tabular evidence gating updated in 0.260.023
 
 This test ensures Phase 2 of #1057 consumes the Phase 1 #1056 contracts for
 standard and streaming Chat plus workflow Search without implementing later
@@ -253,8 +253,10 @@ def test_narrative_only_prompt_skips_rows_and_explicit_failure_is_partial():
         gpt_model="test-model",
         settings={"tabular": True},
     )
-    assert runner_calls == []
-    assert generic_narrative["evidence_envelopes"][0]["status"] == "skipped"
+    # Evidence gathering is additive: a generic question no longer suppresses
+    # computation of an in-scope tabular source. Only an unambiguous
+    # narrative-artifact request (the PDF case above) skips it.
+    assert generic_narrative["evidence_envelopes"][0]["status"] != "skipped"
 
     failing_executor, failure_calls = _load_shared_tabular_executor(
         failing_file_name="broken.csv"
