@@ -9,9 +9,5 @@
 
 release_v0_260_001:
   label: "SimpleChat v0.260.001 Latest Features"
-  note: "Remaining placeholder graphics. Each entry records why the capture could not be automated."
-  items:
-    - page: /latest-release/release-260-conversation-contents-drawer/
-      images: 1
-      path_pattern: "docs/images/latest-release/release_260_conversation_contents_drawer_2.png"
-      note: "Needs a second drawer capture showing the conversation jumping to a selected entry."
+  note: "All Latest Features screenshots for this release are captured."
+  items: []

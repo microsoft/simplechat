@@ -23,7 +23,6 @@ The v0.260.001 app catalog currently provides branded placeholder captures for J
 
 - `/images/latest-release/release_260_conversation_contents_drawer_1.png`
 - `/images/latest-release/release_260_conversation_contents_drawer_2.png`
-- `/images/latest-release/release_260_conversation_contents_drawer_3.png`
 
 ## Why It Matters
 
@@ -42,4 +41,4 @@ This matters because a long working session becomes hard to navigate, and the th
 ## Notes
 
 - The Jump Back to Any Earlier Prompt guide belongs to the SimpleChat 0.260.001 latest-feature set.
-- The gallery for this page uses `release_260_conversation_contents_drawer_1.png`, `release_260_conversation_contents_drawer_2.png`, `release_260_conversation_contents_drawer_3.png` from the app Latest Features catalog.
+- The gallery for this page uses `release_260_conversation_contents_drawer_1.png`, `release_260_conversation_contents_drawer_2.png` from the app Latest Features catalog.
