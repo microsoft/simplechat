@@ -10,6 +10,8 @@ from bs4 import BeautifulSoup
 
 from functions_debug import debug_print
 from config import *
+from azure.ai.documentintelligence.models import DocumentAnalysisFeature
+from functions_office_media import extract_office_embedded_images
 import functions_settings
 from functions_settings import *
 from functions_logging import *
@@ -452,6 +454,11 @@ def extract_content_with_azure_di(file_path, extraction_mode='read', pages=None)
             analyze_options["output_content_format"] = "markdown"
         if pages:
             analyze_options["pages"] = str(pages)
+
+        # Formula extraction is a billed Document Intelligence add-on, so it is opt-in and only
+        # applies to Layout, which is the model that supports it.
+        if normalized_extraction_mode == "layout" and functions_settings.is_document_intelligence_formula_extraction_enabled():
+            analyze_options["features"] = [DocumentAnalysisFeature.FORMULAS]
         
         # Debug logging for troubleshooting
         debug_print(f"Starting Azure DI extraction for: {os.path.basename(file_path)}")
@@ -605,6 +612,85 @@ def extract_content_with_azure_di(file_path, extraction_mode='read', pages=None)
     except Exception as e:
         # add_file_task_to_file_processing_log(document_id, user_id, f"General error during DI: {e}")
         raise e
+
+
+def resolve_extraction_engine_for_mode(extraction_mode, settings):
+    """Resolve which engine backs the given extraction mode, plus a human-readable reason."""
+    if extraction_mode != 'layout':
+        return functions_settings.EXTRACTION_ENGINE_DOCUMENT_INTELLIGENCE, ''
+    return functions_settings.resolve_enhanced_extraction_engine(settings)
+
+
+def extract_content_with_extraction_engine(
+    file_path,
+    extraction_mode,
+    extraction_engine=None,
+    settings=None,
+    pages=None,
+):
+    """Extract page content with the engine that backs the requested extraction mode.
+
+    Standard extraction always uses Document Intelligence ``prebuilt-read``. Enhanced extraction
+    prefers Azure AI Content Understanding, but always falls back to Document Intelligence
+    ``prebuilt-layout`` so a Content Understanding outage never blocks ingestion.
+
+    Returns ``(pages_data, engine_used, fallback_reason)``.
+    """
+    resolved_settings = settings if settings is not None else get_settings()
+    if extraction_engine is None:
+        extraction_engine, _ = resolve_extraction_engine_for_mode(extraction_mode, resolved_settings)
+
+    if (
+        extraction_mode != 'layout'
+        or extraction_engine != functions_settings.EXTRACTION_ENGINE_CONTENT_UNDERSTANDING
+    ):
+        return (
+            extract_content_with_azure_di(file_path, extraction_mode=extraction_mode, pages=pages),
+            functions_settings.EXTRACTION_ENGINE_DOCUMENT_INTELLIGENCE,
+            '',
+        )
+
+    from functions_content_understanding import extract_content_with_content_understanding
+
+    try:
+        content_understanding_pages = extract_content_with_content_understanding(
+            file_path,
+            pages=pages,
+            settings=resolved_settings,
+        )
+        if content_understanding_pages:
+            return (
+                content_understanding_pages,
+                functions_settings.EXTRACTION_ENGINE_CONTENT_UNDERSTANDING,
+                '',
+            )
+        fallback_reason = (
+            'Content Understanding returned no content, so Document Intelligence Layout was used'
+        )
+        log_event(
+            f"[EXTRACTION_ENGINE] Content Understanding returned no content for "
+            f"{os.path.basename(file_path)}; falling back to Document Intelligence Layout.",
+            level=logging.WARNING,
+        )
+    except Exception as content_understanding_error:
+        # The reason is persisted and rendered in workspace tooltips, so keep it short.
+        error_summary = " ".join(str(content_understanding_error).split())[:240]
+        fallback_reason = (
+            f'Content Understanding failed ({error_summary}), '
+            'so Document Intelligence Layout was used'
+        )
+        log_event(
+            f"[EXTRACTION_ENGINE] Content Understanding failed for "
+            f"{os.path.basename(file_path)}: {content_understanding_error}. "
+            "Falling back to Document Intelligence Layout.",
+            level=logging.WARNING,
+        )
+
+    return (
+        extract_content_with_azure_di(file_path, extraction_mode='layout', pages=pages),
+        functions_settings.EXTRACTION_ENGINE_DOCUMENT_INTELLIGENCE,
+        fallback_reason,
+    )
 
 
 def extract_table_file(file_path, file_ext):

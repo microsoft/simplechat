@@ -39,7 +39,19 @@ When implementing fixes or features:
 3. Include this version in documentation markdown files
 4. Ensure consistency across all related files
 
-### 4. Version Tracking Benefits
+### 4. Version Assertions in Tests
+
+Functional tests must not assert the current `config.py` version with exact equality, because exact checks fail after normal future version bumps. When a test needs to prove that a fix or feature is present in at least its implementation version, use the shared helper:
+
+```python
+from test_support.versioning import assert_app_version_at_least
+
+assert_app_version_at_least("0.250.126")
+```
+
+Keep exact version literals only when the version itself is test data, such as validating version-comparison behavior or historical documentation text.
+
+### 5. Version Tracking Benefits
 - Clear traceability of when fixes/features were implemented
 - Easy identification of test coverage for specific versions
 - Simplified debugging and rollback procedures

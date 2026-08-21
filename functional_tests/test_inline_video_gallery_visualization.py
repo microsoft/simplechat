@@ -2,7 +2,7 @@
 # test_inline_video_gallery_visualization.py
 """
 Functional test for inline video gallery visualization support.
-Version: 0.241.066
+Version: 0.260.024
 Implemented in: 0.241.066
 
 This test ensures assistant agent citations can expose inline video galleries,
@@ -12,6 +12,7 @@ citation labels stay readable for video results.
 
 import os
 import sys
+from test_support.versioning import assert_app_version_at_least
 
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -90,7 +91,7 @@ def test_chat_renderer_wires_inline_video_galleries():
     workflow_runner_source = read_text("application/single_app/functions_workflow_runner.py")
     config_py = read_text("application/single_app/config.py")
 
-    assert 'VERSION = "0.241.066"' in config_py
+    assert_app_version_at_least("0.241.066")
     assert "import { renderInlineVideoGalleries } from './chat-inline-videos.js';" in messages_js
     assert "await renderInlineVideoGalleries(" in messages_js
     assert 'const INLINE_VIDEO_GALLERY_RENDER_TYPE = "inline_video_gallery";' in videos_js
@@ -106,6 +107,16 @@ def test_chat_renderer_wires_inline_video_galleries():
     assert "max-height: 400px;" in chats_css
     assert "_contains_inline_video_result(function_result)" in workflow_runner_source
     assert "mime_type.startswith('video/')" in workflow_runner_source
+    assert (
+        "const citedHybridCitations = getCitedHybridCitations(fullMessageObject, hybridCitations);"
+        in messages_js
+    )
+    assert (
+        "const citedWebCitations = getCitedWebCitations(fullMessageObject, webCitations);"
+        in messages_js
+    )
+    assert "function extractWorkspaceCitationVideoItems(citedHybridCitations = []" in videos_js
+    assert "function extractLinkedVideoItems(citedWebCitations = []" in videos_js
 
 
 if __name__ == "__main__":

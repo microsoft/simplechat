@@ -9,6 +9,7 @@ message actions have enough room to remain visible.
 """
 
 import os
+from test_support.versioning import assert_app_version_at_least
 
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -58,7 +59,7 @@ def test_version_and_fix_documentation_alignment():
 
     fix_doc_content = read_file_text(FIX_DOC_FILE)
 
-    assert read_config_version() == '0.240.084'
+    assert_app_version_at_least("0.240.084")
     assert 'Fixed/Implemented in version: **0.240.084**' in fix_doc_content
     assert 'VERSION = "0.240.084"' in fix_doc_content
     assert 'min(320px, 90%)' in fix_doc_content

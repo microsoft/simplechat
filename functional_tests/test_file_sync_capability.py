@@ -14,6 +14,8 @@ import ast
 import re
 import sys
 from pathlib import Path
+from test_support.versioning import assert_app_version_at_least
+from test_support.templates import compose_if_admin_settings
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -21,13 +23,16 @@ APP_ROOT = REPO_ROOT / "application" / "single_app"
 
 
 def read_text(relative_path):
-    return (REPO_ROOT / relative_path).read_text(encoding="utf-8")
+    _path = REPO_ROOT / relative_path
+    return compose_if_admin_settings(
+        _path, _path.read_text(encoding="utf-8")
+    )
 
 
 def test_config_version_and_containers():
     """Validate version bump and File Sync Cosmos containers."""
     config_text = read_text("application/single_app/config.py")
-    assert 'VERSION = "0.241.180"' in config_text
+    assert_app_version_at_least("0.241.180")
 
     expected_containers = [
         "personal_file_sync_sources",

@@ -15,10 +15,10 @@ from openapi_auth_analyzer import analyze_openapi_authentication, get_authentica
 from swagger_wrapper import swagger_route, get_auth_security
 from functions_debug import debug_print
 
-def register_openapi_routes(app):
+def register_openapi_routes(bp):
     """Register OpenAPI-related routes."""
     
-    @app.route('/api/openapi/upload', methods=['POST'])
+    @bp.route('/api/openapi/upload', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -134,7 +134,7 @@ def register_openapi_routes(app):
                 'error': 'Internal server error during upload'
             }), 500
     
-    @app.route('/api/openapi/list-uploaded', methods=['GET'])
+    @bp.route('/api/openapi/list-uploaded', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -191,7 +191,7 @@ def register_openapi_routes(app):
                 'error': 'Internal server error while listing specifications'
             }), 500
     
-    @app.route('/api/openapi/analyze-auth', methods=['POST'])
+    @bp.route('/api/openapi/analyze-auth', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required

@@ -5,6 +5,8 @@
 {% set sidebar_menu_state_raw = user_settings.get('settings', {}).get('sidebarMenuState', {}) %}
 {% set sidebar_menu_state = sidebar_menu_state_raw if sidebar_menu_state_raw is mapping else {} %}
 {% set sidebar_settings = settings if settings is defined else app_settings %}
+{% set latest_features_nav_is_hidden = latest_features_nav_hidden | default(false) %}
+{% set public_workspace_labels = app_settings.public_workspace_labels %}
 <div id="sidebar-nav" class="d-flex flex-column vh-100 bg-light border-end sidebar-expanded" style="width: var(--sidebar-width, 260px); min-width: var(--sidebar-min-width, 220px); position: fixed; left: 0; top: 0; z-index: 1040; transition: transform 0.3s ease;">
 
   <div id="sidebar-resize-handle" class="sidebar-resize-handle" aria-label="Resize sidebar" role="separator" tabindex="0">
@@ -25,7 +27,7 @@
           </button>
         {% endif %}
         {% if app_settings.show_logo %}
-          <a class="navbar-brand sidebar-brand-link" href="{{ url_for('index') }}">
+          <a class="navbar-brand sidebar-brand-link" href="{{ url_for('public_app.index') }}">
             {% if app_settings.custom_logo_base64 or app_settings.custom_logo_dark_base64 %}
               <!-- Light mode logo -->
               {% if app_settings.custom_logo_base64 %}
@@ -57,7 +59,7 @@
             {% endif %}
           </a>
         {% elif not app_settings.hide_app_title %}
-          <a class="navbar-brand fw-bold sidebar-brand-link" href="{{ url_for('index') }}">
+          <a class="navbar-brand fw-bold sidebar-brand-link" href="{{ url_for('public_app.index') }}">
             <span class="sidebar-brand-text">
               <span id="sidebar-app-title" class="sidebar-title-truncate" data-title="{{ app_settings.app_title }}" data-show-logo="false" title="{{ app_settings.app_title }}">{{ app_settings.app_title }}</span>
             </span>
@@ -80,23 +82,23 @@
     </div>
     {% endif %}
   </div>
-  <div id="sidebar-content" class="flex-grow-1 d-flex flex-column" style="padding-bottom: 80px; overflow-y: auto;">
+  <div id="sidebar-content" class="sidebar-scroll-content flex-grow-1 d-flex flex-column">
     <ul class="nav flex-column">
       {% if session.get('user') and session['user'].get('roles') and ('Admin' in session['user']['roles'] or 'User' in session['user']['roles']) %}
         <li class="nav-item">
-          {% if request.endpoint == 'chats' %}
+          {% if request.endpoint == 'frontend_chats.chats' %}
           <button class="nav-link" id="sidebar-new-chat-btn" title="Start a new chat" style="background: none; border: none; text-align: left; width: 100%;">
             <i class="bi bi-chat-right-text me-2"></i><span class="nav-text">New Chat</span>
           </button>
           {% else %}
-          <a class="nav-link" href="{{ url_for('chats') }}">
+          <a class="nav-link" href="{{ url_for('frontend_chats.chats') }}">
             <i class="bi bi-chat-square-text me-2"></i><span class="nav-text">Chat</span>
           </a>
           {% endif %}
         </li>
         {% if sidebar_settings.enable_semantic_kernel %}
         <li class="nav-item">
-          <a class="nav-link d-flex align-items-center" href="{{ url_for('agents') }}">
+          <a class="nav-link d-flex align-items-center" href="{{ url_for('frontend_agents.agents') }}" title="Browse and launch reusable, specialized AI assistants that combine instructions, approved knowledge, and optional actions.">
             <i class="bi bi-robot me-2"></i><span class="nav-text">Agents</span>
           </a>
         </li>
@@ -118,65 +120,67 @@
           <li class="nav-item">
             {% if request.endpoint == 'workspace' %}
             <!-- Personal workspace with expandable sub-menu when on workspace page -->
-            <a class="nav-link d-flex align-items-center workspace-nav-toggle" href="#" data-target="personal-workspace-submenu">
+            <a class="nav-link d-flex align-items-center workspace-nav-toggle" href="#" data-target="personal-workspace-submenu" title="Open your personal workspace for private documents, prompts, identities, sync, endpoints, actions, agents, and workflows.">
               <i class="bi bi-folder me-2"></i><span class="nav-text"> Personal</span>
               <i class="bi bi-caret-right-fill ms-auto transition workspace-caret" style="font-size: 0.8em; transition: transform 0.2s;"></i>
             </a>
             <ul class="nav flex-column ms-3" id="personal-workspace-submenu" style="display: none; visibility: hidden;" data-submenu="personal">
               <li class="nav-item">
-                <a class="nav-link d-flex align-items-center workspace-nav-tab" href="#" data-tab="documents-tab">
+                <a class="nav-link d-flex align-items-center workspace-nav-tab" href="#" data-tab="documents-tab" title="Upload, search, organize, tag, and manage personal files used for grounded chat after processing and indexing.">
                   <i class="bi bi-file-earmark-text me-2" style="font-size: 0.8em;"></i><span class="nav-text">Your Documents</span>
                 </a>
               </li>
               <li class="nav-item">
-                <a class="nav-link d-flex align-items-center workspace-nav-tab" href="#" data-tab="prompts-tab">
+                <a class="nav-link d-flex align-items-center workspace-nav-tab" href="#" data-tab="prompts-tab" title="Create, search, view, and reuse prompt templates for consistent chat instructions.">
                   <i class="bi bi-lightbulb me-2" style="font-size: 0.8em;"></i><span class="nav-text">Your Prompts</span>
                 </a>
               </li>
-              {% if sidebar_settings.allow_user_workflows %}
+              {% if file_sync_enabled or sidebar_settings.enable_semantic_kernel %}
               <li class="nav-item">
-                <a class="nav-link d-flex align-items-center workspace-nav-tab" href="#" data-tab="workflows-tab">
-                  <i class="bi bi-diagram-3 me-2" style="font-size: 0.8em;"></i><span class="nav-text">Your Workflows</span>
-                </a>
-              </li>
-              {% endif %}
-              {% if sidebar_settings.per_user_semantic_kernel and sidebar_settings.enable_semantic_kernel %}
-              <li class="nav-item">
-                <a class="nav-link d-flex align-items-center workspace-nav-tab" href="#" data-tab="agents-tab">
-                  <i class="bi bi-robot me-2" style="font-size: 0.8em;"></i><span class="nav-text">Your Agents</span>
-                </a>
-              </li>
-              <li class="nav-item">
-                <a class="nav-link d-flex align-items-center workspace-nav-tab" href="#" data-tab="plugins-tab">
-                  <i class="bi bi-plugin me-2" style="font-size: 0.8em;"></i><span class="nav-text">Your Actions</span>
-                </a>
-              </li>
-              {% endif %}
-              {% if sidebar_settings.allow_user_custom_endpoints and sidebar_settings.enable_multi_model_endpoints %}
-              <li class="nav-item">
-                <a class="nav-link d-flex align-items-center workspace-nav-tab" href="#" data-tab="endpoints-tab">
-                  <i class="bi bi-hdd-network me-2" style="font-size: 0.8em;"></i><span class="nav-text">Your Endpoints</span>
+                <a class="nav-link d-flex align-items-center workspace-nav-tab" href="#" data-tab="identities-tab" title="Manage reusable authentication profiles for File Sync and Actions so credentials stay scoped and resolved server-side.">
+                  <i class="bi bi-person-badge me-2" style="font-size: 0.8em;"></i><span class="nav-text">Identities</span>
                 </a>
               </li>
               {% endif %}
               {% if file_sync_enabled %}
               <li class="nav-item">
-                <a class="nav-link d-flex align-items-center workspace-nav-tab" href="#" data-tab="sync-tab">
+                <a class="nav-link d-flex align-items-center workspace-nav-tab" href="#" data-tab="sync-tab" title="Configure external file sources that bring approved files into this workspace and run them through the document processing pipeline.">
                   <i class="bi bi-arrow-repeat me-2" style="font-size: 0.8em;"></i><span class="nav-text">Sync</span>
                 </a>
               </li>
               {% endif %}
-              {% if file_sync_enabled or sidebar_settings.enable_semantic_kernel or sidebar_settings.enable_multi_model_endpoints %}
+              {% if sidebar_settings.allow_user_custom_endpoints and sidebar_settings.enable_multi_model_endpoints %}
               <li class="nav-item">
-                <a class="nav-link d-flex align-items-center workspace-nav-tab" href="#" data-tab="identities-tab">
-                  <i class="bi bi-person-badge me-2" style="font-size: 0.8em;"></i><span class="nav-text">Identities</span>
+                <a class="nav-link d-flex align-items-center workspace-nav-tab" href="#" data-tab="endpoints-tab" title="Manage model endpoints available to personal agents and workflows alongside admin-managed global endpoints.">
+                  <i class="bi bi-hdd-network me-2" style="font-size: 0.8em;"></i><span class="nav-text">Your Endpoints</span>
+                </a>
+              </li>
+              {% endif %}
+              {% if sidebar_settings.per_user_semantic_kernel and sidebar_settings.enable_semantic_kernel and sidebar_settings.allow_user_agents %}
+              {% if sidebar_settings.allow_user_plugins %}
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center workspace-nav-tab" href="#" data-tab="plugins-tab" title="Configure governed tools that agents can call, such as APIs, databases, or other connected systems.">
+                  <i class="bi bi-plugin me-2" style="font-size: 0.8em;"></i><span class="nav-text">Your Actions</span>
+                </a>
+              </li>
+              {% endif %}
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center workspace-nav-tab" href="#" data-tab="agents-tab" title="Reusable, specialized AI assistants that combine instructions, approved knowledge, and optional actions. Actions are tasks an agent is allowed to perform.">
+                  <i class="bi bi-robot me-2" style="font-size: 0.8em;"></i><span class="nav-text">Your Agents</span>
+                </a>
+              </li>
+              {% endif %}
+              {% if sidebar_settings.allow_user_workflows %}
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center workspace-nav-tab" href="#" data-tab="workflows-tab" title="Save repeatable personal tasks that run manually or on a schedule using a selected model or agent, with optional document actions and run history.">
+                  <i class="bi bi-diagram-3 me-2" style="font-size: 0.8em;"></i><span class="nav-text">Your Workflows</span>
                 </a>
               </li>
               {% endif %}
             </ul>
             {% else %}
             <!-- Regular Personal workspace link when not on workspace page -->
-            <a class="nav-link d-flex align-items-center" href="{{ url_for('workspace') }}">
+            <a class="nav-link d-flex align-items-center" href="{{ url_for('frontend_workspace.workspace') }}" title="Open your personal workspace for private documents, prompts, identities, sync, endpoints, actions, agents, and workflows.">
               <i class="bi bi-folder me-2"></i><span class="nav-text"> Personal</span>
             </a>
             {% endif %}
@@ -186,58 +190,67 @@
           <li class="nav-item">
             {% if request.endpoint == 'group_workspaces' %}
             <!-- Group workspace with expandable sub-menu when on group workspace page -->
-            <a class="nav-link d-flex align-items-center workspace-nav-toggle" href="#" data-target="group-workspace-submenu">
+            <a class="nav-link d-flex align-items-center workspace-nav-toggle" href="#" data-target="group-workspace-submenu" title="Open group workspaces for shared documents, prompts, identities, sync, endpoints, actions, agents, and workflows.">
               <i class="bi bi-folder me-2"></i><span class="nav-text"> Groups</span>
               <i class="bi bi-caret-right-fill ms-auto transition workspace-caret" style="font-size: 0.8em; transition: transform 0.2s;"></i>
             </a>
             <ul class="nav flex-column ms-3" id="group-workspace-submenu" style="display: none; visibility: hidden;" data-submenu="group">
               <li class="nav-item">
-                <a class="nav-link d-flex align-items-center workspace-nav-tab" href="#" data-tab="documents-tab">
+                <a class="nav-link d-flex align-items-center workspace-nav-tab" href="#" data-tab="documents-tab" title="Manage shared group files with role-aware upload, metadata filters, tags, bulk actions, extraction changes, and chat grounding.">
                   <i class="bi bi-file-earmark-text me-2" style="font-size: 0.8em;"></i><span class="nav-text">Group Documents</span>
                 </a>
               </li>
               <li class="nav-item">
-                <a class="nav-link d-flex align-items-center workspace-nav-tab" href="#" data-tab="prompts-tab">
+                <a class="nav-link d-flex align-items-center workspace-nav-tab" href="#" data-tab="prompts-tab" title="Create and manage reusable prompts shared within the active group, with role-based editing.">
                   <i class="bi bi-lightbulb me-2" style="font-size: 0.8em;"></i><span class="nav-text">Group Prompts</span>
                 </a>
               </li>
-              {% if sidebar_settings.allow_group_agents and sidebar_settings.enable_semantic_kernel %}
-                <li class="nav-item">
-                  <a class="nav-link d-flex align-items-center workspace-nav-tab" href="#" data-tab="group-agents-tab">
-                    <i class="bi bi-robot me-2" style="font-size: 0.8em;"></i><span class="nav-text">Group Agents</span>
-                  </a>
-                </li>
-                <li class="nav-item">
-                  <a class="nav-link d-flex align-items-center workspace-nav-tab" href="#" data-tab="group-plugins-tab">
-                    <i class="bi bi-plugin me-2" style="font-size: 0.8em;"></i><span class="nav-text">Group Actions</span>
-                  </a>
-                </li>
-              {% endif %}
-              {% if sidebar_settings.per_user_semantic_kernel and sidebar_settings.enable_semantic_kernel and sidebar_settings.allow_group_custom_endpoints and sidebar_settings.enable_multi_model_endpoints %}
-                <li class="nav-item">
-                  <a class="nav-link d-flex align-items-center workspace-nav-tab" href="#" data-tab="group-endpoints-tab">
-                    <i class="bi bi-hdd-network me-2" style="font-size: 0.8em;"></i><span class="nav-text">Group Endpoints</span>
+              {% if file_sync_enabled or sidebar_settings.enable_semantic_kernel %}
+                <li class="nav-item d-none" data-group-identities-sidebar-nav>
+                  <a class="nav-link d-flex align-items-center workspace-nav-tab" href="#" data-tab="identities-tab" title="Manage reusable group authentication profiles for File Sync and Actions so credentials stay scoped and resolved server-side.">
+                    <i class="bi bi-person-badge me-2" style="font-size: 0.8em;"></i><span class="nav-text">Identities</span>
                   </a>
                 </li>
               {% endif %}
               {% if file_sync_enabled %}
                 <li class="nav-item">
-                  <a class="nav-link d-flex align-items-center workspace-nav-tab" href="#" data-tab="sync-tab">
+                  <a class="nav-link d-flex align-items-center workspace-nav-tab" href="#" data-tab="sync-tab" title="Configure group-scoped file sources that bring approved files into this workspace and run them through the document processing pipeline.">
                     <i class="bi bi-arrow-repeat me-2" style="font-size: 0.8em;"></i><span class="nav-text">Sync</span>
                   </a>
                 </li>
               {% endif %}
-              {% if file_sync_enabled or sidebar_settings.enable_semantic_kernel or sidebar_settings.enable_multi_model_endpoints %}
-                <li class="nav-item d-none" data-group-identities-sidebar-nav>
-                  <a class="nav-link d-flex align-items-center workspace-nav-tab" href="#" data-tab="identities-tab">
-                    <i class="bi bi-person-badge me-2" style="font-size: 0.8em;"></i><span class="nav-text">Identities</span>
+              {% if sidebar_settings.per_user_semantic_kernel and sidebar_settings.enable_semantic_kernel and sidebar_settings.allow_group_custom_endpoints and sidebar_settings.enable_multi_model_endpoints %}
+                <li class="nav-item">
+                  <a class="nav-link d-flex align-items-center workspace-nav-tab" href="#" data-tab="group-endpoints-tab" title="Manage model endpoints available to group agents and workflows alongside admin-managed global endpoints.">
+                    <i class="bi bi-hdd-network me-2" style="font-size: 0.8em;"></i><span class="nav-text">Group Endpoints</span>
+                  </a>
+                </li>
+              {% endif %}
+              {% if sidebar_settings.per_user_semantic_kernel and sidebar_settings.enable_semantic_kernel and sidebar_settings.allow_group_agents %}
+                {% if sidebar_settings.allow_group_plugins %}
+                  <li class="nav-item">
+                    <a class="nav-link d-flex align-items-center workspace-nav-tab" href="#" data-tab="group-plugins-tab" title="Configure governed group tools that agents can call, such as APIs, databases, or other connected systems.">
+                      <i class="bi bi-plugin me-2" style="font-size: 0.8em;"></i><span class="nav-text">Group Actions</span>
+                    </a>
+                  </li>
+                {% endif %}
+                <li class="nav-item">
+                  <a class="nav-link d-flex align-items-center workspace-nav-tab" href="#" data-tab="group-agents-tab" title="Reusable, specialized AI assistants that combine instructions, approved knowledge, and optional actions. Actions are tasks an agent is allowed to perform.">
+                    <i class="bi bi-robot me-2" style="font-size: 0.8em;"></i><span class="nav-text">Group Agents</span>
+                  </a>
+                </li>
+              {% endif %}
+              {% if sidebar_settings.allow_group_workflows %}
+                <li class="nav-item">
+                  <a class="nav-link d-flex align-items-center workspace-nav-tab" href="#" data-tab="workflows-tab" title="Create repeatable group tasks that run manually, on a schedule, or after File Sync changes using group agents, documents, or models.">
+                    <i class="bi bi-diagram-3 me-2" style="font-size: 0.8em;"></i><span class="nav-text">Group Workflows</span>
                   </a>
                 </li>
               {% endif %}
             </ul>
             {% else %}
             <!-- Regular Groups workspace link when not on group workspace page -->
-            <a class="nav-link d-flex align-items-center" href="{{ url_for('group_workspaces') }}">
+            <a class="nav-link d-flex align-items-center" href="{{ url_for('frontend_group_workspaces.group_workspaces') }}" title="Open group workspaces for shared documents, prompts, identities, sync, endpoints, actions, agents, and workflows.">
               <i class="bi bi-folder me-2"></i><span class="nav-text"> Groups</span>
             </a>
             {% endif %}
@@ -245,8 +258,8 @@
           {% endif %}
           {% if app_settings.enable_public_workspaces %}
           <li class="nav-item">
-            <a class="nav-link d-flex align-items-center" href="{{ url_for('public_directory') }}">
-              <i class="bi bi-folder me-2"></i><span class="nav-text"> Public</span>
+            <a class="nav-link d-flex align-items-center" href="{{ url_for('frontend_public_workspaces.public_directory') }}" title="Open {{ public_workspace_labels.lower_plural }} for shared document collections and prompts available to authorized users.">
+              <i class="bi bi-folder me-2"></i><span class="nav-text"> {{ public_workspace_labels.short }}</span>
             </a>
           </li>
           {% endif %}
@@ -308,11 +321,11 @@
     <!-- Support Menu Section - Only show when a signed-in app user can access at least one support destination -->
     {% set support_menu_role_allowed = session.get('user') and session['user'].get('roles') and ('Admin' in session['user']['roles'] or 'User' in session['user']['roles']) %}
     {% if support_menu_role_allowed and app_settings.enable_support_menu %}
-    {% set show_support_latest_features = app_settings.enable_support_latest_features and app_settings.support_latest_features_has_visible_items %}
+    {% set show_support_latest_features = app_settings.enable_support_latest_features and app_settings.support_latest_features_has_visible_items and not latest_features_nav_is_hidden %}
     {% set show_support_send_feedback = app_settings.enable_support_send_feedback and app_settings.support_feedback_recipient_configured %}
     {% if show_support_latest_features or show_support_send_feedback %}
     {% set support_menu_expanded = sidebar_menu_state.get('support', true) %}
-    <div class="overflow-auto">
+    <div class="overflow-auto" data-support-menu-nav-section>
       <div id="support-menu-toggle" class="mt-2 mb-1 ps-3 pe-2 text-muted small d-flex align-items-center" style="font-weight: 500; letter-spacing: 0.02em; cursor: pointer; user-select: none;" role="button" tabindex="0" aria-controls="support-menu-links-section" aria-expanded="{{ 'true' if support_menu_expanded else 'false' }}" data-sidebar-menu-key="support" data-sidebar-menu-target="support-menu-links-section" data-sidebar-menu-caret="support-menu-caret">
         <span class="nav-text">{{ app_settings.support_menu_name or 'Support' }}</span>
         <i id="support-menu-caret" class="bi bi-caret-down-fill ms-2 transition" style="font-size: 0.9em; transition: transform 0.2s;{% if not support_menu_expanded %} transform: rotate(-90deg);{% endif %}"></i>
@@ -320,17 +333,36 @@
       <div id="support-menu-links-section"{% if not support_menu_expanded %} class="d-none"{% endif %} aria-hidden="{{ 'false' if support_menu_expanded else 'true' }}">
         <ul class="nav flex-column mb-2">
           {% if show_support_latest_features %}
-          <li class="nav-item">
-            <a class="nav-link d-flex align-items-center" href="{{ url_for('support_latest_features') }}">
+          <li class="nav-item d-flex align-items-center latest-features-nav-item" data-latest-features-nav-item data-support-menu-destination>
+            <a class="nav-link d-flex align-items-center flex-grow-1" href="{{ url_for('frontend_support.support_latest_features') }}">
               <i class="bi bi-lightning-charge me-2" style="font-size: 0.8em;"></i>
               <span class="nav-text">Latest Features</span>
               <span class="badge bg-warning text-dark text-uppercase ms-2">New</span>
             </a>
+            <div class="dropdown latest-features-hide-menu me-2">
+              <button
+                type="button"
+                class="btn btn-sm btn-link nav-link p-1 latest-features-options-toggle"
+                data-bs-toggle="dropdown"
+                aria-expanded="false"
+                aria-label="Latest Features options"
+                title="Latest Features options"
+              >
+                <i class="bi bi-three-dots" aria-hidden="true"></i>
+              </button>
+              <ul class="dropdown-menu dropdown-menu-end">
+                <li>
+                  <button type="button" class="dropdown-item latest-features-hide-action" data-latest-features-hide-action>
+                    Hide Latest Features
+                  </button>
+                </li>
+              </ul>
+            </div>
           </li>
           {% endif %}
           {% if show_support_send_feedback %}
-          <li class="nav-item">
-            <a class="nav-link d-flex align-items-center" href="{{ url_for('support_send_feedback') }}">
+          <li class="nav-item" data-support-menu-destination>
+            <a class="nav-link d-flex align-items-center" href="{{ url_for('frontend_support.support_send_feedback') }}">
               <i class="bi bi-envelope-paper me-2" style="font-size: 0.8em;"></i>
               <span class="nav-text">Send Feedback</span>
             </a>
@@ -386,7 +418,7 @@
     {% endif %}
 
     <!-- Admin Settings Section - Only show when on admin settings page and user is admin -->
-    {% if request.endpoint == 'admin_settings' and 'Admin' in session['user']['roles'] %}
+    {% if request.endpoint == 'frontend_admin_settings.admin_settings' and 'Admin' in session['user']['roles'] %}
     {% set admin_settings_menu_expanded = sidebar_menu_state.get('adminSettings', true) %}
     <div class="overflow-auto">
       <div id="admin-settings-toggle" class="mt-2 mb-1 ps-3 pe-2 text-muted small d-flex align-items-center justify-content-between" style="font-weight: 500; letter-spacing: 0.02em; cursor: pointer; user-select: none;" role="button" tabindex="0" aria-controls="admin-settings-section" aria-expanded="{{ 'true' if admin_settings_menu_expanded else 'false' }}" data-sidebar-menu-key="adminSettings" data-sidebar-menu-target="admin-settings-section" data-sidebar-menu-caret="admin-settings-caret">
@@ -409,11 +441,55 @@
         </div>
       </div>
       <div id="admin-settings-section"{% if not admin_settings_menu_expanded %} class="d-none"{% endif %} aria-hidden="{{ 'false' if admin_settings_menu_expanded else 'true' }}">
-        <ul class="nav flex-column mb-2">
-          <li class="nav-item">
-            <a class="nav-link d-flex align-items-center admin-nav-tab" href="#" data-tab="latest-features">
-              <i class="bi bi-lightning-charge me-2"></i><span class="nav-text">Latest Features</span><span class="badge bg-warning text-dark text-uppercase ms-2">New</span>
+        <ul class="nav flex-column mb-2" id="admin-nav-groups">
+          {% for admin_group in admin_nav %}
+          {% set group_state_key = 'adminGroup:' ~ admin_group.id %}
+          {% set group_expanded = sidebar_menu_state.get(group_state_key, false) %}
+          <li class="nav-item admin-nav-group-item" data-admin-group="{{ admin_group.id }}">
+            <a class="nav-link d-flex align-items-center justify-content-between admin-nav-group"
+               href="#"
+               role="button"
+               aria-expanded="{{ 'true' if group_expanded else 'false' }}"
+               aria-controls="admin-group-{{ admin_group.id }}"
+               data-admin-group-toggle="{{ admin_group.id }}">
+              <span class="d-flex align-items-center">
+                <i class="bi {{ admin_group.icon }} me-2" aria-hidden="true"></i>
+                <span class="nav-text">{{ admin_group.label }}</span>
+              </span>
+              <i class="bi bi-chevron-down admin-nav-group-caret{% if not group_expanded %} collapsed{% endif %}"
+                 aria-hidden="true"></i>
             </a>
+            <ul class="nav flex-column ms-2 admin-nav-group-tabs{% if not group_expanded %} d-none{% endif %}"
+                id="admin-group-{{ admin_group.id }}">
+              {% for admin_tab in admin_group.tabs %}
+              {% if admin_tab.render == 'latest_features' %}
+          {% if not latest_features_nav_is_hidden %}
+          <li class="nav-item latest-features-nav-item" data-latest-features-nav-item>
+            <div class="d-flex align-items-center">
+              <a class="nav-link d-flex align-items-center admin-nav-tab flex-grow-1" href="#" data-tab="latest-features">
+                <i class="bi bi-lightning-charge me-2"></i><span class="nav-text">Latest Features</span><span class="badge bg-warning text-dark text-uppercase ms-2">New</span>
+              </a>
+              <div class="dropdown latest-features-hide-menu me-2">
+                <button
+                  type="button"
+                  class="btn btn-sm btn-link nav-link p-1 latest-features-options-toggle"
+                  data-bs-toggle="dropdown"
+                  aria-expanded="false"
+                  aria-label="Latest Features options"
+                  title="Latest Features options"
+                  data-sidebar-menu-ignore="true"
+                >
+                  <i class="bi bi-three-dots" aria-hidden="true"></i>
+                </button>
+                <ul class="dropdown-menu dropdown-menu-end">
+                  <li>
+                    <button type="button" class="dropdown-item latest-features-hide-action" data-latest-features-hide-action>
+                      Hide Latest Features
+                    </button>
+                  </li>
+                </ul>
+              </div>
+            </div>
             <ul class="nav flex-column ms-3" style="display: none;" id="latest-features-submenu">
               {% for release_group in admin_latest_feature_release_groups %}
                 {% if release_group.id == 'current_release' %}
@@ -429,7 +505,7 @@
               {% endfor %}
               {% for release_group in admin_latest_feature_release_groups %}
                 {% if release_group.id != 'current_release' %}
-                {% set release_card_id = 'latest-features-previous-release-card' if release_group.id == 'previous_release' else 'latest-features-' ~ release_group.id|replace('_', '-') ~ '-card' %}
+                {% set release_card_id = 'latest-features-' ~ release_group.id|replace('_', '-') ~ '-card' %}
                 <li class="nav-item">
                   <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="latest-features" data-section="{{ release_card_id }}">
                     <i class="bi bi-clock-history me-2" style="font-size: 0.8em;"></i><span class="nav-text">{{ release_group.label|replace(' Features', '') }}</span>
@@ -439,372 +515,37 @@
               {% endfor %}
             </ul>
           </li>
-          <li class="nav-item">
-            <a class="nav-link d-flex align-items-center admin-nav-tab" href="#" data-tab="general">
-              <i class="bi bi-gear me-2"></i><span class="nav-text">General</span>
-            </a>
-            <ul class="nav flex-column ms-3" style="display: none;" id="general-submenu">
+          {% endif %}
+              {% else %}
+              {% if not admin_tab.condition
+                    or (admin_tab.condition == 'enable_agent_template_gallery' and app_settings.enable_agent_template_gallery)
+                    or (admin_tab.condition == 'mcp_ui_enabled' and mcp_ui_enabled) %}
               <li class="nav-item">
-                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="general" data-section="branding-section">
-                  <i class="bi bi-palette me-2" style="font-size: 0.8em;"></i><span class="nav-text">Branding</span>
+                <a class="nav-link d-flex align-items-center admin-nav-tab" href="#" data-tab="{{ admin_tab.id }}">
+                  <i class="bi {{ admin_tab.icon }} me-2" aria-hidden="true"></i><span class="nav-text">{{ admin_tab.label }}</span>
                 </a>
+                {% if admin_tab.sections %}
+                <ul class="nav flex-column ms-3" style="display: none;" id="{{ admin_tab.id }}-submenu">
+                  {% for admin_section in admin_tab.sections %}
+                  {% if not admin_section.condition
+                        or (admin_section.condition == 'enable_agent_template_gallery' and app_settings.enable_agent_template_gallery)
+                        or (admin_section.condition == 'mcp_ui_enabled' and mcp_ui_enabled) %}
+                  <li class="nav-item">
+                    <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="{{ admin_tab.id }}" data-section="{{ admin_section.id }}">
+                      <i class="bi {{ admin_section.icon }} me-2" style="font-size: 0.8em;" aria-hidden="true"></i><span class="nav-text">{{ admin_section.label }}</span>
+                    </a>
+                  </li>
+                  {% endif %}
+                  {% endfor %}
+                </ul>
+                {% endif %}
               </li>
-              <li class="nav-item">
-                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="general" data-section="home-page-text-section">
-                  <i class="bi bi-house me-2" style="font-size: 0.8em;"></i><span class="nav-text">Home Page Text</span>
-                </a>
-              </li>
-              <li class="nav-item">
-                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="general" data-section="appearance-section">
-                  <i class="bi bi-brush me-2" style="font-size: 0.8em;"></i><span class="nav-text">Appearance</span>
-                </a>
-              </li>
-              <li class="nav-item">
-                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="general" data-section="classification-banner-section">
-                  <i class="bi bi-shield-exclamation me-2" style="font-size: 0.8em;"></i><span class="nav-text">Classification Banner</span>
-                </a>
-              </li>
-              <li class="nav-item">
-                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="general" data-section="support-menu-section">
-                  <i class="bi bi-life-preserver me-2" style="font-size: 0.8em;"></i><span class="nav-text">Support</span>
-                </a>
-              </li>
-              <li class="nav-item">
-                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="general" data-section="external-links-section">
-                  <i class="bi bi-box-arrow-up-right me-2" style="font-size: 0.8em;"></i><span class="nav-text">External Links</span>
-                </a>
-              </li>
-              <li class="nav-item">
-                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="general" data-section="health-check-section">
-                  <i class="bi bi-heart-pulse me-2" style="font-size: 0.8em;"></i><span class="nav-text">Health Check</span>
-                </a>
-              </li>
-              <li class="nav-item">
-                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="general" data-section="swagger-section">
-                  <i class="bi bi-file-earmark-code me-2" style="font-size: 0.8em;"></i><span class="nav-text">API Documentation</span>
-                </a>
-              </li>
-              <li class="nav-item">
-                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="general" data-section="system-settings-section">
-                  <i class="bi bi-gear-fill me-2" style="font-size: 0.8em;"></i><span class="nav-text">System Settings</span>
-                </a>
-              </li>
+              {% endif %}
+              {% endif %}
+              {% endfor %}
             </ul>
           </li>
-          <li class="nav-item">
-            <a class="nav-link d-flex align-items-center admin-nav-tab" href="#" data-tab="custom-pages">
-              <i class="bi bi-window-plus me-2"></i><span class="nav-text">Custom Pages</span>
-            </a>
-            <ul class="nav flex-column ms-3" style="display: none;" id="custom-pages-submenu">
-              <li class="nav-item">
-                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="custom-pages" data-section="custom-pages-section">
-                  <i class="bi bi-file-earmark-richtext me-2" style="font-size: 0.8em;"></i><span class="nav-text">Static Pages</span>
-                </a>
-              </li>
-            </ul>
-          </li>
-          <li class="nav-item">
-            <a class="nav-link d-flex align-items-center admin-nav-tab" href="#" data-tab="ai-models">
-              <i class="bi bi-cpu me-2"></i><span class="nav-text">AI Models</span>
-            </a>
-            <ul class="nav flex-column ms-3" style="display: none;" id="ai-models-submenu">
-              <li class="nav-item">
-                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="ai-models" data-section="gpt-config">
-                  <i class="bi bi-chat-square-text me-2" style="font-size: 0.8em;"></i><span class="nav-text">Chat Model</span>
-                </a>
-              </li>
-              <li class="nav-item">
-                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="ai-models" data-section="processing-thoughts-section">
-                  <i class="bi bi-stars me-2" style="font-size: 0.8em;"></i><span class="nav-text">Processing Thoughts</span>
-                </a>
-              </li>
-              <li class="nav-item">
-                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="ai-models" data-section="embeddings-config">
-                  <i class="bi bi-vector-pen me-2" style="font-size: 0.8em;"></i><span class="nav-text">Embeddings</span>
-                </a>
-              </li>
-              <li class="nav-item">
-                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="ai-models" data-section="image-config">
-                  <i class="bi bi-image me-2" style="font-size: 0.8em;"></i><span class="nav-text">Image Generation</span>
-                </a>
-              </li>
-            </ul>
-          </li>
-          <li class="nav-item">
-            <a class="nav-link d-flex align-items-center admin-nav-tab" href="#" data-tab="agents">
-              <i class="bi bi-robot me-2"></i><span class="nav-text">Agents and Actions</span>
-            </a>
-            <ul class="nav flex-column ms-3" style="display: none;" id="agents-submenu">
-              <li class="nav-item">
-                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="agents" data-section="agents-config">
-                  <i class="bi bi-robot me-2" style="font-size: 0.8em;"></i><span class="nav-text">Agents Configuration</span>
-                </a>
-              </li>
-              <li class="nav-item">
-                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="agents" data-section="actions-config">
-                  <i class="bi bi-plugin me-2" style="font-size: 0.8em;"></i><span class="nav-text">Actions Configuration</span>
-                </a>
-              </li>
-            </ul>
-          </li>
-          <li class="nav-item">
-            <a class="nav-link d-flex align-items-center admin-nav-tab" href="#" data-tab="logging">
-              <i class="bi bi-journal-text me-2"></i><span class="nav-text">Logging</span>
-            </a>
-            <ul class="nav flex-column ms-3" style="display: none;" id="logging-submenu">
-              <li class="nav-item">
-                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="logging" data-section="application-insights-section">
-                  <i class="bi bi-graph-up me-2" style="font-size: 0.8em;"></i><span class="nav-text">Application Insights</span>
-                </a>
-              </li>
-              <li class="nav-item">
-                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="logging" data-section="debug-logging-section">
-                  <i class="bi bi-bug me-2" style="font-size: 0.8em;"></i><span class="nav-text">Debug Logging</span>
-                </a>
-              </li>
-              <li class="nav-item">
-                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="logging" data-section="file-processing-logs-section">
-                  <i class="bi bi-file-earmark-text me-2" style="font-size: 0.8em;"></i><span class="nav-text">File Process Logging</span>
-                </a>
-              </li>
-            </ul>
-          </li>
-          <li class="nav-item">
-            <a class="nav-link d-flex align-items-center admin-nav-tab" href="#" data-tab="scale">
-              <i class="bi bi-diagram-3 me-2"></i><span class="nav-text">Scale</span>
-            </a>
-            <ul class="nav flex-column ms-3" style="display: none;" id="scale-submenu">
-              <li class="nav-item">
-                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="scale" data-section="redis-cache-section">
-                  <i class="bi bi-database me-2" style="font-size: 0.8em;"></i><span class="nav-text">Redis Cache</span>
-                </a>
-              </li>
-              <li class="nav-item">
-                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="scale" data-section="front-door-section">
-                  <i class="bi bi-door-open me-2" style="font-size: 0.8em;"></i><span class="nav-text">Azure Front Door</span>
-                </a>
-              </li>
-            </ul>
-          </li>
-          <li class="nav-item">
-            <a class="nav-link d-flex align-items-center admin-nav-tab" href="#" data-tab="control-center-config">
-              <i class="bi bi-speedometer2 me-2"></i><span class="nav-text">Control Center</span>
-            </a>
-          </li>
-          <li class="nav-item">
-            <a class="nav-link d-flex align-items-center admin-nav-tab" href="#" data-tab="data-management">
-              <i class="bi bi-database-check me-2"></i><span class="nav-text">Data Management</span>
-            </a>
-            <ul class="nav flex-column ms-3" style="display: none;" id="data-management-submenu">
-              <li class="nav-item">
-                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="data-management" data-section="data-management-backup-section">
-                  <i class="bi bi-archive me-2" style="font-size: 0.8em;"></i><span class="nav-text">Backup</span>
-                </a>
-              </li>
-              <li class="nav-item">
-                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="data-management" data-section="data-management-schedule-section">
-                  <i class="bi bi-calendar-event me-2" style="font-size: 0.8em;"></i><span class="nav-text">Schedule</span>
-                </a>
-              </li>
-              <li class="nav-item">
-                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="data-management" data-section="data-management-storage-section">
-                  <i class="bi bi-hdd me-2" style="font-size: 0.8em;"></i><span class="nav-text">Storage</span>
-                </a>
-              </li>
-              <li class="nav-item">
-                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="data-management" data-section="data-management-encryption-section">
-                  <i class="bi bi-key me-2" style="font-size: 0.8em;"></i><span class="nav-text">Encryption</span>
-                </a>
-              </li>
-              <li class="nav-item">
-                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="data-management" data-section="data-management-migration-section">
-                  <i class="bi bi-arrow-left-right me-2" style="font-size: 0.8em;"></i><span class="nav-text">Migration</span>
-                </a>
-              </li>
-              <li class="nav-item">
-                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="data-management" data-section="data-management-backup-inventory-section">
-                  <i class="bi bi-box-seam me-2" style="font-size: 0.8em;"></i><span class="nav-text">Backup Inventory</span>
-                </a>
-              </li>
-              <li class="nav-item">
-                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="data-management" data-section="data-management-jobs-section">
-                  <i class="bi bi-clock-history me-2" style="font-size: 0.8em;"></i><span class="nav-text">Jobs</span>
-                </a>
-              </li>
-            </ul>
-          </li>
-          <li class="nav-item">
-            <a class="nav-link d-flex align-items-center admin-nav-tab" href="#" data-tab="governance">
-              <i class="bi bi-braces-asterisk me-2"></i><span class="nav-text">Governance</span>
-            </a>
-          </li>
-          <li class="nav-item">
-            <a class="nav-link d-flex align-items-center admin-nav-tab" href="#" data-tab="workspaces">
-              <i class="bi bi-folder me-2"></i><span class="nav-text">Workspaces</span>
-            </a>
-            <ul class="nav flex-column ms-3" style="display: none;" id="workspaces-submenu">
-              <li class="nav-item">
-                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="workspaces" data-section="personal-workspaces-section">
-                  <i class="bi bi-person me-2" style="font-size: 0.8em;"></i><span class="nav-text">Personal Workspaces</span>
-                </a>
-              </li>
-              <li class="nav-item">
-                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="workspaces" data-section="workflow-settings-section">
-                  <i class="bi bi-diagram-3 me-2" style="font-size: 0.8em;"></i><span class="nav-text">Workflow</span>
-                </a>
-              </li>
-              <li class="nav-item">
-                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="workspaces" data-section="group-workspaces-section">
-                  <i class="bi bi-people me-2" style="font-size: 0.8em;"></i><span class="nav-text">Group Workspaces</span>
-                </a>
-              </li>
-              <li class="nav-item">
-                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="workspaces" data-section="public-workspaces-section">
-                  <i class="bi bi-globe me-2" style="font-size: 0.8em;"></i><span class="nav-text">Public Workspaces</span>
-                </a>
-              </li>
-              <li class="nav-item">
-                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="workspaces" data-section="file-sharing-section">
-                  <i class="bi bi-share me-2" style="font-size: 0.8em;"></i><span class="nav-text">File Sharing</span>
-                </a>
-              </li>
-              <li class="nav-item">
-                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="workspaces" data-section="metadata-extraction-section">
-                  <i class="bi bi-file-earmark-code me-2" style="font-size: 0.8em;"></i><span class="nav-text">Metadata Extraction</span>
-                </a>
-              </li>
-              <li class="nav-item">
-                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="workspaces" data-section="document-classification-section">
-                  <i class="bi bi-tags me-2" style="font-size: 0.8em;"></i><span class="nav-text">Document Classification</span>
-                </a>
-              </li>
-              <li class="nav-item">
-                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="workspaces" data-section="retention-policy-section">
-                  <i class="bi bi-hourglass-split me-2" style="font-size: 0.8em;"></i><span class="nav-text">Retention Policy</span>
-                </a>
-              </li>
-              <li class="nav-item">
-                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="workspaces" data-section="user-agreement-section">
-                  <i class="bi bi-file-earmark-check me-2" style="font-size: 0.8em;"></i><span class="nav-text">User Agreement</span>
-                </a>
-              </li>
-            </ul>
-          </li>
-          <li class="nav-item">
-            <a class="nav-link d-flex align-items-center admin-nav-tab" href="#" data-tab="file-sync">
-              <i class="bi bi-arrow-repeat me-2"></i><span class="nav-text">File Sync</span>
-            </a>
-          </li>
-          <li class="nav-item">
-            <a class="nav-link d-flex align-items-center admin-nav-tab" href="#" data-tab="workspace-identities">
-              <i class="bi bi-person-badge me-2"></i><span class="nav-text">Global Identities</span>
-            </a>
-          </li>
-          <li class="nav-item">
-            <a class="nav-link d-flex align-items-center admin-nav-tab" href="#" data-tab="citation">
-              <i class="bi bi-quote me-2"></i><span class="nav-text">Citations</span>
-            </a>
-            <ul class="nav flex-column ms-3" style="display: none;" id="citation-submenu">
-              <li class="nav-item">
-                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="citation" data-section="standard-citations-section">
-                  <i class="bi bi-quote me-2" style="font-size: 0.8em;"></i><span class="nav-text">Standard</span>
-                </a>
-              </li>
-              <li class="nav-item">
-                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="citation" data-section="enhanced-citations-section">
-                  <i class="bi bi-star me-2" style="font-size: 0.8em;"></i><span class="nav-text">Enhanced</span>
-                </a>
-              </li>
-            </ul>
-          </li>
-          <li class="nav-item">
-            <a class="nav-link d-flex align-items-center admin-nav-tab" href="#" data-tab="safety">
-              <i class="bi bi-shield-check me-2"></i><span class="nav-text">Safety</span>
-            </a>
-            <ul class="nav flex-column ms-3" style="display: none;" id="safety-submenu">
-              <li class="nav-item">
-                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="safety" data-section="content-safety-section">
-                  <i class="bi bi-shield-exclamation me-2" style="font-size: 0.8em;"></i><span class="nav-text">Content Safety</span>
-                </a>
-              </li>
-              <li class="nav-item">
-                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="safety" data-section="user-feedback-section">
-                  <i class="bi bi-chat-square-heart me-2" style="font-size: 0.8em;"></i><span class="nav-text">User Feedback</span>
-                </a>
-              </li>
-              <li class="nav-item">
-                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="safety" data-section="permissions-section">
-                  <i class="bi bi-person-check me-2" style="font-size: 0.8em;"></i><span class="nav-text">Permissions</span>
-                </a>
-              </li>
-              <li class="nav-item">
-                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="safety" data-section="conversation-archiving-section">
-                  <i class="bi bi-archive me-2" style="font-size: 0.8em;"></i><span class="nav-text">Conversation Archiving</span>
-                </a>
-              </li>
-            </ul>
-          </li>
-          <li class="nav-item">
-            <a class="nav-link d-flex align-items-center admin-nav-tab" href="#" data-tab="security">
-              <i class="bi bi-shield-lock me-2"></i><span class="nav-text">Security</span>
-            </a>
-            <ul class="nav flex-column ms-3" style="display: none;" id="security-submenu">
-              <li class="nav-item">
-                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="security" data-section="keyvault-section">
-                  <i class="bi bi-safe me-2" style="font-size: 0.8em;"></i><span class="nav-text">Key Vault</span>
-                </a>
-              </li>
-            </ul>
-          </li>
-          <li class="nav-item">
-            <a class="nav-link d-flex align-items-center admin-nav-tab" href="#" data-tab="search-extract">
-              <i class="bi bi-search me-2"></i><span class="nav-text">Search & Extract</span>
-            </a>
-            <ul class="nav flex-column ms-3" style="display: none;" id="search-extract-submenu">
-              <li class="nav-item">
-                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="search-extract" data-section="web-search-section">
-                  <i class="bi bi-globe me-2" style="font-size: 0.8em;"></i><span class="nav-text">Web Search</span>
-                </a>
-              </li>
-              <li class="nav-item">
-                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="search-extract" data-section="azure-ai-search-section">
-                  <i class="bi bi-search me-2" style="font-size: 0.8em;"></i><span class="nav-text">Azure AI Search</span>
-                </a>
-              </li>
-              <li class="nav-item">
-                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="search-extract" data-section="document-intelligence-section">
-                  <i class="bi bi-file-earmark-text me-2" style="font-size: 0.8em;"></i><span class="nav-text">Document Intelligence</span>
-                </a>
-              </li>
-              <li class="nav-item">
-                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="search-extract" data-section="multimedia-support-section">
-                  <i class="bi bi-play-circle me-2" style="font-size: 0.8em;"></i><span class="nav-text">Multimedia Support</span>
-                </a>
-              </li>
-            </ul>
-          </li>
-          <li class="nav-item">
-            <a class="nav-link d-flex align-items-center admin-nav-tab" href="#" data-tab="send-feedback">
-              <i class="bi bi-envelope-paper me-2"></i><span class="nav-text">Send Feedback</span>
-            </a>
-            <ul class="nav flex-column ms-3" style="display: none;" id="send-feedback-submenu">
-              <li class="nav-item">
-                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="send-feedback" data-section="send-feedback-overview-card">
-                  <i class="bi bi-info-circle me-2" style="font-size: 0.8em;"></i><span class="nav-text">Overview</span>
-                </a>
-              </li>
-              <li class="nav-item">
-                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="send-feedback" data-section="send-feedback-bug-card">
-                  <i class="bi bi-bug me-2" style="font-size: 0.8em;"></i><span class="nav-text">Report a Bug</span>
-                </a>
-              </li>
-              <li class="nav-item">
-                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="send-feedback" data-section="send-feedback-feature-card">
-                  <i class="bi bi-lightbulb me-2" style="font-size: 0.8em;"></i><span class="nav-text">Request a Feature</span>
-                </a>
-              </li>
-            </ul>
-          </li>
+          {% endfor %}
         </ul>
       </div>
     </div>
@@ -814,7 +555,7 @@
     <!-- Access logic: When require_member_of_control_center_admin is ENABLED, only ControlCenterAdmin role grants access -->
     <!-- When DISABLED (default), only regular Admin role grants access (ControlCenterAdmin is ignored) -->
     <!-- DashboardReader role grants dashboard-only access when that setting is enabled -->
-    {% if request.endpoint == 'control_center' and ((app_settings.require_member_of_control_center_admin and session.get('user') and 'ControlCenterAdmin' in session['user']['roles']) or (app_settings.require_member_of_control_center_dashboard_reader and session.get('user') and 'ControlCenterDashboardReader' in session['user']['roles']) or (not app_settings.require_member_of_control_center_admin and 'Admin' in session['user']['roles'])) %}
+    {% if request.endpoint == 'frontend_control_center.control_center' and ((app_settings.require_member_of_control_center_admin and session.get('user') and 'ControlCenterAdmin' in session['user']['roles']) or (app_settings.require_member_of_control_center_dashboard_reader and session.get('user') and 'ControlCenterDashboardReader' in session['user']['roles']) or (not app_settings.require_member_of_control_center_admin and 'Admin' in session['user']['roles'])) %}
     {% set control_center_menu_expanded = sidebar_menu_state.get('controlCenter', true) %}
     <div class="overflow-auto">
       <div id="control-center-toggle" class="mt-2 mb-1 ps-3 pe-2 text-muted small d-flex align-items-center justify-content-between" style="font-weight: 500; letter-spacing: 0.02em; cursor: pointer; user-select: none;" role="button" tabindex="0" aria-controls="control-center-section" aria-expanded="{{ 'true' if control_center_menu_expanded else 'false' }}" data-sidebar-menu-key="controlCenter" data-sidebar-menu-target="control-center-section" data-sidebar-menu-caret="control-center-caret">
@@ -874,10 +615,10 @@
     {% endif %}
 
     <!-- Conversations Section - Only show on chats page -->
-    {% if request.endpoint == 'chats' %}
+    {% if request.endpoint == 'frontend_chats.chats' %}
     {% set conversations_menu_expanded = sidebar_menu_state.get('conversations', true) %}
-    <div id="conversations-section" class="flex-grow-1 overflow-auto">
-      <div id="conversations-toggle" class="sidebar-section-toggle mt-2 mb-1 ps-3 pe-2 text-muted small d-flex align-items-center justify-content-between" role="button" tabindex="0" aria-controls="conversations-list-container" aria-expanded="{{ 'true' if conversations_menu_expanded else 'false' }}" data-sidebar-menu-key="conversations" data-sidebar-menu-target="conversations-list-container" data-sidebar-menu-caret="conversations-caret">
+    <div id="conversations-section">
+      <div id="conversations-toggle" class="sidebar-section-toggle mb-1 ps-3 pe-2 text-muted small d-flex align-items-center justify-content-between" role="button" tabindex="0" aria-controls="conversations-list-container" aria-expanded="{{ 'true' if conversations_menu_expanded else 'false' }}" data-sidebar-menu-key="conversations" data-sidebar-menu-target="conversations-list-container" data-sidebar-menu-caret="conversations-caret">
         <div class="d-flex align-items-center">
           <span class="nav-text">Conversations</span>
           <i id="conversations-caret" class="bi bi-caret-down-fill ms-2 transition" style="font-size: 0.9em; transition: transform 0.2s;{% if not conversations_menu_expanded %} transform: rotate(-90deg);{% endif %}"></i>
@@ -970,7 +711,7 @@
         </a>
         <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="sidebarUserDropdown">
           <li>
-            <a class="dropdown-item" href="{{ url_for('profile') }}">
+            <a class="dropdown-item" href="{{ url_for('frontend_profile.profile') }}">
               <i class="bi bi-person-circle me-2"></i> {{ session['user'].get('name') }}
             </a>
           </li>
@@ -997,35 +738,35 @@
           <li><hr class="dropdown-divider"></li>
           <!-- Notifications -->
           <li>
-            <a class="dropdown-item" href="{{ url_for('notifications') }}">
+            <a class="dropdown-item" href="{{ url_for('frontend_notifications.notifications') }}">
               <i class="bi bi-bell me-2"></i>Notifications
               <span id="sidebar-notification-count-badge" class="badge bg-danger ms-2" style="display: none;">0</span>
             </a>
           </li>
           <li>
-            <a class="dropdown-item" href="{{ url_for('approvals') }}">
+            <a class="dropdown-item" href="{{ url_for('frontend_control_center.approvals') }}">
               <i class="bi bi-check-circle me-2"></i>Approval Requests
             </a>
           </li>
           <li><hr class="dropdown-divider"></li>
           {% if app_settings.enable_group_workspaces %}
           <li>
-            <a class="dropdown-item" href="{{ url_for('my_groups') }}">My Groups</a>
+            <a class="dropdown-item" href="{{ url_for('frontend_groups.my_groups') }}">My Groups</a>
           </li>
           {% endif %}
           {% if app_settings.enable_public_workspaces %}
           <li>
-            <a class="dropdown-item" href="{{ url_for('my_public_workspaces') }}">My Public Workspaces</a>
+            <a class="dropdown-item" href="{{ url_for('frontend_public_workspaces.my_public_workspaces') }}">My {{ public_workspace_labels.plural }}</a>
           </li>
           {% endif %}
           {% if app_settings.enable_user_feedback %}
           <li>
-            <a class="dropdown-item" href="{{ url_for('my_feedback') }}">My Feedback</a>
+            <a class="dropdown-item" href="{{ url_for('frontend_feedback.my_feedback') }}">My Feedback</a>
           </li>
           {% endif %}
           {% if app_settings.enable_content_safety %}
           <li>
-            <a class="dropdown-item" href="{{ url_for('my_safety_violations') }}">My Safety Violations</a>
+            <a class="dropdown-item" href="{{ url_for('frontend_safety.my_safety_violations') }}">My Safety Violations</a>
           </li>
           {% endif %}
           {% if 'Admin' in session['user']['roles'] %}
@@ -1034,7 +775,7 @@
             Admin
           </div>
           <li>
-            <a class="dropdown-item" href="{{ url_for('admin_settings') }}">App Settings</a>
+            <a class="dropdown-item" href="{{ url_for('frontend_admin_settings.admin_settings') }}">App Settings</a>
           </li>
           {% endif %}
           {# Control Center - access based on role requirements #}
@@ -1043,14 +784,14 @@
           {# DashboardReader role grants dashboard-only access when that setting is enabled #}
           {% if (app_settings.require_member_of_control_center_admin and session.get('user') and 'ControlCenterAdmin' in session['user']['roles']) or (app_settings.require_member_of_control_center_dashboard_reader and session.get('user') and 'ControlCenterDashboardReader' in session['user']['roles']) or (not app_settings.require_member_of_control_center_admin and 'Admin' in session['user']['roles']) %}
           <li>
-            <a class="dropdown-item" href="{{ url_for('control_center') }}">Control Center</a>
+            <a class="dropdown-item" href="{{ url_for('frontend_control_center.control_center') }}">Control Center</a>
           </li>
           {% endif %}
           {# Safety Violations - only show when requirement enabled AND user has role, OR requirement disabled AND user is admin #}
           {% if app_settings.enable_content_safety %}
             {% if (app_settings.require_member_of_safety_violation_admin and session.get('user') and 'SafetyViolationAdmin' in session['user']['roles']) or (not app_settings.require_member_of_safety_violation_admin and 'Admin' in session['user']['roles']) %}
             <li>
-              <a class="dropdown-item" href="{{ url_for('admin_safety_violations') }}">Safety Violations</a>
+              <a class="dropdown-item" href="{{ url_for('frontend_safety.admin_safety_violations') }}">Safety Violations</a>
             </li>
             {% endif %}
           {% endif %}
@@ -1058,20 +799,20 @@
           {% if app_settings.enable_user_feedback %}
             {% if (app_settings.require_member_of_feedback_admin and session.get('user') and 'FeedbackAdmin' in session['user']['roles']) or (not app_settings.require_member_of_feedback_admin and 'Admin' in session['user']['roles']) %}
             <li>
-              <a class="dropdown-item" href="{{ url_for('admin_feedback_review') }}">Feedback Review</a>
+              <a class="dropdown-item" href="{{ url_for('frontend_feedback.admin_feedback_review') }}">Feedback Review</a>
             </li>
             {% endif %}
           {% endif %}
           <li><hr class="dropdown-divider"></li>
           <li>
-            <a class="dropdown-item" href="{{ url_for('logout') }}">
+            <a class="dropdown-item" href="{{ url_for('frontend_authentication.logout') }}">
               <i class="bi bi-box-arrow-right me-2"></i> Logout
             </a>
           </li>
         </ul>
       </div>
     {% else %}
-      <a class="btn btn-outline-primary w-100" href="{{ url_for('login') }}">Login</a>
+      <a class="btn btn-outline-primary w-100" href="{{ url_for('frontend_authentication.login') }}">Login</a>
     {% endif %}
   </div>
   <script type="application/json" id="sidebar-menu-state-data">{{ sidebar_menu_state | tojson }}</script>

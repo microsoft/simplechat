@@ -10,13 +10,18 @@ import { promptSelect } from "./chat-prompts.js";
 import {
   createNewConversation,
   selectConversation,
-  addConversationToList
+  addConversationToList,
+  loadConversations
 } from "./chat-conversations.js";
 import { updateSidebarConversationTitle } from "./chat-sidebar-conversations.js";
 import { getActiveConversationContext, getActiveConversationScope } from "./chat-conversation-scope.js";
 import { escapeHtml, isColorLight, addTargetBlankToExternalLinks, sanitizeHttpUrl } from "./chat-utils.js";
 import { showToast } from "./chat-toast.js";
-import { autoplayTTSIfEnabled } from "./chat-tts.js";
+import {
+  buildGeneratedFileApprovalBlock,
+  generatedFileApprovalBlocksDownload,
+} from "./chat-file-approvals.js";
+import { autoplayTTSIfEnabled, isTTSAutoplayEnabled, playTTS } from "./chat-tts.js";
 import { saveUserSetting } from "./chat-layout.js";
 import { sendMessageWithStreaming } from "./chat-streaming.js";
 import { getCurrentReasoningEffort, isReasoningEffortEnabled } from './chat-reasoning.js';
@@ -27,6 +32,7 @@ import { attachGeneratedImageProposalResults, extractInlineImageProposalBlocks, 
 import { renderInlineVideoGalleries } from './chat-inline-videos.js';
 import { renderInlineImageGalleries } from './chat-inline-images.js';
 import { renderInlineAzureMaps } from './chat-inline-maps.js';
+import { getCitedHybridCitations, getCitedWebCitations } from './chat-citation-tracking.js';
 
 // Conditionally import TTS if enabled
 let ttsModule = null;
@@ -58,6 +64,13 @@ const documentComparisonSelectionList = document.getElementById('document-compar
 const documentComparisonPickerPanel = document.getElementById('document-comparison-picker-panel');
 const documentComparisonPickerControls = document.getElementById('document-comparison-picker-controls');
 const documentComparisonPickerStatus = document.getElementById('document-comparison-picker-status');
+const conversationForkModalEl = document.getElementById('fork-conversation-modal');
+const confirmConversationForkBtn = document.getElementById('confirm-fork-conversation-btn');
+const conversationForkButtonLabel = document.getElementById('fork-conversation-button-label');
+const conversationForkButtonSpinner = document.getElementById('fork-conversation-button-spinner');
+let pendingConversationFork = null;
+let conversationForkRequestPending = false;
+let largeTabularRunConfirmationPending = false;
 let comparisonVersionLoadToken = 0;
 let comparisonVersionCatalog = [];
 let comparisonChatUploadCatalog = [];
@@ -582,6 +595,14 @@ function isWorkspaceDocumentSearchEnabled() {
 }
 
 const INLINE_ASSISTANT_EXPORT_ACTIONS = Object.freeze({
+  audio: {
+    actionName: 'exportMessageAsAudio',
+    buttonClass: 'inline-export-audio-btn',
+    iconClass: 'bi bi-file-earmark-music',
+    label: 'Create Audio File',
+    pendingLabel: 'Creating Audio File...',
+    title: 'Create Audio File',
+  },
   powerpoint: {
     actionName: 'exportMessageAsPowerPoint',
     buttonClass: 'inline-export-ppt-btn',
@@ -1247,7 +1268,7 @@ function toggleComparisonDropzoneHighlight(dropzone, isHighlighted) {
   dropzone.classList.toggle('bg-primary-subtle', isHighlighted);
 }
 
-function updateComparisonChatUploadCatalog(messages = []) {
+export function updateComparisonChatUploadCatalog(messages = []) {
   const preferredLeftSelection = String(documentComparisonLeftSelect?.value || '').trim();
   comparisonChatUploadCatalog = buildComparisonChatUploadCatalog(messages);
   syncComparisonSelectionState(preferredLeftSelection);
@@ -1846,6 +1867,23 @@ function resolveHybridCitationId(cite, index) {
   return `${cite?.chunk_id || ''}_${cite?.page_number || index}`;
 }
 
+// Agent document search can return hundreds of source chunks for one answer, so the
+// source list is collapsed past this many entries instead of being capped server-side.
+const DOCUMENT_CITATION_VISIBLE_LIMIT = 25;
+
+function buildDocumentCitationGroupHtml(citationParts) {
+  if (!Array.isArray(citationParts) || citationParts.length <= DOCUMENT_CITATION_VISIBLE_LIMIT) {
+    return Array.isArray(citationParts) ? citationParts.join("") : "";
+  }
+
+  const visibleParts = citationParts.slice(0, DOCUMENT_CITATION_VISIBLE_LIMIT);
+  const overflowParts = citationParts.slice(DOCUMENT_CITATION_VISIBLE_LIMIT);
+  const collapsedLabel = `Show ${overflowParts.length} more sources`;
+  const expandedLabel = "Show fewer sources";
+
+  return `${visibleParts.join("")}<span class="citation-overflow-group d-none">${overflowParts.join("")}</span><button type="button" class="btn btn-sm citation-button citation-overflow-toggle" data-collapsed-label="${escapeHtml(collapsedLabel)}" data-expanded-label="${escapeHtml(expandedLabel)}" aria-expanded="false" title="${escapeHtml(collapsedLabel)}"><i class="bi bi-plus-circle me-1"></i>${escapeHtml(collapsedLabel)}</button>`;
+}
+
 function createCitationsHtml(
   hybridCitations = [],
   webCitations = [],
@@ -1858,6 +1896,7 @@ function createCitationsHtml(
 
   if (hybridCitations && hybridCitations.length > 0) {
     hasCitations = true;
+    const documentCitationParts = [];
     hybridCitations.forEach((cite, index) => {
       const citationId = resolveHybridCitationId(cite, index);
       const fileName = cite.file_name || 'Document';
@@ -1891,7 +1930,7 @@ function createCitationsHtml(
 
       if (isMetadata && documentId) {
         const summaryText = `${escapeHtml(locationLabel)}: ${escapeHtml(locationValue)}`;
-        citationsHtml += `
+        documentCitationParts.push(`
               <a href="#"
                  class="btn btn-sm citation-button hybrid-citation-link"
                  data-citation-id="${escapeHtml(citationId)}"
@@ -1919,11 +1958,11 @@ function createCitationsHtml(
                  data-metadata-content="${escapeHtml(metadataContent)}"
                  title="View source summary: ${displayText}">
                   <i class="bi bi-tags me-1"></i>${summaryText}
-              </a>`;
+              </a>`);
         return;
       }
 
-      citationsHtml += `
+      documentCitationParts.push(`
               <a href="#"
                  class="btn btn-sm citation-button hybrid-citation-link ${isMetadata ? 'metadata-citation' : ''}"
                  data-citation-id="${escapeHtml(citationId)}"
@@ -1938,8 +1977,9 @@ function createCitationsHtml(
                  data-metadata-content="${escapeHtml(metadataContent)}"
                  title="View source: ${displayText}">
                   <i class="bi ${isMetadata ? 'bi-tags' : 'bi-file-earmark-text'} me-1"></i>${displayText}
-              </a>`;
+              </a>`);
     });
+    citationsHtml += buildDocumentCitationGroupHtml(documentCitationParts);
   }
 
   if (webCitations && webCitations.length > 0) {
@@ -3146,6 +3186,128 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     return !isStreamingAssistantPlaceholder(messageId, fullMessageObject);
   }
 
+  function getForkableSingleUserConversationId(fullMessageObject = null) {
+    const conversationId = resolveMessageConversationId(fullMessageObject);
+    const activeConversationId = String(
+      window.chatConversations?.getCurrentConversationId?.()
+      || window.currentConversationId
+      || ''
+    ).trim();
+    if (!conversationId || conversationId !== activeConversationId) {
+      return '';
+    }
+
+    const conversationItem = document.querySelector(
+      `.conversation-item[data-conversation-id="${CSS.escape(conversationId)}"], `
+      + `.sidebar-conversation-item[data-conversation-id="${CSS.escape(conversationId)}"]`
+    );
+    if (!conversationItem || conversationItem.dataset.conversationKind === 'collaborative') {
+      return '';
+    }
+
+    const chatType = String(conversationItem.dataset.chatType || '').trim().toLowerCase();
+    return [
+      '',
+      'new',
+      'personal',
+      'personal_single_user',
+      'group-single-user',
+      'public',
+    ].includes(chatType)
+      ? conversationId
+      : '';
+  }
+
+  function shouldRenderConversationForkAction(messageId, fullMessageObject = null) {
+    const normalizedMessageId = String(messageId || '').trim();
+    const persistedMessageId = String(fullMessageObject?.id || '').trim();
+    return Boolean(
+      normalizedMessageId
+      && persistedMessageId === normalizedMessageId
+      && shouldRenderCompletedAssistantActions(messageId, fullMessageObject)
+      && getForkableSingleUserConversationId(fullMessageObject)
+    );
+  }
+
+  function setConversationForkPendingState(isPending) {
+    conversationForkRequestPending = isPending;
+    if (confirmConversationForkBtn) {
+      confirmConversationForkBtn.disabled = isPending;
+    }
+    conversationForkButtonLabel?.classList.toggle('d-none', isPending);
+    conversationForkButtonSpinner?.classList.toggle('d-none', !isPending);
+  }
+
+  function openConversationForkModal(messageDiv, fullMessageObject = null) {
+    if (!conversationForkModalEl || !window.bootstrap || conversationForkRequestPending) {
+      return;
+    }
+
+    const messageId = String(messageDiv?.dataset?.messageId || '').trim();
+    const conversationId = getForkableSingleUserConversationId(fullMessageObject);
+    if (!messageId || !conversationId) {
+      showToast('This message is not available to fork.', 'warning');
+      return;
+    }
+
+    pendingConversationFork = { conversationId, messageId };
+    setConversationForkPendingState(false);
+    bootstrap.Modal.getOrCreateInstance(conversationForkModalEl).show();
+  }
+
+  async function executeConversationFork() {
+    if (!pendingConversationFork || conversationForkRequestPending) {
+      return;
+    }
+
+    const { conversationId, messageId } = pendingConversationFork;
+    setConversationForkPendingState(true);
+
+    try {
+      const response = await fetch(
+        `/api/conversations/${encodeURIComponent(conversationId)}/fork`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message_id: messageId }),
+        }
+      );
+      const responsePayload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(responsePayload.error || 'Failed to fork conversation');
+      }
+
+      const forkConversationId = String(responsePayload.conversation_id || '').trim();
+      if (!forkConversationId) {
+        throw new Error('The fork response did not include a conversation ID');
+      }
+
+      bootstrap.Modal.getOrCreateInstance(conversationForkModalEl).hide();
+      pendingConversationFork = null;
+      addConversationToList(
+        forkConversationId,
+        String(responsePayload.title || 'Forked Conversation')
+      );
+      await selectConversation(forkConversationId);
+      void loadConversations();
+      showToast('Conversation fork created.', 'success');
+    } catch (error) {
+      console.error('Failed to fork conversation:', error);
+      showToast(error.message || 'Failed to fork conversation', 'danger');
+    } finally {
+      setConversationForkPendingState(false);
+    }
+  }
+
+  confirmConversationForkBtn?.addEventListener('click', () => {
+    void executeConversationFork();
+  });
+  conversationForkModalEl?.addEventListener('hidden.bs.modal', () => {
+    if (!conversationForkRequestPending) {
+      pendingConversationFork = null;
+    }
+  });
+
   function buildInlineAssistantExportActionsHtml(messageId) {
     const previousMessage = getMostRecentRenderedMessage();
     if (!(previousMessage instanceof HTMLElement) || !previousMessage.classList.contains('user-message')) {
@@ -3196,7 +3358,12 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     const normalizedDocumentId = String(output.document_id || '').trim();
     const normalizedExportRunId = String(output.export_run_id || output.run_id || '').trim();
     const isBackgroundExport = Boolean(output.background_export) && Boolean(normalizedExportRunId);
-    if (!normalizedArtifactMessageId && !normalizedDocumentId && !isBackgroundExport) {
+    const terminalStatus = String(output.status || '').trim().toLowerCase();
+    const isTerminalExportStatus = Boolean(
+      output.suppress_assistant_table_export
+      && ['failed', 'canceled'].includes(terminalStatus)
+    );
+    if (!normalizedArtifactMessageId && !normalizedDocumentId && !isBackgroundExport && !isTerminalExportStatus) {
       return null;
     }
 
@@ -3207,7 +3374,8 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
       document_id: normalizedDocumentId,
       export_run_id: normalizedExportRunId,
       run_id: normalizedExportRunId,
-      background_export: isBackgroundExport,
+      background_export: isBackgroundExport || isTerminalExportStatus,
+      suppress_assistant_table_export: Boolean(output.suppress_assistant_table_export),
     };
   }
 
@@ -3250,6 +3418,273 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     return getGeneratedAnalysisArtifacts(fullMessageObject).filter(output => output.capability === 'tabular');
   }
 
+  function getGeneratedArtifactSetDedupeKey(outputMetadata) {
+    const artifactMessageId = String(outputMetadata?.artifact_message_id || '').trim();
+    if (artifactMessageId) {
+      return `message:${artifactMessageId}`;
+    }
+
+    const stableArtifactId = String(
+      outputMetadata?.artifact_id
+      || outputMetadata?.member_id
+      || outputMetadata?.id
+      || outputMetadata?.document_id
+      || ''
+    ).trim();
+    if (stableArtifactId) {
+      return `artifact:${stableArtifactId}`;
+    }
+
+    const fileName = String(outputMetadata?.file_name || '').trim();
+    const outputFormat = String(outputMetadata?.output_format || '').trim().toLowerCase();
+    return `${fileName}:${outputFormat}`;
+  }
+
+  function isGeneratedArtifactSetComplete(statusMetadata = {}) {
+    const normalizedRunStatus = String(statusMetadata?.status || '').trim().toLowerCase();
+    if (normalizedRunStatus !== 'completed') {
+      return false;
+    }
+
+    const artifactSet = statusMetadata?.artifact_set && typeof statusMetadata.artifact_set === 'object'
+      ? statusMetadata.artifact_set
+      : null;
+    if (!artifactSet) {
+      return true;
+    }
+
+    const lifecycleState = String(artifactSet.lifecycle_state || '').trim().toLowerCase();
+    if (lifecycleState && lifecycleState !== 'completed') {
+      return false;
+    }
+
+    const validationState = String(artifactSet.validation_state || '').trim().toLowerCase();
+    return !['failed', 'invalid', 'rollback_required', 'rolled_back'].includes(validationState);
+  }
+
+  function normalizeGeneratedArtifactSetMember(rawMember, statusMetadata = {}, fallbackMetadata = {}) {
+    if (!rawMember || typeof rawMember !== 'object') {
+      return null;
+    }
+
+    const runId = String(statusMetadata?.run_id || fallbackMetadata?.run_id || fallbackMetadata?.export_run_id || '').trim();
+    const defaultCapability = String(
+      rawMember.capability
+      || fallbackMetadata?.capability
+      || statusMetadata?.capability
+      || 'tabular'
+    ).trim().toLowerCase() || 'tabular';
+    return normalizeGeneratedAnalysisArtifact({
+      ...fallbackMetadata,
+      ...statusMetadata,
+      ...rawMember,
+      capability: defaultCapability,
+      status: 'completed',
+      export_run_id: runId,
+      run_id: runId,
+      background_export: false,
+      suppress_assistant_table_export: Boolean(
+        rawMember.suppress_assistant_table_export
+        || fallbackMetadata?.suppress_assistant_table_export
+        || statusMetadata?.suppress_assistant_table_export
+      ),
+    }, defaultCapability);
+  }
+
+  function sortGeneratedArtifactSetMembers(members, primaryArtifactId) {
+    const normalizedPrimaryArtifactId = String(primaryArtifactId || '').trim();
+    const primaryAnalysisIndex = members.findIndex(member => {
+      const role = String(member?.role || member?.artifact_role || '').trim().toLowerCase();
+      if (role === 'primary_analysis') {
+        return true;
+      }
+      return Boolean(
+        normalizedPrimaryArtifactId
+        && String(member?.artifact_id || member?.member_id || member?.id || '').trim() === normalizedPrimaryArtifactId
+        && isGeneratedMarkdownArtifact(member, member?.output_format)
+      );
+    });
+
+    if (primaryAnalysisIndex <= 0) {
+      return members;
+    }
+
+    const sortedMembers = members.slice();
+    const primaryMember = sortedMembers.splice(primaryAnalysisIndex, 1)[0];
+    sortedMembers.unshift(primaryMember);
+    return sortedMembers;
+  }
+
+  function normalizeGeneratedArtifactSet(statusMetadata = {}, fallbackMetadata = {}) {
+    const artifactSet = statusMetadata?.artifact_set && typeof statusMetadata.artifact_set === 'object'
+      ? statusMetadata.artifact_set
+      : {};
+    const pluralMembersProvided = Array.isArray(statusMetadata?.generated_artifacts);
+    const pluralMembers = pluralMembersProvided ? statusMetadata.generated_artifacts : [];
+    const singularMember = statusMetadata?.generated_artifact && typeof statusMetadata.generated_artifact === 'object'
+      ? statusMetadata.generated_artifact
+      : null;
+    const legacyAnalysisMembers = Array.isArray(statusMetadata?.generated_analysis_artifacts)
+      ? statusMetadata.generated_analysis_artifacts
+      : [];
+    const legacyTabularMembers = Array.isArray(statusMetadata?.generated_tabular_outputs)
+      ? statusMetadata.generated_tabular_outputs
+      : [];
+    const rawMembers = pluralMembersProvided
+      ? pluralMembers
+      : (singularMember ? [singularMember] : [...legacyAnalysisMembers, ...legacyTabularMembers]);
+    const seenMemberKeys = new Set();
+    const members = [];
+    let duplicateSuppressedCount = 0;
+
+    rawMembers.forEach(rawMember => {
+      const normalizedMember = normalizeGeneratedArtifactSetMember(rawMember, statusMetadata, fallbackMetadata);
+      if (!normalizedMember) {
+        return;
+      }
+      const dedupeKey = getGeneratedArtifactSetDedupeKey(normalizedMember);
+      if (dedupeKey && seenMemberKeys.has(dedupeKey)) {
+        duplicateSuppressedCount += 1;
+        return;
+      }
+      if (dedupeKey) {
+        seenMemberKeys.add(dedupeKey);
+      }
+      members.push(normalizedMember);
+    });
+
+    const orderedMembers = sortGeneratedArtifactSetMembers(members, artifactSet.primary_artifact_id);
+    return {
+      contractVersion: String(artifactSet.contract_version || statusMetadata?.contract_version || '').trim(),
+      setId: String(artifactSet.set_id || statusMetadata?.artifact_set_id || '').trim(),
+      status: String(statusMetadata?.status || '').trim().toLowerCase(),
+      lifecycleState: String(artifactSet.lifecycle_state || '').trim().toLowerCase(),
+      validationState: String(artifactSet.validation_state || '').trim().toLowerCase(),
+      primaryArtifactId: String(artifactSet.primary_artifact_id || '').trim(),
+      publicationGeneration: Number.parseInt(artifactSet.publication_generation, 10) || 0,
+      isComplete: isGeneratedArtifactSetComplete(statusMetadata),
+      legacyFallbackUsed: !pluralMembers.length && Boolean(singularMember),
+      duplicateSuppressedCount,
+      members: orderedMembers,
+    };
+  }
+
+  function recordGeneratedArtifactSetUiEvent(eventType, details = {}) {
+    const boundedFormats = Array.isArray(details.formats)
+      ? details.formats.map(format => String(format || '').trim().toLowerCase()).filter(Boolean).slice(0, 8)
+      : [];
+    const eventDetail = {
+      eventType: String(eventType || '').trim().toLowerCase().slice(0, 80),
+      runId: String(details.runId || '').trim().slice(0, 96),
+      status: String(details.status || '').trim().toLowerCase().slice(0, 40),
+      lifecycleState: String(details.lifecycleState || '').trim().toLowerCase().slice(0, 40),
+      memberCount: Number.isFinite(Number.parseInt(details.memberCount, 10))
+        ? Math.max(0, Number.parseInt(details.memberCount, 10))
+        : 0,
+      formats: boundedFormats,
+      primaryRendered: Boolean(details.primaryRendered),
+      legacyFallbackUsed: Boolean(details.legacyFallbackUsed),
+      duplicateSuppressedCount: Number.isFinite(Number.parseInt(details.duplicateSuppressedCount, 10))
+        ? Math.max(0, Number.parseInt(details.duplicateSuppressedCount, 10))
+        : 0,
+    };
+
+    document.dispatchEvent(new CustomEvent('simplechat:generated-artifact-set', { detail: eventDetail }));
+  }
+
+  function createGeneratedArtifactSetGroup(artifactSet, runId = '') {
+    const group = document.createElement('div');
+    group.className = 'generated-artifact-set-group d-grid gap-3 mt-3';
+    group.dataset.generatedArtifactSet = 'true';
+    if (artifactSet.setId) {
+      group.dataset.generatedArtifactSetId = artifactSet.setId;
+    }
+    if (runId) {
+      group.dataset.generatedArtifactRunId = runId;
+    }
+    group.setAttribute('role', 'group');
+    group.setAttribute('aria-label', artifactSet.members.length === 1 ? 'Generated artifact' : 'Generated artifacts');
+
+    if (artifactSet.members.length > 1) {
+      const heading = document.createElement('div');
+      heading.className = 'small fw-semibold';
+      heading.textContent = `${artifactSet.members.length.toLocaleString()} generated artifacts`;
+      group.appendChild(heading);
+    }
+
+    artifactSet.members.forEach(memberMetadata => {
+      group.appendChild(createGeneratedAnalysisArtifactCard(memberMetadata));
+    });
+
+    return group;
+  }
+
+  function replaceBackgroundGeneratedOutputCardWithArtifacts(outputMetadata, card, artifactSet) {
+    if (!(card instanceof HTMLElement) || !document.body.contains(card) || !artifactSet?.isComplete || !artifactSet.members.length) {
+      return false;
+    }
+
+    const runId = String(outputMetadata?.export_run_id || outputMetadata?.run_id || artifactSet.members[0]?.run_id || '').trim();
+    const primaryMember = artifactSet.members.find(member => {
+      const role = String(member?.role || member?.artifact_role || '').trim().toLowerCase();
+      return role === 'primary_analysis';
+    }) || artifactSet.members[0];
+    const group = createGeneratedArtifactSetGroup(artifactSet, runId);
+    const formats = artifactSet.members.map(member => member?.output_format || '');
+    const primaryRendered = Boolean(primaryMember);
+
+    card.dataset.generatedArtifactSetCompleted = 'true';
+    card.replaceWith(group);
+    hideCompletedGeneratedArtifactHandoff(group, primaryMember || outputMetadata);
+
+    recordGeneratedArtifactSetUiEvent('set_card_hydrated', {
+      runId,
+      status: artifactSet.status,
+      lifecycleState: artifactSet.lifecycleState,
+      memberCount: artifactSet.members.length,
+      formats,
+      primaryRendered,
+      legacyFallbackUsed: artifactSet.legacyFallbackUsed,
+      duplicateSuppressedCount: artifactSet.duplicateSuppressedCount,
+    });
+    recordGeneratedArtifactSetUiEvent('plural_completion_rendered', {
+      runId,
+      status: artifactSet.status,
+      lifecycleState: artifactSet.lifecycleState,
+      memberCount: artifactSet.members.length,
+      formats,
+      primaryRendered,
+      legacyFallbackUsed: artifactSet.legacyFallbackUsed,
+      duplicateSuppressedCount: artifactSet.duplicateSuppressedCount,
+    });
+
+    if (artifactSet.legacyFallbackUsed) {
+      recordGeneratedArtifactSetUiEvent('legacy_singular_fallback_used', {
+        runId,
+        status: artifactSet.status,
+        lifecycleState: artifactSet.lifecycleState,
+        memberCount: artifactSet.members.length,
+        formats,
+        primaryRendered,
+        legacyFallbackUsed: true,
+      });
+    }
+
+    if (artifactSet.duplicateSuppressedCount > 0) {
+      recordGeneratedArtifactSetUiEvent('duplicate_member_suppressed', {
+        runId,
+        status: artifactSet.status,
+        lifecycleState: artifactSet.lifecycleState,
+        memberCount: artifactSet.members.length,
+        formats,
+        primaryRendered,
+        duplicateSuppressedCount: artifactSet.duplicateSuppressedCount,
+      });
+    }
+
+    return true;
+  }
+
   function getGeneratedTabularStorageNote(outputMetadata) {
     if (outputMetadata?.background_export) {
       return 'Continuing in the background. Progress is checkpointed and the download will appear here when complete.';
@@ -3270,6 +3705,174 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     }
 
     return normalizedRowCount.toLocaleString();
+  }
+
+  function parseLargeTabularRunInteger(value) {
+    const normalizedValue = String(value || '').replace(/,/g, '').trim();
+    const parsedValue = Number.parseInt(normalizedValue, 10);
+    return Number.isFinite(parsedValue) && parsedValue > 0 ? parsedValue : 0;
+  }
+
+  export function estimateLargeTabularRunForPrompt(messageText, appSettings = window.appSettings || {}) {
+    const normalizedMessage = String(messageText || '').toLowerCase();
+    const confirmationEnabled = appSettings?.enable_tabular_durable_run_confirmation !== false;
+    if (!confirmationEnabled || !normalizedMessage.trim()) {
+      return { shouldConfirm: false, estimatedRows: 0, estimatedBatches: 0 };
+    }
+
+    const exhaustiveRowRequested = /\b(all rows|every row|each row|for each row|for every row|one row per|one object per)\b/.test(normalizedMessage);
+    const exportRequested = /\b(csv|json|xml|export|download|generate|create|save)\b/.test(normalizedMessage);
+    const rowCountMatch = normalizedMessage.match(/\b(\d{1,3}(?:,\d{3})+|\d+)\s*(?:rows?|records?|entries?)\b/);
+    const estimatedRows = parseLargeTabularRunInteger(rowCountMatch?.[1]);
+    const maxBatchRows = Math.max(
+      parseLargeTabularRunInteger(appSettings?.tabular_generated_output_max_batch_rows) || 50,
+      1,
+    );
+    const estimatedBatches = estimatedRows > 0 ? Math.ceil(estimatedRows / maxBatchRows) : 0;
+    const rowThreshold = Math.max(
+      parseLargeTabularRunInteger(appSettings?.tabular_durable_run_confirmation_threshold_rows) || 500,
+      1,
+    );
+    const batchThreshold = Math.max(
+      parseLargeTabularRunInteger(appSettings?.tabular_durable_run_confirmation_threshold_batches) || 75,
+      1,
+    );
+
+    return {
+      shouldConfirm: Boolean(
+        exhaustiveRowRequested
+        && exportRequested
+        && estimatedRows > 0
+        && (estimatedRows > rowThreshold || estimatedBatches > batchThreshold)
+      ),
+      estimatedRows,
+      estimatedBatches,
+      rowThreshold,
+      batchThreshold,
+      maxBatchRows,
+    };
+  }
+
+  function getOrCreateLargeTabularRunConfirmationModal() {
+    let modalElement = document.getElementById('large-tabular-run-confirmation-modal');
+    if (modalElement) {
+      return modalElement;
+    }
+
+    modalElement = document.createElement('div');
+    modalElement.className = 'modal fade';
+    modalElement.id = 'large-tabular-run-confirmation-modal';
+    modalElement.tabIndex = -1;
+    modalElement.setAttribute('aria-labelledby', 'large-tabular-run-confirmation-title');
+    modalElement.setAttribute('aria-hidden', 'true');
+
+    const dialog = document.createElement('div');
+    dialog.className = 'modal-dialog modal-dialog-centered';
+    dialog.setAttribute('role', 'dialog');
+    dialog.setAttribute('aria-modal', 'true');
+    dialog.setAttribute('aria-labelledby', 'large-tabular-run-confirmation-title');
+    modalElement.appendChild(dialog);
+
+    const content = document.createElement('div');
+    content.className = 'modal-content';
+    dialog.appendChild(content);
+
+    const header = document.createElement('div');
+    header.className = 'modal-header';
+    content.appendChild(header);
+
+    const title = document.createElement('h5');
+    title.className = 'modal-title';
+    title.id = 'large-tabular-run-confirmation-title';
+    title.textContent = 'Large tabular run';
+    header.appendChild(title);
+
+    const closeButton = document.createElement('button');
+    closeButton.type = 'button';
+    closeButton.className = 'btn-close';
+    closeButton.setAttribute('data-bs-dismiss', 'modal');
+    closeButton.setAttribute('aria-label', 'Close');
+    header.appendChild(closeButton);
+
+    const body = document.createElement('div');
+    body.className = 'modal-body';
+    content.appendChild(body);
+
+    const summary = document.createElement('p');
+    summary.className = 'mb-2';
+    summary.dataset.largeTabularRunSummary = 'true';
+    body.appendChild(summary);
+
+    const detail = document.createElement('p');
+    detail.className = 'text-muted mb-0';
+    detail.dataset.largeTabularRunDetail = 'true';
+    body.appendChild(detail);
+
+    const footer = document.createElement('div');
+    footer.className = 'modal-footer';
+    content.appendChild(footer);
+
+    const narrowButton = document.createElement('button');
+    narrowButton.type = 'button';
+    narrowButton.className = 'btn btn-outline-secondary';
+    narrowButton.dataset.largeTabularRunCancel = 'true';
+    narrowButton.textContent = 'Narrow scope';
+    footer.appendChild(narrowButton);
+
+    const continueButton = document.createElement('button');
+    continueButton.type = 'button';
+    continueButton.className = 'btn btn-primary';
+    continueButton.dataset.largeTabularRunContinue = 'true';
+    continueButton.textContent = 'Continue run';
+    footer.appendChild(continueButton);
+
+    document.body.appendChild(modalElement);
+    return modalElement;
+  }
+
+  export function confirmLargeTabularRunForPrompt(messageText, appSettings = window.appSettings || {}) {
+    const estimate = estimateLargeTabularRunForPrompt(messageText, appSettings);
+    if (!estimate.shouldConfirm) {
+      return Promise.resolve(true);
+    }
+
+    const modalElement = getOrCreateLargeTabularRunConfirmationModal();
+    const summary = modalElement.querySelector('[data-large-tabular-run-summary="true"]');
+    const detail = modalElement.querySelector('[data-large-tabular-run-detail="true"]');
+    const continueButton = modalElement.querySelector('[data-large-tabular-run-continue="true"]');
+    const cancelButton = modalElement.querySelector('[data-large-tabular-run-cancel="true"]');
+
+    if (summary) {
+      summary.textContent = `This request mentions ${estimate.estimatedRows.toLocaleString()} rows and is estimated at about ${estimate.estimatedBatches.toLocaleString()} batches.`;
+    }
+    if (detail) {
+      detail.textContent = 'Large row-level runs are checkpointed in the background. Continue to start the run, or narrow the prompt before sending.';
+    }
+
+    return new Promise(resolve => {
+      const modal = window.bootstrap?.Modal?.getOrCreateInstance(modalElement);
+      let resolved = false;
+
+      const finish = shouldContinue => {
+        if (resolved) {
+          return;
+        }
+        resolved = true;
+        continueButton?.removeEventListener('click', onContinue);
+        cancelButton?.removeEventListener('click', onCancel);
+        modalElement.removeEventListener('hidden.bs.modal', onHidden);
+        modal?.hide();
+        resolve(shouldContinue);
+      };
+      const onContinue = () => finish(true);
+      const onCancel = () => finish(false);
+      const onHidden = () => finish(false);
+
+      continueButton?.addEventListener('click', onContinue, { once: true });
+      cancelButton?.addEventListener('click', onCancel, { once: true });
+      modalElement.addEventListener('hidden.bs.modal', onHidden, { once: true });
+      modal?.show();
+    });
   }
 
   function clampGeneratedOutputProgress(value) {
@@ -3317,6 +3920,17 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     }
 
     return 'Queued';
+  }
+
+  function getGeneratedOutputRunTypeLabel(outputMetadata = {}) {
+    const taskType = String(outputMetadata?.task_type || '').trim().toLowerCase();
+    if (taskType === 'combined') {
+      return 'Background analysis + export';
+    }
+    if (taskType === 'hierarchical_analysis') {
+      return 'Background analysis';
+    }
+    return 'Background export';
   }
 
   function getGeneratedOutputStatusBadgeClass(outputMetadata) {
@@ -3393,6 +4007,36 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     }
   }
 
+  function canCancelBackgroundGeneratedOutput(outputMetadata) {
+    return Boolean(outputMetadata?.background_export && outputMetadata?.can_cancel);
+  }
+
+  function setBackgroundGeneratedOutputCancelButtonLabel(cancelButton, label) {
+    if (!(cancelButton instanceof HTMLElement)) {
+      return;
+    }
+
+    const icon = document.createElement('i');
+    icon.className = 'bi bi-x-circle me-1';
+    icon.setAttribute('aria-hidden', 'true');
+    const labelText = document.createElement('span');
+    labelText.textContent = label;
+    cancelButton.replaceChildren(icon, labelText);
+  }
+
+  function updateBackgroundGeneratedOutputCancelButton(cancelButton, outputMetadata) {
+    if (!(cancelButton instanceof HTMLElement)) {
+      return;
+    }
+
+    const canCancel = canCancelBackgroundGeneratedOutput(outputMetadata);
+    cancelButton.classList.toggle('d-none', !canCancel);
+    cancelButton.disabled = !canCancel;
+    if (cancelButton.dataset.busy !== 'true') {
+      setBackgroundGeneratedOutputCancelButtonLabel(cancelButton, 'Cancel');
+    }
+  }
+
   function formatGeneratedTabularPreviewValue(value, maxLength = 120) {
     let formattedValue = '';
 
@@ -3421,12 +4065,14 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     return Boolean(row) && typeof row === 'object' && !Array.isArray(row);
   }
 
-  function buildGeneratedTabularPreviewTable(previewRows) {
+  function buildGeneratedTabularPreviewTable(previewRows, options = {}) {
     if (!Array.isArray(previewRows) || !previewRows.length || !previewRows.every(isGeneratedTabularPreviewObjectRow)) {
       return null;
     }
 
-    const previewColumns = [];
+    const previewColumns = Array.isArray(options.columns)
+      ? options.columns.map(columnName => String(columnName || '')).filter(Boolean)
+      : [];
     previewRows.forEach(row => {
       Object.keys(row).forEach(columnName => {
         if (!previewColumns.includes(columnName)) {
@@ -3439,7 +4085,15 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
       return null;
     }
 
-    const displayedColumns = previewColumns.slice(0, 4);
+    const requestedMaxColumns = Number.parseInt(options.maxColumns, 10);
+    const maxColumns = Number.isFinite(requestedMaxColumns) && requestedMaxColumns > 0
+      ? requestedMaxColumns
+      : 4;
+    const requestedCellLength = Number.parseInt(options.maxCellLength, 10);
+    const maxCellLength = Number.isFinite(requestedCellLength) && requestedCellLength > 0
+      ? requestedCellLength
+      : 120;
+    const displayedColumns = previewColumns.slice(0, maxColumns);
     const tableWrapper = document.createElement('div');
     tableWrapper.className = 'table-responsive small border rounded';
 
@@ -3462,7 +4116,7 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
       const tableRow = document.createElement('tr');
       displayedColumns.forEach(columnName => {
         const valueCell = document.createElement('td');
-        valueCell.textContent = formatGeneratedTabularPreviewValue(row[columnName]);
+        valueCell.textContent = formatGeneratedTabularPreviewValue(row[columnName], maxCellLength);
         tableRow.appendChild(valueCell);
       });
       tbody.appendChild(tableRow);
@@ -3537,7 +4191,157 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     return previewBlock;
   }
 
+  function getGeneratedArtifactPreviewRows(outputMetadata) {
+    if (Array.isArray(outputMetadata?.preview_rows) && outputMetadata.preview_rows.length) {
+      return outputMetadata.preview_rows;
+    }
+    if (Array.isArray(outputMetadata?.preview_items) && outputMetadata.preview_items.length) {
+      return outputMetadata.preview_items;
+    }
+    return [];
+  }
+
+  function hasGeneratedArtifactPreview(outputMetadata, outputFormat) {
+    void outputFormat;
+    return Boolean(
+      getGeneratedArtifactPreviewRows(outputMetadata).length
+      || (Array.isArray(outputMetadata?.preview_lines) && outputMetadata.preview_lines.length)
+      || String(
+        outputMetadata?.preview_text
+        || outputMetadata?.analysis_text
+        || outputMetadata?.panalysis_text
+        || ''
+      ).trim()
+    );
+  }
+
+  function getOrCreateGeneratedArtifactPreviewModal() {
+    let modal = document.getElementById('generated-artifact-preview-modal');
+    if (modal) {
+      return modal;
+    }
+
+    modal = document.createElement('div');
+    modal.id = 'generated-artifact-preview-modal';
+    modal.className = 'modal fade';
+    modal.tabIndex = -1;
+    modal.setAttribute('aria-labelledby', 'generated-artifact-preview-modal-label');
+    modal.setAttribute('aria-hidden', 'true');
+
+    const dialog = document.createElement('div');
+    dialog.className = 'modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable';
+    modal.appendChild(dialog);
+
+    const content = document.createElement('div');
+    content.className = 'modal-content';
+    dialog.appendChild(content);
+
+    const header = document.createElement('div');
+    header.className = 'modal-header';
+    content.appendChild(header);
+
+    const title = document.createElement('h5');
+    title.id = 'generated-artifact-preview-modal-label';
+    title.className = 'modal-title';
+    header.appendChild(title);
+
+    const closeButton = document.createElement('button');
+    closeButton.type = 'button';
+    closeButton.className = 'btn-close';
+    closeButton.setAttribute('data-bs-dismiss', 'modal');
+    closeButton.setAttribute('aria-label', 'Close');
+    header.appendChild(closeButton);
+
+    const body = document.createElement('div');
+    body.className = 'modal-body';
+    body.dataset.generatedArtifactPreviewBody = 'true';
+    content.appendChild(body);
+
+    const footer = document.createElement('div');
+    footer.className = 'modal-footer justify-content-between';
+    content.appendChild(footer);
+
+    const rowInfo = document.createElement('span');
+    rowInfo.className = 'small text-muted';
+    rowInfo.dataset.generatedArtifactPreviewInfo = 'true';
+    footer.appendChild(rowInfo);
+
+    const footerCloseButton = document.createElement('button');
+    footerCloseButton.type = 'button';
+    footerCloseButton.className = 'btn btn-sm btn-secondary';
+    footerCloseButton.setAttribute('data-bs-dismiss', 'modal');
+    footerCloseButton.textContent = 'Close';
+    footer.appendChild(footerCloseButton);
+
+    document.body.appendChild(modal);
+    return modal;
+  }
+
+  function showGeneratedArtifactPreviewModal(outputMetadata, outputFormat) {
+    const previewRows = getGeneratedArtifactPreviewRows(outputMetadata);
+    const previewLines = Array.isArray(outputMetadata?.preview_lines) ? outputMetadata.preview_lines : [];
+    const previewText = String(
+      outputMetadata?.preview_text
+      || outputMetadata?.analysis_text
+      || outputMetadata?.panalysis_text
+      || ''
+    ).trim();
+    let previewContent = null;
+    if (previewRows.length) {
+      previewContent = buildGeneratedTabularPreviewTable(previewRows, {
+        columns: outputMetadata?.preview_columns,
+        maxColumns: 50,
+        maxCellLength: 240,
+      }) || buildGeneratedTabularPreviewFallback(previewRows);
+    } else if (previewLines.length) {
+      previewContent = buildGeneratedAnalysisPreviewText(
+        previewLines.join('\n'),
+        outputMetadata,
+        outputFormat,
+      );
+    } else if (previewText) {
+      previewContent = buildGeneratedAnalysisPreviewText(previewText, outputMetadata, outputFormat);
+    }
+
+    if (!previewContent) {
+      showToast('A preview is not available for this generated artifact.', 'warning');
+      return;
+    }
+
+    const modal = getOrCreateGeneratedArtifactPreviewModal();
+    const title = modal.querySelector('.modal-title');
+    const body = modal.querySelector('[data-generated-artifact-preview-body="true"]');
+    const rowInfo = modal.querySelector('[data-generated-artifact-preview-info="true"]');
+    const fileName = String(outputMetadata?.file_name || `generated-output.${outputFormat}`).trim();
+    if (title) {
+      title.textContent = `Preview: ${fileName}`;
+    }
+    if (body) {
+      body.replaceChildren(previewContent);
+    }
+    if (rowInfo) {
+      const totalRows = formatGeneratedTabularRowCount(outputMetadata?.row_count);
+      rowInfo.textContent = previewRows.length
+        ? `Showing ${previewRows.length.toLocaleString()}${totalRows ? ` of ${totalRows}` : ''} rows. Preview values may be shortened; download for complete content.`
+        : 'Generated artifact preview';
+    }
+
+    const modalInstance = window.bootstrap?.Modal?.getOrCreateInstance(modal);
+    if (!modalInstance) {
+      showToast('Could not open the generated artifact preview.', 'warning');
+      return;
+    }
+    modalInstance.show();
+  }
+
   function getGeneratedAnalysisArtifactTitle(outputMetadata, outputFormat) {
+    const artifactId = String(outputMetadata?.artifact_id || outputMetadata?.member_id || '').trim().toLowerCase();
+    if (artifactId === 'analysis-summary') {
+      return 'Analyze Markdown summary';
+    }
+    if (artifactId === 'row-analysis-md') {
+      return 'Row-by-row Markdown output';
+    }
     const capability = String(outputMetadata?.capability || '').trim().toLowerCase();
     if (capability === 'analyze') {
       return `Analyze ${outputFormat.toUpperCase()} artifact`;
@@ -4056,14 +4860,29 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     const statusLabel = formatGeneratedOutputStatusLabel(outputMetadata?.status, outputMetadata);
     const completedBatches = Number.parseInt(outputMetadata?.completed_batches, 10);
     const batchCount = Number.parseInt(outputMetadata?.batch_count, 10);
+    const processedChunkCount = Number.parseInt(outputMetadata?.processed_chunk_count, 10);
+    const totalChunkCount = Number.parseInt(outputMetadata?.total_chunk_count, 10);
+    const failedChunkCount = Number.parseInt(outputMetadata?.failed_chunk_count, 10);
+    const analysisReduceLevel = Number.parseInt(outputMetadata?.analysis_reduce_level, 10);
+    const analysisReduceNode = Number.parseInt(outputMetadata?.analysis_reduce_node, 10);
+    const analysisReduceNodeCount = Number.parseInt(outputMetadata?.analysis_reduce_node_count, 10);
     const processedRows = Number.parseInt(outputMetadata?.processed_rows, 10);
     const rowCount = Number.parseInt(outputMetadata?.row_count, 10);
     const transientFailureCount = Number.parseInt(outputMetadata?.transient_failure_count, 10);
     const manualResumeCount = Number.parseInt(outputMetadata?.manual_resume_count, 10);
     const retryDelaySeconds = Number.parseInt(outputMetadata?.retry_delay_seconds, 10);
     const estimatedRemainingSeconds = Number.parseInt(outputMetadata?.estimated_remaining_seconds, 10);
+    const rowsPerMinute = Number.parseFloat(outputMetadata?.rows_per_minute);
+    const batchConcurrency = Number.parseInt(outputMetadata?.batch_concurrency, 10);
+    const effectiveBatchConcurrency = Number.parseInt(outputMetadata?.effective_batch_concurrency, 10);
+    const taskType = String(outputMetadata?.task_type || '').trim().toLowerCase();
+    const analysisPhase = String(outputMetadata?.analysis_phase || '').trim().toLowerCase();
     const progressPercent = calculateGeneratedOutputProgress(outputMetadata);
     const progressPercentLabel = `${Math.round(progressPercent)}%`;
+
+    if (statusElements.statusLabel) {
+      statusElements.statusLabel.textContent = getGeneratedOutputRunTypeLabel(outputMetadata);
+    }
 
     if (statusElements.statusBadge) {
       statusElements.statusBadge.textContent = statusLabel;
@@ -4091,6 +4910,51 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
         checkpointParts.push(`${processedRows.toLocaleString()} of ${rowCount.toLocaleString()} rows`);
       }
       detailParts.push(checkpointParts.join(', '));
+    }
+
+    if (taskType === 'hierarchical_analysis' || taskType === 'combined') {
+      if (analysisPhase === 'reducing') {
+        const reduceParts = ['Reduce phase'];
+        if (Number.isFinite(analysisReduceLevel) && analysisReduceLevel > 0) {
+          reduceParts.push(`level ${analysisReduceLevel.toLocaleString()}`);
+        }
+        if (
+          Number.isFinite(analysisReduceNode)
+          && Number.isFinite(analysisReduceNodeCount)
+          && analysisReduceNodeCount > 0
+        ) {
+          reduceParts.push(`node ${analysisReduceNode.toLocaleString()} of ${analysisReduceNodeCount.toLocaleString()}`);
+        }
+        detailParts.push(reduceParts.join(' '));
+      } else if (analysisPhase === 'publishing') {
+        detailParts.push('Publishing final artifact');
+      } else if (Number.isFinite(processedChunkCount) && Number.isFinite(totalChunkCount) && totalChunkCount > 0) {
+        detailParts.push(`Map phase: ${processedChunkCount.toLocaleString()} of ${totalChunkCount.toLocaleString()} chunks`);
+      }
+
+      if (Number.isFinite(failedChunkCount) && failedChunkCount > 0) {
+        detailParts.push(`Chunks needing retry: ${failedChunkCount.toLocaleString()}`);
+      }
+    }
+
+    if (Number.isFinite(completedBatches) && Number.isFinite(batchCount) && batchCount > completedBatches) {
+      detailParts.push(`Remaining batches: ${(batchCount - completedBatches).toLocaleString()}`);
+    }
+    if (Number.isFinite(processedChunkCount) && Number.isFinite(totalChunkCount) && totalChunkCount > processedChunkCount) {
+      detailParts.push(`Remaining chunks: ${(totalChunkCount - processedChunkCount).toLocaleString()}`);
+    }
+    if (Number.isFinite(rowsPerMinute) && rowsPerMinute > 0) {
+      detailParts.push(`Throughput: ${rowsPerMinute.toLocaleString(undefined, { maximumFractionDigits: 1 })} rows/min`);
+    }
+    if (Number.isFinite(batchConcurrency) && batchConcurrency > 0) {
+      const concurrencyLabel = (
+        Number.isFinite(effectiveBatchConcurrency)
+        && effectiveBatchConcurrency > 0
+        && effectiveBatchConcurrency !== batchConcurrency
+      )
+        ? `${effectiveBatchConcurrency.toLocaleString()} of ${batchConcurrency.toLocaleString()}`
+        : batchConcurrency.toLocaleString();
+      detailParts.push(`Model concurrency: ${concurrencyLabel}`);
     }
 
     if (outputMetadata?.waiting_for_retry) {
@@ -4137,7 +5001,7 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     }
   }
 
-  function createBackgroundGeneratedOutputStatusBlock(outputMetadata) {
+  function createBackgroundGeneratedOutputStatusBlock(outputMetadata, supportingDetailElements = []) {
     const wrapper = document.createElement('div');
     wrapper.className = 'generated-tabular-background-status mt-3';
 
@@ -4146,7 +5010,7 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
 
     const statusLabel = document.createElement('span');
     statusLabel.className = 'fw-semibold';
-    statusLabel.textContent = 'Background export';
+    statusLabel.textContent = getGeneratedOutputRunTypeLabel(outputMetadata);
     statusRow.appendChild(statusLabel);
 
     const statusBadge = document.createElement('span');
@@ -4165,17 +5029,39 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     progress.appendChild(progressBar);
     wrapper.appendChild(progress);
 
+    const details = document.createElement('details');
+    details.className = 'generated-analysis-preview-details generated-tabular-background-details mt-2';
+    details.dataset.generatedExportDetails = 'true';
+
+    const detailsSummary = document.createElement('summary');
+    detailsSummary.className = 'small fw-semibold';
+    detailsSummary.textContent = 'View details';
+    details.appendChild(detailsSummary);
+
+    const detailsContent = document.createElement('div');
+    detailsContent.className = 'mt-2';
+    supportingDetailElements.forEach(detailElement => {
+      if (detailElement instanceof HTMLElement) {
+        detailsContent.appendChild(detailElement);
+      }
+    });
+
     const detailText = document.createElement('div');
-    detailText.className = 'small text-muted mt-2';
-    wrapper.appendChild(detailText);
+    detailText.className = 'small text-muted';
+    detailsContent.appendChild(detailText);
 
     const updatedText = document.createElement('div');
     updatedText.className = 'small text-muted';
-    wrapper.appendChild(updatedText);
+    detailsContent.appendChild(updatedText);
+    details.appendChild(detailsContent);
+    wrapper.appendChild(details);
 
     const statusElements = {
+      statusLabel,
       statusBadge,
       progressBar,
+      details,
+      detailsContent,
       detailText,
       updatedText,
     };
@@ -4185,6 +5071,17 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
       wrapper,
       statusElements,
     };
+  }
+
+  function hideCompletedGeneratedArtifactHandoff(container, outputMetadata) {
+    if (outputMetadata?.background_export || !outputMetadata?.suppress_assistant_text) {
+      return;
+    }
+    const message = container?.matches?.('.message')
+      ? container
+      : container?.closest?.('.message');
+    message?.querySelector('.message-text')?.classList.add('d-none');
+    message?.querySelector('.message-footer')?.classList.add('d-none');
   }
 
   async function refreshBackgroundGeneratedOutputStatus(outputMetadata, card, statusElements = {}) {
@@ -4205,28 +5102,33 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
         throw new Error(responseData?.error || `Server responded with status ${response.status}`);
       }
 
+      if (!document.body.contains(card)) {
+        return;
+      }
+
       const runStatus = responseData?.run || {};
-      const generatedArtifact = runStatus?.generated_artifact || null;
+      const artifactSet = normalizeGeneratedArtifactSet(runStatus, outputMetadata);
+      const hasCompletedArtifactSet = Boolean(artifactSet.isComplete && artifactSet.members.length);
       Object.assign(outputMetadata, runStatus, {
         export_run_id: runStatus.run_id || runId,
         run_id: runStatus.run_id || runId,
-        background_export: String(runStatus.status || '').toLowerCase() !== 'completed' || !generatedArtifact,
+        background_export: !hasCompletedArtifactSet,
       });
 
-      if (String(runStatus.status || '').toLowerCase() === 'completed' && generatedArtifact) {
-        Object.assign(outputMetadata, generatedArtifact, {
+      if (hasCompletedArtifactSet) {
+        Object.assign(outputMetadata, artifactSet.members[0], {
           background_export: false,
           status: 'completed',
           export_run_id: runStatus.run_id || runId,
           run_id: runStatus.run_id || runId,
         });
-        const refreshedCard = createGeneratedAnalysisArtifactCard(outputMetadata);
-        card.replaceWith(refreshedCard);
+        replaceBackgroundGeneratedOutputCardWithArtifacts(outputMetadata, card, artifactSet);
         return;
       }
 
       updateBackgroundGeneratedOutputStatusCard(statusElements, outputMetadata);
       updateBackgroundGeneratedOutputContinueButton(statusElements.continueButton, outputMetadata);
+      updateBackgroundGeneratedOutputCancelButton(statusElements.cancelButton, outputMetadata);
     } catch (error) {
       if (statusElements.detailText) {
         statusElements.detailText.textContent = error.message || 'Could not refresh export progress.';
@@ -4261,22 +5163,22 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
       }
 
       const runStatus = responseData?.run || {};
-      const generatedArtifact = runStatus?.generated_artifact || null;
+      const artifactSet = normalizeGeneratedArtifactSet(runStatus, outputMetadata);
+      const hasCompletedArtifactSet = Boolean(artifactSet.isComplete && artifactSet.members.length);
       Object.assign(outputMetadata, runStatus, {
         export_run_id: runStatus.run_id || runId,
         run_id: runStatus.run_id || runId,
-        background_export: String(runStatus.status || '').toLowerCase() !== 'completed' || !generatedArtifact,
+        background_export: !hasCompletedArtifactSet,
       });
 
-      if (String(runStatus.status || '').toLowerCase() === 'completed' && generatedArtifact) {
-        Object.assign(outputMetadata, generatedArtifact, {
+      if (hasCompletedArtifactSet) {
+        Object.assign(outputMetadata, artifactSet.members[0], {
           background_export: false,
           status: 'completed',
           export_run_id: runStatus.run_id || runId,
           run_id: runStatus.run_id || runId,
         });
-        const refreshedCard = createGeneratedAnalysisArtifactCard(outputMetadata);
-        card.replaceWith(refreshedCard);
+        replaceBackgroundGeneratedOutputCardWithArtifacts(outputMetadata, card, artifactSet);
         showToast(responseData?.message || 'Background export is already complete.', 'success');
         return;
       }
@@ -4294,6 +5196,53 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
       if (continueButton) {
         continueButton.textContent = originalButtonText;
         updateBackgroundGeneratedOutputContinueButton(continueButton, outputMetadata);
+      }
+    }
+  }
+
+  async function cancelBackgroundGeneratedOutputRun(outputMetadata, card, statusElements = {}, cancelButton = null) {
+    const runId = String(outputMetadata?.export_run_id || outputMetadata?.run_id || '').trim();
+    if (!runId || !(card instanceof HTMLElement) || !document.body.contains(card)) {
+      return;
+    }
+
+    if (cancelButton) {
+      cancelButton.dataset.busy = 'true';
+      cancelButton.disabled = true;
+      setBackgroundGeneratedOutputCancelButtonLabel(cancelButton, 'Canceling...');
+    }
+
+    try {
+      const response = await fetch(`/api/tabular/generated-output/runs/${encodeURIComponent(runId)}/cancel`, {
+        method: 'POST',
+        headers: {
+          'Accept': 'application/json',
+        },
+      });
+      const responseData = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(responseData?.message || responseData?.error || `Server responded with status ${response.status}`);
+      }
+
+      const runStatus = responseData?.run || {};
+      Object.assign(outputMetadata, runStatus, {
+        export_run_id: runStatus.run_id || runId,
+        run_id: runStatus.run_id || runId,
+        background_export: true,
+      });
+      updateBackgroundGeneratedOutputStatusCard(statusElements, outputMetadata);
+      updateBackgroundGeneratedOutputContinueButton(statusElements.continueButton, outputMetadata);
+      updateBackgroundGeneratedOutputCancelButton(cancelButton, outputMetadata);
+      showToast(responseData?.message || 'Background export canceled.', 'success');
+    } catch (error) {
+      if (statusElements.detailText) {
+        statusElements.detailText.textContent = error.message || 'Could not cancel background export.';
+      }
+      showToast(error.message || 'Could not cancel background export.', 'danger');
+    } finally {
+      if (cancelButton) {
+        delete cancelButton.dataset.busy;
+        updateBackgroundGeneratedOutputCancelButton(cancelButton, outputMetadata);
       }
     }
   }
@@ -4352,6 +5301,21 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     const previewText = String(
       outputMetadata?.preview_text || outputMetadata?.analysis_text || outputMetadata?.panalysis_text || ''
     ).trim();
+    const isBackgroundExport = Boolean(outputMetadata?.background_export);
+    const capability = String(outputMetadata?.capability || '').trim().toLowerCase();
+    const isCompletedTabularArtifact = Boolean(
+      !isBackgroundExport
+      && ['csv', 'json', 'xml'].includes(outputFormat)
+      && ['tabular', 'file_export'].includes(capability)
+    );
+    const backgroundDetailElements = [];
+    const appendSupportingDetail = element => {
+      if (isBackgroundExport) {
+        backgroundDetailElements.push(element);
+      } else {
+        card.appendChild(element);
+      }
+    };
 
     const header = document.createElement('div');
     header.className = 'd-flex flex-wrap justify-content-between align-items-start gap-2';
@@ -4364,53 +5328,76 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
 
     const fileNameText = document.createElement('div');
     fileNameText.className = 'small text-muted text-break';
-    fileNameText.textContent = fileName;
-    headerText.appendChild(fileNameText);
+    fileNameText.textContent = isBackgroundExport ? `File: ${fileName}` : fileName;
+    if (isBackgroundExport) {
+      backgroundDetailElements.push(fileNameText);
+    } else {
+      headerText.appendChild(fileNameText);
+    }
     header.appendChild(headerText);
 
-    if (rowCountLabel) {
+    if (rowCountLabel && !isBackgroundExport) {
       const rowCountBadge = document.createElement('span');
       rowCountBadge.className = 'badge text-bg-light';
       rowCountBadge.textContent = `${rowCountLabel} rows`;
       header.appendChild(rowCountBadge);
+    } else if (rowCountLabel) {
+      const rowCountDetail = document.createElement('div');
+      rowCountDetail.className = 'small text-muted';
+      rowCountDetail.textContent = `Rows: ${rowCountLabel}`;
+      backgroundDetailElements.push(rowCountDetail);
+    }
+
+    if (outputMetadata?.rows_truncated) {
+      // The completed-artifact layout hides the summary, so partial coverage needs its own badge.
+      const truncatedBadge = document.createElement('span');
+      truncatedBadge.className = 'badge text-bg-warning';
+      truncatedBadge.textContent = 'Partial';
+      truncatedBadge.title = 'The source action reported truncated results, so this file covers only the rows it returned.';
+      header.appendChild(truncatedBadge);
     }
 
     card.appendChild(header);
 
-    const storageNote = document.createElement('div');
-    storageNote.className = 'small text-muted mt-2';
-    storageNote.textContent = getGeneratedTabularStorageNote(outputMetadata);
-    card.appendChild(storageNote);
+    if (!isCompletedTabularArtifact) {
+      const storageNote = document.createElement('div');
+      storageNote.className = 'small text-muted mt-2';
+      storageNote.textContent = getGeneratedTabularStorageNote(outputMetadata);
+      appendSupportingDetail(storageNote);
 
-    if (sourceFileName || selectedSheet) {
-      const sourceNote = document.createElement('div');
-      sourceNote.className = 'small text-muted';
-      const sourceSegments = [];
-      if (sourceFileName) {
-        sourceSegments.push(`Source: ${sourceFileName}`);
+      if (sourceFileName || selectedSheet) {
+        const sourceNote = document.createElement('div');
+        sourceNote.className = 'small text-muted';
+        const sourceSegments = [];
+        if (sourceFileName) {
+          sourceSegments.push(`Source: ${sourceFileName}`);
+        }
+        if (selectedSheet) {
+          sourceSegments.push(`Sheet: ${selectedSheet}`);
+        }
+        sourceNote.textContent = sourceSegments.join(' | ');
+        appendSupportingDetail(sourceNote);
       }
-      if (selectedSheet) {
-        sourceSegments.push(`Sheet: ${selectedSheet}`);
-      }
-      sourceNote.textContent = sourceSegments.join(' | ');
-      card.appendChild(sourceNote);
-    }
 
-    if (summary) {
-      const summaryText = document.createElement('p');
-      summaryText.className = 'small mb-0 mt-2';
-      summaryText.textContent = summary;
-      card.appendChild(summaryText);
+      if (summary) {
+        const summaryText = document.createElement('p');
+        summaryText.className = 'small mb-0 mt-2';
+        summaryText.textContent = summary;
+        appendSupportingDetail(summaryText);
+      }
     }
 
     let backgroundStatusElements = null;
-    if (outputMetadata?.background_export) {
-      const backgroundStatusBlock = createBackgroundGeneratedOutputStatusBlock(outputMetadata);
+    if (isBackgroundExport) {
+      const backgroundStatusBlock = createBackgroundGeneratedOutputStatusBlock(
+        outputMetadata,
+        backgroundDetailElements,
+      );
       backgroundStatusElements = backgroundStatusBlock.statusElements;
       card.appendChild(backgroundStatusBlock.wrapper);
     }
 
-    if (previewRows.length || previewItems.length || previewLines.length || previewText) {
+    if (!isCompletedTabularArtifact && (previewRows.length || previewItems.length || previewLines.length || previewText)) {
       let previewContent = null;
       if (previewRows.length) {
         previewContent = buildGeneratedTabularPreviewTable(previewRows) || buildGeneratedTabularPreviewFallback(previewRows);
@@ -4427,7 +5414,13 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
       }
 
       if (previewContent) {
-        if (shouldCollapseGeneratedAnalysisPreview(outputMetadata)) {
+        if (isBackgroundExport && backgroundStatusElements?.detailsContent) {
+          const previewLabel = document.createElement('div');
+          previewLabel.className = 'small fw-semibold mt-3 mb-2';
+          previewLabel.textContent = 'Preview';
+          backgroundStatusElements.detailsContent.appendChild(previewLabel);
+          backgroundStatusElements.detailsContent.appendChild(previewContent);
+        } else if (shouldCollapseGeneratedAnalysisPreview(outputMetadata)) {
           const previewDetails = document.createElement('details');
           previewDetails.className = 'generated-analysis-preview-details mt-3';
 
@@ -4450,7 +5443,33 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     const actions = document.createElement('div');
     actions.className = 'd-flex flex-wrap gap-2 mt-3';
 
+    // A staged file is withheld from everyone until an approver releases it, so the download
+    // and preview controls are replaced by the approval banner rather than left to fail.
+    const approvalBlock = buildGeneratedFileApprovalBlock(outputMetadata, (decision, payload) => {
+      if (outputMetadata && typeof outputMetadata.approval === 'object') {
+        outputMetadata.approval.state = payload?.approval_state
+          || (decision === 'approve' ? 'approved' : 'denied');
+        outputMetadata.approval.viewer_can_approve = false;
+        outputMetadata.approval.resolved_by_name = payload?.resolved_by_name || '';
+      }
+      const refreshedCard = createGeneratedAnalysisArtifactCard(outputMetadata);
+      if (refreshedCard && card.parentNode) {
+        card.parentNode.replaceChild(refreshedCard, card);
+      }
+    });
+    if (approvalBlock) {
+      card.appendChild(approvalBlock);
+    }
+    if (generatedFileApprovalBlocksDownload(outputMetadata)) {
+      return card;
+    }
+
     if (outputMetadata?.background_export) {
+      const backgroundRunId = String(outputMetadata?.export_run_id || outputMetadata?.run_id || '').trim();
+      if (!backgroundRunId) {
+        return card;
+      }
+
       const continueButton = document.createElement('button');
       continueButton.type = 'button';
       continueButton.className = 'btn btn-sm btn-outline-primary generated-tabular-continue-btn d-none';
@@ -4464,18 +5483,20 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
       updateBackgroundGeneratedOutputContinueButton(continueButton, outputMetadata);
       actions.appendChild(continueButton);
 
-      const refreshStatusButton = document.createElement('button');
-      refreshStatusButton.type = 'button';
-      refreshStatusButton.className = 'btn btn-sm btn-outline-secondary generated-tabular-refresh-status-btn';
-      refreshStatusButton.textContent = 'Refresh Status';
-      refreshStatusButton.addEventListener('click', async () => {
-        refreshStatusButton.disabled = true;
-        refreshStatusButton.textContent = 'Refreshing...';
-        await refreshBackgroundGeneratedOutputStatus(outputMetadata, card, backgroundStatusElements || {});
-        refreshStatusButton.disabled = false;
-        refreshStatusButton.textContent = 'Refresh Status';
+      const cancelButton = document.createElement('button');
+      cancelButton.type = 'button';
+      cancelButton.className = 'btn btn-sm btn-outline-danger generated-tabular-cancel-btn d-none';
+      cancelButton.setAttribute('aria-label', 'Cancel background export');
+      setBackgroundGeneratedOutputCancelButtonLabel(cancelButton, 'Cancel');
+      cancelButton.addEventListener('click', async () => {
+        await cancelBackgroundGeneratedOutputRun(outputMetadata, card, backgroundStatusElements || {}, cancelButton);
       });
-      actions.appendChild(refreshStatusButton);
+      if (backgroundStatusElements) {
+        backgroundStatusElements.cancelButton = cancelButton;
+      }
+      updateBackgroundGeneratedOutputCancelButton(cancelButton, outputMetadata);
+      actions.appendChild(cancelButton);
+
       card.appendChild(actions);
       scheduleBackgroundGeneratedOutputStatusPolling(outputMetadata, card, backgroundStatusElements || {});
       return card;
@@ -4485,12 +5506,37 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     downloadButton.type = 'button';
     downloadButton.className = 'btn btn-sm btn-outline-primary generated-tabular-download-btn';
     downloadButton.textContent = `Download ${outputFormat.toUpperCase()}`;
+    downloadButton.setAttribute('aria-label', `Download ${fileName}`);
     downloadButton.addEventListener('click', () => {
+      recordGeneratedArtifactSetUiEvent('member_download_action', {
+        runId: outputMetadata?.run_id || outputMetadata?.export_run_id,
+        status: outputMetadata?.status,
+        memberCount: 1,
+        formats: [outputFormat],
+      });
       triggerGeneratedTabularOutputDownload(outputMetadata);
     });
     actions.appendChild(downloadButton);
 
-    if (isGeneratedMarkdownArtifact(outputMetadata, outputFormat)) {
+    if (isCompletedTabularArtifact && hasGeneratedArtifactPreview(outputMetadata, outputFormat)) {
+      const viewButton = document.createElement('button');
+      viewButton.type = 'button';
+      viewButton.className = 'btn btn-sm btn-outline-secondary generated-artifact-view-btn';
+      viewButton.textContent = `View ${outputFormat.toUpperCase()}`;
+      viewButton.setAttribute('aria-label', `View ${fileName}`);
+      viewButton.addEventListener('click', () => {
+        recordGeneratedArtifactSetUiEvent('member_view_action', {
+          runId: outputMetadata?.run_id || outputMetadata?.export_run_id,
+          status: outputMetadata?.status,
+          memberCount: 1,
+          formats: [outputFormat],
+        });
+        showGeneratedArtifactPreviewModal(outputMetadata, outputFormat);
+      });
+      actions.appendChild(viewButton);
+    }
+
+    if (isGeneratedMarkdownArtifact(outputMetadata, outputFormat) && !isCompletedTabularArtifact) {
       const normalizedArtifactMessageId = String(outputMetadata?.artifact_message_id || '').trim();
       const normalizedConversationId = String(outputMetadata?.conversation_id || window.currentConversationId || '').trim();
       if (normalizedArtifactMessageId && normalizedConversationId) {
@@ -4498,9 +5544,16 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
         exportPowerPointButton.type = 'button';
         exportPowerPointButton.className = 'btn btn-sm btn-outline-primary generated-artifact-export-ppt-btn';
         exportPowerPointButton.textContent = 'Create PowerPoint';
+        exportPowerPointButton.setAttribute('aria-label', `Create PowerPoint from ${fileName}`);
         exportPowerPointButton.dataset.artifactMessageId = normalizedArtifactMessageId;
         exportPowerPointButton.dataset.conversationId = normalizedConversationId;
         exportPowerPointButton.addEventListener('click', () => {
+          recordGeneratedArtifactSetUiEvent('member_powerpoint_action', {
+            runId: outputMetadata?.run_id || outputMetadata?.export_run_id,
+            status: outputMetadata?.status,
+            memberCount: 1,
+            formats: [outputFormat],
+          });
           exportGeneratedMarkdownArtifactAsPowerPoint(outputMetadata, exportPowerPointButton);
         });
         actions.appendChild(exportPowerPointButton);
@@ -4510,7 +5563,14 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
       viewButton.type = 'button';
       viewButton.className = 'btn btn-sm btn-outline-secondary generated-artifact-view-md-btn';
       viewButton.textContent = 'View MD';
+      viewButton.setAttribute('aria-label', `View ${fileName}`);
       viewButton.addEventListener('click', () => {
+        recordGeneratedArtifactSetUiEvent('member_view_action', {
+          runId: outputMetadata?.run_id || outputMetadata?.export_run_id,
+          status: outputMetadata?.status,
+          memberCount: 1,
+          formats: [outputFormat],
+        });
         viewGeneratedMarkdownArtifact(outputMetadata, viewButton);
       });
       actions.appendChild(viewButton);
@@ -4523,7 +5583,14 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
       promoteButton.type = 'button';
       promoteButton.className = 'btn btn-sm btn-outline-secondary generated-artifact-promote-btn';
       promoteButton.textContent = 'Add to Workspace';
+      promoteButton.setAttribute('aria-label', `Add ${fileName} to workspace`);
       promoteButton.addEventListener('click', () => {
+        recordGeneratedArtifactSetUiEvent('member_promotion_action', {
+          runId: outputMetadata?.run_id || outputMetadata?.export_run_id,
+          status: outputMetadata?.status,
+          memberCount: 1,
+          formats: [outputFormat],
+        });
         promoteGeneratedArtifactToWorkspace(outputMetadata, promoteButton);
       });
       actions.appendChild(promoteButton);
@@ -4553,6 +5620,7 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
 
     generatedOutputs.forEach(outputMetadata => {
       generatedOutputsContainer.appendChild(createGeneratedAnalysisArtifactCard(outputMetadata));
+      hideCompletedGeneratedArtifactHandoff(messageDiv, outputMetadata);
     });
     generatedOutputsContainer.classList.remove('d-none');
   }
@@ -4572,6 +5640,7 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
 
     generatedOutputs.forEach(outputMetadata => {
       generatedOutputsContainer.appendChild(createGeneratedTabularOutputCard(outputMetadata));
+      hideCompletedGeneratedArtifactHandoff(messageDiv, outputMetadata);
     });
     generatedOutputsContainer.classList.remove('d-none');
   }
@@ -4641,6 +5710,10 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
   function attachMessageExportActionListeners(messageDiv, role) {
     const actionMappings = [
       {
+        selectors: ['.dropdown-export-audio-btn', '.inline-export-audio-btn'],
+        actionName: 'exportMessageAsAudio',
+      },
+      {
         selectors: ['.dropdown-export-md-btn', '.inline-export-md-btn'],
         actionName: 'exportMessageAsMarkdown',
       },
@@ -4667,6 +5740,9 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
         messageDiv.querySelectorAll(selector).forEach(button => {
           button.addEventListener('click', (event) => {
             event.preventDefault();
+            if (button.getAttribute('aria-busy') === 'true') {
+              return;
+            }
             void triggerMessageExportAction(messageDiv, role, actionName, button);
           });
         });
@@ -4694,6 +5770,10 @@ export function appendMessage(
   messageDiv.classList.add("mb-2", "message");
   messageDiv.setAttribute("data-message-id", messageId || `msg-${Date.now()}`);
   messageDiv.dataset.conversationId = resolveMessageConversationId(fullMessageObject);
+  messageDiv.dataset.conversationContentsRole =
+    sender === "You" || sender === "Collaborator" ? "user" : "other";
+  messageDiv.conversationContentsText =
+    sender === "You" || sender === "Collaborator" ? String(messageContent || "") : "";
 
   let avatarImg = "";
   let avatarAltText = "";
@@ -4778,13 +5858,20 @@ export function appendMessage(
         `;
 
     const maskButtonHtml = buildMaskControlsHtml(messageId, maskState);
+    const audioExportMenuItemHtml = window.appSettings?.enable_text_to_speech
+      ? '<li><a class="dropdown-item dropdown-export-audio-btn" href="#" data-default-label="Export to Audio" data-pending-label="Creating Audio File..." data-icon-class="bi bi-file-earmark-music" data-default-title="Export to Audio"><i class="bi bi-file-earmark-music me-2"></i>Export to Audio</a></li>'
+      : '';
     const exportMenuItemsHtml = renderCompletedAssistantActions ? `
             <li><hr class="dropdown-divider"></li>
             <li><a class="dropdown-item dropdown-export-md-btn" href="#" data-message-id="${messageId}"><i class="bi bi-markdown me-2"></i>Export to Markdown</a></li>
             <li><a class="dropdown-item dropdown-export-word-btn" href="#" data-message-id="${messageId}"><i class="bi bi-file-earmark-word me-2"></i>Export to Word</a></li>
             <li><a class="dropdown-item dropdown-export-ppt-btn" href="#" data-message-id="${messageId}"><i class="bi bi-file-earmark-slides me-2"></i>Export to PowerPoint</a></li>
+            ${audioExportMenuItemHtml}
             <li><a class="dropdown-item dropdown-copy-prompt-btn" href="#" data-message-id="${messageId}"><i class="bi bi-clipboard-plus me-2"></i>Use as Prompt</a></li>
             <li><a class="dropdown-item dropdown-open-email-btn" href="#" data-message-id="${messageId}"><i class="bi bi-envelope me-2"></i>Open in Email</a></li>` : '';
+    const forkConversationMenuItemHtml = shouldRenderConversationForkAction(messageId, fullMessageObject)
+      ? '<li><button class="dropdown-item dropdown-fork-conversation-btn" type="button"><i class="bi bi-signpost-split me-2"></i>Fork conversation</button></li>'
+      : '';
     const actionsDropdownHtml = `
             <div class="dropdown">
                 <button class="btn btn-sm btn-link text-muted" type="button" data-bs-toggle="dropdown" data-bs-boundary="viewport" data-bs-reference="parent" aria-expanded="false" title="More actions">
@@ -4793,6 +5880,7 @@ export function appendMessage(
                 <ul class="dropdown-menu dropdown-menu-start">
                     <li><a class="dropdown-item dropdown-delete-btn" href="#" data-message-id="${messageId}"><i class="bi bi-trash me-2"></i>Delete</a></li>
                     <li><a class="dropdown-item dropdown-retry-btn" href="#" data-message-id="${messageId}"><i class="bi bi-arrow-clockwise me-2"></i>Retry</a></li>
+                    ${forkConversationMenuItemHtml}
                     ${feedbackHtml}
             ${exportMenuItemsHtml}
                 </ul>
@@ -4923,17 +6011,23 @@ export function appendMessage(
     }
 
     void (async () => {
+      // Inline galleries present media as supporting the answer, so they render
+      // only what the response cited. The Sources disclosure keeps the complete
+      // retrieved set.
+      const citedHybridCitations = getCitedHybridCitations(fullMessageObject, hybridCitations);
+      const citedWebCitations = getCitedWebCitations(fullMessageObject, webCitations);
+
       await renderInlineVideoGalleries(
         messageDiv,
-        hybridCitations || [],
-        webCitations || [],
+        citedHybridCitations,
+        citedWebCitations,
         agentCitations || [],
         messageConversationId
       );
       await renderInlineImageGalleries(
         messageDiv,
-        hybridCitations || [],
-        webCitations || [],
+        citedHybridCitations,
+        citedWebCitations,
         agentCitations || [],
         messageId,
         messageConversationId
@@ -5018,6 +6112,11 @@ export function appendMessage(
         handleRetryButtonClick(messageDiv, currentMessageId, 'assistant');
       });
     }
+
+    const dropdownForkConversationBtn = messageDiv.querySelector('.dropdown-fork-conversation-btn');
+    dropdownForkConversationBtn?.addEventListener('click', () => {
+      openConversationForkModal(messageDiv, fullMessageObject);
+    });
 
     // Handle dropdown positioning manually - move to chatbox container
     const dropdownToggle = messageDiv.querySelector(".message-actions .dropdown button[data-bs-toggle='dropdown']");
@@ -5117,7 +6216,14 @@ export function appendMessage(
       });
     }
 
-    scrollChatToBottom();
+    // For AI messages, only auto-scroll if the user is currently near
+    // the bottom. This prevents a final jump after a long answer if
+    // the user has scrolled up to read earlier content.
+    if (typeof isChatNearBottom === 'function' && typeof scrollChatToBottom === 'function') {
+      if (isChatNearBottom()) {
+        scrollChatToBottom();
+      }
+    }
     return; // <<< EXIT EARLY FOR AI MESSAGES
 
     // --- Handle ALL OTHER message types ---
@@ -5209,7 +6315,10 @@ export function appendMessage(
 
       // Validate image URL before creating img tag
       if (messageContent && messageContent !== 'null' && messageContent.trim() !== '') {
-        messageContentHtml = `<img src="${messageContent}" alt="${isUserUpload ? 'Uploaded' : 'Generated'} Image" class="generated-image" style="width: 170px; height: 170px; cursor: pointer;" data-image-src="${messageContent}" onload="scrollChatToBottom()" onerror="this.src='/static/images/image-error.png'; this.alt='Failed to load image';" />`;
+        // Use a placeholder container; the actual <img> element will be
+        // created with DOM APIs after insertion to avoid string-based
+        // attribute interpolation in src/data-*.
+        messageContentHtml = '<span class="generated-image-placeholder"></span>';
       } else {
         messageContentHtml = `<div class="alert alert-warning"><i class="bi bi-exclamation-triangle me-2"></i>Failed to ${isUserUpload ? 'load' : 'generate'} image - invalid response from image service</div>`;
       }
@@ -5265,6 +6374,9 @@ export function appendMessage(
     if (sender === "You") {
       const metadataContainerId = `metadata-${messageId || Date.now()}`;
       const maskState = getMaskStateFromMetadata(fullMessageObject?.metadata);
+      const audioExportMenuItemHtml = window.appSettings?.enable_text_to_speech
+        ? '<li><a class="dropdown-item dropdown-export-audio-btn" href="#" data-default-label="Export to Audio" data-pending-label="Creating Audio File..." data-icon-class="bi bi-file-earmark-music" data-default-title="Export to Audio"><i class="bi bi-file-earmark-music me-2"></i>Export to Audio</a></li>'
+        : '';
 
       messageFooterHtml = `
         <div class="message-footer d-flex justify-content-between align-items-center mt-2">
@@ -5281,6 +6393,7 @@ export function appendMessage(
                 <li><a class="dropdown-item dropdown-export-md-btn" href="#" data-message-id="${messageId}"><i class="bi bi-markdown me-2"></i>Export to Markdown</a></li>
                 <li><a class="dropdown-item dropdown-export-word-btn" href="#" data-message-id="${messageId}"><i class="bi bi-file-earmark-word me-2"></i>Export to Word</a></li>
                 <li><a class="dropdown-item dropdown-export-ppt-btn" href="#" data-message-id="${messageId}"><i class="bi bi-file-earmark-slides me-2"></i>Export to PowerPoint</a></li>
+                ${audioExportMenuItemHtml}
                 <li><a class="dropdown-item dropdown-copy-prompt-btn" href="#" data-message-id="${messageId}"><i class="bi bi-clipboard-plus me-2"></i>Use as Prompt</a></li>
                 <li><a class="dropdown-item dropdown-open-email-btn" href="#" data-message-id="${messageId}"><i class="bi bi-envelope me-2"></i>Open in Email</a></li>
               </ul>
@@ -5399,6 +6512,28 @@ export function appendMessage(
     chatbox.appendChild(messageDiv);
     hydrateChatWorkspaceAttachmentProgress(messageDiv);
 
+    // Attach safe image element and error handler for generated/uploaded images
+    if (sender === "image") {
+      const placeholder = messageDiv.querySelector('.generated-image-placeholder');
+      if (placeholder && messageContent && messageContent !== 'null' && messageContent.trim() !== '') {
+        const imgEl = document.createElement('img');
+        imgEl.className = 'generated-image';
+        imgEl.style.width = '170px';
+        imgEl.style.height = '170px';
+        imgEl.style.cursor = 'pointer';
+        imgEl.src = messageContent;
+        imgEl.alt = isUserUpload ? 'Uploaded Image' : 'Generated Image';
+        imgEl.dataset.imageSrc = messageContent;
+
+        imgEl.addEventListener('error', () => {
+          imgEl.src = '/static/images/image-error.png';
+          imgEl.alt = 'Failed to load image';
+        });
+
+        placeholder.replaceWith(imgEl);
+      }
+    }
+
     // Highlight code blocks in the messages
     messageDiv.querySelectorAll('pre code[class^="language-"]').forEach((block) => {
       const match = block.className.match(/language-([a-zA-Z0-9]+)/);
@@ -5414,6 +6549,9 @@ export function appendMessage(
     // Add event listeners for user message buttons
     if (sender === "You") {
       attachUserMessageEventListeners(messageDiv, messageId, messageContent);
+      if (String(messageId || '').startsWith('temp_user_')) {
+        setUserMessageStreamingActionsDisabled(messageId, true);
+      }
 
       // Apply masked state if message has masking
       if (fullMessageObject?.metadata) {
@@ -5517,11 +6655,20 @@ export function appendMessage(
       }
     }
 
-    scrollChatToBottom();
+    // For new user/file/image messages, scroll to bottom once so the
+    // user sees what they just sent. For history loads, only scroll
+    // if they are already near the bottom.
+    if (isNewMessage && typeof scrollChatToBottom === 'function') {
+      scrollChatToBottom();
+    } else if (typeof isChatNearBottom === 'function' && typeof scrollChatToBottom === 'function') {
+      if (isChatNearBottom()) {
+        scrollChatToBottom();
+      }
+    }
   } // End of the large 'else' block for non-AI messages
 }
 
-export function sendMessage() {
+export async function sendMessage(turnOptions = {}) {
   if (!userInput) {
     console.error("User input element not found.");
     return;
@@ -5551,12 +6698,32 @@ export function sendMessage() {
     return;
   }
 
+  if (largeTabularRunConfirmationPending) {
+    return;
+  }
+
+  const largeTabularRunEstimate = estimateLargeTabularRunForPrompt(combinedMessage);
+  let largeTabularRunConfirmed = true;
+  if (largeTabularRunEstimate.shouldConfirm) {
+    largeTabularRunConfirmationPending = true;
+    try {
+      largeTabularRunConfirmed = await confirmLargeTabularRunForPrompt(combinedMessage);
+    } finally {
+      largeTabularRunConfirmationPending = false;
+    }
+  }
+
+  if (!largeTabularRunConfirmed) {
+    userInput.focus();
+    return;
+  }
+
   if (!currentConversationId) {
     createNewConversation(() => {
-      actuallySendMessage(combinedMessage);
+      actuallySendMessage(combinedMessage, turnOptions);
     }, { preserveSelections: true, initialMessage: combinedMessage });
   } else {
-    actuallySendMessage(combinedMessage);
+    actuallySendMessage(combinedMessage, turnOptions);
   }
 
   userInput.value = "";
@@ -5568,6 +6735,12 @@ export function sendMessage() {
   updateSendButtonVisibility();
   // Keep focus on input
   userInput.focus();
+
+  // After sending, ensure the chat view scrolls so the
+  // user can see their newly submitted message.
+  if (typeof window.scrollChatToBottom === 'function') {
+    window.scrollChatToBottom();
+  }
 }
 
 function getCurrentModelSelection() {
@@ -5964,6 +7137,8 @@ export function buildChatRequestPayload(finalMessageToSend, conversationId = cur
       .filter(value => value);
     selectedDocumentId = selectedDocumentIds.length > 0 ? selectedDocumentIds[0] : null;
   }
+  const selectionMode = selectedDocumentIds.length > 0 ? 'selected' : 'relevance';
+  const documentContextRequested = hybridSearchEnabled || selectedDocumentIds.length > 0;
 
   let imageGenEnabled = false;
   const igbtn = document.getElementById('image-generate-btn');
@@ -6078,6 +7253,8 @@ export function buildChatRequestPayload(finalMessageToSend, conversationId = cur
     message: finalMessageToSend,
     conversation_id: conversationId,
     hybrid_search: hybridSearchEnabled,
+    selection_mode: selectionMode,
+    document_context_requested: documentContextRequested,
     user_workspace_context_enabled: userWorkspaceContextEnabled,
     web_search_enabled: webSearchEnabled,
     url_access_enabled: urlAccessEnabled,
@@ -6139,6 +7316,13 @@ export function buildCollaborativeInvocationTarget(messageData = {}, explicitInv
     messageData.agent_info
     && (messageData.agent_info.id || messageData.agent_info.name || messageData.agent_info.display_name)
   );
+  const workspaceContextInvocationRequested = Boolean(
+    messageData.hybrid_search
+    || (
+      messageData.document_context_requested
+      && window.appSettings?.enable_mixed_source_chat_search
+    )
+  );
   const sourceMode = messageData.image_generation
     ? 'image_generation'
     : hasAgentTarget
@@ -6149,7 +7333,7 @@ export function buildCollaborativeInvocationTarget(messageData = {}, explicitInv
     ? 'url_access'
     : messageData.web_search_enabled
     ? 'web_search'
-    : messageData.hybrid_search
+    : workspaceContextInvocationRequested
     ? 'workspace'
     : messageData.prompt_info
     ? 'prompt'
@@ -6196,7 +7380,32 @@ export function shouldUseCollaborativeAiWorkflow(messageData = {}, explicitInvoc
   return Boolean(buildCollaborativeInvocationTarget(messageData, explicitInvocationTarget));
 }
 
-export function actuallySendMessage(finalMessageToSend) {
+function buildVoiceResponseCompletionHandler(responseModality) {
+  if (responseModality !== "voice" || !window.appSettings?.enable_text_to_speech) {
+    return null;
+  }
+
+  return (finalData = {}) => {
+    if (isTTSAutoplayEnabled()) {
+      return;
+    }
+
+    const messageId = String(finalData.message_id || "").trim();
+    const responseText = String(finalData.full_content || finalData.content || "").trim();
+    if (!messageId || !responseText || finalData.cancelled || finalData.canceled) {
+      return;
+    }
+
+    void playTTS(messageId, responseText);
+  };
+}
+
+export function actuallySendMessage(finalMessageToSend, turnOptions = {}) {
+  const inputModality = turnOptions.inputModality === "voice" ? "voice" : "text";
+  const responseModality = inputModality === "voice" && turnOptions.responseModality === "voice"
+    ? "voice"
+    : "text";
+  const onVoiceResponseDone = buildVoiceResponseCompletionHandler(responseModality);
   const isCollaborativeConversation = Boolean(
     currentConversationId
     && window.chatCollaboration?.isCollaborationConversation?.(currentConversationId)
@@ -6210,13 +7419,15 @@ export function actuallySendMessage(finalMessageToSend) {
       explicitInvocationTarget,
       displayMessageText,
     } = buildCollaborativeSendContext(finalMessageToSend, currentConversationId);
+    collaborativeMessageData.input_modality = inputModality;
+    collaborativeMessageData.response_modality = responseModality;
     if (invocationTarget && !String(displayMessageText || '').trim()) {
       showToast('Add a message after the selected @agent or @model tag.', 'warning');
       return;
     }
 
     const pendingCollaborativeContext = window.chatCollaboration?.getPendingMessageContext?.({ invocationTarget }) || null;
-    appendMessage("You", displayMessageText, null, tempUserMessageId, false, [], [], [], null, null, pendingCollaborativeContext);
+    appendMessage("You", displayMessageText, null, tempUserMessageId, false, [], [], [], null, null, pendingCollaborativeContext, true);
     userInput.value = "";
     userInput.style.height = "";
     updateSendButtonVisibility();
@@ -6227,6 +7438,7 @@ export function actuallySendMessage(finalMessageToSend) {
         tempUserMessageId,
         collaborativeMessageData,
         pendingCollaborativeContext,
+        { onDone: onVoiceResponseDone },
       )
       : window.chatCollaboration.sendCollaborativeMessage(displayMessageText, tempUserMessageId);
 
@@ -6243,6 +7455,8 @@ export function actuallySendMessage(finalMessageToSend) {
   // Generate a temporary message ID for the user message
   const tempUserMessageId = `temp_user_${Date.now()}`;
   const messageData = buildChatRequestPayload(finalMessageToSend, currentConversationId);
+  messageData.input_modality = inputModality;
+  messageData.response_modality = responseModality;
   const actionType = String(messageData.document_action?.type || DOCUMENT_ACTION_NONE).trim() || DOCUMENT_ACTION_NONE;
   const useDocumentAction = actionType !== DOCUMENT_ACTION_NONE;
   const totalSelectedDocuments = actionType === DOCUMENT_ACTION_COMPARISON
@@ -6298,6 +7512,7 @@ export function actuallySendMessage(finalMessageToSend) {
     {
       endpoint: useDocumentAction ? '/api/chat/document-action/stream' : '/api/chat/stream',
       fallbackAgentInfo: messageData.agent_info || null,
+      onDone: onVoiceResponseDone,
     }
   );
 
@@ -6350,7 +7565,7 @@ function attachCodeBlockCopyButtons(parentElement) {
 }
 
 if (sendBtn) {
-  sendBtn.addEventListener("click", sendMessage);
+  sendBtn.addEventListener("click", () => sendMessage());
 }
 
 if (userInput) {
@@ -6394,8 +7609,58 @@ if (promptSelect) {
 
 updateDocumentActionControls();
 
+let userMetadataRequestSequence = 0;
+
+function renderUserMetadataStatus(container, message, className = 'text-muted') {
+  const status = document.createElement('div');
+  status.className = className;
+  status.textContent = message;
+  container.replaceChildren(status);
+}
+
+export function setUserMessageStreamingActionsDisabled(messageId, disabled) {
+  const normalizedMessageId = String(messageId || '').trim();
+  if (!normalizedMessageId) {
+    return false;
+  }
+
+  const messageDiv = document.querySelector(`[data-message-id="${normalizedMessageId}"]`);
+  if (!messageDiv) {
+    return false;
+  }
+
+  messageDiv.dataset.streamingActionsDisabled = disabled ? 'true' : 'false';
+  const mutatingActions = getUserMessageMutatingActions(normalizedMessageId);
+  mutatingActions.forEach(action => {
+    action.dataset.streamingDisabled = disabled ? 'true' : 'false';
+    action.classList.toggle('disabled', disabled);
+    action.setAttribute('aria-disabled', disabled ? 'true' : 'false');
+    if (disabled) {
+      action.setAttribute('tabindex', '-1');
+    } else {
+      action.removeAttribute('tabindex');
+    }
+    if (action instanceof HTMLButtonElement) {
+      action.disabled = disabled;
+    }
+  });
+  return mutatingActions.length > 0;
+}
+
+function getUserMessageMutatingActions(messageId) {
+  const normalizedMessageId = String(messageId || '').trim();
+  return Array.from(document.querySelectorAll(
+    '.dropdown-edit-btn, .dropdown-delete-btn, .dropdown-retry-btn, .mask-add-btn, .mask-remove-btn'
+  )).filter(action => action.getAttribute('data-message-id') === normalizedMessageId);
+}
+
+function isUserMessageStreamingActionDisabled(action) {
+  return action?.dataset.streamingDisabled === 'true';
+}
+
 // Helper function to update user message ID after backend response
-export function updateUserMessageId(tempId, realId) {
+export function updateUserMessageId(tempId, realId, options = {}) {
+  const { refreshExpandedMetadata = false } = options;
   console.log(`🔄 Updating message ID: ${tempId} -> ${realId}`);
 
   // Find the message with the temporary ID
@@ -6406,12 +7671,13 @@ export function updateUserMessageId(tempId, realId) {
     console.log(`✅ Updated messageDiv data-message-id to: ${realId}`);
 
     // Update ALL elements with the temporary ID to ensure consistency
-    const elementsToUpdate = [
+    const elementsToUpdate = new Set([
       messageDiv.querySelector('.copy-user-btn'),
       messageDiv.querySelector('.metadata-toggle-btn'),
       ...messageDiv.querySelectorAll(`[data-message-id="${tempId}"]`),
-      ...messageDiv.querySelectorAll(`[aria-controls*="${tempId}"]`)
-    ];
+      ...messageDiv.querySelectorAll(`[aria-controls*="${tempId}"]`),
+      ...getUserMessageMutatingActions(tempId)
+    ]);
 
     let updateCount = 0;
     elementsToUpdate.forEach(element => {
@@ -6444,6 +7710,13 @@ export function updateUserMessageId(tempId, realId) {
       updateCount++;
     }
 
+    if (['pending', 'unconfirmed'].includes(metadataContainer?.dataset.metadataState)) {
+      metadataContainer.dataset.metadataState = 'ready';
+      if (metadataContainer.style.display !== 'none') {
+        loadUserMessageMetadata(realId, metadataContainer);
+      }
+    }
+
     console.log(`✅ Updated ${updateCount} elements with new message ID`);
 
     // Verify the update was successful
@@ -6457,10 +7730,72 @@ export function updateUserMessageId(tempId, realId) {
     const existingRealMessageDiv = document.querySelector(`[data-message-id="${realId}"]`);
     if (existingRealMessageDiv) {
       console.info(`ℹ️ Message div for temp ID ${tempId} was already reconciled to ${realId}`);
+      if (refreshExpandedMetadata) {
+        refreshUserMessageMetadata(realId);
+      }
     } else {
       console.warn(`⚠️ Message div with temp ID ${tempId} not found for update`);
     }
   }
+}
+
+export function refreshUserMessageMetadata(messageId) {
+  const normalizedMessageId = String(messageId || '').trim();
+  const messageDiv = normalizedMessageId
+    ? document.querySelector(`[data-message-id="${normalizedMessageId}"]`)
+    : null;
+  const metadataContainer = messageDiv?.querySelector('.metadata-container');
+  if (!metadataContainer) {
+    return false;
+  }
+
+  if (metadataContainer.style.display !== 'none') {
+    loadUserMessageMetadata(normalizedMessageId, metadataContainer);
+  } else {
+    metadataContainer.dataset.metadataState = 'stale';
+    metadataContainer.dataset.metadataRequestToken = '';
+  }
+  return true;
+}
+
+function markUserMessageMetadataState(messageId, metadataState, statusMessage) {
+  const normalizedMessageId = String(messageId || '').trim();
+  if (!normalizedMessageId) {
+    return false;
+  }
+
+  const messageDiv = document.querySelector(`[data-message-id="${normalizedMessageId}"]`);
+  const metadataContainer = messageDiv?.querySelector('.metadata-container');
+  if (!metadataContainer) {
+    return false;
+  }
+
+  metadataContainer.dataset.metadataState = metadataState;
+  metadataContainer.dataset.metadataRequestToken = '';
+  if (metadataContainer.style.display !== 'none') {
+    renderUserMetadataStatus(
+      metadataContainer,
+      statusMessage,
+      'text-warning'
+    );
+  }
+  return true;
+}
+
+export function markUserMessageMetadataUnconfirmed(messageId) {
+  return markUserMessageMetadataState(
+    messageId,
+    'unconfirmed',
+    'Message metadata persistence could not be confirmed. Refresh the conversation to check.'
+  );
+}
+
+export function markUserMessageMetadataFinalizationUnconfirmed(messageId) {
+  return markUserMessageMetadataState(
+    messageId,
+    'finalization-unconfirmed',
+    'Message metadata may still be updating after the stream disconnected. Refresh the conversation to check.'
+  );
 }
 
 // Helper function to attach event listeners to user message buttons
@@ -6488,7 +7823,8 @@ function attachUserMessageEventListeners(messageDiv, messageId, messageContent) 
 
   if (metadataToggleBtn) {
     metadataToggleBtn.addEventListener("click", () => {
-      toggleUserMessageMetadata(messageDiv, messageId);
+      const currentMessageId = messageDiv.getAttribute('data-message-id') || messageId;
+      toggleUserMessageMetadata(messageDiv, currentMessageId);
     });
   }
 
@@ -6498,6 +7834,9 @@ function attachUserMessageEventListeners(messageDiv, messageId, messageContent) 
   if (dropdownDeleteBtn) {
     dropdownDeleteBtn.addEventListener("click", (e) => {
       e.preventDefault();
+      if (isUserMessageStreamingActionDisabled(e.currentTarget)) {
+        return;
+      }
       // Always read the message ID from the DOM attribute dynamically
       // This ensures we use the updated ID after updateUserMessageId is called
       const currentMessageId = messageDiv.getAttribute('data-message-id');
@@ -6510,6 +7849,9 @@ function attachUserMessageEventListeners(messageDiv, messageId, messageContent) 
   if (dropdownRetryBtn) {
     dropdownRetryBtn.addEventListener("click", (e) => {
       e.preventDefault();
+      if (isUserMessageStreamingActionDisabled(e.currentTarget)) {
+        return;
+      }
       // Always read the message ID from the DOM attribute dynamically
       const currentMessageId = messageDiv.getAttribute('data-message-id');
       console.log(`🔄 Retry button clicked - using message ID from DOM: ${currentMessageId}`);
@@ -6521,6 +7863,9 @@ function attachUserMessageEventListeners(messageDiv, messageId, messageContent) 
   if (dropdownEditBtn) {
     dropdownEditBtn.addEventListener("click", (e) => {
       e.preventDefault();
+      if (isUserMessageStreamingActionDisabled(e.currentTarget)) {
+        return;
+      }
       // Always read the message ID from the DOM attribute dynamically
       const currentMessageId = messageDiv.getAttribute('data-message-id');
       console.log(`✏️ Edit button clicked - using message ID from DOM: ${currentMessageId}`);
@@ -6633,22 +7978,8 @@ function attachCollaboratorMessageEventListeners(messageDiv, fullMessageObject, 
 
 // Function to toggle user message metadata drawer
 function toggleUserMessageMetadata(messageDiv, messageId) {
+  messageId = messageDiv.getAttribute('data-message-id') || messageId;
   console.log(`🔀 Toggling metadata for message: ${messageId}`);
-
-  // Validate that we're not using a temporary ID
-  if (messageId && messageId.startsWith('temp_user_')) {
-    console.error(`❌ Metadata toggle called with temporary ID: ${messageId}`);
-    console.log(`🔍 Checking if real ID is available in DOM...`);
-
-    // Try to find the real ID from the message div
-    const actualMessageId = messageDiv.getAttribute('data-message-id');
-    if (actualMessageId && actualMessageId !== messageId && !actualMessageId.startsWith('temp_user_')) {
-      console.log(`✅ Found real ID in DOM: ${actualMessageId}, using that instead`);
-      messageId = actualMessageId;
-    } else {
-      console.error(`❌ No valid real ID found, metadata toggle may fail`);
-    }
-  }
 
   const toggleBtn = messageDiv.querySelector('.metadata-toggle-btn');
   const targetId = toggleBtn.getAttribute('aria-controls');
@@ -6679,7 +8010,7 @@ function toggleUserMessageMetadata(messageDiv, messageId) {
     toggleBtn.innerHTML = '<i class="bi bi-chevron-up"></i>';
 
     // Load metadata if not already loaded
-    if (metadataContainer.innerHTML.includes('Loading metadata...')) {
+    if (metadataContainer.dataset.metadataState !== 'loaded') {
       console.log(`🔄 Loading metadata content for ${messageId}`);
       loadUserMessageMetadata(messageId, metadataContainer);
     }
@@ -6700,36 +8031,61 @@ function toggleUserMessageMetadata(messageDiv, messageId) {
 
 // Function to load user message metadata into the drawer
 function loadUserMessageMetadata(messageId, container, retryCount = 0) {
+  const currentMessageId = container.closest('[data-message-id]')?.getAttribute('data-message-id');
+  if (
+    messageId?.startsWith('temp_user_')
+    && currentMessageId
+    && !currentMessageId.startsWith('temp_user_')
+  ) {
+    messageId = currentMessageId;
+  }
+
   console.log(`🔍 Loading metadata for message ID: ${messageId} (attempt ${retryCount + 1})`);
+
+  if (container.dataset.metadataState === 'unconfirmed') {
+    renderUserMetadataStatus(
+      container,
+      'Message metadata persistence could not be confirmed. Refresh the conversation to check.',
+      'text-warning'
+    );
+    return;
+  }
+
+  if (container.dataset.metadataState === 'finalization-unconfirmed') {
+    renderUserMetadataStatus(
+      container,
+      'Message metadata may still be updating after the stream disconnected. Refresh the conversation to check.',
+      'text-warning'
+    );
+    return;
+  }
 
   // Validate message ID to catch temporary IDs early
   if (!messageId || messageId === "null" || messageId === "undefined") {
     console.error(`❌ Invalid message ID: ${messageId}`);
-    container.innerHTML = '<div class="text-muted">Message metadata not available.</div>';
+    container.dataset.metadataState = 'error';
+    renderUserMetadataStatus(container, 'Message metadata not available.');
     return;
   }
 
-  // Check for temporary IDs which indicate a bug
+  // Wait for the persistence event instead of polling with a stale temporary ID.
   if (messageId.startsWith('temp_user_')) {
-    console.error(`❌ Attempting to load metadata with temporary ID: ${messageId}`);
-    console.error(`This indicates the updateUserMessageId function didn't work properly`);
-
-    if (retryCount < 2) {
-      // Short retry for temp IDs in case the real ID update is still in progress
-      console.log(`🔄 Retrying metadata load for temp ID in 100ms (attempt ${retryCount + 1}/3)`);
-      setTimeout(() => {
-        loadUserMessageMetadata(messageId, container, retryCount + 1);
-      }, 100);
-      return;
-    } else {
-      container.innerHTML = '<div class="text-danger">Message metadata unavailable (temporary ID not updated).</div>';
-      return;
-    }
+    container.dataset.metadataState = 'pending';
+    renderUserMetadataStatus(container, 'Saving message metadata...');
+    return;
   }
+
+  container.dataset.metadataState = 'loading';
+  const requestToken = String(++userMetadataRequestSequence);
+  container.dataset.metadataRequestToken = requestToken;
+  renderUserMetadataStatus(container, 'Loading metadata...');
 
   // Fetch message metadata from the backend
   fetch(`/api/message/${messageId}/metadata`)
     .then(response => {
+      if (container.dataset.metadataRequestToken !== requestToken) {
+        return;
+      }
       console.log(`📡 Metadata API response for ${messageId}: ${response.status}`);
 
       if (!response.ok) {
@@ -6738,7 +8094,9 @@ function loadUserMessageMetadata(messageId, container, retryCount = 0) {
           const delay = Math.min((retryCount + 1) * 500, 2000); // Cap at 2 seconds
           console.log(`⏳ Message ${messageId} not found, retrying in ${delay}ms (attempt ${retryCount + 1}/3)`);
           setTimeout(() => {
-            loadUserMessageMetadata(messageId, container, retryCount + 1);
+            if (container.dataset.metadataRequestToken === requestToken) {
+              loadUserMessageMetadata(messageId, container, retryCount + 1);
+            }
           }, delay);
           return;
         }
@@ -6747,8 +8105,12 @@ function loadUserMessageMetadata(messageId, container, retryCount = 0) {
       return response.json();
     })
     .then(data => {
+      if (container.dataset.metadataRequestToken !== requestToken) {
+        return;
+      }
       if (data) {
         console.log(`✅ Successfully loaded metadata for ${messageId}`);
+        container.dataset.metadataState = 'loaded';
         container.innerHTML = formatMetadataForDrawer(data);
 
         // Attach event listeners to View Text buttons
@@ -6775,8 +8137,12 @@ function loadUserMessageMetadata(messageId, container, retryCount = 0) {
       }
     })
     .catch(error => {
+      if (container.dataset.metadataRequestToken !== requestToken) {
+        return;
+      }
       console.error(`❌ Error fetching message metadata for ${messageId}:`, error);
 
+      container.dataset.metadataState = 'error';
       if (retryCount >= 3) {
         container.innerHTML = '<div class="text-danger">Failed to load message metadata after multiple attempts.</div>';
       } else {
@@ -8106,6 +9472,9 @@ function attachMaskButtonEventListeners(messageDiv) {
       updateMaskControls(messageDiv, messageDiv._maskingMetadata || {});
     });
     addButton.addEventListener('click', () => {
+      if (isUserMessageStreamingActionDisabled(addButton)) {
+        return;
+      }
       handleMaskAddButtonClick(messageDiv);
     });
   }
@@ -8116,6 +9485,9 @@ function attachMaskButtonEventListeners(messageDiv) {
       updateMaskControls(messageDiv, messageDiv._maskingMetadata || {});
     });
     removeButton.addEventListener('click', () => {
+      if (isUserMessageStreamingActionDisabled(removeButton)) {
+        return;
+      }
       handleMaskRemoveButtonClick(messageDiv);
     });
   }
@@ -8258,6 +9630,17 @@ function executeMessageDeletion(deleteThread = false) {
       // Optionally reload conversation list to update preview
       if (typeof loadConversations === 'function') {
         loadConversations();
+      }
+      if (window.currentConversationId) {
+        window.dispatchEvent(new CustomEvent(
+          'chat:conversation-documents-refresh',
+          {
+            detail: {
+              conversationId: window.currentConversationId,
+              autoOpen: false,
+            },
+          }
+        ));
       }
     } else {
       showToast('Failed to delete message', 'error');

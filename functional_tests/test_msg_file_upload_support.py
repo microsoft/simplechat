@@ -229,14 +229,14 @@ def test_chat_upload_route_keeps_required_decorators():
     print("Testing chat upload route decorators...")
 
     route_source = read_text(CHAT_ROUTE_PATH)
-    route_start = route_source.index("@app.route('/upload', methods=['POST'])")
+    route_start = route_source.index("@bp.route('/upload', methods=['POST'])")
     function_start = route_source.index("def upload_file():", route_start)
     route_header = route_source[route_start:function_start]
 
     assert_order(
         route_header,
         [
-            "@app.route('/upload', methods=['POST'])",
+            "@bp.route('/upload', methods=['POST'])",
             "@swagger_route(security=get_auth_security())",
             "@login_required",
             "@user_required",

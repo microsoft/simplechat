@@ -24,7 +24,13 @@ from functions_visio import render_vsdx_page_preview
 from functions_group import check_group_status_allows_operation, find_group_by_id, get_user_groups, require_active_group
 from functions_notifications import create_group_notification, create_notification, create_public_workspace_notification
 from functions_public_workspaces import check_public_workspace_status_allows_operation, get_user_visible_public_workspace_ids_from_settings, require_active_public_workspace
-from functions_simplechat_operations import download_blob_content, upload_generated_document_for_current_user
+from functions_collaboration import build_conversation_participation_context
+from functions_generated_file_approvals import assert_generated_file_approval_allows_download
+from functions_simplechat_operations import (
+    assert_generated_chat_artifact_is_published_for_user,
+    download_blob_content,
+    upload_generated_document_for_current_user,
+)
 from swagger_wrapper import swagger_route, get_auth_security
 from config import CLIENTS, storage_account_user_documents_container_name, storage_account_group_documents_container_name, storage_account_public_documents_container_name, storage_account_personal_chat_container_name, IMAGE_EXTENSIONS, VIDEO_EXTENSIONS, AUDIO_EXTENSIONS, TABULAR_EXTENSIONS, VISIO_EXTENSIONS, cosmos_messages_container, cosmos_conversations_container
 from functions_debug import debug_print
@@ -44,8 +50,9 @@ def _get_authorized_chat_artifact_message(user_id, conversation_id, message_id):
     except CosmosResourceNotFoundError as exc:
         raise LookupError('Conversation not found') from exc
 
-    if str(conversation_item.get('user_id') or '').strip() != str(user_id or '').strip():
-        raise PermissionError('Forbidden')
+    # Shared conversations are owned by their creator, so participants fail a plain ownership
+    # comparison. Authorize them against the linked shared conversation instead.
+    build_conversation_participation_context(user_id, conversation_item)
 
     try:
         message_item = cosmos_messages_container.read_item(
@@ -65,6 +72,10 @@ def _get_authorized_chat_artifact_message(user_id, conversation_id, message_id):
     if not str(message_item.get('blob_container') or '').strip() or not str(message_item.get('blob_path') or '').strip():
         raise LookupError('Chat artifact content is unavailable')
 
+    # Enforced independently of the export manifest checks below so a staged artifact stays
+    # unreachable for every caller, including the participant who requested it.
+    assert_generated_file_approval_allows_download(user_id, message_item)
+    assert_generated_chat_artifact_is_published_for_user(user_id, message_item)
     return message_item
 
 
@@ -187,7 +198,7 @@ def _build_content_disposition(disposition, file_name, fallback='download'):
 def _log_enhanced_citations_debug(message, **details):
     """Write debug-gated enhanced citations diagnostics."""
     log_event(
-        f"[EnhancedCitations] {message}",
+        f"[ENHANCED_CITATIONS] {message}",
         extra=details or None,
         debug_only=True,
         category="EnhancedCitations",
@@ -199,17 +210,17 @@ def _log_enhanced_citations_error(message, error, **details):
     error_details = dict(details)
     error_details["error"] = str(error)
     log_event(
-        f"[EnhancedCitations] {message}",
+        f"[ENHANCED_CITATIONS] {message}",
         extra=error_details,
         level=logging.ERROR,
         exceptionTraceback=True,
     )
 
 
-def register_enhanced_citations_routes(app):
+def register_enhanced_citations_routes(bp):
     """Register enhanced citations routes"""
 
-    @app.route("/api/enhanced_citations/document_metadata", methods=["GET"])
+    @bp.route("/api/enhanced_citations/document_metadata", methods=["GET"])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -247,7 +258,7 @@ def register_enhanced_citations_routes(app):
             debug_print(f"Error getting enhanced citation document metadata: {e}")
             return jsonify({"error": str(e)}), 500
     
-    @app.route("/api/enhanced_citations/image", methods=["GET"])
+    @bp.route("/api/enhanced_citations/image", methods=["GET"])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -285,7 +296,7 @@ def register_enhanced_citations_routes(app):
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
-    @app.route("/api/enhanced_citations/video", methods=["GET"])
+    @bp.route("/api/enhanced_citations/video", methods=["GET"])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -323,7 +334,7 @@ def register_enhanced_citations_routes(app):
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
-    @app.route("/api/enhanced_citations/audio", methods=["GET"])
+    @bp.route("/api/enhanced_citations/audio", methods=["GET"])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -361,7 +372,7 @@ def register_enhanced_citations_routes(app):
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
-    @app.route("/api/enhanced_citations/pdf", methods=["GET"])
+    @bp.route("/api/enhanced_citations/pdf", methods=["GET"])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -423,7 +434,7 @@ def register_enhanced_citations_routes(app):
             )
             return jsonify({"error": str(e)}), 500
 
-    @app.route("/api/enhanced_citations/tabular", methods=["GET"])
+    @bp.route("/api/enhanced_citations/tabular", methods=["GET"])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -477,6 +488,12 @@ def register_enhanced_citations_routes(app):
             file_msg = items[0]
             file_content_source = file_msg.get('file_content_source', '')
 
+            # Generated artifacts can be served here too, so the approval gate must be enforced
+            # on this reader as well. The source conversation owner is not necessarily an
+            # approver: a plain group User can create a group shared conversation while the
+            # approvers are that group's Owner, Admin, and Document Manager roles.
+            assert_generated_file_approval_allows_download(user_id, file_msg)
+
             if file_content_source != 'blob':
                 return jsonify({"error": "File is not stored in blob storage"}), 400
 
@@ -513,11 +530,14 @@ def register_enhanced_citations_routes(app):
                 }
             )
 
+        except PermissionError as exc:
+            debug_print(f"Forbidden serving tabular citation: {exc}")
+            return jsonify({"error": "Forbidden"}), 403
         except Exception as e:
             debug_print(f"Error serving tabular citation: {e}")
             return jsonify({"error": str(e)}), 500
 
-    @app.route("/api/enhanced_citations/tabular_workspace", methods=["GET"])
+    @bp.route("/api/enhanced_citations/tabular_workspace", methods=["GET"])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -553,7 +573,7 @@ def register_enhanced_citations_routes(app):
             debug_print(f"Error serving tabular workspace citation: {e}")
             return jsonify({"error": str(e)}), 500
 
-    @app.route("/api/workspace_documents/download", methods=["GET"])
+    @bp.route("/api/workspace_documents/download", methods=["GET"])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -578,7 +598,7 @@ def register_enhanced_citations_routes(app):
             debug_print(f"Error serving workspace document download: {e}")
             return jsonify({"error": str(e)}), 500
 
-    @app.route("/api/chat_artifacts/download", methods=["GET"])
+    @bp.route("/api/chat_artifacts/download", methods=["GET"])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -603,7 +623,8 @@ def register_enhanced_citations_routes(app):
                 },
                 force_download=True,
             )
-        except PermissionError:
+        except PermissionError as exc:
+            debug_print(f"Forbidden chat artifact download attempt: {exc}")
             return jsonify({"error": "Forbidden"}), 403
         except LookupError as exc:
             return jsonify({"error": str(exc)}), 404
@@ -611,9 +632,9 @@ def register_enhanced_citations_routes(app):
             return jsonify({"error": str(exc)}), 400
         except Exception as e:
             debug_print(f"Error serving chat artifact download: {e}")
-            return jsonify({"error": str(e)}), 500
+            return jsonify({"error": "An internal error has occurred"}), 500
 
-    @app.route("/api/chat_artifacts/promote", methods=["POST"])
+    @bp.route("/api/chat_artifacts/promote", methods=["POST"])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -855,7 +876,7 @@ def register_enhanced_citations_routes(app):
             debug_print(f"Error promoting chat artifact: {e}")
             return jsonify({"error": str(e)}), 500
 
-    @app.route("/api/enhanced_citations/tabular_preview", methods=["GET"])
+    @bp.route("/api/enhanced_citations/tabular_preview", methods=["GET"])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -993,7 +1014,7 @@ def register_enhanced_citations_routes(app):
             debug_print(f"Error generating tabular preview: {e}")
             return jsonify({"error": str(e)}), 500
 
-    @app.route("/api/enhanced_citations/visio", methods=["GET"])
+    @bp.route("/api/enhanced_citations/visio", methods=["GET"])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required

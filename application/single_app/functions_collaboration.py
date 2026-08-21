@@ -8,6 +8,7 @@ import uuid
 from config import *
 from collaboration_models import (
     COLLABORATION_KIND,
+    COLLABORATION_SOURCE_KIND,
     GROUP_MULTI_USER_CHAT_TYPE,
     MEMBERSHIP_ROLE_ADMIN,
     MEMBERSHIP_ROLE_MEMBER,
@@ -34,8 +35,18 @@ from collaboration_models import (
     translate_image_proposal_source_metadata,
     utc_now_iso,
 )
-from functions_activity_logging import log_chat_activity
+from functions_activity_logging import (
+    log_chat_activity,
+    log_conversation_archival,
+    log_conversation_deletion,
+)
 from functions_appinsights import log_event
+from functions_citation_tracking import (
+    initialize_conversation_used_document_tracking,
+    merge_cited_documents_into_conversation,
+    rebuild_conversation_used_documents,
+)
+from functions_conversation_cache import bump_conversation_cache_version, invalidate_conversation_cache_for_item
 from functions_documents import sync_chat_upload_workspace_document_sharing_for_collaboration
 from functions_group import (
     assert_group_role,
@@ -45,7 +56,11 @@ from functions_group import (
 )
 from functions_message_artifacts import filter_assistant_artifact_items
 from functions_notifications import create_collaboration_message_notification
-from functions_thoughts import delete_thoughts_for_conversation, get_thoughts_for_message
+from functions_thoughts import (
+    archive_thoughts_for_conversation,
+    delete_thoughts_for_conversation,
+    get_thoughts_for_message,
+)
 
 
 PERSONAL_COLLABORATION_MANAGER_ROLES = {
@@ -54,6 +69,21 @@ PERSONAL_COLLABORATION_MANAGER_ROLES = {
 }
 
 COLLABORATION_EVENT_PUBLISHERS = []
+
+CITATION_TRACKING_CONVERSATION_FIELDS = (
+    'used_documents_tracking_version',
+    'legacy_used_documents',
+    'used_documents',
+)
+
+
+def _copy_citation_tracking_conversation_fields(target, source):
+    if not isinstance(target, dict) or not isinstance(source, dict):
+        return target
+    for field_name in CITATION_TRACKING_CONVERSATION_FIELDS:
+        if field_name in source:
+            target[field_name] = deepcopy(source.get(field_name))
+    return target
 
 
 def register_collaboration_event_publisher(event_publisher):
@@ -67,7 +97,7 @@ def publish_collaboration_event(conversation_id, event_payload):
             event_publisher(conversation_id, event_payload)
         except Exception as publish_error:
             log_event(
-                f"[CollaborationEvents] Failed to publish event for {conversation_id}: {publish_error}",
+                f"[COLLABORATION_EVENTS] Failed to publish event for {conversation_id}: {publish_error}",
                 extra={'conversation_id': conversation_id},
                 level=logging.WARNING,
                 exceptionTraceback=True,
@@ -346,7 +376,7 @@ def serialize_collaboration_message(message_doc):
             message_doc.get('id'),
         ) or serialized_content
 
-    return {
+    payload = {
         'id': message_doc.get('id'),
         'conversation_id': message_doc.get('conversation_id'),
         'role': serialized_role,
@@ -373,6 +403,14 @@ def serialize_collaboration_message(message_doc):
         'extracted_text': message_doc.get('extracted_text'),
         'vision_analysis': message_doc.get('vision_analysis'),
     }
+    for field_name in (
+        'citation_tracking_version',
+        'cited_hybrid_citations',
+        'cited_web_search_citations',
+    ):
+        if field_name in message_doc:
+            payload[field_name] = deepcopy(message_doc.get(field_name))
+    return payload
 
 
 def _get_collaboration_source_message(message_doc):
@@ -604,7 +642,7 @@ def create_collaboration_message_notifications(conversation_doc, message_doc):
                 created_notifications.append(notification_doc)
         except Exception as exc:
             log_event(
-                f'[Collaboration Notifications] Failed to create notification for conversation {message_doc.get("conversation_id")}: {exc}',
+                f'[COLLABORATION_NOTIFICATIONS] Failed to create notification for conversation {message_doc.get("conversation_id")}: {exc}',
                 level=logging.WARNING,
                 exceptionTraceback=True,
                 debug_only=True,
@@ -720,6 +758,15 @@ def build_collaboration_message_metadata_payload(message_doc, conversation_doc):
         'extracted_text': message_doc.get('extracted_text') or payload.get('extracted_text'),
         'vision_analysis': message_doc.get('vision_analysis') or payload.get('vision_analysis'),
     })
+    for field_name in (
+        'citation_tracking_version',
+        'cited_hybrid_citations',
+        'cited_web_search_citations',
+    ):
+        if field_name in message_doc:
+            payload[field_name] = deepcopy(message_doc.get(field_name))
+        elif field_name in (source_message_doc or {}):
+            payload[field_name] = deepcopy(source_message_doc.get(field_name))
     payload['metadata'] = merged_metadata
     return payload
 
@@ -811,6 +858,9 @@ def serialize_collaboration_conversation(conversation_doc, current_user_id, user
         'is_hidden': bool((user_state or {}).get('is_hidden', False)),
         'classification': list(conversation_doc.get('classification', []) or []),
         'tags': list(conversation_doc.get('tags', []) or []),
+        'used_documents_tracking_version': conversation_doc.get('used_documents_tracking_version'),
+        'legacy_used_documents': deepcopy(list(conversation_doc.get('legacy_used_documents', []) or [])),
+        'used_documents': deepcopy(list(conversation_doc.get('used_documents', []) or [])),
         'strict': bool(conversation_doc.get('strict', False)),
         'summary': conversation_doc.get('summary'),
         'has_unread_assistant_response': False,
@@ -950,6 +1000,10 @@ def ensure_personal_collaboration_for_legacy_conversation(source_conversation_id
     collaboration_conversation_doc['source_conversation_id'] = source_conversation_id
     collaboration_conversation_doc['classification'] = list(source_conversation_doc.get('classification', []) or [])
     collaboration_conversation_doc['tags'] = list(source_conversation_doc.get('tags', []) or [])
+    _copy_citation_tracking_conversation_fields(
+        collaboration_conversation_doc,
+        source_conversation_doc,
+    )
     collaboration_conversation_doc['strict'] = bool(source_conversation_doc.get('strict', False))
     collaboration_conversation_doc['summary'] = source_conversation_doc.get('summary')
 
@@ -987,7 +1041,7 @@ def ensure_personal_collaboration_for_legacy_conversation(source_conversation_id
     cosmos_conversations_container.upsert_item(source_conversation_doc)
 
     log_event(
-        '[Collaboration] Converted personal conversation into collaborative conversation',
+        '[COLLABORATION] Converted personal conversation into collaborative conversation',
         extra={
             'source_conversation_id': source_conversation_id,
             'conversation_id': collaboration_conversation_doc.get('id'),
@@ -1136,6 +1190,10 @@ def ensure_group_collaboration_for_legacy_conversation(source_conversation_id, o
 
     collaboration_conversation_doc['classification'] = list(source_conversation_doc.get('classification', []) or [])
     collaboration_conversation_doc['tags'] = list(source_conversation_doc.get('tags', []) or [])
+    _copy_citation_tracking_conversation_fields(
+        collaboration_conversation_doc,
+        source_conversation_doc,
+    )
     collaboration_conversation_doc['strict'] = bool(source_conversation_doc.get('strict', False))
     collaboration_conversation_doc['summary'] = source_conversation_doc.get('summary')
     collaboration_conversation_doc['legacy_source_conversation_id'] = source_conversation_id
@@ -1175,7 +1233,7 @@ def ensure_group_collaboration_for_legacy_conversation(source_conversation_id, o
     cosmos_group_conversations_container.upsert_item(source_conversation_doc)
 
     log_event(
-        '[Collaboration] Converted group conversation into collaborative conversation',
+        '[COLLABORATION] Converted group conversation into collaborative conversation',
         extra={
             'source_conversation_id': source_conversation_id,
             'conversation_id': collaboration_conversation_doc.get('id'),
@@ -1214,8 +1272,9 @@ def create_personal_collaboration_conversation_record(title, creator_user, invit
         cosmos_collaboration_user_state_container.upsert_item(state_doc)
         user_states.append(state_doc)
 
+    invalidate_conversation_cache_for_item(conversation_doc, reason="collaboration_created")
     log_event(
-        '[Collaboration] Created personal collaborative conversation',
+        '[COLLABORATION] Created personal collaborative conversation',
         extra={
             'conversation_id': conversation_doc.get('id'),
             'created_by_user_id': conversation_doc.get('created_by_user_id'),
@@ -1255,8 +1314,9 @@ def create_group_collaboration_conversation_record(title, creator_user, group_do
         )
         user_states.append(state_doc)
 
+    invalidate_conversation_cache_for_item(conversation_doc, reason="collaboration_created")
     log_event(
-        '[Collaboration] Created group collaborative conversation',
+        '[COLLABORATION] Created group collaborative conversation',
         extra={
             'conversation_id': conversation_doc.get('id'),
             'group_id': group_doc.get('id'),
@@ -1509,6 +1569,91 @@ def assert_user_can_participate_in_collaboration_conversation(user_id, conversat
     return access_context
 
 
+def is_collaboration_source_conversation(conversation_item):
+    """Return True when a personal conversation is the hidden backing store of a shared one."""
+    normalized_item = conversation_item or {}
+    return bool(
+        str(normalized_item.get('conversation_kind') or '').strip() == COLLABORATION_SOURCE_KIND
+        or str(normalized_item.get('collaboration_conversation_id') or '').strip()
+    )
+
+
+def get_collaboration_conversation_for_source(conversation_item):
+    """Load the shared conversation that owns a collaboration source conversation."""
+    collaboration_conversation_id = str(
+        (conversation_item or {}).get('collaboration_conversation_id') or ''
+    ).strip()
+    if not collaboration_conversation_id:
+        return None
+
+    try:
+        return get_collaboration_conversation(collaboration_conversation_id)
+    except CosmosResourceNotFoundError:
+        return None
+
+
+def build_conversation_participation_context(user_id, conversation_item):
+    """Authorize one caller against a personal conversation or its linked shared conversation.
+
+    Ordinary personal conversations stay owner-only. Collaboration source conversations are
+    always owned by the shared conversation creator, so every other participant fails a plain
+    ownership comparison even though they are legitimate members. Those callers are authorized
+    against the linked collaboration conversation instead, mirroring the chat upload path in
+    ``route_frontend_chats._resolve_chat_upload_context``.
+
+    Returns a context describing how access was granted so callers can distinguish an owner
+    acting on their own conversation from a participant acting inside a shared one.
+    """
+    normalized_user_id = str(user_id or '').strip()
+    normalized_item = conversation_item or {}
+    owner_user_id = str(normalized_item.get('user_id') or '').strip()
+    conversation_id = str(normalized_item.get('id') or '').strip()
+
+    if normalized_user_id and owner_user_id == normalized_user_id:
+        return {
+            'user_id': normalized_user_id,
+            'conversation_id': conversation_id,
+            'owner_user_id': owner_user_id,
+            'is_owner': True,
+            'is_collaboration_source': is_collaboration_source_conversation(normalized_item),
+            'collaboration_conversation': None,
+            'collaboration_conversation_id': str(
+                normalized_item.get('collaboration_conversation_id') or ''
+            ).strip(),
+            'collaboration_access': None,
+            'group_id': '',
+            'group_role': '',
+        }
+
+    collaboration_conversation = get_collaboration_conversation_for_source(normalized_item)
+    if not collaboration_conversation:
+        raise PermissionError('You can only access your own conversations')
+
+    collaboration_access = assert_user_can_participate_in_collaboration_conversation(
+        normalized_user_id,
+        collaboration_conversation,
+    )
+
+    group_id = ''
+    if is_group_collaboration_conversation(collaboration_conversation):
+        group_id = str(
+            (collaboration_conversation.get('scope') or {}).get('group_id') or ''
+        ).strip()
+
+    return {
+        'user_id': normalized_user_id,
+        'conversation_id': conversation_id,
+        'owner_user_id': owner_user_id,
+        'is_owner': False,
+        'is_collaboration_source': True,
+        'collaboration_conversation': collaboration_conversation,
+        'collaboration_conversation_id': str(collaboration_conversation.get('id') or '').strip(),
+        'collaboration_access': collaboration_access,
+        'group_id': group_id,
+        'group_role': str((collaboration_access or {}).get('group_role') or '').strip(),
+    }
+
+
 def record_personal_invite_response(conversation_id, user_id, action):
     conversation_doc = get_collaboration_conversation(conversation_id)
     if not is_explicit_membership_collaboration(conversation_doc):
@@ -1539,6 +1684,7 @@ def record_personal_invite_response(conversation_id, user_id, action):
 
     cosmos_collaboration_conversations_container.upsert_item(conversation_doc)
     cosmos_collaboration_user_state_container.upsert_item(user_state)
+    invalidate_conversation_cache_for_item(conversation_doc, reason="collaboration_invite_response")
     if membership_status == MEMBERSHIP_STATUS_ACCEPTED and is_personal_collaboration_conversation(conversation_doc):
         sync_chat_upload_workspace_document_sharing_for_collaboration(conversation_doc)
     return conversation_doc, user_state, participant_record
@@ -1607,6 +1753,7 @@ def invite_personal_collaboration_participants(conversation_id, owner_user_id, p
         cosmos_collaboration_user_state_container.upsert_item(state_doc)
         created_state_docs.append(state_doc)
 
+    invalidate_conversation_cache_for_item(conversation_doc, reason="collaboration_participants_invited")
     return conversation_doc, created_state_docs
 
 
@@ -1667,6 +1814,8 @@ def remove_personal_collaboration_member(conversation_id, owner_user_id, member_
     if is_personal_collaboration_conversation(conversation_doc):
         sync_chat_upload_workspace_document_sharing_for_collaboration(conversation_doc)
 
+    bump_conversation_cache_version(member_user_id, reason="collaboration_member_removed")
+    invalidate_conversation_cache_for_item(conversation_doc, reason="collaboration_member_removed")
     return conversation_doc, removed_participant
 
 
@@ -1734,6 +1883,19 @@ def _save_collaboration_message_doc(conversation_doc, message_doc):
 
     cosmos_collaboration_messages_container.upsert_item(message_doc)
 
+    if (
+        str(message_doc.get('role') or '').strip().lower() == 'assistant'
+        and (
+            message_doc.get('citation_tracking_version') is not None
+            or 'cited_hybrid_citations' in message_doc
+        )
+    ):
+        initialize_conversation_used_document_tracking(conversation_doc)
+        merge_cited_documents_into_conversation(
+            conversation_doc,
+            message_doc.get('cited_hybrid_citations'),
+        )
+
     conversation_doc['last_message_at'] = message_doc.get('timestamp')
     conversation_doc['last_message_preview'] = (
         message_doc.get('metadata', {}).get('last_message_preview', '')
@@ -1745,6 +1907,7 @@ def _save_collaboration_message_doc(conversation_doc, message_doc):
         refresh_personal_participant_indexes(conversation_doc)
 
     cosmos_collaboration_conversations_container.upsert_item(conversation_doc)
+    invalidate_conversation_cache_for_item(conversation_doc, reason="collaboration_message_saved")
 
     if sender_user_id and sender_user_id != 'assistant' and str(message_doc.get('role') or '').strip().lower() == 'user':
         try:
@@ -1777,7 +1940,7 @@ def _save_collaboration_message_doc(conversation_doc, message_doc):
             )
         except Exception as exc:
             log_event(
-                f'[Collaboration] Failed to log chat activity for {conversation_doc.get("id")}: {exc}',
+                f'[COLLABORATION] Failed to log chat activity for {conversation_doc.get("id")}: {exc}',
                 level=logging.WARNING,
                 exceptionTraceback=True,
             )
@@ -1798,6 +1961,11 @@ def sync_collaboration_conversation_metadata_from_source(conversation_doc, sourc
         'classification': deepcopy(list(source_conversation_doc.get('classification', []) or [])),
         'summary': deepcopy(source_conversation_doc.get('summary')),
     }
+    for field_name in CITATION_TRACKING_CONVERSATION_FIELDS:
+        if field_name in source_conversation_doc:
+            metadata_fields[field_name] = deepcopy(
+                source_conversation_doc.get(field_name)
+            )
 
     updated = False
     for field_name, field_value in metadata_fields.items():
@@ -1807,6 +1975,7 @@ def sync_collaboration_conversation_metadata_from_source(conversation_doc, sourc
 
     if updated:
         cosmos_collaboration_conversations_container.upsert_item(conversation_doc)
+        invalidate_conversation_cache_for_item(conversation_doc, reason="collaboration_metadata_synced")
 
     return conversation_doc, updated
 
@@ -1847,10 +2016,14 @@ def ensure_collaboration_source_conversation(conversation_doc, current_user):
             'locked_contexts': list((conversation_doc or {}).get('locked_contexts', []) or []),
             'classification': list((conversation_doc or {}).get('classification', []) or []),
             'summary': (conversation_doc or {}).get('summary'),
-            'conversation_kind': 'collaboration_source',
+            'conversation_kind': COLLABORATION_SOURCE_KIND,
             'collaboration_conversation_id': (conversation_doc or {}).get('id'),
             'is_hidden': True,
         }
+        _copy_citation_tracking_conversation_fields(
+            source_conversation_doc,
+            conversation_doc,
+        )
         source_updated = True
     else:
         synchronized_values = {
@@ -1863,10 +2036,15 @@ def ensure_collaboration_source_conversation(conversation_doc, current_user):
             'locked_contexts': list((conversation_doc or {}).get('locked_contexts', []) or source_conversation_doc.get('locked_contexts', []) or []),
             'classification': list((conversation_doc or {}).get('classification', []) or source_conversation_doc.get('classification', []) or []),
             'summary': (conversation_doc or {}).get('summary', source_conversation_doc.get('summary')),
-            'conversation_kind': 'collaboration_source',
+            'conversation_kind': COLLABORATION_SOURCE_KIND,
             'collaboration_conversation_id': (conversation_doc or {}).get('id'),
             'is_hidden': True,
         }
+        for field_name in CITATION_TRACKING_CONVERSATION_FIELDS:
+            if field_name in (conversation_doc or {}):
+                synchronized_values[field_name] = deepcopy(
+                    conversation_doc.get(field_name)
+                )
         for field_name, field_value in synchronized_values.items():
             if source_conversation_doc.get(field_name) != field_value:
                 source_conversation_doc[field_name] = field_value
@@ -1875,6 +2053,7 @@ def ensure_collaboration_source_conversation(conversation_doc, current_user):
     if source_updated:
         source_conversation_doc['last_updated'] = timestamp
         cosmos_conversations_container.upsert_item(source_conversation_doc)
+        invalidate_conversation_cache_for_item(source_conversation_doc, reason="collaboration_source_synced")
 
     if str((conversation_doc or {}).get('source_conversation_id') or '').strip() != source_conversation_id:
         conversation_doc['source_conversation_id'] = source_conversation_id
@@ -1934,6 +2113,7 @@ def _refresh_collaboration_conversation_message_summary(conversation_doc):
         raise ValueError('conversation_id is required')
 
     remaining_messages = list_collaboration_messages(conversation_id)
+    rebuild_conversation_used_documents(conversation_doc, remaining_messages)
     conversation_doc['message_count'] = len(remaining_messages)
 
     if remaining_messages:
@@ -1950,6 +2130,7 @@ def _refresh_collaboration_conversation_message_summary(conversation_doc):
         conversation_doc['updated_at'] = utc_now_iso()
 
     cosmos_collaboration_conversations_container.upsert_item(conversation_doc)
+    invalidate_conversation_cache_for_item(conversation_doc, reason="collaboration_message_summary_refreshed")
     return conversation_doc
 
 
@@ -2015,6 +2196,7 @@ def update_personal_collaboration_title(conversation_id, current_user_id, new_ti
     conversation_doc['title'] = normalized_title
     conversation_doc['updated_at'] = utc_now_iso()
     cosmos_collaboration_conversations_container.upsert_item(conversation_doc)
+    invalidate_conversation_cache_for_item(conversation_doc, reason="collaboration_title_updated")
     return conversation_doc
 
 
@@ -2050,6 +2232,7 @@ def toggle_personal_collaboration_pin(conversation_id, current_user_id):
     user_state['is_pinned'] = not bool(user_state.get('is_pinned', False))
     user_state['updated_at'] = utc_now_iso()
     cosmos_collaboration_user_state_container.upsert_item(user_state)
+    bump_conversation_cache_version(current_user_id, reason="collaboration_pin_toggled")
     return conversation_doc, user_state
 
 
@@ -2085,6 +2268,7 @@ def toggle_personal_collaboration_hide(conversation_id, current_user_id):
     user_state['is_hidden'] = not bool(user_state.get('is_hidden', False))
     user_state['updated_at'] = utc_now_iso()
     cosmos_collaboration_user_state_container.upsert_item(user_state)
+    bump_conversation_cache_version(current_user_id, reason="collaboration_hide_toggled")
     return conversation_doc, user_state
 
 
@@ -2133,6 +2317,7 @@ def update_personal_collaboration_member_role(conversation_id, current_user_id, 
         user_state['updated_at'] = timestamp
         cosmos_collaboration_user_state_container.upsert_item(user_state)
 
+    invalidate_conversation_cache_for_item(conversation_doc, reason="collaboration_member_role_updated")
     return conversation_doc, participant
 
 
@@ -2216,82 +2401,380 @@ def leave_personal_collaboration_conversation(conversation_id, current_user_id, 
     if is_personal_collaboration_conversation(conversation_doc):
         sync_chat_upload_workspace_document_sharing_for_collaboration(conversation_doc)
 
+    bump_conversation_cache_version(current_user_id, reason="collaboration_left")
+    invalidate_conversation_cache_for_item(conversation_doc, reason="collaboration_left")
     return conversation_doc, participant, promoted_participant
 
 
-def _delete_source_personal_conversation(conversation_doc, current_user_id):
-    source_conversation_id = str((conversation_doc or {}).get('source_conversation_id') or '').strip()
-    if not source_conversation_id:
-        return
+def _archive_collaboration_item(item, archive_container, record_type, retention_deletion):
+    archived_item = deepcopy(item)
+    archived_item['archived_at'] = datetime.now(timezone.utc).isoformat()
+    archived_item['collaboration_record_type'] = record_type
+    if retention_deletion:
+        archived_item['archived_by_retention_policy'] = True
+    archive_container.upsert_item(archived_item)
 
+
+def _delete_blob_backed_collaboration_files(messages):
+    # Local import avoids the functions_simplechat_operations collaboration dependency cycle.
+    from functions_simplechat_operations import delete_blob_backed_chat_message_files
+
+    return delete_blob_backed_chat_message_files(messages, raise_on_error=True)
+
+
+def _delete_item_if_present(container, item_id, partition_key):
     try:
-        source_conversation = cosmos_conversations_container.read_item(
-            item=source_conversation_id,
-            partition_key=source_conversation_id,
+        container.delete_item(
+            item=item_id,
+            partition_key=partition_key,
         )
     except CosmosResourceNotFoundError:
-        return
-
-    if str(source_conversation.get('user_id') or '').strip() != str(current_user_id or '').strip():
-        return
-    if str(source_conversation.get('collaboration_conversation_id') or '').strip() != str(conversation_doc.get('id') or '').strip():
-        return
-
-    message_query = 'SELECT * FROM c WHERE c.conversation_id = @conversation_id'
-    source_messages = list(cosmos_messages_container.query_items(
-        query=message_query,
-        parameters=[{'name': '@conversation_id', 'value': source_conversation_id}],
-        partition_key=source_conversation_id,
-    ))
-
-    for message_doc in source_messages:
-        cosmos_messages_container.delete_item(
-            item=message_doc.get('id'),
-            partition_key=source_conversation_id,
+        log_event(
+            '[COLLABORATION_RETENTION] Record was already deleted',
+            extra={
+                'item_id': item_id,
+                'partition_key': partition_key,
+            },
+            debug_only=True,
         )
 
-    delete_thoughts_for_conversation(source_conversation_id, current_user_id)
-    cosmos_conversations_container.delete_item(
-        item=source_conversation_id,
-        partition_key=source_conversation_id,
+
+def _collaboration_retention_identity(conversation_doc):
+    scope = (
+        conversation_doc.get('scope')
+        if isinstance((conversation_doc or {}).get('scope'), dict)
+        else {}
+    )
+    return (
+        str((conversation_doc or {}).get('chat_type') or '').strip(),
+        str((conversation_doc or {}).get('created_by_user_id') or '').strip(),
+        str(scope.get('group_id') or '').strip(),
     )
 
 
-def _delete_source_group_conversation(conversation_doc, current_user_id):
-    source_conversation_id = str((conversation_doc or {}).get('legacy_source_conversation_id') or '').strip()
+def _read_collaboration_conversation_for_retention(selected_conversation_doc):
+    conversation_id = str((selected_conversation_doc or {}).get('id') or '').strip()
+    try:
+        live_conversation_doc = get_collaboration_conversation(conversation_id)
+    except CosmosResourceNotFoundError:
+        return {
+            'id': conversation_id,
+            'title': (selected_conversation_doc or {}).get('title', 'Untitled'),
+            'updated_at': (selected_conversation_doc or {}).get('updated_at'),
+            'already_deleted': True,
+        }
+
+    if (
+        live_conversation_doc.get('updated_at')
+        != (selected_conversation_doc or {}).get('updated_at')
+        or _collaboration_retention_identity(live_conversation_doc)
+        != _collaboration_retention_identity(selected_conversation_doc)
+    ):
+        return None
+
+    return live_conversation_doc
+
+
+def _cleanup_collaboration_thoughts(conversation_id, user_ids, archiving_enabled):
+    for user_id in {
+        str(raw_user_id or '').strip()
+        for raw_user_id in user_ids
+        if str(raw_user_id or '').strip()
+    }:
+        if archiving_enabled:
+            archive_thoughts_for_conversation(
+                conversation_id,
+                user_id,
+                raise_on_error=True,
+            )
+        else:
+            delete_thoughts_for_conversation(
+                conversation_id,
+                user_id,
+                raise_on_error=True,
+            )
+
+
+def _cleanup_linked_collaboration_source(
+    conversation_doc,
+    source_field,
+    source_container,
+    source_messages_container,
+    archiving_enabled,
+    retention_deletion,
+    expected_user_id=None,
+    additional_thought_user_ids=None,
+):
+    source_conversation_id = str((conversation_doc or {}).get(source_field) or '').strip()
     if not source_conversation_id:
-        return
+        return None
 
     try:
-        source_conversation = cosmos_group_conversations_container.read_item(
+        source_conversation = source_container.read_item(
             item=source_conversation_id,
             partition_key=source_conversation_id,
         )
     except CosmosResourceNotFoundError:
-        return
+        return None
 
-    if str(source_conversation.get('user_id') or '').strip() != str(current_user_id or '').strip():
-        return
+    normalized_expected_user_id = str(expected_user_id or '').strip()
+    if normalized_expected_user_id and str(source_conversation.get('user_id') or '').strip() != normalized_expected_user_id:
+        return None
     if str(source_conversation.get('collaboration_conversation_id') or '').strip() != str(conversation_doc.get('id') or '').strip():
-        return
+        return None
 
-    message_query = 'SELECT * FROM c WHERE c.conversation_id = @conversation_id'
-    source_messages = list(cosmos_group_messages_container.query_items(
-        query=message_query,
+    source_messages = list(source_messages_container.query_items(
+        query='SELECT * FROM c WHERE c.conversation_id = @conversation_id',
         parameters=[{'name': '@conversation_id', 'value': source_conversation_id}],
         partition_key=source_conversation_id,
     ))
 
-    for message_doc in source_messages:
-        cosmos_group_messages_container.delete_item(
-            item=message_doc.get('id'),
-            partition_key=source_conversation_id,
+    if archiving_enabled:
+        _archive_collaboration_item(
+            source_conversation,
+            cosmos_archived_conversations_container,
+            'linked_source_conversation',
+            retention_deletion,
+        )
+    else:
+        _delete_blob_backed_collaboration_files(source_messages)
+
+    for source_message in source_messages:
+        if archiving_enabled:
+            _archive_collaboration_item(
+                source_message,
+                cosmos_archived_messages_container,
+                'linked_source_message',
+                retention_deletion,
+            )
+        _delete_item_if_present(
+            source_messages_container,
+            source_message.get('id'),
+            source_conversation_id,
         )
 
-    delete_thoughts_for_conversation(source_conversation_id, current_user_id)
-    cosmos_group_conversations_container.delete_item(
-        item=source_conversation_id,
-        partition_key=source_conversation_id,
+    source_user_id = str(source_conversation.get('user_id') or '').strip()
+    _cleanup_collaboration_thoughts(
+        source_conversation_id,
+        [source_user_id, *(additional_thought_user_ids or [])],
+        archiving_enabled,
+    )
+    _delete_item_if_present(
+        source_container,
+        source_conversation_id,
+        source_conversation_id,
+    )
+    invalidate_conversation_cache_for_item(
+        source_conversation,
+        reason='collaboration_source_deleted',
+    )
+    return source_conversation
+
+
+def _delete_source_personal_conversation(
+    conversation_doc,
+    current_user_id,
+    archiving_enabled=False,
+    retention_deletion=False,
+):
+    return _cleanup_linked_collaboration_source(
+        conversation_doc,
+        'source_conversation_id',
+        cosmos_conversations_container,
+        cosmos_messages_container,
+        archiving_enabled,
+        retention_deletion,
+        expected_user_id=current_user_id,
+    )
+
+
+def _delete_source_group_conversation(
+    conversation_doc,
+    current_user_id,
+    archiving_enabled=False,
+    retention_deletion=False,
+):
+    return _cleanup_linked_collaboration_source(
+        conversation_doc,
+        'legacy_source_conversation_id',
+        cosmos_group_conversations_container,
+        cosmos_group_messages_container,
+        archiving_enabled,
+        retention_deletion,
+        expected_user_id=current_user_id,
+    )
+
+
+def _delete_collaboration_conversation_records(
+    conversation_doc,
+    workspace_type,
+    archiving_enabled,
+    retention_deletion,
+    expected_source_user_id=None,
+):
+    conversation_id = str((conversation_doc or {}).get('id') or '').strip()
+    if not conversation_id:
+        raise ValueError('conversation_id is required')
+
+    if retention_deletion:
+        live_conversation_doc = _read_collaboration_conversation_for_retention(
+            conversation_doc
+        )
+        if live_conversation_doc is None:
+            return None
+        if live_conversation_doc.get('already_deleted'):
+            return live_conversation_doc
+        conversation_doc = live_conversation_doc
+    else:
+        conversation_doc = get_collaboration_conversation(conversation_id)
+
+    if is_personal_collaboration_conversation(conversation_doc):
+        revocation_conversation_doc = deepcopy(conversation_doc)
+        revocation_conversation_doc['accepted_participant_ids'] = []
+        sync_chat_upload_workspace_document_sharing_for_collaboration(
+            revocation_conversation_doc
+        )
+
+    state_docs = list(cosmos_collaboration_user_state_container.query_items(
+        query='SELECT * FROM c WHERE c.conversation_id = @conversation_id',
+        parameters=[{'name': '@conversation_id', 'value': conversation_id}],
+        enable_cross_partition_query=True,
+    ))
+
+    if archiving_enabled:
+        archived_conversation_doc = deepcopy(conversation_doc)
+        archived_conversation_doc['collaboration_user_states'] = state_docs
+        _archive_collaboration_item(
+            archived_conversation_doc,
+            cosmos_archived_conversations_container,
+            'collaboration_conversation',
+            retention_deletion,
+        )
+        log_conversation_archival(
+            user_id=conversation_doc.get('created_by_user_id'),
+            conversation_id=conversation_id,
+            title=conversation_doc.get('title', 'Untitled'),
+            workspace_type=workspace_type,
+            context=conversation_doc.get('context', []),
+            tags=conversation_doc.get('tags', []),
+            group_id=str((conversation_doc.get('scope') or {}).get('group_id') or '').strip() or None,
+            additional_context={
+                'conversation_kind': 'collaboration',
+                'deletion_reason': 'retention_policy' if retention_deletion else 'user_request',
+            },
+        )
+
+    messages = list(cosmos_collaboration_messages_container.query_items(
+        query='SELECT * FROM c WHERE c.conversation_id = @conversation_id',
+        parameters=[{'name': '@conversation_id', 'value': conversation_id}],
+        partition_key=conversation_id,
+    ))
+    if not archiving_enabled:
+        _delete_blob_backed_collaboration_files(messages)
+
+    for message_doc in messages:
+        if archiving_enabled:
+            _archive_collaboration_item(
+                message_doc,
+                cosmos_archived_messages_container,
+                'collaboration_message',
+                retention_deletion,
+            )
+        _delete_item_if_present(
+            cosmos_collaboration_messages_container,
+            message_doc.get('id'),
+            conversation_id,
+        )
+
+    thought_user_ids = [conversation_doc.get('created_by_user_id')]
+    thought_user_ids.extend(
+        participant.get('user_id')
+        for participant in list(conversation_doc.get('participants', []) or [])
+        if isinstance(participant, dict)
+    )
+    source_thought_user_ids = list(thought_user_ids)
+    source_thought_user_ids.extend(
+        str((message_doc.get('metadata') or {}).get('source_thought_user_id') or '').strip()
+        for message_doc in messages
+        if isinstance(message_doc, dict)
+        and isinstance(message_doc.get('metadata'), dict)
+    )
+    _cleanup_collaboration_thoughts(
+        conversation_id,
+        thought_user_ids,
+        archiving_enabled,
+    )
+
+    for state_doc in state_docs:
+        _delete_item_if_present(
+            cosmos_collaboration_user_state_container,
+            state_doc.get('id'),
+            state_doc.get('user_id'),
+        )
+
+    _cleanup_linked_collaboration_source(
+        conversation_doc,
+        'source_conversation_id',
+        cosmos_conversations_container,
+        cosmos_messages_container,
+        archiving_enabled,
+        retention_deletion,
+        expected_user_id=expected_source_user_id,
+        additional_thought_user_ids=source_thought_user_ids,
+    )
+    _cleanup_linked_collaboration_source(
+        conversation_doc,
+        'legacy_source_conversation_id',
+        cosmos_group_conversations_container,
+        cosmos_group_messages_container,
+        archiving_enabled,
+        retention_deletion,
+        expected_user_id=expected_source_user_id,
+        additional_thought_user_ids=source_thought_user_ids,
+    )
+
+    log_conversation_deletion(
+        user_id=conversation_doc.get('created_by_user_id'),
+        conversation_id=conversation_id,
+        title=conversation_doc.get('title', 'Untitled'),
+        workspace_type=workspace_type,
+        context=conversation_doc.get('context', []),
+        tags=conversation_doc.get('tags', []),
+        is_archived=archiving_enabled,
+        is_bulk_operation=retention_deletion,
+        group_id=str((conversation_doc.get('scope') or {}).get('group_id') or '').strip() or None,
+        additional_context={
+            'conversation_kind': 'collaboration',
+            'deletion_reason': 'retention_policy' if retention_deletion else 'user_request',
+        },
+    )
+    _delete_item_if_present(
+        cosmos_collaboration_conversations_container,
+        conversation_id,
+        conversation_id,
+    )
+    invalidate_conversation_cache_for_item(
+        conversation_doc,
+        reason='collaboration_deleted',
+    )
+    return {
+        'id': conversation_id,
+        'title': conversation_doc.get('title', 'Untitled'),
+        'updated_at': conversation_doc.get('updated_at'),
+    }
+
+
+def delete_collaboration_conversation_for_retention(
+    conversation_doc,
+    workspace_type,
+    archiving_enabled,
+):
+    """Delete a policy-selected collaboration conversation and all linked records."""
+    return _delete_collaboration_conversation_records(
+        conversation_doc,
+        workspace_type,
+        archiving_enabled,
+        retention_deletion=True,
     )
 
 
@@ -2312,41 +2795,12 @@ def delete_personal_collaboration_conversation(conversation_id, current_user_id)
     if current_user_id not in set(conversation_doc.get('owner_user_ids', []) or []):
         raise PermissionError('Only conversation owners can delete this shared conversation')
 
-    if is_personal_collaboration_conversation(conversation_doc):
-        revocation_conversation_doc = deepcopy(conversation_doc)
-        revocation_conversation_doc['accepted_participant_ids'] = []
-        sync_chat_upload_workspace_document_sharing_for_collaboration(revocation_conversation_doc)
-
-    message_query = 'SELECT * FROM c WHERE c.conversation_id = @conversation_id'
-    messages = list(cosmos_collaboration_messages_container.query_items(
-        query=message_query,
-        parameters=[{'name': '@conversation_id', 'value': conversation_id}],
-        partition_key=conversation_id,
-    ))
-    for message_doc in messages:
-        cosmos_collaboration_messages_container.delete_item(
-            item=message_doc.get('id'),
-            partition_key=conversation_id,
-        )
-
-    state_query = 'SELECT * FROM c WHERE c.conversation_id = @conversation_id'
-    state_docs = list(cosmos_collaboration_user_state_container.query_items(
-        query=state_query,
-        parameters=[{'name': '@conversation_id', 'value': conversation_id}],
-        enable_cross_partition_query=True,
-    ))
-    for state_doc in state_docs:
-        cosmos_collaboration_user_state_container.delete_item(
-            item=state_doc.get('id'),
-            partition_key=state_doc.get('user_id'),
-        )
-
-    _delete_source_personal_conversation(conversation_doc, current_user_id)
-    if is_group_collaboration_conversation(conversation_doc):
-        _delete_source_group_conversation(conversation_doc, current_user_id)
-    cosmos_collaboration_conversations_container.delete_item(
-        item=conversation_id,
-        partition_key=conversation_id,
+    _delete_collaboration_conversation_records(
+        conversation_doc,
+        workspace_type='group' if is_group_collaboration_conversation(conversation_doc) else 'personal',
+        archiving_enabled=False,
+        retention_deletion=False,
+        expected_source_user_id=current_user_id,
     )
     return conversation_doc
 

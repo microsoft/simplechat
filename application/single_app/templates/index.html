@@ -56,7 +56,7 @@
             class="{% if app_settings.landing_page_alignment == 'center' %}text-center{% elif app_settings.landing_page_alignment == 'right' %}text-end{% else %}text-start{% endif %}">
             {{ landing_html | safe }}
         </div>
-        <a href="{{ url_for('chats') }}" class="btn btn-primary btn-lg">
+        <a href="{{ url_for('frontend_chats.chats') }}" class="btn btn-primary btn-lg">
             Start Chatting
         </a>
 
@@ -75,7 +75,7 @@
                 {{ landing_html | safe }}
             </div>
             <p class="lead">
-                Please <a href="{{ url_for('login') }}">sign in</a> to continue.
+                Please <a href="{{ url_for('frontend_authentication.login') }}">sign in</a> to continue.
             </p>
         {% endif %}
     {% endif %}

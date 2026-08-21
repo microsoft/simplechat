@@ -12,6 +12,7 @@ searchable single-select implementation.
 
 import os
 import sys
+from test_support.versioning import assert_app_version_at_least
 
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -106,7 +107,7 @@ def test_prompt_scope_filtering_and_searchable_picker_implementation():
         assert not missing_template, f'Missing prompt dropdown template markup: {missing_template}'
         print('✅ Prompt dropdown template markup implemented')
 
-        assert 'VERSION = "0.239.125"' in config_content, 'Expected config.py version 0.239.125'
+        assert_app_version_at_least("0.239.125")
         print('✅ Version properly updated to 0.239.125 in config.py')
 
         print('✅ Workspace scope prompt implementation checks passed!')

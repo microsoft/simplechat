@@ -33,19 +33,19 @@ def _is_foundry_project_endpoint(endpoint):
     return 'services.ai.azure.com' in (endpoint or '').lower()
 
 
-def register_route_backend_models(app):
+def register_route_backend_models(bp):
     """
     Register backend routes for fetching Azure OpenAI models.
     """
 
     def log_models_debug(message, extra=None):
-        log_event(f"[Models] {message}", extra=extra, debug_only=True, category="Models")
+        log_event(f"[MODELS] {message}", extra=extra, debug_only=True, category="Models")
 
     def log_models_exception(message, exception, extra=None, level=logging.ERROR):
         properties = dict(extra or {})
         properties["exception_type"] = type(exception).__name__
         log_event(
-            f"[Models] {message}",
+            f"[MODELS] {message}",
             extra=properties,
             level=level,
             exceptionTraceback=level >= logging.ERROR,
@@ -61,7 +61,7 @@ def register_route_backend_models(app):
         }
         if isinstance(exception, ValueError):
             log_event(
-                "[Models] Group access blocked because no active group was selected",
+                "[MODELS] Group access blocked because no active group was selected",
                 extra=extra,
                 level=logging.WARNING,
             )
@@ -71,14 +71,14 @@ def register_route_backend_models(app):
             )
         if isinstance(exception, LookupError):
             log_event(
-                "[Models] Group access blocked because the group could not be found",
+                "[MODELS] Group access blocked because the group could not be found",
                 extra=extra,
                 level=logging.WARNING,
             )
             return build_safe_error_response("The selected group could not be found.", 404)
 
         log_event(
-            "[Models] Group access denied",
+            "[MODELS] Group access denied",
             extra=extra,
             level=logging.WARNING,
         )
@@ -160,7 +160,7 @@ def register_route_backend_models(app):
             if not persisted_endpoint:
                 log_models_debug(f"Rejecting {scope} request for unknown endpoint_id={endpoint_id}.")
                 log_event(
-                    "[Models] Model endpoint lookup failed",
+                    "[MODELS] Model endpoint lookup failed",
                     extra={"user_id": user_id, "scope": scope, "endpoint_id": endpoint_id},
                     level=logging.WARNING,
                 )
@@ -207,15 +207,7 @@ def register_route_backend_models(app):
         }
 
     def resolve_foundry_scope(auth_settings):
-        management_cloud = (auth_settings.get("management_cloud") or "public").lower()
-        if management_cloud == "government":
-            return "https://ai.azure.us/.default"
-        if management_cloud == "custom":
-            custom_scope = (auth_settings.get("foundry_scope") or "").strip()
-            if not custom_scope:
-                raise ValueError("Foundry scope is required for custom cloud configurations.")
-            return custom_scope
-        return "https://ai.azure.com/.default"
+        return resolve_model_endpoint_foundry_scope(auth_settings)
 
     def build_foundry_token(auth_settings):
         management_cloud = (auth_settings.get("management_cloud") or "public").lower()
@@ -264,17 +256,13 @@ def register_route_backend_models(app):
         return endpoint_host.split(".")[0].strip()
 
     def get_management_cloud_for_environment():
-        if AZURE_ENVIRONMENT == "usgovernment":
-            return "government"
-        if AZURE_ENVIRONMENT == "custom":
-            return "custom"
-        return "public"
+        return get_model_endpoint_management_cloud_for_environment()
 
     def build_legacy_aoai_discovery_auth_settings():
         return {
             "type": "service_principal",
             "management_cloud": get_management_cloud_for_environment(),
-            "custom_authority": authority if AZURE_ENVIRONMENT == "custom" else "",
+            "custom_authority": get_model_endpoint_default_custom_authority(),
             "tenant_id": TENANT_ID,
             "client_id": CLIENT_ID,
             "client_secret": MICROSOFT_PROVIDER_AUTHENTICATION_SECRET,
@@ -442,7 +430,7 @@ def register_route_backend_models(app):
             return jsonify({"error": "Model provider not found."}), 400
         except LookupError as exc:
             log_event(
-                "[Models] Fetch model list blocked because the model endpoint was not found",
+                "[MODELS] Fetch model list blocked because the model endpoint was not found",
                 extra={"scope": scope},
                 level=logging.WARNING,
             )
@@ -514,7 +502,7 @@ def register_route_backend_models(app):
 
         except LookupError as exc:
             log_event(
-                "[Models] Test model request blocked because the model endpoint was not found",
+                "[MODELS] Test model request blocked because the model endpoint was not found",
                 extra={"scope": scope},
                 level=logging.WARNING,
             )
@@ -537,7 +525,7 @@ def register_route_backend_models(app):
                 400,
             )
 
-    @app.route('/api/models/gpt', methods=['GET'])
+    @bp.route('/api/models/gpt', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -593,7 +581,7 @@ def register_route_backend_models(app):
         return jsonify({"models": models})
 
 
-    @app.route('/api/models/embedding', methods=['GET'])
+    @bp.route('/api/models/embedding', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -647,7 +635,7 @@ def register_route_backend_models(app):
         return jsonify({"models": models})
 
 
-    @app.route('/api/models/image', methods=['GET'])
+    @bp.route('/api/models/image', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -700,7 +688,7 @@ def register_route_backend_models(app):
         return jsonify({"models": models})
 
 
-    @app.route('/api/models/test-connection', methods=['POST'])
+    @bp.route('/api/models/test-connection', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -762,7 +750,7 @@ def register_route_backend_models(app):
             return jsonify({"error": "Model provider not found."}), 400
         except LookupError as e:
             log_event(
-                "[Models] Test connection blocked because the model endpoint was not found",
+                "[MODELS] Test connection blocked because the model endpoint was not found",
                 level=logging.WARNING,
             )
             return build_safe_error_response("The selected model endpoint could not be found.", 404)
@@ -783,7 +771,7 @@ def register_route_backend_models(app):
             )
 
 
-    @app.route('/api/models/fetch', methods=['POST'])
+    @bp.route('/api/models/fetch', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -792,7 +780,7 @@ def register_route_backend_models(app):
         return handle_fetch_model_list(scope="global")
 
 
-    @app.route('/api/user/model-endpoints', methods=['GET'])
+    @bp.route('/api/user/model-endpoints', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -810,7 +798,7 @@ def register_route_backend_models(app):
         })
 
 
-    @app.route('/api/user/model-endpoints', methods=['POST'])
+    @bp.route('/api/user/model-endpoints', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -876,7 +864,7 @@ def register_route_backend_models(app):
         return jsonify({"success": True})
 
 
-    @app.route('/api/group/model-endpoints', methods=['GET'])
+    @bp.route('/api/group/model-endpoints', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -904,7 +892,7 @@ def register_route_backend_models(app):
         })
 
 
-    @app.route('/api/group/model-endpoints', methods=['POST'])
+    @bp.route('/api/group/model-endpoints', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -980,7 +968,7 @@ def register_route_backend_models(app):
         return jsonify({"success": True})
 
 
-    @app.route('/api/models/foundry/agents', methods=['POST'])
+    @bp.route('/api/models/foundry/agents', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -1074,7 +1062,7 @@ def register_route_backend_models(app):
         })
 
 
-    @app.route('/api/models/test-model', methods=['POST'])
+    @bp.route('/api/models/test-model', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -1083,7 +1071,7 @@ def register_route_backend_models(app):
         return handle_test_model_connection(scope="global")
 
 
-    @app.route('/api/user/models/fetch', methods=['POST'])
+    @bp.route('/api/user/models/fetch', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -1092,7 +1080,7 @@ def register_route_backend_models(app):
         return handle_fetch_model_list(scope="user")
 
 
-    @app.route('/api/user/models/test-model', methods=['POST'])
+    @bp.route('/api/user/models/test-model', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -1101,7 +1089,7 @@ def register_route_backend_models(app):
         return handle_test_model_connection(scope="user")
 
 
-    @app.route('/api/group/models/fetch', methods=['POST'])
+    @bp.route('/api/group/models/fetch', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -1121,7 +1109,7 @@ def register_route_backend_models(app):
         return handle_fetch_model_list(scope="group")
 
 
-    @app.route('/api/group/models/test-model', methods=['POST'])
+    @bp.route('/api/group/models/test-model', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required

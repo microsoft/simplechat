@@ -348,7 +348,7 @@
         error: function (jqXHR, textStatus, errorThrown) {
             console.error("Failed to set active workspace:", errorThrown);
             const errorMsg = jqXHR.responseJSON?.error || errorThrown || 'Unknown error';
-            alert("Failed to set active workspace: " + escapeHtml(errorMsg));
+            showToast("Failed to set active workspace: " + escapeHtml(errorMsg), 'danger');
             // Restore button on error
             buttonElement.prop('disabled', false).html(originalHtml);
         }
@@ -365,7 +365,7 @@
       const originalButtonText = submitButton.text();
 
       if (!name) {
-          alert("Group Name is required.");
+          showToast("Group Name is required.", 'warning');
           return;
       }
 
@@ -385,7 +385,7 @@
         error: function (jqXHR, textStatus, errorThrown) {
           console.error("Error creating group:", errorThrown);
           const errorMsg = jqXHR.responseJSON?.error || errorThrown || 'Unknown error';
-          alert("Error creating group: " + escapeHtml(errorMsg));
+          showToast("Error creating group: " + escapeHtml(errorMsg), 'danger');
         },
         complete: function() {
              submitButton.prop('disabled', false).text(originalButtonText);
@@ -444,14 +444,14 @@
         url: `/api/groups/${encodeURIComponent(groupId)}/requests`,
         method: "POST",
         success: function (response) {
-          alert("Join request sent successfully!");
+          showToast("Join request sent successfully!", 'success');
           buttonElement.removeClass('btn-primary').addClass('btn-outline-secondary').text('Request Sent');
           // Keep it disabled or re-enable after a delay if desired
         },
         error: function (jqXHR, textStatus, errorThrown) {
           console.error("Error requesting to join:", errorThrown);
           const errorMsg = jqXHR.responseJSON?.error || errorThrown || 'Unknown error';
-          alert("Failed to request join: " + escapeHtml(errorMsg));
+          showToast("Failed to request join: " + escapeHtml(errorMsg), 'danger');
           buttonElement.prop('disabled', false).text(originalButtonText); // Re-enable on error
         }
         // Note: No 'complete' needed if success handles button state sufficiently

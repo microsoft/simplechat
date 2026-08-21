@@ -1,5 +1,6 @@
 {% extends "base.html" %}
-{% block title %} Public Directory - {{ app_settings.app_title }} {% endblock %}
+{% set public_workspace_labels = app_settings.public_workspace_labels %}
+{% block title %} {{ public_workspace_labels.singular }} Directory - {{ app_settings.app_title }} {% endblock %}
 {% block head %}
 <style>
   /* Public Directory specific styles */
@@ -197,9 +198,9 @@
 {% block content %}
 <div class="container">
   <div class="d-flex justify-content-between align-items-center mb-2">
-    <h2>Public Directory</h2>
+    <h2>{{ public_workspace_labels.singular }} Directory</h2>
   </div>
-  <p class="text-muted mb-4">Browse and discover public workspaces accessible to all users. Use visibility settings to control which workspaces are shown on the chat page.</p>
+  <p class="text-muted mb-4">Browse and discover {{ public_workspace_labels.lower_plural }} accessible to all users. Use visibility settings to control which workspaces are shown on the chat page.</p>
 
   <!-- Chat Action Buttons -->
   <div class="mb-3 d-flex gap-2">
@@ -234,7 +235,7 @@
   <div class="mb-2">
     <p class="mb-2 small text-muted">
       <strong>Curated Lists & Visibility:</strong><br>
-      Save your current set of visible public workspaces as a named list, so you can quickly switch between different workspace sets for chat and search.
+      Save your current set of visible {{ public_workspace_labels.lower_plural }} as a named list, so you can quickly switch between different workspace sets for chat and search.
       Use <b>Save List</b> to store your current selection, <b>Load List</b> to apply a saved set.
       Use <b>All Visible</b> or <b>All Hidden</b> to quickly show or hide all workspaces at once.
     </p>
@@ -296,7 +297,7 @@
               <div class="spinner-border spinner-border-sm me-2" role="status">
                 <span class="visually-hidden">Loading...</span>
               </div>
-              Loading public workspaces...
+              Loading {{ public_workspace_labels.lower_plural }}...
             </td>
           </tr>
         </tbody>
@@ -323,7 +324,7 @@
   <div class="modal-dialog modal-lg">
     <div class="modal-content">
       <div class="modal-header">
-        <h5 class="modal-title" id="viewWorkspaceModalLabel">Public Workspace Details</h5>
+        <h5 class="modal-title" id="viewWorkspaceModalLabel">{{ public_workspace_labels.singular }} Details</h5>
         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
       </div>
       <div class="modal-body">

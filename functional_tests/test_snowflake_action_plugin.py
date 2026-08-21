@@ -12,11 +12,35 @@ account.
 
 import os
 import sys
+import types
 import traceback
 from unittest.mock import patch
 
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'application', 'single_app'))
+
+config_stub = types.ModuleType('config')
+config_stub.SECRET_KEY = 'snowflake-test-secret'
+sys.modules.setdefault('config', config_stub)
+
+simplechat_operations_stub = types.ModuleType('functions_simplechat_operations')
+simplechat_operations_stub.SIMPLECHAT_DEFAULT_ENDPOINT = 'simplechat://internal'
+sys.modules.setdefault('functions_simplechat_operations', simplechat_operations_stub)
+
+plugin_logger_stub = types.ModuleType('semantic_kernel_plugins.plugin_invocation_logger')
+
+
+def _plugin_function_logger_stub(*args, **kwargs):
+    def decorator(func):
+        return func
+
+    if args and callable(args[0]) and len(args) == 1 and not kwargs:
+        return args[0]
+    return decorator
+
+
+plugin_logger_stub.plugin_function_logger = _plugin_function_logger_stub
+sys.modules.setdefault('semantic_kernel_plugins.plugin_invocation_logger', plugin_logger_stub)
 
 from functions_snowflake_operations import (  # noqa: E402
     SNOWFLAKE_DEFAULT_ENDPOINT,

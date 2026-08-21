@@ -40,7 +40,7 @@ def test_chat_stream_lifecycle_observability() -> None:
     assert_contains(ROUTE_FILE, "def mark_reattached(self):")
     assert_contains(ROUTE_FILE, "self._stream_session.note_keepalive(source='bridge')")
     assert_contains(ROUTE_FILE, "self.note_keepalive(source='session')")
-    assert_contains(ROUTE_FILE, "@app.route('/api/chat/stream/client-event', methods=['POST'])")
+    assert_contains(ROUTE_FILE, "@bp.route('/api/chat/stream/client-event', methods=['POST'])")
     assert_contains(ROUTE_FILE, "def chat_stream_client_event_api():")
     assert_contains(ROUTE_FILE, "stream_status = stream_session.get_status_snapshot() if stream_session else _build_stream_status_payload(None)")
     assert_contains(ROUTE_FILE, "stream_session.mark_reattached()")

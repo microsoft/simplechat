@@ -280,13 +280,13 @@ function normalizeWorkspaceCitationVideoItem(rawCitation, index = 0) {
     };
 }
 
-function extractWorkspaceCitationVideoItems(hybridCitations = [], seenKeys = new Set()) {
+function extractWorkspaceCitationVideoItems(citedHybridCitations = [], seenKeys = new Set()) {
     const items = [];
-    if (!Array.isArray(hybridCitations) || hybridCitations.length === 0) {
+    if (!Array.isArray(citedHybridCitations) || citedHybridCitations.length === 0) {
         return items;
     }
 
-    hybridCitations.forEach((citation, index) => {
+    citedHybridCitations.forEach((citation, index) => {
         pushUniqueVideoItem(items, seenKeys, normalizeWorkspaceCitationVideoItem(citation, index));
     });
 
@@ -343,13 +343,13 @@ function normalizeWebCitationVideoItem(rawCitation, index = 0) {
     };
 }
 
-function extractLinkedVideoItems(webCitations = [], seenKeys = new Set()) {
+function extractLinkedVideoItems(citedWebCitations = [], seenKeys = new Set()) {
     const items = [];
-    if (!Array.isArray(webCitations) || webCitations.length === 0) {
+    if (!Array.isArray(citedWebCitations) || citedWebCitations.length === 0) {
         return items;
     }
 
-    webCitations.forEach((citation, index) => {
+    citedWebCitations.forEach((citation, index) => {
         pushUniqueVideoItem(items, seenKeys, normalizeWebCitationVideoItem(citation, index));
     });
 
@@ -720,10 +720,17 @@ function createVideoGalleryCard(result) {
     return { card };
 }
 
+/**
+ * Render inline video galleries for one assistant message.
+ *
+ * The workspace and linked galleries take the cited citation subsets, not the
+ * full retrieved sets, so videos only appear when the response referenced them.
+ * Agent citations are executed tool results and are always rendered.
+ */
 export async function renderInlineVideoGalleries(
     messageElement,
-    hybridCitations = [],
-    webCitations = [],
+    citedHybridCitations = [],
+    citedWebCitations = [],
     agentCitations = [],
     conversationId = ""
 ) {
@@ -738,8 +745,8 @@ export async function renderInlineVideoGalleries(
 
     container.querySelectorAll(".inline-video-gallery-card").forEach((card) => card.remove());
 
-    const hasHybridCitations = Array.isArray(hybridCitations) && hybridCitations.length > 0;
-    const hasWebCitations = Array.isArray(webCitations) && webCitations.length > 0;
+    const hasHybridCitations = Array.isArray(citedHybridCitations) && citedHybridCitations.length > 0;
+    const hasWebCitations = Array.isArray(citedWebCitations) && citedWebCitations.length > 0;
     const hasAgentCitations = Array.isArray(agentCitations) && agentCitations.length > 0;
     if (!hasHybridCitations && !hasWebCitations && !hasAgentCitations) {
         container.classList.toggle("d-none", container.children.length === 0);
@@ -749,7 +756,7 @@ export async function renderInlineVideoGalleries(
     let remainingSlots = MAX_INLINE_VIDEO_ITEMS;
     const seenVideoKeys = new Set();
 
-    const workspaceItems = extractWorkspaceCitationVideoItems(hybridCitations, seenVideoKeys);
+    const workspaceItems = extractWorkspaceCitationVideoItems(citedHybridCitations, seenVideoKeys);
     if (workspaceItems.length > 0 && remainingSlots > 0) {
         const workspaceGallery = buildVideoGalleryResult(
             "Workspace videos",
@@ -765,11 +772,11 @@ export async function renderInlineVideoGalleries(
         }
     }
 
-    const linkedItems = extractLinkedVideoItems(webCitations, seenVideoKeys);
+    const linkedItems = extractLinkedVideoItems(citedWebCitations, seenVideoKeys);
     if (linkedItems.length > 0 && remainingSlots > 0) {
         const linkedGallery = buildVideoGalleryResult(
             "Linked videos",
-            "Direct video links returned with this response.",
+            "Video links cited in this response.",
             linkedItems.slice(0, remainingSlots),
             "Linked sources",
             linkedItems.length

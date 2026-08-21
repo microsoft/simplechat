@@ -11,8 +11,8 @@ from functions_search_service import (
 from swagger_wrapper import swagger_route, get_auth_security
 
 
-def register_route_backend_search(app):
-    @app.route('/api/search/documents', methods=['POST'])
+def register_route_backend_search(bp):
+    @bp.route('/api/search/documents', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -41,13 +41,13 @@ def register_route_backend_search(app):
             return jsonify({'error': str(e)}), 400
         except Exception as e:
             log_event(
-                '[Backend Search] Document search failed.',
+                '[BACKEND_SEARCH] Document search failed.',
                 extra={'user_id': user_id, 'error_message': str(e)},
                 level=logging.ERROR,
             )
             return jsonify({'error': 'Document search failed'}), 500
 
-    @app.route('/api/search/document-chunks', methods=['POST'])
+    @bp.route('/api/search/document-chunks', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -78,7 +78,7 @@ def register_route_backend_search(app):
             return jsonify({'error': str(e)}), 404
         except Exception as e:
             log_event(
-                '[Backend Search] Document chunk retrieval failed.',
+                '[BACKEND_SEARCH] Document chunk retrieval failed.',
                 extra={
                     'user_id': user_id,
                     'document_id': document_id,
@@ -88,7 +88,7 @@ def register_route_backend_search(app):
             )
             return jsonify({'error': 'Document chunk retrieval failed'}), 500
 
-    @app.route('/api/search/document-summary', methods=['POST'])
+    @bp.route('/api/search/document-summary', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -125,7 +125,7 @@ def register_route_backend_search(app):
             return jsonify({'error': str(e)}), 400
         except Exception as e:
             log_event(
-                '[Backend Search] Document summarization failed.',
+                '[BACKEND_SEARCH] Document summarization failed.',
                 extra={
                     'user_id': user_id,
                     'document_id': document_id,

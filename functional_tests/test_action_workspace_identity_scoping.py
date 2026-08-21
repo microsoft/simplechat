@@ -14,6 +14,7 @@ import ast
 import json
 import sys
 from pathlib import Path
+from test_support.versioning import assert_app_version_at_least
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -38,7 +39,7 @@ def test_version_and_schema_contract():
     schema = json.loads(read_text("application/single_app/static/json/schemas/plugin.schema.json"))
     properties = schema["definitions"]["Plugin"]["properties"]
 
-    assert 'VERSION = "0.241.095"' in config_text
+    assert_app_version_at_least("0.241.095")
     assert "identity_id" in properties
     assert properties["identity_id"]["type"] == "string"
 

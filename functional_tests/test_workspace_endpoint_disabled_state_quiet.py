@@ -11,6 +11,7 @@ showing user-facing errors.
 """
 
 from pathlib import Path
+from test_support.versioning import assert_app_version_at_least
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -27,7 +28,7 @@ def test_workspace_endpoint_disabled_state_quiet():
     workspace_template = WORKSPACE_TEMPLATE.read_text(encoding="utf-8")
     group_template = GROUP_TEMPLATE.read_text(encoding="utf-8")
 
-    assert 'VERSION = "0.240.005"' in config_content, "Expected config.py version 0.240.005"
+    assert_app_version_at_least("0.240.005")
     assert "function hasEndpointManagementUi()" in js_content, (
         "Expected workspace_model_endpoints.js to detect whether the endpoints UI exists."
     )

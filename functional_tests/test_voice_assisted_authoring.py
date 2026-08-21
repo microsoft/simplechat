@@ -11,6 +11,7 @@ without requiring live microphone, Azure Speech, or Azure OpenAI services.
 """
 
 from pathlib import Path
+from test_support.versioning import assert_app_version_at_least
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -33,7 +34,7 @@ def test_voice_assisted_authoring_contract():
     manage_group_js = read_text("application/single_app/static/js/group/manage_group.js")
     manage_public_js = read_text("application/single_app/static/js/public/manage_public_workspace.js")
 
-    assert 'VERSION = "0.241.177"' in config_text
+    assert_app_version_at_least("0.241.177")
 
     assert "js/form-voice-input.js" in base_template
     assert "app_settings.enable_speech_to_text_input" in base_template

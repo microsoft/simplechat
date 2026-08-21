@@ -32,10 +32,10 @@ import ffmpeg as ffmpeg_py
 import glob
 import jwt
 import pandas
+from functions_latest_features_nav import is_development_env_enabled
+from functions_appinsights import log_event
 
-# Add dotenv import
-from dotenv import load_dotenv
-
+from functions_environment import load_simplechat_dotenv
 from flask import (
     Flask, 
     flash, 
@@ -71,7 +71,8 @@ from PIL import Image
 from io import BytesIO
 from typing import List
 
-from azure.cosmos import CosmosClient, PartitionKey, exceptions
+import azure.cosmos as azure_cosmos
+from azure.cosmos import PartitionKey, exceptions
 from azure.cosmos.exceptions import CosmosResourceNotFoundError
 from azure.core.credentials import AzureKeyCredential
 from azure.ai.documentintelligence import DocumentIntelligenceClient
@@ -88,14 +89,15 @@ from azure.ai.contentsafety import ContentSafetyClient
 from azure.ai.contentsafety.models import AnalyzeTextOptions, TextCategory
 from azure.storage.blob import BlobServiceClient, generate_blob_sas, BlobSasPermissions
 
-# Load environment variables from .env file
-load_dotenv()
+# Load environment variables from a selected dotenv profile or the default .env file.
+DOTENV_LOAD_RESULT = load_simplechat_dotenv()
 
 # Flask app configuration constants
 EXECUTOR_TYPE = 'thread'
 EXECUTOR_MAX_WORKERS = 30
 SESSION_TYPE = 'filesystem'
-VERSION = "0.250.001"
+VERSION = "0.260.028"
+IS_DEVELOPMENT = is_development_env_enabled()
 
 SESSION_COOKIE_SAMESITE = os.getenv('SESSION_COOKIE_SAMESITE', 'Lax')
 SESSION_COOKIE_HTTPONLY = os.getenv('SESSION_COOKIE_HTTPONLY', 'true').lower() != 'false'
@@ -104,6 +106,7 @@ CSRF_ENFORCE_ORIGIN_FOR_UNSAFE_METHODS = os.getenv(
     'CSRF_ENFORCE_ORIGIN_FOR_UNSAFE_METHODS',
     'true'
 ).lower() != 'false'
+
 def _split_origin_list(raw_value):
     """Return trimmed origins from comma, space, or JSON-list environment values."""
     if not raw_value:
@@ -128,6 +131,34 @@ def _split_origin_list(raw_value):
     ]
 
 
+def _split_env_list(raw_value, lowercase=False):
+    """Return trimmed values from comma, space, or JSON-list environment values."""
+    if not raw_value:
+        return []
+
+    value = raw_value.strip()
+    parsed_values = []
+    if value.startswith('['):
+        try:
+            parsed = json.loads(value)
+            if isinstance(parsed, list):
+                parsed_values = parsed
+        except (TypeError, ValueError):
+            parsed_values = []
+    else:
+        parsed_values = re.split(r'[\s,]+', value)
+
+    normalized_values = []
+    for item in parsed_values:
+        normalized_item = str(item).strip()
+        if not normalized_item:
+            continue
+        if lowercase:
+            normalized_item = normalized_item.lower()
+        normalized_values.append(normalized_item)
+    return normalized_values
+
+
 CSRF_TRUSTED_ORIGINS = _split_origin_list(os.getenv('CSRF_TRUSTED_ORIGINS', ''))
 
 SECRET_KEY = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
@@ -138,6 +169,7 @@ HSTS_MAX_AGE = int(os.getenv('HSTS_MAX_AGE', '31536000'))  # 1 year default
 
 CLIENTS = {}
 CLIENTS_LOCK = threading.Lock()
+ENHANCED_CITATIONS_STORAGE_STATUS = {}
 
 # Base allowed extensions (always available)
 BASE_ALLOWED_EXTENSIONS = {'txt', 'doc', 'docm', 'html', 'md', 'json', 'xml', 'yaml', 'yml', 'log'}
@@ -155,7 +187,12 @@ VIDEO_EXTENSIONS = {
     'mpg', 'wmv', 'asf', 'm4v', 'isma', 'ismv', 'dvr-ms', 'webm', 'mpeg'
 }
 
-AUDIO_EXTENSIONS = {'mp3', 'wav', 'ogg', 'aac', 'flac', 'm4a'}
+AUDIO_EXTENSIONS = {
+    '3ga', 'aac', 'ac3', 'aif', 'aifc', 'aiff', 'amr', 'ape', 'au', 'caf',
+    'dts', 'f4a', 'flac', 'm4a', 'm4b', 'm4r', 'mka', 'mp2', 'mp3', 'mpa',
+    'oga', 'ogg', 'opus', 'spx', 'wav', 'weba', 'wma', 'wv'
+}
+AUDIO_FAST_TRANSCRIPTION_SOURCE_EXTENSIONS = {'aac', 'flac', 'm4a', 'mp3', 'ogg', 'wav'}
 
 def get_allowed_extensions(enable_video=False, enable_audio=False):
     """
@@ -182,6 +219,49 @@ def get_allowed_extensions(enable_video=False, enable_audio=False):
 
     return extensions
 
+def get_allowed_extension_categories(enable_video=False, enable_audio=False):
+    """
+    Get allowed file extensions grouped for display in workspace upload dialogs.
+    """
+    categories = [
+        {
+            'name': 'Documents and presentations',
+            'extensions': BASE_ALLOWED_EXTENSIONS | DOCUMENT_EXTENSIONS,
+        },
+        {
+            'name': 'Tables and data',
+            'extensions': TABULAR_EXTENSIONS,
+        },
+        {
+            'name': 'Images',
+            'extensions': IMAGE_EXTENSIONS,
+        },
+        {
+            'name': 'Email and diagrams',
+            'extensions': EMAIL_EXTENSIONS | VISIO_EXTENSIONS,
+        },
+    ]
+
+    if enable_audio:
+        categories.append({
+            'name': 'Audio',
+            'extensions': AUDIO_EXTENSIONS,
+        })
+
+    if enable_video:
+        categories.append({
+            'name': 'Video',
+            'extensions': VIDEO_EXTENSIONS,
+        })
+
+    return [
+        {
+            'name': category['name'],
+            'extensions': sorted(category['extensions']),
+        }
+        for category in categories
+    ]
+
 ALLOWED_EXTENSIONS = get_allowed_extensions(enable_video=True, enable_audio=True)
 
 # Admin UI specific extensions (for logo/favicon uploads)
@@ -205,6 +285,9 @@ IDLE_TIMEOUT_EXEMPT_PATHS = {
     '/login',
     '/logout',
     '/logout/local',
+    '/terms-of-use',
+    '/terms-of-use/accept',
+    '/terms-of-use/decline',
     '/getAToken',
     '/getATokenApi',
     '/ci-auth/session',
@@ -232,10 +315,31 @@ CI_BEARER_SESSION_ALLOWED_APP_IDS = [
     if app_id.strip()
 ]
 CI_BEARER_SESSION_REQUIRED_ROLE = os.getenv("CI_BEARER_SESSION_REQUIRED_ROLE", "Admin")
+ENABLE_MCP_UI = os.getenv("ENABLE_MCP_UI", os.getenv("enable_mcp_ui", "false")).lower() == "true"
+INBOUND_MCP_RESOURCE_PATH = "/api/mcp"
+INBOUND_MCP_PRM_ROOT_PATH = "/.well-known/oauth-protected-resource"
+INBOUND_MCP_PRM_RESOURCE_PATH = f"{INBOUND_MCP_PRM_ROOT_PATH}{INBOUND_MCP_RESOURCE_PATH}"
+INBOUND_MCP_LEGACY_PRM_PATH = "/.well-known/oauth-protected-resource/mcp"
+INBOUND_MCP_PRM_PATH = INBOUND_MCP_PRM_RESOURCE_PATH
+INBOUND_MCP_PRM_PATHS = (
+    INBOUND_MCP_PRM_ROOT_PATH,
+    INBOUND_MCP_PRM_RESOURCE_PATH,
+    INBOUND_MCP_LEGACY_PRM_PATH,
+)
+INBOUND_MCP_AUTHORIZATION_SERVER_METADATA_PATH = "/.well-known/oauth-authorization-server"
+ENABLE_MCP_DESTINATION_GOVERNANCE = os.getenv("ENABLE_MCP_DESTINATION_GOVERNANCE", "false").lower() == "true"
+MCP_ALLOWED_DESTINATIONS = _split_env_list(os.getenv("MCP_ALLOWED_DESTINATIONS", ""))
+MCP_ALLOWED_PERSONAL_DESTINATIONS = _split_env_list(os.getenv("MCP_ALLOWED_PERSONAL_DESTINATIONS", ""))
+MCP_ALLOWED_GROUP_DESTINATIONS = _split_env_list(os.getenv("MCP_ALLOWED_GROUP_DESTINATIONS", ""))
+MCP_ALLOWED_GLOBAL_DESTINATIONS = _split_env_list(os.getenv("MCP_ALLOWED_GLOBAL_DESTINATIONS", ""))
+MCP_BLOCK_UNSAFE_DESTINATIONS = os.getenv("MCP_BLOCK_UNSAFE_DESTINATIONS", "false").lower() == "true"
+SIMPLECHAT_MCP_PRECONFIGURATION_PATHS = os.getenv("SIMPLECHAT_MCP_PRECONFIGURATION_PATHS", "")
+ENABLE_LOCAL_MCP_PRECONFIGURATION = os.getenv("ENABLE_LOCAL_MCP_PRECONFIGURATION", "false").lower() == "true"
 LOGIN_REDIRECT_URL = os.getenv("LOGIN_REDIRECT_URL")
 HOME_REDIRECT_URL = os.getenv("HOME_REDIRECT_URL")  # Front Door URL for home page
 AZURE_ENVIRONMENT = os.getenv("AZURE_ENVIRONMENT", "public") # public, usgovernment, custom
 ENABLE_TEAMS_SSO = os.getenv("ENABLE_TEAMS_SSO", "false").lower() == "true"
+ENABLE_AUTO_LOGIN_ON_INDEX = os.getenv("ENABLE_AUTO_LOGIN_ON_INDEX", "false").lower() == "true"
 TEAMS_APP_RESOURCE = os.getenv("TEAMS_APP_RESOURCE", "")
 TEAMS_SUCCESS_REDIRECT_PATH = os.getenv("TEAMS_SUCCESS_REDIRECT_PATH", "/chats")
 TEAMS_FRAME_ANCESTORS = _split_origin_list(os.getenv("TEAMS_FRAME_ANCESTORS", ""))
@@ -313,6 +417,7 @@ FRAME_ANCESTORS_DIRECTIVE = "frame-ancestors 'self'"
 if TEAMS_FRAME_ANCESTORS:
     FRAME_ANCESTORS_DIRECTIVE = f"{FRAME_ANCESTORS_DIRECTIVE} {' '.join(TEAMS_FRAME_ANCESTORS)}"
 
+
 # Security Headers Configuration
 SECURITY_HEADERS = {
     'X-Content-Type-Options': 'nosniff',
@@ -363,18 +468,149 @@ storage_account_public_documents_container_name = "public-documents"
 storage_account_personal_chat_container_name = "personal-chat"
 storage_account_group_chat_container_name = "group-chat"
 
+
+def get_enhanced_citations_storage_container_names():
+    """Return the source blob containers used by Enhanced Citations."""
+    return [
+        storage_account_user_documents_container_name,
+        storage_account_group_documents_container_name,
+        storage_account_public_documents_container_name,
+        storage_account_personal_chat_container_name,
+        storage_account_group_chat_container_name,
+    ]
+
+
+def _set_enhanced_citations_storage_status(
+    state,
+    message,
+    enabled=False,
+    configured=False,
+    authentication_type=None,
+    error_type=None,
+):
+    """Record non-secret Enhanced Citations storage startup status for admin diagnostics."""
+    ENHANCED_CITATIONS_STORAGE_STATUS.clear()
+    ENHANCED_CITATIONS_STORAGE_STATUS.update({
+        "state": state,
+        "message": message,
+        "enabled": bool(enabled),
+        "configured": bool(configured),
+        "authentication_type": authentication_type or "",
+        "error_type": error_type or "",
+        "container_names": get_enhanced_citations_storage_container_names(),
+    })
+
+
+def get_enhanced_citations_storage_status():
+    """Return a copy of the current Enhanced Citations storage startup status."""
+    if not ENHANCED_CITATIONS_STORAGE_STATUS:
+        _set_enhanced_citations_storage_status(
+            "not_initialized",
+            "Enhanced Citations storage has not been initialized for this process.",
+        )
+    return dict(ENHANCED_CITATIONS_STORAGE_STATUS)
+
+
+def build_enhanced_citations_blob_service_client(settings):
+    """Build the Enhanced Citations Blob service client without probing the network."""
+    settings = settings or {}
+    authentication_type = str(settings.get("office_docs_authentication_type") or "key").strip()
+    if authentication_type == "managed_identity":
+        blob_endpoint = str(settings.get("office_docs_storage_account_blob_endpoint") or "").strip()
+        if not blob_endpoint:
+            raise ValueError("Enhanced Citations blob endpoint is required for managed identity authentication.")
+        return BlobServiceClient(account_url=blob_endpoint, credential=DefaultAzureCredential())
+
+    connection_string = str(settings.get("office_docs_storage_account_url") or "").strip()
+    if not connection_string:
+        raise ValueError("Enhanced Citations storage connection string is required for key authentication.")
+    return BlobServiceClient.from_connection_string(connection_string)
+
+
+def _initialize_enhanced_citations_storage_client(settings, enable_enhanced_citations):
+    """Initialize optional Enhanced Citations storage without startup network calls."""
+    authentication_type = str((settings or {}).get("office_docs_authentication_type") or "key").strip()
+    if not enable_enhanced_citations:
+        CLIENTS.pop("storage_account_office_docs_client", None)
+        _set_enhanced_citations_storage_status(
+            "disabled",
+            "Enhanced Citations storage is disabled.",
+            authentication_type=authentication_type,
+        )
+        return
+
+    try:
+        blob_service_client = build_enhanced_citations_blob_service_client(settings)
+        CLIENTS["storage_account_office_docs_client"] = blob_service_client
+        _set_enhanced_citations_storage_status(
+            "configured",
+            "Enhanced Citations storage client was configured at startup. Live container checks are deferred until upload or admin connection testing.",
+            enabled=True,
+            configured=True,
+            authentication_type=authentication_type,
+        )
+        log_event(
+            "[ENHANCED_CITATIONS] Storage client configured without startup container checks.",
+            extra={
+                "authentication_type": authentication_type,
+                "container_count": len(get_enhanced_citations_storage_container_names()),
+            },
+            level=logging.INFO,
+        )
+    except Exception as exc:
+        CLIENTS.pop("storage_account_office_docs_client", None)
+        _set_enhanced_citations_storage_status(
+            "initialization_failed",
+            "Enhanced Citations storage is enabled but the storage client could not be configured. The application will continue running, but Enhanced Citations storage operations will fail until settings are corrected.",
+            enabled=True,
+            configured=False,
+            authentication_type=authentication_type,
+            error_type=type(exc).__name__,
+        )
+        log_event(
+            "[ENHANCED_CITATIONS] Storage client initialization failed during startup; continuing without Enhanced Citations storage.",
+            extra={
+                "authentication_type": authentication_type,
+                "error_type": type(exc).__name__,
+            },
+            level=logging.WARNING,
+            exceptionTraceback=True,
+        )
+
 # Initialize Azure Cosmos DB client
 cosmos_endpoint = os.getenv("AZURE_COSMOS_ENDPOINT")
 cosmos_key = os.getenv("AZURE_COSMOS_KEY")
 cosmos_authentication_type = os.getenv("AZURE_COSMOS_AUTHENTICATION_TYPE", "key") #key or managed_identity
 
 if cosmos_authentication_type == "managed_identity":
-    cosmos_client = CosmosClient(cosmos_endpoint, credential=DefaultAzureCredential(), consistency_level="Session")
+    cosmos_client = azure_cosmos.CosmosClient(cosmos_endpoint, credential=DefaultAzureCredential(), consistency_level="Session")
 else:
-    cosmos_client = CosmosClient(cosmos_endpoint, cosmos_key, consistency_level="Session")
+    cosmos_client = azure_cosmos.CosmosClient(cosmos_endpoint, cosmos_key, consistency_level="Session")
 
 cosmos_database_name = "SimpleChat"
 cosmos_database = cosmos_client.create_database_if_not_exists(cosmos_database_name)
+
+_cosmos_create_container_if_not_exists = cosmos_database.create_container_if_not_exists
+
+
+def _create_container_if_not_exists_with_conflict_recovery(*args, **kwargs):
+    """Return the existing container when concurrent startup creates it first."""
+    try:
+        return _cosmos_create_container_if_not_exists(*args, **kwargs)
+    except exceptions.CosmosResourceExistsError:
+        container_id = kwargs.get('id')
+        if container_id is None and args:
+            container_id = args[0]
+
+        if not container_id:
+            raise
+
+        container = cosmos_database.get_container_client(container_id)
+        container.read()
+        return container
+
+
+cosmos_database.create_container_if_not_exists = _create_container_if_not_exists_with_conflict_recovery
 
 cosmos_conversations_container_name = "conversations"
 cosmos_conversations_container = cosmos_database.create_container_if_not_exists(
@@ -395,15 +631,32 @@ cosmos_tabular_export_runs_container = cosmos_database.create_container_if_not_e
 )
 
 cosmos_data_management_jobs_container_name = "data_management_jobs"
+DATA_MANAGEMENT_HISTORY_INDEXING_POLICY = {
+    "indexingMode": "consistent",
+    "automatic": True,
+    "includedPaths": [{"path": "/*"}],
+    "excludedPaths": [{"path": "/\"_etag\"/?"}],
+    "compositeIndexes": [[
+        {"path": "/created_at", "order": "descending"},
+        {"path": "/id", "order": "descending"},
+    ]],
+}
 cosmos_data_management_jobs_container = cosmos_database.create_container_if_not_exists(
     id=cosmos_data_management_jobs_container_name,
-    partition_key=PartitionKey(path="/id")
+    partition_key=PartitionKey(path="/id"),
+    indexing_policy=DATA_MANAGEMENT_HISTORY_INDEXING_POLICY
 )
 
 cosmos_data_management_job_items_container_name = "data_management_job_items"
 cosmos_data_management_job_items_container = cosmos_database.create_container_if_not_exists(
     id=cosmos_data_management_job_items_container_name,
     partition_key=PartitionKey(path="/job_id")
+)
+
+cosmos_data_management_backup_item_states_container_name = "data_management_backup_item_states"
+cosmos_data_management_backup_item_states_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_data_management_backup_item_states_container_name,
+    partition_key=PartitionKey(path="/source_scope")
 )
 
 cosmos_personal_workflows_container_name = "personal_workflows"
@@ -512,6 +765,18 @@ cosmos_public_documents_container_name = "public_documents"
 cosmos_public_documents_container = cosmos_database.create_container_if_not_exists(
     id=cosmos_public_documents_container_name,
     partition_key=PartitionKey(path="/id")
+)
+
+cosmos_document_access_index_container_name = "document_access_index"
+cosmos_document_access_index_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_document_access_index_container_name,
+    partition_key=PartitionKey(path="/scope_key")
+)
+
+cosmos_key_vault_secret_reminders_container_name = "key_vault_secret_reminders"
+cosmos_key_vault_secret_reminders_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_key_vault_secret_reminders_container_name,
+    partition_key=PartitionKey(path="/scope_key")
 )
 
 cosmos_personal_file_sync_sources_container_name = "personal_file_sync_sources"
@@ -1015,35 +1280,4 @@ def initialize_clients(settings):
                 del CLIENTS["content_safety_client"]
 
 
-        try:
-            if enable_enhanced_citations:
-                blob_service_client = None
-                if settings.get("office_docs_authentication_type") == "key":
-                    blob_service_client = BlobServiceClient.from_connection_string(settings.get("office_docs_storage_account_url"))
-                    CLIENTS["storage_account_office_docs_client"] = blob_service_client
-                elif settings.get("office_docs_authentication_type") == "managed_identity":
-                    blob_service_client = BlobServiceClient(account_url=settings.get("office_docs_storage_account_blob_endpoint"), credential=DefaultAzureCredential())
-                    CLIENTS["storage_account_office_docs_client"] = blob_service_client
-                
-                # Create containers if they don't exist
-                # This addresses the issue where the application assumes containers exist
-                if blob_service_client:
-                    for container_name in [
-                        storage_account_user_documents_container_name,
-                        storage_account_group_documents_container_name,
-                        storage_account_public_documents_container_name,
-                        storage_account_personal_chat_container_name,
-                        storage_account_group_chat_container_name
-                        ]:
-                        try:
-                            container_client = blob_service_client.get_container_client(container_name)
-                            if not container_client.exists():
-                                print(f"Container '{container_name}' does not exist. Creating...")
-                                container_client.create_container()
-                                print(f"Container '{container_name}' created successfully.")
-                            else:
-                                print(f"Container '{container_name}' already exists.")
-                        except Exception as container_error:
-                            print(f"Error creating container {container_name}: {str(container_error)}")
-        except Exception as e:
-            print(f"Failed to initialize Blob Storage clients: {e}")
+        _initialize_enhanced_citations_storage_client(settings, enable_enhanced_citations)

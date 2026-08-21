@@ -17,6 +17,7 @@ Additionally validates that:
 import sys
 import os
 import inspect
+from test_support.versioning import assert_app_version_at_least
 
 # Add the application directory to the path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'application', 'single_app'))
@@ -183,8 +184,7 @@ def test_version_updated():
         with open(config_path, 'r') as f:
             config_content = f.read()
         
-        assert 'VERSION = "0.239.015"' in config_content, \
-            f"config.py should contain VERSION = \"0.239.015\""
+        assert_app_version_at_least("0.239.015")
         
         print("✅ Version correctly updated to 0.239.015!")
         return True

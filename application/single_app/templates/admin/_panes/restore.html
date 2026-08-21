@@ -1,0 +1,147 @@
+            <div class="tab-pane fade{% if admin_landing_tab == 'restore' %} show active{% endif %}" id="restore" role="tabpanel" aria-labelledby="restore-tab" data-testid="restore-tab-pane" data-ignore-settings-change="true">
+                <div class="card p-4 mb-4 border-primary shadow-sm" id="data-management-backup-inventory-section">
+                    <div class="d-flex flex-wrap align-items-start justify-content-between gap-3 mb-3">
+                        <div>
+                            <h4 class="mb-1">Backup Inventory</h4>
+                            <p class="text-muted mb-0 small">Track completed full and partial backups created by Data Management jobs.</p>
+                        </div>
+                        <div class="d-flex flex-wrap align-items-center gap-2">
+                            <button type="button" class="btn btn-outline-danger btn-sm" id="data-management-run-retention-cleanup-btn"
+                                    data-bs-toggle="tooltip" data-bs-placement="bottom"
+                                    title="Permanently deletes backups older than the configured retention period, along with their stored artifacts. Backups still inside the retention window are never touched.">
+                                <i class="bi bi-trash3 me-1"></i>Run Retention Cleanup
+                            </button>
+                            <button type="button" class="btn btn-link btn-sm p-0 text-decoration-none" id="data-management-retention-cleanup-info-btn"
+                                    data-bs-toggle="collapse" data-bs-target="#data-management-retention-cleanup-help"
+                                    aria-expanded="false" aria-controls="data-management-retention-cleanup-help"
+                                    aria-label="What does Run Retention Cleanup do?">
+                                <i class="bi bi-info-circle" aria-hidden="true"></i>
+                            </button>
+                            <button type="button" class="btn btn-outline-secondary btn-sm" id="data-management-refresh-backups-btn">
+                                <i class="bi bi-arrow-clockwise me-1"></i>Refresh
+                            </button>
+                        </div>
+                    </div>
+                    <div class="collapse mb-3" id="data-management-retention-cleanup-help">
+                        <div class="alert alert-info small mb-0" role="note">
+                            <div class="fw-semibold mb-1"><i class="bi bi-info-circle me-1" aria-hidden="true"></i>What does Run Retention Cleanup do?</div>
+                            <p class="mb-2">
+                                It permanently deletes backups whose age exceeds the retention period configured in Data Management settings,
+                                and removes their stored artifacts from the backup container. Backups newer than the retention cutoff are left alone.
+                            </p>
+                            <ul class="mb-2 ps-3">
+                                <li>Only backups in a finished state are eligible; running or queued jobs are skipped.</li>
+                                <li>When <em>Keep latest full backup</em> is enabled, the most recent successful full backup is protected even if it is past the cutoff.</li>
+                                <li>Each run deletes at most 25 backups, so very large cleanups may need several runs.</li>
+                                <li>Cleanup also runs automatically on the configured schedule; this button just runs it now.</li>
+                            </ul>
+                            <p class="mb-0 text-muted">
+                                Seeing &ldquo;found no expired backups to delete&rdquo; means every backup is still inside the retention window. That is expected, not an error.
+                            </p>
+                        </div>
+                    </div>
+                    <div class="row g-3 mb-3" role="group" aria-label="Backup inventory filters">
+                        <div class="col-lg-4">
+                            <button type="button" class="btn btn-primary w-100 h-100 text-start" id="data-management-view-all-backups-btn" data-backup-filter="all" aria-pressed="true">
+                                <span class="d-flex align-items-center gap-2 small text-white-50">
+                                    <i class="bi bi-check-circle"></i>
+                                    <span>Available backups</span>
+                                </span>
+                                <span class="d-block fs-3 fw-semibold" id="data-management-available-backup-count">0</span>
+                                <span class="d-block small text-white-50">Completed backups ready to inspect or restore later.</span>
+                            </button>
+                        </div>
+                        <div class="col-lg-4">
+                            <button type="button" class="btn btn-outline-primary w-100 h-100 text-start" id="data-management-view-full-backups-btn" data-backup-filter="full" aria-pressed="false">
+                                <span class="d-flex align-items-center gap-2 small text-muted">
+                                    <i class="bi bi-archive"></i>
+                                    <span>Full backups</span>
+                                </span>
+                                <span class="d-block fs-3 fw-semibold" id="data-management-full-backup-count">0</span>
+                                <span class="d-block small text-muted">Complete snapshots across the selected backup surfaces.</span>
+                            </button>
+                        </div>
+                        <div class="col-lg-4">
+                            <button type="button" class="btn btn-outline-primary w-100 h-100 text-start" id="data-management-view-partial-backups-btn" data-backup-filter="partial" aria-pressed="false">
+                                <span class="d-flex align-items-center gap-2 small text-muted">
+                                    <i class="bi bi-archive-fill"></i>
+                                    <span>Partial backups</span>
+                                </span>
+                                <span class="d-block fs-3 fw-semibold" id="data-management-partial-backup-count">0</span>
+                                <span class="d-block small text-muted">Daily change captures between full backup windows.</span>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="row g-2 align-items-end mb-3" aria-label="Backup inventory query filters">
+                        <div class="col-sm-6 col-lg-2">
+                            <label class="form-label small" for="data_management_backup_status_filter">Status</label>
+                            <select class="form-select form-select-sm" id="data_management_backup_status_filter">
+                                <option value="available" selected>Available</option>
+                                <option value="">All statuses</option>
+                                <option value="completed">Completed</option>
+                                <option value="completed_with_warnings">Completed with warnings</option>
+                                <option value="queued">Queued</option>
+                                <option value="running">Running</option>
+                                <option value="failed">Failed</option>
+                                <option value="canceled">Canceled</option>
+                            </select>
+                        </div>
+                        <div class="col-sm-6 col-lg-2">
+                            <label class="form-label small" for="data_management_backup_scheduled_filter">Run type</label>
+                            <select class="form-select form-select-sm" id="data_management_backup_scheduled_filter">
+                                <option value="all" selected>Scheduled and manual</option>
+                                <option value="scheduled">Scheduled</option>
+                                <option value="manual">Manual</option>
+                            </select>
+                        </div>
+                        <div class="col-sm-6 col-lg-2">
+                            <label class="form-label small" for="data_management_backup_created_from">Created from</label>
+                            <input class="form-control form-control-sm" type="date" id="data_management_backup_created_from" />
+                        </div>
+                        <div class="col-sm-6 col-lg-2">
+                            <label class="form-label small" for="data_management_backup_created_to">Created through</label>
+                            <input class="form-control form-control-sm" type="date" id="data_management_backup_created_to" />
+                        </div>
+                        <div class="col-sm-6 col-lg-2">
+                            <label class="form-label small" for="data_management_backup_page_size">Rows per page</label>
+                            <select class="form-select form-select-sm" id="data_management_backup_page_size">
+                                <option value="10">10</option>
+                                <option value="25" selected>25</option>
+                                <option value="50">50</option>
+                                <option value="100">100</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="table-responsive">
+                        <table class="table table-sm align-middle">
+                            <thead>
+                                <tr>
+                                    <th scope="col">Backup</th>
+                                    <th scope="col">Completed</th>
+                                    <th scope="col">Contents</th>
+                                    <th scope="col">Storage</th>
+                                    <th scope="col">Protection</th>
+                                    <th scope="col">Warnings</th>
+                                    <th scope="col">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="data-management-backups-tbody">
+                                <tr>
+                                    <td colspan="7" class="text-muted">Backup inventory has not loaded yet.</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <nav class="d-flex flex-wrap align-items-center justify-content-between gap-2" aria-label="Backup inventory pagination">
+                        <span class="small text-muted" id="data-management-backup-pagination-status" role="status" aria-live="polite">Page 1 has not loaded yet.</span>
+                        <div class="btn-group btn-group-sm" role="group" aria-label="Backup inventory pages">
+                            <button type="button" class="btn btn-outline-secondary" id="data-management-backup-previous-page-btn" disabled aria-disabled="true">
+                                <i class="bi bi-chevron-left me-1"></i>Previous
+                            </button>
+                            <button type="button" class="btn btn-outline-secondary" id="data-management-backup-next-page-btn" disabled aria-disabled="true">
+                                Next<i class="bi bi-chevron-right ms-1"></i>
+                            </button>
+                        </div>
+                    </nav>
+                </div>
+            </div>

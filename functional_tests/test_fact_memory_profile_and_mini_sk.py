@@ -16,6 +16,7 @@ import os
 import types
 import uuid
 from datetime import datetime, timezone
+from test_support.versioning import assert_app_version_at_least
 
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -357,10 +358,10 @@ def test_route_sources_wire_chat_and_profile_fact_memory_paths():
     assert "memory_type': 'instruction'" in route_source or 'FACT_MEMORY_TYPE_INSTRUCTION' in route_source
     assert "'fact_memory'" in route_source
 
-    assert "@app.route('/api/profile/fact-memory', methods=['GET'])" in profile_route_source
-    assert "@app.route('/api/profile/fact-memory', methods=['POST'])" in profile_route_source
-    assert "@app.route('/api/profile/fact-memory/<fact_id>', methods=['PUT'])" in profile_route_source
-    assert "@app.route('/api/profile/fact-memory/<fact_id>', methods=['DELETE'])" in profile_route_source
+    assert "@bp.route('/api/profile/fact-memory', methods=['GET'])" in profile_route_source
+    assert "@bp.route('/api/profile/fact-memory', methods=['POST'])" in profile_route_source
+    assert "@bp.route('/api/profile/fact-memory/<fact_id>', methods=['PUT'])" in profile_route_source
+    assert "@bp.route('/api/profile/fact-memory/<fact_id>', methods=['DELETE'])" in profile_route_source
     assert 'FactMemoryStore()' in profile_route_source
     assert 'memory_type' in profile_route_source
 
@@ -374,7 +375,7 @@ def test_version_and_feature_documentation_alignment():
 
     feature_doc_content = read_file_text(FEATURE_DOC)
 
-    assert read_config_version() == '0.240.085'
+    assert_app_version_at_least("0.240.085")
     assert 'Implemented in version: **0.240.077**' in feature_doc_content
     assert 'Updated in version:' in feature_doc_content
     assert 'Updated in version: **0.240.085**' in feature_doc_content

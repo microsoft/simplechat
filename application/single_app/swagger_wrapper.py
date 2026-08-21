@@ -87,7 +87,7 @@ Cache Management:
 - Memory-efficient single-entry cache per app instance
 """
 
-from flask import Flask, jsonify, render_template_string, request, make_response
+from flask import Blueprint, Flask, jsonify, render_template_string, request, make_response
 from functools import wraps
 from typing import Dict, List, Optional, Any, Union
 import json
@@ -1555,8 +1555,11 @@ def register_swagger_routes(app: Flask):
     if not settings.get('enable_swagger', True):  # Default to True if setting not found
         print("Swagger documentation is disabled in admin settings.")
         return
+
+    swagger_bp = Blueprint('swagger_docs', __name__)
+    swagger_bp.before_request(apply_blueprint_auth('login_required'))
     
-    @app.route('/swagger')
+    @swagger_bp.route('/swagger')
     @swagger_route(
         summary="Interactive Swagger UI",
         description="Serve the Swagger UI interface for API documentation and testing.",
@@ -2049,7 +2052,7 @@ def register_swagger_routes(app: Flask):
         """
         return swagger_html
     
-    @app.route('/swagger.json')
+    @swagger_bp.route('/swagger.json')
     @swagger_route(
         summary="OpenAPI Specification",
         description="Serve the OpenAPI 3.0 specification as JSON with caching and rate limiting.",
@@ -2105,7 +2108,7 @@ def register_swagger_routes(app: Flask):
         
         return response
     
-    @app.route('/swagger.yaml')
+    @swagger_bp.route('/swagger.yaml')
     @swagger_route(
         summary="OpenAPI Specification (YAML)",
         description="Serve the OpenAPI 3.0 specification as YAML with caching and rate limiting.",
@@ -2161,7 +2164,7 @@ def register_swagger_routes(app: Flask):
         
         return response
     
-    @app.route('/api/swagger/routes')
+    @swagger_bp.route('/api/swagger/routes')
     @swagger_route(
         summary="List Documented Routes",
         description="List all routes and their documentation status with cache statistics.",
@@ -2233,7 +2236,7 @@ def register_swagger_routes(app: Flask):
             'cache_stats': _swagger_cache.get_cache_stats()
         })
     
-    @app.route('/api/swagger/cache', methods=['GET', 'DELETE'])
+    @swagger_bp.route('/api/swagger/cache', methods=['GET', 'DELETE'])
     @swagger_route(
         summary="Swagger Cache Management",
         description="Manage swagger specification cache - get cache statistics or clear cache.",
@@ -2274,6 +2277,8 @@ def register_swagger_routes(app: Flask):
                 'cache_stats': stats,
                 'message': 'Use DELETE method to clear cache'
             })
+
+    app.register_blueprint(swagger_bp)
 
 # Utility function to create common response schemas
 def create_response_schema(success_schema: Optional[Dict[str, Any]] = None, error_schema: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:

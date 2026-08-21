@@ -12,7 +12,15 @@ const MCP_ACTION_IDENTITY_AUTH_TYPES = ['api_key', 'bearer_token', 'managed_iden
 const DATABRICKS_ACTION_IDENTITY_AUTH_TYPES = ['api_key', 'bearer_token', 'managed_identity'];
 const SNOWFLAKE_ACTION_IDENTITY_AUTH_TYPES = ['api_key', 'bearer_token', 'username_password'];
 const TABLEAU_ACTION_IDENTITY_AUTH_TYPES = ['api_key', 'username_password'];
+const YAMCS_ACTION_IDENTITY_AUTH_TYPES = ['api_key', 'bearer_token', 'username_password'];
+const LOG_ANALYTICS_ACTION_IDENTITY_AUTH_TYPES = ['client_secret', 'managed_identity'];
 const BLOB_STORAGE_PLUGIN_TYPE = 'blob_storage';
+const AZURE_STORAGE_ENDPOINT_SUFFIXES = [
+  'core.windows.net',
+  'core.usgovcloudapi.net',
+  'core.chinacloudapi.cn',
+  'core.cloudapi.de'
+];
 const DATABRICKS_PLUGIN_TYPE = 'databricks';
 const DATABRICKS_DEFAULT_CLOUD = 'azure_commercial';
 const SNOWFLAKE_PLUGIN_TYPE = 'snowflake';
@@ -23,9 +31,57 @@ const SNOWFLAKE_AUTH_METHOD_OAUTH = 'oauth';
 const TABLEAU_PLUGIN_TYPE = 'tableau';
 const TABLEAU_AUTH_METHOD_PAT = 'personal_access_token';
 const TABLEAU_AUTH_METHOD_USERNAME_PASSWORD = 'username_password';
+const YAMCS_PLUGIN_TYPE = 'yamcs';
+const YAMCS_DEFAULT_PROCESSOR = 'realtime';
+const YAMCS_AUTH_METHOD_USERNAME_PASSWORD = 'username_password';
+const YAMCS_AUTH_METHOD_API_KEY = 'api_key';
+const YAMCS_AUTH_METHOD_BEARER_TOKEN = 'bearer_token';
+const YAMCS_AUTH_METHOD_NONE = 'none';
+const publicWorkspacePlural = window.getPublicWorkspaceLabel ? window.getPublicWorkspaceLabel('plural') : 'Public Workspaces';
 const MCP_PLUGIN_TYPE = 'mcp';
+const KEY_VAULT_SECRET_REMINDERS_METADATA_FIELD = 'key_vault_secret_reminders';
+const KEY_VAULT_SECRET_REMINDER_ALL_FIELDS = '__all__';
+const MCP_HEADER_NAME_PATTERN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
+const MCP_MAX_CUSTOM_HEADER_COUNT = 20;
+const MCP_MAX_HEADER_VALUE_LENGTH = 4096;
+const MCP_RESERVED_CUSTOM_HEADER_NAMES = new Set([
+  'connection',
+  'content-length',
+  'cookie',
+  'host',
+  'keep-alive',
+  'proxy-authenticate',
+  'proxy-authorization',
+  'set-cookie',
+  'te',
+  'trailer',
+  'transfer-encoding',
+  'upgrade'
+]);
 const AZURE_MAPS_PLUGIN_TYPE = 'azure_maps_openlayers';
 const AZURE_MAPS_DEFAULT_ENDPOINT = 'https://atlas.microsoft.com';
+const ROCKSDB_PLUGIN_TYPE = 'rocksdb';
+const ROCKSDB_AUTH_SCHEME_NONE = 'none';
+const ROCKSDB_AUTH_SCHEME_BEARER = 'bearer';
+const ROCKSDB_AUTH_SCHEME_API_KEY = 'api_key';
+const ROCKSDB_DEFAULT_API_KEY_HEADER = 'X-API-Key';
+const ROCKSDB_DEFAULT_COLUMN_FAMILY = 'default';
+const ROCKSDB_DEFAULT_MAX_RESULTS = 100;
+const ROCKSDB_DEFAULT_MAX_VALUE_BYTES = 32768;
+const ROCKSDB_DEFAULT_TIMEOUT = 30;
+const LOG_ANALYTICS_PLUGIN_TYPE = 'log_analytics';
+const LOG_ANALYTICS_DEFAULT_ENDPOINT = 'https://api.loganalytics.io';
+const LOG_ANALYTICS_DEFAULT_CLOUD = 'public';
+const ACTION_CONNECTION_TEST_CONFIG = {
+  openapi: { idPrefix: 'openapi', url: '/api/plugins/test-openapi-connection', label: 'OpenAPI' },
+  azureMaps: { idPrefix: 'azure-maps', url: '/api/plugins/test-azure-maps-connection', label: 'Azure Maps' },
+  blobStorage: { idPrefix: 'blob-storage', url: '/api/plugins/test-blob-storage-connection', label: 'Blob Storage' },
+  databricks: { idPrefix: 'databricks', url: '/api/plugins/test-databricks-connection', label: 'Databricks' },
+  logAnalytics: { idPrefix: 'log-analytics', url: '/api/plugins/test-log-analytics-connection', label: 'Log Analytics' },
+  mcp: { idPrefix: 'mcp', url: '/api/plugins/test-mcp-connection', label: 'MCP' },
+  snowflake: { idPrefix: 'snowflake', url: '/api/plugins/test-snowflake-connection', label: 'Snowflake' },
+  tableau: { idPrefix: 'tableau', url: '/api/plugins/test-tableau-connection', label: 'Tableau' }
+};
 const CHART_DEFAULT_ENDPOINT = 'chart://internal';
 const INTERNAL_DOCUMENT_SEARCH_ENDPOINT = 'internal://document-search';
 const MSGRAPH_DEFAULT_ENDPOINT = 'https://graph.microsoft.com';
@@ -40,7 +96,43 @@ const MSGRAPH_MAX_MAIL_DELAY_SECONDS = 600;
 const MSGRAPH_DEFAULT_CALENDAR_DELAY_SECONDS = 60;
 const MSGRAPH_MIN_CALENDAR_DELAY_SECONDS = 5;
 const MSGRAPH_MAX_CALENDAR_DELAY_SECONDS = 600;
+const MCP_DEFAULT_SERVER_PROFILE = 'generic';
 const MCP_STDIO_ENDPOINT = 'stdio://local';
+const MCP_FALLBACK_SERVER_PRESETS = [
+  {
+    id: MCP_DEFAULT_SERVER_PROFILE,
+    displayName: 'Generic MCP Server',
+    description: 'Default MCP server preset for standards-compliant MCP servers.',
+    defaults: {
+      transport: 'streamable_http',
+      auth_method: 'none',
+      api_key_header_name: 'X-API-Key',
+      load_tools: true,
+      load_prompts: false,
+      request_timeout: 30,
+      connect_timeout: 10,
+      sse_read_timeout: 300,
+      retry_count: 0,
+      retry_backoff_seconds: 1,
+      validate_tool_arguments: false,
+      tool_result_policy: 'truncate',
+      allowed_tool_names: []
+    },
+    ui: {
+      helpText: 'Use generic unless the server needs a specific compatibility preset.',
+      endpointPlaceholder: 'https://example.com/mcp',
+      websocketEndpointPlaceholder: 'wss://example.com/mcp'
+    },
+    constraints: {
+      allowedTransports: ['streamable_http', 'sse', 'websocket', 'stdio'],
+      allowedAuthMethods: ['none', 'bearer', 'api_key', 'basic', 'identity'],
+      customHeadersAllowed: true,
+      stdioAllowed: true
+    },
+    warnings: []
+  }
+];
+const MCP_FALLBACK_SERVER_PRECONFIGURATIONS = [];
 const BLOB_STORAGE_CAPABILITY_DEFINITIONS = [
   {
     key: 'list_container_contents',
@@ -125,6 +217,12 @@ const SIMPLECHAT_CAPABILITY_DEFINITIONS = [
     key: 'create_personal_collaboration_conversation',
     label: 'Create personal collaborative conversations',
     description: 'Allow this action to create personal collaborative conversations and invite participants.'
+  },
+  {
+    key: 'raise_workflow_alert',
+    label: 'Raise workflow alerts',
+    description: 'Allow this action to raise an alert signal while a workflow run is executing, so the workflow\'s alert rules can notify the owner.',
+    defaultEnabled: false
   }
 ];
 const MSGRAPH_CAPABILITY_DEFINITIONS = [
@@ -268,6 +366,13 @@ export class PluginModalStepper {
     this.blobStorageCapabilityState = this.getDefaultBlobStorageCapabilities();
     this.blobStorageReadFileTypeState = this.getDefaultBlobStorageReadFileTypes();
     this.blobStorageUploadFileTypeState = this.getDefaultBlobStorageUploadFileTypes();
+    this.mcpServerPresets = MCP_FALLBACK_SERVER_PRESETS;
+    this.mcpServerPresetMap = {};
+    this.mcpDefaultServerPreset = MCP_DEFAULT_SERVER_PROFILE;
+    this.mcpServerPresetsLoaded = false;
+    this.mcpServerPreconfigurations = MCP_FALLBACK_SERVER_PRECONFIGURATIONS;
+    this.mcpServerPreconfigurationMap = {};
+    this.mcpServerPreconfigurationsLoaded = false;
 
     this._loadPluginSchema().then(() => { // Load schema on initialization
       this._populateGenericAuthTypeDropdown(); // Dynamically populate generic auth type dropdown after schema loads (will be called again after schema loads)
@@ -355,6 +460,9 @@ export class PluginModalStepper {
     this.actionIdentityScope = { scope, apiBase };
     this.actionIdentities = [];
     this.actionIdentitiesLoaded = false;
+    this.mcpServerPreconfigurations = MCP_FALLBACK_SERVER_PRECONFIGURATIONS;
+    this.mcpServerPreconfigurationMap = {};
+    this.mcpServerPreconfigurationsLoaded = false;
   }
 
   async loadActionIdentities() {
@@ -433,6 +541,12 @@ export class PluginModalStepper {
     if (kind === 'tableau') {
       return this.actionIdentities.filter(identity => TABLEAU_ACTION_IDENTITY_AUTH_TYPES.includes(this.getIdentityAuthType(identity)));
     }
+    if (kind === 'yamcs') {
+      return this.actionIdentities.filter(identity => YAMCS_ACTION_IDENTITY_AUTH_TYPES.includes(this.getIdentityAuthType(identity)));
+    }
+    if (kind === 'logAnalytics') {
+      return this.actionIdentities.filter(identity => LOG_ANALYTICS_ACTION_IDENTITY_AUTH_TYPES.includes(this.getIdentityAuthType(identity)));
+    }
     return this.actionIdentities;
   }
 
@@ -442,6 +556,8 @@ export class PluginModalStepper {
     this.populateActionIdentitySelector('databricks', 'databricks-identity-select', 'databricks-action-identity-group', 'databricks-identity-status');
     this.populateActionIdentitySelector('snowflake', 'snowflake-identity-select', 'snowflake-action-identity-group', 'snowflake-identity-status');
     this.populateActionIdentitySelector('tableau', 'tableau-identity-select', 'tableau-action-identity-group', 'tableau-identity-status');
+    this.populateActionIdentitySelector('yamcs', 'yamcs-identity-select', 'yamcs-action-identity-group', 'yamcs-identity-status');
+    this.populateActionIdentitySelector('logAnalytics', 'log-analytics-identity-select', 'log-analytics-action-identity-group', 'log-analytics-identity-status');
     this.populateActionIdentitySelector('generic', 'plugin-auth-identity-select-generic', 'generic-action-identity-group', 'plugin-auth-identity-status-generic');
     this.populateActionIdentitySelector('sql', 'sql-identity-select', 'sql-action-identity-group', 'sql-identity-status');
   }
@@ -504,6 +620,8 @@ export class PluginModalStepper {
       databricks: 'databricks-identity-select',
       snowflake: 'snowflake-identity-select',
       tableau: 'tableau-identity-select',
+      yamcs: 'yamcs-identity-select',
+      logAnalytics: 'log-analytics-identity-select',
       generic: 'plugin-auth-identity-select-generic',
       sql: 'sql-identity-select'
     };
@@ -521,6 +639,8 @@ export class PluginModalStepper {
       databricks: 'databricks-identity-select',
       snowflake: 'snowflake-identity-select',
       tableau: 'tableau-identity-select',
+      yamcs: 'yamcs-identity-select',
+      logAnalytics: 'log-analytics-identity-select',
       generic: 'plugin-auth-identity-select-generic',
       sql: 'sql-identity-select'
     };
@@ -555,9 +675,16 @@ export class PluginModalStepper {
       return;
     }
 
-    const authSelect = document.getElementById(kind === 'openapi'
-      ? 'plugin-auth-type'
-      : (kind === 'mcp' ? 'mcp-auth-method' : (kind === 'databricks' ? 'databricks-auth-method' : (kind === 'snowflake' ? 'snowflake-auth-method' : (kind === 'tableau' ? 'tableau-auth-method' : 'plugin-auth-type-generic')))));
+    const authSelectIds = {
+      openapi: 'plugin-auth-type',
+      mcp: 'mcp-auth-method',
+      databricks: 'databricks-auth-method',
+      snowflake: 'snowflake-auth-method',
+      tableau: 'tableau-auth-method',
+      yamcs: 'yamcs-auth-method',
+      logAnalytics: 'log-analytics-auth-method'
+    };
+    const authSelect = document.getElementById(authSelectIds[kind] || 'plugin-auth-type-generic');
     if (authSelect) {
       authSelect.disabled = !!selectedIdentity;
     }
@@ -571,6 +698,10 @@ export class PluginModalStepper {
       this.toggleSnowflakeAuthFields();
     } else if (kind === 'tableau') {
       this.toggleTableauAuthFields();
+    } else if (kind === 'yamcs') {
+      this.toggleYamcsAuthFields();
+    } else if (kind === 'logAnalytics') {
+      this.toggleLogAnalyticsAuthFields();
     } else {
       this.toggleGenericAuthFields();
     }
@@ -589,6 +720,8 @@ export class PluginModalStepper {
     document.getElementById('plugin-auth-type').addEventListener('change', () => this.toggleOpenApiAuthFields());
     document.getElementById('plugin-auth-type-generic').addEventListener('change', () => this.toggleGenericAuthFields());
     document.getElementById('plugin-auth-identity-select').addEventListener('change', () => this.handleActionIdentityChange('openapi'));
+    document.getElementById('mcp-preconfiguration').addEventListener('change', () => this.applyMcpPreconfiguration());
+    document.getElementById('mcp-server-profile').addEventListener('change', () => this.applyMcpServerProfile());
     document.getElementById('mcp-transport').addEventListener('change', () => this.toggleMcpTransportFields());
     document.getElementById('mcp-auth-method').addEventListener('change', () => this.toggleMcpAuthFields());
     document.getElementById('mcp-identity-select').addEventListener('change', () => this.handleActionIdentityChange('mcp'));
@@ -599,6 +732,20 @@ export class PluginModalStepper {
     document.getElementById('snowflake-identity-select').addEventListener('change', () => this.handleActionIdentityChange('snowflake'));
     document.getElementById('tableau-auth-method').addEventListener('change', () => this.toggleTableauAuthFields());
     document.getElementById('tableau-identity-select').addEventListener('change', () => this.handleActionIdentityChange('tableau'));
+    document.getElementById('yamcs-auth-method').addEventListener('change', () => this.toggleYamcsAuthFields());
+    document.getElementById('yamcs-identity-select').addEventListener('change', () => this.handleActionIdentityChange('yamcs'));
+    const logAnalyticsCloud = document.getElementById('log-analytics-cloud');
+    if (logAnalyticsCloud) {
+      logAnalyticsCloud.addEventListener('change', () => this.handleLogAnalyticsCloudChange());
+    }
+    const logAnalyticsAuthMethod = document.getElementById('log-analytics-auth-method');
+    if (logAnalyticsAuthMethod) {
+      logAnalyticsAuthMethod.addEventListener('change', () => this.toggleLogAnalyticsAuthFields());
+    }
+    const logAnalyticsIdentitySelect = document.getElementById('log-analytics-identity-select');
+    if (logAnalyticsIdentitySelect) {
+      logAnalyticsIdentitySelect.addEventListener('change', () => this.handleActionIdentityChange('logAnalytics'));
+    }
     document.getElementById('plugin-auth-identity-select-generic').addEventListener('change', () => this.handleActionIdentityChange('generic'));
     const msGraphMailSendMode = document.getElementById('msgraph-mail-send-mode');
     if (msGraphMailSendMode) {
@@ -629,6 +776,16 @@ export class PluginModalStepper {
     document.getElementById('sql-identity-select').addEventListener('change', () => this.handleActionIdentityChange('sql'));
     document.getElementById('cosmos-auth-type').addEventListener('change', () => this.handleCosmosAuthTypeChange());
 
+    const blobStorageAuthTypeSelect = document.getElementById('blob-storage-auth-type');
+    if (blobStorageAuthTypeSelect) {
+      blobStorageAuthTypeSelect.addEventListener('change', () => this.handleBlobStorageAuthTypeChange());
+    }
+
+    const rocksDbAuthSchemeSelect = document.getElementById('rocksdb-auth-scheme');
+    if (rocksDbAuthSchemeSelect) {
+      rocksDbAuthSchemeSelect.addEventListener('change', () => this.handleRocksDbAuthSchemeChange());
+    }
+
     // Test SQL connection button
     const testConnBtn = document.getElementById('sql-test-connection-btn');
     if (testConnBtn) {
@@ -638,6 +795,29 @@ export class PluginModalStepper {
     const testCosmosBtn = document.getElementById('cosmos-test-connection-btn');
     if (testCosmosBtn) {
       testCosmosBtn.addEventListener('click', () => this.testCosmosConnection());
+    }
+
+    const testRocksDbBtn = document.getElementById('rocksdb-test-connection-btn');
+    if (testRocksDbBtn) {
+      testRocksDbBtn.addEventListener('click', () => this.testRocksDbConnection());
+    }
+
+    const testYamcsBtn = document.getElementById('yamcs-test-connection-btn');
+    if (testYamcsBtn) {
+      testYamcsBtn.addEventListener('click', () => this.testYamcsConnection());
+    }
+
+    // Test connection buttons for the remaining configurable action types
+    Object.keys(ACTION_CONNECTION_TEST_CONFIG).forEach(testKey => {
+      const button = document.getElementById(`${ACTION_CONNECTION_TEST_CONFIG[testKey].idPrefix}-test-connection-btn`);
+      if (button) {
+        button.addEventListener('click', () => this.runActionConnectionTest(testKey));
+      }
+    });
+
+    const keyVaultReminderToggle = document.getElementById('plugin-key-vault-reminder-enabled');
+    if (keyVaultReminderToggle) {
+      keyVaultReminderToggle.addEventListener('change', () => this.toggleKeyVaultReminderFields());
     }
 
     // Set up display name to generated name conversion
@@ -651,6 +831,145 @@ export class PluginModalStepper {
         document.getElementById('plugin-name').value = actionName;
       }
     });
+  }
+
+  toggleKeyVaultReminderFields() {
+    const reminderToggle = document.getElementById('plugin-key-vault-reminder-enabled');
+    const reminderFields = document.getElementById('plugin-key-vault-reminder-fields');
+    if (!reminderToggle || !reminderFields) {
+      return;
+    }
+    reminderFields.classList.toggle('d-none', !reminderToggle.checked);
+  }
+
+  clearKeyVaultReminderForm() {
+    const reminderToggle = document.getElementById('plugin-key-vault-reminder-enabled');
+    if (reminderToggle) {
+      reminderToggle.checked = false;
+    }
+    [
+      'plugin-key-vault-reminder-expires-on',
+      'plugin-key-vault-reminder-email',
+      'plugin-key-vault-reminder-label',
+      'plugin-key-vault-reminder-notes'
+    ].forEach(id => {
+      const element = document.getElementById(id);
+      if (element) {
+        element.value = element.dataset.defaultValue || '';
+      }
+    });
+    const leadDays = document.getElementById('plugin-key-vault-reminder-lead-days');
+    if (leadDays) {
+      leadDays.value = leadDays.dataset.defaultValue || leadDays.defaultValue || '30';
+    }
+    this.toggleKeyVaultReminderFields();
+  }
+
+  getKeyVaultReminderAllConfig(metadata) {
+    const reminders = metadata && typeof metadata === 'object'
+      ? metadata[KEY_VAULT_SECRET_REMINDERS_METADATA_FIELD]
+      : null;
+    if (!reminders || typeof reminders !== 'object') {
+      return null;
+    }
+    const allConfig = reminders[KEY_VAULT_SECRET_REMINDER_ALL_FIELDS];
+    return allConfig && typeof allConfig === 'object' ? allConfig : null;
+  }
+
+  populateKeyVaultReminderForm(metadata) {
+    this.clearKeyVaultReminderForm();
+    const allConfig = this.getKeyVaultReminderAllConfig(metadata);
+    if (!allConfig || !allConfig.enabled) {
+      return;
+    }
+
+    const reminderToggle = document.getElementById('plugin-key-vault-reminder-enabled');
+    if (reminderToggle) {
+      reminderToggle.checked = true;
+    }
+    const expiresOn = document.getElementById('plugin-key-vault-reminder-expires-on');
+    const email = document.getElementById('plugin-key-vault-reminder-email');
+    const leadDays = document.getElementById('plugin-key-vault-reminder-lead-days');
+    const label = document.getElementById('plugin-key-vault-reminder-label');
+    const notes = document.getElementById('plugin-key-vault-reminder-notes');
+    if (expiresOn) {
+      expiresOn.value = String(allConfig.expires_on || allConfig.expiration_date || '').slice(0, 10);
+    }
+    if (email) {
+      email.value = allConfig.contact_email || allConfig.reminder_email || '';
+    }
+    if (leadDays) {
+      leadDays.value = allConfig.lead_days || '30';
+    }
+    if (label) {
+      label.value = allConfig.label || allConfig.friendly_label || '';
+    }
+    if (notes) {
+      notes.value = allConfig.notes || allConfig.rotation_notes || '';
+    }
+    this.toggleKeyVaultReminderFields();
+  }
+
+  validateKeyVaultReminderFields() {
+    const reminderToggle = document.getElementById('plugin-key-vault-reminder-enabled');
+    if (!reminderToggle?.checked) {
+      return true;
+    }
+
+    const expiresOn = document.getElementById('plugin-key-vault-reminder-expires-on')?.value.trim();
+    const email = document.getElementById('plugin-key-vault-reminder-email')?.value.trim();
+    const leadDays = parseInt(document.getElementById('plugin-key-vault-reminder-lead-days')?.value || '30', 10);
+    if (!expiresOn) {
+      this.showError('Expiration date is required when Key Vault expiration tracking is enabled.');
+      return false;
+    }
+    if (!email || !email.includes('@')) {
+      this.showError('A valid reminder email is required when Key Vault expiration tracking is enabled.');
+      return false;
+    }
+    if (!Number.isInteger(leadDays) || leadDays < 1 || leadDays > 3650) {
+      this.showError('Lead days must be between 1 and 3650.');
+      return false;
+    }
+    return true;
+  }
+
+  applyKeyVaultReminderMetadata(metadata) {
+    const normalizedMetadata = metadata && typeof metadata === 'object' ? metadata : {};
+    const reminderToggle = document.getElementById('plugin-key-vault-reminder-enabled');
+    if (!reminderToggle) {
+      return normalizedMetadata;
+    }
+
+    const existingReminders = normalizedMetadata[KEY_VAULT_SECRET_REMINDERS_METADATA_FIELD];
+    const hasExistingAllConfig = Boolean(
+      existingReminders
+      && typeof existingReminders === 'object'
+      && existingReminders[KEY_VAULT_SECRET_REMINDER_ALL_FIELDS]
+    );
+    if (!reminderToggle.checked) {
+      if (hasExistingAllConfig) {
+        normalizedMetadata[KEY_VAULT_SECRET_REMINDERS_METADATA_FIELD] = {
+          ...existingReminders,
+          [KEY_VAULT_SECRET_REMINDER_ALL_FIELDS]: { enabled: false }
+        };
+      }
+      return normalizedMetadata;
+    }
+
+    const leadDays = parseInt(document.getElementById('plugin-key-vault-reminder-lead-days')?.value || '30', 10);
+    normalizedMetadata[KEY_VAULT_SECRET_REMINDERS_METADATA_FIELD] = {
+      ...(existingReminders && typeof existingReminders === 'object' ? existingReminders : {}),
+      [KEY_VAULT_SECRET_REMINDER_ALL_FIELDS]: {
+        enabled: true,
+        expires_on: document.getElementById('plugin-key-vault-reminder-expires-on')?.value.trim() || '',
+        contact_email: document.getElementById('plugin-key-vault-reminder-email')?.value.trim() || '',
+        lead_days: Number.isInteger(leadDays) ? leadDays : 30,
+        label: document.getElementById('plugin-key-vault-reminder-label')?.value.trim() || '',
+        notes: document.getElementById('plugin-key-vault-reminder-notes')?.value.trim() || ''
+      }
+    };
+    return normalizedMetadata;
   }
 
   async showModal(plugin = null) {
@@ -672,6 +991,9 @@ export class PluginModalStepper {
 
     // Clear error messages
     document.getElementById('plugin-modal-error').classList.add('d-none');
+
+    await this.loadMcpServerPresets();
+    await this.loadMcpServerPreconfigurations();
 
     // Load available types and populate
     await this.loadAvailableTypes();
@@ -697,9 +1019,7 @@ export class PluginModalStepper {
 
   async loadAvailableTypes() {
     try {
-      // Determine the endpoint based on context (admin vs user)
-      const endpoint = window.location.pathname.includes('admin') ?
-        '/api/admin/plugins/types' : '/api/user/plugins/types';
+      const endpoint = this.getActionTypesEndpoint();
 
       const res = await fetch(endpoint);
       if (!res.ok) throw new Error('Failed to load action types');
@@ -720,6 +1040,17 @@ export class PluginModalStepper {
       this.availableTypes = [];
       this.filteredTypes = [];
     }
+  }
+
+  getActionTypesEndpoint() {
+    const scope = this.actionIdentityScope?.scope || 'personal';
+    if (scope === 'global' || window.location.pathname.includes('admin')) {
+      return '/api/admin/plugins/types';
+    }
+    if (scope === 'group') {
+      return '/api/group/plugins/types';
+    }
+    return '/api/user/plugins/types';
   }
 
   setupNameGeneration() {
@@ -1010,6 +1341,10 @@ export class PluginModalStepper {
     return !!(type && type.toLowerCase() === 'cosmos_query');
   }
 
+  isRocksDbType(type = this.selectedType) {
+    return !!(type && type.toLowerCase() === ROCKSDB_PLUGIN_TYPE);
+  }
+
   isDocumentSearchType(type = this.selectedType) {
     return !!(type && ['search', 'document_search'].includes(type.toLowerCase()));
   }
@@ -1030,6 +1365,10 @@ export class PluginModalStepper {
     return !!(type && type.toLowerCase() === TABLEAU_PLUGIN_TYPE);
   }
 
+  isYamcsType(type = this.selectedType) {
+    return !!(type && type.toLowerCase() === YAMCS_PLUGIN_TYPE);
+  }
+
   isMcpType(type = this.selectedType) {
     return !!(type && type.toLowerCase() === MCP_PLUGIN_TYPE);
   }
@@ -1046,6 +1385,10 @@ export class PluginModalStepper {
     return !!(type && type.toLowerCase() === AZURE_MAPS_PLUGIN_TYPE);
   }
 
+  isLogAnalyticsType(type = this.selectedType) {
+    return !!(type && type.toLowerCase() === LOG_ANALYTICS_PLUGIN_TYPE);
+  }
+
   isChartType(type = this.selectedType) {
     return !!(type && type.toLowerCase() === 'chart');
   }
@@ -1053,7 +1396,7 @@ export class PluginModalStepper {
   getDefaultSimpleChatCapabilities() {
     const defaults = {};
     SIMPLECHAT_CAPABILITY_DEFINITIONS.forEach(definition => {
-      defaults[definition.key] = true;
+      defaults[definition.key] = definition.defaultEnabled !== false;
     });
     return defaults;
   }
@@ -1721,6 +2064,35 @@ export class PluginModalStepper {
     return String(prefix || '').trim().replace(/^\/+|\/+$/g, '');
   }
 
+  isAzureBlobEndpoint(endpoint = '') {
+    // Mirrors the server-side allowlist so the modal fails fast with a clear message.
+    const normalizedEndpoint = String(endpoint || '').trim();
+    if (!normalizedEndpoint) {
+      return false;
+    }
+
+    let parsedUrl;
+    try {
+      parsedUrl = new URL(normalizedEndpoint.includes('://') ? normalizedEndpoint : `https://${normalizedEndpoint}`);
+    } catch (err) {
+      return false;
+    }
+
+    if (parsedUrl.protocol !== 'https:' || parsedUrl.port || parsedUrl.username || parsedUrl.password
+      || parsedUrl.search || parsedUrl.hash) {
+      return false;
+    }
+
+    return AZURE_STORAGE_ENDPOINT_SUFFIXES.some(suffix => {
+      const hostSuffix = `.blob.${suffix}`;
+      if (!parsedUrl.hostname.toLowerCase().endsWith(hostSuffix)) {
+        return false;
+      }
+      const accountName = parsedUrl.hostname.toLowerCase().slice(0, -hostSuffix.length);
+      return /^[a-z0-9]{3,24}$/.test(accountName);
+    });
+  }
+
   deriveBlobStorageEndpointFromConnectionString(connectionString = '') {
     const normalizedConnectionString = String(connectionString || '').trim();
     if (!normalizedConnectionString || normalizedConnectionString === 'Stored_In_KeyVault') {
@@ -2145,6 +2517,156 @@ export class PluginModalStepper {
     };
   }
 
+  normalizeYamcsServerUrl(serverUrl = '') {
+    const value = String(serverUrl || '').trim().replace(/\/+$/, '');
+    if (!value) {
+      return '';
+    }
+    if (!/^https?:\/\//i.test(value)) {
+      return `https://${value}`;
+    }
+    return value;
+  }
+
+  getYamcsIdentityAuthMethod(identity) {
+    const authType = this.getIdentityAuthType(identity);
+    if (authType === 'api_key') {
+      return YAMCS_AUTH_METHOD_API_KEY;
+    }
+    if (authType === 'bearer_token') {
+      return YAMCS_AUTH_METHOD_BEARER_TOKEN;
+    }
+    return YAMCS_AUTH_METHOD_USERNAME_PASSWORD;
+  }
+
+  formatYamcsAuthMethod(authMethod) {
+    if (authMethod === YAMCS_AUTH_METHOD_API_KEY) {
+      return 'API Key';
+    }
+    if (authMethod === YAMCS_AUTH_METHOD_BEARER_TOKEN) {
+      return 'Bearer Token';
+    }
+    if (authMethod === YAMCS_AUTH_METHOD_NONE) {
+      return 'No Authentication';
+    }
+    return 'Username and Password';
+  }
+
+  toggleYamcsAuthFields() {
+    const selectedIdentity = this.getSelectedActionIdentity('yamcs');
+    const authMethodSelect = document.getElementById('yamcs-auth-method');
+    const usernamePasswordGroup = document.getElementById('yamcs-username-password-group');
+    const apiKeyGroup = document.getElementById('yamcs-api-key-group');
+    const bearerTokenGroup = document.getElementById('yamcs-bearer-token-group');
+
+    if (authMethodSelect) {
+      authMethodSelect.disabled = Boolean(selectedIdentity);
+      if (selectedIdentity) {
+        authMethodSelect.value = this.getYamcsIdentityAuthMethod(selectedIdentity);
+      }
+    }
+
+    [usernamePasswordGroup, apiKeyGroup, bearerTokenGroup].forEach(group => {
+      if (group) {
+        group.classList.add('d-none');
+      }
+    });
+
+    if (selectedIdentity) {
+      return;
+    }
+
+    const authMethod = authMethodSelect?.value || YAMCS_AUTH_METHOD_USERNAME_PASSWORD;
+    if (authMethod === YAMCS_AUTH_METHOD_USERNAME_PASSWORD) {
+      usernamePasswordGroup?.classList.remove('d-none');
+    } else if (authMethod === YAMCS_AUTH_METHOD_API_KEY) {
+      apiKeyGroup?.classList.remove('d-none');
+    } else if (authMethod === YAMCS_AUTH_METHOD_BEARER_TOKEN) {
+      bearerTokenGroup?.classList.remove('d-none');
+    }
+  }
+
+  populateYamcsForm(plugin) {
+    const additionalFields = plugin.additionalFields || plugin.additional_fields || {};
+    const auth = plugin.auth || {};
+    const serverUrl = this.normalizeYamcsServerUrl(plugin.endpoint || additionalFields.server_url || '');
+
+    document.getElementById('yamcs-server-url').value = serverUrl;
+    document.getElementById('yamcs-instance').value = additionalFields.instance || '';
+    document.getElementById('yamcs-processor').value = additionalFields.processor || YAMCS_DEFAULT_PROCESSOR;
+    document.getElementById('yamcs-max-rows').value = additionalFields.max_rows || 500;
+    document.getElementById('yamcs-timeout').value = additionalFields.timeout || 30;
+    document.getElementById('yamcs-tls-verify').checked = additionalFields.tls_verify !== false;
+    document.getElementById('yamcs-enable-archive-sql').checked = additionalFields.enable_archive_sql === true;
+
+    let authMethod = additionalFields.auth_method || YAMCS_AUTH_METHOD_USERNAME_PASSWORD;
+    if (auth.type === 'NoAuth') {
+      authMethod = YAMCS_AUTH_METHOD_NONE;
+    } else if (auth.type === 'username_password') {
+      authMethod = YAMCS_AUTH_METHOD_USERNAME_PASSWORD;
+      document.getElementById('yamcs-username').value = auth.identity || '';
+      document.getElementById('yamcs-password').value = auth.key || '';
+    } else if (auth.type === 'key') {
+      if (authMethod === YAMCS_AUTH_METHOD_BEARER_TOKEN) {
+        document.getElementById('yamcs-bearer-token').value = auth.key || '';
+      } else {
+        authMethod = YAMCS_AUTH_METHOD_API_KEY;
+        document.getElementById('yamcs-api-key').value = auth.key || '';
+      }
+    }
+
+    document.getElementById('yamcs-auth-method').value = authMethod;
+    this.setSelectedActionIdentity('yamcs', plugin.identity_id || '');
+    this.handleActionIdentityChange('yamcs');
+  }
+
+  getYamcsConfiguration() {
+    const serverUrl = this.normalizeYamcsServerUrl(document.getElementById('yamcs-server-url')?.value || '');
+    const selectedIdentity = this.getSelectedActionIdentity('yamcs');
+    const authMethod = selectedIdentity
+      ? this.getYamcsIdentityAuthMethod(selectedIdentity)
+      : (document.getElementById('yamcs-auth-method')?.value || YAMCS_AUTH_METHOD_USERNAME_PASSWORD);
+    const additionalFields = {
+      server_url: serverUrl,
+      instance: document.getElementById('yamcs-instance')?.value.trim() || '',
+      processor: document.getElementById('yamcs-processor')?.value.trim() || YAMCS_DEFAULT_PROCESSOR,
+      auth_method: authMethod,
+      tls_verify: document.getElementById('yamcs-tls-verify')?.checked !== false,
+      read_only: true,
+      enable_archive_sql: document.getElementById('yamcs-enable-archive-sql')?.checked === true,
+      max_rows: parseInt(document.getElementById('yamcs-max-rows')?.value, 10) || 500,
+      timeout: parseInt(document.getElementById('yamcs-timeout')?.value, 10) || 30
+    };
+    const auth = {};
+    let identityId = '';
+
+    if (selectedIdentity) {
+      identityId = selectedIdentity.id || selectedIdentity.identity_id || '';
+      auth.type = 'identity';
+      auth.identity = identityId;
+      additionalFields.identity_auth_type = this.getIdentityAuthType(selectedIdentity);
+    } else if (authMethod === YAMCS_AUTH_METHOD_USERNAME_PASSWORD) {
+      auth.type = 'username_password';
+      auth.identity = document.getElementById('yamcs-username')?.value.trim() || '';
+      auth.key = document.getElementById('yamcs-password')?.value.trim() || '';
+    } else if (authMethod === YAMCS_AUTH_METHOD_API_KEY) {
+      auth.type = 'key';
+      auth.key = document.getElementById('yamcs-api-key')?.value.trim() || '';
+    } else if (authMethod === YAMCS_AUTH_METHOD_BEARER_TOKEN) {
+      auth.type = 'key';
+      auth.key = document.getElementById('yamcs-bearer-token')?.value.trim() || '';
+    } else {
+      auth.type = 'NoAuth';
+    }
+
+    return {
+      endpoint: serverUrl,
+      auth,
+      additionalFields,
+      identityId
+    };
+  }
+
   initializeDocumentSearchConfiguration() {
     const defaults = {
       'document-search-scope': 'all',
@@ -2193,7 +2715,7 @@ export class PluginModalStepper {
 
   populateDocumentSearchForm(additionalFields = {}) {
     document.getElementById('document-search-scope').value = additionalFields.default_doc_scope || 'all';
-    document.getElementById('document-search-top-n').value = additionalFields.default_top_n || 12;
+    document.getElementById('document-search-top-n').value = additionalFields.default_top_n || 25;
     document.getElementById('document-search-window-unit').value = additionalFields.default_window_unit || 'pages';
     document.getElementById('document-search-window-size').value = additionalFields.default_window_size || '';
     document.getElementById('document-search-window-percent').value = additionalFields.default_window_percent || '';
@@ -2207,7 +2729,7 @@ export class PluginModalStepper {
       all: 'All Accessible Content',
       personal: 'Personal Workspace',
       group: 'Group Workspaces',
-      public: 'Public Workspaces'
+      public: publicWorkspacePlural
     };
 
     return scopeMap[scope] || scope || '-';
@@ -2274,14 +2796,406 @@ export class PluginModalStepper {
     return labels[transport] || transport || '-';
   }
 
+  async loadMcpServerPresets() {
+    if (this.mcpServerPresetsLoaded) {
+      return this.mcpServerPresets;
+    }
+
+    let presets = MCP_FALLBACK_SERVER_PRESETS;
+    let defaultPreset = MCP_DEFAULT_SERVER_PROFILE;
+    try {
+      const response = await fetch('/api/plugins/mcp/presets');
+      if (!response.ok) {
+        throw new Error(`MCP preset request failed with status ${response.status}`);
+      }
+      const payload = await response.json();
+      if (Array.isArray(payload.presets) && payload.presets.length) {
+        presets = payload.presets;
+      }
+      if (payload.defaultPreset) {
+        defaultPreset = payload.defaultPreset;
+      }
+    } catch (error) {
+      console.warn('Failed to load MCP server presets; using generic fallback.', error.message || error);
+    }
+
+    this.setMcpServerPresets(presets, defaultPreset);
+    this.mcpServerPresetsLoaded = true;
+    return this.mcpServerPresets;
+  }
+
+  setMcpServerPresets(presets, defaultPreset = MCP_DEFAULT_SERVER_PROFILE) {
+    const validPresets = Array.isArray(presets) && presets.length ? presets : MCP_FALLBACK_SERVER_PRESETS;
+    this.mcpServerPresets = validPresets;
+    this.mcpDefaultServerPreset = defaultPreset || MCP_DEFAULT_SERVER_PROFILE;
+    this.mcpServerPresetMap = {};
+    validPresets.forEach(preset => {
+      if (preset?.id) {
+        this.mcpServerPresetMap[preset.id] = preset;
+      }
+    });
+
+    if (!this.mcpServerPresetMap[this.mcpDefaultServerPreset]) {
+      this.mcpDefaultServerPreset = MCP_DEFAULT_SERVER_PROFILE;
+    }
+    if (!this.mcpServerPresetMap[MCP_DEFAULT_SERVER_PROFILE]) {
+      const fallbackPreset = MCP_FALLBACK_SERVER_PRESETS[0];
+      this.mcpServerPresetMap[MCP_DEFAULT_SERVER_PROFILE] = fallbackPreset;
+      this.mcpServerPresets = [fallbackPreset, ...this.mcpServerPresets];
+    }
+
+    this.populateMcpServerPresetDropdown();
+  }
+
+  populateMcpServerPresetDropdown() {
+    const select = document.getElementById('mcp-server-profile');
+    if (!select) {
+      return;
+    }
+
+    const currentValue = select.value || this.mcpDefaultServerPreset;
+    const options = this.mcpServerPresets.map(preset => {
+      const option = document.createElement('option');
+      option.value = preset.id;
+      option.textContent = preset.displayName || preset.id;
+      return option;
+    });
+    select.replaceChildren(...options);
+
+    if (this.mcpServerPresetMap[currentValue]) {
+      select.value = currentValue;
+    } else {
+      select.value = this.mcpDefaultServerPreset;
+    }
+  }
+
+  getMcpServerPreset(profile) {
+    const presetId = profile || MCP_DEFAULT_SERVER_PROFILE;
+    return this.mcpServerPresetMap[presetId]
+      || this.mcpServerPresetMap[this.mcpDefaultServerPreset]
+      || this.mcpServerPresetMap[MCP_DEFAULT_SERVER_PROFILE]
+      || MCP_FALLBACK_SERVER_PRESETS[0];
+  }
+
+  getSelectedMcpServerPreset() {
+    const profile = document.getElementById('mcp-server-profile')?.value || this.mcpDefaultServerPreset;
+    return this.getMcpServerPreset(profile);
+  }
+
+  getMcpPresetDefault(preset, fieldName, fallbackValue) {
+    const defaults = preset?.defaults || {};
+    return Object.prototype.hasOwnProperty.call(defaults, fieldName) ? defaults[fieldName] : fallbackValue;
+  }
+
+  formatMcpServerProfile(profile) {
+    const preset = this.getMcpServerPreset(profile);
+    return preset.displayName || profile || '-';
+  }
+
+  async loadMcpServerPreconfigurations() {
+    if (this.mcpServerPreconfigurationsLoaded) {
+      return this.mcpServerPreconfigurations;
+    }
+
+    let preconfigurations = MCP_FALLBACK_SERVER_PRECONFIGURATIONS;
+    try {
+      const scope = this.actionIdentityScope?.scope || 'personal';
+      const response = await fetch(`/api/plugins/mcp/preconfigurations?scope=${encodeURIComponent(scope)}`);
+      if (!response.ok) {
+        throw new Error(`MCP preconfiguration request failed with status ${response.status}`);
+      }
+      const payload = await response.json();
+      if (Array.isArray(payload.preconfigurations)) {
+        preconfigurations = payload.preconfigurations;
+      }
+    } catch (error) {
+      console.warn('Failed to load MCP server preconfigurations; using custom-only fallback.', error.message || error);
+    }
+
+    this.setMcpServerPreconfigurations(preconfigurations);
+    this.mcpServerPreconfigurationsLoaded = true;
+    return this.mcpServerPreconfigurations;
+  }
+
+  setMcpServerPreconfigurations(preconfigurations) {
+    const validPreconfigurations = Array.isArray(preconfigurations) ? preconfigurations : MCP_FALLBACK_SERVER_PRECONFIGURATIONS;
+    this.mcpServerPreconfigurations = validPreconfigurations;
+    this.mcpServerPreconfigurationMap = {};
+    validPreconfigurations.forEach(preconfiguration => {
+      if (preconfiguration?.id) {
+        this.mcpServerPreconfigurationMap[preconfiguration.id] = preconfiguration;
+      }
+    });
+    this.populateMcpServerPreconfigurationDropdown();
+  }
+
+  populateMcpServerPreconfigurationDropdown() {
+    const select = document.getElementById('mcp-preconfiguration');
+    if (!select) {
+      return;
+    }
+
+    const currentValue = select.value || '';
+    const customOption = document.createElement('option');
+    customOption.value = '';
+    customOption.textContent = 'Custom configuration';
+    const options = [customOption];
+    this.mcpServerPreconfigurations.forEach(preconfiguration => {
+      const option = document.createElement('option');
+      option.value = preconfiguration.id;
+      option.textContent = preconfiguration.displayName || preconfiguration.id;
+      options.push(option);
+    });
+    select.replaceChildren(...options);
+
+    select.value = this.mcpServerPreconfigurationMap[currentValue] ? currentValue : '';
+    this.updateMcpPreconfigurationHelp();
+  }
+
+  getMcpServerPreconfiguration(preconfigurationId) {
+    return this.mcpServerPreconfigurationMap[preconfigurationId] || null;
+  }
+
+  formatMcpServerPreconfiguration(preconfigurationId) {
+    const preconfiguration = this.getMcpServerPreconfiguration(preconfigurationId);
+    return preconfiguration?.displayName || (preconfigurationId ? preconfigurationId : '-');
+  }
+
+  updateMcpPreconfigurationHelp() {
+    const select = document.getElementById('mcp-preconfiguration');
+    const help = document.getElementById('mcp-preconfiguration-help');
+    if (!select || !help) {
+      return;
+    }
+
+    const preconfiguration = this.getMcpServerPreconfiguration(select.value);
+    if (!preconfiguration) {
+      help.textContent = 'Choose a curated server template, or keep custom configuration.';
+      return;
+    }
+
+    const helpParts = [
+      preconfiguration.ui?.helpText || preconfiguration.description || 'Curated MCP server configuration.'
+    ];
+    if (preconfiguration.catalogTier === 'enterprise' || preconfiguration.riskLabel === 'high') {
+      helpParts.push('Enterprise/high-risk template: review governance, identity, and tool exposure before use.');
+    }
+    if (Array.isArray(preconfiguration.requiredGovernanceGates) && preconfiguration.requiredGovernanceGates.length > 0) {
+      helpParts.push(`Required governance: ${preconfiguration.requiredGovernanceGates.join(', ')}.`);
+    }
+    if (Array.isArray(preconfiguration.warnings) && preconfiguration.warnings.length > 0) {
+      helpParts.push(`Warnings: ${preconfiguration.warnings.join(' ')}`);
+    }
+    if (preconfiguration.documentationUrl) {
+      helpParts.push(`Docs: ${preconfiguration.documentationUrl}`);
+    }
+    help.textContent = helpParts.join(' ');
+  }
+
+  applyMcpPreconfiguration() {
+    const select = document.getElementById('mcp-preconfiguration');
+    const preconfiguration = this.getMcpServerPreconfiguration(select?.value);
+    this.updateMcpPreconfigurationHelp();
+    if (!preconfiguration) {
+      return;
+    }
+
+    const defaults = preconfiguration.defaults || {};
+    const setFieldValue = (fieldId, value) => {
+      const element = document.getElementById(fieldId);
+      if (element && value !== undefined && value !== null) {
+        element.value = String(value);
+      }
+    };
+    const setIfBlank = (fieldId, value) => {
+      const element = document.getElementById(fieldId);
+      if (element && !element.value.trim() && value) {
+        element.value = String(value);
+      }
+    };
+
+    setIfBlank('plugin-display-name', preconfiguration.displayName);
+    setIfBlank('plugin-description', preconfiguration.description);
+    setFieldValue('mcp-server-profile', preconfiguration.presetId || MCP_DEFAULT_SERVER_PROFILE);
+    this.applyMcpServerProfile({ applyDefaults: true });
+    setFieldValue('mcp-transport', preconfiguration.transport);
+    setFieldValue('mcp-endpoint', preconfiguration.endpoint);
+    setFieldValue('mcp-auth-method', defaults.auth_method);
+    setFieldValue('mcp-api-key-header-name', defaults.api_key_header_name);
+    setFieldValue('mcp-request-timeout', defaults.request_timeout);
+    setFieldValue('mcp-connect-timeout', defaults.connect_timeout);
+    setFieldValue('mcp-sse-read-timeout', defaults.sse_read_timeout);
+    setFieldValue('mcp-retry-count', defaults.retry_count);
+    setFieldValue('mcp-retry-backoff-seconds', defaults.retry_backoff_seconds);
+    setFieldValue('mcp-tool-names', Array.isArray(defaults.allowed_tool_names) ? defaults.allowed_tool_names.join('\n') : '');
+    const loadTools = document.getElementById('mcp-load-tools');
+    if (loadTools && typeof defaults.load_tools === 'boolean') {
+      loadTools.checked = defaults.load_tools;
+    }
+    const loadPrompts = document.getElementById('mcp-load-prompts');
+    if (loadPrompts && typeof defaults.load_prompts === 'boolean') {
+      loadPrompts.checked = defaults.load_prompts;
+    }
+    const validateToolArguments = document.getElementById('mcp-validate-tool-arguments');
+    if (validateToolArguments && typeof defaults.validate_tool_arguments === 'boolean') {
+      validateToolArguments.checked = defaults.validate_tool_arguments;
+    }
+    setFieldValue('mcp-tool-result-policy', defaults.tool_result_policy || 'truncate');
+    this.toggleMcpAuthFields();
+    this.toggleMcpTransportFields();
+  }
+
+  getMcpEndpointPlaceholder(transport, profile) {
+    if (transport === 'websocket') {
+      return this.getMcpServerPreset(profile)?.ui?.websocketEndpointPlaceholder || 'wss://example.com/mcp';
+    }
+    return this.getMcpServerPreset(profile)?.ui?.endpointPlaceholder || 'https://example.com/mcp';
+  }
+
+  applyMcpPresetDefaults(preset) {
+    const setValue = (id, fieldName, fallbackValue) => {
+      const element = document.getElementById(id);
+      if (element) {
+        element.value = String(this.getMcpPresetDefault(preset, fieldName, fallbackValue));
+      }
+    };
+
+    setValue('mcp-transport', 'transport', 'streamable_http');
+    if (!this.getSelectedActionIdentity('mcp')) {
+      setValue('mcp-auth-method', 'auth_method', 'none');
+    }
+    setValue('mcp-api-key-header-name', 'api_key_header_name', 'X-API-Key');
+    setValue('mcp-request-timeout', 'request_timeout', 30);
+    setValue('mcp-connect-timeout', 'connect_timeout', 10);
+    setValue('mcp-sse-read-timeout', 'sse_read_timeout', 300);
+    setValue('mcp-retry-count', 'retry_count', 0);
+    setValue('mcp-retry-backoff-seconds', 'retry_backoff_seconds', 1);
+
+    const loadTools = document.getElementById('mcp-load-tools');
+    if (loadTools) {
+      loadTools.checked = this.getMcpPresetDefault(preset, 'load_tools', true) !== false;
+    }
+    const loadPrompts = document.getElementById('mcp-load-prompts');
+    if (loadPrompts) {
+      loadPrompts.checked = Boolean(this.getMcpPresetDefault(preset, 'load_prompts', false));
+    }
+    const validateToolArguments = document.getElementById('mcp-validate-tool-arguments');
+    if (validateToolArguments) {
+      validateToolArguments.checked = Boolean(this.getMcpPresetDefault(preset, 'validate_tool_arguments', false));
+    }
+    const resultPolicy = document.getElementById('mcp-tool-result-policy');
+    if (resultPolicy) {
+      resultPolicy.value = this.getMcpPresetDefault(preset, 'tool_result_policy', 'truncate');
+    }
+
+    const allowedToolNames = this.getMcpPresetDefault(preset, 'allowed_tool_names', []);
+    const toolNamesField = document.getElementById('mcp-tool-names');
+    if (Array.isArray(allowedToolNames) && allowedToolNames.length && toolNamesField && !toolNamesField.value.trim()) {
+      toolNamesField.value = allowedToolNames.join('\n');
+    }
+  }
+
+  applyMcpAuthConstraints(preset) {
+    const authSelect = document.getElementById('mcp-auth-method');
+    if (!authSelect) {
+      return;
+    }
+
+    const allowedAuthMethods = new Set(preset?.constraints?.allowedAuthMethods || []);
+    Array.from(authSelect.options).forEach(option => {
+      option.disabled = allowedAuthMethods.size > 0 && !allowedAuthMethods.has(option.value);
+    });
+
+    if (authSelect.selectedOptions.length && authSelect.selectedOptions[0].disabled) {
+      const fallbackAuthMethod = this.getMcpPresetDefault(preset, 'auth_method', 'none');
+      const fallbackOption = Array.from(authSelect.options).find(option => option.value === fallbackAuthMethod && !option.disabled)
+        || Array.from(authSelect.options).find(option => !option.disabled);
+      if (fallbackOption) {
+        authSelect.value = fallbackOption.value;
+      }
+    }
+  }
+
+  applyMcpCustomHeaderConstraints(preset, applyDefaults) {
+    const customHeaders = document.getElementById('mcp-custom-headers');
+    if (!customHeaders) {
+      return;
+    }
+
+    const customHeadersAllowed = preset?.constraints?.customHeadersAllowed !== false;
+    customHeaders.disabled = !customHeadersAllowed;
+    if (!customHeadersAllowed && applyDefaults) {
+      customHeaders.value = '{}';
+    }
+  }
+
+  applyMcpServerProfile({ applyDefaults = true } = {}) {
+    const profile = document.getElementById('mcp-server-profile')?.value || this.mcpDefaultServerPreset;
+    const preset = this.getMcpServerPreset(profile);
+    const helpText = document.getElementById('mcp-server-profile-help');
+
+    if (helpText) {
+      helpText.textContent = preset?.ui?.helpText || 'Use generic unless the server needs a specific compatibility preset.';
+    }
+
+    if (applyDefaults) {
+      this.applyMcpPresetDefaults(preset);
+    }
+
+    this.applyMcpAuthConstraints(preset);
+    this.applyMcpCustomHeaderConstraints(preset, applyDefaults);
+    this.toggleMcpTransportFields();
+    this.toggleMcpAuthFields();
+  }
+
+  getMcpCustomHeaders() {
+    const headers = this.parseJsonObjectField('mcp-custom-headers', 'Custom Headers', {});
+    const normalizedHeaders = {};
+    Object.entries(headers).forEach(([rawName, rawValue]) => {
+      const headerName = String(rawName || '').trim();
+      const headerValue = rawValue === null || rawValue === undefined ? '' : String(rawValue).trim();
+      if (headerName && headerValue) {
+        normalizedHeaders[headerName] = headerValue;
+      }
+    });
+    return normalizedHeaders;
+  }
+
+  validateMcpCustomHeaders(headers) {
+    const entries = Object.entries(headers || {});
+    if (entries.length > MCP_MAX_CUSTOM_HEADER_COUNT) {
+      throw new Error(`MCP custom headers support at most ${MCP_MAX_CUSTOM_HEADER_COUNT} headers.`);
+    }
+
+    entries.forEach(([headerName, headerValue]) => {
+      const normalizedName = String(headerName || '').trim();
+      if (!MCP_HEADER_NAME_PATTERN.test(normalizedName) || MCP_RESERVED_CUSTOM_HEADER_NAMES.has(normalizedName.toLowerCase())) {
+        throw new Error(`MCP custom header '${normalizedName}' has an invalid or reserved header name.`);
+      }
+      const valueText = String(headerValue || '');
+      if (valueText.includes('\r') || valueText.includes('\n')) {
+        throw new Error(`MCP custom header '${normalizedName}' must not contain line breaks.`);
+      }
+      if (valueText.length > MCP_MAX_HEADER_VALUE_LENGTH) {
+        throw new Error(`MCP custom header '${normalizedName}' must be ${MCP_MAX_HEADER_VALUE_LENGTH} characters or fewer.`);
+      }
+    });
+  }
+
   initializeMcpConfiguration() {
     const defaults = {
+      'mcp-preconfiguration': '',
+      'mcp-server-profile': this.mcpDefaultServerPreset || MCP_DEFAULT_SERVER_PROFILE,
       'mcp-transport': 'streamable_http',
       'mcp-auth-method': 'none',
       'mcp-api-key-header-name': 'X-API-Key',
+      'mcp-custom-headers': '{}',
       'mcp-request-timeout': '30',
       'mcp-connect-timeout': '10',
       'mcp-sse-read-timeout': '300',
+      'mcp-retry-count': '0',
+      'mcp-retry-backoff-seconds': '1',
+      'mcp-tool-result-policy': 'truncate',
       'mcp-tool-metadata': '[]',
       'mcp-env': '{}'
     };
@@ -2294,7 +3208,7 @@ export class PluginModalStepper {
     });
 
     this.updateMcpTransportOptions();
-    this.toggleMcpTransportFields();
+    this.applyMcpServerProfile();
     this.toggleMcpAuthFields();
   }
 
@@ -2308,15 +3222,33 @@ export class PluginModalStepper {
       return;
     }
 
-    const stdioOption = Array.from(transportSelect.options).find(option => option.value === 'stdio');
-    if (!stdioOption) {
-      return;
+    const preset = this.getSelectedMcpServerPreset();
+    const constraints = preset?.constraints || {};
+    const allowedTransports = new Set(constraints.allowedTransports || []);
+    const allowStdio = this.isAdminActionScope();
+
+    Array.from(transportSelect.options).forEach(option => {
+      let allowed = allowedTransports.size === 0 || allowedTransports.has(option.value);
+      if (option.value === 'stdio') {
+        allowed = allowed && allowStdio && constraints.stdioAllowed !== false;
+      }
+      option.disabled = !allowed;
+    });
+
+    if (transportSelect.selectedOptions.length && transportSelect.selectedOptions[0].disabled) {
+      const fallbackTransport = this.getMcpPresetDefault(preset, 'transport', 'streamable_http');
+      const fallbackOption = Array.from(transportSelect.options).find(option => option.value === fallbackTransport && !option.disabled)
+        || Array.from(transportSelect.options).find(option => !option.disabled);
+      if (fallbackOption) {
+        transportSelect.value = fallbackOption.value;
+      }
     }
 
-    const allowStdio = this.isAdminActionScope();
-    stdioOption.disabled = !allowStdio;
     if (!allowStdio && transportSelect.value === 'stdio') {
-      transportSelect.value = 'streamable_http';
+      const firstRemoteOption = Array.from(transportSelect.options).find(option => option.value !== 'stdio' && !option.disabled);
+      if (firstRemoteOption) {
+        transportSelect.value = firstRemoteOption.value;
+      }
       this.setMcpDiscoveryStatus('Stdio transport is only available for admin-managed global actions.', 'warning');
     }
   }
@@ -2336,7 +3268,8 @@ export class PluginModalStepper {
       stdioGroup.classList.toggle('d-none', !isStdio);
     }
     if (!isStdio && endpointInput && !endpointInput.value.trim()) {
-      endpointInput.placeholder = transport === 'websocket' ? 'wss://example.com/mcp' : 'https://example.com/mcp';
+      const profile = document.getElementById('mcp-server-profile')?.value || this.mcpDefaultServerPreset || MCP_DEFAULT_SERVER_PROFILE;
+      endpointInput.placeholder = this.getMcpEndpointPlaceholder(transport, profile);
     }
   }
 
@@ -2373,6 +3306,16 @@ export class PluginModalStepper {
     const auth = plugin.auth || {};
     const transport = additionalFields.transport || 'streamable_http';
 
+    const storedProfile = additionalFields.server_profile || this.mcpDefaultServerPreset || MCP_DEFAULT_SERVER_PROFILE;
+    const storedPreconfiguration = additionalFields.preconfiguration_id || '';
+    const preconfigurationSelect = document.getElementById('mcp-preconfiguration');
+    if (preconfigurationSelect) {
+      preconfigurationSelect.value = this.mcpServerPreconfigurationMap[storedPreconfiguration] ? storedPreconfiguration : '';
+      this.updateMcpPreconfigurationHelp();
+    }
+    document.getElementById('mcp-server-profile').value = this.mcpServerPresetMap[storedProfile]
+      ? storedProfile
+      : (this.mcpDefaultServerPreset || MCP_DEFAULT_SERVER_PROFILE);
     document.getElementById('mcp-transport').value = transport;
     document.getElementById('mcp-endpoint').value = transport === 'stdio' ? '' : (plugin.endpoint || '');
     document.getElementById('mcp-command').value = additionalFields.command || '';
@@ -2380,9 +3323,14 @@ export class PluginModalStepper {
     document.getElementById('mcp-env').value = JSON.stringify(additionalFields.env || {}, null, 2);
     document.getElementById('mcp-load-tools').checked = additionalFields.load_tools !== false;
     document.getElementById('mcp-load-prompts').checked = Boolean(additionalFields.load_prompts);
+    document.getElementById('mcp-validate-tool-arguments').checked = Boolean(additionalFields.validate_tool_arguments);
+    document.getElementById('mcp-tool-result-policy').value = additionalFields.tool_result_policy || 'truncate';
     document.getElementById('mcp-request-timeout').value = additionalFields.request_timeout || 30;
     document.getElementById('mcp-connect-timeout').value = additionalFields.connect_timeout || 10;
     document.getElementById('mcp-sse-read-timeout').value = additionalFields.sse_read_timeout || 300;
+    document.getElementById('mcp-retry-count').value = additionalFields.retry_count || 0;
+    document.getElementById('mcp-retry-backoff-seconds').value = additionalFields.retry_backoff_seconds || 1;
+    document.getElementById('mcp-custom-headers').value = JSON.stringify(additionalFields.custom_headers || {}, null, 2);
     document.getElementById('mcp-tool-names').value = Array.isArray(additionalFields.allowed_tool_names)
       ? additionalFields.allowed_tool_names.join('\n')
       : '';
@@ -2392,7 +3340,7 @@ export class PluginModalStepper {
     if (auth.type === 'key' && !additionalFields.auth_method) {
       authMethod = 'bearer';
     }
-    document.getElementById('mcp-auth-method').value = authMethod === 'identity' ? 'none' : authMethod;
+    document.getElementById('mcp-auth-method').value = authMethod;
 
     if (authMethod === 'bearer') {
       document.getElementById('mcp-bearer-token').value = auth.key || '';
@@ -2406,25 +3354,41 @@ export class PluginModalStepper {
 
     this.setSelectedActionIdentity('mcp', plugin.identity_id || '');
     this.handleActionIdentityChange('mcp');
+    this.applyMcpServerProfile({ applyDefaults: false });
     this.toggleMcpTransportFields();
     this.toggleMcpAuthFields();
   }
 
   getMcpConfiguration() {
     const transport = document.getElementById('mcp-transport')?.value || 'streamable_http';
+    const selectedPreconfigurationId = document.getElementById('mcp-preconfiguration')?.value || '';
+    const selectedPreconfiguration = this.getMcpServerPreconfiguration(selectedPreconfigurationId);
     const selectedIdentity = this.getSelectedActionIdentity('mcp');
     const authMethod = selectedIdentity ? 'identity' : (document.getElementById('mcp-auth-method')?.value || 'none');
     const additionalFields = {
+      preconfiguration_id: selectedPreconfigurationId,
+      server_profile: document.getElementById('mcp-server-profile')?.value || this.mcpDefaultServerPreset || MCP_DEFAULT_SERVER_PROFILE,
       transport,
       auth_method: authMethod,
       load_tools: document.getElementById('mcp-load-tools')?.checked !== false,
       load_prompts: Boolean(document.getElementById('mcp-load-prompts')?.checked),
+      validate_tool_arguments: Boolean(document.getElementById('mcp-validate-tool-arguments')?.checked),
+      tool_result_policy: document.getElementById('mcp-tool-result-policy')?.value || 'truncate',
       request_timeout: this.getIntegerFieldValue('mcp-request-timeout', 30),
       connect_timeout: this.getIntegerFieldValue('mcp-connect-timeout', 10),
       sse_read_timeout: this.getIntegerFieldValue('mcp-sse-read-timeout', 300),
+      retry_count: this.getIntegerFieldValue('mcp-retry-count', 0),
+      retry_backoff_seconds: this.getIntegerFieldValue('mcp-retry-backoff-seconds', 1),
+      custom_headers: this.getMcpCustomHeaders(),
       allowed_tool_names: this.parseTextareaLines('mcp-tool-names'),
       mcp_tools: this.parseJsonArrayField('mcp-tool-metadata', 'Discovered Tool Metadata', [])
     };
+    if (selectedPreconfiguration?.implementation && typeof selectedPreconfiguration.implementation === 'object') {
+      additionalFields.implementation = JSON.parse(JSON.stringify(selectedPreconfiguration.implementation));
+    }
+    if (selectedPreconfiguration?.additionalSettings && typeof selectedPreconfiguration.additionalSettings === 'object') {
+      additionalFields.additionalSettings = JSON.parse(JSON.stringify(selectedPreconfiguration.additionalSettings));
+    }
 
     let endpoint = document.getElementById('mcp-endpoint')?.value.trim() || '';
     if (transport === 'stdio') {
@@ -2473,6 +3437,23 @@ export class PluginModalStepper {
     status.className = `small text-${variant}`;
   }
 
+  setMcpDiscoveryWarnings(warnings = []) {
+    const warningContainer = document.getElementById('mcp-discover-warnings');
+    if (!warningContainer) {
+      return;
+    }
+    const safeWarnings = Array.isArray(warnings)
+      ? warnings.map(warning => String(warning || '').trim()).filter(Boolean)
+      : [];
+    if (!safeWarnings.length) {
+      warningContainer.textContent = '';
+      warningContainer.classList.add('d-none');
+      return;
+    }
+    warningContainer.textContent = safeWarnings.join(' ');
+    warningContainer.classList.remove('d-none');
+  }
+
   async discoverMcpTools() {
     const button = document.getElementById('mcp-discover-tools-btn');
     const spinner = document.getElementById('mcp-discover-spinner');
@@ -2510,6 +3491,7 @@ export class PluginModalStepper {
         spinner.classList.remove('d-none');
       }
       this.setMcpDiscoveryStatus('Discovering tools...', 'muted');
+      this.setMcpDiscoveryWarnings([]);
 
       const response = await fetch('/api/plugins/mcp/discover', {
         method: 'POST',
@@ -2518,13 +3500,19 @@ export class PluginModalStepper {
       });
       const result = await response.json();
       if (!response.ok || result.success === false) {
-        const message = result.error || (Array.isArray(result.errors) ? result.errors.join('; ') : 'Tool discovery failed.');
+        let message = result.error || (Array.isArray(result.errors) ? result.errors.join('; ') : 'Tool discovery failed.');
+        if (result.error_type) {
+          message = `${message} (${result.error_type})`;
+        }
         throw new Error(message);
       }
 
       const tools = Array.isArray(result.tools) ? result.tools : [];
       document.getElementById('mcp-tool-metadata').value = JSON.stringify(tools, null, 2);
-      this.setMcpDiscoveryStatus(`Discovered ${tools.length} tool${tools.length === 1 ? '' : 's'}.`, 'success');
+      const warnings = Array.isArray(result.warnings) ? result.warnings : [];
+      const capabilityText = result.capabilities?.connector_type ? ` Probe: ${result.capabilities.connector_type}.` : '';
+      this.setMcpDiscoveryStatus(`Discovered ${tools.length} tool${tools.length === 1 ? '' : 's'}.${capabilityText}`, 'success');
+      this.setMcpDiscoveryWarnings(warnings);
     } catch (error) {
       this.setMcpDiscoveryStatus(error.message || 'Tool discovery failed.', 'danger');
     } finally {
@@ -2536,7 +3524,7 @@ export class PluginModalStepper {
   }
 
   isStructuredConfigType(type = this.selectedType) {
-    return this.isSqlType(type) || this.isCosmosType(type) || this.isDocumentSearchType(type) || this.isBlobStorageType(type) || this.isDatabricksType(type) || this.isSnowflakeType(type) || this.isTableauType(type) || this.isMcpType(type) || this.isSimpleChatType(type) || this.isMsGraphType(type) || this.isAzureMapsType(type) || this.isChartType(type);
+    return this.isSqlType(type) || this.isCosmosType(type) || this.isRocksDbType(type) || this.isDocumentSearchType(type) || this.isBlobStorageType(type) || this.isDatabricksType(type) || this.isSnowflakeType(type) || this.isTableauType(type) || this.isYamcsType(type) || this.isMcpType(type) || this.isSimpleChatType(type) || this.isMsGraphType(type) || this.isAzureMapsType(type) || this.isChartType(type) || this.isLogAnalyticsType(type);
   }
 
   showConfigSectionForType() {
@@ -2545,15 +3533,18 @@ export class PluginModalStepper {
       generic: document.getElementById('generic-config-section'),
       sql: document.getElementById('sql-config-section'),
       cosmos: document.getElementById('cosmos-config-section'),
+      rocksdb: document.getElementById('rocksdb-config-section'),
       documentSearch: document.getElementById('document-search-config-section'),
       blobStorage: document.getElementById('blob-storage-config-section'),
       databricks: document.getElementById('databricks-config-section'),
       snowflake: document.getElementById('snowflake-config-section'),
       tableau: document.getElementById('tableau-config-section'),
+      yamcs: document.getElementById('yamcs-config-section'),
       simpleChat: document.getElementById('simplechat-config-section'),
       msGraph: document.getElementById('msgraph-config-section'),
       mcp: document.getElementById('mcp-config-section'),
       azureMaps: document.getElementById('azure-maps-config-section'),
+      logAnalytics: document.getElementById('log-analytics-config-section'),
       chart: document.getElementById('chart-config-section')
     };
 
@@ -2574,6 +3565,9 @@ export class PluginModalStepper {
     } else if (this.isCosmosType()) {
       showOnly('cosmos');
       this.initializeCosmosConfiguration();
+    } else if (this.isRocksDbType()) {
+      showOnly('rocksdb');
+      this.initializeRocksDbConfiguration();
     } else if (this.isDocumentSearchType()) {
       showOnly('documentSearch');
       this.initializeDocumentSearchConfiguration();
@@ -2589,6 +3583,9 @@ export class PluginModalStepper {
     } else if (this.isTableauType()) {
       showOnly('tableau');
       this.toggleTableauAuthFields();
+    } else if (this.isYamcsType()) {
+      showOnly('yamcs');
+      this.toggleYamcsAuthFields();
     } else if (this.isMcpType()) {
       showOnly('mcp');
       this.initializeMcpConfiguration();
@@ -2602,6 +3599,9 @@ export class PluginModalStepper {
       this.updateMsGraphCalendarDelayVisibility();
     } else if (this.isAzureMapsType()) {
       showOnly('azureMaps');
+    } else if (this.isLogAnalyticsType()) {
+      showOnly('logAnalytics');
+      this.initializeLogAnalyticsConfiguration();
     } else if (this.isChartType()) {
       showOnly('chart');
       this.renderChartConfiguration();
@@ -2648,6 +3648,8 @@ export class PluginModalStepper {
           titleEl.textContent = 'Database Configuration';
         } else if (isCosmosType) {
           titleEl.textContent = 'Cosmos Configuration';
+        } else if (this.isRocksDbType()) {
+          titleEl.textContent = 'RocksDB Configuration';
         } else if (isDocumentSearchType) {
           titleEl.textContent = 'Document Search Configuration';
         } else if (isBlobStorageType) {
@@ -2658,6 +3660,8 @@ export class PluginModalStepper {
           titleEl.textContent = 'Snowflake Configuration';
         } else if (isTableauType) {
           titleEl.textContent = 'Tableau Configuration';
+        } else if (this.isYamcsType()) {
+          titleEl.textContent = 'Yamcs Configuration';
         } else if (isMcpType) {
           titleEl.textContent = 'MCP Server Configuration';
         } else if (this.isSimpleChatType()) {
@@ -2666,6 +3670,8 @@ export class PluginModalStepper {
           titleEl.textContent = 'Microsoft Graph Configuration';
         } else if (isAzureMapsType) {
           titleEl.textContent = 'Azure Maps Configuration';
+        } else if (this.isLogAnalyticsType()) {
+          titleEl.textContent = 'Log Analytics Configuration';
         } else if (isChartType) {
           titleEl.textContent = 'Chart Configuration';
         } else {
@@ -2843,29 +3849,35 @@ export class PluginModalStepper {
         const openApiSection = document.getElementById('openapi-config-section');
         const sqlSection = document.getElementById('sql-config-section');
         const cosmosSection = document.getElementById('cosmos-config-section');
+        const rocksDbSection = document.getElementById('rocksdb-config-section');
         const documentSearchSection = document.getElementById('document-search-config-section');
         const blobStorageSection = document.getElementById('blob-storage-config-section');
         const databricksSection = document.getElementById('databricks-config-section');
         const snowflakeSection = document.getElementById('snowflake-config-section');
         const tableauSection = document.getElementById('tableau-config-section');
+        const yamcsSection = document.getElementById('yamcs-config-section');
         const mcpSection = document.getElementById('mcp-config-section');
         const simpleChatSection = document.getElementById('simplechat-config-section');
         const msGraphSection = document.getElementById('msgraph-config-section');
         const azureMapsSection = document.getElementById('azure-maps-config-section');
         const chartSection = document.getElementById('chart-config-section');
+        const logAnalyticsSection = document.getElementById('log-analytics-config-section');
         const isOpenApiVisible = !openApiSection.classList.contains('d-none');
         const isSqlVisible = !sqlSection.classList.contains('d-none');
         const isCosmosVisible = !cosmosSection.classList.contains('d-none');
+        const isRocksDbVisible = !!rocksDbSection && !rocksDbSection.classList.contains('d-none');
         const isDocumentSearchVisible = !documentSearchSection.classList.contains('d-none');
         const isBlobStorageVisible = !blobStorageSection.classList.contains('d-none');
         const isDatabricksVisible = !databricksSection.classList.contains('d-none');
         const isSnowflakeVisible = !snowflakeSection.classList.contains('d-none');
         const isTableauVisible = !tableauSection.classList.contains('d-none');
+        const isYamcsVisible = !yamcsSection.classList.contains('d-none');
         const isMcpVisible = !mcpSection.classList.contains('d-none');
         const isSimpleChatVisible = !simpleChatSection.classList.contains('d-none');
         const isMsGraphVisible = !msGraphSection.classList.contains('d-none');
         const isAzureMapsVisible = !azureMapsSection.classList.contains('d-none');
         const isChartVisible = !chartSection.classList.contains('d-none');
+        const isLogAnalyticsVisible = !!logAnalyticsSection && !logAnalyticsSection.classList.contains('d-none');
 
         if (isOpenApiVisible) {
           // Validate OpenAPI fields
@@ -3015,15 +4027,36 @@ export class PluginModalStepper {
             this.showError('Timeout must be between 1 and 120 seconds.');
             return false;
           }
+        } else if (isRocksDbVisible) {
+          const rocksDbError = this.getRocksDbValidationError();
+          if (rocksDbError) {
+            this.showError(rocksDbError);
+            return false;
+          }
         } else if (isBlobStorageVisible) {
+          const blobAuthType = this.getBlobStorageAuthType();
           const connectionString = document.getElementById('blob-storage-connection-string').value.trim();
+          const blobEndpoint = document.getElementById('blob-storage-endpoint')?.value.trim() || '';
+          const blobAccountKey = document.getElementById('blob-storage-account-key')?.value.trim() || '';
           const containerName = document.getElementById('blob-storage-container-name').value.trim();
           const capabilityValues = Object.values(this.getSelectedBlobStorageCapabilities());
           const readTypeValues = Object.values(this.getSelectedBlobStorageReadFileTypes());
           const uploadTypeValues = Object.values(this.getSelectedBlobStorageUploadFileTypes());
 
-          if (!connectionString) {
+          if (blobAuthType === 'connection_string' && !connectionString) {
             this.showError('Blob storage connection string is required.');
+            return false;
+          }
+          if (blobAuthType !== 'connection_string' && !blobEndpoint) {
+            this.showError('Blob service endpoint is required.');
+            return false;
+          }
+          if (blobAuthType !== 'connection_string' && !this.isAzureBlobEndpoint(blobEndpoint)) {
+            this.showError('Blob service endpoint must be an Azure Blob service URL, for example https://account.blob.core.windows.net.');
+            return false;
+          }
+          if (blobAuthType === 'key' && !blobAccountKey) {
+            this.showError('Blob storage account key is required.');
             return false;
           }
           if (!containerName) {
@@ -3180,6 +4213,50 @@ export class PluginModalStepper {
             this.showError('Tableau timeout must be between 1 and 300 seconds.');
             return false;
           }
+        } else if (isYamcsVisible) {
+          const serverUrl = this.normalizeYamcsServerUrl(document.getElementById('yamcs-server-url').value);
+          const instance = document.getElementById('yamcs-instance').value.trim();
+          const selectedIdentity = this.getSelectedActionIdentity('yamcs');
+          const authMethod = document.getElementById('yamcs-auth-method').value;
+          const username = document.getElementById('yamcs-username').value.trim();
+          const password = document.getElementById('yamcs-password').value.trim();
+          const apiKey = document.getElementById('yamcs-api-key').value.trim();
+          const bearerToken = document.getElementById('yamcs-bearer-token').value.trim();
+          const maxRows = parseInt(document.getElementById('yamcs-max-rows').value, 10);
+          const timeout = parseInt(document.getElementById('yamcs-timeout').value, 10);
+
+          if (!serverUrl || !/^https?:\/\//i.test(serverUrl)) {
+            this.showError('Yamcs server URL must be an http or https URL.');
+            return false;
+          }
+          if (!instance) {
+            this.showError('Yamcs instance is required.');
+            return false;
+          }
+          if (![YAMCS_AUTH_METHOD_USERNAME_PASSWORD, YAMCS_AUTH_METHOD_API_KEY, YAMCS_AUTH_METHOD_BEARER_TOKEN, YAMCS_AUTH_METHOD_NONE].includes(authMethod)) {
+            this.showError('Select a supported Yamcs authentication method.');
+            return false;
+          }
+          if (!selectedIdentity && authMethod === YAMCS_AUTH_METHOD_USERNAME_PASSWORD && (!username || !password)) {
+            this.showError('Yamcs username and password are required for username/password authentication.');
+            return false;
+          }
+          if (!selectedIdentity && authMethod === YAMCS_AUTH_METHOD_API_KEY && !apiKey) {
+            this.showError('Yamcs API key is required for API key authentication.');
+            return false;
+          }
+          if (!selectedIdentity && authMethod === YAMCS_AUTH_METHOD_BEARER_TOKEN && !bearerToken) {
+            this.showError('Yamcs bearer token is required for bearer token authentication.');
+            return false;
+          }
+          if (Number.isNaN(maxRows) || maxRows < 1 || maxRows > 5000) {
+            this.showError('Yamcs max rows must be between 1 and 5000.');
+            return false;
+          }
+          if (Number.isNaN(timeout) || timeout < 1 || timeout > 300) {
+            this.showError('Yamcs timeout must be between 1 and 300 seconds.');
+            return false;
+          }
         } else if (isMcpVisible) {
           const transport = document.getElementById('mcp-transport').value;
           const endpoint = document.getElementById('mcp-endpoint').value.trim();
@@ -3189,6 +4266,9 @@ export class PluginModalStepper {
           const requestTimeout = parseInt(document.getElementById('mcp-request-timeout').value, 10);
           const connectTimeout = parseInt(document.getElementById('mcp-connect-timeout').value, 10);
           const sseReadTimeout = parseInt(document.getElementById('mcp-sse-read-timeout').value, 10);
+          const retryCount = parseInt(document.getElementById('mcp-retry-count').value, 10);
+          const retryBackoffSeconds = parseInt(document.getElementById('mcp-retry-backoff-seconds').value, 10);
+          let customHeaders = {};
 
           if (!['streamable_http', 'sse', 'websocket', 'stdio'].includes(transport)) {
             this.showError('Select a supported MCP transport.');
@@ -3205,9 +4285,27 @@ export class PluginModalStepper {
               this.showError(error.message);
               return false;
             }
-          } else if (!endpoint) {
-            this.showError('Endpoint is required for MCP remote transports.');
-            return false;
+          } else {
+            if (!endpoint) {
+              this.showError('Endpoint is required for MCP remote transports.');
+              return false;
+            }
+            try {
+              const parsedEndpoint = new URL(endpoint);
+              const allowedSchemes = transport === 'websocket' ? ['ws:', 'wss:'] : ['http:', 'https:'];
+              if (!allowedSchemes.includes(parsedEndpoint.protocol) || !parsedEndpoint.host) {
+                const schemeLabel = allowedSchemes.map(scheme => scheme.replace(':', '')).join('/');
+                this.showError(`MCP ${transport} transport requires a valid ${schemeLabel} endpoint.`);
+                return false;
+              }
+              if (parsedEndpoint.username || parsedEndpoint.password) {
+                this.showError('MCP endpoint must not include embedded credentials.');
+                return false;
+              }
+            } catch (error) {
+              this.showError('MCP endpoint must be a valid absolute URL.');
+              return false;
+            }
           }
 
           if (!document.getElementById('mcp-load-tools').checked && !document.getElementById('mcp-load-prompts').checked) {
@@ -3231,8 +4329,27 @@ export class PluginModalStepper {
               return false;
             }
           }
+          try {
+            customHeaders = this.getMcpCustomHeaders();
+            this.validateMcpCustomHeaders(customHeaders);
+          } catch (error) {
+            this.showError(error.message);
+            return false;
+          }
+          if (transport === 'websocket' && (authMethod !== 'none' || Object.keys(customHeaders).length > 0)) {
+            this.showError('MCP websocket transport does not support custom or authentication headers. Use Streamable HTTP or SSE for header-based authentication.');
+            return false;
+          }
           if ([requestTimeout, connectTimeout, sseReadTimeout].some(value => Number.isNaN(value) || value < 1 || value > 300)) {
             this.showError('MCP timeout values must be between 1 and 300 seconds.');
+            return false;
+          }
+          if (Number.isNaN(retryCount) || retryCount < 0 || retryCount > 3) {
+            this.showError('MCP retry count must be between 0 and 3.');
+            return false;
+          }
+          if (Number.isNaN(retryBackoffSeconds) || retryBackoffSeconds < 1 || retryBackoffSeconds > 30) {
+            this.showError('MCP retry backoff must be between 1 and 30 seconds.');
             return false;
           }
           try {
@@ -3274,6 +4391,38 @@ export class PluginModalStepper {
           const azureMapsKey = document.getElementById('azure-maps-key').value.trim();
           if (!azureMapsKey) {
             this.showError('Azure Maps subscription key is required.');
+            return false;
+          }
+        } else if (isLogAnalyticsVisible) {
+          const workspaceId = document.getElementById('log-analytics-workspace-id').value.trim();
+          if (!workspaceId) {
+            this.showError('Log Analytics workspace ID is required.');
+            return false;
+          }
+
+          const cloud = document.getElementById('log-analytics-cloud').value;
+          if (cloud === 'custom') {
+            const authorityHost = document.getElementById('log-analytics-authority-host').value.trim();
+            const endpointOverride = document.getElementById('log-analytics-endpoint-override').value.trim();
+            if (!authorityHost || !endpointOverride) {
+              this.showError('Authority host and endpoint override are required for the custom cloud.');
+              return false;
+            }
+          }
+
+          const selectedLogAnalyticsIdentity = this.getSelectedActionIdentity('logAnalytics');
+          const logAnalyticsAuthMethod = document.getElementById('log-analytics-auth-method').value;
+          if (!selectedLogAnalyticsIdentity && logAnalyticsAuthMethod === 'servicePrincipal') {
+            const clientId = document.getElementById('log-analytics-auth-identity').value.trim();
+            const clientSecret = document.getElementById('log-analytics-auth-key').value.trim();
+            const tenantId = document.getElementById('log-analytics-auth-tenant-id').value.trim();
+            if (!clientId || !clientSecret || !tenantId) {
+              this.showError('Client ID, client secret, and tenant ID are required for service principal authentication.');
+              return false;
+            }
+          }
+          if (!selectedLogAnalyticsIdentity && logAnalyticsAuthMethod === 'key' && !document.getElementById('log-analytics-auth-key').value.trim()) {
+            this.showError('A key is required for key authentication.');
             return false;
           }
         } else if (isChartVisible) {
@@ -3318,6 +4467,7 @@ export class PluginModalStepper {
       case 4:
         // Validate JSON fields
         if (!this.validateJSONField('plugin-metadata', 'Metadata')) return false;
+        if (!this.validateKeyVaultReminderFields()) return false;
         //if (!this.validateJSONField('plugin-additional-fields', 'Additional Fields')) return false;
         break;
     }
@@ -3712,6 +4862,920 @@ export class PluginModalStepper {
     } finally {
       btn.innerHTML = originalText;
       btn.disabled = false;
+    }
+  }
+
+  initializeRocksDbConfiguration() {
+    const defaultValues = [
+      ['rocksdb-auth-scheme', ROCKSDB_AUTH_SCHEME_NONE],
+      ['rocksdb-read-only', 'true'],
+      ['rocksdb-key-encoding', 'utf8'],
+      ['rocksdb-value-encoding', 'utf8'],
+      ['rocksdb-column-family', ROCKSDB_DEFAULT_COLUMN_FAMILY],
+      ['rocksdb-api-key-header', ROCKSDB_DEFAULT_API_KEY_HEADER],
+      ['rocksdb-max-results', String(ROCKSDB_DEFAULT_MAX_RESULTS)],
+      ['rocksdb-max-value-bytes', String(ROCKSDB_DEFAULT_MAX_VALUE_BYTES)],
+      ['rocksdb-timeout', String(ROCKSDB_DEFAULT_TIMEOUT)]
+    ];
+
+    defaultValues.forEach(([fieldId, defaultValue]) => {
+      const field = document.getElementById(fieldId);
+      if (field && !field.value) {
+        field.value = defaultValue;
+      }
+    });
+
+    const resultDiv = document.getElementById('rocksdb-test-connection-result');
+    if (resultDiv) {
+      resultDiv.classList.add('d-none');
+    }
+
+    this.handleRocksDbAuthSchemeChange();
+  }
+
+  setRocksDbFieldValue(fieldId, value) {
+    const field = document.getElementById(fieldId);
+    if (field) {
+      field.value = value === null || value === undefined ? '' : value;
+    }
+  }
+
+  handleRocksDbAuthSchemeChange() {
+    const authScheme = document.getElementById('rocksdb-auth-scheme')?.value || ROCKSDB_AUTH_SCHEME_NONE;
+    const requiresToken = authScheme === ROCKSDB_AUTH_SCHEME_BEARER || authScheme === ROCKSDB_AUTH_SCHEME_API_KEY;
+
+    document.getElementById('rocksdb-auth-key-group')?.classList.toggle('d-none', !requiresToken);
+    document.getElementById('rocksdb-api-key-header-group')?.classList.toggle(
+      'd-none',
+      authScheme !== ROCKSDB_AUTH_SCHEME_API_KEY
+    );
+
+    const keyInput = document.getElementById('rocksdb-auth-key');
+    if (keyInput) {
+      keyInput.required = requiresToken;
+    }
+  }
+
+  getRocksDbKeyPrefixHints() {
+    const rawValue = document.getElementById('rocksdb-key-prefix-hints')?.value || '';
+    return rawValue
+      .split(/[,\n]/)
+      .map(value => value.trim())
+      .filter(Boolean);
+  }
+
+  getRocksDbEndpointValue() {
+    return (document.getElementById('rocksdb-base-url')?.value || '').trim().replace(/\/+$/, '');
+  }
+
+  getRocksDbAuthLabel() {
+    const authScheme = document.getElementById('rocksdb-auth-scheme')?.value || ROCKSDB_AUTH_SCHEME_NONE;
+    if (authScheme === ROCKSDB_AUTH_SCHEME_BEARER) {
+      return 'Bearer Token';
+    }
+    if (authScheme === ROCKSDB_AUTH_SCHEME_API_KEY) {
+      return 'API Key Header';
+    }
+    return 'No Authentication';
+  }
+
+  getRocksDbValidationError() {
+    const baseUrl = (document.getElementById('rocksdb-base-url')?.value || '').trim();
+    if (!baseUrl) {
+      return 'RocksDB service base URL is required.';
+    }
+    if (!/^https?:\/\/.+/i.test(baseUrl)) {
+      return 'RocksDB service base URL must start with http:// or https://.';
+    }
+
+    const authScheme = document.getElementById('rocksdb-auth-scheme')?.value || ROCKSDB_AUTH_SCHEME_NONE;
+    if (authScheme !== ROCKSDB_AUTH_SCHEME_NONE && !(document.getElementById('rocksdb-auth-key')?.value || '').trim()) {
+      return 'A service token is required when the RocksDB authentication scheme is Bearer Token or API Key Header.';
+    }
+
+    const maxResults = parseInt(document.getElementById('rocksdb-max-results')?.value, 10);
+    if (Number.isNaN(maxResults) || maxResults < 1 || maxResults > 1000) {
+      return 'Max results must be between 1 and 1000.';
+    }
+
+    const maxValueBytes = parseInt(document.getElementById('rocksdb-max-value-bytes')?.value, 10);
+    if (Number.isNaN(maxValueBytes) || maxValueBytes < 1 || maxValueBytes > 1048576) {
+      return 'Max value bytes must be between 1 and 1048576.';
+    }
+
+    const timeout = parseInt(document.getElementById('rocksdb-timeout')?.value, 10);
+    if (Number.isNaN(timeout) || timeout < 1 || timeout > 300) {
+      return 'Timeout must be between 1 and 300 seconds.';
+    }
+
+    return null;
+  }
+
+  getRocksDbConfiguration() {
+    const endpoint = this.getRocksDbEndpointValue();
+    const authScheme = document.getElementById('rocksdb-auth-scheme')?.value || ROCKSDB_AUTH_SCHEME_NONE;
+
+    const additionalFields = {
+      base_url: endpoint,
+      auth_scheme: authScheme,
+      column_family: (document.getElementById('rocksdb-column-family')?.value || '').trim() || ROCKSDB_DEFAULT_COLUMN_FAMILY,
+      key_encoding: document.getElementById('rocksdb-key-encoding')?.value || 'utf8',
+      value_encoding: document.getElementById('rocksdb-value-encoding')?.value || 'utf8',
+      key_prefix_hints: this.getRocksDbKeyPrefixHints(),
+      read_only: (document.getElementById('rocksdb-read-only')?.value || 'true') === 'true',
+      max_results: parseInt(document.getElementById('rocksdb-max-results')?.value, 10) || ROCKSDB_DEFAULT_MAX_RESULTS,
+      max_value_bytes: parseInt(document.getElementById('rocksdb-max-value-bytes')?.value, 10) || ROCKSDB_DEFAULT_MAX_VALUE_BYTES,
+      timeout: parseInt(document.getElementById('rocksdb-timeout')?.value, 10) || ROCKSDB_DEFAULT_TIMEOUT
+    };
+
+    if (authScheme === ROCKSDB_AUTH_SCHEME_API_KEY) {
+      additionalFields.api_key_header = (document.getElementById('rocksdb-api-key-header')?.value || '').trim()
+        || ROCKSDB_DEFAULT_API_KEY_HEADER;
+    }
+
+    const auth = {};
+    if (authScheme === ROCKSDB_AUTH_SCHEME_NONE) {
+      auth.type = 'NoAuth';
+    } else {
+      auth.type = 'key';
+      auth.key = (document.getElementById('rocksdb-auth-key')?.value || '').trim();
+    }
+
+    return { endpoint, auth, additionalFields };
+  }
+
+  populateRocksDbForm(plugin) {
+    const additionalFields = plugin.additionalFields || plugin.additional_fields || {};
+    const auth = plugin.auth || {};
+    const prefixHints = Array.isArray(additionalFields.key_prefix_hints)
+      ? additionalFields.key_prefix_hints.join('\n')
+      : (additionalFields.key_prefix_hints || '');
+
+    this.setRocksDbFieldValue('rocksdb-base-url', additionalFields.base_url || plugin.endpoint || '');
+    this.setRocksDbFieldValue('rocksdb-auth-scheme', additionalFields.auth_scheme || ROCKSDB_AUTH_SCHEME_NONE);
+    this.setRocksDbFieldValue('rocksdb-auth-key', auth.key || '');
+    this.setRocksDbFieldValue('rocksdb-api-key-header', additionalFields.api_key_header || ROCKSDB_DEFAULT_API_KEY_HEADER);
+    this.setRocksDbFieldValue('rocksdb-column-family', additionalFields.column_family || ROCKSDB_DEFAULT_COLUMN_FAMILY);
+    this.setRocksDbFieldValue('rocksdb-read-only', additionalFields.read_only === false ? 'false' : 'true');
+    this.setRocksDbFieldValue('rocksdb-key-encoding', additionalFields.key_encoding || 'utf8');
+    this.setRocksDbFieldValue('rocksdb-value-encoding', additionalFields.value_encoding || 'utf8');
+    this.setRocksDbFieldValue('rocksdb-key-prefix-hints', prefixHints);
+    this.setRocksDbFieldValue('rocksdb-max-results', additionalFields.max_results || ROCKSDB_DEFAULT_MAX_RESULTS);
+    this.setRocksDbFieldValue('rocksdb-max-value-bytes', additionalFields.max_value_bytes || ROCKSDB_DEFAULT_MAX_VALUE_BYTES);
+    this.setRocksDbFieldValue('rocksdb-timeout', additionalFields.timeout || ROCKSDB_DEFAULT_TIMEOUT);
+
+    this.handleRocksDbAuthSchemeChange();
+  }
+
+  setRocksDbSummaryText(elementId, value) {
+    const element = document.getElementById(elementId);
+    if (element) {
+      element.textContent = value;
+    }
+  }
+
+  populateRocksDbSummary() {
+    const rocksDbSection = document.getElementById('summary-rocksdb-section');
+    if (!rocksDbSection) {
+      return;
+    }
+
+    if (!this.isRocksDbType()) {
+      rocksDbSection.classList.add('d-none');
+      return;
+    }
+
+    const readOnly = (document.getElementById('rocksdb-read-only')?.value || 'true') === 'true';
+    const prefixHints = this.getRocksDbKeyPrefixHints();
+    const timeoutValue = (document.getElementById('rocksdb-timeout')?.value || '').trim();
+    const keyEncoding = document.getElementById('rocksdb-key-encoding')?.value || 'utf8';
+    const valueEncoding = document.getElementById('rocksdb-value-encoding')?.value || 'utf8';
+
+    this.setRocksDbSummaryText('summary-rocksdb-target', this.getRocksDbEndpointValue() || '-');
+    this.setRocksDbSummaryText('summary-rocksdb-auth-scheme', this.getRocksDbAuthLabel());
+    this.setRocksDbSummaryText('summary-rocksdb-access', readOnly ? 'Read-only' : 'Reads and writes');
+    this.setRocksDbSummaryText(
+      'summary-rocksdb-column-family',
+      (document.getElementById('rocksdb-column-family')?.value || '').trim() || ROCKSDB_DEFAULT_COLUMN_FAMILY
+    );
+    this.setRocksDbSummaryText('summary-rocksdb-encoding', `Keys: ${keyEncoding}, Values: ${valueEncoding}`);
+    this.setRocksDbSummaryText(
+      'summary-rocksdb-max-results',
+      (document.getElementById('rocksdb-max-results')?.value || '').trim() || '-'
+    );
+    this.setRocksDbSummaryText(
+      'summary-rocksdb-max-value-bytes',
+      (document.getElementById('rocksdb-max-value-bytes')?.value || '').trim() || '-'
+    );
+    this.setRocksDbSummaryText('summary-rocksdb-timeout', timeoutValue ? `${timeoutValue} seconds` : '-');
+    this.setRocksDbSummaryText(
+      'summary-rocksdb-key-prefix-hints',
+      prefixHints.length ? prefixHints.join(', ') : 'None configured'
+    );
+
+    rocksDbSection.classList.remove('d-none');
+  }
+
+  async testRocksDbConnection() {
+    const btn = document.getElementById('rocksdb-test-connection-btn');
+    const resultDiv = document.getElementById('rocksdb-test-connection-result');
+    const alertDiv = document.getElementById('rocksdb-test-connection-alert');
+    if (!btn || !resultDiv || !alertDiv) return;
+
+    const validationError = this.getRocksDbValidationError();
+    if (validationError) {
+      resultDiv.classList.remove('d-none');
+      alertDiv.className = 'alert alert-warning mb-0 py-2 px-3 small';
+      alertDiv.textContent = validationError;
+      return;
+    }
+
+    const authScheme = document.getElementById('rocksdb-auth-scheme')?.value || ROCKSDB_AUTH_SCHEME_NONE;
+    const payload = {
+      base_url: this.getRocksDbEndpointValue(),
+      auth_scheme: authScheme,
+      timeout: Math.min(parseInt(document.getElementById('rocksdb-timeout')?.value, 10) || 10, 30)
+    };
+
+    if (authScheme === ROCKSDB_AUTH_SCHEME_API_KEY) {
+      payload.api_key_header = (document.getElementById('rocksdb-api-key-header')?.value || '').trim()
+        || ROCKSDB_DEFAULT_API_KEY_HEADER;
+    }
+    if (authScheme !== ROCKSDB_AUTH_SCHEME_NONE) {
+      payload.auth_key = (document.getElementById('rocksdb-auth-key')?.value || '').trim();
+    }
+
+    const existingPluginContext = this.getTestPluginContext();
+    if (existingPluginContext) {
+      payload.existing_plugin = existingPluginContext;
+    }
+
+    const originalText = btn.innerHTML;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>Testing...';
+    btn.disabled = true;
+    resultDiv.classList.add('d-none');
+
+    try {
+      const response = await fetch('/api/plugins/test-rocksdb-connection', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const data = await response.json();
+
+      resultDiv.classList.remove('d-none');
+      if (data.success) {
+        alertDiv.className = 'alert alert-success mb-0 py-2 px-3 small';
+        alertDiv.innerHTML = '<i class="bi bi-check-circle me-2"></i>' + this.escapeHtml(data.message || 'Connection successful!');
+      } else {
+        alertDiv.className = 'alert alert-danger mb-0 py-2 px-3 small';
+        alertDiv.innerHTML = '<i class="bi bi-x-circle me-2"></i>' + this.escapeHtml(data.error || 'Connection failed.');
+      }
+    } catch (error) {
+      resultDiv.classList.remove('d-none');
+      alertDiv.className = 'alert alert-danger mb-0 py-2 px-3 small';
+      alertDiv.innerHTML = '<i class="bi bi-x-circle me-2"></i>Test failed: ' + this.escapeHtml(error.message || 'Network error');
+    } finally {
+      btn.innerHTML = originalText;
+      btn.disabled = false;
+    }
+  }
+
+  async testYamcsConnection() {
+    const btn = document.getElementById('yamcs-test-connection-btn');
+    const resultDiv = document.getElementById('yamcs-test-connection-result');
+    const alertDiv = document.getElementById('yamcs-test-connection-alert');
+    if (!btn || !resultDiv || !alertDiv) return;
+
+    const serverUrl = this.normalizeYamcsServerUrl(document.getElementById('yamcs-server-url')?.value || '');
+    const instance = document.getElementById('yamcs-instance')?.value?.trim() || '';
+    const selectedIdentity = this.getSelectedActionIdentity('yamcs');
+    const authMethod = selectedIdentity
+      ? this.getYamcsIdentityAuthMethod(selectedIdentity)
+      : (document.getElementById('yamcs-auth-method')?.value || YAMCS_AUTH_METHOD_USERNAME_PASSWORD);
+    const tlsVerify = document.getElementById('yamcs-tls-verify')?.checked !== false;
+    const timeout = parseInt(document.getElementById('yamcs-timeout')?.value, 10) || 10;
+
+    if (!serverUrl || !instance) {
+      resultDiv.classList.remove('d-none');
+      alertDiv.className = 'alert alert-warning mb-0 py-2 px-3 small';
+      alertDiv.textContent = 'Server URL and instance are required before testing the Yamcs connection.';
+      return;
+    }
+    if (selectedIdentity) {
+      resultDiv.classList.remove('d-none');
+      alertDiv.className = 'alert alert-warning mb-0 py-2 px-3 small';
+      alertDiv.textContent = 'Save the action first to test a connection that uses a reusable identity.';
+      return;
+    }
+
+    let authKey = '';
+    let username = '';
+    if (authMethod === YAMCS_AUTH_METHOD_USERNAME_PASSWORD) {
+      username = document.getElementById('yamcs-username')?.value?.trim() || '';
+      authKey = document.getElementById('yamcs-password')?.value?.trim() || '';
+    } else if (authMethod === YAMCS_AUTH_METHOD_API_KEY) {
+      authKey = document.getElementById('yamcs-api-key')?.value?.trim() || '';
+    } else if (authMethod === YAMCS_AUTH_METHOD_BEARER_TOKEN) {
+      authKey = document.getElementById('yamcs-bearer-token')?.value?.trim() || '';
+    }
+
+    const existingPluginContext = this.getTestPluginContext();
+    if (authMethod !== YAMCS_AUTH_METHOD_NONE && !authKey && !existingPluginContext) {
+      resultDiv.classList.remove('d-none');
+      alertDiv.className = 'alert alert-warning mb-0 py-2 px-3 small';
+      alertDiv.textContent = 'A credential is required before testing an authenticated Yamcs connection.';
+      return;
+    }
+
+    const originalText = btn.innerHTML;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>Testing...';
+    btn.disabled = true;
+    resultDiv.classList.add('d-none');
+
+    try {
+      const payload = {
+        server_url: serverUrl,
+        instance,
+        auth_method: authMethod,
+        tls_verify: tlsVerify,
+        timeout
+      };
+
+      if (authMethod === YAMCS_AUTH_METHOD_USERNAME_PASSWORD) {
+        payload.username = username;
+      }
+      if (authMethod !== YAMCS_AUTH_METHOD_NONE) {
+        payload.auth_key = authKey;
+      }
+      if (existingPluginContext) {
+        payload.existing_plugin = existingPluginContext;
+      }
+
+      const response = await fetch('/api/plugins/test-yamcs-connection', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const data = await response.json();
+
+      resultDiv.classList.remove('d-none');
+      if (data.success) {
+        alertDiv.className = 'alert alert-success mb-0 py-2 px-3 small';
+        alertDiv.innerHTML = '<i class="bi bi-check-circle me-2"></i>' + this.escapeHtml(data.message || 'Connection successful!');
+      } else {
+        alertDiv.className = 'alert alert-danger mb-0 py-2 px-3 small';
+        alertDiv.innerHTML = '<i class="bi bi-x-circle me-2"></i>' + this.escapeHtml(data.error || 'Connection failed.');
+      }
+    } catch (error) {
+      resultDiv.classList.remove('d-none');
+      alertDiv.className = 'alert alert-danger mb-0 py-2 px-3 small';
+      alertDiv.innerHTML = '<i class="bi bi-x-circle me-2"></i>Test failed: ' + this.escapeHtml(error.message || 'Network error');
+    } finally {
+      btn.innerHTML = originalText;
+      btn.disabled = false;
+    }
+  }
+
+  getOpenApiAuthConfiguration() {
+    const selectedIdentity = this.getSelectedActionIdentity('openapi');
+    const authType = document.getElementById('plugin-auth-type')?.value || 'none';
+    const auth = {};
+    const additionalFields = {};
+    let identityId = '';
+
+    if (selectedIdentity) {
+      identityId = selectedIdentity.id || selectedIdentity.identity_id || '';
+      auth.type = 'identity';
+      auth.identity = identityId;
+      additionalFields.identity_auth_type = this.getIdentityAuthType(selectedIdentity);
+      additionalFields.auth_method = 'identity';
+    } else if (authType === 'api_key') {
+      auth.type = 'key';
+      auth.key = document.getElementById('plugin-auth-api-key-value')?.value.trim() || '';
+      additionalFields.api_key_location = document.getElementById('plugin-auth-api-key-location')?.value || 'header';
+      additionalFields.api_key_name = document.getElementById('plugin-auth-api-key-name')?.value.trim() || '';
+    } else if (authType === 'bearer') {
+      auth.type = 'key';
+      auth.key = document.getElementById('plugin-auth-bearer-token')?.value.trim() || '';
+      additionalFields.auth_method = 'bearer';
+    } else if (authType === 'basic') {
+      auth.type = 'key';
+      const username = document.getElementById('plugin-auth-basic-username')?.value.trim() || '';
+      const password = document.getElementById('plugin-auth-basic-password')?.value.trim() || '';
+      auth.key = `${username}:${password}`;
+      additionalFields.auth_method = 'basic';
+    } else if (authType === 'oauth2') {
+      auth.type = 'key';
+      auth.key = document.getElementById('plugin-auth-oauth2-token')?.value.trim() || '';
+      additionalFields.auth_method = 'oauth2';
+    } else if (authType === 'none') {
+      auth.type = 'key';
+      auth.key = '';
+      additionalFields.auth_method = 'none';
+    }
+
+    return { auth, additionalFields, identityId };
+  }
+
+  getAzureMapsConfiguration() {
+    return {
+      endpoint: AZURE_MAPS_DEFAULT_ENDPOINT,
+      auth: {
+        type: 'key',
+        key: document.getElementById('azure-maps-key')?.value.trim() || ''
+      },
+      additionalFields: {},
+      identityId: ''
+    };
+  }
+
+  getBlobStorageAuthType() {
+    return document.getElementById('blob-storage-auth-type')?.value || 'connection_string';
+  }
+
+  handleBlobStorageAuthTypeChange() {
+    const authType = this.getBlobStorageAuthType();
+    const connectionStringGroup = document.getElementById('blob-storage-connection-string-group');
+    const endpointGroup = document.getElementById('blob-storage-endpoint-group');
+    const accountKeyGroup = document.getElementById('blob-storage-account-key-group');
+
+    connectionStringGroup?.classList.toggle('d-none', authType !== 'connection_string');
+    endpointGroup?.classList.toggle('d-none', authType === 'connection_string');
+    accountKeyGroup?.classList.toggle('d-none', authType !== 'key');
+  }
+
+  getBlobStorageConfiguration() {
+    const authType = this.getBlobStorageAuthType();
+    const connectionString = document.getElementById('blob-storage-connection-string')?.value.trim() || '';
+    const endpoint = document.getElementById('blob-storage-endpoint')?.value.trim() || '';
+    const accountKey = document.getElementById('blob-storage-account-key')?.value.trim() || '';
+    const containerName = document.getElementById('blob-storage-container-name')?.value.trim() || '';
+    const blobPrefix = this.normalizeBlobStoragePrefix(document.getElementById('blob-storage-blob-prefix')?.value || '');
+
+    const additionalFields = {
+      container_name: containerName,
+      blob_storage_capabilities: this.getSelectedBlobStorageCapabilities(),
+      blob_storage_read_file_types: this.getSelectedBlobStorageReadFileTypes(),
+      blob_storage_upload_file_types: this.getSelectedBlobStorageUploadFileTypes()
+    };
+    if (blobPrefix) {
+      additionalFields.blob_prefix = blobPrefix;
+    }
+
+    if (authType === 'identity') {
+      return {
+        endpoint,
+        auth: { type: 'identity', identity: 'managed_identity' },
+        additionalFields,
+        identityId: ''
+      };
+    }
+
+    if (authType === 'key') {
+      return {
+        endpoint,
+        auth: { type: 'key', key: accountKey },
+        additionalFields,
+        identityId: ''
+      };
+    }
+
+    return {
+      endpoint: this.deriveBlobStorageEndpointFromConnectionString(connectionString) || this.originalPlugin?.endpoint || '',
+      auth: { type: 'connection_string', key: connectionString },
+      additionalFields,
+      identityId: ''
+    };
+  }
+
+  getLogAnalyticsIdentityAuthMethod(identity) {
+    return this.getIdentityAuthType(identity) === 'client_secret' ? 'servicePrincipal' : 'identity';
+  }
+
+  initializeLogAnalyticsConfiguration() {
+    const cloudField = document.getElementById('log-analytics-cloud');
+    if (cloudField && !cloudField.value) {
+      cloudField.value = LOG_ANALYTICS_DEFAULT_CLOUD;
+    }
+    const endpointField = document.getElementById('log-analytics-endpoint');
+    if (endpointField) {
+      endpointField.placeholder = LOG_ANALYTICS_DEFAULT_ENDPOINT;
+    }
+
+    this.clearActionConnectionTestResult('logAnalytics');
+    this.handleLogAnalyticsCloudChange();
+    this.toggleLogAnalyticsAuthFields();
+  }
+
+  handleLogAnalyticsCloudChange() {
+    const cloud = document.getElementById('log-analytics-cloud')?.value || LOG_ANALYTICS_DEFAULT_CLOUD;
+    const customGroup = document.getElementById('log-analytics-custom-cloud-group');
+    if (customGroup) {
+      customGroup.classList.toggle('d-none', cloud !== 'custom');
+    }
+  }
+
+  toggleLogAnalyticsAuthFields() {
+    const selectedIdentity = this.getSelectedActionIdentity('logAnalytics');
+    const authMethod = selectedIdentity
+      ? this.getLogAnalyticsIdentityAuthMethod(selectedIdentity)
+      : (document.getElementById('log-analytics-auth-method')?.value || 'identity');
+
+    const identityGroup = document.getElementById('log-analytics-auth-identity-group');
+    const keyGroup = document.getElementById('log-analytics-auth-key-group');
+    const tenantGroup = document.getElementById('log-analytics-auth-tenant-id-group');
+    const identityLabel = document.getElementById('log-analytics-auth-identity-label');
+    const keyLabel = document.getElementById('log-analytics-auth-key-label');
+
+    const showIdentity = !selectedIdentity && ['identity', 'servicePrincipal'].includes(authMethod);
+    const showKey = !selectedIdentity && ['servicePrincipal', 'key'].includes(authMethod);
+    const showTenant = !selectedIdentity && authMethod === 'servicePrincipal';
+
+    if (identityGroup) identityGroup.classList.toggle('d-none', !showIdentity);
+    if (keyGroup) keyGroup.classList.toggle('d-none', !showKey);
+    if (tenantGroup) tenantGroup.classList.toggle('d-none', !showTenant);
+
+    if (identityLabel) {
+      identityLabel.textContent = authMethod === 'servicePrincipal' ? 'Client ID' : 'Managed Identity Client ID';
+    }
+    if (keyLabel) {
+      keyLabel.textContent = authMethod === 'servicePrincipal' ? 'Client Secret' : 'Key';
+    }
+
+    this.updateLogAnalyticsAuthInfo(authMethod, selectedIdentity);
+  }
+
+  updateLogAnalyticsAuthInfo(authMethod, selectedIdentity) {
+    const infoDiv = document.getElementById('log-analytics-auth-info');
+    const infoText = document.getElementById('log-analytics-auth-info-text');
+    if (!infoDiv || !infoText) {
+      return;
+    }
+
+    let message = 'Managed Identity uses the application identity. Grant it the Log Analytics Reader role on the target workspace.';
+    if (selectedIdentity) {
+      message = 'Credentials come from the selected reusable identity. Action-specific fields are ignored.';
+    } else if (authMethod === 'servicePrincipal') {
+      message = 'Service Principal authentication needs a client ID, client secret, and tenant ID with Log Analytics Reader access to the workspace.';
+    } else if (authMethod === 'user') {
+      message = 'On-Behalf-Of User authentication runs queries as the signed-in user, so results respect that user\'s workspace permissions.';
+    } else if (authMethod === 'key') {
+      message = 'Key authentication is only supported by custom Log Analytics-compatible endpoints.';
+    }
+
+    infoText.textContent = message;
+    infoDiv.classList.remove('d-none');
+  }
+
+  getLogAnalyticsConfiguration() {
+    const selectedIdentity = this.getSelectedActionIdentity('logAnalytics');
+    const authMethod = selectedIdentity
+      ? this.getLogAnalyticsIdentityAuthMethod(selectedIdentity)
+      : (document.getElementById('log-analytics-auth-method')?.value || 'identity');
+    const cloud = document.getElementById('log-analytics-cloud')?.value || LOG_ANALYTICS_DEFAULT_CLOUD;
+
+    // Preserve stored fields such as query_history that Step 3 does not surface.
+    const storedFields = this.originalPlugin?.additionalFields;
+    const additionalFields = (storedFields && typeof storedFields === 'object' && !Array.isArray(storedFields))
+      ? { ...storedFields }
+      : {};
+    delete additionalFields.authorityHost;
+    delete additionalFields.endpointOverride;
+    delete additionalFields.identity_auth_type;
+
+    additionalFields.workspaceId = document.getElementById('log-analytics-workspace-id')?.value.trim() || '';
+    additionalFields.cloud = cloud;
+    if (!Array.isArray(additionalFields.query_history)) {
+      additionalFields.query_history = [];
+    }
+    if (cloud === 'custom') {
+      additionalFields.authorityHost = document.getElementById('log-analytics-authority-host')?.value.trim() || '';
+      additionalFields.endpointOverride = document.getElementById('log-analytics-endpoint-override')?.value.trim() || '';
+    }
+
+    const auth = {};
+    let identityId = '';
+
+    if (selectedIdentity) {
+      identityId = selectedIdentity.id || selectedIdentity.identity_id || '';
+      auth.type = 'identity';
+      auth.identity = identityId;
+      additionalFields.identity_auth_type = this.getIdentityAuthType(selectedIdentity);
+    } else if (authMethod === 'servicePrincipal') {
+      auth.type = 'servicePrincipal';
+      auth.identity = document.getElementById('log-analytics-auth-identity')?.value.trim() || '';
+      auth.key = document.getElementById('log-analytics-auth-key')?.value.trim() || '';
+      auth.tenantId = document.getElementById('log-analytics-auth-tenant-id')?.value.trim() || '';
+    } else if (authMethod === 'key') {
+      auth.type = 'key';
+      auth.key = document.getElementById('log-analytics-auth-key')?.value.trim() || '';
+    } else if (authMethod === 'user') {
+      auth.type = 'user';
+    } else {
+      auth.type = 'identity';
+      const managedIdentityClientId = document.getElementById('log-analytics-auth-identity')?.value.trim() || '';
+      if (managedIdentityClientId) {
+        auth.identity = managedIdentityClientId;
+      }
+    }
+
+    const endpoint = document.getElementById('log-analytics-endpoint')?.value.trim()
+      || (cloud === 'custom' ? additionalFields.endpointOverride : '')
+      || LOG_ANALYTICS_DEFAULT_ENDPOINT;
+
+    return { endpoint, auth, additionalFields, identityId };
+  }
+
+  populateLogAnalyticsConfiguration(plugin) {
+    const additionalFields = (plugin?.additionalFields && typeof plugin.additionalFields === 'object')
+      ? plugin.additionalFields
+      : {};
+    const auth = (plugin?.auth && typeof plugin.auth === 'object') ? plugin.auth : {};
+
+    const workspaceField = document.getElementById('log-analytics-workspace-id');
+    if (workspaceField) {
+      workspaceField.value = additionalFields.workspaceId || '';
+    }
+    const cloudField = document.getElementById('log-analytics-cloud');
+    if (cloudField) {
+      cloudField.value = additionalFields.cloud || LOG_ANALYTICS_DEFAULT_CLOUD;
+    }
+    const endpointField = document.getElementById('log-analytics-endpoint');
+    if (endpointField) {
+      endpointField.value = plugin?.endpoint && plugin.endpoint !== LOG_ANALYTICS_DEFAULT_ENDPOINT ? plugin.endpoint : '';
+    }
+    const authorityHostField = document.getElementById('log-analytics-authority-host');
+    if (authorityHostField) {
+      authorityHostField.value = additionalFields.authorityHost || '';
+    }
+    const endpointOverrideField = document.getElementById('log-analytics-endpoint-override');
+    if (endpointOverrideField) {
+      endpointOverrideField.value = additionalFields.endpointOverride || '';
+    }
+
+    const authType = String(auth.type || 'identity');
+    const authMethodField = document.getElementById('log-analytics-auth-method');
+    if (authMethodField && !plugin?.identity_id) {
+      authMethodField.value = ['identity', 'user', 'servicePrincipal', 'key'].includes(authType) ? authType : 'identity';
+    }
+
+    const authIdentityField = document.getElementById('log-analytics-auth-identity');
+    if (authIdentityField) {
+      authIdentityField.value = auth.identity && auth.identity !== 'managed_identity' ? auth.identity : '';
+    }
+    const authKeyField = document.getElementById('log-analytics-auth-key');
+    if (authKeyField) {
+      authKeyField.value = auth.key || '';
+    }
+    const authTenantField = document.getElementById('log-analytics-auth-tenant-id');
+    if (authTenantField) {
+      authTenantField.value = auth.tenantId || '';
+    }
+
+    if (plugin?.identity_id) {
+      this.setSelectedActionIdentity('logAnalytics', plugin.identity_id);
+    }
+
+    this.handleLogAnalyticsCloudChange();
+    this.toggleLogAnalyticsAuthFields();
+  }
+
+  getActionConnectionTestElements(testKey) {
+    const config = ACTION_CONNECTION_TEST_CONFIG[testKey];
+    if (!config) {
+      return null;
+    }
+    return {
+      config,
+      button: document.getElementById(`${config.idPrefix}-test-connection-btn`),
+      result: document.getElementById(`${config.idPrefix}-test-connection-result`),
+      alert: document.getElementById(`${config.idPrefix}-test-connection-alert`)
+    };
+  }
+
+  clearActionConnectionTestResult(testKey) {
+    const elements = this.getActionConnectionTestElements(testKey);
+    if (!elements) {
+      return;
+    }
+    if (elements.result) {
+      elements.result.classList.add('d-none');
+    }
+    if (elements.alert) {
+      elements.alert.replaceChildren();
+    }
+  }
+
+  showActionConnectionTestMessage(testKey, variant, message, iconClass = '') {
+    const elements = this.getActionConnectionTestElements(testKey);
+    if (!elements || !elements.result || !elements.alert) {
+      return;
+    }
+
+    elements.alert.className = `alert alert-${variant} mb-0 py-2 px-3 small`;
+    elements.alert.replaceChildren();
+    if (iconClass) {
+      const icon = document.createElement('i');
+      icon.className = `${iconClass} me-2`;
+      elements.alert.appendChild(icon);
+    }
+    elements.alert.appendChild(document.createTextNode(message));
+    elements.result.classList.remove('d-none');
+  }
+
+  buildActionConnectionTestConfig(testKey) {
+    if (testKey === 'openapi') {
+      const endpoint = document.getElementById('plugin-endpoint')?.value.trim() || '';
+      if (!endpoint) {
+        throw new Error('Enter the API base URL before testing the connection.');
+      }
+
+      const openApiAuthConfig = this.getOpenApiAuthConfiguration();
+      const additionalFields = { ...openApiAuthConfig.additionalFields, base_url: endpoint };
+      const specContent = document.getElementById('plugin-openapi-file')?.dataset.specContent || '';
+      if (specContent) {
+        try {
+          additionalFields.openapi_spec_content = JSON.parse(specContent);
+          additionalFields.openapi_source_type = 'content';
+        } catch (error) {
+          throw new Error('The uploaded OpenAPI specification could not be parsed.');
+        }
+      } else if (!this.isEditMode) {
+        throw new Error('Upload an OpenAPI specification file before testing the connection.');
+      }
+
+      return {
+        endpoint,
+        auth: openApiAuthConfig.auth,
+        additionalFields,
+        identityId: openApiAuthConfig.identityId
+      };
+    }
+
+    if (testKey === 'azureMaps') {
+      const azureMapsConfig = this.getAzureMapsConfiguration();
+      if (!azureMapsConfig.auth.key && !this.isEditMode) {
+        throw new Error('Enter the Azure Maps subscription key before testing the connection.');
+      }
+      return azureMapsConfig;
+    }
+
+    if (testKey === 'blobStorage') {
+      const blobStorageConfig = this.getBlobStorageConfiguration();
+      if (!blobStorageConfig.additionalFields.container_name) {
+        throw new Error('Enter the container name before testing the connection.');
+      }
+      if (blobStorageConfig.auth.type === 'connection_string' && !blobStorageConfig.auth.key && !this.isEditMode) {
+        throw new Error('Enter the storage connection string before testing the connection.');
+      }
+      if (blobStorageConfig.auth.type !== 'connection_string' && !blobStorageConfig.endpoint) {
+        throw new Error('Enter the blob service endpoint before testing the connection.');
+      }
+      if (blobStorageConfig.auth.type === 'key' && !blobStorageConfig.auth.key && !this.isEditMode) {
+        throw new Error('Enter the storage account key before testing the connection.');
+      }
+      return blobStorageConfig;
+    }
+
+    if (testKey === 'databricks') {
+      const databricksConfig = this.getDatabricksConfiguration();
+      if (!databricksConfig.endpoint) {
+        throw new Error('Enter the Databricks workspace URL before testing the connection.');
+      }
+      if (!databricksConfig.additionalFields.warehouse_id) {
+        throw new Error('Enter the SQL warehouse ID before testing the connection.');
+      }
+      return databricksConfig;
+    }
+
+    if (testKey === 'logAnalytics') {
+      const logAnalyticsConfig = this.getLogAnalyticsConfiguration();
+      if (!logAnalyticsConfig.additionalFields.workspaceId) {
+        throw new Error('Enter the Log Analytics workspace ID before testing the connection.');
+      }
+      return logAnalyticsConfig;
+    }
+
+    if (testKey === 'mcp') {
+      const mcpConfig = this.getMcpConfiguration();
+      const transport = mcpConfig.additionalFields?.transport;
+      if (transport !== 'stdio' && !mcpConfig.endpoint) {
+        throw new Error('Enter the MCP server endpoint before testing the connection.');
+      }
+      return mcpConfig;
+    }
+
+    if (testKey === 'snowflake') {
+      const snowflakeConfig = this.getSnowflakeConfiguration();
+      if (!snowflakeConfig.additionalFields.account) {
+        throw new Error('Enter the Snowflake account identifier before testing the connection.');
+      }
+      if (!snowflakeConfig.additionalFields.warehouse) {
+        throw new Error('Enter the Snowflake warehouse before testing the connection.');
+      }
+      return snowflakeConfig;
+    }
+
+    if (testKey === 'tableau') {
+      const tableauConfig = this.getTableauConfiguration();
+      if (!tableauConfig.endpoint) {
+        throw new Error('Enter the Tableau server URL before testing the connection.');
+      }
+      return tableauConfig;
+    }
+
+    throw new Error('This action type does not support connection testing.');
+  }
+
+  buildActionConnectionTestPayload(testKey) {
+    const typeConfig = this.buildActionConnectionTestConfig(testKey);
+    const payload = {
+      name: document.getElementById('plugin-name')?.value.trim() || '',
+      displayName: document.getElementById('plugin-display-name')?.value.trim() || '',
+      description: document.getElementById('plugin-description')?.value.trim() || '',
+      type: this.selectedType || '',
+      endpoint: typeConfig.endpoint || '',
+      auth: typeConfig.auth || {},
+      metadata: {},
+      additionalFields: typeConfig.additionalFields || {},
+      action_scope: this.actionIdentityScope?.scope || 'personal'
+    };
+
+    if (typeConfig.identityId) {
+      payload.identity_id = typeConfig.identityId;
+    }
+
+    const pluginContext = this.getTestPluginContext();
+    if (pluginContext) {
+      payload.plugin_context = pluginContext;
+    }
+
+    return payload;
+  }
+
+  async runActionConnectionTest(testKey) {
+    const elements = this.getActionConnectionTestElements(testKey);
+    if (!elements || !elements.button) {
+      return;
+    }
+
+    let payload;
+    try {
+      payload = this.buildActionConnectionTestPayload(testKey);
+    } catch (error) {
+      this.showActionConnectionTestMessage(
+        testKey,
+        'warning',
+        error.message || 'Complete the required configuration fields before testing the connection.',
+        'bi bi-exclamation-triangle'
+      );
+      return;
+    }
+
+    const originalChildNodes = Array.from(elements.button.childNodes);
+    elements.button.disabled = true;
+    elements.button.replaceChildren();
+    const spinner = document.createElement('span');
+    spinner.className = 'spinner-border spinner-border-sm me-2';
+    spinner.setAttribute('role', 'status');
+    spinner.setAttribute('aria-hidden', 'true');
+    elements.button.append(spinner, document.createTextNode('Testing...'));
+    this.clearActionConnectionTestResult(testKey);
+
+    try {
+      const response = await fetch(elements.config.url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const data = await response.json().catch(() => ({}));
+
+      if (response.ok && data.success) {
+        this.showActionConnectionTestMessage(
+          testKey,
+          'success',
+          data.message || 'Connection successful.',
+          'bi bi-check-circle'
+        );
+      } else {
+        this.showActionConnectionTestMessage(
+          testKey,
+          'danger',
+          data.error || `The ${elements.config.label} connection test failed.`,
+          'bi bi-x-circle'
+        );
+      }
+    } catch (error) {
+      this.showActionConnectionTestMessage(
+        testKey,
+        'danger',
+        `Test failed: ${error.message || 'Network error'}`,
+        'bi bi-x-circle'
+      );
+    } finally {
+      elements.button.replaceChildren(...originalChildNodes);
+      elements.button.disabled = false;
     }
   }
 
@@ -4274,16 +6338,32 @@ export class PluginModalStepper {
       document.getElementById('cosmos-auth-type').value = auth.type || 'identity';
       document.getElementById('cosmos-auth-key').value = auth.key || '';
       this.initializeCosmosConfiguration();
+    } else if (this.isRocksDbType(plugin.type)) {
+      this.populateRocksDbForm(plugin);
     } else if (this.isDocumentSearchType(plugin.type)) {
       this.populateDocumentSearchForm(plugin.additionalFields || {});
       this.initializeDocumentSearchConfiguration();
     } else if (this.isBlobStorageType(plugin.type)) {
       const additionalFields = plugin.additionalFields || plugin.additional_fields || {};
       const auth = plugin.auth || {};
+      const blobAuthType = ['identity', 'key'].includes(auth.type) ? auth.type : 'connection_string';
 
-      document.getElementById('blob-storage-connection-string').value = auth.key || '';
+      const blobAuthTypeField = document.getElementById('blob-storage-auth-type');
+      if (blobAuthTypeField) {
+        blobAuthTypeField.value = blobAuthType;
+      }
+      document.getElementById('blob-storage-connection-string').value = blobAuthType === 'connection_string' ? (auth.key || '') : '';
+      const blobEndpointField = document.getElementById('blob-storage-endpoint');
+      if (blobEndpointField) {
+        blobEndpointField.value = blobAuthType === 'connection_string' ? '' : (plugin.endpoint || '');
+      }
+      const blobAccountKeyField = document.getElementById('blob-storage-account-key');
+      if (blobAccountKeyField) {
+        blobAccountKeyField.value = blobAuthType === 'key' ? (auth.key || '') : '';
+      }
       document.getElementById('blob-storage-container-name').value = additionalFields.container_name || '';
       document.getElementById('blob-storage-blob-prefix').value = additionalFields.blob_prefix || '';
+      this.handleBlobStorageAuthTypeChange();
       this.setBlobStorageConfiguration({
         blob_storage_capabilities: additionalFields.blob_storage_capabilities || plugin.blob_storage_capabilities || null,
         blob_storage_read_file_types: additionalFields.blob_storage_read_file_types || plugin.blob_storage_read_file_types || null,
@@ -4295,6 +6375,8 @@ export class PluginModalStepper {
       this.populateSnowflakeForm(plugin);
     } else if (this.isTableauType(plugin.type)) {
       this.populateTableauForm(plugin);
+    } else if (this.isYamcsType(plugin.type)) {
+      this.populateYamcsForm(plugin);
     } else if (this.isMcpType(plugin.type)) {
       this.populateMcpForm(plugin);
     } else if (this.isSimpleChatType(plugin.type)) {
@@ -4308,6 +6390,8 @@ export class PluginModalStepper {
     } else if (this.isAzureMapsType(plugin.type)) {
       const auth = plugin.auth || {};
       document.getElementById('azure-maps-key').value = auth.key || '';
+    } else if (this.isLogAnalyticsType(plugin.type)) {
+      this.populateLogAnalyticsConfiguration(plugin);
     } else if (this.isChartType(plugin.type)) {
       const additionalFields = plugin.additionalFields || plugin.additional_fields || {};
       this.setChartCapabilities(additionalFields.chart_capabilities || plugin.chart_capabilities || null);
@@ -4334,6 +6418,7 @@ export class PluginModalStepper {
       JSON.stringify(plugin.additionalFields, null, 2) : '{}';
 
     document.getElementById('plugin-metadata').value = metadata;
+    this.populateKeyVaultReminderForm(plugin.metadata || {});
     try {
       document.getElementById('plugin-additional-fields').value = additionalFields;
     } catch (e) {
@@ -4346,23 +6431,29 @@ export class PluginModalStepper {
     const openApiSection = document.getElementById('openapi-config-section');
     const sqlSection = document.getElementById('sql-config-section');
     const cosmosSection = document.getElementById('cosmos-config-section');
+    const rocksDbSection = document.getElementById('rocksdb-config-section');
     const documentSearchSection = document.getElementById('document-search-config-section');
     const blobStorageSection = document.getElementById('blob-storage-config-section');
     const databricksSection = document.getElementById('databricks-config-section');
     const snowflakeSection = document.getElementById('snowflake-config-section');
     const tableauSection = document.getElementById('tableau-config-section');
+    const yamcsSection = document.getElementById('yamcs-config-section');
     const mcpSection = document.getElementById('mcp-config-section');
     const azureMapsSection = document.getElementById('azure-maps-config-section');
+    const logAnalyticsSection = document.getElementById('log-analytics-config-section');
     const isOpenApiVisible = !openApiSection.classList.contains('d-none');
     const isSqlVisible = !sqlSection.classList.contains('d-none');
     const isCosmosVisible = !cosmosSection.classList.contains('d-none');
+    const isRocksDbVisible = !!rocksDbSection && !rocksDbSection.classList.contains('d-none');
     const isDocumentSearchVisible = !documentSearchSection.classList.contains('d-none');
     const isBlobStorageVisible = !blobStorageSection.classList.contains('d-none');
     const isDatabricksVisible = !databricksSection.classList.contains('d-none');
     const isSnowflakeVisible = !snowflakeSection.classList.contains('d-none');
     const isTableauVisible = !tableauSection.classList.contains('d-none');
+    const isYamcsVisible = !yamcsSection.classList.contains('d-none');
     const isMcpVisible = !mcpSection.classList.contains('d-none');
     const isAzureMapsVisible = !azureMapsSection.classList.contains('d-none');
+    const isLogAnalyticsVisible = !!logAnalyticsSection && !logAnalyticsSection.classList.contains('d-none');
 
     let auth = {};
     let endpoint = '';
@@ -4389,45 +6480,10 @@ export class PluginModalStepper {
       additionalFields.openapi_source_type = 'content';  // Changed from 'file'
       additionalFields.base_url = endpoint;
 
-      const selectedIdentity = this.getSelectedActionIdentity('openapi');
-      const authType = document.getElementById('plugin-auth-type').value;
-
-      if (selectedIdentity) {
-        identityId = selectedIdentity.id || selectedIdentity.identity_id || '';
-        auth.type = 'identity';
-        auth.identity = identityId;
-        additionalFields.identity_auth_type = this.getIdentityAuthType(selectedIdentity);
-        additionalFields.auth_method = 'identity';
-      } else if (authType === 'api_key') {
-        // Map api_key to 'key' type for schema compliance
-        auth.type = 'key';
-        const apiKeyValue = document.getElementById('plugin-auth-api-key-value').value.trim();
-        auth.key = apiKeyValue;
-
-        // Store API key configuration details in additionalFields instead of auth object
-        const apiKeyLocation = document.getElementById('plugin-auth-api-key-location').value;
-        const apiKeyName = document.getElementById('plugin-auth-api-key-name').value.trim();
-        additionalFields.api_key_location = apiKeyLocation;
-        additionalFields.api_key_name = apiKeyName;
-      } else if (authType === 'bearer') {
-        auth.type = 'key';  // Bearer tokens are also 'key' type in the schema
-        auth.key = document.getElementById('plugin-auth-bearer-token').value.trim();
-        additionalFields.auth_method = 'bearer';
-      } else if (authType === 'basic') {
-        auth.type = 'key';  // Basic auth is also 'key' type in the schema
-        const username = document.getElementById('plugin-auth-basic-username').value.trim();
-        const password = document.getElementById('plugin-auth-basic-password').value.trim();
-        auth.key = `${username}:${password}`;  // Store as combined string
-        additionalFields.auth_method = 'basic';
-      } else if (authType === 'oauth2') {
-        auth.type = 'key';  // OAuth2 is also 'key' type in the schema
-        auth.key = document.getElementById('plugin-auth-oauth2-token').value.trim();
-        additionalFields.auth_method = 'oauth2';
-      } else if (authType === 'none') {
-        auth.type = 'key';
-        auth.key = '';  // Empty key for no auth
-        additionalFields.auth_method = 'none';
-      }
+      const openApiAuthConfig = this.getOpenApiAuthConfiguration();
+      auth = openApiAuthConfig.auth;
+      identityId = openApiAuthConfig.identityId;
+      Object.assign(additionalFields, openApiAuthConfig.additionalFields);
     } else if (isSqlVisible) {
       // Collect SQL plugin data
       const databaseType = document.querySelector('input[name="sql-database-type"]:checked')?.value;
@@ -4586,25 +6642,25 @@ export class PluginModalStepper {
       additionalFields.field_hints = this.getCosmosFieldHints();
       additionalFields.max_items = parseInt(document.getElementById('cosmos-max-items').value, 10) || 100;
       additionalFields.timeout = parseInt(document.getElementById('cosmos-timeout').value, 10) || 30;
+    } else if (isRocksDbVisible) {
+      const rocksDbError = this.getRocksDbValidationError();
+      if (rocksDbError) {
+        throw new Error(rocksDbError);
+      }
+
+      const rocksDbConfig = this.getRocksDbConfiguration();
+      endpoint = rocksDbConfig.endpoint;
+      auth = rocksDbConfig.auth;
+      additionalFields = rocksDbConfig.additionalFields;
     } else if (isDocumentSearchVisible) {
       endpoint = INTERNAL_DOCUMENT_SEARCH_ENDPOINT;
       auth.type = 'NoAuth';
       additionalFields = this.getDocumentSearchAdditionalFields();
     } else if (isBlobStorageVisible) {
-      const connectionString = document.getElementById('blob-storage-connection-string').value.trim();
-      const containerName = document.getElementById('blob-storage-container-name').value.trim();
-      const blobPrefix = this.normalizeBlobStoragePrefix(document.getElementById('blob-storage-blob-prefix').value);
-
-      auth.type = 'connection_string';
-      auth.key = connectionString;
-      endpoint = this.deriveBlobStorageEndpointFromConnectionString(connectionString) || this.originalPlugin?.endpoint || '';
-      additionalFields.container_name = containerName;
-      if (blobPrefix) {
-        additionalFields.blob_prefix = blobPrefix;
-      }
-      additionalFields.blob_storage_capabilities = this.getSelectedBlobStorageCapabilities();
-      additionalFields.blob_storage_read_file_types = this.getSelectedBlobStorageReadFileTypes();
-      additionalFields.blob_storage_upload_file_types = this.getSelectedBlobStorageUploadFileTypes();
+      const blobStorageConfig = this.getBlobStorageConfiguration();
+      endpoint = blobStorageConfig.endpoint;
+      auth = blobStorageConfig.auth;
+      additionalFields = blobStorageConfig.additionalFields;
     } else if (isDatabricksVisible) {
       const databricksConfig = this.getDatabricksConfiguration();
       endpoint = databricksConfig.endpoint;
@@ -4623,6 +6679,12 @@ export class PluginModalStepper {
       auth = tableauConfig.auth;
       additionalFields = tableauConfig.additionalFields;
       identityId = tableauConfig.identityId;
+    } else if (isYamcsVisible) {
+      const yamcsConfig = this.getYamcsConfiguration();
+      endpoint = yamcsConfig.endpoint;
+      auth = yamcsConfig.auth;
+      additionalFields = yamcsConfig.additionalFields;
+      identityId = yamcsConfig.identityId;
     } else if (isMcpVisible) {
       const mcpConfig = this.getMcpConfiguration();
       endpoint = mcpConfig.endpoint;
@@ -4640,9 +6702,15 @@ export class PluginModalStepper {
       Object.assign(additionalFields, this.getMsGraphMailSendConfiguration());
       Object.assign(additionalFields, this.getMsGraphCalendarSendConfiguration());
     } else if (isAzureMapsVisible) {
-      endpoint = AZURE_MAPS_DEFAULT_ENDPOINT;
-      auth.type = 'key';
-      auth.key = document.getElementById('azure-maps-key').value.trim();
+      const azureMapsConfig = this.getAzureMapsConfiguration();
+      endpoint = azureMapsConfig.endpoint;
+      auth = azureMapsConfig.auth;
+    } else if (isLogAnalyticsVisible) {
+      const logAnalyticsConfig = this.getLogAnalyticsConfiguration();
+      endpoint = logAnalyticsConfig.endpoint;
+      auth = logAnalyticsConfig.auth;
+      additionalFields = logAnalyticsConfig.additionalFields;
+      identityId = logAnalyticsConfig.identityId;
     } else if (this.isChartType()) {
       endpoint = CHART_DEFAULT_ENDPOINT;
       auth.type = 'user';
@@ -4692,6 +6760,7 @@ export class PluginModalStepper {
     try {
       const metadataValue = document.getElementById('plugin-metadata').value.trim();
       metadata = metadataValue ? JSON.parse(metadataValue) : {};
+      metadata = this.applyKeyVaultReminderMetadata(metadata);
     } catch (e) {
       throw new Error('Invalid metadata JSON');
     }
@@ -4745,14 +6814,17 @@ export class PluginModalStepper {
     const isDatabricksType = this.isDatabricksType();
     const isSnowflakeType = this.isSnowflakeType();
     const isTableauType = this.isTableauType();
+    const isYamcsType = this.isYamcsType();
     const isMcpType = this.isMcpType();
     const isSimpleChatType = this.isSimpleChatType();
     const isMsGraphType = this.isMsGraphType();
     const isAzureMapsType = this.isAzureMapsType();
     const isChartType = this.isChartType();
+    const isLogAnalyticsType = this.isLogAnalyticsType();
 
     const endpointRow = document.getElementById('summary-plugin-endpoint-row');
     const databaseTypeRow = document.getElementById('summary-plugin-database-type-row');
+    const isRocksDbType = this.isRocksDbType();
 
     if (isSqlType) {
       // Hide endpoint for SQL plugins since they don't use endpoints
@@ -4764,6 +6836,12 @@ export class PluginModalStepper {
       document.getElementById('summary-plugin-endpoint').textContent = endpoint || '-';
       endpointRow.style.display = '';
       document.getElementById('summary-plugin-database-type').textContent = 'Cosmos DB for NoSQL';
+      databaseTypeRow.style.display = '';
+    } else if (isRocksDbType) {
+      const endpoint = this.getEndpointValue();
+      document.getElementById('summary-plugin-endpoint').textContent = endpoint || '-';
+      endpointRow.style.display = '';
+      document.getElementById('summary-plugin-database-type').textContent = 'RocksDB HTTP service';
       databaseTypeRow.style.display = '';
     } else if (isDocumentSearchType) {
       endpointRow.style.display = 'none';
@@ -4809,6 +6887,12 @@ export class PluginModalStepper {
       endpointRow.style.display = 'none';
       document.getElementById('summary-plugin-database-type').textContent = 'Azure Maps tile proxy';
       databaseTypeRow.style.display = '';
+    } else if (isLogAnalyticsType) {
+      const endpoint = this.getEndpointValue();
+      document.getElementById('summary-plugin-endpoint').textContent = endpoint || '-';
+      endpointRow.style.display = '';
+      document.getElementById('summary-plugin-database-type').textContent = 'Azure Log Analytics workspace';
+      databaseTypeRow.style.display = '';
     } else if (isChartType) {
       endpointRow.style.display = 'none';
       document.getElementById('summary-plugin-database-type').textContent = 'Built-in chart action';
@@ -4835,10 +6919,10 @@ export class PluginModalStepper {
     }
 
     const databaseType = this.getSqlDatabaseType();
-    if (!isSqlType && !isCosmosType && !isDocumentSearchType && !isBlobStorageType && !isDatabricksType && !isSnowflakeType && !isTableauType && !isMcpType && !isSimpleChatType && !isMsGraphType && !isAzureMapsType && !isChartType && databaseType) {
+    if (!isSqlType && !isCosmosType && !isRocksDbType && !isDocumentSearchType && !isBlobStorageType && !isDatabricksType && !isSnowflakeType && !isTableauType && !isYamcsType && !isMcpType && !isSimpleChatType && !isMsGraphType && !isAzureMapsType && !isChartType && !isLogAnalyticsType && databaseType) {
       document.getElementById('summary-plugin-database-type').textContent = databaseType;
       databaseTypeRow.style.display = '';
-    } else if (!isSqlType && !isCosmosType && !isDocumentSearchType && !isBlobStorageType && !isDatabricksType && !isSnowflakeType && !isTableauType && !isMcpType && !isSimpleChatType && !isMsGraphType && !isAzureMapsType && !isChartType) {
+    } else if (!isSqlType && !isCosmosType && !isRocksDbType && !isDocumentSearchType && !isBlobStorageType && !isDatabricksType && !isSnowflakeType && !isTableauType && !isYamcsType && !isMcpType && !isSimpleChatType && !isMsGraphType && !isAzureMapsType && !isChartType && !isLogAnalyticsType) {
       databaseTypeRow.style.display = 'none';
     }
 
@@ -4846,11 +6930,13 @@ export class PluginModalStepper {
     this.populateOpenApiSummary();
     this.populateSqlSummary();
     this.populateCosmosSummary();
+    this.populateRocksDbSummary();
     this.populateDocumentSearchSummary();
     this.populateBlobStorageSummary();
     this.populateDatabricksSummary();
     this.populateSnowflakeSummary();
     this.populateTableauSummary();
+    this.populateYamcsSummary();
     this.populateMcpSummary();
     this.populateSimpleChatSummary();
     this.populateMsGraphSummary();
@@ -4874,6 +6960,7 @@ export class PluginModalStepper {
     const isMsGraphType = this.isMsGraphType();
     const isAzureMapsType = this.isAzureMapsType();
     const isChartType = this.isChartType();
+    const isLogAnalyticsType = this.isLogAnalyticsType();
 
     if (isOpenApiType) {
       return document.getElementById('plugin-endpoint').value.trim();
@@ -4881,9 +6968,14 @@ export class PluginModalStepper {
       return document.getElementById('sql-connection-string').value.trim();
     } else if (isCosmosType) {
       return document.getElementById('cosmos-endpoint').value.trim();
+    } else if (this.isRocksDbType()) {
+      return this.getRocksDbEndpointValue();
     } else if (isDocumentSearchType) {
       return INTERNAL_DOCUMENT_SEARCH_ENDPOINT;
     } else if (isBlobStorageType) {
+      if (this.getBlobStorageAuthType() !== 'connection_string') {
+        return document.getElementById('blob-storage-endpoint')?.value.trim() || '';
+      }
       const connectionString = document.getElementById('blob-storage-connection-string').value.trim();
       return this.deriveBlobStorageEndpointFromConnectionString(connectionString) || this.originalPlugin?.endpoint || '';
     } else if (isDatabricksType) {
@@ -4892,11 +6984,15 @@ export class PluginModalStepper {
       return SNOWFLAKE_DEFAULT_ENDPOINT;
     } else if (isTableauType) {
       return this.normalizeTableauServerUrl(document.getElementById('tableau-server-url')?.value || '');
+    } else if (this.isYamcsType()) {
+      return this.normalizeYamcsServerUrl(document.getElementById('yamcs-server-url')?.value || '');
     } else if (isMcpType) {
       const transport = document.getElementById('mcp-transport')?.value || 'streamable_http';
       return transport === 'stdio' ? MCP_STDIO_ENDPOINT : document.getElementById('mcp-endpoint').value.trim();
     } else if (isAzureMapsType) {
       return AZURE_MAPS_DEFAULT_ENDPOINT;
+    } else if (isLogAnalyticsType) {
+      return this.getLogAnalyticsConfiguration().endpoint;
     } else if (isMsGraphType) {
       return MSGRAPH_DEFAULT_ENDPOINT;
     } else if (isChartType) {
@@ -4921,6 +7017,7 @@ export class PluginModalStepper {
     const isMsGraphType = this.isMsGraphType();
     const isAzureMapsType = this.isAzureMapsType();
     const isChartType = this.isChartType();
+    const isLogAnalyticsType = this.isLogAnalyticsType();
 
     if (isOpenApiType) {
       const authType = document.getElementById('plugin-auth-type').value;
@@ -4931,6 +7028,8 @@ export class PluginModalStepper {
     } else if (isCosmosType) {
       const authType = document.getElementById('cosmos-auth-type')?.value || 'identity';
       return authType === 'key' ? 'Account Key' : 'Managed Identity';
+    } else if (this.isRocksDbType()) {
+      return this.getRocksDbAuthLabel();
     } else if (isDocumentSearchType) {
       return 'Internal user context';
     } else if (isBlobStorageType) {
@@ -4950,6 +7049,11 @@ export class PluginModalStepper {
         return 'Reusable Identity';
       }
       return this.formatTableauAuthMethod(document.getElementById('tableau-auth-method')?.value || TABLEAU_AUTH_METHOD_PAT);
+    } else if (this.isYamcsType()) {
+      if (this.getSelectedActionIdentity('yamcs')) {
+        return 'Reusable Identity';
+      }
+      return this.formatYamcsAuthMethod(document.getElementById('yamcs-auth-method')?.value || YAMCS_AUTH_METHOD_USERNAME_PASSWORD);
     } else if (isMcpType) {
       if (this.getSelectedActionIdentity('mcp')) {
         return 'Reusable Identity';
@@ -4961,6 +7065,11 @@ export class PluginModalStepper {
       return 'User';
     } else if (isAzureMapsType) {
       return 'Subscription Key';
+    } else if (isLogAnalyticsType) {
+      if (this.getSelectedActionIdentity('logAnalytics')) {
+        return 'Reusable Identity';
+      }
+      return this.formatAuthType(document.getElementById('log-analytics-auth-method')?.value || 'identity');
     } else if (isChartType) {
       return 'User';
     } else {
@@ -5103,7 +7212,7 @@ export class PluginModalStepper {
 
     const config = this.getDocumentSearchAdditionalFields();
     document.getElementById('summary-search-scope').textContent = this.formatDocumentScope(config.default_doc_scope);
-    document.getElementById('summary-search-top-n').textContent = String(config.default_top_n || 12);
+    document.getElementById('summary-search-top-n').textContent = String(config.default_top_n || 25);
     document.getElementById('summary-search-chunk-behavior').textContent = 'Returns all chunks by default';
     document.getElementById('summary-search-windowing').textContent = this.formatDocumentSearchWindowing(config);
     document.getElementById('summary-search-window-target-length').textContent = config.default_window_target_length || '2 pages';
@@ -5246,6 +7355,34 @@ export class PluginModalStepper {
     tableauSection.classList.remove('d-none');
   }
 
+  populateYamcsSummary() {
+    const yamcsSection = document.getElementById('summary-yamcs-section');
+    if (!yamcsSection) {
+      return;
+    }
+
+    if (!this.isYamcsType()) {
+      yamcsSection.classList.add('d-none');
+      return;
+    }
+
+    const selectedIdentity = this.getSelectedActionIdentity('yamcs');
+    const authMethod = selectedIdentity
+      ? this.getYamcsIdentityAuthMethod(selectedIdentity)
+      : (document.getElementById('yamcs-auth-method')?.value || YAMCS_AUTH_METHOD_USERNAME_PASSWORD);
+
+    document.getElementById('summary-yamcs-instance').textContent = document.getElementById('yamcs-instance')?.value.trim() || '-';
+    document.getElementById('summary-yamcs-processor').textContent = document.getElementById('yamcs-processor')?.value.trim() || YAMCS_DEFAULT_PROCESSOR;
+    document.getElementById('summary-yamcs-auth-method').textContent = selectedIdentity
+      ? `Reusable Identity (${this.formatYamcsAuthMethod(authMethod)})`
+      : this.formatYamcsAuthMethod(authMethod);
+    document.getElementById('summary-yamcs-tls-verify').textContent = document.getElementById('yamcs-tls-verify')?.checked === false ? 'Disabled' : 'Enabled';
+    document.getElementById('summary-yamcs-max-rows').textContent = document.getElementById('yamcs-max-rows')?.value.trim() || '500';
+    document.getElementById('summary-yamcs-timeout').textContent = `${document.getElementById('yamcs-timeout')?.value || '30'} seconds`;
+    document.getElementById('summary-yamcs-archive-sql').textContent = document.getElementById('yamcs-enable-archive-sql')?.checked === true ? 'Enabled (read-only)' : 'Disabled';
+    yamcsSection.classList.remove('d-none');
+  }
+
   populateMcpSummary() {
     const mcpSection = document.getElementById('summary-mcp-section');
     if (!mcpSection) {
@@ -5258,8 +7395,12 @@ export class PluginModalStepper {
     }
 
     const transport = document.getElementById('mcp-transport')?.value || 'streamable_http';
+    const serverProfile = document.getElementById('mcp-server-profile')?.value || this.mcpDefaultServerPreset || MCP_DEFAULT_SERVER_PROFILE;
+    const preconfigurationId = document.getElementById('mcp-preconfiguration')?.value || '';
     const loadTools = Boolean(document.getElementById('mcp-load-tools')?.checked);
     const loadPrompts = Boolean(document.getElementById('mcp-load-prompts')?.checked);
+    const validateToolArguments = Boolean(document.getElementById('mcp-validate-tool-arguments')?.checked);
+    const resultPolicy = document.getElementById('mcp-tool-result-policy')?.value || 'truncate';
     const loadModes = [];
     if (loadTools) {
       loadModes.push('Tools');
@@ -5276,12 +7417,32 @@ export class PluginModalStepper {
       toolMetadataCount = 0;
     }
 
+    let customHeaderNames = [];
+    try {
+      customHeaderNames = Object.keys(this.getMcpCustomHeaders());
+    } catch (error) {
+      customHeaderNames = [];
+    }
+
+    const retryCount = document.getElementById('mcp-retry-count')?.value || '0';
+    const retryBackoff = document.getElementById('mcp-retry-backoff-seconds')?.value || '1';
+
     document.getElementById('summary-mcp-transport').textContent = this.formatMcpTransport(transport);
+    document.getElementById('summary-mcp-preconfiguration').textContent = this.formatMcpServerPreconfiguration(preconfigurationId);
+    document.getElementById('summary-mcp-server-profile').textContent = this.formatMcpServerProfile(serverProfile);
     document.getElementById('summary-mcp-load-mode').textContent = loadModes.length ? loadModes.join(', ') : 'None';
     document.getElementById('summary-mcp-request-timeout').textContent = `${document.getElementById('mcp-request-timeout')?.value || '30'} seconds`;
     document.getElementById('summary-mcp-connect-timeout').textContent = `${document.getElementById('mcp-connect-timeout')?.value || '10'} seconds`;
+    document.getElementById('summary-mcp-retry-policy').textContent = retryCount === '0'
+      ? 'No retries'
+      : `${retryCount} retries, ${retryBackoff}s initial backoff`;
+    document.getElementById('summary-mcp-custom-headers').textContent = customHeaderNames.length
+      ? customHeaderNames.join(', ')
+      : 'None configured';
     document.getElementById('summary-mcp-tool-names').textContent = allowedToolNames.length ? allowedToolNames.join(', ') : 'All discovered tools';
     document.getElementById('summary-mcp-tool-metadata').textContent = `${toolMetadataCount} cached tool${toolMetadataCount === 1 ? '' : 's'}`;
+    const resultPolicyLabel = resultPolicy === 'error_on_limit' ? 'error on oversized results' : 'truncate oversized results';
+    document.getElementById('summary-mcp-tool-metadata').textContent += `; validation ${validateToolArguments ? 'on' : 'off'}; ${resultPolicyLabel}`;
     mcpSection.classList.remove('d-none');
   }
 
@@ -5462,11 +7623,13 @@ export class PluginModalStepper {
       const isDocumentSearchType = this.isDocumentSearchType();
       const isDatabricksType = this.isDatabricksType();
       const isTableauType = this.isTableauType();
+      const isYamcsType = this.isYamcsType();
       const isMcpType = this.isMcpType();
       const isSimpleChatType = this.isSimpleChatType();
       const isMsGraphType = this.isMsGraphType();
       const isAzureMapsType = this.isAzureMapsType();
       const isChartType = this.isChartType();
+      const isLogAnalyticsType = this.isLogAnalyticsType();
 
       if (isOpenApiType) {
         currentEndpoint = document.getElementById('plugin-endpoint')?.value || '';
@@ -5474,12 +7637,16 @@ export class PluginModalStepper {
         currentEndpoint = document.getElementById('sql-connection-string')?.value || '';
       } else if (isCosmosType) {
         currentEndpoint = document.getElementById('cosmos-endpoint')?.value || '';
+      } else if (this.isRocksDbType()) {
+        currentEndpoint = this.getRocksDbEndpointValue();
       } else if (isDocumentSearchType) {
         currentEndpoint = INTERNAL_DOCUMENT_SEARCH_ENDPOINT;
       } else if (isDatabricksType) {
         currentEndpoint = this.normalizeDatabricksWorkspaceUrl(document.getElementById('databricks-workspace-url')?.value || '');
       } else if (isTableauType) {
         currentEndpoint = this.normalizeTableauServerUrl(document.getElementById('tableau-server-url')?.value || '');
+      } else if (isYamcsType) {
+        currentEndpoint = this.normalizeYamcsServerUrl(document.getElementById('yamcs-server-url')?.value || '');
       } else if (isMcpType) {
         currentEndpoint = this.getEndpointValue();
       } else if (isSimpleChatType) {
@@ -5488,6 +7655,8 @@ export class PluginModalStepper {
         currentEndpoint = MSGRAPH_DEFAULT_ENDPOINT;
       } else if (isAzureMapsType) {
         currentEndpoint = AZURE_MAPS_DEFAULT_ENDPOINT;
+      } else if (isLogAnalyticsType) {
+        currentEndpoint = this.getLogAnalyticsConfiguration().endpoint;
       } else if (isChartType) {
         currentEndpoint = CHART_DEFAULT_ENDPOINT;
       } else {
@@ -5516,6 +7685,12 @@ export class PluginModalStepper {
         if (currentAuthType === 'key') {
           currentAuthKey = document.getElementById('cosmos-auth-key')?.value || '';
         }
+      } else if (this.isRocksDbType()) {
+        const rocksDbAuthScheme = document.getElementById('rocksdb-auth-scheme')?.value || ROCKSDB_AUTH_SCHEME_NONE;
+        currentAuthType = rocksDbAuthScheme !== ROCKSDB_AUTH_SCHEME_NONE ? 'key' : 'NoAuth';
+        if (currentAuthType === 'key') {
+          currentAuthKey = document.getElementById('rocksdb-auth-key')?.value || '';
+        }
       } else if (isDocumentSearchType) {
         currentAuthType = 'NoAuth';
       } else if (isTableauType) {
@@ -5525,6 +7700,17 @@ export class PluginModalStepper {
           currentAuthKey = document.getElementById('tableau-pat-secret')?.value || '';
         } else if (!selectedIdentity && currentAuthType === TABLEAU_AUTH_METHOD_USERNAME_PASSWORD) {
           currentAuthKey = document.getElementById('tableau-password')?.value || '';
+        }
+      } else if (isYamcsType) {
+        const selectedIdentity = this.getSelectedActionIdentity('yamcs');
+        const yamcsAuthMethod = document.getElementById('yamcs-auth-method')?.value || YAMCS_AUTH_METHOD_USERNAME_PASSWORD;
+        currentAuthType = selectedIdentity ? 'identity' : yamcsAuthMethod;
+        if (!selectedIdentity && yamcsAuthMethod === YAMCS_AUTH_METHOD_USERNAME_PASSWORD) {
+          currentAuthKey = document.getElementById('yamcs-password')?.value || '';
+        } else if (!selectedIdentity && yamcsAuthMethod === YAMCS_AUTH_METHOD_API_KEY) {
+          currentAuthKey = document.getElementById('yamcs-api-key')?.value || '';
+        } else if (!selectedIdentity && yamcsAuthMethod === YAMCS_AUTH_METHOD_BEARER_TOKEN) {
+          currentAuthKey = document.getElementById('yamcs-bearer-token')?.value || '';
         }
       } else if (isMcpType) {
         const selectedIdentity = this.getSelectedActionIdentity('mcp');
@@ -5543,6 +7729,12 @@ export class PluginModalStepper {
       } else if (isAzureMapsType) {
         currentAuthType = 'key';
         currentAuthKey = document.getElementById('azure-maps-key')?.value || '';
+      } else if (isLogAnalyticsType) {
+        const selectedIdentity = this.getSelectedActionIdentity('logAnalytics');
+        currentAuthType = selectedIdentity ? 'identity' : (document.getElementById('log-analytics-auth-method')?.value || 'identity');
+        if (!selectedIdentity && ['servicePrincipal', 'key'].includes(currentAuthType)) {
+          currentAuthKey = document.getElementById('log-analytics-auth-key')?.value || '';
+        }
       } else if (isChartType) {
         currentAuthType = 'user';
       } else {
@@ -5563,10 +7755,14 @@ export class PluginModalStepper {
           max_items: parseInt(document.getElementById('cosmos-max-items')?.value, 10) || 100,
           timeout: parseInt(document.getElementById('cosmos-timeout')?.value, 10) || 30
         }, null, 2);
+      } else if (this.isRocksDbType()) {
+        currentAdditionalFields = JSON.stringify(this.getRocksDbConfiguration().additionalFields, null, 2);
       } else if (isDocumentSearchType) {
         currentAdditionalFields = JSON.stringify(this.getDocumentSearchAdditionalFields(), null, 2);
       } else if (isTableauType) {
         currentAdditionalFields = JSON.stringify(this.getTableauConfiguration().additionalFields, null, 2);
+      } else if (isYamcsType) {
+        currentAdditionalFields = JSON.stringify(this.getYamcsConfiguration().additionalFields, null, 2);
       } else if (isMcpType) {
         currentAdditionalFields = JSON.stringify(this.getMcpConfiguration().additionalFields, null, 2);
       } else if (isSimpleChatType) {
@@ -5581,6 +7777,8 @@ export class PluginModalStepper {
         }, null, 2);
       } else if (isAzureMapsType) {
         currentAdditionalFields = '{}';
+      } else if (isLogAnalyticsType) {
+        currentAdditionalFields = JSON.stringify(this.getLogAnalyticsConfiguration().additionalFields, null, 2);
       } else if (isChartType) {
         currentAdditionalFields = JSON.stringify({
           chart_capabilities: this.getSelectedChartCapabilities()
@@ -5863,7 +8061,21 @@ export class PluginModalStepper {
     safeSetValue('plugin-auth-oauth2-token-generic');
     safeSetValue('azure-maps-key');
 
+    // Step 3 fields - Log Analytics Plugin
+    safeSetValue('log-analytics-workspace-id');
+    safeSetValue('log-analytics-cloud', LOG_ANALYTICS_DEFAULT_CLOUD);
+    safeSetValue('log-analytics-endpoint');
+    safeSetValue('log-analytics-authority-host');
+    safeSetValue('log-analytics-endpoint-override');
+    safeSetValue('log-analytics-identity-select');
+    safeSetValue('log-analytics-auth-method', 'identity');
+    safeSetValue('log-analytics-auth-identity');
+    safeSetValue('log-analytics-auth-key');
+    safeSetValue('log-analytics-auth-tenant-id');
+
     // Step 3 fields - MCP Plugin
+    safeSetValue('mcp-preconfiguration');
+    safeSetValue('mcp-server-profile', this.mcpDefaultServerPreset || MCP_DEFAULT_SERVER_PROFILE);
     safeSetValue('mcp-transport', 'streamable_http');
     safeSetValue('mcp-endpoint');
     safeSetValue('mcp-command');
@@ -5876,11 +8088,14 @@ export class PluginModalStepper {
     safeSetValue('mcp-api-key-value');
     safeSetValue('mcp-basic-username');
     safeSetValue('mcp-basic-password');
+    safeSetValue('mcp-custom-headers', '{}');
     safeSetValue('mcp-tool-names');
     safeSetValue('mcp-tool-metadata', '[]');
     safeSetValue('mcp-request-timeout', '30');
     safeSetValue('mcp-connect-timeout', '10');
     safeSetValue('mcp-sse-read-timeout', '300');
+    safeSetValue('mcp-retry-count', '0');
+    safeSetValue('mcp-retry-backoff-seconds', '1');
     const loadTools = document.getElementById('mcp-load-tools');
     if (loadTools) {
       loadTools.checked = true;
@@ -5889,6 +8104,7 @@ export class PluginModalStepper {
     if (loadPrompts) {
       loadPrompts.checked = false;
     }
+    this.updateMcpPreconfigurationHelp();
 
     // Step 3 fields - Databricks Plugin
     safeSetValue('databricks-workspace-url');
@@ -5979,6 +8195,7 @@ export class PluginModalStepper {
     this.blobStorageReadFileTypeState = this.getDefaultBlobStorageReadFileTypes();
     this.blobStorageUploadFileTypeState = this.getDefaultBlobStorageUploadFileTypes();
     this.renderBlobStorageConfiguration();
+    this.clearKeyVaultReminderForm();
 
     // Clear any type selection
     this.selectedType = null;

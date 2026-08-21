@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """
 Test improved document metrics implementation.
-Version: 0.230.024
+Version: 0.250.047
 Implemented in: 0.230.024
+CosmosClient module import cleanup updated in: 0.250.047
 
 This script tests the improved document metrics for Control Center.
 """
 
 import os
-from azure.cosmos import CosmosClient
+import azure.cosmos as azure_cosmos
 from datetime import datetime, timezone, timedelta
 
 def test_improved_document_metrics():
@@ -18,7 +19,7 @@ def test_improved_document_metrics():
     endpoint = os.getenv('AZURE_COSMOS_ENDPOINT', '')
     key = os.getenv('AZURE_COSMOS_KEY', '')
 
-    client = CosmosClient(endpoint, key, consistency_level="Session")
+    client = azure_cosmos.CosmosClient(endpoint, key, consistency_level="Session")
     database = client.get_database_client("SimpleChat")
     
     # Get containers

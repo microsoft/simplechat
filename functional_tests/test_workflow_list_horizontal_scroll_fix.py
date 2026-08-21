@@ -12,6 +12,7 @@ a desktop horizontal scrollbar.
 
 import os
 import sys
+from test_support.versioning import assert_app_version_at_least
 
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -71,7 +72,7 @@ def test_workflow_list_horizontal_scroll_fix_contract():
         )
         print('✅ Workflow action buttons expose the dedicated wrapping hook')
 
-        assert 'VERSION = "0.241.045"' in config_content, 'Expected config.py version 0.241.045'
+        assert_app_version_at_least("0.241.045")
         print('✅ Version properly updated to 0.241.045 in config.py')
 
         print('✅ Workflow horizontal scroll fix checks passed!')

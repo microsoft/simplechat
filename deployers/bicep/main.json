@@ -5,8 +5,8 @@
   "metadata": {
     "_generator": {
       "name": "bicep",
-      "version": "0.44.1.10279",
-      "templateHash": "6458000613813396258"
+      "version": "0.41.2.15936",
+      "templateHash": "4181884823834827643"
     }
   },
   "parameters": {
@@ -15,6 +15,14 @@
       "minLength": 1,
       "metadata": {
         "description": "The Azure region where resources will be deployed.  \n- Region must align to the target cloud environment"
+      }
+    },
+    "redisLocation": {
+      "type": "string",
+      "defaultValue": "[parameters('location')]",
+      "minLength": 1,
+      "metadata": {
+        "description": "Optional Azure region override for Azure Cache for Redis.\n- Defaults to the deployment location.\n- Use only when Redis capacity or SKU availability differs from the primary app region."
       }
     },
     "cloudEnvironment": {
@@ -60,6 +68,22 @@
       "defaultValue": "simplechat:latest",
       "metadata": {
         "description": "The name of the container image to deploy to the web app.\n- should be in the format <repository>:<tag>"
+      }
+    },
+    "deployNativePythonWebApp": {
+      "type": "bool",
+      "defaultValue": false,
+      "metadata": {
+        "description": "Deploy a secondary native Python App Service alongside the primary container App Service.\n- Default is false; enable only for native App Service comparison/testing."
+      }
+    },
+    "nativeWebAppName": {
+      "type": "string",
+      "defaultValue": "[toLower(format('{0}-{1}-native-app', parameters('appName'), parameters('environment')))]",
+      "minLength": 2,
+      "maxLength": 60,
+      "metadata": {
+        "description": "Optional name for the secondary native Python Web App.\n- Used only when deployNativePythonWebApp is true."
       }
     },
     "enterpriseAppClientId": {
@@ -116,6 +140,17 @@
       ],
       "metadata": {
         "description": "Authentication type for resources that support Managed Identity or Key authentication.\n- Key: Use access keys for authentication (application keys will be stored in Key Vault)\n- managed_identity: Use Managed Identity for authentication"
+      }
+    },
+    "redisAuthenticationType": {
+      "type": "string",
+      "defaultValue": "[parameters('authenticationType')]",
+      "allowedValues": [
+        "key",
+        "managed_identity"
+      ],
+      "metadata": {
+        "description": "Authentication type for Azure Cache for Redis.\n- Defaults to the global authenticationType for backward compatibility.\n- Set to key when Redis managed identity authentication is unavailable in the target cloud."
       }
     },
     "configureApplicationPermissions": {
@@ -401,9 +436,9 @@
     "defaultGptModels": [
       {
         "modelName": "gpt-4o",
-        "modelVersion": "[if(variables('isUsGovernmentCloud'), '2024-05-13', '2024-11-20')]",
+        "modelVersion": "2024-11-20",
         "skuName": "[variables('resolvedOpenAIDeploymentType')]",
-        "skuCapacity": 100
+        "skuCapacity": "[if(variables('isUsGovernmentCloud'), 20, 100)]"
       }
     ],
     "defaultEmbeddingModels": "[if(variables('isUsGovernmentCloud'), createArray(createObject('modelName', if(equals(variables('normalizedLocation'), 'usgovvirginia'), 'text-embedding-ada-002', 'text-embedding-3-small'), 'modelVersion', if(equals(variables('normalizedLocation'), 'usgovvirginia'), '2', '1'), 'skuName', variables('resolvedOpenAIDeploymentType'), 'skuCapacity', 100)), createArray(createObject('modelName', 'text-embedding-3-small', 'modelVersion', '1', 'skuName', variables('resolvedOpenAIDeploymentType'), 'skuCapacity', 100)))]",
@@ -427,6 +462,59 @@
       "name": "[variables('rgName')]",
       "location": "[parameters('location')]",
       "tags": "[variables('tags')]"
+    },
+    "rgDeleteLock": {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "resourceGroupDeleteLock",
+      "resourceGroup": "[variables('rgName')]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "lockName": {
+            "value": "prevent-accidental-delete"
+          },
+          "lockNotes": {
+            "value": "Prevents accidental deletion of the SimpleChat staging resource group."
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.41.2.15936",
+              "templateHash": "9460738255069396179"
+            }
+          },
+          "parameters": {
+            "lockName": {
+              "type": "string"
+            },
+            "lockNotes": {
+              "type": "string"
+            }
+          },
+          "resources": [
+            {
+              "type": "Microsoft.Authorization/locks",
+              "apiVersion": "2020-05-01",
+              "name": "[parameters('lockName')]",
+              "properties": {
+                "level": "CanNotDelete",
+                "notes": "[parameters('lockNotes')]"
+              }
+            }
+          ]
+        }
+      },
+      "dependsOn": [
+        "rg"
+      ]
     },
     "virtualNetwork": {
       "condition": "[and(parameters('enablePrivateNetworking'), not(variables('useExistingVirtualNetwork')))]",
@@ -477,8 +565,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.44.1.10279",
-              "templateHash": "2401736388076476169"
+              "version": "0.41.2.15936",
+              "templateHash": "493906105301296560"
             }
           },
           "parameters": {
@@ -593,8 +681,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.44.1.10279",
-              "templateHash": "9084211890269320873"
+              "version": "0.41.2.15936",
+              "templateHash": "3702219330633152864"
             }
           },
           "parameters": {
@@ -670,8 +758,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.44.1.10279",
-              "templateHash": "16116738102101306702"
+              "version": "0.41.2.15936",
+              "templateHash": "16478820448576828524"
             }
           },
           "parameters": {
@@ -754,8 +842,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.44.1.10279",
-              "templateHash": "7204750827815083180"
+              "version": "0.41.2.15936",
+              "templateHash": "859139323900296552"
             }
           },
           "parameters": {
@@ -831,8 +919,8 @@
                   "metadata": {
                     "_generator": {
                       "name": "bicep",
-                      "version": "0.44.1.10279",
-                      "templateHash": "2572294110747766074"
+                      "version": "0.41.2.15936",
+                      "templateHash": "7649984259379022431"
                     }
                   },
                   "variables": {
@@ -841,11 +929,6 @@
                       "days": 0
                     },
                     "standardLogCategories": [
-                      {
-                        "categoryGroup": "Audit",
-                        "enabled": true,
-                        "retentionPolicy": "[variables('standardRetentionPolicy')]"
-                      },
                       {
                         "categoryGroup": "allLogs",
                         "enabled": true,
@@ -911,11 +994,6 @@
                       },
                       {
                         "category": "AppServicePlatformLogs",
-                        "enabled": true,
-                        "retentionPolicy": "[variables('standardRetentionPolicy')]"
-                      },
-                      {
-                        "category": "AppServiceAuthenticationLogs",
                         "enabled": true,
                         "retentionPolicy": "[variables('standardRetentionPolicy')]"
                       }
@@ -1001,8 +1079,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.44.1.10279",
-              "templateHash": "4357249017169225925"
+              "version": "0.41.2.15936",
+              "templateHash": "15395992383660736405"
             }
           },
           "parameters": {
@@ -1087,8 +1165,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.44.1.10279",
-              "templateHash": "5402011159587552275"
+              "version": "0.41.2.15936",
+              "templateHash": "18277603989725510610"
             }
           },
           "parameters": {
@@ -1149,6 +1227,33 @@
                 "defaultTtl": null
               },
               {
+                "name": "data_management_jobs",
+                "partitionKeyPath": "/id",
+                "defaultTtl": null,
+                "compositeIndexes": [
+                  [
+                    {
+                      "path": "/created_at",
+                      "order": "descending"
+                    },
+                    {
+                      "path": "/id",
+                      "order": "descending"
+                    }
+                  ]
+                ]
+              },
+              {
+                "name": "data_management_job_items",
+                "partitionKeyPath": "/job_id",
+                "defaultTtl": null
+              },
+              {
+                "name": "data_management_backup_item_states",
+                "partitionKeyPath": "/source_scope",
+                "defaultTtl": null
+              },
+              {
                 "name": "personal_workflows",
                 "partitionKeyPath": "/user_id",
                 "defaultTtl": null
@@ -1205,6 +1310,11 @@
               },
               {
                 "name": "settings",
+                "partitionKeyPath": "/id",
+                "defaultTtl": null
+              },
+              {
+                "name": "custom_pages",
                 "partitionKeyPath": "/id",
                 "defaultTtl": null
               },
@@ -1374,6 +1484,16 @@
                 "defaultTtl": null
               },
               {
+                "name": "governance_policies",
+                "partitionKeyPath": "/id",
+                "defaultTtl": null
+              },
+              {
+                "name": "governance_item_policies",
+                "partitionKeyPath": "/id",
+                "defaultTtl": null
+              },
+              {
                 "name": "agent_templates",
                 "partitionKeyPath": "/id",
                 "defaultTtl": null
@@ -1469,7 +1589,7 @@
               "apiVersion": "2023-04-15",
               "name": "[format('{0}/{1}/{2}', toLower(format('{0}-{1}-cosmos', parameters('appName'), parameters('environment'))), 'SimpleChat', variables('cosmosContainers')[copyIndex()].name)]",
               "properties": {
-                "resource": "[union(createObject('id', variables('cosmosContainers')[copyIndex()].name, 'partitionKey', createObject('paths', createArray(variables('cosmosContainers')[copyIndex()].partitionKeyPath))), if(equals(variables('cosmosContainers')[copyIndex()].defaultTtl, null()), createObject(), createObject('defaultTtl', variables('cosmosContainers')[copyIndex()].defaultTtl)))]",
+                "resource": "[union(createObject('id', variables('cosmosContainers')[copyIndex()].name, 'partitionKey', createObject('paths', createArray(variables('cosmosContainers')[copyIndex()].partitionKeyPath))), if(equals(variables('cosmosContainers')[copyIndex()].defaultTtl, null()), createObject(), createObject('defaultTtl', variables('cosmosContainers')[copyIndex()].defaultTtl)), if(contains(variables('cosmosContainers')[copyIndex()], 'compositeIndexes'), createObject('indexingPolicy', createObject('indexingMode', 'consistent', 'automatic', true(), 'includedPaths', createArray(createObject('path', '/*')), 'excludedPaths', createArray(createObject('path', '/\"_etag\"/?')), 'compositeIndexes', variables('cosmosContainers')[copyIndex()].compositeIndexes)), createObject()))]",
                 "options": "[if(equals(parameters('capacityMode'), 'serverless'), createObject(), createObject('autoscaleSettings', createObject('maxThroughput', parameters('containerAutoscaleMaxThroughput'))))]"
               },
               "dependsOn": [
@@ -1508,8 +1628,8 @@
                   "metadata": {
                     "_generator": {
                       "name": "bicep",
-                      "version": "0.44.1.10279",
-                      "templateHash": "2572294110747766074"
+                      "version": "0.41.2.15936",
+                      "templateHash": "7649984259379022431"
                     }
                   },
                   "variables": {
@@ -1518,11 +1638,6 @@
                       "days": 0
                     },
                     "standardLogCategories": [
-                      {
-                        "categoryGroup": "Audit",
-                        "enabled": true,
-                        "retentionPolicy": "[variables('standardRetentionPolicy')]"
-                      },
                       {
                         "categoryGroup": "allLogs",
                         "enabled": true,
@@ -1588,11 +1703,6 @@
                       },
                       {
                         "category": "AppServicePlatformLogs",
-                        "enabled": true,
-                        "retentionPolicy": "[variables('standardRetentionPolicy')]"
-                      },
-                      {
-                        "category": "AppServiceAuthenticationLogs",
                         "enabled": true,
                         "retentionPolicy": "[variables('standardRetentionPolicy')]"
                       }
@@ -1685,8 +1795,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.44.1.10279",
-              "templateHash": "723773788781767575"
+              "version": "0.41.2.15936",
+              "templateHash": "17207626058468970666"
             }
           },
           "parameters": {
@@ -1762,8 +1872,8 @@
                   "metadata": {
                     "_generator": {
                       "name": "bicep",
-                      "version": "0.44.1.10279",
-                      "templateHash": "2572294110747766074"
+                      "version": "0.41.2.15936",
+                      "templateHash": "7649984259379022431"
                     }
                   },
                   "variables": {
@@ -1772,11 +1882,6 @@
                       "days": 0
                     },
                     "standardLogCategories": [
-                      {
-                        "categoryGroup": "Audit",
-                        "enabled": true,
-                        "retentionPolicy": "[variables('standardRetentionPolicy')]"
-                      },
                       {
                         "categoryGroup": "allLogs",
                         "enabled": true,
@@ -1842,11 +1947,6 @@
                       },
                       {
                         "category": "AppServicePlatformLogs",
-                        "enabled": true,
-                        "retentionPolicy": "[variables('standardRetentionPolicy')]"
-                      },
-                      {
-                        "category": "AppServiceAuthenticationLogs",
                         "enabled": true,
                         "retentionPolicy": "[variables('standardRetentionPolicy')]"
                       }
@@ -1945,8 +2045,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.44.1.10279",
-              "templateHash": "9048589122600697072"
+              "version": "0.41.2.15936",
+              "templateHash": "6501140528687127350"
             }
           },
           "parameters": {
@@ -2049,8 +2149,8 @@
                   "metadata": {
                     "_generator": {
                       "name": "bicep",
-                      "version": "0.44.1.10279",
-                      "templateHash": "2572294110747766074"
+                      "version": "0.41.2.15936",
+                      "templateHash": "7649984259379022431"
                     }
                   },
                   "variables": {
@@ -2059,11 +2159,6 @@
                       "days": 0
                     },
                     "standardLogCategories": [
-                      {
-                        "categoryGroup": "Audit",
-                        "enabled": true,
-                        "retentionPolicy": "[variables('standardRetentionPolicy')]"
-                      },
                       {
                         "categoryGroup": "allLogs",
                         "enabled": true,
@@ -2129,11 +2224,6 @@
                       },
                       {
                         "category": "AppServicePlatformLogs",
-                        "enabled": true,
-                        "retentionPolicy": "[variables('standardRetentionPolicy')]"
-                      },
-                      {
-                        "category": "AppServiceAuthenticationLogs",
                         "enabled": true,
                         "retentionPolicy": "[variables('standardRetentionPolicy')]"
                       }
@@ -2226,8 +2316,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.44.1.10279",
-              "templateHash": "15042975964890925263"
+              "version": "0.41.2.15936",
+              "templateHash": "10665719054703044011"
             }
           },
           "parameters": {
@@ -2301,8 +2391,8 @@
                   "metadata": {
                     "_generator": {
                       "name": "bicep",
-                      "version": "0.44.1.10279",
-                      "templateHash": "2572294110747766074"
+                      "version": "0.41.2.15936",
+                      "templateHash": "7649984259379022431"
                     }
                   },
                   "variables": {
@@ -2311,11 +2401,6 @@
                       "days": 0
                     },
                     "standardLogCategories": [
-                      {
-                        "categoryGroup": "Audit",
-                        "enabled": true,
-                        "retentionPolicy": "[variables('standardRetentionPolicy')]"
-                      },
                       {
                         "categoryGroup": "allLogs",
                         "enabled": true,
@@ -2381,11 +2466,6 @@
                       },
                       {
                         "category": "AppServicePlatformLogs",
-                        "enabled": true,
-                        "retentionPolicy": "[variables('standardRetentionPolicy')]"
-                      },
-                      {
-                        "category": "AppServiceAuthenticationLogs",
                         "enabled": true,
                         "retentionPolicy": "[variables('standardRetentionPolicy')]"
                       }
@@ -2491,8 +2571,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.44.1.10279",
-              "templateHash": "1496292183366834025"
+              "version": "0.41.2.15936",
+              "templateHash": "1180469665094956253"
             }
           },
           "parameters": {
@@ -2625,8 +2705,8 @@
                   "metadata": {
                     "_generator": {
                       "name": "bicep",
-                      "version": "0.44.1.10279",
-                      "templateHash": "2572294110747766074"
+                      "version": "0.41.2.15936",
+                      "templateHash": "7649984259379022431"
                     }
                   },
                   "variables": {
@@ -2635,11 +2715,6 @@
                       "days": 0
                     },
                     "standardLogCategories": [
-                      {
-                        "categoryGroup": "Audit",
-                        "enabled": true,
-                        "retentionPolicy": "[variables('standardRetentionPolicy')]"
-                      },
                       {
                         "categoryGroup": "allLogs",
                         "enabled": true,
@@ -2707,11 +2782,6 @@
                         "category": "AppServicePlatformLogs",
                         "enabled": true,
                         "retentionPolicy": "[variables('standardRetentionPolicy')]"
-                      },
-                      {
-                        "category": "AppServiceAuthenticationLogs",
-                        "enabled": true,
-                        "retentionPolicy": "[variables('standardRetentionPolicy')]"
                       }
                     ]
                   },
@@ -2772,8 +2842,8 @@
                   "metadata": {
                     "_generator": {
                       "name": "bicep",
-                      "version": "0.44.1.10279",
-                      "templateHash": "4357249017169225925"
+                      "version": "0.41.2.15936",
+                      "templateHash": "15395992383660736405"
                     }
                   },
                   "parameters": {
@@ -2885,8 +2955,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.44.1.10279",
-              "templateHash": "3399768244721477866"
+              "version": "0.41.2.15936",
+              "templateHash": "10284000514834971249"
             }
           },
           "parameters": {
@@ -2991,8 +3061,8 @@
                   "metadata": {
                     "_generator": {
                       "name": "bicep",
-                      "version": "0.44.1.10279",
-                      "templateHash": "2572294110747766074"
+                      "version": "0.41.2.15936",
+                      "templateHash": "7649984259379022431"
                     }
                   },
                   "variables": {
@@ -3001,11 +3071,6 @@
                       "days": 0
                     },
                     "standardLogCategories": [
-                      {
-                        "categoryGroup": "Audit",
-                        "enabled": true,
-                        "retentionPolicy": "[variables('standardRetentionPolicy')]"
-                      },
                       {
                         "categoryGroup": "allLogs",
                         "enabled": true,
@@ -3071,11 +3136,6 @@
                       },
                       {
                         "category": "AppServicePlatformLogs",
-                        "enabled": true,
-                        "retentionPolicy": "[variables('standardRetentionPolicy')]"
-                      },
-                      {
-                        "category": "AppServiceAuthenticationLogs",
                         "enabled": true,
                         "retentionPolicy": "[variables('standardRetentionPolicy')]"
                       }
@@ -3149,8 +3209,8 @@
                   "metadata": {
                     "_generator": {
                       "name": "bicep",
-                      "version": "0.44.1.10279",
-                      "templateHash": "1013492894400488975"
+                      "version": "0.41.2.15936",
+                      "templateHash": "12746224250029736064"
                     }
                   },
                   "parameters": {
@@ -3256,8 +3316,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.44.1.10279",
-              "templateHash": "1526213983092690172"
+              "version": "0.41.2.15936",
+              "templateHash": "16679874701984557432"
             }
           },
           "parameters": {
@@ -3335,8 +3395,8 @@
                   "metadata": {
                     "_generator": {
                       "name": "bicep",
-                      "version": "0.44.1.10279",
-                      "templateHash": "2572294110747766074"
+                      "version": "0.41.2.15936",
+                      "templateHash": "7649984259379022431"
                     }
                   },
                   "variables": {
@@ -3345,11 +3405,6 @@
                       "days": 0
                     },
                     "standardLogCategories": [
-                      {
-                        "categoryGroup": "Audit",
-                        "enabled": true,
-                        "retentionPolicy": "[variables('standardRetentionPolicy')]"
-                      },
                       {
                         "categoryGroup": "allLogs",
                         "enabled": true,
@@ -3415,11 +3470,6 @@
                       },
                       {
                         "category": "AppServicePlatformLogs",
-                        "enabled": true,
-                        "retentionPolicy": "[variables('standardRetentionPolicy')]"
-                      },
-                      {
-                        "category": "AppServiceAuthenticationLogs",
                         "enabled": true,
                         "retentionPolicy": "[variables('standardRetentionPolicy')]"
                       }
@@ -3588,8 +3638,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.44.1.10279",
-              "templateHash": "12133845290797055906"
+              "version": "0.41.2.15936",
+              "templateHash": "15107037280969688975"
             }
           },
           "parameters": {
@@ -3733,7 +3783,10 @@
           },
           "variables": {
             "tenantId": "[tenant().tenantId]",
-            "openIdMetadataUrl": "[format('{0}{1}/v2.0/.well-known/openid-configuration', environment().authentication.loginEndpoint, variables('tenantId'))]",
+            "identityLoginEndpoint": "[if(empty(parameters('customIdentityUrl')), environment().authentication.loginEndpoint, parameters('customIdentityUrl'))]",
+            "normalizedIdentityLoginEndpoint": "[if(endsWith(variables('identityLoginEndpoint'), '/'), variables('identityLoginEndpoint'), format('{0}/', variables('identityLoginEndpoint')))]",
+            "openIdIssuer": "[format('{0}{1}/', variables('normalizedIdentityLoginEndpoint'), variables('tenantId'))]",
+            "openIdMetadataUrl": "[format('{0}v2.0/.well-known/openid-configuration', variables('openIdIssuer'))]",
             "acrDomain": "[environment().suffixes.acrLoginServer]"
           },
           "resources": {
@@ -3785,7 +3838,7 @@
                   "alwaysOn": true,
                   "ftpsState": "Disabled",
                   "healthCheckPath": "/external/healthcheck",
-                  "appSettings": "[flatten(createArray(createArray(createObject('name', 'AZURE_ENVIRONMENT', 'value', parameters('azurePlatform')), createObject('name', 'SIMPLECHAT_RUN_BACKGROUND_TASKS', 'value', '1'), createObject('name', 'SCM_DO_BUILD_DURING_DEPLOYMENT', 'value', 'false'), createObject('name', 'AZURE_SUBSCRIPTION_ID', 'value', subscription().subscriptionId), createObject('name', 'AZURE_RESOURCE_GROUP', 'value', resourceGroup().name), createObject('name', 'AZURE_COSMOS_ENDPOINT', 'value', reference('cosmosDb').documentEndpoint), createObject('name', 'AZURE_COSMOS_ACCOUNT_NAME', 'value', parameters('cosmosDbName')), createObject('name', 'AZURE_COSMOS_DATABASE_NAME', 'value', 'SimpleChat'), createObject('name', 'AZURE_COSMOS_AUTHENTICATION_TYPE', 'value', toLower(parameters('authenticationType')))), if(equals(parameters('authenticationType'), 'key'), createArray(createObject('name', 'AZURE_COSMOS_KEY', 'value', listKeys('cosmosDb', '2023-04-15').primaryMasterKey)), createArray()), createArray(createObject('name', 'TENANT_ID', 'value', tenant().tenantId), createObject('name', 'CLIENT_ID', 'value', parameters('enterpriseAppClientId')), createObject('name', 'SECRET_KEY', 'value', if(not(empty(parameters('enterpriseAppClientSecret'))), parameters('enterpriseAppClientSecret'), format('@Microsoft.KeyVault(SecretUri={0}secrets/enterprise-app-client-secret)', parameters('keyVaultUri')))), createObject('name', 'MICROSOFT_PROVIDER_AUTHENTICATION_SECRET', 'value', format('@Microsoft.KeyVault(SecretUri={0}secrets/enterprise-app-client-secret)', parameters('keyVaultUri'))), createObject('name', 'ENABLE_TEAMS_SSO', 'value', if(parameters('enableTeamsSso'), 'true', 'false'))), if(parameters('enableTeamsSso'), createArray(createObject('name', 'SESSION_COOKIE_SAMESITE', 'value', 'None'), createObject('name', 'SESSION_COOKIE_SECURE', 'value', 'true'), createObject('name', 'TEAMS_SUCCESS_REDIRECT_PATH', 'value', '/chats'), createObject('name', 'TEAMS_FRAME_ANCESTORS', 'value', parameters('teamsFrameAncestors')), createObject('name', 'CUSTOM_TEAMS_ORIGINS', 'value', parameters('customTeamsOrigins')), createObject('name', 'TEAMS_APP_RESOURCE', 'value', parameters('teamsAppResource'))), createArray()), createArray(createObject('name', 'DOCKER_REGISTRY_SERVER_URL', 'value', format('https://{0}{1}', parameters('acrName'), variables('acrDomain')))), if(equals(parameters('authenticationType'), 'key'), createArray(createObject('name', 'DOCKER_REGISTRY_SERVER_USERNAME', 'value', listCredentials('acrService', '2025-04-01').username)), createArray()), if(equals(parameters('authenticationType'), 'key'), createArray(createObject('name', 'DOCKER_REGISTRY_SERVER_PASSWORD', 'value', listCredentials('acrService', '2025-04-01').passwords[0].value)), createArray()), createArray(createObject('name', 'WEBSITE_AUTH_AAD_ALLOWED_TENANTS', 'value', tenant().tenantId), createObject('name', 'AZURE_OPENAI_RESOURCE_NAME', 'value', parameters('openAiServiceName')), createObject('name', 'AZURE_OPENAI_RESOURCE_GROUP_NAME', 'value', parameters('openAiResourceGroupName')), createObject('name', 'AZURE_OPENAI_URL', 'value', parameters('openAiEndpoint')), createObject('name', 'VIDEO_INDEXER_ARM_API_VERSION', 'value', if(equals(parameters('azurePlatform'), 'usgovernment'), '2024-01-01', '2025-04-01')), createObject('name', 'AZURE_SEARCH_SERVICE_NAME', 'value', parameters('searchServiceName'))), if(equals(parameters('authenticationType'), 'key'), createArray(createObject('name', 'AZURE_SEARCH_API_KEY', 'value', listAdminKeys('searchService', '2025-05-01').primaryKey)), createArray()), createArray(createObject('name', 'AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT', 'value', reference('documentIntelligence').endpoint)), if(equals(parameters('authenticationType'), 'key'), createArray(createObject('name', 'AZURE_DOCUMENT_INTELLIGENCE_API_KEY', 'value', listKeys('documentIntelligence', '2025-06-01').key1)), createArray()), createArray(createObject('name', 'APPINSIGHTS_INSTRUMENTATIONKEY', 'value', reference('appInsights').InstrumentationKey), createObject('name', 'APPLICATIONINSIGHTS_CONNECTION_STRING', 'value', reference('appInsights').ConnectionString), createObject('name', 'APPINSIGHTS_PROFILERFEATURE_VERSION', 'value', '1.0.0'), createObject('name', 'APPINSIGHTS_SNAPSHOTFEATURE_VERSION', 'value', '1.0.0'), createObject('name', 'APPLICATIONINSIGHTS_CONFIGURATION_CONTENT', 'value', ''), createObject('name', 'ApplicationInsightsAgent_EXTENSION_VERSION', 'value', '~3'), createObject('name', 'DiagnosticServices_EXTENSION_VERSION', 'value', '~3'), createObject('name', 'InstrumentationEngine_EXTENSION_VERSION', 'value', 'disabled'), createObject('name', 'SnapshotDebugger_EXTENSION_VERSION', 'value', 'disabled'), createObject('name', 'XDT_MicrosoftApplicationInsights_BaseExtensions', 'value', 'disabled'), createObject('name', 'XDT_MicrosoftApplicationInsights_Mode', 'value', 'recommended'), createObject('name', 'XDT_MicrosoftApplicationInsights_PreemptSdk', 'value', 'disabled')), if(equals(parameters('azurePlatform'), 'custom'), createArray(createObject('name', 'CUSTOM_GRAPH_URL_VALUE', 'value', coalesce(parameters('customGraphUrl'), '')), createObject('name', 'CUSTOM_IDENTITY_URL_VALUE', 'value', coalesce(parameters('customIdentityUrl'), '')), createObject('name', 'CUSTOM_RESOURCE_MANAGER_URL_VALUE', 'value', coalesce(parameters('customResourceManagerUrl'), '')), createObject('name', 'CUSTOM_BLOB_STORAGE_URL_VALUE', 'value', coalesce(parameters('customBlobStorageSuffix'), '')), createObject('name', 'CUSTOM_COGNITIVE_SERVICES_URL_VALUE', 'value', coalesce(parameters('customCognitiveServicesScope'), '')), createObject('name', 'CUSTOM_SEARCH_RESOURCE_MANAGER_URL_VALUE', 'value', coalesce(parameters('customSearchResourceUrl'), '')), createObject('name', 'CUSTOM_VIDEO_INDEXER_ENDPOINT', 'value', coalesce(parameters('customVideoIndexerEndpoint'), '')), createObject('name', 'KEY_VAULT_DOMAIN', 'value', environment().suffixes.keyvaultDns), createObject('name', 'CUSTOM_OIDC_METADATA_URL_VALUE', 'value', coalesce(variables('openIdMetadataUrl'), ''))), createArray())))]"
+                  "appSettings": "[flatten(createArray(createArray(createObject('name', 'AZURE_ENVIRONMENT', 'value', parameters('azurePlatform')), createObject('name', 'REDIS_ENTRA_TOKEN_SCOPE', 'value', 'https://redis.azure.com/.default'), createObject('name', 'SIMPLECHAT_RUN_BACKGROUND_TASKS', 'value', '1'), createObject('name', 'SCM_DO_BUILD_DURING_DEPLOYMENT', 'value', 'false'), createObject('name', 'AZURE_SUBSCRIPTION_ID', 'value', subscription().subscriptionId), createObject('name', 'AZURE_RESOURCE_GROUP', 'value', resourceGroup().name), createObject('name', 'AZURE_COSMOS_ENDPOINT', 'value', reference('cosmosDb').documentEndpoint), createObject('name', 'AZURE_COSMOS_ACCOUNT_NAME', 'value', parameters('cosmosDbName')), createObject('name', 'AZURE_COSMOS_DATABASE_NAME', 'value', 'SimpleChat'), createObject('name', 'AZURE_COSMOS_AUTHENTICATION_TYPE', 'value', toLower(parameters('authenticationType')))), if(equals(parameters('authenticationType'), 'key'), createArray(createObject('name', 'AZURE_COSMOS_KEY', 'value', listKeys('cosmosDb', '2023-04-15').primaryMasterKey)), createArray()), createArray(createObject('name', 'TENANT_ID', 'value', tenant().tenantId), createObject('name', 'CLIENT_ID', 'value', parameters('enterpriseAppClientId')), createObject('name', 'SECRET_KEY', 'value', if(not(empty(parameters('enterpriseAppClientSecret'))), parameters('enterpriseAppClientSecret'), format('@Microsoft.KeyVault(SecretUri={0}secrets/enterprise-app-client-secret)', parameters('keyVaultUri')))), createObject('name', 'MICROSOFT_PROVIDER_AUTHENTICATION_SECRET', 'value', format('@Microsoft.KeyVault(SecretUri={0}secrets/enterprise-app-client-secret)', parameters('keyVaultUri'))), createObject('name', 'ENABLE_TEAMS_SSO', 'value', if(parameters('enableTeamsSso'), 'true', 'false'))), if(parameters('enableTeamsSso'), createArray(createObject('name', 'SESSION_COOKIE_SAMESITE', 'value', 'None'), createObject('name', 'SESSION_COOKIE_SECURE', 'value', 'true'), createObject('name', 'TEAMS_SUCCESS_REDIRECT_PATH', 'value', '/chats'), createObject('name', 'TEAMS_FRAME_ANCESTORS', 'value', parameters('teamsFrameAncestors')), createObject('name', 'CUSTOM_TEAMS_ORIGINS', 'value', parameters('customTeamsOrigins')), createObject('name', 'TEAMS_APP_RESOURCE', 'value', parameters('teamsAppResource'))), createArray()), createArray(createObject('name', 'DOCKER_REGISTRY_SERVER_URL', 'value', format('https://{0}{1}', parameters('acrName'), variables('acrDomain')))), if(equals(parameters('authenticationType'), 'key'), createArray(createObject('name', 'DOCKER_REGISTRY_SERVER_USERNAME', 'value', listCredentials('acrService', '2025-04-01').username)), createArray()), if(equals(parameters('authenticationType'), 'key'), createArray(createObject('name', 'DOCKER_REGISTRY_SERVER_PASSWORD', 'value', listCredentials('acrService', '2025-04-01').passwords[0].value)), createArray()), createArray(createObject('name', 'WEBSITE_AUTH_AAD_ALLOWED_TENANTS', 'value', tenant().tenantId), createObject('name', 'AZURE_OPENAI_RESOURCE_NAME', 'value', parameters('openAiServiceName')), createObject('name', 'AZURE_OPENAI_RESOURCE_GROUP_NAME', 'value', parameters('openAiResourceGroupName')), createObject('name', 'AZURE_OPENAI_URL', 'value', parameters('openAiEndpoint')), createObject('name', 'VIDEO_INDEXER_ARM_API_VERSION', 'value', if(equals(parameters('azurePlatform'), 'usgovernment'), '2024-01-01', '2025-04-01')), createObject('name', 'AZURE_SEARCH_SERVICE_NAME', 'value', parameters('searchServiceName'))), if(equals(parameters('authenticationType'), 'key'), createArray(createObject('name', 'AZURE_SEARCH_API_KEY', 'value', listAdminKeys('searchService', '2025-05-01').primaryKey)), createArray()), createArray(createObject('name', 'AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT', 'value', reference('documentIntelligence').endpoint)), if(equals(parameters('authenticationType'), 'key'), createArray(createObject('name', 'AZURE_DOCUMENT_INTELLIGENCE_API_KEY', 'value', listKeys('documentIntelligence', '2025-06-01').key1)), createArray()), createArray(createObject('name', 'APPINSIGHTS_INSTRUMENTATIONKEY', 'value', reference('appInsights').InstrumentationKey), createObject('name', 'APPLICATIONINSIGHTS_CONNECTION_STRING', 'value', reference('appInsights').ConnectionString), createObject('name', 'APPINSIGHTS_PROFILERFEATURE_VERSION', 'value', '1.0.0'), createObject('name', 'APPINSIGHTS_SNAPSHOTFEATURE_VERSION', 'value', '1.0.0'), createObject('name', 'APPLICATIONINSIGHTS_CONFIGURATION_CONTENT', 'value', ''), createObject('name', 'ApplicationInsightsAgent_EXTENSION_VERSION', 'value', '~3'), createObject('name', 'DiagnosticServices_EXTENSION_VERSION', 'value', '~3'), createObject('name', 'InstrumentationEngine_EXTENSION_VERSION', 'value', 'disabled'), createObject('name', 'SnapshotDebugger_EXTENSION_VERSION', 'value', 'disabled'), createObject('name', 'XDT_MicrosoftApplicationInsights_BaseExtensions', 'value', 'disabled'), createObject('name', 'XDT_MicrosoftApplicationInsights_Mode', 'value', 'recommended'), createObject('name', 'XDT_MicrosoftApplicationInsights_PreemptSdk', 'value', 'disabled')), if(equals(parameters('azurePlatform'), 'custom'), createArray(createObject('name', 'CUSTOM_GRAPH_URL_VALUE', 'value', coalesce(parameters('customGraphUrl'), '')), createObject('name', 'CUSTOM_IDENTITY_URL_VALUE', 'value', coalesce(parameters('customIdentityUrl'), '')), createObject('name', 'CUSTOM_RESOURCE_MANAGER_URL_VALUE', 'value', coalesce(parameters('customResourceManagerUrl'), '')), createObject('name', 'CUSTOM_BLOB_STORAGE_URL_VALUE', 'value', coalesce(parameters('customBlobStorageSuffix'), '')), createObject('name', 'CUSTOM_COGNITIVE_SERVICES_URL_VALUE', 'value', coalesce(parameters('customCognitiveServicesScope'), '')), createObject('name', 'CUSTOM_SEARCH_RESOURCE_MANAGER_URL_VALUE', 'value', coalesce(parameters('customSearchResourceUrl'), '')), createObject('name', 'CUSTOM_VIDEO_INDEXER_ENDPOINT', 'value', coalesce(parameters('customVideoIndexerEndpoint'), '')), createObject('name', 'KEY_VAULT_DOMAIN', 'value', environment().suffixes.keyvaultDns), createObject('name', 'CUSTOM_OIDC_METADATA_URL_VALUE', 'value', coalesce(variables('openIdMetadataUrl'), ''))), createArray())))]"
                 },
                 "clientAffinityEnabled": false,
                 "httpsOnly": true
@@ -3847,7 +3900,7 @@
                   "azureActiveDirectory": {
                     "enabled": true,
                     "registration": {
-                      "openIdIssuer": "[format('{0}{1}/', environment().authentication.loginEndpoint, tenant().tenantId)]",
+                      "openIdIssuer": "[variables('openIdIssuer')]",
                       "clientId": "[parameters('enterpriseAppClientId')]",
                       "clientSecretSettingName": "MICROSOFT_PROVIDER_AUTHENTICATION_SECRET"
                     },
@@ -3913,8 +3966,8 @@
                   "metadata": {
                     "_generator": {
                       "name": "bicep",
-                      "version": "0.44.1.10279",
-                      "templateHash": "2572294110747766074"
+                      "version": "0.41.2.15936",
+                      "templateHash": "7649984259379022431"
                     }
                   },
                   "variables": {
@@ -3923,11 +3976,6 @@
                       "days": 0
                     },
                     "standardLogCategories": [
-                      {
-                        "categoryGroup": "Audit",
-                        "enabled": true,
-                        "retentionPolicy": "[variables('standardRetentionPolicy')]"
-                      },
                       {
                         "categoryGroup": "allLogs",
                         "enabled": true,
@@ -3995,11 +4043,6 @@
                         "category": "AppServicePlatformLogs",
                         "enabled": true,
                         "retentionPolicy": "[variables('standardRetentionPolicy')]"
-                      },
-                      {
-                        "category": "AppServiceAuthenticationLogs",
-                        "enabled": true,
-                        "retentionPolicy": "[variables('standardRetentionPolicy')]"
                       }
                     ]
                   },
@@ -4064,6 +4107,544 @@
         "virtualNetwork"
       ]
     },
+    "nativeAppService": {
+      "condition": "[parameters('deployNativePythonWebApp')]",
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "nativeAppService",
+      "resourceGroup": "[variables('rgName')]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "location": {
+            "value": "[parameters('location')]"
+          },
+          "nativeWebAppName": {
+            "value": "[parameters('nativeWebAppName')]"
+          },
+          "tags": {
+            "value": "[variables('tags')]"
+          },
+          "enableDiagLogging": {
+            "value": "[parameters('enableDiagLogging')]"
+          },
+          "logAnalyticsId": {
+            "value": "[reference('logAnalytics').outputs.logAnalyticsId.value]"
+          },
+          "appServicePlanId": {
+            "value": "[reference('appServicePlan').outputs.appServicePlanId.value]"
+          },
+          "azurePlatform": {
+            "value": "[variables('scCloudEnvironment')]"
+          },
+          "cosmosDbName": {
+            "value": "[reference('cosmosDB').outputs.cosmosDbName.value]"
+          },
+          "searchServiceName": {
+            "value": "[reference('searchService').outputs.searchServiceName.value]"
+          },
+          "openAiServiceName": {
+            "value": "[reference('openAI').outputs.openAIName.value]"
+          },
+          "openAiEndpoint": {
+            "value": "[reference('openAI').outputs.openAIEndpoint.value]"
+          },
+          "openAiResourceGroupName": {
+            "value": "[reference('openAI').outputs.openAIResourceGroup.value]"
+          },
+          "documentIntelligenceServiceName": {
+            "value": "[reference('docIntel').outputs.documentIntelligenceServiceName.value]"
+          },
+          "appInsightsName": {
+            "value": "[reference('applicationInsights').outputs.appInsightsName.value]"
+          },
+          "enterpriseAppClientId": {
+            "value": "[parameters('enterpriseAppClientId')]"
+          },
+          "enterpriseAppClientSecret": {
+            "value": "[parameters('enterpriseAppClientSecret')]"
+          },
+          "authenticationType": {
+            "value": "[parameters('authenticationType')]"
+          },
+          "keyVaultUri": {
+            "value": "[reference('keyVault').outputs.keyVaultUri.value]"
+          },
+          "enablePrivateNetworking": {
+            "value": "[parameters('enablePrivateNetworking')]"
+          },
+          "appServiceSubnetId": "[if(parameters('enablePrivateNetworking'), if(variables('useExistingVirtualNetwork'), createObject('value', parameters('existingAppServiceSubnetId')), createObject('value', reference('virtualNetwork').outputs.appServiceSubnetId.value)), createObject('value', ''))]",
+          "customBlobStorageSuffix": {
+            "value": "[parameters('customBlobStorageSuffix')]"
+          },
+          "customGraphUrl": {
+            "value": "[parameters('customGraphUrl')]"
+          },
+          "customIdentityUrl": {
+            "value": "[parameters('customIdentityUrl')]"
+          },
+          "customResourceManagerUrl": {
+            "value": "[parameters('customResourceManagerUrl')]"
+          },
+          "customCognitiveServicesScope": {
+            "value": "[parameters('customCognitiveServicesScope')]"
+          },
+          "customSearchResourceUrl": {
+            "value": "[parameters('customSearchResourceUrl')]"
+          },
+          "customVideoIndexerEndpoint": {
+            "value": "[variables('resolvedVideoIndexerEndpoint')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "languageVersion": "2.0",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.41.2.15936",
+              "templateHash": "4022020899820943835"
+            }
+          },
+          "parameters": {
+            "location": {
+              "type": "string"
+            },
+            "nativeWebAppName": {
+              "type": "string"
+            },
+            "tags": {
+              "type": "object"
+            },
+            "enableDiagLogging": {
+              "type": "bool"
+            },
+            "logAnalyticsId": {
+              "type": "string"
+            },
+            "appServicePlanId": {
+              "type": "string"
+            },
+            "azurePlatform": {
+              "type": "string"
+            },
+            "cosmosDbName": {
+              "type": "string"
+            },
+            "searchServiceName": {
+              "type": "string"
+            },
+            "openAiServiceName": {
+              "type": "string"
+            },
+            "openAiEndpoint": {
+              "type": "string"
+            },
+            "openAiResourceGroupName": {
+              "type": "string"
+            },
+            "documentIntelligenceServiceName": {
+              "type": "string"
+            },
+            "appInsightsName": {
+              "type": "string"
+            },
+            "enterpriseAppClientId": {
+              "type": "string",
+              "defaultValue": ""
+            },
+            "authenticationType": {
+              "type": "string"
+            },
+            "startupCommand": {
+              "type": "string",
+              "defaultValue": "python -m gunicorn -c gunicorn.conf.py app:app"
+            },
+            "enterpriseAppClientSecret": {
+              "type": "securestring",
+              "defaultValue": ""
+            },
+            "keyVaultUri": {
+              "type": "string"
+            },
+            "enablePrivateNetworking": {
+              "type": "bool"
+            },
+            "appServiceSubnetId": {
+              "type": "string",
+              "defaultValue": ""
+            },
+            "customBlobStorageSuffix": {
+              "type": "string",
+              "nullable": true,
+              "metadata": {
+                "description": "Custom blob storage URL suffix, e.g. blob.core.usgovcloudapi.net"
+              }
+            },
+            "customGraphUrl": {
+              "type": "string",
+              "nullable": true,
+              "metadata": {
+                "description": "Custom Graph API URL, e.g. https://graph.microsoft.us"
+              }
+            },
+            "customIdentityUrl": {
+              "type": "string",
+              "nullable": true,
+              "metadata": {
+                "description": "Custom Identity URL, e.g. https://login.microsoftonline.us"
+              }
+            },
+            "customResourceManagerUrl": {
+              "type": "string",
+              "nullable": true,
+              "metadata": {
+                "description": "Custom Resource Manager URL, e.g. https://management.usgovcloudapi.net"
+              }
+            },
+            "customCognitiveServicesScope": {
+              "type": "string",
+              "nullable": true,
+              "metadata": {
+                "description": "Custom Cognitive Services scope ex: https://cognitiveservices.azure.com/.default"
+              }
+            },
+            "customSearchResourceUrl": {
+              "type": "string",
+              "nullable": true,
+              "metadata": {
+                "description": "Custom search resource URL for token audience, e.g. https://search.azure.us"
+              }
+            },
+            "customVideoIndexerEndpoint": {
+              "type": "string",
+              "nullable": true,
+              "metadata": {
+                "description": "Custom Video Indexer endpoint, e.g. https://api.videoindexer.ai"
+              }
+            }
+          },
+          "variables": {
+            "tenantId": "[tenant().tenantId]",
+            "identityLoginEndpoint": "[if(empty(parameters('customIdentityUrl')), environment().authentication.loginEndpoint, parameters('customIdentityUrl'))]",
+            "normalizedIdentityLoginEndpoint": "[if(endsWith(variables('identityLoginEndpoint'), '/'), variables('identityLoginEndpoint'), format('{0}/', variables('identityLoginEndpoint')))]",
+            "openIdIssuer": "[format('{0}{1}/', variables('normalizedIdentityLoginEndpoint'), variables('tenantId'))]",
+            "openIdMetadataUrl": "[format('{0}v2.0/.well-known/openid-configuration', variables('openIdIssuer'))]"
+          },
+          "resources": {
+            "cosmosDb": {
+              "existing": true,
+              "type": "Microsoft.DocumentDB/databaseAccounts",
+              "apiVersion": "2023-04-15",
+              "name": "[parameters('cosmosDbName')]"
+            },
+            "searchService": {
+              "existing": true,
+              "type": "Microsoft.Search/searchServices",
+              "apiVersion": "2025-05-01",
+              "name": "[parameters('searchServiceName')]"
+            },
+            "documentIntelligence": {
+              "existing": true,
+              "type": "Microsoft.CognitiveServices/accounts",
+              "apiVersion": "2025-06-01",
+              "name": "[parameters('documentIntelligenceServiceName')]"
+            },
+            "appInsights": {
+              "existing": true,
+              "type": "Microsoft.Insights/components",
+              "apiVersion": "2020-02-02",
+              "name": "[parameters('appInsightsName')]"
+            },
+            "webApp": {
+              "type": "Microsoft.Web/sites",
+              "apiVersion": "2022-03-01",
+              "name": "[toLower(parameters('nativeWebAppName'))]",
+              "location": "[parameters('location')]",
+              "kind": "app,linux",
+              "properties": {
+                "serverFarmId": "[parameters('appServicePlanId')]",
+                "virtualNetworkSubnetId": "[if(not(equals(parameters('appServiceSubnetId'), '')), parameters('appServiceSubnetId'), null())]",
+                "publicNetworkAccess": "Enabled",
+                "siteConfig": {
+                  "linuxFxVersion": "PYTHON|3.12",
+                  "appCommandLine": "[parameters('startupCommand')]",
+                  "alwaysOn": true,
+                  "ftpsState": "Disabled",
+                  "healthCheckPath": "/external/healthcheck",
+                  "vnetRouteAllEnabled": "[if(parameters('enablePrivateNetworking'), true(), false())]",
+                  "appSettings": "[flatten(createArray(createArray(createObject('name', 'AZURE_ENVIRONMENT', 'value', parameters('azurePlatform')), createObject('name', 'REDIS_ENTRA_TOKEN_SCOPE', 'value', 'https://redis.azure.com/.default'), createObject('name', 'SIMPLECHAT_RUN_BACKGROUND_TASKS', 'value', '0'), createObject('name', 'SCM_DO_BUILD_DURING_DEPLOYMENT', 'value', 'true'), createObject('name', 'AZURE_SUBSCRIPTION_ID', 'value', subscription().subscriptionId), createObject('name', 'AZURE_RESOURCE_GROUP', 'value', resourceGroup().name), createObject('name', 'AZURE_COSMOS_ENDPOINT', 'value', reference('cosmosDb').documentEndpoint), createObject('name', 'AZURE_COSMOS_ACCOUNT_NAME', 'value', parameters('cosmosDbName')), createObject('name', 'AZURE_COSMOS_DATABASE_NAME', 'value', 'SimpleChat'), createObject('name', 'AZURE_COSMOS_AUTHENTICATION_TYPE', 'value', toLower(parameters('authenticationType')))), if(equals(parameters('authenticationType'), 'key'), createArray(createObject('name', 'AZURE_COSMOS_KEY', 'value', listKeys('cosmosDb', '2023-04-15').primaryMasterKey)), createArray()), createArray(createObject('name', 'TENANT_ID', 'value', variables('tenantId')), createObject('name', 'CLIENT_ID', 'value', parameters('enterpriseAppClientId')), createObject('name', 'SECRET_KEY', 'value', if(not(empty(parameters('enterpriseAppClientSecret'))), parameters('enterpriseAppClientSecret'), format('@Microsoft.KeyVault(SecretUri={0}secrets/enterprise-app-client-secret)', parameters('keyVaultUri')))), createObject('name', 'MICROSOFT_PROVIDER_AUTHENTICATION_SECRET', 'value', format('@Microsoft.KeyVault(SecretUri={0}secrets/enterprise-app-client-secret)', parameters('keyVaultUri'))), createObject('name', 'WEBSITE_AUTH_AAD_ALLOWED_TENANTS', 'value', variables('tenantId')), createObject('name', 'AZURE_OPENAI_RESOURCE_NAME', 'value', parameters('openAiServiceName')), createObject('name', 'AZURE_OPENAI_RESOURCE_GROUP_NAME', 'value', parameters('openAiResourceGroupName')), createObject('name', 'AZURE_OPENAI_URL', 'value', parameters('openAiEndpoint')), createObject('name', 'VIDEO_INDEXER_ARM_API_VERSION', 'value', if(equals(parameters('azurePlatform'), 'usgovernment'), '2024-01-01', '2025-04-01')), createObject('name', 'AZURE_SEARCH_SERVICE_NAME', 'value', parameters('searchServiceName'))), if(equals(parameters('authenticationType'), 'key'), createArray(createObject('name', 'AZURE_SEARCH_API_KEY', 'value', listAdminKeys('searchService', '2025-05-01').primaryKey)), createArray()), createArray(createObject('name', 'AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT', 'value', reference('documentIntelligence').endpoint)), if(equals(parameters('authenticationType'), 'key'), createArray(createObject('name', 'AZURE_DOCUMENT_INTELLIGENCE_API_KEY', 'value', listKeys('documentIntelligence', '2025-06-01').key1)), createArray()), createArray(createObject('name', 'APPINSIGHTS_INSTRUMENTATIONKEY', 'value', reference('appInsights').InstrumentationKey), createObject('name', 'APPLICATIONINSIGHTS_CONNECTION_STRING', 'value', reference('appInsights').ConnectionString), createObject('name', 'APPINSIGHTS_PROFILERFEATURE_VERSION', 'value', '1.0.0'), createObject('name', 'APPINSIGHTS_SNAPSHOTFEATURE_VERSION', 'value', '1.0.0'), createObject('name', 'APPLICATIONINSIGHTS_CONFIGURATION_CONTENT', 'value', ''), createObject('name', 'ApplicationInsightsAgent_EXTENSION_VERSION', 'value', '~3'), createObject('name', 'DiagnosticServices_EXTENSION_VERSION', 'value', '~3'), createObject('name', 'InstrumentationEngine_EXTENSION_VERSION', 'value', 'disabled'), createObject('name', 'SnapshotDebugger_EXTENSION_VERSION', 'value', 'disabled'), createObject('name', 'XDT_MicrosoftApplicationInsights_BaseExtensions', 'value', 'disabled'), createObject('name', 'XDT_MicrosoftApplicationInsights_Mode', 'value', 'recommended'), createObject('name', 'XDT_MicrosoftApplicationInsights_PreemptSdk', 'value', 'disabled')), if(equals(parameters('azurePlatform'), 'custom'), createArray(createObject('name', 'CUSTOM_GRAPH_URL_VALUE', 'value', coalesce(parameters('customGraphUrl'), '')), createObject('name', 'CUSTOM_IDENTITY_URL_VALUE', 'value', coalesce(parameters('customIdentityUrl'), '')), createObject('name', 'CUSTOM_RESOURCE_MANAGER_URL_VALUE', 'value', coalesce(parameters('customResourceManagerUrl'), '')), createObject('name', 'CUSTOM_BLOB_STORAGE_URL_VALUE', 'value', coalesce(parameters('customBlobStorageSuffix'), '')), createObject('name', 'CUSTOM_COGNITIVE_SERVICES_URL_VALUE', 'value', coalesce(parameters('customCognitiveServicesScope'), '')), createObject('name', 'CUSTOM_SEARCH_RESOURCE_MANAGER_URL_VALUE', 'value', coalesce(parameters('customSearchResourceUrl'), '')), createObject('name', 'CUSTOM_VIDEO_INDEXER_ENDPOINT', 'value', coalesce(parameters('customVideoIndexerEndpoint'), '')), createObject('name', 'KEY_VAULT_DOMAIN', 'value', environment().suffixes.keyvaultDns), createObject('name', 'CUSTOM_OIDC_METADATA_URL_VALUE', 'value', variables('openIdMetadataUrl'))), createArray())))]"
+                },
+                "clientAffinityEnabled": false,
+                "httpsOnly": true
+              },
+              "identity": {
+                "type": "SystemAssigned"
+              },
+              "tags": "[union(parameters('tags'), createObject('azd-service-name', 'web-native', 'simplechat-hosting-model', 'native-python'))]",
+              "dependsOn": [
+                "appInsights",
+                "cosmosDb",
+                "documentIntelligence"
+              ]
+            },
+            "webAppLogging": {
+              "type": "Microsoft.Web/sites/config",
+              "apiVersion": "2022-03-01",
+              "name": "[format('{0}/{1}', toLower(parameters('nativeWebAppName')), 'logs')]",
+              "properties": {
+                "httpLogs": {
+                  "fileSystem": {
+                    "enabled": true,
+                    "retentionInDays": 7,
+                    "retentionInMb": 35
+                  }
+                }
+              },
+              "dependsOn": [
+                "webApp"
+              ]
+            },
+            "webAppDiagnostics": {
+              "condition": "[parameters('enableDiagLogging')]",
+              "type": "Microsoft.Insights/diagnosticSettings",
+              "apiVersion": "2021-05-01-preview",
+              "scope": "[resourceId('Microsoft.Web/sites', toLower(parameters('nativeWebAppName')))]",
+              "name": "[toLower(format('{0}-diagnostics', toLower(parameters('nativeWebAppName'))))]",
+              "properties": {
+                "workspaceId": "[parameters('logAnalyticsId')]",
+                "logs": "[reference('diagnosticConfigs').outputs.webAppLogCategories.value]",
+                "metrics": "[reference('diagnosticConfigs').outputs.standardMetricsCategories.value]"
+              },
+              "dependsOn": [
+                "diagnosticConfigs",
+                "webApp"
+              ]
+            },
+            "authSettings": {
+              "type": "Microsoft.Web/sites/config",
+              "apiVersion": "2022-03-01",
+              "name": "[format('{0}/{1}', toLower(parameters('nativeWebAppName')), 'authsettingsV2')]",
+              "properties": {
+                "globalValidation": {
+                  "requireAuthentication": true,
+                  "unauthenticatedClientAction": "RedirectToLoginPage",
+                  "redirectToProvider": "azureActiveDirectory"
+                },
+                "identityProviders": {
+                  "azureActiveDirectory": {
+                    "enabled": true,
+                    "registration": {
+                      "openIdIssuer": "[variables('openIdIssuer')]",
+                      "clientId": "[parameters('enterpriseAppClientId')]",
+                      "clientSecretSettingName": "MICROSOFT_PROVIDER_AUTHENTICATION_SECRET"
+                    },
+                    "validation": {
+                      "jwtClaimChecks": {},
+                      "allowedAudiences": [
+                        "[format('api://{0}', parameters('enterpriseAppClientId'))]",
+                        "[parameters('enterpriseAppClientId')]"
+                      ]
+                    },
+                    "isAutoProvisioned": false
+                  }
+                },
+                "login": {
+                  "routes": {
+                    "logoutEndpoint": "/.auth/logout"
+                  },
+                  "tokenStore": {
+                    "enabled": true,
+                    "tokenRefreshExtensionHours": 72,
+                    "fileSystem": {
+                      "directory": "/home/data/.auth"
+                    }
+                  },
+                  "preserveUrlFragmentsForLogins": false,
+                  "allowedExternalRedirectUrls": [],
+                  "cookieExpiration": {
+                    "convention": "FixedTime",
+                    "timeToExpiration": "08:00:00"
+                  },
+                  "nonce": {
+                    "validateNonce": true,
+                    "nonceExpirationInterval": "00:05:00"
+                  }
+                },
+                "httpSettings": {
+                  "requireHttps": true,
+                  "routes": {
+                    "apiPrefix": "/.auth"
+                  },
+                  "forwardProxy": {
+                    "convention": "NoProxy"
+                  }
+                },
+                "platform": {
+                  "enabled": true,
+                  "runtimeVersion": "~1"
+                }
+              },
+              "dependsOn": [
+                "webApp"
+              ]
+            },
+            "diagnosticConfigs": {
+              "condition": "[parameters('enableDiagLogging')]",
+              "type": "Microsoft.Resources/deployments",
+              "apiVersion": "2025-04-01",
+              "name": "nativeDiagnosticConfigs",
+              "properties": {
+                "expressionEvaluationOptions": {
+                  "scope": "inner"
+                },
+                "mode": "Incremental",
+                "template": {
+                  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+                  "contentVersion": "1.0.0.0",
+                  "metadata": {
+                    "_generator": {
+                      "name": "bicep",
+                      "version": "0.41.2.15936",
+                      "templateHash": "7649984259379022431"
+                    }
+                  },
+                  "variables": {
+                    "standardRetentionPolicy": {
+                      "enabled": false,
+                      "days": 0
+                    },
+                    "standardLogCategories": [
+                      {
+                        "categoryGroup": "allLogs",
+                        "enabled": true,
+                        "retentionPolicy": "[variables('standardRetentionPolicy')]"
+                      }
+                    ],
+                    "limitedLogCategories": [
+                      {
+                        "categoryGroup": "allLogs",
+                        "enabled": true,
+                        "retentionPolicy": "[variables('standardRetentionPolicy')]"
+                      }
+                    ],
+                    "standardMetricsCategories": [
+                      {
+                        "category": "AllMetrics",
+                        "enabled": true,
+                        "retentionPolicy": "[variables('standardRetentionPolicy')]"
+                      }
+                    ],
+                    "transactionMetricsCategories": [
+                      {
+                        "category": "Transaction",
+                        "enabled": true,
+                        "retentionPolicy": "[variables('standardRetentionPolicy')]"
+                      }
+                    ],
+                    "webAppLogCategories": [
+                      {
+                        "category": "AppServiceAntivirusScanAuditLogs",
+                        "enabled": true,
+                        "retentionPolicy": "[variables('standardRetentionPolicy')]"
+                      },
+                      {
+                        "category": "AppServiceHTTPLogs",
+                        "enabled": true,
+                        "retentionPolicy": "[variables('standardRetentionPolicy')]"
+                      },
+                      {
+                        "category": "AppServiceConsoleLogs",
+                        "enabled": true,
+                        "retentionPolicy": "[variables('standardRetentionPolicy')]"
+                      },
+                      {
+                        "category": "AppServiceAppLogs",
+                        "enabled": true,
+                        "retentionPolicy": "[variables('standardRetentionPolicy')]"
+                      },
+                      {
+                        "category": "AppServiceFileAuditLogs",
+                        "enabled": true,
+                        "retentionPolicy": "[variables('standardRetentionPolicy')]"
+                      },
+                      {
+                        "category": "AppServiceAuditLogs",
+                        "enabled": true,
+                        "retentionPolicy": "[variables('standardRetentionPolicy')]"
+                      },
+                      {
+                        "category": "AppServiceIPSecAuditLogs",
+                        "enabled": true,
+                        "retentionPolicy": "[variables('standardRetentionPolicy')]"
+                      },
+                      {
+                        "category": "AppServicePlatformLogs",
+                        "enabled": true,
+                        "retentionPolicy": "[variables('standardRetentionPolicy')]"
+                      }
+                    ]
+                  },
+                  "resources": [],
+                  "outputs": {
+                    "limitedLogCategories": {
+                      "type": "array",
+                      "value": "[variables('limitedLogCategories')]"
+                    },
+                    "standardRetentionPolicy": {
+                      "type": "object",
+                      "value": "[variables('standardRetentionPolicy')]"
+                    },
+                    "standardLogCategories": {
+                      "type": "array",
+                      "value": "[variables('standardLogCategories')]"
+                    },
+                    "standardMetricsCategories": {
+                      "type": "array",
+                      "value": "[variables('standardMetricsCategories')]"
+                    },
+                    "transactionMetricsCategories": {
+                      "type": "array",
+                      "value": "[variables('transactionMetricsCategories')]"
+                    },
+                    "webAppLogCategories": {
+                      "type": "array",
+                      "value": "[variables('webAppLogCategories')]"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "outputs": {
+            "name": {
+              "type": "string",
+              "value": "[toLower(parameters('nativeWebAppName'))]"
+            },
+            "principalId": {
+              "type": "string",
+              "value": "[reference('webApp', '2022-03-01', 'full').identity.principalId]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "applicationInsights",
+        "appServicePlan",
+        "cosmosDB",
+        "docIntel",
+        "keyVault",
+        "logAnalytics",
+        "openAI",
+        "rg",
+        "searchService",
+        "virtualNetwork"
+      ]
+    },
     "contentSafety": {
       "condition": "[parameters('deployContentSafety')]",
       "type": "Microsoft.Resources/deployments",
@@ -4104,8 +4685,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.44.1.10279",
-              "templateHash": "10246919715661794423"
+              "version": "0.41.2.15936",
+              "templateHash": "5518882993099057198"
             }
           },
           "parameters": {
@@ -4179,8 +4760,8 @@
                   "metadata": {
                     "_generator": {
                       "name": "bicep",
-                      "version": "0.44.1.10279",
-                      "templateHash": "2572294110747766074"
+                      "version": "0.41.2.15936",
+                      "templateHash": "7649984259379022431"
                     }
                   },
                   "variables": {
@@ -4189,11 +4770,6 @@
                       "days": 0
                     },
                     "standardLogCategories": [
-                      {
-                        "categoryGroup": "Audit",
-                        "enabled": true,
-                        "retentionPolicy": "[variables('standardRetentionPolicy')]"
-                      },
                       {
                         "categoryGroup": "allLogs",
                         "enabled": true,
@@ -4259,11 +4835,6 @@
                       },
                       {
                         "category": "AppServicePlatformLogs",
-                        "enabled": true,
-                        "retentionPolicy": "[variables('standardRetentionPolicy')]"
-                      },
-                      {
-                        "category": "AppServiceAuthenticationLogs",
                         "enabled": true,
                         "retentionPolicy": "[variables('standardRetentionPolicy')]"
                       }
@@ -4330,13 +4901,16 @@
         "mode": "Incremental",
         "parameters": {
           "location": {
-            "value": "[parameters('location')]"
+            "value": "[parameters('redisLocation')]"
           },
           "appName": {
             "value": "[parameters('appName')]"
           },
           "environment": {
             "value": "[parameters('environment')]"
+          },
+          "redisAuthenticationType": {
+            "value": "[parameters('redisAuthenticationType')]"
           },
           "tags": {
             "value": "[variables('tags')]"
@@ -4354,8 +4928,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.44.1.10279",
-              "templateHash": "2921997713740092726"
+              "version": "0.41.2.15936",
+              "templateHash": "5244921657772448964"
             }
           },
           "parameters": {
@@ -4368,6 +4942,17 @@
             "environment": {
               "type": "string"
             },
+            "redisAuthenticationType": {
+              "type": "string",
+              "defaultValue": "managed_identity",
+              "allowedValues": [
+                "key",
+                "managed_identity"
+              ],
+              "metadata": {
+                "description": "Authentication type for Azure Cache for Redis."
+              }
+            },
             "tags": {
               "type": "object"
             },
@@ -4377,6 +4962,9 @@
             "logAnalyticsId": {
               "type": "string"
             }
+          },
+          "variables": {
+            "redisConfiguration": "[if(equals(parameters('redisAuthenticationType'), 'managed_identity'), createObject('aad-enabled', 'true'), createObject())]"
           },
           "resources": [
             {
@@ -4392,9 +4980,7 @@
                 },
                 "enableNonSslPort": false,
                 "minimumTlsVersion": "1.2",
-                "redisConfiguration": {
-                  "aad-enabled": "true"
-                }
+                "redisConfiguration": "[variables('redisConfiguration')]"
               },
               "tags": "[parameters('tags')]"
             },
@@ -4430,8 +5016,8 @@
                   "metadata": {
                     "_generator": {
                       "name": "bicep",
-                      "version": "0.44.1.10279",
-                      "templateHash": "2572294110747766074"
+                      "version": "0.41.2.15936",
+                      "templateHash": "7649984259379022431"
                     }
                   },
                   "variables": {
@@ -4440,11 +5026,6 @@
                       "days": 0
                     },
                     "standardLogCategories": [
-                      {
-                        "categoryGroup": "Audit",
-                        "enabled": true,
-                        "retentionPolicy": "[variables('standardRetentionPolicy')]"
-                      },
                       {
                         "categoryGroup": "allLogs",
                         "enabled": true,
@@ -4510,11 +5091,6 @@
                       },
                       {
                         "category": "AppServicePlatformLogs",
-                        "enabled": true,
-                        "retentionPolicy": "[variables('standardRetentionPolicy')]"
-                      },
-                      {
-                        "category": "AppServiceAuthenticationLogs",
                         "enabled": true,
                         "retentionPolicy": "[variables('standardRetentionPolicy')]"
                       }
@@ -4608,8 +5184,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.44.1.10279",
-              "templateHash": "8709431544664505304"
+              "version": "0.41.2.15936",
+              "templateHash": "13343807698206273916"
             }
           },
           "parameters": {
@@ -4686,8 +5262,8 @@
                   "metadata": {
                     "_generator": {
                       "name": "bicep",
-                      "version": "0.44.1.10279",
-                      "templateHash": "2572294110747766074"
+                      "version": "0.41.2.15936",
+                      "templateHash": "7649984259379022431"
                     }
                   },
                   "variables": {
@@ -4696,11 +5272,6 @@
                       "days": 0
                     },
                     "standardLogCategories": [
-                      {
-                        "categoryGroup": "Audit",
-                        "enabled": true,
-                        "retentionPolicy": "[variables('standardRetentionPolicy')]"
-                      },
                       {
                         "categoryGroup": "allLogs",
                         "enabled": true,
@@ -4766,11 +5337,6 @@
                       },
                       {
                         "category": "AppServicePlatformLogs",
-                        "enabled": true,
-                        "retentionPolicy": "[variables('standardRetentionPolicy')]"
-                      },
-                      {
-                        "category": "AppServiceAuthenticationLogs",
                         "enabled": true,
                         "retentionPolicy": "[variables('standardRetentionPolicy')]"
                       }
@@ -4873,8 +5439,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.44.1.10279",
-              "templateHash": "18274641172688139159"
+              "version": "0.41.2.15936",
+              "templateHash": "14757319513168804759"
             }
           },
           "parameters": {
@@ -4995,8 +5561,8 @@
                   "metadata": {
                     "_generator": {
                       "name": "bicep",
-                      "version": "0.44.1.10279",
-                      "templateHash": "2572294110747766074"
+                      "version": "0.41.2.15936",
+                      "templateHash": "7649984259379022431"
                     }
                   },
                   "variables": {
@@ -5005,11 +5571,6 @@
                       "days": 0
                     },
                     "standardLogCategories": [
-                      {
-                        "categoryGroup": "Audit",
-                        "enabled": true,
-                        "retentionPolicy": "[variables('standardRetentionPolicy')]"
-                      },
                       {
                         "categoryGroup": "allLogs",
                         "enabled": true,
@@ -5075,11 +5636,6 @@
                       },
                       {
                         "category": "AppServicePlatformLogs",
-                        "enabled": true,
-                        "retentionPolicy": "[variables('standardRetentionPolicy')]"
-                      },
-                      {
-                        "category": "AppServiceAuthenticationLogs",
                         "enabled": true,
                         "retentionPolicy": "[variables('standardRetentionPolicy')]"
                       }
@@ -5153,6 +5709,9 @@
           "authenticationType": {
             "value": "[parameters('authenticationType')]"
           },
+          "redisAuthenticationType": {
+            "value": "[parameters('redisAuthenticationType')]"
+          },
           "enterpriseAppServicePrincipalId": {
             "value": "[parameters('enterpriseAppServicePrincipalId')]"
           },
@@ -5197,8 +5756,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.44.1.10279",
-              "templateHash": "1771723961606912785"
+              "version": "0.41.2.15936",
+              "templateHash": "7872327915668785970"
             }
           },
           "parameters": {
@@ -5207,6 +5766,14 @@
             },
             "authenticationType": {
               "type": "string"
+            },
+            "redisAuthenticationType": {
+              "type": "string",
+              "defaultValue": "[parameters('authenticationType')]",
+              "allowedValues": [
+                "key",
+                "managed_identity"
+              ]
             },
             "keyVaultName": {
               "type": "string"
@@ -5287,7 +5854,7 @@
               "apiVersion": "2022-04-01",
               "name": "[guid(resourceGroup().id, 'simplechat-cosmos-throughput-operator')]",
               "properties": {
-                "roleName": "SimpleChat Cosmos Throughput Operator",
+                "roleName": "[format('SimpleChat Cosmos Throughput Operator {0}', resourceGroup().name)]",
                 "description": "Allows SimpleChat to read metrics and adjust Cosmos DB SQL database/container throughput settings without granting data-plane access.",
                 "type": "CustomRole",
                 "permissions": [
@@ -5499,7 +6066,7 @@
               }
             },
             {
-              "condition": "[not(equals(parameters('redisCacheName'), ''))]",
+              "condition": "[and(not(equals(parameters('redisCacheName'), '')), equals(parameters('redisAuthenticationType'), 'managed_identity'))]",
               "type": "Microsoft.Authorization/roleAssignments",
               "apiVersion": "2022-04-01",
               "scope": "[resourceId('Microsoft.Cache/redis', parameters('redisCacheName'))]",
@@ -5508,6 +6075,17 @@
                 "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'e0f68234-74aa-48ed-b826-c38b57376e17')]",
                 "principalId": "[reference(resourceId('Microsoft.Web/sites', parameters('webAppName')), '2022-03-01', 'full').identity.principalId]",
                 "principalType": "ServicePrincipal"
+              }
+            },
+            {
+              "condition": "[and(not(equals(parameters('redisCacheName'), '')), equals(parameters('redisAuthenticationType'), 'managed_identity'))]",
+              "type": "Microsoft.Cache/redis/accessPolicyAssignments",
+              "apiVersion": "2024-11-01",
+              "name": "[format('{0}/{1}', parameters('redisCacheName'), 'webapp-mi-data-contributor')]",
+              "properties": {
+                "accessPolicyName": "Data Contributor",
+                "objectId": "[reference(resourceId('Microsoft.Web/sites', parameters('webAppName')), '2022-03-01', 'full').identity.principalId]",
+                "objectIdAlias": "[reference(resourceId('Microsoft.Web/sites', parameters('webAppName')), '2022-03-01', 'full').identity.principalId]"
               }
             },
             {
@@ -5549,8 +6127,8 @@
                   "metadata": {
                     "_generator": {
                       "name": "bicep",
-                      "version": "0.44.1.10279",
-                      "templateHash": "17218488046755682415"
+                      "version": "0.41.2.15936",
+                      "templateHash": "4522636670670774179"
                     }
                   },
                   "parameters": {
@@ -5593,7 +6171,7 @@
                       }
                     },
                     {
-                      "condition": "[equals(parameters('authenticationType'), 'managed_identity')]",
+                      "condition": "[and(equals(parameters('authenticationType'), 'managed_identity'), not(empty(parameters('enterpriseAppServicePrincipalId'))))]",
                       "type": "Microsoft.Authorization/roleAssignments",
                       "apiVersion": "2022-04-01",
                       "scope": "[resourceId('Microsoft.CognitiveServices/accounts', parameters('openAIName'))]",
@@ -5661,6 +6239,424 @@
         "speechService",
         "storageAccount",
         "videoIndexerService"
+      ]
+    },
+    "setNativeWebAppPermissions": {
+      "condition": "[and(parameters('configureApplicationPermissions'), parameters('deployNativePythonWebApp'))]",
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "setNativeWebAppPermissions",
+      "resourceGroup": "[variables('rgName')]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "nativeWebAppName": {
+            "value": "[reference('nativeAppService').outputs.name.value]"
+          },
+          "authenticationType": {
+            "value": "[parameters('authenticationType')]"
+          },
+          "redisAuthenticationType": {
+            "value": "[parameters('redisAuthenticationType')]"
+          },
+          "keyVaultName": {
+            "value": "[reference('keyVault').outputs.keyVaultName.value]"
+          },
+          "cosmosDBName": {
+            "value": "[reference('cosmosDB').outputs.cosmosDbName.value]"
+          },
+          "openAIName": {
+            "value": "[reference('openAI').outputs.openAIName.value]"
+          },
+          "openAIResourceGroupName": {
+            "value": "[reference('openAI').outputs.openAIResourceGroup.value]"
+          },
+          "openAISubscriptionId": {
+            "value": "[reference('openAI').outputs.openAISubscriptionId.value]"
+          },
+          "docIntelName": {
+            "value": "[reference('docIntel').outputs.documentIntelligenceServiceName.value]"
+          },
+          "storageAccountName": {
+            "value": "[reference('storageAccount').outputs.name.value]"
+          },
+          "searchServiceName": {
+            "value": "[reference('searchService').outputs.searchServiceName.value]"
+          },
+          "speechServiceName": "[if(parameters('deploySpeechService'), createObject('value', reference('speechService').outputs.speechServiceName.value), createObject('value', ''))]",
+          "redisCacheName": "[if(parameters('deployRedisCache'), createObject('value', reference('redisCache').outputs.redisCacheName.value), createObject('value', ''))]",
+          "contentSafetyName": "[if(parameters('deployContentSafety'), createObject('value', reference('contentSafety').outputs.contentSafetyName.value), createObject('value', ''))]"
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.41.2.15936",
+              "templateHash": "2201578881115556468"
+            }
+          },
+          "parameters": {
+            "nativeWebAppName": {
+              "type": "string"
+            },
+            "authenticationType": {
+              "type": "string"
+            },
+            "redisAuthenticationType": {
+              "type": "string",
+              "defaultValue": "[parameters('authenticationType')]",
+              "allowedValues": [
+                "key",
+                "managed_identity"
+              ]
+            },
+            "keyVaultName": {
+              "type": "string"
+            },
+            "cosmosDBName": {
+              "type": "string"
+            },
+            "openAIName": {
+              "type": "string"
+            },
+            "openAIResourceGroupName": {
+              "type": "string"
+            },
+            "openAISubscriptionId": {
+              "type": "string"
+            },
+            "docIntelName": {
+              "type": "string"
+            },
+            "storageAccountName": {
+              "type": "string"
+            },
+            "speechServiceName": {
+              "type": "string"
+            },
+            "searchServiceName": {
+              "type": "string"
+            },
+            "redisCacheName": {
+              "type": "string"
+            },
+            "contentSafetyName": {
+              "type": "string"
+            }
+          },
+          "variables": {
+            "useExternalOpenAIResource": "[and(and(not(equals(parameters('openAIName'), '')), not(empty(parameters('openAIResourceGroupName')))), not(empty(parameters('openAISubscriptionId'))))]"
+          },
+          "resources": [
+            {
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "scope": "[resourceId('Microsoft.KeyVault/vaults', parameters('keyVaultName'))]",
+              "name": "[guid(resourceId('Microsoft.KeyVault/vaults', parameters('keyVaultName')), resourceId('Microsoft.Web/sites', parameters('nativeWebAppName')), 'kv-secrets-user')]",
+              "properties": {
+                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '4633458b-17de-408a-b874-0445c86b69e6')]",
+                "principalId": "[reference(resourceId('Microsoft.Web/sites', parameters('nativeWebAppName')), '2022-03-01', 'full').identity.principalId]",
+                "principalType": "ServicePrincipal"
+              }
+            },
+            {
+              "condition": "[equals(parameters('authenticationType'), 'managed_identity')]",
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "scope": "[resourceId('Microsoft.DocumentDB/databaseAccounts', parameters('cosmosDBName'))]",
+              "name": "[guid(resourceId('Microsoft.DocumentDB/databaseAccounts', parameters('cosmosDBName')), resourceId('Microsoft.Web/sites', parameters('nativeWebAppName')), 'cosmos-contributor')]",
+              "properties": {
+                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'b24988ac-6180-42a0-ab88-20f7382dd24c')]",
+                "principalId": "[reference(resourceId('Microsoft.Web/sites', parameters('nativeWebAppName')), '2022-03-01', 'full').identity.principalId]",
+                "principalType": "ServicePrincipal"
+              }
+            },
+            {
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "scope": "[resourceId('Microsoft.DocumentDB/databaseAccounts', parameters('cosmosDBName'))]",
+              "name": "[guid(resourceId('Microsoft.DocumentDB/databaseAccounts', parameters('cosmosDBName')), resourceId('Microsoft.Web/sites', parameters('nativeWebAppName')), 'cosmos-throughput-operator')]",
+              "properties": {
+                "roleDefinitionId": "[resourceId('Microsoft.Authorization/roleDefinitions', guid(resourceGroup().id, 'simplechat-cosmos-throughput-operator'))]",
+                "principalId": "[reference(resourceId('Microsoft.Web/sites', parameters('nativeWebAppName')), '2022-03-01', 'full').identity.principalId]",
+                "principalType": "ServicePrincipal"
+              }
+            },
+            {
+              "condition": "[equals(parameters('authenticationType'), 'managed_identity')]",
+              "type": "Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments",
+              "apiVersion": "2023-04-15",
+              "name": "[format('{0}/{1}', parameters('cosmosDBName'), guid(resourceId('Microsoft.DocumentDB/databaseAccounts', parameters('cosmosDBName')), resourceId('Microsoft.Web/sites', parameters('nativeWebAppName')), 'cosmos-data-contributor'))]",
+              "properties": {
+                "roleDefinitionId": "[format('{0}/sqlRoleDefinitions/00000000-0000-0000-0000-000000000002', resourceId('Microsoft.DocumentDB/databaseAccounts', parameters('cosmosDBName')))]",
+                "principalId": "[reference(resourceId('Microsoft.Web/sites', parameters('nativeWebAppName')), '2022-03-01', 'full').identity.principalId]",
+                "scope": "[resourceId('Microsoft.DocumentDB/databaseAccounts', parameters('cosmosDBName'))]"
+              }
+            },
+            {
+              "condition": "[and(and(equals(parameters('authenticationType'), 'managed_identity'), not(equals(parameters('openAIName'), ''))), not(variables('useExternalOpenAIResource')))]",
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "scope": "[resourceId('Microsoft.CognitiveServices/accounts', parameters('openAIName'))]",
+              "name": "[guid(resourceId('Microsoft.CognitiveServices/accounts', parameters('openAIName')), resourceId('Microsoft.Web/sites', parameters('nativeWebAppName')), 'openai-user')]",
+              "properties": {
+                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '5e0bd9bd-7b93-4f28-af87-19fc36ad61bd')]",
+                "principalId": "[reference(resourceId('Microsoft.Web/sites', parameters('nativeWebAppName')), '2022-03-01', 'full').identity.principalId]",
+                "principalType": "ServicePrincipal"
+              }
+            },
+            {
+              "condition": "[equals(parameters('authenticationType'), 'managed_identity')]",
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "scope": "[resourceId('Microsoft.CognitiveServices/accounts', parameters('docIntelName'))]",
+              "name": "[guid(resourceId('Microsoft.CognitiveServices/accounts', parameters('docIntelName')), resourceId('Microsoft.Web/sites', parameters('nativeWebAppName')), 'doc-intel-user')]",
+              "properties": {
+                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'a97b65f3-24c7-4388-baec-2e87135dc908')]",
+                "principalId": "[reference(resourceId('Microsoft.Web/sites', parameters('nativeWebAppName')), '2022-03-01', 'full').identity.principalId]",
+                "principalType": "ServicePrincipal"
+              }
+            },
+            {
+              "condition": "[equals(parameters('authenticationType'), 'managed_identity')]",
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "scope": "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]",
+              "name": "[guid(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), resourceId('Microsoft.Web/sites', parameters('nativeWebAppName')), 'storage-blob-data-contributor')]",
+              "properties": {
+                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')]",
+                "principalId": "[reference(resourceId('Microsoft.Web/sites', parameters('nativeWebAppName')), '2022-03-01', 'full').identity.principalId]",
+                "principalType": "ServicePrincipal"
+              }
+            },
+            {
+              "condition": "[and(not(equals(parameters('speechServiceName'), '')), equals(parameters('authenticationType'), 'managed_identity'))]",
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "scope": "[resourceId('Microsoft.CognitiveServices/accounts', parameters('speechServiceName'))]",
+              "name": "[guid(resourceId('Microsoft.CognitiveServices/accounts', parameters('speechServiceName')), resourceId('Microsoft.Web/sites', parameters('nativeWebAppName')), 'speech-service-user')]",
+              "properties": {
+                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'a97b65f3-24c7-4388-baec-2e87135dc908')]",
+                "principalId": "[reference(resourceId('Microsoft.Web/sites', parameters('nativeWebAppName')), '2022-03-01', 'full').identity.principalId]",
+                "principalType": "ServicePrincipal"
+              }
+            },
+            {
+              "condition": "[equals(parameters('authenticationType'), 'managed_identity')]",
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "scope": "[resourceId('Microsoft.Search/searchServices', parameters('searchServiceName'))]",
+              "name": "[guid(resourceId('Microsoft.Search/searchServices', parameters('searchServiceName')), resourceId('Microsoft.Web/sites', parameters('nativeWebAppName')), 'search-index-data-contributor')]",
+              "properties": {
+                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '8ebe5a00-799e-43f5-93ac-243d3dce84a7')]",
+                "principalId": "[reference(resourceId('Microsoft.Web/sites', parameters('nativeWebAppName')), '2022-03-01', 'full').identity.principalId]",
+                "principalType": "ServicePrincipal"
+              }
+            },
+            {
+              "condition": "[equals(parameters('authenticationType'), 'managed_identity')]",
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "scope": "[resourceId('Microsoft.Search/searchServices', parameters('searchServiceName'))]",
+              "name": "[guid(resourceId('Microsoft.Search/searchServices', parameters('searchServiceName')), resourceId('Microsoft.Web/sites', parameters('nativeWebAppName')), 'search-service-contributor')]",
+              "properties": {
+                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '7ca78c08-252a-4471-8644-bb5ff32d4ba0')]",
+                "principalId": "[reference(resourceId('Microsoft.Web/sites', parameters('nativeWebAppName')), '2022-03-01', 'full').identity.principalId]",
+                "principalType": "ServicePrincipal"
+              }
+            },
+            {
+              "condition": "[and(not(equals(parameters('contentSafetyName'), '')), equals(parameters('authenticationType'), 'managed_identity'))]",
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "scope": "[resourceId('Microsoft.CognitiveServices/accounts', parameters('contentSafetyName'))]",
+              "name": "[guid(resourceId('Microsoft.CognitiveServices/accounts', parameters('contentSafetyName')), resourceId('Microsoft.Web/sites', parameters('nativeWebAppName')), 'content-safety-user')]",
+              "properties": {
+                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'a97b65f3-24c7-4388-baec-2e87135dc908')]",
+                "principalId": "[reference(resourceId('Microsoft.Web/sites', parameters('nativeWebAppName')), '2022-03-01', 'full').identity.principalId]",
+                "principalType": "ServicePrincipal"
+              }
+            },
+            {
+              "condition": "[and(not(equals(parameters('redisCacheName'), '')), equals(parameters('redisAuthenticationType'), 'managed_identity'))]",
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "scope": "[resourceId('Microsoft.Cache/redis', parameters('redisCacheName'))]",
+              "name": "[guid(resourceId('Microsoft.Cache/redis', parameters('redisCacheName')), resourceId('Microsoft.Web/sites', parameters('nativeWebAppName')), 'redis-cache-contributor')]",
+              "properties": {
+                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'e0f68234-74aa-48ed-b826-c38b57376e17')]",
+                "principalId": "[reference(resourceId('Microsoft.Web/sites', parameters('nativeWebAppName')), '2022-03-01', 'full').identity.principalId]",
+                "principalType": "ServicePrincipal"
+              }
+            },
+            {
+              "condition": "[and(not(equals(parameters('redisCacheName'), '')), equals(parameters('redisAuthenticationType'), 'managed_identity'))]",
+              "type": "Microsoft.Cache/redis/accessPolicyAssignments",
+              "apiVersion": "2024-11-01",
+              "name": "[format('{0}/{1}', parameters('redisCacheName'), 'native-webapp-mi-data-contributor')]",
+              "properties": {
+                "accessPolicyName": "Data Contributor",
+                "objectId": "[reference(resourceId('Microsoft.Web/sites', parameters('nativeWebAppName')), '2022-03-01', 'full').identity.principalId]",
+                "objectIdAlias": "[reference(resourceId('Microsoft.Web/sites', parameters('nativeWebAppName')), '2022-03-01', 'full').identity.principalId]"
+              }
+            },
+            {
+              "condition": "[variables('useExternalOpenAIResource')]",
+              "type": "Microsoft.Resources/deployments",
+              "apiVersion": "2025-04-01",
+              "name": "nativeOpenAIExternalPermissions",
+              "subscriptionId": "[parameters('openAISubscriptionId')]",
+              "resourceGroup": "[parameters('openAIResourceGroupName')]",
+              "properties": {
+                "expressionEvaluationOptions": {
+                  "scope": "inner"
+                },
+                "mode": "Incremental",
+                "parameters": {
+                  "openAIName": {
+                    "value": "[parameters('openAIName')]"
+                  },
+                  "authenticationType": {
+                    "value": "[parameters('authenticationType')]"
+                  },
+                  "webAppPrincipalId": {
+                    "value": "[reference(resourceId('Microsoft.Web/sites', parameters('nativeWebAppName')), '2022-03-01', 'full').identity.principalId]"
+                  },
+                  "enterpriseAppServicePrincipalId": {
+                    "value": ""
+                  },
+                  "videoIndexerPrincipalId": {
+                    "value": ""
+                  },
+                  "videoIndexerName": {
+                    "value": ""
+                  },
+                  "videoIndexerSupportsOpenAiIntegration": {
+                    "value": false
+                  }
+                },
+                "template": {
+                  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+                  "contentVersion": "1.0.0.0",
+                  "metadata": {
+                    "_generator": {
+                      "name": "bicep",
+                      "version": "0.41.2.15936",
+                      "templateHash": "4522636670670774179"
+                    }
+                  },
+                  "parameters": {
+                    "openAIName": {
+                      "type": "string"
+                    },
+                    "authenticationType": {
+                      "type": "string"
+                    },
+                    "webAppPrincipalId": {
+                      "type": "string"
+                    },
+                    "enterpriseAppServicePrincipalId": {
+                      "type": "string"
+                    },
+                    "videoIndexerPrincipalId": {
+                      "type": "string",
+                      "defaultValue": ""
+                    },
+                    "videoIndexerName": {
+                      "type": "string",
+                      "defaultValue": ""
+                    },
+                    "videoIndexerSupportsOpenAiIntegration": {
+                      "type": "bool",
+                      "defaultValue": true
+                    }
+                  },
+                  "resources": [
+                    {
+                      "condition": "[equals(parameters('authenticationType'), 'managed_identity')]",
+                      "type": "Microsoft.Authorization/roleAssignments",
+                      "apiVersion": "2022-04-01",
+                      "scope": "[resourceId('Microsoft.CognitiveServices/accounts', parameters('openAIName'))]",
+                      "name": "[guid(resourceId('Microsoft.CognitiveServices/accounts', parameters('openAIName')), parameters('webAppPrincipalId'), 'openai-user')]",
+                      "properties": {
+                        "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '5e0bd9bd-7b93-4f28-af87-19fc36ad61bd')]",
+                        "principalId": "[parameters('webAppPrincipalId')]",
+                        "principalType": "ServicePrincipal"
+                      }
+                    },
+                    {
+                      "condition": "[and(equals(parameters('authenticationType'), 'managed_identity'), not(empty(parameters('enterpriseAppServicePrincipalId'))))]",
+                      "type": "Microsoft.Authorization/roleAssignments",
+                      "apiVersion": "2022-04-01",
+                      "scope": "[resourceId('Microsoft.CognitiveServices/accounts', parameters('openAIName'))]",
+                      "name": "[guid(resourceId('Microsoft.CognitiveServices/accounts', parameters('openAIName')), parameters('enterpriseAppServicePrincipalId'), 'enterpriseApp-CognitiveServicesOpenAIUserRole')]",
+                      "properties": {
+                        "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '5e0bd9bd-7b93-4f28-af87-19fc36ad61bd')]",
+                        "principalId": "[parameters('enterpriseAppServicePrincipalId')]",
+                        "principalType": "ServicePrincipal"
+                      }
+                    },
+                    {
+                      "condition": "[not(empty(parameters('enterpriseAppServicePrincipalId')))]",
+                      "type": "Microsoft.Authorization/roleAssignments",
+                      "apiVersion": "2022-04-01",
+                      "scope": "[resourceId('Microsoft.CognitiveServices/accounts', parameters('openAIName'))]",
+                      "name": "[guid(resourceId('Microsoft.CognitiveServices/accounts', parameters('openAIName')), parameters('enterpriseAppServicePrincipalId'), 'enterpriseApp-CognitiveServicesUserRole')]",
+                      "properties": {
+                        "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'a97b65f3-24c7-4388-baec-2e87135dc908')]",
+                        "principalId": "[parameters('enterpriseAppServicePrincipalId')]",
+                        "principalType": "ServicePrincipal"
+                      }
+                    },
+                    {
+                      "condition": "[and(and(not(equals(parameters('videoIndexerName'), '')), not(empty(parameters('videoIndexerPrincipalId')))), parameters('videoIndexerSupportsOpenAiIntegration'))]",
+                      "type": "Microsoft.Authorization/roleAssignments",
+                      "apiVersion": "2022-04-01",
+                      "scope": "[resourceId('Microsoft.CognitiveServices/accounts', parameters('openAIName'))]",
+                      "name": "[guid(resourceId('Microsoft.CognitiveServices/accounts', parameters('openAIName')), parameters('videoIndexerPrincipalId'), 'video-indexer-cog-services-contributor')]",
+                      "properties": {
+                        "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '25fbc0a9-bd7c-42a3-aa1a-3b75d497ee68')]",
+                        "principalId": "[parameters('videoIndexerPrincipalId')]",
+                        "principalType": "ServicePrincipal"
+                      }
+                    },
+                    {
+                      "condition": "[and(and(not(equals(parameters('videoIndexerName'), '')), not(empty(parameters('videoIndexerPrincipalId')))), parameters('videoIndexerSupportsOpenAiIntegration'))]",
+                      "type": "Microsoft.Authorization/roleAssignments",
+                      "apiVersion": "2022-04-01",
+                      "scope": "[resourceId('Microsoft.CognitiveServices/accounts', parameters('openAIName'))]",
+                      "name": "[guid(resourceId('Microsoft.CognitiveServices/accounts', parameters('openAIName')), parameters('videoIndexerPrincipalId'), 'video-indexer-cog-services-user')]",
+                      "properties": {
+                        "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'a97b65f3-24c7-4388-baec-2e87135dc908')]",
+                        "principalId": "[parameters('videoIndexerPrincipalId')]",
+                        "principalType": "ServicePrincipal"
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      },
+      "dependsOn": [
+        "contentSafety",
+        "cosmosDB",
+        "docIntel",
+        "keyVault",
+        "nativeAppService",
+        "openAI",
+        "redisCache",
+        "rg",
+        "searchService",
+        "setPermissions",
+        "speechService",
+        "storageAccount"
       ]
     },
     "privateNetworking": {
@@ -5735,8 +6731,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.44.1.10279",
-              "templateHash": "16990852046160181859"
+              "version": "0.41.2.15936",
+              "templateHash": "5732528072862809219"
             }
           },
           "parameters": {
@@ -5895,8 +6891,8 @@
                   "metadata": {
                     "_generator": {
                       "name": "bicep",
-                      "version": "0.44.1.10279",
-                      "templateHash": "6946008567642736236"
+                      "version": "0.41.2.15936",
+                      "templateHash": "3501998361364242008"
                     }
                   },
                   "parameters": {
@@ -5988,8 +6984,8 @@
                           "metadata": {
                             "_generator": {
                               "name": "bicep",
-                              "version": "0.44.1.10279",
-                              "templateHash": "1211059935570939009"
+                              "version": "0.41.2.15936",
+                              "templateHash": "16255331454976703178"
                             }
                           },
                           "parameters": {
@@ -6082,8 +7078,8 @@
                   "metadata": {
                     "_generator": {
                       "name": "bicep",
-                      "version": "0.44.1.10279",
-                      "templateHash": "1795431069306274319"
+                      "version": "0.41.2.15936",
+                      "templateHash": "18226293550364152784"
                     }
                   },
                   "parameters": {
@@ -6210,8 +7206,8 @@
                   "metadata": {
                     "_generator": {
                       "name": "bicep",
-                      "version": "0.44.1.10279",
-                      "templateHash": "6946008567642736236"
+                      "version": "0.41.2.15936",
+                      "templateHash": "3501998361364242008"
                     }
                   },
                   "parameters": {
@@ -6303,8 +7299,8 @@
                           "metadata": {
                             "_generator": {
                               "name": "bicep",
-                              "version": "0.44.1.10279",
-                              "templateHash": "1211059935570939009"
+                              "version": "0.41.2.15936",
+                              "templateHash": "16255331454976703178"
                             }
                           },
                           "parameters": {
@@ -6397,8 +7393,8 @@
                   "metadata": {
                     "_generator": {
                       "name": "bicep",
-                      "version": "0.44.1.10279",
-                      "templateHash": "1795431069306274319"
+                      "version": "0.41.2.15936",
+                      "templateHash": "18226293550364152784"
                     }
                   },
                   "parameters": {
@@ -6525,8 +7521,8 @@
                   "metadata": {
                     "_generator": {
                       "name": "bicep",
-                      "version": "0.44.1.10279",
-                      "templateHash": "6946008567642736236"
+                      "version": "0.41.2.15936",
+                      "templateHash": "3501998361364242008"
                     }
                   },
                   "parameters": {
@@ -6618,8 +7614,8 @@
                           "metadata": {
                             "_generator": {
                               "name": "bicep",
-                              "version": "0.44.1.10279",
-                              "templateHash": "1211059935570939009"
+                              "version": "0.41.2.15936",
+                              "templateHash": "16255331454976703178"
                             }
                           },
                           "parameters": {
@@ -6712,8 +7708,8 @@
                   "metadata": {
                     "_generator": {
                       "name": "bicep",
-                      "version": "0.44.1.10279",
-                      "templateHash": "1795431069306274319"
+                      "version": "0.41.2.15936",
+                      "templateHash": "18226293550364152784"
                     }
                   },
                   "parameters": {
@@ -6840,8 +7836,8 @@
                   "metadata": {
                     "_generator": {
                       "name": "bicep",
-                      "version": "0.44.1.10279",
-                      "templateHash": "6946008567642736236"
+                      "version": "0.41.2.15936",
+                      "templateHash": "3501998361364242008"
                     }
                   },
                   "parameters": {
@@ -6933,8 +7929,8 @@
                           "metadata": {
                             "_generator": {
                               "name": "bicep",
-                              "version": "0.44.1.10279",
-                              "templateHash": "1211059935570939009"
+                              "version": "0.41.2.15936",
+                              "templateHash": "16255331454976703178"
                             }
                           },
                           "parameters": {
@@ -7027,8 +8023,8 @@
                   "metadata": {
                     "_generator": {
                       "name": "bicep",
-                      "version": "0.44.1.10279",
-                      "templateHash": "1795431069306274319"
+                      "version": "0.41.2.15936",
+                      "templateHash": "18226293550364152784"
                     }
                   },
                   "parameters": {
@@ -7155,8 +8151,8 @@
                   "metadata": {
                     "_generator": {
                       "name": "bicep",
-                      "version": "0.44.1.10279",
-                      "templateHash": "6946008567642736236"
+                      "version": "0.41.2.15936",
+                      "templateHash": "3501998361364242008"
                     }
                   },
                   "parameters": {
@@ -7248,8 +8244,8 @@
                           "metadata": {
                             "_generator": {
                               "name": "bicep",
-                              "version": "0.44.1.10279",
-                              "templateHash": "1211059935570939009"
+                              "version": "0.41.2.15936",
+                              "templateHash": "16255331454976703178"
                             }
                           },
                           "parameters": {
@@ -7342,8 +8338,8 @@
                   "metadata": {
                     "_generator": {
                       "name": "bicep",
-                      "version": "0.44.1.10279",
-                      "templateHash": "1795431069306274319"
+                      "version": "0.41.2.15936",
+                      "templateHash": "18226293550364152784"
                     }
                   },
                   "parameters": {
@@ -7470,8 +8466,8 @@
                   "metadata": {
                     "_generator": {
                       "name": "bicep",
-                      "version": "0.44.1.10279",
-                      "templateHash": "6946008567642736236"
+                      "version": "0.41.2.15936",
+                      "templateHash": "3501998361364242008"
                     }
                   },
                   "parameters": {
@@ -7563,8 +8559,8 @@
                           "metadata": {
                             "_generator": {
                               "name": "bicep",
-                              "version": "0.44.1.10279",
-                              "templateHash": "1211059935570939009"
+                              "version": "0.41.2.15936",
+                              "templateHash": "16255331454976703178"
                             }
                           },
                           "parameters": {
@@ -7657,8 +8653,8 @@
                   "metadata": {
                     "_generator": {
                       "name": "bicep",
-                      "version": "0.44.1.10279",
-                      "templateHash": "1795431069306274319"
+                      "version": "0.41.2.15936",
+                      "templateHash": "18226293550364152784"
                     }
                   },
                   "parameters": {
@@ -7786,8 +8782,8 @@
                   "metadata": {
                     "_generator": {
                       "name": "bicep",
-                      "version": "0.44.1.10279",
-                      "templateHash": "6946008567642736236"
+                      "version": "0.41.2.15936",
+                      "templateHash": "3501998361364242008"
                     }
                   },
                   "parameters": {
@@ -7879,8 +8875,8 @@
                           "metadata": {
                             "_generator": {
                               "name": "bicep",
-                              "version": "0.44.1.10279",
-                              "templateHash": "1211059935570939009"
+                              "version": "0.41.2.15936",
+                              "templateHash": "16255331454976703178"
                             }
                           },
                           "parameters": {
@@ -7972,8 +8968,8 @@
                   "metadata": {
                     "_generator": {
                       "name": "bicep",
-                      "version": "0.44.1.10279",
-                      "templateHash": "1795431069306274319"
+                      "version": "0.41.2.15936",
+                      "templateHash": "18226293550364152784"
                     }
                   },
                   "parameters": {
@@ -8100,8 +9096,8 @@
                   "metadata": {
                     "_generator": {
                       "name": "bicep",
-                      "version": "0.44.1.10279",
-                      "templateHash": "6946008567642736236"
+                      "version": "0.41.2.15936",
+                      "templateHash": "3501998361364242008"
                     }
                   },
                   "parameters": {
@@ -8193,8 +9189,8 @@
                           "metadata": {
                             "_generator": {
                               "name": "bicep",
-                              "version": "0.44.1.10279",
-                              "templateHash": "1211059935570939009"
+                              "version": "0.41.2.15936",
+                              "templateHash": "16255331454976703178"
                             }
                           },
                           "parameters": {
@@ -8287,8 +9283,8 @@
                   "metadata": {
                     "_generator": {
                       "name": "bicep",
-                      "version": "0.44.1.10279",
-                      "templateHash": "1795431069306274319"
+                      "version": "0.41.2.15936",
+                      "templateHash": "18226293550364152784"
                     }
                   },
                   "parameters": {
@@ -8423,8 +9419,8 @@
                   "metadata": {
                     "_generator": {
                       "name": "bicep",
-                      "version": "0.44.1.10279",
-                      "templateHash": "1795431069306274319"
+                      "version": "0.41.2.15936",
+                      "templateHash": "18226293550364152784"
                     }
                   },
                   "parameters": {
@@ -8559,8 +9555,8 @@
                   "metadata": {
                     "_generator": {
                       "name": "bicep",
-                      "version": "0.44.1.10279",
-                      "templateHash": "1795431069306274319"
+                      "version": "0.41.2.15936",
+                      "templateHash": "18226293550364152784"
                     }
                   },
                   "parameters": {
@@ -8695,8 +9691,8 @@
                   "metadata": {
                     "_generator": {
                       "name": "bicep",
-                      "version": "0.44.1.10279",
-                      "templateHash": "1795431069306274319"
+                      "version": "0.41.2.15936",
+                      "templateHash": "18226293550364152784"
                     }
                   },
                   "parameters": {
@@ -8811,6 +9807,10 @@
       "type": "string",
       "value": "[toLower(parameters('authenticationType'))]"
     },
+    "var_redisAuthenticationType": {
+      "type": "string",
+      "value": "[toLower(parameters('redisAuthenticationType'))]"
+    },
     "var_blobStorageEndpoint": {
       "type": "string",
       "value": "[reference('storageAccount').outputs.endpoint.value]"
@@ -8918,6 +9918,10 @@
     "var_webService": {
       "type": "string",
       "value": "[reference('appService').outputs.name.value]"
+    },
+    "var_nativeWebService": {
+      "type": "string",
+      "value": "[if(parameters('deployNativePythonWebApp'), reference('nativeAppService').outputs.name.value, '')]"
     },
     "var_enablePrivateNetworking": {
       "type": "bool",

@@ -2,8 +2,8 @@
 """
 UI test for markdown citation lookup payloads.
 
-Version: 0.241.021
-Implemented in: 0.241.021
+Version: 0.250.215
+Implemented in: 0.241.021; Updated in: 0.250.215
 
 This test ensures markdown citation buttons send document, page, and chunk
 context to `/api/get_citation` so text citation lookup can recover when the
@@ -108,11 +108,92 @@ def test_markdown_citation_button_sends_lookup_context(playwright):
                     },
                     true
                 );
+                messagesModule.appendMessage(
+                    'AI',
+                    'Workbook answer (Source: Budget, 2026.xlsx, Sheet: Q1, Final (Approved)) [#budget-doc_Q1]',
+                    null,
+                    'assistant-sheet-1',
+                    true,
+                    [
+                        {
+                            file_name: 'Budget, 2026.xlsx',
+                            document_id: 'budget-doc',
+                            citation_id: 'budget-doc_Q1',
+                            chunk_id: 'Q1',
+                            page_number: 'Q1, Final (Approved)',
+                            sheet_name: 'Q1, Final (Approved)',
+                            location_label: 'Sheet',
+                            location_value: 'Q1, Final (Approved)',
+                        },
+                    ],
+                    [],
+                    [],
+                    null,
+                    null,
+                    {
+                        id: 'assistant-sheet-1',
+                        role: 'assistant',
+                        content: 'Workbook answer (Source: Budget, 2026.xlsx, Sheet: Q1, Final (Approved)) [#budget-doc_Q1]',
+                    },
+                    true
+                );
+                messagesModule.appendMessage(
+                    'AI',
+                    'A (Source: A.pdf, Page: 1). B (Source: B.pdf, Page: 2) [#b-doc_2]',
+                    null,
+                    'assistant-adjacent-1',
+                    true,
+                    [
+                        {
+                            file_name: 'B.pdf',
+                            document_id: 'b-doc',
+                            citation_id: 'b-doc_2',
+                            chunk_id: '2',
+                            page_number: 2,
+                            location_label: 'Page',
+                            location_value: 2,
+                        },
+                    ],
+                    [],
+                    [],
+                    null,
+                    null,
+                    {
+                        id: 'assistant-adjacent-1',
+                        role: 'assistant',
+                        content: 'A (Source: A.pdf, Page: 1). B (Source: B.pdf, Page: 2) [#b-doc_2]',
+                    },
+                    true
+                );
             }
             """
         )
 
         message = page.locator('.message[data-message-id="assistant-md-1"]')
+        sheet_message = page.locator(
+            '.message[data-message-id="assistant-sheet-1"]'
+        )
+        sheet_link = sheet_message.locator(
+            'a.citation-link[data-citation-id="budget-doc_Q1"]'
+        )
+        expect(sheet_link).to_be_visible()
+        expect(sheet_link).to_have_text("Q1, Final (Approved)")
+        expect(sheet_link).to_have_attribute(
+            "data-sheet-name",
+            "Q1, Final (Approved)"
+        )
+        adjacent_message = page.locator(
+            '.message[data-message-id="assistant-adjacent-1"]'
+        )
+        expect(adjacent_message.locator(".message-text")).to_contain_text(
+            "(Source: A.pdf, Page: 1)"
+        )
+        adjacent_link = adjacent_message.locator(
+            'a.citation-link[data-citation-id="b-doc_2"]'
+        )
+        expect(adjacent_link).to_be_visible()
+        expect(adjacent_link).to_have_text("2")
+
         citation_toggle = message.locator('.citation-toggle-btn')
         expect(citation_toggle).to_be_visible()
         citation_toggle.click()

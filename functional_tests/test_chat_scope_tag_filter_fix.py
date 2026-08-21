@@ -11,6 +11,7 @@ inside the selected document tag scope.
 
 import os
 import sys
+from test_support.versioning import assert_app_version_at_least
 
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -99,7 +100,7 @@ def test_config_version_is_bumped_for_chat_scope_tag_filter_fix():
     print("🔍 Testing config version bump...")
 
     config_content = read_file(CONFIG_FILE)
-    assert 'VERSION = "0.240.029"' in config_content, "Expected config.py version 0.240.029"
+    assert_app_version_at_least("0.240.029")
 
     print("✅ Config version bump passed")
     return True

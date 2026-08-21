@@ -2,12 +2,20 @@
 """Helpers for Model Context Protocol action configuration."""
 
 import re
+from urllib.parse import urlparse
+
+from jsonschema import Draft7Validator
+from jsonschema.exceptions import SchemaError
+
 
 MCP_PLUGIN_TYPE = "mcp"
+MCP_DEFAULT_SERVER_PROFILE = "generic"
 MCP_DEFAULT_TRANSPORT = "streamable_http"
 MCP_DEFAULT_REQUEST_TIMEOUT_SECONDS = 30
 MCP_DEFAULT_CONNECT_TIMEOUT_SECONDS = 10
 MCP_DEFAULT_SSE_READ_TIMEOUT_SECONDS = 300
+MCP_DEFAULT_RETRY_COUNT = 0
+MCP_DEFAULT_RETRY_BACKOFF_SECONDS = 1
 MCP_STDIO_ENDPOINT = "stdio://local"
 MCP_SUPPORTED_TRANSPORTS = {
     "streamable_http",
@@ -28,8 +36,53 @@ MCP_SUPPORTED_AUTH_METHODS = {
     "identity",
 }
 MCP_MAX_TIMEOUT_SECONDS = 300
+MCP_MAX_RETRY_COUNT = 3
+MCP_MAX_RETRY_BACKOFF_SECONDS = 30
 MCP_MAX_TOOL_COUNT = 100
 MCP_MAX_TOOL_RESULT_TEXT_LENGTH = 120000
+MCP_MAX_CUSTOM_HEADER_COUNT = 20
+MCP_MAX_HEADER_NAME_LENGTH = 128
+MCP_MAX_HEADER_VALUE_LENGTH = 4096
+MCP_TOOL_RESULT_POLICY_TRUNCATE = "truncate"
+MCP_TOOL_RESULT_POLICY_ERROR_ON_LIMIT = "error_on_limit"
+MCP_TOOL_RESULT_POLICIES = {
+    MCP_TOOL_RESULT_POLICY_TRUNCATE,
+    MCP_TOOL_RESULT_POLICY_ERROR_ON_LIMIT,
+}
+MCP_CUSTOM_HEADERS_FIELD = "custom_headers"
+MCP_HEADER_NAME_PATTERN = re.compile(r"^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$")
+MCP_RESERVED_CUSTOM_HEADERS = {
+    "connection",
+    "content-length",
+    "cookie",
+    "host",
+    "keep-alive",
+    "proxy-authenticate",
+    "proxy-authorization",
+    "set-cookie",
+    "te",
+    "trailer",
+    "transfer-encoding",
+    "upgrade",
+}
+MCP_REDACTED_VALUE = "***REDACTED***"
+MCP_ERROR_DETAIL_MAX_LENGTH = 500
+MCP_SECRET_ASSIGNMENT_RE = re.compile(
+    r"(?i)\b(api[-_]?key|access[-_]?token|authorization|client[-_]?secret|password|secret|token)=([^&\s,;]+)"
+)
+MCP_AUTHORIZATION_VALUE_RE = re.compile(r"(?i)\b(Bearer|Basic|Splunk)\s+[A-Za-z0-9._~+/=-]+")
+MCP_PRECONFIGURATION_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+
+
+class McpRuntimeError(RuntimeError):
+    """MCP runtime error with a safe public category and message."""
+
+    def __init__(self, message, category="unknown", operation="mcp", detail=None, retryable=False):
+        super().__init__(message)
+        self.category = category
+        self.operation = operation
+        self.detail = detail or message
+        self.retryable = retryable
 
 
 def normalize_mcp_transport(value):
@@ -47,6 +100,30 @@ def normalize_mcp_transport(value):
         "stdio": "stdio",
     }
     return aliases.get(normalized_value, MCP_DEFAULT_TRANSPORT)
+
+
+def normalize_mcp_server_profile(value):
+    """Normalize a server preset/profile value using the validated preset catalog."""
+    # Import lazily to keep the low-level MCP operation helpers independent of the preset catalog at module load.
+    presets_module = __import__(
+        "functions_mcp_presets",
+        fromlist=["mcp_server_preset_exists", "normalize_mcp_preset_id"],
+    )
+    normalized_value = presets_module.normalize_mcp_preset_id(value)
+    if presets_module.mcp_server_preset_exists(normalized_value):
+        return normalized_value
+    return MCP_DEFAULT_SERVER_PROFILE
+
+
+def normalize_mcp_preconfiguration_id(value):
+    """Normalize an optional MCP server preconfiguration id."""
+    normalized_value = str(value or "").strip().lower()
+    normalized_value = re.sub(r"\s+", "_", normalized_value)
+    if normalized_value in {"", "custom", "none"}:
+        return ""
+    if MCP_PRECONFIGURATION_ID_PATTERN.fullmatch(normalized_value):
+        return normalized_value
+    return ""
 
 
 def normalize_mcp_auth_method(value):
@@ -71,14 +148,55 @@ def normalize_mcp_auth_method(value):
     return aliases.get(normalized_value, "none")
 
 
+def coerce_mcp_integer(value, default_value, minimum_value, maximum_value):
+    """Coerce an integer into a supported range."""
+    try:
+        integer_value = int(value)
+    except (TypeError, ValueError):
+        integer_value = default_value
+
+    return min(max(integer_value, minimum_value), maximum_value)
+
+
 def coerce_mcp_timeout(value, default_value):
     """Coerce a timeout value into the supported MCP timeout range."""
-    try:
-        timeout_value = int(value)
-    except (TypeError, ValueError):
-        timeout_value = default_value
+    return coerce_mcp_integer(value, default_value, 1, MCP_MAX_TIMEOUT_SECONDS)
 
-    return min(max(timeout_value, 1), MCP_MAX_TIMEOUT_SECONDS)
+
+def coerce_mcp_retry_count(value):
+    """Coerce an MCP retry count into the supported retry range."""
+    return coerce_mcp_integer(value, MCP_DEFAULT_RETRY_COUNT, 0, MCP_MAX_RETRY_COUNT)
+
+
+def coerce_mcp_retry_backoff(value):
+    """Coerce retry backoff into the supported MCP backoff range."""
+    return coerce_mcp_integer(value, MCP_DEFAULT_RETRY_BACKOFF_SECONDS, 1, MCP_MAX_RETRY_BACKOFF_SECONDS)
+
+
+def normalize_mcp_result_policy(value):
+    """Return a supported MCP tool result handling policy."""
+    normalized_value = str(value or "").strip().lower()
+    if normalized_value in MCP_TOOL_RESULT_POLICIES:
+        return normalized_value
+    return MCP_TOOL_RESULT_POLICY_TRUNCATE
+
+
+def apply_mcp_result_text_policy(value, result_policy):
+    """Apply configured MCP result text handling to one string value."""
+    text_value = str(value or "")
+    if len(text_value) <= MCP_MAX_TOOL_RESULT_TEXT_LENGTH:
+        return text_value
+
+    normalized_policy = normalize_mcp_result_policy(result_policy)
+    if normalized_policy == MCP_TOOL_RESULT_POLICY_ERROR_ON_LIMIT:
+        raise McpRuntimeError(
+            "MCP tool result exceeded the configured result size limit.",
+            category="result_limit",
+            operation="tool_call",
+            detail=f"Tool result text length {len(text_value)} exceeded {MCP_MAX_TOOL_RESULT_TEXT_LENGTH}.",
+            retryable=False,
+        )
+    return f"{text_value[:MCP_MAX_TOOL_RESULT_TEXT_LENGTH]}... [truncated]"
 
 
 def normalize_mcp_string_list(value, max_items=MCP_MAX_TOOL_COUNT):
@@ -101,6 +219,165 @@ def normalize_mcp_string_list(value, max_items=MCP_MAX_TOOL_COUNT):
         if len(normalized_values) >= max_items:
             break
     return normalized_values
+
+
+def normalize_mcp_custom_headers(value):
+    """Return a case-deduplicated custom header mapping with string names and values."""
+    if isinstance(value, dict):
+        raw_items = value.items()
+    elif isinstance(value, list):
+        raw_items = []
+        for item in value:
+            if not isinstance(item, dict):
+                continue
+            header_name = item.get("name") or item.get("header") or item.get("key")
+            header_value = item.get("value")
+            raw_items.append((header_name, header_value))
+    else:
+        return {}
+
+    normalized_headers = {}
+    seen_header_names = {}
+    for raw_name, raw_value in raw_items:
+        header_name = str(raw_name or "").strip()
+        if not header_name:
+            continue
+
+        header_value = "" if raw_value is None else str(raw_value).strip()
+        if not header_value:
+            continue
+
+        normalized_name = header_name.lower()
+        previous_name = seen_header_names.get(normalized_name)
+        if previous_name:
+            normalized_headers.pop(previous_name, None)
+        normalized_headers[header_name] = header_value
+        seen_header_names[normalized_name] = header_name
+
+    return normalized_headers
+
+
+def is_valid_mcp_header_name(header_name):
+    """Return whether a custom MCP header name is syntactically safe."""
+    normalized_name = str(header_name or "").strip()
+    if not normalized_name or len(normalized_name) > MCP_MAX_HEADER_NAME_LENGTH:
+        return False
+    if normalized_name.lower() in MCP_RESERVED_CUSTOM_HEADERS:
+        return False
+    return MCP_HEADER_NAME_PATTERN.fullmatch(normalized_name) is not None
+
+
+def get_mcp_custom_header_validation_errors(headers):
+    """Return validation errors for normalized custom MCP headers."""
+    if not isinstance(headers, dict):
+        return ["MCP custom_headers must be an object when provided"]
+
+    errors = []
+    if len(headers) > MCP_MAX_CUSTOM_HEADER_COUNT:
+        errors.append(f"MCP custom_headers supports at most {MCP_MAX_CUSTOM_HEADER_COUNT} headers")
+
+    for header_name, header_value in headers.items():
+        if not is_valid_mcp_header_name(header_name):
+            errors.append(f"MCP custom header '{header_name}' has an invalid or reserved header name")
+        value_text = str(header_value or "")
+        if "\r" in value_text or "\n" in value_text:
+            errors.append(f"MCP custom header '{header_name}' must not contain line breaks")
+        if len(value_text) > MCP_MAX_HEADER_VALUE_LENGTH:
+            errors.append(
+                f"MCP custom header '{header_name}' must be {MCP_MAX_HEADER_VALUE_LENGTH} characters or fewer"
+            )
+
+    return errors
+
+
+def validate_mcp_endpoint_for_transport(endpoint, transport):
+    """Return validation errors for an MCP endpoint and transport combination."""
+    normalized_transport = normalize_mcp_transport(transport)
+    if normalized_transport not in MCP_REMOTE_TRANSPORTS:
+        return []
+
+    endpoint_text = str(endpoint or "").strip()
+    if not endpoint_text:
+        return ["MCP plugin requires an endpoint for remote transports"]
+    if "\r" in endpoint_text or "\n" in endpoint_text:
+        return ["MCP endpoint must not contain line breaks"]
+
+    parsed_endpoint = urlparse(endpoint_text)
+    allowed_schemes = {"ws", "wss"} if normalized_transport == "websocket" else {"http", "https"}
+    if parsed_endpoint.scheme not in allowed_schemes or not parsed_endpoint.netloc:
+        return [f"MCP {normalized_transport} transport requires a valid {'/'.join(sorted(allowed_schemes))} endpoint"]
+    if parsed_endpoint.username or parsed_endpoint.password:
+        return ["MCP endpoint must not include embedded credentials"]
+    return []
+
+
+def redact_mcp_error_detail(value):
+    """Return MCP diagnostic text with credential-looking values removed."""
+    detail = str(value or "")
+    detail = MCP_SECRET_ASSIGNMENT_RE.sub(lambda match: f"{match.group(1)}={MCP_REDACTED_VALUE}", detail)
+    detail = MCP_AUTHORIZATION_VALUE_RE.sub(lambda match: f"{match.group(1)} {MCP_REDACTED_VALUE}", detail)
+    if len(detail) > MCP_ERROR_DETAIL_MAX_LENGTH:
+        return f"{detail[:MCP_ERROR_DETAIL_MAX_LENGTH]}... [truncated]"
+    return detail
+
+
+def classify_mcp_exception(exc, operation="mcp"):
+    """Classify MCP exceptions into safe, actionable categories."""
+    detail = redact_mcp_error_detail(str(exc))
+    detail_lower = detail.lower()
+    operation_text = str(operation or "mcp").strip() or "mcp"
+
+    category = "unknown"
+    message = "MCP operation failed. Check the server endpoint, transport, authentication, and server logs."
+    retryable = True
+
+    if isinstance(exc, TimeoutError) or "timeout" in detail_lower or "timed out" in detail_lower:
+        category = "timeout"
+        message = "MCP operation timed out. Check timeout settings and server responsiveness."
+    elif any(term in detail_lower for term in ("certificate", "ssl", "tls", "handshake failure")):
+        category = "tls"
+        message = "MCP TLS negotiation failed. Check the server certificate and endpoint scheme."
+        retryable = False
+    elif any(term in detail_lower for term in ("name resolution", "getaddrinfo", "nodename", "dns")):
+        category = "dns_resolution"
+        message = "MCP server name could not be resolved. Check the endpoint host name."
+    elif any(term in detail_lower for term in ("401", "403", "unauthorized", "forbidden", "invalid token")):
+        category = "authentication"
+        message = "MCP server rejected authentication. Check credentials, headers, and allowed tools."
+        retryable = False
+    elif any(term in detail_lower for term in ("connection refused", "connect call failed", "connection reset", "network is unreachable")):
+        category = "connection"
+        message = "MCP server connection failed. Check network access, firewall rules, and transport."
+    elif any(term in detail_lower for term in ("initialize", "initialise", "session", "did not create a session")):
+        category = "initialization"
+        message = "MCP server initialization failed. Check server compatibility and transport settings."
+    elif operation_text == "tool_discovery" or "list_tools" in detail_lower:
+        category = "discovery"
+        message = "MCP tool discovery failed. Check that the server supports tool listing."
+    elif operation_text == "tool_call" or "call_tool" in detail_lower:
+        category = "tool_execution"
+        message = "MCP tool execution failed. Check the tool name, arguments, and server logs."
+
+    return {
+        "category": category,
+        "message": message,
+        "detail": detail,
+        "operation": operation_text,
+        "retryable": retryable,
+    }
+
+
+def get_mcp_error_http_status(category):
+    """Map an MCP error category to an HTTP status suitable for discovery responses."""
+    if category == "authentication":
+        return 401
+    if category == "timeout":
+        return 504
+    if category == "result_limit":
+        return 413
+    if category in {"connection", "dns_resolution", "tls", "initialization", "discovery", "tool_execution"}:
+        return 502
+    return 500
 
 
 def normalize_mcp_function_name(value, fallback_prefix="tool"):
@@ -137,20 +414,131 @@ def normalize_mcp_tool_metadata(value):
             suffix += 1
         used_function_names.add(function_name)
 
+        output_schema = tool.get("output_schema") if isinstance(tool.get("output_schema"), dict) else {}
+        annotations = tool.get("annotations") if isinstance(tool.get("annotations"), dict) else {}
+        structured_content = bool(tool.get("structured_content")) or bool(output_schema)
+
         normalized_tools.append({
             "original_name": original_name,
             "function_name": function_name,
             "description": str(tool.get("description") or "").strip(),
             "input_schema": tool.get("input_schema") if isinstance(tool.get("input_schema"), dict) else {},
+            "output_schema": output_schema,
+            "annotations": annotations,
+            "structured_content": structured_content,
         })
     return normalized_tools
+
+
+def _is_broad_mcp_input_schema(schema):
+    if not isinstance(schema, dict) or not schema:
+        return True
+
+    schema_type = schema.get("type")
+    properties = schema.get("properties")
+    additional_properties = schema.get("additionalProperties")
+    if schema_type == "object" or isinstance(properties, dict):
+        return not properties and additional_properties is not False
+    return False
+
+
+def build_mcp_tool_metadata_warnings(tools, additional_fields=None):
+    """Return non-blocking warnings for discovered MCP metadata."""
+    normalized_tools = normalize_mcp_tool_metadata(tools)
+    normalized_fields = normalize_mcp_additional_fields(additional_fields or {})
+    warnings = []
+
+    if not normalized_tools:
+        warnings.append("MCP discovery returned no tools.")
+
+    base_function_names = {}
+    renamed_count = 0
+    broad_schema_count = 0
+    for tool in normalized_tools:
+        original_name = tool.get("original_name") or ""
+        expected_function_name = normalize_mcp_function_name(original_name)
+        actual_function_name = tool.get("function_name") or ""
+        base_function_names[expected_function_name] = base_function_names.get(expected_function_name, 0) + 1
+        if actual_function_name != expected_function_name:
+            renamed_count += 1
+        if _is_broad_mcp_input_schema(tool.get("input_schema")):
+            broad_schema_count += 1
+
+    if renamed_count or any(count > 1 for count in base_function_names.values()):
+        warnings.append("One or more MCP tool names were normalized to safe unique function names.")
+    if broad_schema_count:
+        warnings.append(
+            f"{broad_schema_count} MCP tool input schema"
+            f"{'' if broad_schema_count == 1 else 's'} are missing or broad; argument validation may be limited."
+        )
+    if normalized_fields.get("load_prompts"):
+        warnings.append("Prompt loading was requested, but SimpleChat currently caches MCP tools only.")
+
+    return warnings[:20]
+
+
+def _mcp_tool_schema_defines_property(tool, property_name):
+    if not isinstance(tool, dict):
+        return False
+
+    input_schema = tool.get("input_schema") if isinstance(tool.get("input_schema"), dict) else {}
+    properties = input_schema.get("properties")
+    return isinstance(properties, dict) and property_name in properties
+
+
+def normalize_mcp_tool_call_arguments(tool, arguments):
+    """Return MCP tool arguments in the top-level shape expected by tools/call."""
+    if arguments is None:
+        return {}
+    if not isinstance(arguments, dict):
+        return arguments
+
+    wrapper_value = arguments.get("kwargs")
+    if (
+        set(arguments.keys()) == {"kwargs"}
+        and isinstance(wrapper_value, dict)
+        and not _mcp_tool_schema_defines_property(tool, "kwargs")
+    ):
+        return wrapper_value
+
+    return arguments
+
+
+def validate_mcp_tool_arguments(tool, arguments):
+    """Return validation errors for MCP tool arguments against cached input schema."""
+    if not isinstance(tool, dict):
+        return ["MCP tool metadata is unavailable for argument validation."]
+
+    input_schema = tool.get("input_schema") if isinstance(tool.get("input_schema"), dict) else {}
+    if not input_schema:
+        return []
+
+    if not isinstance(arguments, dict):
+        return ["MCP tool arguments must be a JSON object."]
+    arguments_value = arguments
+    try:
+        Draft7Validator.check_schema(input_schema)
+        validator = Draft7Validator(input_schema)
+        errors = sorted(validator.iter_errors(arguments_value), key=lambda error: list(error.path))
+    except SchemaError as exc:
+        return [f"MCP tool input schema is invalid: {exc.message}"]
+
+    return [
+        f"{'.'.join(str(part) for part in error.path) or 'arguments'}: {error.message}"
+        for error in errors
+    ]
 
 
 def normalize_mcp_additional_fields(additional_fields):
     """Normalize MCP additionalFields while preserving unknown future fields."""
     normalized_fields = dict(additional_fields) if isinstance(additional_fields, dict) else {}
+    normalized_fields["server_profile"] = normalize_mcp_server_profile(normalized_fields.get("server_profile"))
+    normalized_fields["preconfiguration_id"] = normalize_mcp_preconfiguration_id(
+        normalized_fields.get("preconfiguration_id")
+    )
     normalized_fields["transport"] = normalize_mcp_transport(normalized_fields.get("transport"))
     normalized_fields["auth_method"] = normalize_mcp_auth_method(normalized_fields.get("auth_method"))
+    normalized_fields["api_key_header_name"] = str(normalized_fields.get("api_key_header_name") or "X-API-Key").strip() or "X-API-Key"
     normalized_fields["load_tools"] = bool(normalized_fields.get("load_tools", True))
     normalized_fields["load_prompts"] = bool(normalized_fields.get("load_prompts", False))
     normalized_fields["request_timeout"] = coerce_mcp_timeout(
@@ -165,6 +553,21 @@ def normalize_mcp_additional_fields(additional_fields):
         normalized_fields.get("sse_read_timeout"),
         MCP_DEFAULT_SSE_READ_TIMEOUT_SECONDS,
     )
+    normalized_fields["retry_count"] = coerce_mcp_retry_count(normalized_fields.get("retry_count"))
+    normalized_fields["retry_backoff_seconds"] = coerce_mcp_retry_backoff(
+        normalized_fields.get("retry_backoff_seconds")
+    )
+    normalized_fields["validate_tool_arguments"] = bool(normalized_fields.get("validate_tool_arguments", False))
+    normalized_fields["tool_result_policy"] = normalize_mcp_result_policy(
+        normalized_fields.get("tool_result_policy")
+    )
+    normalized_fields[MCP_CUSTOM_HEADERS_FIELD] = normalize_mcp_custom_headers(
+        normalized_fields.get(MCP_CUSTOM_HEADERS_FIELD)
+    )
+    if not isinstance(normalized_fields.get("implementation"), dict):
+        normalized_fields["implementation"] = {}
+    if not isinstance(normalized_fields.get("additionalSettings"), dict):
+        normalized_fields["additionalSettings"] = {}
     normalized_fields["allowed_tool_names"] = normalize_mcp_string_list(
         normalized_fields.get("allowed_tool_names")
     )

@@ -25,7 +25,7 @@ resource openAIUserRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = i
   }
 }
 
-resource openAIenterpriseAppUserRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (authenticationType == 'managed_identity') {
+resource openAIenterpriseAppUserRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (authenticationType == 'managed_identity' && !empty(enterpriseAppServicePrincipalId)) {
   scope: openAiService
   name: guid(openAiService.id, enterpriseAppServicePrincipalId, 'enterpriseApp-CognitiveServicesOpenAIUserRole')
   properties: {

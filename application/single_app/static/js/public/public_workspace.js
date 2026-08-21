@@ -6,6 +6,8 @@ let userRoleInActivePublic = null;
 let userPublics = [];
 let activePublicId = null;
 let activePublicName = '';
+const publicWorkspaceLowerSingular = window.getPublicWorkspaceLabel ? window.getPublicWorkspaceLabel('lower_singular') : 'public workspace';
+const publicWorkspaceLowerPlural = window.getPublicWorkspaceLabel ? window.getPublicWorkspaceLabel('lower_plural') : 'public workspaces';
 
 // Documents state
 let publicDocsCurrentPage = 1;
@@ -79,6 +81,60 @@ function getPublicDeleteModalContent(documentCount) {
       <p class="mb-0"><strong>Delete All Versions</strong> permanently removes every stored revision for each selected document.</p>
     `,
   };
+}
+
+async function requestPublicSelectedMetadataExtraction(documentIds) {
+  const response = await fetch('/api/public_documents/extract_metadata', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ document_ids: documentIds }),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok && !(Array.isArray(data.queued) && data.queued.length > 0)) {
+    throw new Error(data.error || data.message || 'Unable to queue metadata extraction.');
+  }
+  return data;
+}
+
+function showPublicSelectedMetadataExtractionResult(data) {
+  const queuedCount = Array.isArray(data.queued) ? data.queued.length : 0;
+  const errorCount = Array.isArray(data.errors) ? data.errors.length : 0;
+  const message = errorCount > 0
+    ? `Queued metadata extraction for ${queuedCount} document(s); ${errorCount} item(s) were skipped.`
+    : (data.message || `Queued metadata extraction for ${queuedCount} document(s).`);
+  showPublicWorkspaceToast(message, errorCount > 0 ? 'warning' : 'success');
+}
+
+async function extractPublicSelectedMetadata() {
+  const documentIds = Array.from(publicSelectedDocuments);
+  if (documentIds.length === 0) {
+    return;
+  }
+  if (!(window.enable_extract_meta_data === true || window.enable_extract_meta_data === 'true')) {
+    showPublicWorkspaceToast('Metadata extraction is not enabled.', 'info');
+    return;
+  }
+
+  const extractMetadataBtn = document.getElementById('public-extract-selected-metadata-btn');
+  if (extractMetadataBtn) {
+    extractMetadataBtn.disabled = true;
+    extractMetadataBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>Extracting...';
+  }
+
+  try {
+    const data = await requestPublicSelectedMetadataExtraction(documentIds);
+    showPublicSelectedMetadataExtractionResult(data);
+    publicSelectedDocuments.clear();
+    syncPublicSelectionModeUI();
+    fetchPublicDocs();
+  } catch (error) {
+    showPublicWorkspaceToast(error.message, 'danger');
+  } finally {
+    if (extractMetadataBtn) {
+      extractMetadataBtn.disabled = false;
+      extractMetadataBtn.innerHTML = '<i class="bi bi-magic me-1"></i>Extract Metadata';
+    }
+  }
 }
 
 function showPublicDocumentDeleteFeedback(message, variant = 'danger') {
@@ -197,7 +253,7 @@ async function downloadPublicDocumentFile(documentId, event) {
     event.stopPropagation();
   }
   if (!publicFileDownloadsEnabled) {
-    showPublicDocumentDeleteFeedback('File downloads are disabled for this public workspace.', 'warning');
+    showPublicDocumentDeleteFeedback(`File downloads are disabled for this ${publicWorkspaceLowerSingular}.`, 'warning');
     return;
   }
 
@@ -471,8 +527,8 @@ document.addEventListener('DOMContentLoaded', ()=>{
     if(activePublicId) loadActivePublicData();
     else {
       const noActivePublicMessage = userPublics.length === 0
-        ? 'No public workspaces are available. Select My Workspaces to create one.'
-        : 'Please select an active public workspace.';
+        ? `No ${publicWorkspaceLowerPlural} available. Select My Workspaces to create one.`
+        : `Please select an active ${publicWorkspaceLowerSingular}.`;
       setPublicTableMessage(publicDocsTableBody, 4, noActivePublicMessage);
       setPublicTableMessage(publicPromptsTableBody, 2, noActivePublicMessage);
       renderPublicPromptsEmptyState(noActivePublicMessage);
@@ -504,7 +560,7 @@ document.addEventListener('DOMContentLoaded', ()=>{
     // Click on area triggers file input
     uploadArea.addEventListener('click', (e) => {
       // Only trigger if not clicking the hidden input itself
-      if (e.target !== fileInput) {
+      if (e.target !== fileInput && !e.target.closest('.workspace-upload-supported-types-trigger')) {
         fileInput.click();
       }
     });
@@ -614,11 +670,13 @@ document.addEventListener('DOMContentLoaded', ()=>{
   const publicDownloadSelectedBtn = document.getElementById('public-download-selected-btn');
   const publicClearSelectionBtn = document.getElementById('public-clear-selection-btn');
   const publicChatSelectedBtn = document.getElementById('public-chat-selected-btn');
+  const publicExtractSelectedMetadataBtn = document.getElementById('public-extract-selected-metadata-btn');
 
   if (publicDeleteSelectedBtn) publicDeleteSelectedBtn.addEventListener('click', deletePublicSelectedDocuments);
   if (publicDownloadSelectedBtn) publicDownloadSelectedBtn.addEventListener('click', downloadPublicSelectedDocuments);
   if (publicClearSelectionBtn) publicClearSelectionBtn.addEventListener('click', clearPublicSelection);
   if (publicChatSelectedBtn) publicChatSelectedBtn.addEventListener('click', chatWithPublicSelected);
+  if (publicExtractSelectedMetadataBtn) publicExtractSelectedMetadataBtn.addEventListener('click', extractPublicSelectedMetadata);
   document.getElementById('public-toggle-selection-btn')?.addEventListener('click', togglePublicSelectionMode);
   document.addEventListener('click', handlePublicDocumentCardClick);
 });
@@ -648,7 +706,7 @@ async function fetchUserPublics(){
 
       const emptyItem = document.createElement('div');
       emptyItem.className = 'dropdown-item-text text-muted small text-wrap';
-      emptyItem.textContent = 'No public workspaces are available. Select My Workspaces to create one.';
+      emptyItem.textContent = `No ${publicWorkspaceLowerPlural} available. Select My Workspaces to create one.`;
       publicDropdownItems.appendChild(emptyItem);
 
       const emptyOption = document.createElement('option');
@@ -1075,6 +1133,7 @@ function getPublicDocumentSyncTypeConfig(doc) {
   const sourceTypeMap = {
     smb: { label: 'SMB', className: 'bg-primary text-white', title: 'Managed by File Sync from an SMB source.' },
     azure_files: { label: 'Azure Files', className: 'bg-info text-dark', title: 'Managed by File Sync from Azure Files.' },
+    azure_blob: { label: 'Azure Blob', className: 'bg-info text-dark', title: 'Managed by File Sync from Azure Blob Storage.' },
     m365sp: { label: 'M365SP', className: 'bg-info text-dark', title: 'Managed by File Sync from Microsoft 365 SharePoint.' },
     m365_sp: { label: 'M365SP', className: 'bg-info text-dark', title: 'Managed by File Sync from Microsoft 365 SharePoint.' },
     m365_sharepoint: { label: 'M365SP', className: 'bg-info text-dark', title: 'Managed by File Sync from Microsoft 365 SharePoint.' },
@@ -1224,7 +1283,7 @@ function appendPublicDocumentMetaPills(container, doc) {
     doc.version ? `v${doc.version}` : null,
     doc.authors ? `By ${doc.authors}` : null,
     doc.number_of_pages ? `${doc.number_of_pages} pages` : null,
-    isPublicPdfDocument(doc) ? getPublicDocumentExtractionModeLabel(doc) : null,
+    supportsPublicExtractionModeChange(doc) ? getPublicDocumentExtractionModeLabel(doc) : null,
     doc.publication_date ? doc.publication_date : null,
   ].filter(Boolean);
 
@@ -1238,8 +1297,32 @@ function appendPublicDocumentMetaPills(container, doc) {
   });
 }
 
+const PUBLIC_EXTRACTION_MODE_CHANGE_IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif', '.heif', '.heic'];
+const PUBLIC_EXTRACTION_STANDARD_TOOLTIP = 'Standard extraction uses Document Intelligence Read for faster, lower-cost text extraction. Best for plain text PDFs and images.';
+const PUBLIC_EXTRACTION_ENHANCED_CONTENT_UNDERSTANDING_TOOLTIP = 'Enhanced extraction uses Azure AI Content Understanding to preserve tables, page structure, and checkbox states, and to describe figures, charts, and images. Adds latency and higher cost.';
+const PUBLIC_EXTRACTION_ENHANCED_DOCUMENT_INTELLIGENCE_TOOLTIP = 'Enhanced extraction uses Document Intelligence Layout to preserve tables, page structure, forms, and checkbox states. Adds latency and higher cost.';
+
 function isPublicPdfDocument(doc) {
   return String(doc?.file_name || '').toLowerCase().endsWith('.pdf');
+}
+
+function isPublicImageDocument(doc) {
+  const fileName = String(doc?.file_name || '').toLowerCase();
+  return PUBLIC_EXTRACTION_MODE_CHANGE_IMAGE_EXTENSIONS.some((extension) => fileName.endsWith(extension));
+}
+
+function supportsPublicExtractionModeChange(doc) {
+  return isPublicPdfDocument(doc) || isPublicImageDocument(doc);
+}
+
+function getPublicDocumentExtractionEngine(doc) {
+  return String(doc?.extraction_engine || '').trim().toLowerCase();
+}
+
+function getPublicDocumentEnhancedTooltipForEngine(engine) {
+  return engine === 'content_understanding'
+    ? PUBLIC_EXTRACTION_ENHANCED_CONTENT_UNDERSTANDING_TOOLTIP
+    : PUBLIC_EXTRACTION_ENHANCED_DOCUMENT_INTELLIGENCE_TOOLTIP;
 }
 
 function getPublicDocumentExtractionModeLabel(doc) {
@@ -1260,17 +1343,19 @@ function getPublicDocumentExtractionModeLabelFromMode(mode) {
   return mode === 'layout' ? 'Enhanced' : 'Standard';
 }
 
-function getPublicDocumentExtractionChangeTooltip(targetMode) {
+function getPublicDocumentExtractionChangeTooltip(targetMode, engine) {
   return targetMode === 'layout'
-    ? 'Extract again with Enhanced extraction. Enhanced extraction uses Document Intelligence Layout to preserve tables, page structure, forms, and checkbox states. Adds latency and higher cost.'
-    : 'Extract again with Standard extraction. Standard extraction uses Document Intelligence Read for faster text extraction. Best for plain text PDFs and images.';
+    ? `Extract again with Enhanced extraction. ${getPublicDocumentEnhancedTooltipForEngine(engine)}`
+    : `Extract again with Standard extraction. ${PUBLIC_EXTRACTION_STANDARD_TOOLTIP}`;
 }
 
 function getPublicDocumentExtractionModeTooltip(doc) {
   const mode = String(doc?.document_intelligence_extraction_mode || '').trim().toLowerCase();
-  return mode === 'layout'
-    ? 'Enhanced extraction uses Document Intelligence Layout to preserve tables, page structure, forms, and checkbox states. Adds latency and higher cost.'
-    : 'Standard extraction uses Document Intelligence Read for faster text extraction. Best for plain text PDFs and images.';
+  const tooltip = mode === 'layout'
+    ? getPublicDocumentEnhancedTooltipForEngine(getPublicDocumentExtractionEngine(doc))
+    : PUBLIC_EXTRACTION_STANDARD_TOOLTIP;
+  const reason = String(doc?.extraction_engine_reason || '').trim();
+  return reason ? `${tooltip} ${reason}.` : tooltip;
 }
 
 function getPublicDocumentCitationTooltip(doc) {
@@ -1280,7 +1365,7 @@ function getPublicDocumentCitationTooltip(doc) {
 }
 
 function createPublicDocumentExtractionModeBadge(doc) {
-  if (!isPublicPdfDocument(doc)) {
+  if (!supportsPublicExtractionModeChange(doc)) {
     return null;
   }
 
@@ -1296,7 +1381,7 @@ function createPublicDocumentExtractionModeBadge(doc) {
 }
 
 function getPublicDocumentExtractionModeBadgeHtml(doc) {
-  if (!isPublicPdfDocument(doc)) {
+  if (!supportsPublicExtractionModeChange(doc)) {
     return '';
   }
 
@@ -1442,11 +1527,11 @@ function createPublicDocumentCard(doc) {
     if (canManage) {
       dropdownItems.push(createPublicDropdownItem('bi-pencil-fill', 'Edit Metadata', () => window.onEditPublicDocument(docId)));
       dropdownItems.push(createPublicDropdownItem('bi-magic', 'Extract Metadata', () => window.onExtractPublicMetadata(docId, null)));
-      if (isPublicPdfDocument(doc)) {
+      if (supportsPublicExtractionModeChange(doc)) {
         const extractionActionMode = getPublicDocumentTargetExtractionMode(doc);
         const extractionActionLabel = getPublicDocumentExtractionModeLabelFromMode(extractionActionMode);
         const extractionActionIcon = getPublicDocumentExtractionModeIcon(extractionActionMode);
-        const extractionActionTooltip = getPublicDocumentExtractionChangeTooltip(extractionActionMode);
+        const extractionActionTooltip = getPublicDocumentExtractionChangeTooltip(extractionActionMode, getPublicDocumentExtractionEngine(doc));
         dropdownItems.push(createPublicDropdownDivider());
         dropdownItems.push(createPublicDropdownHeader('Change Extraction'));
         dropdownItems.push(createPublicDropdownItem(extractionActionIcon, `Change to ${extractionActionLabel}`, () => window.reprocessPublicDocumentExtraction(docId, extractionActionMode, null), false, extractionActionTooltip));
@@ -1613,7 +1698,7 @@ function renderPublicDocumentRow(doc) {
       const extractionActionMode = getPublicDocumentTargetExtractionMode(doc);
       const extractionActionLabel = getPublicDocumentExtractionModeLabelFromMode(extractionActionMode);
       const extractionActionIcon = getPublicDocumentExtractionModeIcon(extractionActionMode);
-      const extractionActionTooltip = getPublicDocumentExtractionChangeTooltip(extractionActionMode);
+      const extractionActionTooltip = getPublicDocumentExtractionChangeTooltip(extractionActionMode, getPublicDocumentExtractionEngine(doc));
       actionsDropdown += `
           <li><hr class="dropdown-divider"></li>
           <li><a class="dropdown-item" href="#" onclick="window.onEditPublicDocument('${doc.id}'); return false;">
@@ -1622,7 +1707,7 @@ function renderPublicDocumentRow(doc) {
           <li><a class="dropdown-item" href="#" onclick="window.onExtractPublicMetadata('${doc.id}', event); return false;">
             <i class="bi bi-magic me-2"></i>Extract Metadata
           </a></li>
-          ${isPublicPdfDocument(doc) ? `
+          ${supportsPublicExtractionModeChange(doc) ? `
           <li><hr class="dropdown-divider"></li>
           <li><h6 class="dropdown-header">Change Extraction</h6></li>
           <li><a class="dropdown-item" href="#" title="${escapeHtml(extractionActionTooltip)}" onclick="window.reprocessPublicDocumentExtraction('${reprocessDocId}', '${extractionActionMode}', event); return false;">
@@ -1690,7 +1775,7 @@ function renderPublicDocumentRow(doc) {
   const extractionActionMode = getPublicDocumentTargetExtractionMode(doc);
   const extractionActionLabel = getPublicDocumentExtractionModeLabelFromMode(extractionActionMode);
   const extractionActionIcon = getPublicDocumentExtractionModeIcon(extractionActionMode);
-  const extractionActionTooltip = getPublicDocumentExtractionChangeTooltip(extractionActionMode);
+  const extractionActionTooltip = getPublicDocumentExtractionChangeTooltip(extractionActionMode, getPublicDocumentExtractionEngine(doc));
 
   detailsRow.innerHTML = `
     <td colspan="4">
@@ -1700,7 +1785,7 @@ function renderPublicDocumentRow(doc) {
         <p class="mb-1"><strong>Version:</strong> ${escapeHtml(doc.version || '1')}</p>
         <p class="mb-1"><strong>Authors:</strong> ${escapeHtml(doc.authors || 'N/A')}</p>
         <p class="mb-1"><strong>Pages/Chunks:</strong> ${escapeHtml(doc.number_of_pages || 'N/A')}</p>
-        ${isPublicPdfDocument(doc) ? `<p class="mb-1"><strong>Extraction:</strong> ${getPublicDocumentExtractionModeBadgeHtml(doc)}</p>` : ''}
+        ${supportsPublicExtractionModeChange(doc) ? `<p class="mb-1"><strong>Extraction:</strong> ${getPublicDocumentExtractionModeBadgeHtml(doc)}</p>` : ''}
         <p class="mb-1"><strong>Citations:</strong> ${getCitationBadge(doc.enhanced_citations)}</p>
         <p class="mb-1"><strong>Publication Date:</strong> ${escapeHtml(doc.publication_date || 'N/A')}</p>
         <p class="mb-1"><strong>Keywords:</strong> ${escapeHtml(doc.keywords || 'N/A')}</p>
@@ -1715,7 +1800,7 @@ function renderPublicDocumentRow(doc) {
             <button class="btn btn-sm btn-warning" onclick="window.onExtractPublicMetadata('${doc.id}', event)" title="Re-run Metadata Extraction">
               <i class="bi bi-magic"></i> Extract Metadata
             </button>
-            ${isPublicPdfDocument(doc) ? `
+            ${supportsPublicExtractionModeChange(doc) ? `
             <button class="btn btn-sm btn-outline-secondary" onclick="window.reprocessPublicDocumentExtraction('${reprocessDocId}', '${extractionActionMode}', event)" title="${escapeHtml(extractionActionTooltip)}">
               <i class="bi ${extractionActionIcon}"></i> Change to ${extractionActionLabel}
             </button>` : ''}
@@ -1842,7 +1927,7 @@ function renderPublicDocsPagination(page, pageSize, totalCount){
  */
 function checkUserAgreementBeforePublicUpload() {
   if (!fileInput || !fileInput.files || fileInput.files.length === 0) {
-    alert('Select files');
+    showToast('Select files', 'warning');
     return;
   }
   
@@ -1863,9 +1948,9 @@ function checkUserAgreementBeforePublicUpload() {
 }
 
 async function onPublicUploadClick() {
-  if (!fileInput) return alert('File input not found');
+  if (!fileInput) return showToast('File input not found', 'danger');
   const files = fileInput.files;
-  if (!files || !files.length) return alert('Select files');
+  if (!files || !files.length) return showToast('Select files', 'warning');
   
   // Client-side file size validation
   const maxFileSizeMB = window.max_file_size_mb || 16; // Default to 16MB if not set
@@ -1874,7 +1959,7 @@ async function onPublicUploadClick() {
   for (const file of files) {
       if (file.size > maxFileSizeBytes) {
           const fileSizeMB = (file.size / (1024 * 1024)).toFixed(1);
-          alert(`File "${file.name}" (${fileSizeMB} MB) exceeds the maximum allowed size of ${maxFileSizeMB} MB. Please select a smaller file.`);
+          showToast(`File "${file.name}" (${fileSizeMB} MB) exceeds the maximum allowed size of ${maxFileSizeMB} MB. Please select a smaller file.`, 'warning');
           return;
       }
   }
@@ -2226,17 +2311,22 @@ function updatePublicBulkActionButtons() {
   const deleteBtn = document.getElementById('public-delete-selected-btn');
   const downloadBtn = document.getElementById('public-download-selected-btn');
   const reprocessDropdown = document.getElementById('public-reprocess-selected-dropdown');
+  const extractMetadataBtn = document.getElementById('public-extract-selected-metadata-btn');
 
   if (publicSelectedDocuments.size > 0) {
     if (bulkActionsBar) bulkActionsBar.style.display = 'block';
     if (selectedCountSpan) selectedCountSpan.textContent = publicSelectedDocuments.size;
     const canManage = ['Owner', 'Admin', 'DocumentManager'].includes(userRoleInActivePublic);
+    const canModify = canManage && (window.currentPublicStatus || 'active') === 'active';
+    const metadataEnabled = window.enable_extract_meta_data === true || window.enable_extract_meta_data === 'true';
     if (deleteBtn) deleteBtn.style.display = canManage ? 'inline-block' : 'none';
     if (downloadBtn) downloadBtn.classList.toggle('d-none', !publicFileDownloadsEnabled);
     if (reprocessDropdown) reprocessDropdown.classList.toggle('d-none', !canManage);
+    if (extractMetadataBtn) extractMetadataBtn.classList.toggle('d-none', !(canModify && metadataEnabled));
   } else {
     if (bulkActionsBar) bulkActionsBar.style.display = 'none';
     if (downloadBtn) downloadBtn.classList.add('d-none');
+    if (extractMetadataBtn) extractMetadataBtn.classList.add('d-none');
   }
 }
 
@@ -2470,7 +2560,7 @@ async function downloadPublicSelectedDocuments() {
     return;
   }
   if (!publicFileDownloadsEnabled) {
-    showPublicDocumentDeleteFeedback('File downloads are disabled for this public workspace.', 'warning');
+    showPublicDocumentDeleteFeedback(`File downloads are disabled for this ${publicWorkspaceLowerSingular}.`, 'warning');
     return;
   }
 
@@ -2510,6 +2600,7 @@ window.clearPublicSelection = clearPublicSelection;
 window.chatWithPublicSelected = chatWithPublicSelected;
 window.reprocessPublicDocumentExtraction = reprocessPublicDocumentExtraction;
 window.reprocessPublicSelectedDocumentExtraction = reprocessPublicSelectedDocumentExtraction;
+window.extractPublicSelectedMetadata = extractPublicSelectedMetadata;
 
 // Prompts
 function canManagePublicPrompts() {
@@ -2834,14 +2925,14 @@ function openPublicPromptViewModal(prompt) {
   bootstrap.Modal.getOrCreateInstance(modalEl).show();
 }
 
-window.onViewPublicPrompt=async function(id){ try{ const r=await fetch(`/api/public_prompts/${encodeURIComponent(id)}`); if(!r.ok) throw await r.json(); const d=await r.json(); openPublicPromptViewModal(d); }catch(e){ alert(e.error||e.message);} };
+window.onViewPublicPrompt=async function(id){ try{ const r=await fetch(`/api/public_prompts/${encodeURIComponent(id)}`); if(!r.ok) throw await r.json(); const d=await r.json(); openPublicPromptViewModal(d); }catch(e){ showToast(e.error||e.message, 'danger');} };
 window.chatWithPublicPrompt=chatWithPublicPrompt;
 function renderPublicPromptsPagination(page,pageSize,totalCount){ const container=publicPromptsPagination; container.innerHTML=''; const totalPages=Math.ceil(totalCount/pageSize); if(totalPages<=1) return; const ul=document.createElement('ul'); ul.className='pagination pagination-sm mb-0'; function mk(p,t,d,a){ const li=document.createElement('li'); li.className=`page-item${d?' disabled':''}${a?' active':''}`; const aEl=document.createElement('a'); aEl.className='page-link'; aEl.href='#'; aEl.textContent=t; if(!d&&!a) aEl.onclick=e=>{e.preventDefault();publicPromptsCurrentPage=p;fetchPublicPrompts();}; li.append(aEl); return li;} ul.append(mk(page-1,'«',page<=1,false)); for(let p=1;p<=totalPages;p++) ul.append(mk(p,p,false,p===page)); ul.append(mk(page+1,'»',page>=totalPages,false)); container.append(ul);} 
 
 function openPublicPromptModal(){ publicPromptIdEl.value=''; publicPromptNameEl.value=''; if(publicSimplemde) publicSimplemde.value(''); else publicPromptContentEl.value=''; document.getElementById('publicPromptModalLabel').textContent='Create Public Prompt'; publicPromptModal.show(); updatePublicPromptsRoleUI(); }
-async function onSavePublicPrompt(e){ e.preventDefault(); const id=publicPromptIdEl.value; const url=id?`/api/public_prompts/${encodeURIComponent(id)}`:'/api/public_prompts'; const method=id?'PATCH':'POST'; const name=publicPromptNameEl.value.trim(); const content=publicSimplemde?publicSimplemde.value():publicPromptContentEl.value.trim(); if(!name||!content) return alert('Name & content required'); const btn=document.getElementById('public-prompt-save-btn'); btn.disabled=true; btn.innerHTML='<span class="spinner-border spinner-border-sm me-1"></span>Saving…'; try{ const r=await fetch(url,{method,headers:{'Content-Type':'application/json'},body:JSON.stringify({name,content})}); if(!r.ok) throw await r.json(); publicPromptModal.hide(); fetchPublicPrompts(); }catch(err){ alert(err.error||err.message); }finally{ btn.disabled=false; btn.textContent='Save Prompt'; }}
-window.onEditPublicPrompt=async function(id){ try{ const r=await fetch(`/api/public_prompts/${encodeURIComponent(id)}`); if(!r.ok) throw await r.json(); const d=await r.json(); document.getElementById('publicPromptModalLabel').textContent=`Edit: ${d.name}`; publicPromptIdEl.value=d.id; publicPromptNameEl.value=d.name; if(publicSimplemde) publicSimplemde.value(d.content); else publicPromptContentEl.value=d.content; publicPromptModal.show(); }catch(e){ alert(e.error||e.message);} };
-window.onDeletePublicPrompt=async function(id){ if(!confirm('Delete prompt?')) return; try{ await fetch(`/api/public_prompts/${encodeURIComponent(id)}`,{method:'DELETE'}); fetchPublicPrompts(); }catch(e){ alert(e.error||e.message);} };
+async function onSavePublicPrompt(e){ e.preventDefault(); const id=publicPromptIdEl.value; const url=id?`/api/public_prompts/${encodeURIComponent(id)}`:'/api/public_prompts'; const method=id?'PATCH':'POST'; const name=publicPromptNameEl.value.trim(); const content=publicSimplemde?publicSimplemde.value():publicPromptContentEl.value.trim(); if(!name||!content) return showToast('Name & content required', 'warning'); const btn=document.getElementById('public-prompt-save-btn'); btn.disabled=true; btn.innerHTML='<span class="spinner-border spinner-border-sm me-1"></span>Saving…'; try{ const r=await fetch(url,{method,headers:{'Content-Type':'application/json'},body:JSON.stringify({name,content})}); if(!r.ok) throw await r.json(); publicPromptModal.hide(); fetchPublicPrompts(); }catch(err){ showToast(err.error||err.message, 'danger'); }finally{ btn.disabled=false; btn.textContent='Save Prompt'; }}
+window.onEditPublicPrompt=async function(id){ try{ const r=await fetch(`/api/public_prompts/${encodeURIComponent(id)}`); if(!r.ok) throw await r.json(); const d=await r.json(); document.getElementById('publicPromptModalLabel').textContent=`Edit: ${d.name}`; publicPromptIdEl.value=d.id; publicPromptNameEl.value=d.name; if(publicSimplemde) publicSimplemde.value(d.content); else publicPromptContentEl.value=d.content; publicPromptModal.show(); }catch(e){ showToast(e.error||e.message, 'danger');} };
+window.onDeletePublicPrompt=async function(id){ if(!confirm('Delete prompt?')) return; try{ await fetch(`/api/public_prompts/${encodeURIComponent(id)}`,{method:'DELETE'}); fetchPublicPrompts(); }catch(e){ showToast(e.error||e.message, 'danger');} };
 
 // Document metadata functions
 window.onEditPublicDocument = function(docId) {
@@ -2888,7 +2979,7 @@ window.onEditPublicDocument = function(docId) {
     })
     .catch(err => {
       console.error("Error retrieving public document for edit:", err);
-      alert("Error retrieving document details: " + (err.error || err.message || "Unknown error"));
+      showToast("Error retrieving document details: " + (err.error || err.message || "Unknown error"), 'danger');
     });
 };
 
@@ -2952,7 +3043,7 @@ async function onSavePublicDocMetadata(e) {
     loadPublicWorkspaceTags(); // Refresh tag counts
   } catch (err) {
     console.error("Error updating public document:", err);
-    alert("Error updating document: " + (err.message || "Unknown error"));
+    showToast("Error updating document: " + (err.message || "Unknown error"), 'danger');
   } finally {
     docSaveBtn.disabled = false;
     docSaveBtn.textContent = "Save Metadata";
@@ -2985,7 +3076,7 @@ window.onExtractPublicMetadata = function(docId, event) {
     })
     .catch(err => {
       console.error("Error calling extract metadata for public document:", err);
-      alert("Error extracting metadata: " + (err.error || err.message || "Unknown error"));
+      showToast("Error extracting metadata: " + (err.error || err.message || "Unknown error"), 'danger');
     })
     .finally(() => {
       if (extractBtn) {
@@ -3276,10 +3367,10 @@ function buildPublicFolderDocumentsTable(docs) {
         const extractionActionMode = getPublicDocumentTargetExtractionMode(doc);
         const extractionActionLabel = getPublicDocumentExtractionModeLabelFromMode(extractionActionMode);
         const extractionActionIcon = getPublicDocumentExtractionModeIcon(extractionActionMode);
-        const extractionActionTooltip = getPublicDocumentExtractionChangeTooltip(extractionActionMode);
+        const extractionActionTooltip = getPublicDocumentExtractionChangeTooltip(extractionActionMode, getPublicDocumentExtractionEngine(doc));
         actionsHtml += `<li><a class="dropdown-item" href="#" onclick="window.onEditPublicDocument('${doc.id}'); return false;"><i class="bi bi-pencil-fill me-2"></i>Edit Metadata</a></li>
             <li><a class="dropdown-item" href="#" onclick="window.onExtractPublicMetadata('${doc.id}', event); return false;"><i class="bi bi-magic me-2"></i>Extract Metadata</a></li>
-        ${isPublicPdfDocument(doc) ? `<li><hr class="dropdown-divider"></li>
+        ${supportsPublicExtractionModeChange(doc) ? `<li><hr class="dropdown-divider"></li>
         <li><h6 class="dropdown-header">Change Extraction</h6></li>
         <li><a class="dropdown-item" href="#" title="${escapeHtml(extractionActionTooltip)}" onclick="window.reprocessPublicDocumentExtraction('${reprocessDocId}', '${extractionActionMode}', event); return false;"><i class="bi ${extractionActionIcon} me-2"></i>Change to ${extractionActionLabel}</a></li>` : ''}
             <li><hr class="dropdown-divider"></li>
@@ -3488,9 +3579,9 @@ function renamePublicTag(tagName) {
     body: JSON.stringify({ new_name: newName.trim() })
   }).then(r => r.json().then(d => ({ ok: r.ok, data: d })))
     .then(({ ok, data }) => {
-      if (ok) { alert(data.message); loadPublicWorkspaceTags(); if (publicCurrentView === 'grid' || publicCurrentView === 'folders-cards') renderPublicGridView(); else fetchPublicDocs(); }
-      else alert('Error: ' + (data.error || 'Failed to rename'));
-    }).catch(e => { console.error(e); alert('Error renaming tag'); });
+      if (ok) { showToast(data.message, 'info'); loadPublicWorkspaceTags(); if (publicCurrentView === 'grid' || publicCurrentView === 'folders-cards') renderPublicGridView(); else fetchPublicDocs(); }
+      else showToast('Error: ' + (data.error || 'Failed to rename'), 'danger');
+    }).catch(e => { console.error(e); showToast('Error renaming tag', 'danger'); });
 }
 
 function changePublicTagColor(tagName, currentColor) {
@@ -3502,9 +3593,9 @@ function changePublicTagColor(tagName, currentColor) {
     body: JSON.stringify({ color: newColor.trim() })
   }).then(r => r.json().then(d => ({ ok: r.ok, data: d })))
     .then(({ ok, data }) => {
-      if (ok) { alert(data.message); loadPublicWorkspaceTags(); if (publicCurrentView === 'grid' || publicCurrentView === 'folders-cards') renderPublicGridView(); }
-      else alert('Error: ' + (data.error || 'Failed to change color'));
-    }).catch(e => { console.error(e); alert('Error changing tag color'); });
+      if (ok) { showToast(data.message, 'info'); loadPublicWorkspaceTags(); if (publicCurrentView === 'grid' || publicCurrentView === 'folders-cards') renderPublicGridView(); }
+      else showToast('Error: ' + (data.error || 'Failed to change color'), 'danger');
+    }).catch(e => { console.error(e); showToast('Error changing tag color', 'danger'); });
 }
 
 function deletePublicTag(tagName) {
@@ -3512,9 +3603,9 @@ function deletePublicTag(tagName) {
   fetch(`/api/public_workspace_documents/tags/${encodeURIComponent(tagName)}`, { method: 'DELETE' })
     .then(r => r.json().then(d => ({ ok: r.ok, data: d })))
     .then(({ ok, data }) => {
-      if (ok) { alert(data.message); loadPublicWorkspaceTags(); if (publicCurrentView === 'grid' || publicCurrentView === 'folders-cards') renderPublicGridView(); else fetchPublicDocs(); }
-      else alert('Error: ' + (data.error || 'Failed to delete'));
-    }).catch(e => { console.error(e); alert('Error deleting tag'); });
+      if (ok) { showToast(data.message, 'info'); loadPublicWorkspaceTags(); if (publicCurrentView === 'grid' || publicCurrentView === 'folders-cards') renderPublicGridView(); else fetchPublicDocs(); }
+      else showToast('Error: ' + (data.error || 'Failed to delete'), 'danger');
+    }).catch(e => { console.error(e); showToast('Error deleting tag', 'danger'); });
 }
 
 function updatePublicListSortIcons() {
@@ -3797,8 +3888,8 @@ async function applyPublicBulkTagChanges() {
   const action = document.getElementById('public-bulk-tag-action').value;
   const selectedTags = Array.from(publicBulkSelectedTags);
   const documentIds = Array.from(publicSelectedDocuments);
-  if (documentIds.length === 0) { alert('No documents selected'); return; }
-  if (selectedTags.length === 0) { alert('Please select at least one tag'); return; }
+  if (documentIds.length === 0) { showToast('No documents selected', 'warning'); return; }
+  if (selectedTags.length === 0) { showToast('Please select at least one tag', 'warning'); return; }
 
   const applyBtn = document.getElementById('public-bulk-tag-apply-btn');
   const totalDocuments = documentIds.length;
@@ -3828,7 +3919,7 @@ async function applyPublicBulkTagChanges() {
     const ec = results.errors.length;
     let msg = `Tags updated for ${sc} document(s)`;
     if (ec > 0) msg += `\n${ec} document(s) had errors`;
-    alert(msg);
+    showToast(msg, 'info');
     await loadPublicWorkspaceTags();
     fetchPublicDocs();
     publicSelectedDocuments.clear();
@@ -3852,7 +3943,7 @@ async function applyPublicBulkTagChanges() {
       errorMessage += `\n${e.message}`;
     }
 
-    alert(errorMessage);
+    showToast(errorMessage, 'danger');
   } finally {
     setPublicBulkTagButtonLoadingState(applyBtn, false);
   }
@@ -3933,8 +4024,8 @@ window.loadPublicWorkspaceTags = loadPublicWorkspaceTags;
         });
         const data = await resp.json();
         if (resp.ok) { await loadPublicWorkspaceTags(); updatePublicBulkTagsList(); }
-        else alert('Error: ' + (data.error || 'Failed to create tag'));
-      } catch (e) { console.error(e); alert('Error creating tag'); }
+        else showToast('Error: ' + (data.error || 'Failed to create tag'), 'danger');
+      } catch (e) { console.error(e); showToast('Error creating tag', 'danger'); }
     });
   }
 })();
@@ -4090,9 +4181,9 @@ window.deletePublicTagFromModal = async function(tagName) {
       await loadPublicWorkspaceTags();
       refreshPublicTagManagementTable();
     } else {
-      alert('Error: ' + (data.error || 'Failed to delete tag'));
+      showToast('Error: ' + (data.error || 'Failed to delete tag'), 'danger');
     }
-  } catch (e) { console.error(e); alert('Error deleting tag'); }
+  } catch (e) { console.error(e); showToast('Error deleting tag', 'danger'); }
 };
 
 async function handlePublicAddOrSaveTag() {
@@ -4102,8 +4193,8 @@ async function handlePublicAddOrSaveTag() {
   const tagName = nameInput.value.trim().toLowerCase();
   const tagColor = colorInput.value;
 
-  if (!tagName) { alert('Please enter a tag name'); return; }
-  if (!/^[a-z0-9_-]+$/.test(tagName)) { alert('Tag name must contain only lowercase letters, numbers, hyphens, and underscores'); return; }
+  if (!tagName) { showToast('Please enter a tag name', 'warning'); return; }
+  if (!/^[a-z0-9_-]+$/.test(tagName)) { showToast('Tag name must contain only lowercase letters, numbers, hyphens, and underscores', 'warning'); return; }
 
   if (publicEditingTag) {
     // Edit mode
@@ -4111,7 +4202,7 @@ async function handlePublicAddOrSaveTag() {
     const colorChanged = tagColor !== publicEditingTag.originalColor;
     if (!nameChanged && !colorChanged) { publicCancelEditMode(); return; }
     if (nameChanged && publicWorkspaceTags.some(t => t.name === tagName && t.name !== publicEditingTag.originalName)) {
-      alert('A tag with this name already exists'); return;
+      showToast('A tag with this name already exists', 'warning'); return;
     }
     try {
       const body = {};
@@ -4126,11 +4217,11 @@ async function handlePublicAddOrSaveTag() {
         await loadPublicWorkspaceTags();
         refreshPublicTagManagementTable();
         if (publicCurrentView === 'grid' || publicCurrentView === 'folders-cards') renderPublicGridView();
-      } else { alert('Error: ' + (data.error || 'Failed to update tag')); }
-    } catch (e) { console.error(e); alert('Error updating tag'); }
+      } else { showToast('Error: ' + (data.error || 'Failed to update tag'), 'danger'); }
+    } catch (e) { console.error(e); showToast('Error updating tag', 'danger'); }
   } else {
     // Add mode
-    if (publicWorkspaceTags.some(t => t.name === tagName)) { alert('A tag with this name already exists'); return; }
+    if (publicWorkspaceTags.some(t => t.name === tagName)) { showToast('A tag with this name already exists', 'warning'); return; }
     try {
       const resp = await fetch('/api/public_workspace_documents/tags', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -4143,8 +4234,8 @@ async function handlePublicAddOrSaveTag() {
         await loadPublicWorkspaceTags();
         refreshPublicTagManagementTable();
         if (publicCurrentView === 'grid' || publicCurrentView === 'folders-cards') renderPublicGridView();
-      } else { alert('Error: ' + (data.error || 'Failed to create tag')); }
-    } catch (e) { console.error(e); alert('Error creating tag'); }
+      } else { showToast('Error: ' + (data.error || 'Failed to create tag'), 'danger'); }
+    } catch (e) { console.error(e); showToast('Error creating tag', 'danger'); }
   }
 }
 

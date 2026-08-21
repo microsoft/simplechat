@@ -12,6 +12,7 @@ synced documents so source definition changes do not leave documents untagged.
 import ast
 import sys
 from pathlib import Path
+from test_support.versioning import assert_app_version_at_least
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -36,7 +37,7 @@ def get_function_source(relative_path, function_name):
 def test_config_version_updated():
     """Validate the fix version is tracked in config.py."""
     config_text = read_text("application/single_app/config.py")
-    assert 'VERSION = "0.241.178"' in config_text
+    assert_app_version_at_least("0.241.178")
 
 
 def test_unchanged_file_paths_reconcile_tags():

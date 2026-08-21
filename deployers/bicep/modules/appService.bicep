@@ -49,7 +49,10 @@ param customSearchResourceUrl string?
 param customVideoIndexerEndpoint string?
 
 var tenantId = tenant().tenantId
-var openIdMetadataUrl = '${az.environment().authentication.loginEndpoint}${tenantId}/v2.0/.well-known/openid-configuration'
+var identityLoginEndpoint = empty(customIdentityUrl) ? az.environment().authentication.loginEndpoint : customIdentityUrl!
+var normalizedIdentityLoginEndpoint = endsWith(identityLoginEndpoint, '/') ? identityLoginEndpoint : '${identityLoginEndpoint}/'
+var openIdIssuer = '${normalizedIdentityLoginEndpoint}${tenantId}/'
+var openIdMetadataUrl = '${openIdIssuer}v2.0/.well-known/openid-configuration'
 
 // Import diagnostic settings configurations
 module diagnosticConfigs 'diagnosticSettings.bicep' = if (enableDiagLogging) {
@@ -101,6 +104,7 @@ resource webApp 'Microsoft.Web/sites@2022-03-01' = {
       healthCheckPath: '/external/healthcheck'
       appSettings: [
         { name: 'AZURE_ENVIRONMENT', value: azurePlatform }
+        { name: 'REDIS_ENTRA_TOKEN_SCOPE', value: 'https://redis.azure.com/.default' }
         { name: 'SIMPLECHAT_RUN_BACKGROUND_TASKS', value: '1' }
         { name: 'SCM_DO_BUILD_DURING_DEPLOYMENT', value: 'false' }
         { name: 'AZURE_SUBSCRIPTION_ID', value: subscription().subscriptionId }
@@ -256,7 +260,7 @@ resource authSettings 'Microsoft.Web/sites/config@2022-03-01' = {
       azureActiveDirectory: {
         enabled: true
         registration: {
-          openIdIssuer: '${az.environment().authentication.loginEndpoint}${tenant().tenantId}/'
+          openIdIssuer: openIdIssuer
           clientId: enterpriseAppClientId
           clientSecretSettingName: 'MICROSOFT_PROVIDER_AUTHENTICATION_SECRET'
         }

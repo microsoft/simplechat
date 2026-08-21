@@ -2,8 +2,8 @@
 # test_per_message_powerpoint_export.py
 """
 Functional test for per-message PowerPoint export.
-Version: 0.241.146
-Implemented in: 0.241.033
+Version: 0.250.215
+Implemented in: 0.241.033; Updated in: 0.250.215
 
 This test ensures the message export flow exposes a PowerPoint route,
 uses the frontend PowerPoint action hook, prefers the message model
@@ -426,6 +426,7 @@ def test_powerpoint_frontend_hooks_present() -> bool:
 
     assert "fetch('/api/message/export-powerpoint'" in frontend_source, 'Expected frontend fetch for the PowerPoint export endpoint'
     assert 'exportMessageAsPowerPoint' in frontend_source, 'Expected frontend PowerPoint export helper'
+    assert 'get_message_reference_citation_buckets' in ROUTE_FILE.read_text(encoding='utf-8')
     assert 'message_content_override' in frontend_source, 'Expected PowerPoint export requests to support edited assistant markdown overrides'
     assert 'delete requestBody.message_content_override;' in frontend_source, 'Expected artifact PowerPoint export to ignore visible-message overrides'
     assert 'dropdown-export-ppt-btn' in menu_source, 'Expected chat message menu PowerPoint action'

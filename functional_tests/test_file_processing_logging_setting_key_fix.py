@@ -11,6 +11,7 @@ pluralized setting key that the application settings defaults define.
 
 import sys
 from pathlib import Path
+from test_support.versioning import assert_app_version_at_least
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -36,9 +37,7 @@ def test_file_processing_logging_setting_key_alignment():
     assert "'enable_file_processing_logs': True" in functions_settings_source, (
         'functions_settings.py should define the pluralized enable_file_processing_logs default.'
     )
-    assert 'VERSION = "0.239.141"' in config_source, (
-        'config.py should be bumped to version 0.239.141 for this fix.'
-    )
+    assert_app_version_at_least("0.239.141")
 
     print('✅ File processing logging setting keys are aligned.')
 

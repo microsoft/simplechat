@@ -1,26 +1,26 @@
-#!/usr/bin/env python3
 # test_document_action_conversation_scope_metadata.py
 """
 Functional test for document-action conversation scope metadata.
-Version: 0.241.124
-Implemented in: 0.241.124
+Version: 0.250.171
+Implemented in: 0.241.124; Updated in: 0.250.073 and 0.250.171
 
 This test ensures Analyze and tabular document-action results can assign
 conversation workspace metadata from selected document summaries when no
 hybrid search results are present, while preserving personal assigned-knowledge
-primary context behavior.
+primary context behavior and user-facing document filenames.
 """
 
 import ast
 import os
 import sys
 
+from test_support.versioning import assert_app_version_at_least
+
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 METADATA_FILE = os.path.join(ROOT_DIR, 'application', 'single_app', 'functions_conversation_metadata.py')
 ROUTE_FILE = os.path.join(ROOT_DIR, 'application', 'single_app', 'route_backend_chats.py')
-CONFIG_FILE = os.path.join(ROOT_DIR, 'application', 'single_app', 'config.py')
-FIX_VERSION = '0.241.124'
+FIX_VERSION = '0.250.171'
 TEST_USER_ID = 'scope-user-1'
 CRIMSON_GROUP_ID = 'crimson-group-1'
 PUBLIC_WORKSPACE_ID = 'public-workspace-1'
@@ -42,13 +42,6 @@ METADATA_TARGET_FUNCTIONS = {
 def read_text(file_path):
     with open(file_path, 'r', encoding='utf-8') as file_handle:
         return file_handle.read()
-
-
-def read_config_version():
-    for line in read_text(CONFIG_FILE).splitlines():
-        if line.startswith('VERSION = '):
-            return line.split('=', 1)[1].strip().strip('"')
-    raise AssertionError('VERSION assignment not found in config.py')
 
 
 def load_metadata_helpers():
@@ -136,6 +129,8 @@ def test_selected_group_document_sets_conversation_primary_context():
 
     document_tag = next(tag for tag in updated['tags'] if tag.get('category') == 'document')
     assert document_tag['document_id'] == 'crimson-workbook-doc'
+    assert document_tag['title'] == 'Crimson Workbook'
+    assert document_tag['file_name'] == 'Crimson.xlsx'
     assert document_tag['scope']['type'] == 'group'
     assert document_tag['scope']['id'] == CRIMSON_GROUP_ID
 
@@ -196,6 +191,51 @@ def test_assigned_knowledge_personal_agent_keeps_personal_primary_context():
     print('PASS: assigned-knowledge primary context preservation')
 
 
+def test_existing_document_tag_backfills_filename():
+    """Existing document tags should gain a filename without losing stored metadata."""
+    print('Testing existing document filename backfill...')
+    namespace = load_metadata_helpers()
+    collect_metadata = namespace['collect_conversation_metadata']
+
+    updated = collect_metadata(
+        user_message='Continue analyzing the Crimson workbook',
+        conversation_id='conversation-3',
+        user_id=TEST_USER_ID,
+        document_scope='all',
+        active_group_ids=[CRIMSON_GROUP_ID],
+        selected_documents=[{
+            'document_id': 'crimson-workbook-doc',
+            'file_name': 'Crimson.xlsx',
+            'scope': 'group',
+            'scope_id': CRIMSON_GROUP_ID,
+            'classification': 'Confidential',
+        }],
+        search_results=None,
+        conversation_item={
+            'context': [],
+            'tags': [{
+                'category': 'document',
+                'document_id': 'crimson-workbook-doc',
+                'title': 'Crimson Workbook',
+                'scope': {
+                    'type': 'group',
+                    'id': CRIMSON_GROUP_ID,
+                    'name': 'Crimson',
+                },
+                'chunk_ids': [],
+                'classification': 'Confidential',
+            }],
+            'strict': False,
+        },
+    )
+
+    document_tag = next(tag for tag in updated['tags'] if tag.get('category') == 'document')
+    assert document_tag['title'] == 'Crimson Workbook'
+    assert document_tag['file_name'] == 'Crimson.xlsx'
+    assert document_tag['classification'] == 'Confidential'
+    print('PASS: existing document filename backfill')
+
+
 def test_document_action_stream_payload_preserves_metadata_fields():
     """Streaming document-action responses should carry conversation metadata updates."""
     print('Testing document-action stream payload metadata fields...')
@@ -214,7 +254,7 @@ def test_document_action_stream_payload_preserves_metadata_fields():
 def test_version_bumped_for_fix():
     """Verify config.py version was bumped for this fix."""
     print('Testing version bump...')
-    assert read_config_version() == FIX_VERSION
+    assert_app_version_at_least(FIX_VERSION)
     print('PASS: version bump')
 
 
@@ -222,6 +262,7 @@ if __name__ == '__main__':
     tests = [
         test_selected_group_document_sets_conversation_primary_context,
         test_assigned_knowledge_personal_agent_keeps_personal_primary_context,
+        test_existing_document_tag_backfills_filename,
         test_document_action_stream_payload_preserves_metadata_fields,
         test_version_bumped_for_fix,
     ]

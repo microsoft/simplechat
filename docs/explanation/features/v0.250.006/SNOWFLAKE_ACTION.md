@@ -22,7 +22,7 @@ Agents can use the action to discover databases, schemas, tables, and table colu
 - Factory: `semantic_kernel_plugins/snowflake_plugin_factory.py`
 - Shared normalization helpers: `functions_snowflake_operations.py`
 - UI configuration: `templates/_plugin_modal.html` and `static/js/plugin_modal_stepper.js`
-- Connector dependency: `snowflake-connector-python[pandas]==3.14.0`
+- Connector dependency: `snowflake-connector-python[pandas]==3.18.0`
 
 ### Authentication
 

@@ -2,7 +2,7 @@
 
 Implemented in version: **0.241.046**
 
-Updated through version: **0.241.064**
+Updated through version: **0.250.152**
 
 ## Overview
 
@@ -25,13 +25,31 @@ The feature supports large spreadsheet-driven analysis, including workbooks that
 
 - Chat and workflow tabular generated-output requests continue to use the existing inline path for smaller exports.
 - Oversized structured exports are queued with `queue_tabular_generated_output_run(...)`.
-- Input row batches are staged as a single blob-backed JSON payload.
+- Version-pinned CSV sources are replayed into bounded per-batch input checkpoints without model pagination.
 - Each completed model batch is checkpointed as an output blob.
 - Cosmos stores compact run metadata, progress counts, retry state, and final artifact metadata.
 - The background scheduler claims queued runs with optimistic status updates and resumes from checkpointed output batches.
 - Users can manually continue resumable failed or stale runs from the existing checkpoints without restarting completed batches.
 - Queued retry runs whose retry time has already passed are surfaced as resumable so deployments without active scheduler loops still give users a recovery action.
 - Run status includes safe user-facing status detail, checkpoint summaries, retry timing, heartbeat state, and continuation availability.
+- Phase 1 acceleration groundwork adds additive generation contract fields, legacy-off rollout gates, safe batch latency/token telemetry, and deterministic fake model/storage harnesses without changing fixed-window execution behavior.
+- Phase 2 foreground handoff uses server-composed acknowledgment text for accepted background export, analysis, and combined runs, so the assistant response describes the complete queued work instead of narrating preview limitations.
+- Phase 3 creates one bounded LLM schema plan after source staging, stores it as an immutable hashed blob, and binds planned output checkpoints to that plan and source ETag.
+- Phase 4 adds an active-plan compact row response protocol for structured exports. The model emits one short batch-local row key plus positional LLM values, while the server reattaches source metadata and checkpoints the same object-shaped rows as before.
+- Phase 5 adds opt-in completion-driven checkpointing for structured exports. Validated model results are submitted to a bounded checkpoint writer as soon as each task completes while the executor still preserves fixed window boundaries.
+- Phase 6 adds an opt-in rolling worker pool that replaces completed model slots without waiting for a fixed window barrier.
+- Phase 7 adds durable per-batch retry records and a delayed retry heap so one retrying batch does not pause healthy pending work.
+- Phase 8 assigns new runs to deterministic rollout cohorts, records explicit planner/executor/protocol/retry modes, reclaims new-run workers after a snapshotted two-minute stale interval, and revalidates source ETags before final publication.
+- Background handoff metadata derives its requested row count from the safe public run status so accepted durable runs cannot terminate the foreground stream while constructing the status card payload.
+- Object-protocol model responses can recover from hidden source-token echo mismatches when row count and any explicit source row number or identity markers preserve the requested source order.
+- Fixed-window runs use a timeout-aware stale threshold so normal long model calls are not shown as stale while only rolling-pool runs use the short heartbeat interval. Retry status text includes safe reason categories such as model output validation or transient provider interruption.
+- Object-protocol responses that wrap one generated CSV row inside a `csv` property are expanded before schema inference so final artifacts use the requested generated columns instead of a nested CSV column.
+- Direct durable artifact routing accepts every configured tabular input format (`csv`, `xlsx`, `xls`, and `xlsm`) through one version-pinned replay contract. Multi-sheet workbooks replay worksheets in workbook order.
+- Recognized exhaustive artifact requests never fall back to dumping generated rows into the assistant response when source preparation fails. The chat receives a concise artifact handoff or safe failure status instead.
+- Shadow schema planning is deferred off the production critical path. Unplanned source-backed runs checkpoint a small first batch before opening normal batch concurrency, and the status card identifies source preparation, active planning, or initial checkpoint generation before row progress appears.
+- Running background cards keep the status badge, progress bar, and available actions visible by default. File/source metadata, checkpoint counts, remaining work, throughput, concurrency, timestamps, and previews are grouped under a collapsed `View details` disclosure.
+- Completed structured artifacts show only the generated filename, total row count, and `Download`, `View`, and `Add to Workspace` actions. `View` opens a bounded validated preview in a modal, and the stale background handoff prose is hidden after completion.
+- New source-backed runs estimate serialized row size from a bounded source sample, apply the tighter of row and character capacity, and rebalance uneven multi-wave work across configured model concurrency. Completion-driven checkpointing is enabled by default so successful batches become durable while slower siblings are still running.
 
 ### API Endpoints
 
@@ -45,8 +63,27 @@ The feature supports large spreadsheet-driven analysis, including workbooks that
 - `tabular_generated_output_max_batch_rows`
 - `tabular_generated_output_max_batch_chars`
 - `tabular_generated_output_batch_concurrency`
+- `tabular_generated_output_input_token_ratio`
+- `tabular_generated_output_large_context_input_token_ratio`
+- `tabular_generated_output_input_token_soft_cap`
+- `tabular_generated_output_output_token_ratio`
+- `tabular_generated_output_output_expansion_ratio`
+- `tabular_generation_rollout_percentage`
+- `tabular_background_handoff_mode`
+- `enable_tabular_generation_plan`
+- `tabular_generation_plan_mode`
+- `enable_tabular_compact_response_protocol`
+- `enable_tabular_completion_driven_checkpointing`
+- `enable_tabular_rolling_worker_pool`
+- `enable_tabular_independent_batch_retries`
+- `tabular_generation_checkpoint_writer_concurrency`
+- `tabular_generation_heartbeat_seconds`
+- `tabular_generation_stale_seconds`
+- `tabular_generation_systemic_failure_threshold`
 
-If settings are absent, conservative defaults are used.
+If a fixed concurrency is not configured, runs use up to 4, 16, 64, or 128 concurrent model calls according to the actual staged batch count. Model-aware source batching uses selected-model metadata, local `model_capabilities.json` token-limit fields when present, and bounded fallback limits otherwise.
+Phase 3 enables generation planning in output-neutral `shadow` mode for new runs. Shadow mode preserves first-batch schema discovery and records agreement metrics only. `active` mode is available as an explicit administrator rollout choice and removes the first-batch schema barrier. Rollout settings are copied into new run records, and backend-only settings are filtered from sanitized non-admin frontend settings payloads.
+Phase 8 applies the configured acceleration settings only to new runs whose deterministic bucket is within `tabular_generation_rollout_percentage`. The percentage defaults to 100 to preserve existing behavior. A control run stores legacy effective modes, while a canary run stores the configured effective modes; later setting changes cannot switch either run during resume.
 
 ### File Structure
 
@@ -60,13 +97,33 @@ If settings are absent, conservative defaults are used.
 
 Users continue requesting tabular structured output in chat or workflows. For smaller exports, the file is attached during the response. For larger exports, the assistant message shows a background progress card and the final download appears when processing completes. If a resumable run stops after a transient infrastructure failure, the card shows a Continue action that queues the same run to resume from completed checkpoints.
 
+When a background run is accepted, the immediate assistant response acknowledges the complete requested row count and deliverable. Any visible rows are identified as a sample or preview, while mutable progress remains in the status card and the completed file or analysis appears in the chat when ready.
+
 When a workflow/document analysis request also creates a full generated tabular export, the generated export is presented as the primary deliverable. The analysis layer may still attach a supporting CSV preview, but redundant analysis JSON and Markdown artifacts are suppressed so they do not compete with the full generated export card.
 
-The progress card displays current status, completed checkpoint counts, processed row counts, estimated remaining time, scheduled retry time, retry-due state, transient retry count, manual continuation count, last update time, and heartbeat time when available.
+The progress card displays current status, completed checkpoint counts, processed row counts, wall-clock rows per minute, model concurrency, estimated remaining time, scheduled retry time, retry-due state, transient retry count, manual continuation count, last update time, and heartbeat time when available.
 
 ## Testing and Validation
 
 - Functional regression: `functional_tests/test_tabular_background_generated_exports.py`
+- Scale and performance regression: `functional_tests/test_tabular_row_orchestration_scale.py`
+- Phase 3 immutable plan, recovery, shadow comparison, active schema, and checkpoint-integrity regression: `functional_tests/test_tabular_row_orchestration_scale.py`
+- Phase 4 compact protocol selection, prompt, validation, row-key, plan-hash, and normalized-output equivalence regression: `functional_tests/test_tabular_row_orchestration_scale.py`
+- Phase 5 completion-driven checkpoint timing and output-prefix resume scan regression: `functional_tests/test_tabular_row_orchestration_scale.py`
+- Phase 6 rolling scheduling, heartbeat, backpressure, and straggler regression: `functional_tests/test_tabular_row_orchestration_scale.py`
+- Phase 7 independent retry, durable retry-ledger, and circuit-breaker regression: `functional_tests/test_tabular_row_orchestration_scale.py`
+- Phase 8 stable cohort, stale reclaim, source-version publication, crash recovery, and performance-summary regression: `functional_tests/test_tabular_row_orchestration_scale.py`
+- Background metadata streaming regression for export, analysis, and combined modes: `functional_tests/test_tabular_row_orchestration_scale.py`
+- Source-token echo recovery regression: `functional_tests/test_tabular_row_orchestration_scale.py`
+- Fixed-window stale heartbeat regression: `functional_tests/test_tabular_row_orchestration_scale.py`
+- Nested CSV output recovery regression: `functional_tests/test_tabular_row_orchestration_scale.py`
+- Generic CSV and workbook durable routing regressions: `functional_tests/test_tabular_row_orchestration_scale.py`
+- Artifact-only failure and fast-start regressions: `functional_tests/test_tabular_row_orchestration_scale.py`
+- Collapsed background status detail regressions: `functional_tests/test_tabular_background_generated_exports.py` and `ui_tests/test_chat_background_generated_export_status.py`
+- Completed artifact card and bounded modal regressions: `functional_tests/test_tabular_background_generated_exports.py` and `ui_tests/test_chat_generated_tabular_output_card.py`
+- Character-aware balanced batch and completion-checkpoint regressions: `functional_tests/test_tabular_row_orchestration_scale.py`
+- Phase 2 handoff regression: `functional_tests/test_tabular_row_orchestration_scale.py`
+- Phase 1 baseline and fake harness coverage: `functional_tests/test_tabular_row_orchestration_scale.py`
 - Functional regression for workflow/document-action presentation: `functional_tests/test_document_analysis_lossless_artifacts.py`
 - UI regression: `ui_tests/test_chat_background_generated_export_status.py`
 - Compile validation covers the modified Python modules.
@@ -75,7 +132,17 @@ The progress card displays current status, completed checkpoint counts, processe
 
 - The request only stages durable input and queues work for oversized exports.
 - Phase 3 batch packing compacts generated-export prompt payloads, removes internal tabular helper fields from staged model input, avoids duplicating row-linked document excerpts as synthetic attachment text, and packs rows by configurable row and character budgets.
-- Phase 4 bounded concurrency lets the background worker generate a small configurable window of model batches in parallel while checkpointing successful batches and advancing public progress only in contiguous batch order.
+- Model-aware packing targets 50% of ordinary model input capacity and 60% of output capacity. Context windows above 500,000 tokens use a lower 30% input ratio and a default 180,000-token soft input cap.
+- Adaptive concurrency uses up to 4 calls for small runs, 16 for medium runs, 64 for large runs, and 128 for runs with at least 256 staged batches. An explicit administrator setting overrides the adaptive tier.
+- Each parallel window checkpoints successful output batches before advancing public progress in contiguous order.
+- Progress is persisted once per completed parallel window. ETA uses recent wall-clock rows per minute rather than summing concurrent model-call durations as serial work.
+- Phase 1 telemetry separates safe model-call, validation, and checkpoint timing metrics where the current executor can observe them. Validation mismatch logs record counts and timings only, not generated response previews.
+- Phase 3 planning reads at most five staged rows from at most two input checkpoints and sends only column metadata plus redacted value shapes, so planner input remains bounded independently of source row count.
+- Phase 4 compact responses reduce repeated generated field names and avoid model-emitted long source tokens for active planned structured exports. Compact responses are normalized before checkpointing, so final CSV, JSON, and XML serialization remains unchanged.
+- Phase 5 completion-driven checkpointing offloads synchronous Blob/Cosmos checkpoint work from the event loop through a bounded writer backlog. A fast validated batch can commit its output blob before a slower batch in the same fixed window finishes.
+- Phase 6 rolling execution keeps eligible slots occupied as individual tasks complete, subject to checkpoint backpressure.
+- Phase 7 delayed per-batch retries leave unrelated pending batches eligible for dispatch.
+- Phase 8 stores a bounded terminal performance summary with queue, planning, generation, end-to-end, throughput, concurrency, retry, and rollout dimensions. Detailed latency percentiles remain available from the existing per-batch telemetry events.
 - Background processing writes each completed batch before moving on, allowing the run to resume after worker restarts.
 - The run status API returns compact metadata only, not source rows or generated batch content.
 - User-facing status details are derived from run metadata instead of displaying raw backend errors in the progress card.
@@ -83,8 +150,14 @@ The progress card displays current status, completed checkpoint counts, processe
 ## Known Limitations
 
 - Background runs still depend on configured background scheduler capacity and available Azure OpenAI throughput.
+- One durable run is still claimed by one application worker; App Service scale-out does not shard a single run across workers.
+- Completion time remains proportional to LLM-generated output volume and model generation speed. Higher batching and concurrency improve throughput but do not guarantee a fixed completion time.
 - Completion appears through status polling or on the next chat reload; no push notification is added in this version.
 - Manual continuation applies to retryable failures, stale running leases, queued retries whose retry time has passed, and stale queued runs; hard validation failures remain terminal.
+- Shadow mode does not remove the first-batch schema barrier. Administrators should move new runs to `active` only after representative shadow comparisons preserve every requested field.
+- Compact row responses apply only to new active planned structured exports. Existing runs, shadow runs, fallback runs, passthrough rows, analysis-only runs, and combined analysis/export runs remain on `object-v1`.
+- Percentage rollback affects new runs only. Existing runs resume with their persisted cohort, effective settings, executor, response protocol, and retry mode.
+- The 30,000-row live LLM throughput target remains dependent on provisioned model throughput and must be measured in the target environment before 100% activation.
 
 ## Related Version Updates
 
@@ -92,3 +165,20 @@ The progress card displays current status, completed checkpoint counts, processe
 - `application/single_app/config.py` was updated to version **0.241.059** for Phase 3 compact batch packing.
 - `application/single_app/config.py` was updated to version **0.241.060** for Phase 4 bounded batch concurrency.
 - `application/single_app/config.py` was updated to version **0.241.064** for generated export artifact presentation cleanup.
+- `application/single_app/config.py` was updated to version **0.250.136** for model-aware batch sizing, adaptive LLM concurrency, and parallel wall-clock ETA.
+- `application/single_app/config.py` was updated to version **0.250.137** for Phase 1 acceleration baseline contracts, rollout controls, privacy-safe telemetry, and fake model/storage harnesses.
+- `application/single_app/config.py` was updated to version **0.250.138** for Phase 2 truthful foreground handoff wording and metadata.
+- `application/single_app/config.py` was updated to version **0.250.139** for Phase 3 immutable LLM schema planning, shadow comparison, active scheduling, and checkpoint integrity.
+- `application/single_app/config.py` was updated to version **0.250.140** for Phase 4 compact row response protocol validation and normalized checkpoint compatibility.
+- `application/single_app/config.py` was updated to version **0.250.141** for Phase 5 completion-driven checkpointing and output-prefix resume scanning.
+- `application/single_app/config.py` was updated to version **0.250.142** for Phase 6 rolling worker pool scheduling.
+- `application/single_app/config.py` was updated to version **0.250.143** for Phase 7 independent batch retries.
+- `application/single_app/config.py` was updated to version **0.250.144** for Phase 8 stable rollout cohorts, stale reclaim, source-version publication checks, chaos recovery coverage, and bounded performance summaries.
+- `application/single_app/config.py` was updated to version **0.250.145** to prevent accepted background-run metadata from terminating the foreground stream with an undefined row-count variable.
+- `application/single_app/config.py` was updated to version **0.250.146** to recover object-protocol model responses that preserve row order but fail to echo hidden source-row tokens.
+- `application/single_app/config.py` was updated to version **0.250.147** to prevent fixed-window runs from being falsely marked stale during normal long model calls and to show safe retry-reason details in the status card.
+- `application/single_app/config.py` was updated to version **0.250.148** to flatten single-row nested CSV model outputs before generated-export schema inference.
+- `application/single_app/config.py` was updated to version **0.250.149** to route every supported tabular input through artifact-only durable generation and reduce time to the first visible checkpoint.
+- `application/single_app/config.py` was updated to version **0.250.150** to simplify background export cards while preserving expandable operational detail.
+- `application/single_app/config.py` was updated to version **0.250.151** to simplify completed artifact cards and add bounded on-demand previews.
+- `application/single_app/config.py` was updated to version **0.250.152** to normalize JSON/XML completed cards and reduce durable export stragglers with character-aware balanced batches.

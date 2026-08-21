@@ -63,7 +63,7 @@ The live API documentation and external health routes are controlled from **Admi
 | Protected health check | **Enable /external/healthcheck** | <code>/external/healthcheck</code> |
 | Unauthenticated health check | **Enable /external/healthcheckz** | <code>/external/healthcheckz</code> |
 
-For the full operator workflow, see [Configure Branding, Home Page, and Support Settings]({{ '/how-to/admin_ui_settings/' | relative_url }}).
+For the full operator workflow, see [Configure Branding, Home Page, and Support Settings]({{ '/guides/configure-branding-and-support-settings/' | relative_url }}).
 
 ## Documentation endpoints
 

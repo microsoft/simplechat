@@ -1,6 +1,8 @@
 # route_backend_group_prompts.py
 
 from config import *
+from flask import current_app
+
 from functions_authentication import *
 from functions_group import require_active_group
 from functions_settings import *
@@ -22,8 +24,8 @@ def _get_active_group_or_error(user_id):
         return None, (jsonify({"error": "You are not a member of the active group"}), 403)
 
 
-def register_route_backend_group_prompts(app):
-    @app.route('/api/group_prompts', methods=['GET'])
+def register_route_backend_group_prompts(bp):
+    @bp.route('/api/group_prompts', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -48,10 +50,10 @@ def register_route_backend_group_prompts(app):
                 "total_count": total
             }), 200
         except Exception as e:
-            app.logger.error(f"Error fetching group prompts: {e}")
+            current_app.logger.error(f"Error fetching group prompts: {e}")
             return jsonify({"error":"An unexpected error occurred"}), 500
 
-    @app.route('/api/group_prompts', methods=['POST'])
+    @bp.route('/api/group_prompts', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -78,10 +80,10 @@ def register_route_backend_group_prompts(app):
             )
             return jsonify(result), 201
         except Exception as e:
-            app.logger.error(f"Error creating group prompt: {e}")
+            current_app.logger.error(f"Error creating group prompt: {e}")
             return jsonify({"error":"An unexpected error occurred"}), 500
 
-    @app.route('/api/group_prompts/<prompt_id>', methods=['GET'])
+    @bp.route('/api/group_prompts/<prompt_id>', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -103,10 +105,10 @@ def register_route_backend_group_prompts(app):
                 return jsonify({"error":"Prompt not found or access denied"}), 404
             return jsonify(item), 200
         except Exception as e:
-            app.logger.error(f"Unexpected error getting group prompt {prompt_id}: {e}")
+            current_app.logger.error(f"Unexpected error getting group prompt {prompt_id}: {e}")
             return jsonify({"error":"An unexpected error occurred"}), 500
 
-    @app.route('/api/group_prompts/<prompt_id>', methods=['PATCH'])
+    @bp.route('/api/group_prompts/<prompt_id>', methods=['PATCH'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -142,10 +144,10 @@ def register_route_backend_group_prompts(app):
                 return jsonify({"error":"Prompt not found or access denied"}), 404
             return jsonify(result), 200
         except Exception as e:
-            app.logger.error(f"Unexpected error updating group prompt {prompt_id}: {e}")
+            current_app.logger.error(f"Unexpected error updating group prompt {prompt_id}: {e}")
             return jsonify({"error":"An unexpected error occurred"}), 500
 
-    @app.route('/api/group_prompts/<prompt_id>', methods=['DELETE'])
+    @bp.route('/api/group_prompts/<prompt_id>', methods=['DELETE'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -166,5 +168,5 @@ def register_route_backend_group_prompts(app):
                 return jsonify({"error":"Prompt not found or access denied"}), 404
             return jsonify({"message":"Prompt deleted successfully"}), 200
         except Exception as e:
-            app.logger.error(f"Unexpected error deleting group prompt {prompt_id}: {e}")
+            current_app.logger.error(f"Unexpected error deleting group prompt {prompt_id}: {e}")
             return jsonify({"error":"An unexpected error occurred"}), 500

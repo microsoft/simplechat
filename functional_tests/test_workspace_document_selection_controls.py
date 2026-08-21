@@ -12,6 +12,7 @@ are available anywhere document pagination is configured.
 
 from pathlib import Path
 import traceback
+from test_support.versioning import assert_app_version_at_least
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -30,9 +31,7 @@ def test_workspace_document_selection_controls_wiring() -> None:
     workspace_tags_js = read_text("application/single_app/static/js/workspace/workspace-tags.js")
     group_template = read_text("application/single_app/templates/group_workspaces.html")
 
-    assert 'VERSION = "0.241.095"' in config_content, (
-        "Expected config.py version 0.241.095 for the workspace document selection controls update."
-    )
+    assert_app_version_at_least("0.241.095")
 
     assert 'id="docs-select-all-checkbox"' in workspace_template, (
         "Expected the personal workspace list table to render a select-all checkbox."

@@ -183,7 +183,7 @@ def execute_safety_violation_action(
         raise RuntimeError('Failed to create the user notification')
 
     log_event(
-        '[SafetyRemediation] Executed safety remediation action',
+        '[SAFETY_REMEDIATION] Executed safety remediation action',
         {
             'safety_log_id': safety_log.get('id'),
             'violation_action': action,
@@ -195,7 +195,7 @@ def execute_safety_violation_action(
         },
     )
     debug_print(
-        f"[SafetyRemediation] Executed {action} for {target_user_id} on safety log {safety_log.get('id')}"
+        f"[SAFETY_REMEDIATION] Executed {action} for {target_user_id} on safety log {safety_log.get('id')}"
     )
 
     return {

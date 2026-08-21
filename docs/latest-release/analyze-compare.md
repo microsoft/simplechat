@@ -5,7 +5,7 @@ description: "How chat and workspace document actions support full-document revi
 section: "Latest Release"
 ---
 
-Current release version: **0.241.183**
+Current release version: **0.250.070**
 
 Analyze and Compare give users deliberate document-action modes beyond regular workspace search.
 
@@ -39,3 +39,6 @@ Some questions need exhaustive review or side-by-side comparison instead of top-
 - Interactive chat analysis targets a deliberately bounded set of selected documents.
 - Workflow Analyze runs can cover larger repeated batches and changed synced documents.
 - Compare treats one selected document as the source baseline and compares selected target documents against it.
+- Mixed-source Analyze and cross-format Compare remain behind default-off rollout flags.
+- Every selected source has terminal coverage. Analyze requires at least one successful source, and Compare fails when its Source cannot be prepared while retaining failed Target visibility.
+- The bounded Analyze All backend remains default off and is not newly exposed in the workflow selector pending production rollout approval.

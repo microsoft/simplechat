@@ -1,5 +1,14 @@
 // chat-streaming.js
-import { appendMessage, renderAiMessageContent, updateUserMessageId } from './chat-messages.js';
+import {
+    appendMessage,
+    loadMessages,
+    markUserMessageMetadataFinalizationUnconfirmed,
+    markUserMessageMetadataUnconfirmed,
+    refreshUserMessageMetadata,
+    renderAiMessageContent,
+    setUserMessageStreamingActionsDisabled,
+    updateUserMessageId,
+} from './chat-messages.js';
 import { applyConversationMetadataUpdate, markConversationRead } from './chat-conversations.js';
 import { hideLoadingIndicatorInChatbox, showLoadingIndicatorInChatbox } from './chat-loading-indicator.js';
 import { showToast } from './chat-toast.js';
@@ -8,10 +17,12 @@ import { beginStreamingThoughtSession, clearStreamingThoughtSession, handleStrea
 import { destroyInlineCharts, hydrateInlineCharts } from './chat-inline-charts.js';
 import { hydrateInlineImageProposals } from './chat-inline-image-proposals.js';
 import { escapeHtml } from './chat-utils.js';
+import { requestDesktopNotificationPermissionIfNeeded, showDesktopConversationNotification } from './chat-desktop-notifications.js';
 
 let currentStreamController = null;
 let currentStreamContext = null;
 const MAX_STREAM_CLIENT_ERROR_LENGTH = 500;
+const USER_MESSAGE_PERSISTED_EVENT_TYPE = 'user_message_persisted';
 
 function normalizeLegacyEscapedSseDelimiters(chunk) {
     return String(chunk || '').replace(/(\})\\n\\n(?=(?:data:|event:|id:|retry:|:|$))/g, '$1\n\n');
@@ -72,6 +83,34 @@ function getStreamingMessageElement(messageId) {
     }
 
     return document.querySelector(`[data-message-id="${messageId}"]`);
+}
+
+function isConversationCurrentlyActive(conversationId) {
+    const normalizedConversationId = String(conversationId || '').trim();
+    return Boolean(normalizedConversationId) && window.currentConversationId === normalizedConversationId;
+}
+
+function markStreamingConversationReadIfActive(conversationId, contextLabel) {
+    if (!isConversationCurrentlyActive(conversationId)) {
+        return;
+    }
+
+    markConversationRead(conversationId, { force: true, suppressErrorToast: true }).catch(error => {
+        console.warn(`Failed to clear unread state after ${contextLabel}:`, error);
+    });
+}
+
+function notifySuccessfulStreamingCompletion(finalData) {
+    if (!window.simpleChatCompletionAudio?.handleCompletion) {
+        return;
+    }
+
+    window.simpleChatCompletionAudio.handleCompletion({
+        conversationId: finalData?.conversation_id,
+        messageId: finalData?.message_id,
+    }, {
+        refreshAdminGate: true,
+    });
 }
 
 function buildDefaultCancelEndpoint(conversationId) {
@@ -322,6 +361,25 @@ function updateStreamContextConversation(streamContext, conversationId) {
     setStreamingStopButtonState(streamContext.tempAiMessageId, streamContext.cancelEndpoint ? 'ready' : 'waiting_for_conversation');
 }
 
+function notifyConversationDocumentsMayHaveChanged(conversationId, autoOpen = false) {
+    const normalizedConversationId = String(conversationId || '').trim();
+    if (!normalizedConversationId) {
+        return;
+    }
+
+    window.dispatchEvent(new CustomEvent('chat:conversation-documents-refresh', {
+        detail: {
+            conversationId: normalizedConversationId,
+            autoOpen,
+        },
+    }));
+}
+
+function hasCitedWorkspaceDocuments(payload) {
+    return Array.isArray(payload?.cited_hybrid_citations)
+        && payload.cited_hybrid_citations.length > 0;
+}
+
 async function requestStreamCancellation(streamContext = currentStreamContext) {
     if (!streamContext || streamContext.cancellationRequested) {
         return false;
@@ -425,6 +483,24 @@ export function applyStreamingConversationMetadata(data = {}) {
     applyConversationMetadataUpdate(conversationId, metadataUpdates);
 }
 
+export function applyStreamingUserMessagePersistence(data = {}, tempUserMessageId = null) {
+    if (data.type !== USER_MESSAGE_PERSISTED_EVENT_TYPE || data.message_persisted !== true) {
+        return false;
+    }
+
+    const persistedUserMessageId = String(data.user_message_id || '').trim();
+    if (!persistedUserMessageId) {
+        return null;
+    }
+
+    const pendingUserMessageId = String(tempUserMessageId || '').trim();
+    if (pendingUserMessageId) {
+        updateUserMessageId(pendingUserMessageId, persistedUserMessageId);
+    }
+    setUserMessageStreamingActionsDisabled(persistedUserMessageId, true);
+    return persistedUserMessageId;
+}
+
 async function getStreamingStatus(conversationId) {
     if (!conversationId) {
         return null;
@@ -448,6 +524,7 @@ async function attemptStreamingRecovery(conversationId, failedMessageId, tempUse
         onError = null,
         onFinally = null,
         reconnectStatusLabel = 'Reconnecting...',
+        persistedUserMessageId = null,
     } = options;
 
     if (!conversationId) {
@@ -498,6 +575,7 @@ async function attemptStreamingRecovery(conversationId, failedMessageId, tempUse
                 allowRecovery: false,
                 recoveryConversationId: conversationId,
                 reconnectStatusLabel,
+                initialPersistedUserMessageId: persistedUserMessageId,
             },
         );
     } catch (error) {
@@ -516,6 +594,7 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
         cancelEndpoint = null,
         reconnectStatusLabel = 'Reconnecting...',
         fallbackAgentInfo = null,
+        initialPersistedUserMessageId = null,
     } = options;
 
     if (currentStreamController) {
@@ -541,8 +620,39 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
     let hasStreamedContent = false;
     let streamError = false;
     let streamCompleted = false;
+    let persistedUserMessageId = String(initialPersistedUserMessageId || '').trim() || null;
     let lastChunkAt = null;
     let eventCount = 0;
+
+    function finalizePendingUserMessageMetadata() {
+        if (persistedUserMessageId) {
+            if (tempUserMessageId) {
+                updateUserMessageId(
+                    tempUserMessageId,
+                    persistedUserMessageId,
+                    { refreshExpandedMetadata: true }
+                );
+            } else {
+                refreshUserMessageMetadata(persistedUserMessageId);
+            }
+        } else if (tempUserMessageId) {
+            markUserMessageMetadataUnconfirmed(tempUserMessageId);
+        }
+    }
+
+    function markInterruptedUserMessageMetadata() {
+        if (persistedUserMessageId) {
+            markUserMessageMetadataFinalizationUnconfirmed(persistedUserMessageId);
+        } else if (tempUserMessageId) {
+            markUserMessageMetadataUnconfirmed(tempUserMessageId);
+        }
+    }
+
+    function enablePersistedUserMessageActions() {
+        if (persistedUserMessageId) {
+            setUserMessageStreamingActionsDisabled(persistedUserMessageId, false);
+        }
+    }
 
     requestFactory(abortController.signal).then(response => {
         if (!response.ok) {
@@ -575,6 +685,11 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
             lastChunkAt = Date.now();
 
             if (data.error) {
+                if (data.user_message_id && data.message_persisted === true) {
+                    persistedUserMessageId = String(data.user_message_id);
+                }
+                finalizePendingUserMessageMetadata();
+                enablePersistedUserMessageActions();
                 stopThoughtPolling();
                 streamError = true;
                 clearStreamingThoughtSession(tempAiMessageId);
@@ -588,6 +703,36 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
                     error_message: data.error,
                 });
                 handleStreamError(tempAiMessageId, data.partial_content || accumulatedContent, data.error, data);
+                if (
+                    data.message_persisted
+                    && data.message_id
+                    && data.conversation_id
+                ) {
+                    notifyConversationDocumentsMayHaveChanged(
+                        data.conversation_id,
+                        false
+                    );
+                    if (
+                        data.conversation_kind === 'collaborative'
+                        && typeof window.chatCollaboration?.loadConversationMessages === 'function'
+                    ) {
+                        void window.chatCollaboration
+                            .loadConversationMessages(data.conversation_id)
+                            .catch(error => {
+                                console.warn(
+                                    'Failed to reload persisted collaborative response:',
+                                    error
+                                );
+                            });
+                    } else {
+                        void loadMessages(data.conversation_id).catch(error => {
+                            console.warn(
+                                'Failed to reload persisted response:',
+                                error
+                            );
+                        });
+                    }
+                }
                 clearCurrentStreamController(abortController);
                 if (typeof onError === 'function') {
                     onError(data.error, data);
@@ -611,6 +756,18 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
                 return false;
             }
 
+            if (data.type === USER_MESSAGE_PERSISTED_EVENT_TYPE) {
+                const acknowledgedUserMessageId = applyStreamingUserMessagePersistence(
+                    data,
+                    tempUserMessageId
+                );
+                if (acknowledgedUserMessageId) {
+                    persistedUserMessageId = acknowledgedUserMessageId;
+                }
+                updateStreamContextConversation(streamContext, data.conversation_id || data.conversationId);
+                return false;
+            }
+
             if (data.conversation_id || data.conversationId) {
                 updateStreamContextConversation(streamContext, data.conversation_id || data.conversationId);
             }
@@ -625,6 +782,11 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
                 stopThoughtPolling();
                 streamCompleted = true;
                 clearStreamingThoughtSession(tempAiMessageId);
+                if (data.user_message_id) {
+                    persistedUserMessageId = String(data.user_message_id);
+                }
+                finalizePendingUserMessageMetadata();
+                enablePersistedUserMessageActions();
 
                 if (data.cancelled || data.canceled || data.type === 'cancelled' || data.type === 'canceled') {
                     finalizeCancelledStreamingMessage(
@@ -652,6 +814,7 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
                     data,
                     fallbackAgentInfo
                 );
+                showDesktopConversationNotification(data);
 
                 if (typeof onDone === 'function') {
                     onDone(data);
@@ -739,6 +902,7 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
                                     onError,
                                     onFinally,
                                     reconnectStatusLabel,
+                                    persistedUserMessageId,
                                 },
                             );
                             if (recovered) {
@@ -746,6 +910,7 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
                             }
                         }
 
+                        markInterruptedUserMessageMetadata();
                         clearStreamingThoughtSession(tempAiMessageId);
                         handleStreamError(
                             tempAiMessageId,
@@ -776,6 +941,7 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
                 readStream(); // Continue reading
             }).catch(async err => {
                 if (abortController.signal.aborted) {
+                    markInterruptedUserMessageMetadata();
                     void reportClientStreamEvent('stream_aborted', {
                         conversation_id: recoveryConversationId,
                         elapsed_ms: Date.now() - streamStartedAt,
@@ -814,6 +980,7 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
                             onError,
                             onFinally,
                             reconnectStatusLabel,
+                            persistedUserMessageId,
                         },
                     );
                     if (recovered) {
@@ -821,6 +988,7 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
                     }
                 }
 
+                markInterruptedUserMessageMetadata();
                 clearStreamingThoughtSession(tempAiMessageId);
                 handleStreamError(tempAiMessageId, accumulatedContent, err.message, err);
                 if (typeof onError === 'function') {
@@ -836,6 +1004,7 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
         
     }).catch(async error => {
         if (abortController.signal.aborted) {
+            markInterruptedUserMessageMetadata();
             void reportClientStreamEvent('stream_aborted', {
                 conversation_id: recoveryConversationId,
                 elapsed_ms: Date.now() - streamStartedAt,
@@ -874,6 +1043,7 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
                     onError,
                     onFinally,
                     reconnectStatusLabel,
+                    persistedUserMessageId,
                 },
             );
             if (recovered) {
@@ -881,6 +1051,7 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
             }
         }
 
+        markInterruptedUserMessageMetadata();
         clearStreamingThoughtSession(tempAiMessageId);
         handleStreamError(tempAiMessageId, accumulatedContent, error.message, error);
 
@@ -898,6 +1069,7 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
 
 export function sendMessageWithStreaming(messageData, tempUserMessageId, currentConversationId, options = {}) {
     const { endpoint = '/api/chat/stream' } = options;
+    void requestDesktopNotificationPermissionIfNeeded();
     const tempAiMessageId = createStreamingPlaceholder();
     const recoveryConversationId = currentConversationId || messageData?.conversation_id || window.currentConversationId || null;
 
@@ -1100,10 +1272,6 @@ function finalizeCancelledStreamingMessage(messageId, userMessageId, finalData, 
     const messageElement = getStreamingMessageElement(messageId);
     const partialContent = finalData.full_content || finalData.partial_content || fallbackContent || '';
 
-    if (finalData.user_message_id && userMessageId) {
-        updateUserMessageId(userMessageId, finalData.user_message_id);
-    }
-
     removeStreamingStopButton(messageId);
 
     if (finalData.message_id && finalData.message_persisted) {
@@ -1144,15 +1312,15 @@ function finalizeCancelledStreamingMessage(messageId, userMessageId, finalData, 
             document.querySelector(`[data-message-id="${finalData.message_id}"]`),
             Boolean(String(partialContent || '').trim())
         );
+        notifyConversationDocumentsMayHaveChanged(
+            finalData.conversation_id,
+            false
+        );
     } else if (messageElement) {
         renderStoppedContent(messageElement, partialContent);
     }
 
-    if (finalData.conversation_id) {
-        markConversationRead(finalData.conversation_id, { force: true, suppressErrorToast: true }).catch(error => {
-            console.warn('Failed to clear unread state after stream cancellation:', error);
-        });
-    }
+    markStreamingConversationReadIfActive(finalData.conversation_id, 'stream cancellation');
 }
 
 function normalizeFallbackAgentIcon(iconPayload) {
@@ -1230,15 +1398,11 @@ function handleStreamError(messageId, partialContent, errorMessage, errorDetails
 
 function finalizeStreamingMessage(messageId, userMessageId, finalData, fallbackAgentInfo = null) {
     finalData = applyFallbackAgentIcon(finalData, fallbackAgentInfo);
+    notifySuccessfulStreamingCompletion(finalData);
     const messageElement = document.querySelector(`[data-message-id="${messageId}"]`);
     if (!messageElement) return;
 
     removeStreamingStopButton(messageId);
-    
-    // Update user message ID first
-    if (finalData.user_message_id && userMessageId) {
-        updateUserMessageId(userMessageId, finalData.user_message_id);
-    }
     
     // Remove the temporary streaming message
     messageElement.remove();
@@ -1252,11 +1416,11 @@ function finalizeStreamingMessage(messageId, userMessageId, finalData, fallbackA
     }
 
     if (existingFinalMessage) {
-        if (finalData.conversation_id) {
-            markConversationRead(finalData.conversation_id, { force: true, suppressErrorToast: true }).catch(error => {
-                console.warn('Failed to clear unread state after live streaming completion:', error);
-            });
-        }
+        markStreamingConversationReadIfActive(finalData.conversation_id, 'live streaming completion');
+        notifyConversationDocumentsMayHaveChanged(
+            finalData.conversation_id,
+            hasCitedWorkspaceDocuments(finalData)
+        );
         return;
     }
 
@@ -1285,6 +1449,10 @@ function finalizeStreamingMessage(messageId, userMessageId, finalData, fallbackA
         if (finalData.reload_messages && finalData.conversation_id && typeof window.chatMessages?.loadMessages === 'function') {
             window.chatMessages.loadMessages(finalData.conversation_id);
         }
+        notifyConversationDocumentsMayHaveChanged(
+            finalData.conversation_id,
+            hasCitedWorkspaceDocuments(finalData)
+        );
         return;
     }
 
@@ -1307,7 +1475,7 @@ function finalizeStreamingMessage(messageId, userMessageId, finalData, fallbackA
     );
     
     // Update conversation if needed
-    if (finalData.conversation_id && window.currentConversationId !== finalData.conversation_id) {
+    if (finalData.conversation_id && !window.currentConversationId) {
         window.currentConversationId = finalData.conversation_id;
     }
     
@@ -1348,11 +1516,11 @@ function finalizeStreamingMessage(messageId, userMessageId, finalData, fallbackA
         window.chatMessages.loadMessages(finalData.conversation_id);
     }
 
-    if (finalData.conversation_id) {
-        markConversationRead(finalData.conversation_id, { force: true, suppressErrorToast: true }).catch(error => {
-            console.warn('Failed to clear unread state after live streaming completion:', error);
-        });
-    }
+    notifyConversationDocumentsMayHaveChanged(
+        finalData.conversation_id,
+        hasCitedWorkspaceDocuments(finalData)
+    );
+    markStreamingConversationReadIfActive(finalData.conversation_id, 'live streaming completion');
 }
 
 export function cancelStreaming() {

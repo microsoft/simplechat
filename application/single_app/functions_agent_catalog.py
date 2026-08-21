@@ -382,7 +382,7 @@ def _load_agent_usage_counts(
                 counts[key] = counts.get(key, 0) + 1
     except Exception as exc:
         log_event(
-            "[AgentCatalog] Failed to load agent usage counts.",
+            "[AGENT_CATALOG] Failed to load agent usage counts.",
             extra={"error": str(exc), "since": since or "all_time"},
             level=logging.WARNING,
             exceptionTraceback=True,

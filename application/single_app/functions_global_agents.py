@@ -17,6 +17,7 @@ from config import cosmos_global_agents_container
 from functions_keyvault import keyvault_agent_save_helper, keyvault_agent_get_helper, keyvault_agent_delete_helper
 from functions_settings import *
 from functions_agent_payload import sanitize_agent_payload, AgentPayloadError
+from functions_chat_bootstrap_cache import bump_chat_bootstrap_global_cache_version
 
 
 def ensure_default_global_agent_exists():
@@ -256,6 +257,7 @@ def save_global_agent(agent_data, user_id=None):
             "Global agent saved successfully.",
             extra={"agent_id": result['id'], "user_id": user_id},
         )
+        bump_chat_bootstrap_global_cache_version(reason="global_agent_saved")
         print(f"Global agent saved successfully: {result['id']}")
         return result
     except Exception as e:
@@ -293,6 +295,7 @@ def delete_global_agent(agent_id):
             "Global agent deleted successfully.",
             extra={"agent_id": agent_id, "user_id": user_id},
         )
+        bump_chat_bootstrap_global_cache_version(reason="global_agent_deleted")
         print(f"Global agent deleted successfully: {agent_id}")
         return True
     except Exception as e:
@@ -335,6 +338,7 @@ def update_global_agent_enabled(agent_id, is_enabled, user_id=None):
         agent['modified_at'] = now
         agent['updated_at'] = now
         result = cosmos_global_agents_container.upsert_item(body=agent)
+        bump_chat_bootstrap_global_cache_version(reason="global_agent_enabled_updated")
         return result
     except Exception as e:
         log_event(

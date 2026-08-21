@@ -71,6 +71,8 @@ ACR_PASSWORD = "your_acr_password"
 
 Terraform defaults to Azure AI Search Standard S1 with standard Semantic Ranker and Cosmos DB provisioned dedicated container autoscale throughput. Free Search and serverless Cosmos DB remain configurable for short-lived MVP phases, but they are not the repository defaults because they can hit semantic query, indexing, or request-unit limits during document-heavy testing.
 
+Terraform also assigns the application managed identity the `SimpleChat Cosmos Throughput Operator` custom role on the deployed Cosmos account. It is limited to Cosmos account/database/container throughput discovery and mutation, throughput-operation reads, autoscale migration operations, and metrics reads; it does not replace Cosmos DB data-plane permissions. The optional Data Management source backup boost is capped at 10,000 RU/s and restores the captured capacity after completion, cancellation, failure, or durable recovery. Review the additional Cosmos cost before enabling it. Serverless, unsupported shared/dedicated throughput layouts, and capacity already above 10,000 RU/s remain portal-managed.
+
 ## Deploy initial container
 
 Terraform does not build the container image itself. It expects `image_name` to point to an image tag that already exists in your Azure Container Registry.

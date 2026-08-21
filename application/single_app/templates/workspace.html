@@ -1,5 +1,6 @@
 <!-- templates/workspace.html -->
 {% extends "base.html" %}
+{% from "_supported_file_types_modal.html" import supported_file_types_modal %}
 {% block title %} Personal Workspace - {{ app_settings.app_title }} {% endblock %}
 {% block head %}
    <link rel="stylesheet" href="/static/css/simplemde.min.css" />
@@ -603,26 +604,26 @@
         <label class="form-label" for="workspace-section-select">Section</label>
         <select class="form-select" id="workspace-section-select" data-workspace-section-select aria-label="Select workspace section">
           <option value="documents-tab-btn">Your Documents</option>
-          {% if file_sync_enabled %}
-            <option value="sync-tab-btn">Sync</option>
-          {% endif %}
+          <option value="prompts-tab-btn">Your Prompts</option>
           {% if workspace_identities_enabled %}
             <option value="identities-tab-btn">Identities</option>
           {% endif %}
-          <option value="prompts-tab-btn">Your Prompts</option>
-          {% if settings.per_user_semantic_kernel and settings.enable_semantic_kernel %}
-            {% if settings.allow_user_agents %}
-              <option value="agents-tab-btn">Your Agents</option>
-              {% if settings.allow_user_plugins %}
-                <option value="plugins-tab-btn">Your Actions</option>
-              {% endif %}
-            {% endif %}
-          {% endif %}
-          {% if settings.allow_user_workflows %}
-            <option value="workflows-tab-btn">Personal Workflows</option>
+          {% if file_sync_enabled %}
+            <option value="sync-tab-btn">Sync</option>
           {% endif %}
           {% if settings.allow_user_custom_endpoints and settings.enable_multi_model_endpoints %}
             <option value="endpoints-tab-btn">Your Endpoints</option>
+          {% endif %}
+          {% if settings.per_user_semantic_kernel and settings.enable_semantic_kernel %}
+            {% if settings.allow_user_agents %}
+              {% if settings.allow_user_plugins %}
+                <option value="plugins-tab-btn">Your Actions</option>
+              {% endif %}
+              <option value="agents-tab-btn">Your Agents</option>
+            {% endif %}
+          {% endif %}
+          {% if settings.allow_user_workflows %}
+            <option value="workflows-tab-btn">Workflows</option>
           {% endif %}
         </select>
       </div>
@@ -636,6 +637,7 @@
           id="documents-tab-btn"
           data-bs-toggle="tab"
           data-bs-target="#documents-tab"
+          title="Upload, search, organize, tag, and manage personal files used for grounded chat after processing and indexing."
           type="button"
           role="tab"
           aria-controls="documents-tab"
@@ -644,22 +646,21 @@
           Documents
         </button>
       </li>
-      {% if file_sync_enabled %}
       <li class="nav-item" role="presentation">
         <button
           class="nav-link"
-          id="sync-tab-btn"
+          id="prompts-tab-btn"
           data-bs-toggle="tab"
-          data-bs-target="#sync-tab"
+          data-bs-target="#prompts-tab"
+          title="Create, search, view, and reuse prompt templates for consistent chat instructions."
           type="button"
           role="tab"
-          aria-controls="sync-tab"
+          aria-controls="prompts-tab"
           aria-selected="false"
         >
-          Sync
+          Prompts
         </button>
       </li>
-      {% endif %}
       {% if workspace_identities_enabled %}
       <li class="nav-item" role="presentation">
         <button
@@ -667,6 +668,7 @@
           id="identities-tab-btn"
           data-bs-toggle="tab"
           data-bs-target="#identities-tab"
+          title="Manage reusable authentication profiles for File Sync and Actions so credentials stay scoped and resolved server-side."
           type="button"
           role="tab"
           aria-controls="identities-tab"
@@ -676,37 +678,42 @@
         </button>
       </li>
       {% endif %}
+      {% if file_sync_enabled %}
       <li class="nav-item" role="presentation">
         <button
           class="nav-link"
-          id="prompts-tab-btn"
+          id="sync-tab-btn"
           data-bs-toggle="tab"
-          data-bs-target="#prompts-tab"
+          data-bs-target="#sync-tab"
+          title="Configure external file sources that bring approved files into this workspace and run them through the document processing pipeline."
           type="button"
           role="tab"
-          aria-controls="prompts-tab"
+          aria-controls="sync-tab"
           aria-selected="false"
         >
-          Prompts
+          Sync
         </button>
       </li>
+      {% endif %}
+      {% if settings.allow_user_custom_endpoints and settings.enable_multi_model_endpoints %}
+        <li class="nav-item" role="presentation">
+          <button
+            class="nav-link"
+            id="endpoints-tab-btn"
+            data-bs-toggle="tab"
+            data-bs-target="#endpoints-tab"
+            title="Manage model endpoints available to personal agents and workflows alongside admin-managed global endpoints."
+            type="button"
+            role="tab"
+            aria-controls="endpoints-tab"
+            aria-selected="false"
+          >
+            Endpoints
+          </button>
+        </li>
+      {% endif %}
       {% if settings.per_user_semantic_kernel and settings.enable_semantic_kernel %}
         {% if settings.allow_user_agents %}
-          <li class="nav-item" role="presentation">
-            <button
-              class="nav-link"
-              id="agents-tab-btn"
-              data-bs-toggle="tab"
-              data-bs-target="#agents-tab"
-              type="button"
-              role="tab"
-              aria-controls="agents-tab"
-              aria-selected="false"
-            >
-              Agents
-            </button>
-          </li>
-      
           {% if settings.allow_user_plugins %}
             <li class="nav-item" role="presentation">
               <button
@@ -714,6 +721,7 @@
                 id="plugins-tab-btn"
                 data-bs-toggle="tab"
                 data-bs-target="#plugins-tab"
+                title="Configure governed tools that agents can call, such as APIs, databases, or other connected systems."
                 type="button"
                 role="tab"
                 aria-controls="plugins-tab"
@@ -723,6 +731,22 @@
               </button>
             </li>
           {% endif %}
+
+          <li class="nav-item" role="presentation">
+            <button
+              class="nav-link"
+              id="agents-tab-btn"
+              data-bs-toggle="tab"
+              data-bs-target="#agents-tab"
+              title="Reusable, specialized AI assistants that combine instructions, approved knowledge, and optional actions. Actions are tasks an agent is allowed to perform."
+              type="button"
+              role="tab"
+              aria-controls="agents-tab"
+              aria-selected="false"
+            >
+              Agents
+            </button>
+          </li>
         {% endif %}
       {% endif %}
       {% if settings.allow_user_workflows %}
@@ -732,28 +756,13 @@
             id="workflows-tab-btn"
             data-bs-toggle="tab"
             data-bs-target="#workflows-tab"
+            title="Save repeatable personal tasks that run manually or on a schedule using a selected model or agent, with optional document actions and run history."
             type="button"
             role="tab"
             aria-controls="workflows-tab"
             aria-selected="false"
           >
-            Personal Workflows
-          </button>
-        </li>
-      {% endif %}
-      {% if settings.allow_user_custom_endpoints and settings.enable_multi_model_endpoints %}
-        <li class="nav-item" role="presentation">
-          <button
-            class="nav-link"
-            id="endpoints-tab-btn"
-            data-bs-toggle="tab"
-            data-bs-target="#endpoints-tab"
-            type="button"
-            role="tab"
-            aria-controls="endpoints-tab"
-            aria-selected="false"
-          >
-            Endpoints
+            Workflows
           </button>
         </li>
       {% endif %}
@@ -773,12 +782,14 @@
 
           <!-- Document Upload Form -->
           <div class="mb-3">
-            <div id="upload-area" class="upload-area text-center p-4 border border-2 border-dashed rounded bg-light" style="cursor:pointer; transition: border-color 0.2s;">
+            <div id="upload-area" class="upload-area workspace-upload-area text-center py-2 px-3 border border-2 border-dashed rounded bg-light" style="cursor:pointer; transition: border-color 0.2s;">
               <input type="file" id="workspace-file-input" multiple style="display:none;" />
               <div class="upload-area-content">
-                <i class="bi bi-cloud-arrow-up display-4 text-primary mb-2"></i>
+                <i class="bi bi-cloud-arrow-up text-primary mb-1"></i>
                 <div class="fw-bold">Drag & drop files here or <span class="text-primary text-decoration-underline">click to browse</span></div>
-                <div class="small text-muted mt-1">{{ allowed_extensions }}</div>
+                <button type="button" class="btn btn-link btn-sm p-0 mt-1 workspace-upload-supported-types-trigger" data-bs-toggle="modal" data-bs-target="#workspaceSupportedFileTypesModal">
+                  View all supported file types
+                </button>
               </div>
             </div>
             <span id="upload-status" class="ms-2 text-muted small" style="display:none;"></span>
@@ -910,6 +921,9 @@
                 </button>
                 <button type="button" class="btn btn-sm btn-primary ms-2" id="chat-selected-btn">
                   <i class="bi bi-chat-dots-fill me-1"></i>Chat with Selected
+                </button>
+                <button type="button" class="btn btn-sm btn-warning ms-2 d-none" id="extract-selected-metadata-btn">
+                  <i class="bi bi-magic me-1"></i>Extract Metadata
                 </button>
                 <button type="button" class="btn btn-sm btn-outline-primary ms-2 d-none" id="download-selected-btn">
                   <i class="bi bi-download me-1"></i>Download Selected
@@ -1401,6 +1415,7 @@
   {% if settings.allow_user_custom_endpoints and settings.enable_multi_model_endpoints and workspace_governance.user_endpoints %}
   {% include '_multiendpoint_modal.html' %}
   {% endif %}
+  {{ supported_file_types_modal('workspaceSupportedFileTypesModal', 'Supported file types', allowed_extension_categories) }}
   <!-- Shared Item View Modal (read-only details for agents/actions) -->
   <div class="modal fade" id="item-view-modal" tabindex="-1" aria-labelledby="item-view-modal-label" aria-hidden="true">
     <div class="modal-dialog modal-lg modal-dialog-scrollable">
@@ -1421,32 +1436,88 @@
 
   {% if settings.allow_user_workflows %}
   <div class="modal fade" id="workflowModal" tabindex="-1" aria-labelledby="workflowModalLabel" aria-hidden="true">
-    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-dialog modal-xl modal-dialog-scrollable">
       <form class="modal-content" id="workflow-form" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true">
         <div class="modal-header">
-          <h5 class="modal-title" id="workflowModalLabel">Create Personal Workflow</h5>
+          <div>
+            <h5 class="modal-title" id="workflowModalLabel">Create Personal Workflow</h5>
+            <div class="text-muted small mt-1" id="workflow-step-description">Name the workflow and choose its default runner.</div>
+          </div>
           <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
         </div>
-        <div class="modal-body">
+        <div class="modal-body workflow-builder-body">
           <input type="hidden" id="workflow-id" />
-          <div class="row g-3 mb-3">
+          <nav class="workflow-step-nav" aria-label="Workflow setup steps">
+            <button type="button" class="workflow-step-nav__item is-active" data-workflow-step-target="general" aria-current="step"><span>1</span>General</button>
+            <button type="button" class="workflow-step-nav__item" data-workflow-step-target="trigger"><span>2</span>Trigger</button>
+            <button type="button" class="workflow-step-nav__item" data-workflow-step-target="tasks"><span>3</span>Tasks</button>
+            <button type="button" class="workflow-step-nav__item" data-workflow-step-target="reliability"><span>4</span>Reliability</button>
+            <button type="button" class="workflow-step-nav__item" data-workflow-step-target="review"><span>5</span>Review</button>
+          </nav>
+          <div class="row g-3 mb-3 workflow-step-block" data-workflow-step="general">
             <div class="col-md-7">
               <label for="workflow-name" class="form-label">Workflow Name</label>
               <input type="text" class="form-control" id="workflow-name" maxlength="120" required />
             </div>
             <div class="col-md-5">
-              <label for="workflow-runner-type" class="form-label">Runner</label>
+              <label for="workflow-runner-type" class="form-label">Default Runner</label>
               <select class="form-select" id="workflow-runner-type">
                 <option value="model">Direct Model</option>
                 <option value="agent">Agent</option>
               </select>
             </div>
           </div>
-          <div class="mb-3">
+          <div class="mb-3 workflow-step-block" data-workflow-step="general">
             <label for="workflow-description" class="form-label">Description</label>
             <input type="text" class="form-control" id="workflow-description" maxlength="240" placeholder="Optional summary for the workflow list." />
           </div>
-          <div class="mb-3">
+          <div class="workflow-step-block" data-workflow-step="tasks">
+            <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
+              <div>
+                <h6 class="mb-1">Task sequence</h6>
+                <div class="form-text mt-0">Tasks run from top to bottom with the workflow default or a task override.</div>
+              </div>
+              <button type="button" class="btn btn-outline-primary btn-sm" id="workflow-add-task-btn">
+                <i class="bi bi-plus-circle me-1" aria-hidden="true"></i>Add Task
+              </button>
+            </div>
+            <div id="workflow-task-list" class="workflow-task-list mb-3" aria-live="polite"></div>
+            <div class="workflow-task-editor border rounded-2 p-3 mb-3" id="workflow-task-editor">
+              <label for="workflow-task-name" class="form-label">Task Name</label>
+              <input type="text" class="form-control" id="workflow-task-name" maxlength="120" placeholder="e.g., Summarize findings" />
+              <div class="mt-3">
+                <label for="workflow-task-runner-type" class="form-label">Runner</label>
+                <select class="form-select" id="workflow-task-runner-type">
+                  <option value="inherit">Workflow default</option>
+                  <option value="model">Direct Model</option>
+                  <option value="agent">Agent</option>
+                </select>
+              </div>
+              <div class="row g-3 mt-1 d-none" id="workflow-task-model-fields">
+                <div class="col-12 col-md-4">
+                  <label for="workflow-task-model-source" class="form-label">Model Source</label>
+                  <select class="form-select" id="workflow-task-model-source">
+                    <option value="global">Global endpoints</option>
+                    <option value="workspace">Personal endpoints</option>
+                  </select>
+                </div>
+                <div class="col-12 col-md-4">
+                  <label for="workflow-task-model-endpoint" class="form-label">Endpoint</label>
+                  <select class="form-select" id="workflow-task-model-endpoint"></select>
+                </div>
+                <div class="col-12 col-md-4">
+                  <label for="workflow-task-model" class="form-label">Model</label>
+                  <select class="form-select" id="workflow-task-model"></select>
+                </div>
+              </div>
+              <div class="mt-3 d-none" id="workflow-task-agent-fields">
+                <label for="workflow-task-agent" class="form-label">Agent</label>
+                <select class="form-select" id="workflow-task-agent"></select>
+                <div class="form-text" id="workflow-task-agent-help">Choose an authorized personal or merged global agent.</div>
+              </div>
+            </div>
+          </div>
+          <div class="mb-3 workflow-step-block" data-workflow-step="tasks">
             <label for="workflow-task-brief" class="form-label">Task Brief</label>
             <textarea class="form-control" id="workflow-task-brief" rows="3" placeholder="Briefly describe what this workflow should accomplish."></textarea>
             <div class="d-flex align-items-center gap-2 mt-2">
@@ -1456,24 +1527,27 @@
               <span class="text-muted small" id="workflow-draft-instructions-status" aria-live="polite"></span>
             </div>
           </div>
-          <div class="mb-3">
-            <label for="workflow-task-prompt" class="form-label">Workflow Instructions</label>
-            <textarea class="form-control" id="workflow-task-prompt" rows="7" placeholder="Describe exactly what this workflow should do each time it runs." required></textarea>
-            <div class="form-text">Each run appends this prompt to the workflow conversation as a new user message.</div>
+          <div class="mb-3 workflow-step-block" data-workflow-step="tasks">
+            <label for="workflow-task-prompt" class="form-label">Task Instructions</label>
+            <textarea class="form-control" id="workflow-task-prompt" rows="7" placeholder="Describe exactly what this task should do each time it runs."></textarea>
+            <div class="form-text">The next task receives this task's response as bounded context.</div>
           </div>
           {% if settings.enable_url_access %}
-          <div class="form-check form-switch mb-3" id="workflow-url-access-group">
+          <div class="form-check form-switch mb-3 workflow-step-block" id="workflow-url-access-group" data-workflow-step="trigger">
             <input class="form-check-input" type="checkbox" id="workflow-url-access-enabled" />
             <label class="form-check-label ms-2" for="workflow-url-access-enabled">Allow URL Access for this workflow</label>
             <div class="form-text">Workflow runs can review up to {{ settings.url_access_max_workflow_urls_per_run|default(50, true) }} HTTP(S) URLs from the task prompt using the shared admin domain policy.</div>
           </div>
           {% endif %}
 
-          <div class="card p-3 mb-3">
+          <div class="card p-3 mb-3 workflow-step-block" data-workflow-step="tasks">
+            <h6 class="mb-1">Workspace documents</h6>
+            <div class="form-text mb-3">Optional and saved with the selected task. Use a document action only when this task needs workspace document context.</div>
             <div class="row g-3 mb-2">
               <div class="col-md-6">
-                <label for="workflow-document-action-type" class="form-label">Action Type</label>
-                <select class="form-select" id="workflow-document-action-type" title="Search selected or recent documents and use matching excerpts as workflow context.">
+                <label for="workflow-document-action-type" class="form-label">Document action</label>
+                <select class="form-select" id="workflow-document-action-type" title="Run the workflow instructions without workspace document context.">
+                  <option value="none" data-action-description="Run the workflow instructions without workspace document context." title="Run the workflow instructions without workspace document context.">No document action</option>
                   <option value="search" data-action-description="Search selected or recent documents and use matching excerpts as workflow context." title="Search selected or recent documents and use matching excerpts as workflow context.">Search</option>
                   {% if settings.document_action_capabilities.analyze.enabled %}
                   <option value="analyze" data-action-description="Perform an in-depth analysis across all selected documents based on your request." title="Perform an in-depth analysis across all selected documents based on your request.">Analyze</option>
@@ -1483,12 +1557,12 @@
                   {% endif %}
                 </select>
               </div>
-              <div class="col-md-6">
+              <div class="col-md-6 d-none" id="workflow-analysis-retries-group">
                 <label for="workflow-analysis-retries" class="form-label">Retries Per Window</label>
                 <input type="number" class="form-control" id="workflow-analysis-retries" min="0" max="5" value="1" />
               </div>
             </div>
-            <div class="form-text mt-2" id="workflow-document-action-help">Search selected or recent documents and use matching excerpts as workflow context.</div>
+            <div class="form-text mt-2" id="workflow-document-action-help">Run the workflow instructions without workspace document context.</div>
 
             <div id="workflow-document-targets-fields" class="mt-3 d-none">
               <input type="hidden" id="workflow-analysis-doc-scope" value="personal" />
@@ -1522,13 +1596,14 @@
               <div id="workflow-document-picker-card" class="border rounded-3 p-3 mb-3">
                 <div class="d-flex flex-wrap gap-2 justify-content-between align-items-center mb-3">
                   <div class="form-text mb-0" id="workflow-selected-documents-summary">No workspace documents selected in the picker.</div>
-                  <button type="button" class="btn btn-sm btn-outline-secondary" id="workflow-use-selected-documents-btn">Refresh selected documents</button>
+                  <button type="button" class="btn btn-sm btn-outline-secondary" id="workflow-use-selected-documents-btn">Refresh documents</button>
                 </div>
                 <div id="workflow-document-picker-loading" class="text-muted small mb-2 d-none">
                   <span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>Loading documents...
                 </div>
                 <div id="workflow-document-picker-error" class="alert alert-warning py-2 d-none" role="alert"></div>
                 <select class="d-none" id="document-action-select" aria-label="Workflow document action">
+                  <option value="none">No document action</option>
                   <option value="search">Search</option>
                   {% if settings.document_action_capabilities.analyze.enabled %}
                   <option value="analyze">Analyze</option>
@@ -1631,7 +1706,7 @@
             </div>
           </div>
 
-          <div class="card p-3 mb-3" id="workflow-file-sync-card">
+          <div class="card p-3 mb-3 workflow-step-block" id="workflow-file-sync-card" data-workflow-step="trigger">
             <div class="d-flex flex-wrap gap-2 justify-content-between align-items-start mb-3">
               <div>
                 <label class="form-label mb-0" for="workflow-file-sync-enabled">File Sync Before Run</label>
@@ -1670,7 +1745,7 @@
             </div>
           </div>
 
-          <div id="workflow-agent-fields" class="card p-3 mb-3 d-none">
+          <div id="workflow-agent-fields" class="card p-3 mb-3 d-none workflow-step-block" data-workflow-step="general">
             <div class="mb-0">
               <label for="workflow-agent-select" class="form-label">Selected Agent</label>
               <select class="form-select" id="workflow-agent-select"></select>
@@ -1678,7 +1753,7 @@
             </div>
           </div>
 
-          <div id="workflow-model-fields" class="card p-3 mb-3">
+          <div id="workflow-model-fields" class="card p-3 mb-3 workflow-step-block" data-workflow-step="general">
             <div class="row g-3">
               <div class="col-md-4">
                 <label for="workflow-model-source" class="form-label">Model Source</label>
@@ -1699,9 +1774,19 @@
             <div class="form-text mt-2" id="workflow-model-help">The default app model follows your admin-configured default selection or legacy GPT settings.</div>
           </div>
 
-          <div class="card p-3 mb-3">
-            <div class="row g-3 align-items-end">
+          <div class="card p-3 mb-3 workflow-step-block" data-workflow-step="review">
+            <h6 class="mb-1">Alerts</h6>
+            <div class="form-text mb-3">Alerts notify you when a run meets a condition you define. A run that matches nothing stays silent.</div>
+            <div class="row g-3">
               <div class="col-md-5">
+                <label for="workflow-alert-mode" class="form-label">When to alert</label>
+                <select class="form-select" id="workflow-alert-mode">
+                  <option value="off">Never notify me</option>
+                  <option value="rules">Only when a condition is met</option>
+                  <option value="every_run">On every run</option>
+                </select>
+              </div>
+              <div class="col-md-5 d-none" id="workflow-alert-priority-group">
                 <label for="workflow-alert-priority" class="form-label">Pop-up Alert Priority</label>
                 <select class="form-select" id="workflow-alert-priority">
                   <option value="none">No notification</option>
@@ -1710,13 +1795,28 @@
                   <option value="high">High priority</option>
                 </select>
               </div>
-              <div class="col-md-7">
-                <div class="form-text mt-0">When enabled, workflow runs create a pop-up alert modal with direct links to the workflow conversation and any conversation the agent created during the run.</div>
+            </div>
+            <div class="mt-3 d-none" id="workflow-alert-rules-group">
+              <div class="d-flex justify-content-between align-items-center mb-2">
+                <span class="form-label mb-0">Alert rules</span>
+                <button type="button" class="btn btn-sm btn-outline-primary" id="workflow-alert-rule-add-btn"><i class="bi bi-plus-lg me-1" aria-hidden="true"></i>Add rule</button>
+              </div>
+              <div id="workflow-alert-rules-list" class="workflow-alert-rules-list"></div>
+              <div class="form-text mt-2">When several rules match the same run, the highest severity wins and every matched rule is listed in the alert.</div>
+              <div class="form-text">Info and low severities go to the notification bell only. Medium and above open the pop-up alert.</div>
+              <div class="row g-3 mt-1">
+                <div class="col-md-6">
+                  <label for="workflow-alert-evaluation-on-error" class="form-label">If a model evaluated condition cannot be judged</label>
+                  <select class="form-select" id="workflow-alert-evaluation-on-error">
+                    <option value="skip">Skip the rule and stay silent</option>
+                    <option value="alert">Alert anyway so it is not missed</option>
+                  </select>
+                </div>
               </div>
             </div>
           </div>
 
-          <div class="card p-3">
+          <div class="card p-3 workflow-step-block" id="workflow-trigger-settings-card" data-workflow-step="trigger">
             <div class="row g-3 align-items-end">
               <div class="col-md-4">
                 <label for="workflow-trigger-type" class="form-label">Trigger</label>
@@ -1745,10 +1845,33 @@
             </div>
             <div class="form-text mt-2" id="workflow-trigger-help">Manual workflows run only when you trigger them from the workspace.</div>
           </div>
+          <div class="workflow-step-block" data-workflow-step="reliability">
+            <div class="card p-3">
+              <h6 class="mb-3">Error strategy</h6>
+              <div class="form-check mb-2">
+                <input class="form-check-input" type="radio" name="workflow-error-strategy" id="workflow-error-strategy-halt" value="halt" checked />
+                <label class="form-check-label" for="workflow-error-strategy-halt">Stop when a task still fails after retries</label>
+              </div>
+              <div class="form-check mb-3">
+                <input class="form-check-input" type="radio" name="workflow-error-strategy" id="workflow-error-strategy-continue" value="continue" />
+                <label class="form-check-label" for="workflow-error-strategy-continue">Record the failure and continue to the next task</label>
+              </div>
+              <div class="border-top pt-3">
+                <label for="workflow-task-retry-count" class="form-label">Task Retry Count</label>
+                <input type="number" class="form-control workflow-retry-input" id="workflow-task-retry-count" min="0" max="5" value="0" />
+                <div class="form-text">Retries apply to each task before the selected error strategy.</div>
+              </div>
+            </div>
+          </div>
+          <div class="workflow-step-block" id="workflow-review-summary-block" data-workflow-step="review">
+            <div class="workflow-review-summary" id="workflow-review-summary" aria-live="polite"></div>
+          </div>
         </div>
         <div class="modal-footer">
           <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
-          <button type="submit" class="btn btn-primary" id="workflow-save-btn">Save Personal Workflow</button>
+          <button type="button" class="btn btn-outline-secondary d-none" id="workflow-step-back-btn"><i class="bi bi-arrow-left me-1" aria-hidden="true"></i>Back</button>
+          <button type="button" class="btn btn-primary" id="workflow-step-next-btn">Next<i class="bi bi-arrow-right ms-1" aria-hidden="true"></i></button>
+          <button type="submit" class="btn btn-primary d-none" id="workflow-save-btn">Save Personal Workflow</button>
         </div>
       </form>
     </div>
@@ -2473,6 +2596,9 @@
     window.urlAccessSettings = {
       enable_url_access: {{ settings.enable_url_access|default(false, true)|tojson }},
       url_access_max_workflow_urls_per_run: {{ settings.url_access_max_workflow_urls_per_run|default(50, true)|tojson }}
+    };
+    window.workflowSettings = {
+      workflow_max_tasks: {{ settings.workflow_max_tasks|default(50, true)|tojson }}
     };
     window.max_file_size_mb = {{ settings.max_file_size_mb | default(16) }};
     

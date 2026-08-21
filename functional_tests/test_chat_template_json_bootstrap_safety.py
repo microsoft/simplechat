@@ -10,6 +10,7 @@ string literals that can break when payload values contain control characters.
 """
 
 from pathlib import Path
+from test_support.versioning import assert_app_version_at_least
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -56,7 +57,7 @@ def test_chat_template_bootstraps_json_with_direct_literals():
     template_content = CHAT_TEMPLATE.read_text(encoding="utf-8")
     config_content = CONFIG_FILE.read_text(encoding="utf-8")
 
-    assert 'VERSION = "0.240.008"' in config_content, "Expected config.py version 0.240.008"
+    assert_app_version_at_least("0.240.008")
 
     missing_safe_assignments = [
         snippet for snippet in SAFE_ASSIGNMENTS if snippet not in template_content
