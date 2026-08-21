@@ -2,6 +2,10 @@
 
 **Fixed in version: 0.260.023**
 
+**Issue:** [#1332](https://github.com/microsoft/simplechat/issues/1332)
+
+**Related:** [#1021](https://github.com/microsoft/simplechat/issues/1021) — turn-level orchestration across chat capabilities, the strategic solution to this class of problem. This fix addresses the concrete symptom and does not close that initiative.
+
 ## Issue
 
 Selecting an agent that has actions, enabling a workspace, and asking a specific
