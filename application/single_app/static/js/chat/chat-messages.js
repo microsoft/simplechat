@@ -32,6 +32,7 @@ import { attachGeneratedImageProposalResults, extractInlineImageProposalBlocks, 
 import { renderInlineVideoGalleries } from './chat-inline-videos.js';
 import { renderInlineImageGalleries } from './chat-inline-images.js';
 import { renderInlineAzureMaps } from './chat-inline-maps.js';
+import { getCitedHybridCitations, getCitedWebCitations } from './chat-citation-tracking.js';
 
 // Conditionally import TTS if enabled
 let ttsModule = null;
@@ -6010,17 +6011,23 @@ export function appendMessage(
     }
 
     void (async () => {
+      // Inline galleries present media as supporting the answer, so they render
+      // only what the response cited. The Sources disclosure keeps the complete
+      // retrieved set.
+      const citedHybridCitations = getCitedHybridCitations(fullMessageObject, hybridCitations);
+      const citedWebCitations = getCitedWebCitations(fullMessageObject, webCitations);
+
       await renderInlineVideoGalleries(
         messageDiv,
-        hybridCitations || [],
-        webCitations || [],
+        citedHybridCitations,
+        citedWebCitations,
         agentCitations || [],
         messageConversationId
       );
       await renderInlineImageGalleries(
         messageDiv,
-        hybridCitations || [],
-        webCitations || [],
+        citedHybridCitations,
+        citedWebCitations,
         agentCitations || [],
         messageId,
         messageConversationId

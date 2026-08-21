@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for cited-source tracking.
-Version: 0.250.215
+Version: 0.260.024
 Implemented in: 0.250.215
 
 This test ensures returned sources remain complete while exact document and
@@ -37,6 +37,11 @@ CHAT_COLLABORATION_JS = (
 CHAT_MESSAGES_JS = APP_ROOT / "static" / "js" / "chat" / "chat-messages.js"
 CHAT_RETRY_JS = APP_ROOT / "static" / "js" / "chat" / "chat-retry.js"
 CHAT_EDIT_JS = APP_ROOT / "static" / "js" / "chat" / "chat-edit.js"
+CHAT_CITATION_TRACKING_JS = (
+    APP_ROOT / "static" / "js" / "chat" / "chat-citation-tracking.js"
+)
+INLINE_IMAGES_JS = APP_ROOT / "static" / "js" / "chat" / "chat-inline-images.js"
+INLINE_VIDEOS_JS = APP_ROOT / "static" / "js" / "chat" / "chat-inline-videos.js"
 SIMPLECHAT_OPERATIONS = APP_ROOT / "functions_simplechat_operations.py"
 WORKFLOW_RUNNER = APP_ROOT / "functions_workflow_runner.py"
 if str(APP_ROOT) not in sys.path:
@@ -630,6 +635,46 @@ def test_ui_and_exports_select_cited_subsets_without_losing_sources():
     assert "Web References" in export_source
 
 
+def test_inline_media_galleries_render_cited_subsets_only():
+    """Verify inline image and video galleries consume cited subsets, not sources."""
+    tracking_source = CHAT_CITATION_TRACKING_JS.read_text(encoding="utf-8")
+    messages_source = CHAT_MESSAGES_JS.read_text(encoding="utf-8")
+    images_source = INLINE_IMAGES_JS.read_text(encoding="utf-8")
+    videos_source = INLINE_VIDEOS_JS.read_text(encoding="utf-8")
+
+    assert "export function messageHasCitationTracking(message)" in tracking_source
+    assert "export function getCitedHybridCitations(message, sourceCitations = [])" in tracking_source
+    assert "export function getCitedWebCitations(message, sourceCitations = [])" in tracking_source
+    assert '"cited_hybrid_citations" in message || "cited_web_search_citations" in message' in tracking_source
+
+    assert (
+        "import { getCitedHybridCitations, getCitedWebCitations } from './chat-citation-tracking.js';"
+        in messages_source
+    )
+    assert (
+        "const citedHybridCitations = getCitedHybridCitations(fullMessageObject, hybridCitations);"
+        in messages_source
+    )
+    assert (
+        "const citedWebCitations = getCitedWebCitations(fullMessageObject, webCitations);"
+        in messages_source
+    )
+
+    # Sources keeps the complete retrieved inventory; only the galleries narrow.
+    citations_call = messages_source.split(
+        "const citationsButtonsHtml = createCitationsHtml("
+    )[1].split(");")[0]
+    assert "hybridCitations," in citations_call
+    assert "webCitations," in citations_call
+    assert "citedHybridCitations" not in citations_call
+    assert "citedWebCitations" not in citations_call
+
+    for gallery_source in (images_source, videos_source):
+        assert "citedHybridCitations = []," in gallery_source
+        assert "citedWebCitations = []," in gallery_source
+        assert "agentCitations = []," in gallery_source
+
+
 def test_version_is_available():
     """Verify the application includes the cited-source tracking version."""
     assert_app_version_at_least("0.250.215")
@@ -652,6 +697,7 @@ if __name__ == "__main__":
         test_lifecycle_mutations_and_forks_rebuild_exact_usage,
         test_collaboration_and_workflow_propagate_tracking_contract,
         test_ui_and_exports_select_cited_subsets_without_losing_sources,
+        test_inline_media_galleries_render_cited_subsets_only,
         test_version_is_available,
     ]
     for test in tests:
