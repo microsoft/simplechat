@@ -88,7 +88,7 @@ USER_CURRENT_FEATURE_IMAGE_FILES = {
     'release_260_chat_ai_notice': ['release_260_chat_ai_notice_1.png', 'release_260_chat_ai_notice_2.png', 'release_260_chat_ai_notice_3.png'],
     'release_260_conversation_context_grounding': ['release_260_conversation_context_grounding_1.png', 'release_260_conversation_context_grounding_2.png', 'release_260_conversation_context_grounding_3.png'],
     'release_260_used_documents_fork': ['release_260_used_documents_fork_1.png', 'release_260_used_documents_fork_2.png', 'release_260_used_documents_fork_3.png'],
-    'release_260_conversation_contents_drawer': ['release_260_conversation_contents_drawer_1.png', 'release_260_conversation_contents_drawer_2.png', 'release_260_conversation_contents_drawer_3.png'],
+    'release_260_conversation_contents_drawer': ['release_260_conversation_contents_drawer_1.png', 'release_260_conversation_contents_drawer_2.png'],
     'release_260_font_size_zoom': ['release_260_font_size_zoom_1.png', 'release_260_font_size_zoom_2.png', 'release_260_font_size_zoom_3.png'],
     'release_260_message_audio_export': ['release_260_message_audio_export_1.png', 'release_260_message_audio_export_2.png', 'release_260_message_audio_export_3.png'],
     'release_260_public_workspace_display_name': ['release_260_public_workspace_display_name_1.png', 'release_260_public_workspace_display_name_2.png', 'release_260_public_workspace_display_name_3.png'],
@@ -102,10 +102,8 @@ ADMIN_CURRENT_FEATURE_IMAGE_FILES = {
     'admin_release_260_model_identity_header': ['admin_release_260_model_identity_header.png'],
     'admin_release_260_per_model_response_length': ['admin_release_260_per_model_response_length.png'],
     'admin_release_260_control_center_refresh': ['admin_release_260_control_center_refresh.png'],
-    'admin_release_260_feedback_safety_lifecycle': ['admin_release_260_feedback_safety_lifecycle.png'],
     'admin_release_260_log_cleanup': ['admin_release_260_log_cleanup.png'],
     'admin_release_260_redis_explorer': ['admin_release_260_redis_explorer.png'],
-    'admin_release_260_index_auto_login': ['admin_release_260_index_auto_login.png'],
     'admin_release_260_enhanced_extraction': ['admin_release_260_enhanced_extraction.png'],
     'admin_release_260_mcp_platform': ['admin_release_260_mcp_platform.png'],
     'admin_release_260_azure_blob_file_sync': ['admin_release_260_azure_blob_file_sync.png'],
@@ -113,6 +111,14 @@ ADMIN_CURRENT_FEATURE_IMAGE_FILES = {
     'admin_release_260_chat_ai_notice': ['admin_release_260_chat_ai_notice.png'],
     'admin_release_260_public_workspace_display_name': ['admin_release_260_public_workspace_display_name.png'],
 }
+
+# These settings have no admin pane of their own to photograph: auto-login is an
+# environment variable, and the record lifecycle controls only appear once real
+# feedback or safety rows exist.
+ADMIN_FEATURES_WITHOUT_SCREENSHOTS = [
+    'admin_release_260_feedback_safety_lifecycle',
+    'admin_release_260_index_auto_login',
+]
 
 PREVIOUS_ADMIN_FEATURE_IDS = [
     'admin_release_250_azure_openai_identity',
@@ -181,7 +187,7 @@ def test_user_latest_features_catalog_release_groups():
     assert default_visibility['deployment'] is False
     assert default_visibility['redis_key_vault'] is False
     assert default_visibility['release_250_ai_access'] is True
-    assert all(default_visibility[feature_id] is False for feature_id in USER_CURRENT_FEATURE_IDS), 'v0.260.001 cards ship hidden until their placeholder screenshots are replaced'
+    assert all(default_visibility[feature_id] is True for feature_id in USER_CURRENT_FEATURE_IDS), 'v0.260.001 cards ship visible now that every screenshot is a real capture'
 
     first_feature = release_groups[0]['features'][0]
     assert first_feature['id'] == 'release_260_enhanced_extraction'
@@ -194,7 +200,7 @@ def test_user_latest_features_catalog_release_groups():
         assert feature.get('image') == expected_paths[0], f"Primary image mismatch for {feature['id']}"
         assert feature.get('image_alt'), f"Missing primary image alt text for {feature['id']}"
         assert [image['path'] for image in images] == expected_paths, f"Gallery image paths mismatch for {feature['id']}"
-        assert len(images) == 3, f"Expected three gallery images for {feature['id']}"
+        assert len(images) == len(expected_files), f"Gallery image count mismatch for {feature['id']}"
         assert len(feature.get('guidance', [])) >= 5, f"Expected at least five how-to steps for {feature['id']}"
 
     print('User-facing Latest Features catalog release groups are current')
@@ -238,6 +244,9 @@ def test_admin_latest_features_catalog_release_groups():
             images = feature.get('images', [])
             assert feature.get('image') == expected_paths[0], f"Primary admin image mismatch for {feature['id']}"
             assert [image['path'] for image in images] == expected_paths, f"Admin gallery image paths mismatch for {feature['id']}"
+        elif feature['id'] in ADMIN_FEATURES_WITHOUT_SCREENSHOTS:
+            assert not feature.get('images'), f"Expected no screenshot slot for {feature['id']}"
+            assert not feature.get('image'), f"Expected no primary image for {feature['id']}"
 
     print('Admin Latest Features catalog release groups are current')
     return True

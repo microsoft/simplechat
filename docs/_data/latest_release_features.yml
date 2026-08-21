@@ -220,9 +220,9 @@ lookup:
       label: Test Connection
     - path: /images/latest-release/release_260_mcp_platform_3.png
       alt: Use MCP Tools in Chat screenshot placeholder
-      title: Use MCP Tools in Chat
-      caption: An agent holding an MCP action can call those tools during a conversation.
-      label: MCP in Chat
+      title: Review the MCP Configuration
+      caption: The final step lists the transport, preset, timeouts, and the exact tools the action will expose.
+      label: MCP Summary
   release-260-yamcs-action:
     title: Yamcs Mission Control Integration
     description: A new Yamcs action type connects agents to Yamcs mission control servers with eleven read-only tools covering
@@ -251,9 +251,9 @@ lookup:
       label: Connection Test
     - path: /images/latest-release/release_260_yamcs_action_3.png
       alt: Ask About Telemetry screenshot placeholder
-      title: Ask About Telemetry
-      caption: An agent with the Yamcs action can answer questions about telemetry, events, and alarms.
-      label: Telemetry Q&A
+      title: Review the Yamcs Configuration
+      caption: The summary confirms the instance, processor, authentication, TLS, limits, and archive SQL state before saving.
+      label: Configuration Summary
   release-260-rocksdb-action:
     title: RocksDB Key-Value Store Action
     description: A new RocksDB action type lets agents read from an ordered key-value store through a conforming HTTP and
@@ -282,9 +282,9 @@ lookup:
       label: Auth Options
     - path: /images/latest-release/release_260_rocksdb_action_3.png
       alt: Query Keys From Chat screenshot placeholder
-      title: Query Keys From Chat
-      caption: Ask an agent for a specific key or a range scan across a key prefix.
-      label: Key Lookup
+      title: Review the Keyspace Configuration
+      caption: The summary confirms read-only access, encodings, limits, and the key prefixes the model is told about.
+      label: Keyspace Summary
   release-260-agent-instruction-references:
     title: Reference Actions and Knowledge Directly in Agent Instructions
     description: Agent instructions can now name the exact actions and documents an agent holds using autocompleted hash-action
@@ -519,20 +519,20 @@ lookup:
     image_alt: Context Citation on a Response screenshot placeholder
     images:
     - path: /images/latest-release/release_260_conversation_context_grounding_1.png
-      alt: Context Citation on a Response screenshot placeholder
+      alt: Context Citation on a Response screenshot
       title: Context Citation on a Response
-      caption: Every answer carries a Conversation Context citation alongside its document sources.
+      caption: Every answer carries a Conversation Context citation alongside Conversation History and Instruction Memory.
       label: Context Citation
     - path: /images/latest-release/release_260_conversation_context_grounding_2.png
-      alt: Model and Version Detail screenshot placeholder
-      title: Model and Version Detail
-      caption: See the exact model and SimpleChat version that produced the response.
-      label: Model Detail
+      alt: Document Sources screenshot
+      title: Document Sources
+      caption: Statements drawn from a workspace document cite the source file and the page they came from.
+      label: Document Sources
     - path: /images/latest-release/release_260_conversation_context_grounding_3.png
-      alt: Scope and Documents screenshot placeholder
-      title: Scope and Documents
-      caption: Workspace scope, selected documents, agent, and capability state are all recorded.
-      label: Scope Detail
+      alt: Scope and Generation Detail screenshot
+      title: Scope and Generation Detail
+      caption: The detail panel records the model, workspace action, retrieval flags, and agent citations behind the answer.
+      label: Generation Detail
   release-260-used-documents-fork:
     title: Used Documents View and Conversation Forking
     description: A Used Documents mode shows only the documents actually cited in a conversation, and you can fork a conversation
@@ -581,17 +581,12 @@ lookup:
     image_alt: Contents Drawer screenshot placeholder
     images:
     - path: /images/latest-release/release_260_conversation_contents_drawer_1.png
-      alt: Contents Drawer screenshot placeholder
+      alt: Contents Drawer screenshot
       title: Contents Drawer
-      caption: Your earlier prompts are indexed as navigable entries beside the conversation.
+      caption: Your earlier prompts are indexed as navigable entries; select one to move straight to that point in a long conversation.
       label: Drawer
     - path: /images/latest-release/release_260_conversation_contents_drawer_2.png
-      alt: Jump to a Prompt screenshot placeholder
-      title: Jump to a Prompt
-      caption: Select an entry to move directly to that point in a long conversation.
-      label: Jump
-    - path: /images/latest-release/release_260_conversation_contents_drawer_3.png
-      alt: Hide It If You Prefer screenshot placeholder
+      alt: Hide It If You Prefer screenshot
       title: Hide It If You Prefer
       caption: Each user can hide the drawer from their own profile page.
       label: Profile Toggle
@@ -668,22 +663,22 @@ lookup:
     release_label: Current Release
     release_version: 0.260.001
     image: /images/latest-release/release_260_public_workspace_display_name_1.png
-    image_alt: Renamed in Chat Scope screenshot placeholder
+    image_alt: Set the End-User Label screenshot
     images:
     - path: /images/latest-release/release_260_public_workspace_display_name_1.png
-      alt: Renamed in Chat Scope screenshot placeholder
-      title: Renamed in Chat Scope
-      caption: The organization-chosen name replaces the default Public Workspace label.
-      label: Scope Selector
+      alt: Set the End-User Label screenshot
+      title: Set the End-User Label
+      caption: An optional display name replaces Public Workspace everywhere end users see it.
+      label: Display Name
     - path: /images/latest-release/release_260_public_workspace_display_name_2.png
-      alt: Consistent Across Navigation screenshot placeholder
+      alt: Consistent Across Navigation screenshot
       title: Consistent Across Navigation
       caption: The same label appears in navigation, profile, and directory pages.
       label: Navigation
     - path: /images/latest-release/release_260_public_workspace_display_name_3.png
-      alt: Behavior Is Unchanged screenshot placeholder
+      alt: Behavior Is Unchanged screenshot
       title: Behavior Is Unchanged
-      caption: Only the label changes; documents, links, and citations work exactly as before.
+      caption: Chat scope selection, documents, and citations work exactly as before; only the label changes.
       label: Same Behavior
   release-260-chat-scroll-508:
     title: Chat Stops Yanking You to the Bottom

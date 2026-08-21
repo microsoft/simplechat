@@ -1653,7 +1653,7 @@ _SUPPORT_RELEASE_260_FEATURE_CATALOG = [
         images=[
             {'title': 'Choose an MCP Preset', 'label': 'MCP Presets', 'caption': 'Presets and admin-curated catalogs replace hand-typed MCP server configuration.'},
             {'title': 'Test the Connection', 'label': 'Test Connection', 'caption': 'Verify the MCP server responds before saving the action.'},
-            {'title': 'Use MCP Tools in Chat', 'label': 'MCP in Chat', 'caption': 'An agent holding an MCP action can call those tools during a conversation.'},
+            {'title': 'Review the MCP Configuration', 'label': 'MCP Summary', 'caption': 'The final step lists the transport, preset, timeouts, and the exact tools the action will expose.'},
         ],
     ),
     _latest_feature_card(
@@ -1679,7 +1679,7 @@ _SUPPORT_RELEASE_260_FEATURE_CATALOG = [
         images=[
             {'title': 'Configure the Yamcs Action', 'label': 'Yamcs Setup', 'caption': 'A dedicated panel collects the server address, authentication method, and optional archive SQL access.'},
             {'title': 'Verify With Test Connection', 'label': 'Connection Test', 'caption': 'Confirm SimpleChat can reach the Yamcs instance before relying on the action.'},
-            {'title': 'Ask About Telemetry', 'label': 'Telemetry Q&A', 'caption': 'An agent with the Yamcs action can answer questions about telemetry, events, and alarms.'},
+            {'title': 'Review the Yamcs Configuration', 'label': 'Configuration Summary', 'caption': 'The summary confirms the instance, processor, authentication, TLS, limits, and archive SQL state before saving.'},
         ],
     ),
     _latest_feature_card(
@@ -1705,7 +1705,7 @@ _SUPPORT_RELEASE_260_FEATURE_CATALOG = [
         images=[
             {'title': 'Configure the RocksDB Action', 'label': 'RocksDB Setup', 'caption': 'Point the action at the HTTP and JSON service fronting your key-value store.'},
             {'title': 'Choose an Authentication Mode', 'label': 'Auth Options', 'caption': 'No-auth, bearer token, and API key authentication are all supported.'},
-            {'title': 'Query Keys From Chat', 'label': 'Key Lookup', 'caption': 'Ask an agent for a specific key or a range scan across a key prefix.'},
+            {'title': 'Review the Keyspace Configuration', 'label': 'Keyspace Summary', 'caption': 'The summary confirms read-only access, encodings, limits, and the key prefixes the model is told about.'},
         ],
     ),
     _latest_feature_card(
@@ -1906,9 +1906,9 @@ _SUPPORT_RELEASE_260_FEATURE_CATALOG = [
             {'label': 'Open Chat', 'description': 'Send a message and open the Conversation Context citation on the response.', 'href': '/chats#chatbox', 'icon': 'bi-chat-dots'},
         ],
         images=[
-            {'title': 'Context Citation on a Response', 'label': 'Context Citation', 'caption': 'Every answer carries a Conversation Context citation alongside its document sources.'},
-            {'title': 'Model and Version Detail', 'label': 'Model Detail', 'caption': 'See the exact model and SimpleChat version that produced the response.'},
-            {'title': 'Scope and Documents', 'label': 'Scope Detail', 'caption': 'Workspace scope, selected documents, agent, and capability state are all recorded.'},
+            {'title': 'Context Citation on a Response', 'label': 'Context Citation', 'caption': 'Every answer carries a Conversation Context citation alongside Conversation History and Instruction Memory.'},
+            {'title': 'Document Sources', 'label': 'Document Sources', 'caption': 'Statements drawn from a workspace document cite the source file and the page they came from.'},
+            {'title': 'Scope and Generation Detail', 'label': 'Generation Detail', 'caption': 'The detail panel records the model, workspace action, retrieval flags, and agent citations behind the answer.'},
         ],
     ),
     _latest_feature_card(
@@ -1958,8 +1958,7 @@ _SUPPORT_RELEASE_260_FEATURE_CATALOG = [
             {'label': 'Open Profile', 'description': 'Show or hide the conversation contents drawer for your account.', 'href': '/profile', 'icon': 'bi-person-gear'},
         ],
         images=[
-            {'title': 'Contents Drawer', 'label': 'Drawer', 'caption': 'Your earlier prompts are indexed as navigable entries beside the conversation.'},
-            {'title': 'Jump to a Prompt', 'label': 'Jump', 'caption': 'Select an entry to move directly to that point in a long conversation.'},
+            {'title': 'Contents Drawer', 'label': 'Drawer', 'caption': 'Your earlier prompts are indexed as navigable entries; select one to move straight to that point in a long conversation.'},
             {'title': 'Hide It If You Prefer', 'label': 'Profile Toggle', 'caption': 'Each user can hide the drawer from their own profile page.'},
         ],
     ),
@@ -2035,9 +2034,9 @@ _SUPPORT_RELEASE_260_FEATURE_CATALOG = [
             {'label': 'Open Profile', 'description': 'Confirm the same workspace name appears on your profile.', 'href': '/profile', 'icon': 'bi-person-gear'},
         ],
         images=[
-            {'title': 'Renamed in Chat Scope', 'label': 'Scope Selector', 'caption': 'The organization-chosen name replaces the default Public Workspace label.'},
+            {'title': 'Set the End-User Label', 'label': 'Display Name', 'caption': 'An optional display name replaces Public Workspace everywhere end users see it.'},
             {'title': 'Consistent Across Navigation', 'label': 'Navigation', 'caption': 'The same label appears in navigation, profile, and directory pages.'},
-            {'title': 'Behavior Is Unchanged', 'label': 'Same Behavior', 'caption': 'Only the label changes; documents, links, and citations work exactly as before.'},
+            {'title': 'Behavior Is Unchanged', 'label': 'Same Behavior', 'caption': 'Chat scope selection, documents, and citations work exactly as before; only the label changes.'},
         ],
     ),
     _latest_feature_card(
@@ -2228,7 +2227,7 @@ _ADMIN_RELEASE_260_FEATURE_CATALOG = [
             {'label': 'Open Safety', 'description': 'Manage safety violation archive and delete lifecycle.', 'href': '#safety', 'admin_tab': '#safety', 'icon': 'bi-shield-exclamation'},
             {'label': 'Open Send Feedback', 'description': 'Review feedback records affected by archive and delete lifecycle controls.', 'href': '#send-feedback', 'admin_tab': '#send-feedback', 'icon': 'bi-chat-left-text'},
         ],
-        image_label='Record Lifecycle',
+        include_media=False,
     ),
     _latest_feature_card(
         'admin_release_260_log_cleanup',
@@ -2282,7 +2281,7 @@ _ADMIN_RELEASE_260_FEATURE_CATALOG = [
         actions=[
             {'label': 'Open Security', 'description': 'Review Entra SSO and home-page auto-login behavior.', 'href': '#security', 'admin_tab': '#security', 'icon': 'bi-shield-lock'},
         ],
-        image_label='SSO Redirect',
+        include_media=False,
     ),
     _latest_feature_card(
         'admin_release_260_enhanced_extraction',
@@ -2517,13 +2516,6 @@ def get_default_support_latest_features_visibility():
     }
     defaults['deployment'] = False
     defaults['redis_key_vault'] = False
-
-    # The v0.260.001 cards ship hidden because their screenshots are still
-    # placeholders. Admins enable each card from Admin Settings once the real
-    # capture replaces the placeholder image, so end users never see a
-    # "Screenshot pending" tile.
-    for item in _SUPPORT_RELEASE_260_FEATURE_CATALOG:
-        defaults[item['id']] = False
 
     return defaults
 
