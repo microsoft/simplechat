@@ -2,24 +2,46 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
-### **(v0.260.023)**
+### **(v0.260.025)**
 
 #### Bug Fixes
 
 *   **Agent Actions Are No Longer Skipped When A Workspace Is In Scope**
     *   Selecting an agent that has actions and enabling a workspace produced answers that never invoked any of the agent's actions. The assistant answered from retrieved document text alone, even when the retrieved excerpts did not contain what the question asked for.
     *   The retrieval prompt instructed the model to base its answer *only* on the retrieved excerpts, so although the agent's actions were attached and available, the model was told not to reach for them. Retrieved excerpts are now framed as starting evidence, and the model is directed to call an available action when the excerpts lack what the question needs, then reason over the excerpts and the action results together. The rule against fabricating unsupported values is unchanged.
-    *   (Ref: `build_search_augmentation_system_prompt`, `build_mixed_source_evidence_handoff`, agent actions, workspace search, #1332)
+    *   (Ref: `build_search_augmentation_system_prompt`, `build_mixed_source_evidence_handoff`, agent actions, workspace search, [#1332](https://github.com/microsoft/simplechat/issues/1332))
 
 *   **Spreadsheets In A Workspace Are Now Actually Computed**
     *   A quantitative question about a spreadsheet could return values that were not in the file. Tabular computation was suppressed whenever workspace search also returned any narrative document, and the heuristic treated topic words such as "report", "policy", and "memo" as reasons to skip computation entirely.
     *   Because only a truncated three-row preview of a spreadsheet is indexed for search, skipping computation left the model deriving totals and averages from those preview rows. Tabular sources in scope are now computed unless the question unambiguously names a narrative artifact such as a PDF or presentation, restoring parity with the behavior already used when mixed-source search is disabled.
-    *   (Ref: `should_run_tabular_evidence`, `functions_mixed_source_orchestration.py`, tabular processing, mixed-source evidence, #1332)
+    *   (Ref: `should_run_tabular_evidence`, `functions_mixed_source_orchestration.py`, tabular processing, mixed-source evidence, [#1332](https://github.com/microsoft/simplechat/issues/1332))
 
 *   **A Skipped Spreadsheet Now Tells The Model What It Is Missing**
     *   When tabular computation is skipped, the evidence record previously said processing "was not needed", which implied the source was irrelevant and left the model free to compute from indexed preview rows.
     *   It now states that the full table was never read, that any indexed excerpt is a truncated preview, that numeric conclusions must not be drawn from it, and that the tabular analysis action should be called if values from that source are required.
-    *   (Ref: `execute_tabular_evidence_sources`, evidence envelopes, tabular citations, #1332)
+    *   (Ref: `execute_tabular_evidence_sources`, evidence envelopes, tabular citations, [#1332](https://github.com/microsoft/simplechat/issues/1332))
+
+### **(v0.260.024)**
+
+#### Bug Fixes
+
+*   **Inline Images And Videos Now Show Only Cited Media**
+    *   Assistant messages rendered an inline image or video gallery for every media file that retrieval returned, so a search that surfaced five workspace images produced five inline tiles even when the answer referenced only one of them, or none at all. Media that had nothing to do with the answer was presented inside the message bubble as though it supported the answer.
+    *   Inline galleries now render only the media the response actually cited. The five-item gallery cap therefore goes to genuinely cited media instead of retrieval noise, and unreferenced workspace files no longer trigger enhanced-citation fetches.
+    *   Galleries produced by an action or tool the assistant actually ran are unaffected, since those are executed results rather than unused search candidates. Conversations created before cited-source tracking existed also keep their previous behavior.
+    *   The **Sources** disclosure is unchanged and still lists every retrieved document and web result, so nothing becomes harder to find.
+    *   (Ref: `chat-citation-tracking.js`, `chat-inline-images.js`, `chat-inline-videos.js`, `chat-messages.js`, `cited_hybrid_citations`, [#1329](https://github.com/microsoft/simplechat/issues/1329))
+
+### **(v0.260.023)**
+
+#### Bug Fixes
+
+*   **Running Simple Chat Directly No Longer Fails To Start When An Agent Has Actions**
+    *   Starting Simple Chat with `python app.py` (including via `uv run`) aborted with `RuntimeError: Working outside of request context` whenever any agent had an action assigned. The app started normally until the first action was saved, which made the failure look intermittent.
+    *   Semantic Kernel initialization runs before any request exists on that path, but agent plugin loading read the signed-in user from the Flask session. It now resolves the user only when a request is actually in progress and otherwise loads with no user identity, matching how global plugin loading already behaved.
+    *   Container and App Service deployments were never affected, because they start through gunicorn and initialize during the first request. Their behavior is unchanged.
+    *   Three further identity lookups used for group scope and personal model endpoints had the same latent problem and were corrected at the same time.
+    *   (Ref: `semantic_kernel_loader.py`, `functions_authentication.py`, `get_current_user_id_or_none`, issue #1327)
 
 ### **(v0.260.021)**
 

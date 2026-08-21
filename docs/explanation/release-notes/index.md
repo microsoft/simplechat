@@ -20,6 +20,9 @@ This page includes the latest release notes inline. Older release sections are s
 
 | Version | Page |
 | --- | --- |
+| v0.260.025 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
+| v0.260.024 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
+| v0.260.023 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
 | v0.260.021 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
 | v0.260.020 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
 | v0.260.019 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
@@ -29,9 +32,9 @@ This page includes the latest release notes inline. Older release sections are s
 | v0.260.015 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
 | v0.260.014 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
 | v0.260.013 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
-| v0.260.012 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
-| v0.260.011 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
-| v0.260.010 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
+| v0.260.012 | [Release notes 0.260 series]({{ '/explanation/release-notes/v0.260/' | relative_url }}) |
+| v0.260.011 | [Release notes 0.260 series]({{ '/explanation/release-notes/v0.260/' | relative_url }}) |
+| v0.260.010 | [Release notes 0.260 series]({{ '/explanation/release-notes/v0.260/' | relative_url }}) |
 | v0.260.009 | [Release notes 0.260 series]({{ '/explanation/release-notes/v0.260/' | relative_url }}) |
 | v0.260.008 | [Release notes 0.260 series]({{ '/explanation/release-notes/v0.260/' | relative_url }}) |
 | v0.260.007 | [Release notes 0.260 series]({{ '/explanation/release-notes/v0.260/' | relative_url }}) |
@@ -64,6 +67,47 @@ This page includes the latest release notes inline. Older release sections are s
 | v0.235.003 | [Release notes 0.235 series]({{ '/explanation/release-notes/v0.235/' | relative_url }}) |
 
 ## Latest release notes
+
+### **(v0.260.025)**
+
+#### Bug Fixes
+
+*   **Agent Actions Are No Longer Skipped When A Workspace Is In Scope**
+    *   Selecting an agent that has actions and enabling a workspace produced answers that never invoked any of the agent's actions. The assistant answered from retrieved document text alone, even when the retrieved excerpts did not contain what the question asked for.
+    *   The retrieval prompt instructed the model to base its answer *only* on the retrieved excerpts, so although the agent's actions were attached and available, the model was told not to reach for them. Retrieved excerpts are now framed as starting evidence, and the model is directed to call an available action when the excerpts lack what the question needs, then reason over the excerpts and the action results together. The rule against fabricating unsupported values is unchanged.
+    *   (Ref: `build_search_augmentation_system_prompt`, `build_mixed_source_evidence_handoff`, agent actions, workspace search, [#1332](https://github.com/microsoft/simplechat/issues/1332))
+
+*   **Spreadsheets In A Workspace Are Now Actually Computed**
+    *   A quantitative question about a spreadsheet could return values that were not in the file. Tabular computation was suppressed whenever workspace search also returned any narrative document, and the heuristic treated topic words such as "report", "policy", and "memo" as reasons to skip computation entirely.
+    *   Because only a truncated three-row preview of a spreadsheet is indexed for search, skipping computation left the model deriving totals and averages from those preview rows. Tabular sources in scope are now computed unless the question unambiguously names a narrative artifact such as a PDF or presentation, restoring parity with the behavior already used when mixed-source search is disabled.
+    *   (Ref: `should_run_tabular_evidence`, `functions_mixed_source_orchestration.py`, tabular processing, mixed-source evidence, [#1332](https://github.com/microsoft/simplechat/issues/1332))
+
+*   **A Skipped Spreadsheet Now Tells The Model What It Is Missing**
+    *   When tabular computation is skipped, the evidence record previously said processing "was not needed", which implied the source was irrelevant and left the model free to compute from indexed preview rows.
+    *   It now states that the full table was never read, that any indexed excerpt is a truncated preview, that numeric conclusions must not be drawn from it, and that the tabular analysis action should be called if values from that source are required.
+    *   (Ref: `execute_tabular_evidence_sources`, evidence envelopes, tabular citations, [#1332](https://github.com/microsoft/simplechat/issues/1332))
+
+### **(v0.260.024)**
+
+#### Bug Fixes
+
+*   **Inline Images And Videos Now Show Only Cited Media**
+    *   Assistant messages rendered an inline image or video gallery for every media file that retrieval returned, so a search that surfaced five workspace images produced five inline tiles even when the answer referenced only one of them, or none at all. Media that had nothing to do with the answer was presented inside the message bubble as though it supported the answer.
+    *   Inline galleries now render only the media the response actually cited. The five-item gallery cap therefore goes to genuinely cited media instead of retrieval noise, and unreferenced workspace files no longer trigger enhanced-citation fetches.
+    *   Galleries produced by an action or tool the assistant actually ran are unaffected, since those are executed results rather than unused search candidates. Conversations created before cited-source tracking existed also keep their previous behavior.
+    *   The **Sources** disclosure is unchanged and still lists every retrieved document and web result, so nothing becomes harder to find.
+    *   (Ref: `chat-citation-tracking.js`, `chat-inline-images.js`, `chat-inline-videos.js`, `chat-messages.js`, `cited_hybrid_citations`, [#1329](https://github.com/microsoft/simplechat/issues/1329))
+
+### **(v0.260.023)**
+
+#### Bug Fixes
+
+*   **Running Simple Chat Directly No Longer Fails To Start When An Agent Has Actions**
+    *   Starting Simple Chat with `python app.py` (including via `uv run`) aborted with `RuntimeError: Working outside of request context` whenever any agent had an action assigned. The app started normally until the first action was saved, which made the failure look intermittent.
+    *   Semantic Kernel initialization runs before any request exists on that path, but agent plugin loading read the signed-in user from the Flask session. It now resolves the user only when a request is actually in progress and otherwise loads with no user identity, matching how global plugin loading already behaved.
+    *   Container and App Service deployments were never affected, because they start through gunicorn and initialize during the first request. Their behavior is unchanged.
+    *   Three further identity lookups used for group scope and personal model endpoints had the same latent problem and were corrected at the same time.
+    *   (Ref: `semantic_kernel_loader.py`, `functions_authentication.py`, `get_current_user_id_or_none`, issue #1327)
 
 ### **(v0.260.021)**
 
@@ -287,81 +331,3 @@ This page includes the latest release notes inline. Older release sections are s
 *   **Stale Tab Names In Latest Features**
     *   Several Latest Features entries pointed readers at tabs by their old names after the settings moved.
     *   (Ref: `latest-features` pane)
-
-### **(v0.260.012)**
-
-#### User Interface Enhancements
-
-*   **New Data Lifecycle Group For Retention, Classification And Archiving**
-    *   Retention policy, document classification and conversation archiving all decide how long content lives and how it is labelled, but they were split across Workspaces and Safety. They now sit together in a **Data Lifecycle** group with a tab each: **Retention**, **Classification** and **Archiving**.
-    *   Conversation archiving in particular was buried under Safety, which described what it protects against rather than what it does.
-    *   (Ref: navigation map, `retention-policy-section`, `document-classification-section`, `conversation-archiving-section`)
-
-*   **Chat Group Gathers The Settings That Shape A Conversation**
-    *   Settings that change what a conversation looks and behaves like were spread across AI Models, Workspaces and Safety. The **Chat** group now holds them in two tabs.
-    *   **Chat Experience** collects model thought display, chat file uploads (with the conversation contents drawer) and workspace scope lock.
-    *   **Feedback & Alerts** collects user feedback and desktop notifications, which are both about how the app talks back to the user rather than about safety enforcement.
-    *   (Ref: `chat-experience`, `feedback-alerts`, `processing-thoughts-section`, `chat-file-uploads-section`, `workspace-scope-lock-section`, `user-feedback-section`, `desktop-notifications-section`)
-
-*   **Settings Keep Their Values Through The Move**
-    *   Cards were relocated between tabs without renaming a single field, so every saved value is preserved and the form submits exactly the payload it did before.
-    *   Sidebar search still finds a setting by group, tab or card name, so you can reach anything without knowing where it now lives.
-    *   (Ref: admin settings field contract, `admin_settings_nav.py`)
-
-### **(v0.260.011)**
-
-#### User Interface Enhancements
-
-*   **Governance And Scale Split Into Focused Tabs**
-    *   Governance held five cards covering three different jobs. It is now **Feature Governance** (which features are governed), **Policies** (the policies themselves), and **MCP Governance**.
-    *   Scale mixed cache configuration with Cosmos capacity, and is now **Redis & Caching** and **Cosmos**.
-    *   **Azure Front Door** moved out of Scale into Security, under a new **Network** tab. It configures authentication and redirect flows rather than throughput, so it never belonged with capacity settings.
-    *   Existing links and bookmarks to `#governance` and `#scale` still work and land on the first tab of each group.
-    *   No settings changed. Every option keeps its name and its saved value.
-    *   (Ref: navigation map, `feature-governance`, `governance-policies`, `mcp-governance`, `redis-caching`, `cosmos`, `network`)
-
-#### Bug Fixes
-
-*   **Governance Status Messages No Longer Get Stuck On One Tab**
-    *   The inline governance status message lived inside the Governance pane, so a message raised while working in one area could end up rendered on a tab you were not looking at.
-    *   It now sits outside the tabs and is visible wherever you are in Governance.
-    *   (Ref: `governance-status`, `admin_governance.js`)
-
-#### Bug Fixes
-
-*   **Reliable File Generation From Agent Action Results**
-    *   Asking an agent for a downloadable file built from action results now produces the complete dataset in the requested format. Previously these requests could fail outright, publish a three-row sample of a large result, overwrite the assistant's written answer, or return nothing at all. Delivered across v0.260.004 through v0.260.011.
-    *   **Files no longer fail to generate.** A CSV built from several actions in one turn could stop with `Generated output schema mismatch at row 2`, because each action returned a different set of columns. The export now pins a union of every column before the run starts and pads the missing cells, so mixed-shape results serialize instead of failing.
-    *   **The written answer is no longer replaced by the file card.** CSV replies were suppressed alongside JSON and XML, but only JSON and XML withhold their payload from the response. CSV, DOCX, and PDF now keep the assistant's answer and append the file card beneath it.
-    *   **Files contain the retrieved data, not a sample of it.** When the assistant pasted a few example rows above its answer, that excerpt outranked the real result set, producing a 3-row file from a 900-row query. Pasted rows are now used only when they are not an excerpt of the data actually retrieved.
-    *   **Discovery calls no longer dilute the dataset.** A turn that lists instances, lists parameters, then retrieves history used to blend all three into one file. Rows are grouped by the action that produced them, and the action holding the substantive dataset wins.
-    *   **Follow-up requests reuse data already gathered.** Asking "now make that a CSV" after the data was retrieved in an earlier turn no longer returns an empty result. The export reaches back through stored conversation citations, bounded by the **conversation history limit** in Admin Settings, and reuses the rows already collected instead of re-querying the source.
-    *   **Answering a clarifying question now delivers the file.** When the assistant asks which rows and columns to include, replying "yes, all columns" now publishes the file that was originally requested. The clarification turn itself no longer publishes a placeholder file built from the question text.
-    *   **The assistant no longer claims it cannot create files.** Every format now states the publication contract to the model, including on the turn that only answers a clarification, so replies stop saying "I cannot create or attach a file in this interface" and then producing one anyway.
-    *   **Overlapping result pages no longer double the row count.** Agents frequently re-request a range from the same start time rather than paging forward, which produced a 1,000-row file for a window holding roughly 500 distinct records. Rows an earlier page of the same action already returned are dropped, while genuinely repeated records inside a single response are preserved.
-    *   **Partial data is now labeled.** When an action reports that it truncated its own results, the file carries a **Partial** badge and a note explaining that it covers only the rows the action returned. Agents are also instructed to request the remainder starting after the last row they already hold, rather than repeating the original range.
-    *   **CSV, DOCX, PDF, JSON, and XML now behave identically.** All five formats resolve rows the same way, reach back to earlier turns, decline to publish on a clarification turn, and report truncation.
-    *   (Ref: `functions_generated_file_exports.py`, `functions_tabular_generated_exports.py`, `route_backend_chats.py`, `chat-messages.js`, [Generated Artifact Paging, Truncation, and Guidance Carry-Forward Fix](https://github.com/microsoft/simplechat/blob/main/docs/explanation/fixes/GENERATED_ARTIFACT_PAGING_AND_GUIDANCE_FIX.md), Refs #1071)
-
-### **(v0.260.010)**
-
-#### New Features
-
-*   **Admin Settings Navigation Is Now Grouped**
-    *   Admin Settings presented 18 tabs in one flat list. Related tabs are now collected under 12 groups such as Appearance, Knowledge, Security and Operations, so the list is scannable and has room to grow.
-    *   In the sidebar, groups are collapsible and remember whether you left them open. In the tab layout, a row of group pills filters the tab strip to one group at a time.
-    *   Opening a tab always reveals its group first, so a deep link or a cross-reference can never land you on a pane whose tab is hidden.
-    *   Sidebar search now matches group names as well as tab and setting names, and expands whatever it needs to show a result.
-    *   No settings moved in this release. Every tab keeps its contents; only the navigation around them changed.
-    *   (Ref: `admin_settings_nav.py`, `_sidebar_nav.html`, `admin_settings.html`, `admin_sidebar_nav.js`)
-
-#### Bug Fixes
-
-*   **Shared Conversation File Approvals Is Reachable From The Sidebar**
-    *   The Shared Conversation File Approvals card had no navigation entry, so it could only be found by scrolling the AI Models tab. It is now listed like every other setting.
-    *   (Ref: `shared-conversation-file-approvals-section`, navigation map)
-
-*   **Navigation Labels And Order Can No Longer Drift**
-    *   The tab strip and the sidebar each maintained the same structure by hand and had diverged: tab order differed between them, and Agents, Custom Pages and Search and Extract each showed a different name depending on which navigation you used.
-    *   Both now render from one definition, so a change is made once and appears in both.
-    *   (Ref: `admin_settings_nav.py`, `test_admin_settings_nav_map.py`)

@@ -2,8 +2,8 @@
 # test_agent_actions_with_workspace_evidence.py
 """
 Functional test for additive evidence gathering when a workspace is in scope.
-Version: 0.260.023
-Implemented in: 0.260.023
+Version: 0.260.025
+Implemented in: 0.260.025
 
 This test ensures that selecting an agent with actions and enabling a workspace
 no longer degrades into a retrieval-only turn. It validates that:
@@ -62,7 +62,7 @@ def test_tabular_evidence_runs_alongside_narrative_sources():
     print("🔍 Testing additive tabular evidence gating...")
 
     try:
-        assert_app_version_at_least("0.260.023")
+        assert_app_version_at_least("0.260.025")
 
         # The reported regression: a specific quantitative question that uses none
         # of the hardcoded tabular keywords, asked while narrative sources are also

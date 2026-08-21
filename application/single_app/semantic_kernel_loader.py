@@ -41,7 +41,7 @@ from model_endpoint_clients import (
     resolve_openai_style_request_api_version,
 )
 from functions_appinsights import log_event, get_appinsights_logger
-from functions_authentication import get_current_user_id
+from functions_authentication import get_current_user_id_or_none
 from semantic_kernel_plugins.plugin_health_checker import PluginHealthChecker, PluginErrorRecovery
 from semantic_kernel_plugins.logged_plugin_loader import create_logged_plugin_loader
 from semantic_kernel_plugins.plugin_invocation_logger import get_plugin_logger
@@ -357,8 +357,18 @@ def resolve_agent_config(agent, settings, group_scope_id=None):
         if persisted_group_id:
             return persisted_group_id
 
+        scope_user_id = get_current_user_id_or_none()
+        if not scope_user_id:
+            debug_print("[SK_LOADER] No request-scoped user available while resolving group endpoint scope.")
+            log_event(
+                "[SK_LOADER] Group endpoint resolution could not determine a group scope.",
+                level=logging.WARNING,
+                extra={"agent_name": agent.get("name")}
+            )
+            return ""
+
         try:
-            return require_active_group(get_current_user_id())
+            return require_active_group(scope_user_id)
         except ValueError as err:
             debug_print(f"[SK_LOADER] No active group available while resolving group endpoint scope: {err}")
             log_event(
@@ -529,11 +539,13 @@ def resolve_agent_config(agent, settings, group_scope_id=None):
                     endpoints.extend([{**endpoint, "_endpoint_scope": "group"} for endpoint in get_group_model_endpoints(group_id)])
         elif not is_global_agent:
             if allow_custom_agent_endpoints:
-                user_settings = get_user_settings(get_current_user_id())
-                endpoints.extend([
-                    {**endpoint, "_endpoint_scope": "user"}
-                    for endpoint in user_settings.get("settings", {}).get("personal_model_endpoints", [])
-                ])
+                endpoint_user_id = get_current_user_id_or_none()
+                if endpoint_user_id:
+                    user_settings = get_user_settings(endpoint_user_id)
+                    endpoints.extend([
+                        {**endpoint, "_endpoint_scope": "user"}
+                        for endpoint in user_settings.get("settings", {}).get("personal_model_endpoints", [])
+                    ])
         endpoints.extend([{**endpoint, "_endpoint_scope": "global"} for endpoint in (settings.get("model_endpoints", []) or [])])
 
         return endpoints
@@ -647,11 +659,13 @@ def resolve_agent_config(agent, settings, group_scope_id=None):
                     endpoints.extend([{**endpoint, "_endpoint_scope": "group"} for endpoint in get_group_model_endpoints(group_id)])
         elif not is_global_agent:
             if allow_custom_agent_endpoints:
-                user_settings = get_user_settings(get_current_user_id())
-                endpoints.extend([
-                    {**endpoint, "_endpoint_scope": "user"}
-                    for endpoint in user_settings.get("settings", {}).get("personal_model_endpoints", [])
-                ])
+                endpoint_user_id = get_current_user_id_or_none()
+                if endpoint_user_id:
+                    user_settings = get_user_settings(endpoint_user_id)
+                    endpoints.extend([
+                        {**endpoint, "_endpoint_scope": "user"}
+                        for endpoint in user_settings.get("settings", {}).get("personal_model_endpoints", [])
+                    ])
         endpoints.extend([{**endpoint, "_endpoint_scope": "global"} for endpoint in (settings.get("model_endpoints", []) or [])])
 
         endpoint_cfg = next((e for e in endpoints if e.get("id") == endpoint_id), None)
@@ -1924,7 +1938,7 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
             else:
                 plugin_mode = mode_label
 
-            resolved_user_id = get_current_user_id()
+            resolved_user_id = get_current_user_id_or_none()
             group_id = agent_config.get("group_id") if agent_is_group else None
             print(f"[SK_LOADER] Agent scope - is_global: {agent_is_global}, is_group: {agent_is_group}, plugin_mode: {plugin_mode}, group_id: {group_id}")
             load_agent_specific_plugins(
@@ -2289,11 +2303,7 @@ def load_plugins_for_kernel(kernel, plugin_manifests, settings, mode_label="glob
     
     # Use the logged plugin loader for custom plugins
     try:
-        user_id = None
-        try:
-            user_id = get_current_user_id()
-        except Exception:
-            pass  # User ID is optional for plugin loading
+        user_id = get_current_user_id_or_none()
         
         # Load plugins with enhanced logging
         results = logged_loader.load_multiple_plugins(plugin_manifests, user_id)

@@ -1,6 +1,6 @@
 # Agent Actions Ignored When Workspace Evidence Is Present
 
-**Fixed in version: 0.260.023**
+**Fixed in version: 0.260.025**
 
 **Issue:** [#1332](https://github.com/microsoft/simplechat/issues/1332)
 
@@ -91,7 +91,7 @@ sufficient, so it never called an action.
 |---|---|
 | `application/single_app/functions_mixed_source_orchestration.py` | Inverted the tabular gate; narrowed narrative markers; rewrote the skipped-envelope summary; added action permission and a preview-row guard to the evidence handoff |
 | `application/single_app/route_backend_chats.py` | Rewrote `build_search_augmentation_system_prompt()` |
-| `application/single_app/config.py` | Version `0.260.022` -> `0.260.023` |
+| `application/single_app/config.py` | Version `0.260.024` -> `0.260.025` |
 | `functional_tests/test_agent_actions_with_workspace_evidence.py` | New regression test |
 | `functional_tests/test_mixed_source_chat_search_consistency.py` | Updated the gating contract a generic question now computes rather than skips |
 
