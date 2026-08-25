@@ -328,6 +328,17 @@ ADMIN_NAV = [
                     {"id": "front-door-section", "label": "Azure Front Door", "icon": "bi-door-open"},
                 ],
             },
+            {
+                # What a throttled user is told. The limits themselves are
+                # enforced upstream or per feature, so this owns the response
+                # rather than the thresholds.
+                "id": "rate-limiting",
+                "label": "Rate Limiting",
+                "icon": "bi-hourglass-split",
+                "sections": [
+                    {"id": "rate-limit-message-section", "label": "Rate Limit Message", "icon": "bi-hourglass-split"},
+                ],
+            },
         ],
     },
     {
