@@ -24,4 +24,4 @@ This matters because index and capacity changes are exactly the operations that 
 
 ## Where to Find It
 
-- **Open Scale** &mdash; Run Cosmos maintenance and configure throughput guardrails.
+- **Open Cosmos** &mdash; Run Cosmos maintenance and configure throughput guardrails.

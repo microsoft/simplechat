@@ -24,4 +24,4 @@ This matters because document list performance is dominated by a partitioning mi
 
 ## Where to Find It
 
-- **Open Scale** &mdash; Review Document Access Index health, fallbacks, RU, and latency.
+- **Open Cosmos** &mdash; Review Document Access Index health, fallbacks, RU, and latency.

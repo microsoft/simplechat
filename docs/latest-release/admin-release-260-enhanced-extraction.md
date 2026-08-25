@@ -16,11 +16,11 @@ This matters because admins can improve retrieval quality for visual documents w
 
 ## How to Try It
 
-1. Open Admin Settings > Search and Extract and enable the Enhanced extraction toggle for Azure AI Content Understanding.
+1. Open Admin Settings > Document Extraction and enable the Enhanced extraction toggle for Azure AI Content Understanding.
 2. Review existing Enhanced or Auto settings after upgrade to confirm the migration preserved the intended mode.
 3. Tell workspace owners that users will see extraction engine badges and fallback reasons on processed documents.
 4. Re-extract important documents with figures, charts, or diagrams so end users benefit from generated descriptions.
 
 ## Where to Find It
 
-- **Open Search and Extract** &mdash; Enable and review Enhanced extraction configuration.
+- **Open Document Extraction** &mdash; Enable and review Enhanced extraction configuration.

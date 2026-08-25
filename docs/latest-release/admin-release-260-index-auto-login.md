@@ -23,4 +23,4 @@ This matters because SSO-first tenants can reduce landing-page friction while ke
 
 ## Where to Find It
 
-- **Open Security** &mdash; Review Entra SSO and home-page auto-login behavior.
+- **Open Secrets** &mdash; Review Entra SSO and home-page auto-login behavior.

@@ -23,4 +23,4 @@ This matters because cache performance and cache safety can be observed without 
 
 ## Where to Find It
 
-- **Open Scale** &mdash; Inspect Redis and review cache metrics, toggles, and TTLs.
+- **Open Redis & Caching** &mdash; Inspect Redis and review cache metrics, toggles, and TTLs.

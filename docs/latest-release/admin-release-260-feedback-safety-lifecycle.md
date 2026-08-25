@@ -16,12 +16,12 @@ This matters because moderation and feedback queues can be retained, cleaned up,
 
 ## How to Try It
 
-1. Open Admin Settings > Safety and review active Safety Violation records before archiving or deleting anything.
+1. Open the Safety Violations admin page and review active records before archiving or deleting anything.
 2. Use archive when records should leave user profile history but remain recoverable for administrative review.
 3. Resolve pending remediation approvals before attempting permanent deletion of safety violations.
 4. Review audit records after lifecycle actions to confirm the administrative history is complete.
 
 ## Where to Find It
 
-- **Open Safety** &mdash; Manage safety violation archive and delete lifecycle.
+- **Open Safety Violations** &mdash; Manage safety violation archive and delete lifecycle.
 - **Open Send Feedback** &mdash; Review feedback records affected by archive and delete lifecycle controls.

@@ -16,11 +16,11 @@ This matters because exception handling and access reviews are easier to enforce
 
 ## How to Try It
 
-1. Open Admin Settings > Governance and review policies that currently rely on broad allow-all access.
+1. Open Admin Settings > Governance Policies and review policies that currently rely on broad allow-all access.
 2. Add block-list entries for users or groups that must be excluded from a capability.
 3. Use Duplicate or Inverse when creating related policies so deny and allow rules stay consistent.
 4. Open Show Users before rollout to confirm the resolved principals match the intended audience.
 
 ## Where to Find It
 
-- **Open Governance** &mdash; Configure allow and block policies for AI capabilities.
+- **Open Governance Policies** &mdash; Configure allow and block policies for AI capabilities.

@@ -16,11 +16,11 @@ This matters because tenant access expectations can be acknowledged consistently
 
 ## How to Try It
 
-1. Open Admin Settings > General and configure the Terms of Use or Rules of Behavior content.
+1. Open Admin Settings > Notices & Agreements and configure the Terms of Use or Rules of Behavior content.
 2. Select the recurrence mode that matches tenant policy: every session, once per day, or once per version.
 3. Review the accept and decline activity logging expectations with compliance stakeholders.
 4. Preview the user gate so support teams know what end users will see before entering SimpleChat.
 
 ## Where to Find It
 
-- **Open General Settings** &mdash; Configure terms content, recurrence, and user gate behavior.
+- **Open Notices & Agreements** &mdash; Configure terms content, recurrence, and user gate behavior.

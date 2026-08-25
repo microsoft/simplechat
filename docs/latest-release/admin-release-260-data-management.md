@@ -23,4 +23,4 @@ This matters because tenant data operations can be planned, audited, resumed, an
 
 ## Where to Find It
 
-- **Open Data Management** &mdash; Configure backup, migration, restore, storage, and inspection workflows.
+- **Open Backup** &mdash; Configure backup, migration, restore, storage, and inspection workflows.

@@ -23,4 +23,4 @@ This matters because APIM policies can enforce per-user quotas and cost attribut
 
 ## Where to Find It
 
-- **Open AI Models** &mdash; Configure model endpoint identity header behavior.
+- **Open Model Endpoints** &mdash; Configure model endpoint identity header behavior.

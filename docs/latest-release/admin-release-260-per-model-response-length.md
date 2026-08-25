@@ -23,4 +23,4 @@ This matters because administrators can balance cost, latency, and answer depth 
 
 ## Where to Find It
 
-- **Open AI Models** &mdash; Set per-model output token ceilings.
+- **Open Model Endpoints** &mdash; Set per-model output token ceilings.

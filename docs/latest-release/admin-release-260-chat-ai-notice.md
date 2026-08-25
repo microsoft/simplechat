@@ -16,11 +16,11 @@ This matters because AI usage guidance can be kept visible at the point of use w
 
 ## How to Try It
 
-1. Open Admin Settings > General and write the Markdown guidance users should see below the chat composer.
+1. Open Admin Settings > Notices & Agreements and write the Markdown guidance users should see below the chat composer.
 2. Choose whether the notice is non-dismissible, per-session, daily, or once per message version.
 3. Update the notice text when policy changes so the notice reappears for users who previously dismissed it.
 4. Preview Chat after saving so admins can confirm the exact user-facing wording and placement.
 
 ## Where to Find It
 
-- **Open General Settings** &mdash; Configure the Chat AI usage notice and dismissal mode.
+- **Open Notices & Agreements** &mdash; Configure the Chat AI usage notice and dismissal mode.
