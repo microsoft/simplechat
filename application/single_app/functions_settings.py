@@ -486,6 +486,11 @@ def is_tabular_processing_enabled(settings):
     return bool((settings or {}).get('enable_enhanced_citations', False))
 
 
+def is_fact_memory_enabled(settings):
+    """Fact memory is a Chat capability and never requires agents or actions."""
+    return bool((settings or {}).get('enable_fact_memory_plugin', False))
+
+
 def is_mixed_source_manifest_enabled(settings):
     """Return whether Phase 1 mixed-source manifest diagnostics are enabled."""
     return bool((settings or {}).get('enable_mixed_source_manifest', False))

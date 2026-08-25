@@ -5,7 +5,7 @@ description: "A contents drawer indexes the questions you asked in a conversatio
 section: "Latest Release"
 ---
 
-Current release version for Jump Back to Any Earlier Prompt: **0.260.001**
+Current release version for Jump Back to Any Earlier Prompt: **0.261.001**
 
 The drawer lists your saved prompts as navigable entries and tracks where you currently are in the conversation. It is on by default when your admins enable it, works with keyboard navigation, and adapts to an off-canvas panel on smaller screens. You can hide it for your own account from your profile if you prefer a wider chat area.
 
@@ -16,13 +16,6 @@ A contents drawer indexes the questions you asked in a conversation so you can j
 ## Admin Side
 
 Admins decide whether Jump Back to Any Earlier Prompt is available in your environment. If you cannot find Open Chat and Open Profile, ask whether the related settings, governance policy, or workspace access has been enabled for your account.
-
-## Screenshot Placeholder
-
-The v0.260.001 app catalog currently provides branded placeholder captures for Jump Back to Any Earlier Prompt. Replace these copied documentation images when final screenshots are ready:
-
-- `/images/latest-release/release_260_conversation_contents_drawer_1.png`
-- `/images/latest-release/release_260_conversation_contents_drawer_2.png`
 
 ## Why It Matters
 
@@ -40,5 +33,5 @@ This matters because a long working session becomes hard to navigate, and the th
 
 ## Notes
 
-- The Jump Back to Any Earlier Prompt guide belongs to the SimpleChat 0.260.001 latest-feature set.
+- The Jump Back to Any Earlier Prompt guide belongs to the SimpleChat 0.261.001 latest-feature set.
 - The gallery for this page uses `release_260_conversation_contents_drawer_1.png`, `release_260_conversation_contents_drawer_2.png` from the app Latest Features catalog.

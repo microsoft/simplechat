@@ -6,6 +6,13 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 
 #### New Features
 
+*   **Facts And Memories Now Work In Standard Chat, Without Agents Or Actions**
+    *   Fact memory is now a chat capability. With it enabled, the assistant recalls a user's saved memories during normal conversation and can save, change, or remove them when the user asks, such as "remember that I prefer bullet points" or "stop calling me Paul". Agents and actions can stay off.
+    *   Previously, memory recall worked without agents but memory *writes* did not. The memory tool was only attached to the model on the Semantic Kernel agent path, so a request to remember or forget something silently did nothing unless an administrator had turned on agents.
+    *   Writes run through a small memory-only Semantic Kernel pass after the response is already finished, so it never changes or delays the answer. An intent check runs first, so ordinary chat turns take no extra work. If a memory update fails, the chat response is unaffected.
+    *   Instruction memories still apply to every prompt, fact memories are still recalled only when relevant, and memory activity appears in processing thoughts. Users continue to review, edit, and delete their own entries from Profile > Fact Memory.
+    *   (Ref: `functions_fact_memory_autosave.py`, `route_backend_chats.py`, `fact_memory_plugin.py`, [#1352](https://github.com/microsoft/simplechat/issues/1352), [#1153](https://github.com/microsoft/simplechat/issues/1153))
+
 *   **Admin-Configurable Rate Limit Message With Markdown Support**
     *   A new **Security → Rate Limiting** tab in Admin Settings controls what a user is told when a request is refused with HTTP 429. The message supports Markdown, so it can link to an internal runbook or a capacity request form.
     *   Leaving the toggle off, or saving an empty message, keeps the built-in wording. A throttled user never receives an empty response.
@@ -14,10 +21,23 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 
 #### User Interface Enhancements
 
+*   **Fact Memory Moved To Chat Settings**
+    *   The fact memory control now lives in **Admin Settings > Chat > Chat Experience > Fact Memory**, with wording that explains it works without agents or actions and that users manage their own entries in Profile.
+    *   It was previously only reachable from **Agents & Actions > Actions** as "Enable Fact Memory Action", so administrators running plain chat had no reason to open that tab and never found it.
+    *   The Actions tab now shows a read-only note pointing at the Chat setting, matching how Tabular Processing points at Enhanced Citations. Existing configurations are unchanged; the underlying setting and any saved memories are preserved.
+    *   (Ref: `chat-experience.html`, `actions.html`, `admin_settings.js`, `admin_settings_nav.py`, [#1352](https://github.com/microsoft/simplechat/issues/1352))
+
 *   **Throttled Chat Responses Now Explain Themselves**
     *   SimpleChat retries throttled model calls with backoff, but once those retries ran out the chat response fell through to the generic "Something went wrong while streaming the response" error. That was indistinguishable from a genuine failure, which mattered most in deployments that throttle deliberately through API Management.
     *   An exhausted throttle is now recognized as rate limiting and shown in its own banner, with an hourglass icon, a "Rate limited:" heading, and the administrator's rendered Markdown. Any partial content already streamed is still saved.
     *   (Ref: `chat-streaming.js`, `appendStreamErrorBanner`, `is_rate_limit_error`, [#1354](https://github.com/microsoft/simplechat/issues/1354))
+
+#### Bug Fixes
+
+*   **Core Action Toggles No Longer Interfere With Fact Memory**
+    *   Fact memory and the built-in core actions were saved through the same admin endpoint, which required fact memory to be included in every request. With the control relocated to Chat, that contract would have let a change to any unrelated core action overwrite the fact memory setting.
+    *   The endpoint now treats fact memory as optional and ignores it, so the Chat setting is the only thing that changes it. Older clients that still send the value continue to work.
+    *   (Ref: `route_backend_plugins.py`, `route_frontend_admin_settings.py`, core plugin settings endpoint, [#1352](https://github.com/microsoft/simplechat/issues/1352))
 
 ### **(v0.260.025)**
 

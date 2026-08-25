@@ -21,6 +21,8 @@ Use it for durable preferences or background facts. Do not store secrets or regu
 ## Before you start
 
 - Built-in storage; controlled by `enable_fact_memory_plugin` and user memory preferences.
+- The setting lives in [Chat settings]({{ '/admin/chat/#fact-memory-section' | relative_url }}), not in Agents & Actions. Enabling it does not require agents or actions, and standard chat uses memories on its own.
+- Assigning this action to an agent lets the agent read and write memories as part of its own tool calls.
 - Users also need access to the action through workspace or governance policy where applicable.
 
 ## Configuration overview

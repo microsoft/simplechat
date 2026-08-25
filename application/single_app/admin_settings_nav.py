@@ -68,6 +68,7 @@ ADMIN_NAV = [
                     {"id": "workspace-scope-lock-section", "label": "Workspace Scope Lock", "icon": "bi-lock"},
                     {"id": "conversation-history-section", "label": "Conversation History", "icon": "bi-clock-history"},
                     {"id": "default-system-prompt-section", "label": "Default System Prompt", "icon": "bi-chat-square-quote"},
+                    {"id": "fact-memory-section", "label": "Fact Memory", "icon": "bi-journal-text"},
                 ],
             },
             {
@@ -542,8 +543,16 @@ ADMIN_NAV = [
                 ],
             },
             {
+                "id": "user-facing-latest-features",
+                "label": "User-Facing Latest Features",
+                "icon": "bi-megaphone",
+                "sections": [
+                    {"id": "user-facing-latest-features-section", "label": "User-Facing Latest Features", "icon": "bi-megaphone"},
+                ],
+            },
+            {
                 "id": "latest-features",
-                "label": "Latest Features",
+                "label": "Admin Latest Features",
                 "icon": "bi-lightning-charge",
                 "sections": [],
                 # Rendered specially: it can be hidden per user, carries a New

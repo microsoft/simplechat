@@ -5,7 +5,7 @@ description: "The conversation no longer jumps to the bottom while you are readi
 section: "Latest Release"
 ---
 
-Current release version for Chat Stops Yanking You to the Bottom: **0.260.001**
+Current release version for Chat Stops Yanking You to the Bottom: **0.261.001**
 
 Previously, new streaming content pulled the viewport down even when you had deliberately scrolled up to read something. Now the view stays where you put it, and a floating scroll-to-latest button appears when there is newer content below your current position. The change also improves the experience for keyboard users and screen reader testing.
 
@@ -16,14 +16,6 @@ The conversation no longer jumps to the bottom while you are reading further up,
 ## Admin Side
 
 Admins decide whether Chat Stops Yanking You to the Bottom is available in your environment. If you cannot find Open Chat, ask whether the related settings, governance policy, or workspace access has been enabled for your account.
-
-## Screenshot Placeholder
-
-The v0.260.001 app catalog currently provides branded placeholder captures for Chat Stops Yanking You to the Bottom. Replace these copied documentation images when final screenshots are ready:
-
-- `/images/latest-release/release_260_chat_scroll_508_1.png`
-- `/images/latest-release/release_260_chat_scroll_508_2.png`
-- `/images/latest-release/release_260_chat_scroll_508_3.png`
 
 ## Why It Matters
 
@@ -41,5 +33,5 @@ This matters because losing your place mid-paragraph while an answer is still st
 
 ## Notes
 
-- The Chat Stops Yanking You to the Bottom guide belongs to the SimpleChat 0.260.001 latest-feature set.
+- The Chat Stops Yanking You to the Bottom guide belongs to the SimpleChat 0.261.001 latest-feature set.
 - The gallery for this page uses `release_260_chat_scroll_508_1.png`, `release_260_chat_scroll_508_2.png`, `release_260_chat_scroll_508_3.png` from the app Latest Features catalog.

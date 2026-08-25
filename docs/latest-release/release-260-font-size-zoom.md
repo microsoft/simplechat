@@ -5,7 +5,7 @@ description: "Five font size choices ranging from 75 percent to 200 percent are 
 section: "Latest Release"
 ---
 
-Current release version for Choose Your Text Size: **0.260.001**
+Current release version for Choose Your Text Size: **0.261.001**
 
 Font size is a saved per-user preference, so it follows you across sessions rather than resetting. Alongside it, chat, top navigation, classification banners, and the sidebar were reworked to remain fully usable when the browser itself is zoomed to 200 percent.
 
@@ -16,14 +16,6 @@ Five font size choices ranging from 75 percent to 200 percent are available on y
 ## Admin Side
 
 Admins decide whether Choose Your Text Size is available in your environment. If you cannot find Open Profile and Open Chat, ask whether the related settings, governance policy, or workspace access has been enabled for your account.
-
-## Screenshot Placeholder
-
-The v0.260.001 app catalog currently provides branded placeholder captures for Choose Your Text Size. Replace these copied documentation images when final screenshots are ready:
-
-- `/images/latest-release/release_260_font_size_zoom_1.png`
-- `/images/latest-release/release_260_font_size_zoom_2.png`
-- `/images/latest-release/release_260_font_size_zoom_3.png`
 
 ## Why It Matters
 
@@ -41,5 +33,5 @@ This matters because readable text is an accessibility requirement, not a prefer
 
 ## Notes
 
-- The Choose Your Text Size guide belongs to the SimpleChat 0.260.001 latest-feature set.
+- The Choose Your Text Size guide belongs to the SimpleChat 0.261.001 latest-feature set.
 - The gallery for this page uses `release_260_font_size_zoom_1.png`, `release_260_font_size_zoom_2.png`, `release_260_font_size_zoom_3.png` from the app Latest Features catalog.
