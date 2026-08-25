@@ -118,6 +118,24 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   The Cosmos DB tab checked the wrong thing for the debug setting, so the backfill controls, shadow validation metrics and reset option stayed hidden even after an admin turned the setting on.
     *   (Ref: `admin/_panes/cosmos.html`, `enable_dai_debug`)
 
+### **(v0.260.019)**
+
+#### Bug Fixes
+
+*   **Logout No Longer Redirects To A Missing Easy Auth Endpoint**
+    *   Logout could redirect to `/.auth/logout?post_logout_redirect_uri=%2Flogin` and return a 404 on Azure App Service deployments that were not actually serving App Service Easy Auth. This affected production deployments as well as development ones.
+    *   The root cause was Easy Auth detection treating the manually configured `WEBSITE_AUTH_AAD_ALLOWED_TENANTS` application setting as proof that Easy Auth was intercepting requests. SimpleChat's own advanced environment variable guidance instructs operators to set that value by hand, so it was never a reliable signal.
+    *   Detection now relies only on the `X-MS-CLIENT-PRINCIPAL` request headers that App Service Easy Auth injects on requests it actually intercepts, so deployments genuinely behind Easy Auth still clear the upstream platform session, and everyone else gets a clean local logout.
+    *   Idle-timeout logout uses the same local logout path, so automatic session expiration follows the corrected behavior as well.
+    *   (Ref: `route_frontend_authentication.py`, `_use_app_service_easy_auth_logout`, `test_app_service_easy_auth_logout.py`, [Easy Auth Logout Detection Fix](fixes/EASY_AUTH_LOGOUT_DETECTION_FIX.md))
+
+#### New Features
+
+*   **Opt-Out For App Service Easy Auth Logout**
+    *   Added the `DISABLE_APP_SERVICE_EASY_AUTH_LOGOUT` environment variable for deployments where Easy Auth is genuinely active but the platform `/.auth/logout` endpoint is not reachable on the public host, such as when a custom domain or gateway does not route `/.auth/*` to the App Service origin.
+    *   Setting it to `true` keeps logout on the local path instead of redirecting to the platform endpoint. Logout routing decisions are now also traced through debug logging, so `FLASK_DEBUG=1` shows which path was taken and why.
+    *   (Ref: `DISABLE_APP_SERVICE_EASY_AUTH_LOGOUT`, `config.py`, `example.env`, [Running SimpleChat Locally](running_simplechat_locally.md))
+
 ### **(v0.260.018)**
 
 #### Bug Fixes
