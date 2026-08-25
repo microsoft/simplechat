@@ -68,6 +68,7 @@ ADMIN_NAV = [
                     {"id": "workspace-scope-lock-section", "label": "Workspace Scope Lock", "icon": "bi-lock"},
                     {"id": "conversation-history-section", "label": "Conversation History", "icon": "bi-clock-history"},
                     {"id": "default-system-prompt-section", "label": "Default System Prompt", "icon": "bi-chat-square-quote"},
+                    {"id": "fact-memory-section", "label": "Fact Memory", "icon": "bi-journal-text"},
                 ],
             },
             {

@@ -1511,11 +1511,13 @@ def update_core_plugin_settings():
         'enable_math_plugin',
         'enable_text_plugin',
         'enable_default_embedding_model_plugin',
-        'enable_fact_memory_plugin',
         'allow_user_plugins',
         'allow_group_plugins'
     ]
-    deprecated_optional_keys = ['enable_tabular_processing_plugin']
+    # Fact memory moved to Chat > Chat Experience and is saved by the admin settings form.
+    # It stays accepted here so older clients do not 400, but it is never written from this
+    # endpoint -- otherwise a client that omits it would silently disable fact memory.
+    deprecated_optional_keys = ['enable_tabular_processing_plugin', 'enable_fact_memory_plugin']
     updates = {}
     # Check for unexpected keys in the data payload
     for key in data:

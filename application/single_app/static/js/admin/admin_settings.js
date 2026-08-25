@@ -6465,11 +6465,10 @@ function setupToggles() {
         const waitToggle = document.getElementById('toggle-wait-plugin');
         const mathToggle = document.getElementById('toggle-math-plugin');
         const textToggle = document.getElementById('toggle-text-plugin');
-        const factMemoryToggle = document.getElementById('toggle-fact-memory-plugin');
         const embeddingToggle = document.getElementById('toggle-default-embedding-model-plugin');
         const allowUserPluginsToggle = document.getElementById('toggle-allow-user-plugins');
         const allowGroupPluginsToggle = document.getElementById('toggle-allow-group-plugins');
-        const toggles = [timeToggle, httpToggle, waitToggle, mathToggle, textToggle, factMemoryToggle, embeddingToggle, allowUserPluginsToggle, allowGroupPluginsToggle];
+        const toggles = [timeToggle, httpToggle, waitToggle, mathToggle, textToggle, embeddingToggle, allowUserPluginsToggle, allowGroupPluginsToggle];
         // Feedback area
         let feedbackDiv = document.getElementById('core-plugin-toggles-feedback');
         if (!feedbackDiv) {
@@ -6498,7 +6497,14 @@ function setupToggles() {
                 if (mathToggle) mathToggle.checked = !!settings.enable_math_plugin;
                 if (textToggle) textToggle.checked = !!settings.enable_text_plugin;
                 if (embeddingToggle) embeddingToggle.checked = !!settings.enable_default_embedding_model_plugin;
-                if (factMemoryToggle) factMemoryToggle.checked = !!settings.enable_fact_memory_plugin;
+                const factMemoryNote = document.getElementById('fact-memory-dependency-note');
+                if (factMemoryNote) {
+                    const factMemoryEnabled = !!settings.enable_fact_memory_plugin;
+                    factMemoryNote.textContent = factMemoryEnabled
+                        ? 'Enabled in Chat > Chat Experience > Fact Memory'
+                        : 'Disabled. Enable it in Chat > Chat Experience > Fact Memory';
+                    factMemoryNote.className = factMemoryEnabled ? 'text-muted d-block ms-4' : 'text-danger d-block ms-4';
+                }
                 const depNote = document.getElementById('tabular-processing-dependency-note');
                 if (depNote) {
                     const tabularEnabled = !!settings.enable_tabular_processing_plugin;
@@ -6527,7 +6533,6 @@ function setupToggles() {
                 enable_math_plugin: mathToggle ? mathToggle.checked : false,
                 enable_text_plugin: textToggle ? textToggle.checked : false,
                 enable_default_embedding_model_plugin: embeddingToggle ? embeddingToggle.checked : false,
-                enable_fact_memory_plugin: factMemoryToggle ? factMemoryToggle.checked : false,
                 allow_user_plugins: allowUserPluginsToggle ? allowUserPluginsToggle.checked : false,
                 allow_group_plugins: allowGroupPluginsToggle ? allowGroupPluginsToggle.checked : false
             };
