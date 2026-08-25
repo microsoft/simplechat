@@ -5,7 +5,7 @@ description: "A new RocksDB action type lets agents read from an ordered key-val
 section: "Latest Release"
 ---
 
-Current release version for RocksDB Key-Value Store Action: **0.260.001**
+Current release version for RocksDB Key-Value Store Action: **0.261.001**
 
 The RocksDB action targets an HTTP and JSON service in front of a RocksDB store. It exposes get, scan, and stats tools for reads, plus guarded write operations, and supports no-auth, bearer token, and API key authentication. A dedicated configuration card and a Test Connection button let you confirm the endpoint before saving.
 
@@ -16,14 +16,6 @@ A new RocksDB action type lets agents read from an ordered key-value store throu
 ## Admin Side
 
 Admins decide whether RocksDB Key-Value Store Action is available in your environment. If you cannot find Open Personal Workspace and Open Agents, ask whether the related settings, governance policy, or workspace access has been enabled for your account.
-
-## Screenshot Placeholder
-
-The v0.260.001 app catalog currently provides branded placeholder captures for RocksDB Key-Value Store Action. Replace these copied documentation images when final screenshots are ready:
-
-- `/images/latest-release/release_260_rocksdb_action_1.png`
-- `/images/latest-release/release_260_rocksdb_action_2.png`
-- `/images/latest-release/release_260_rocksdb_action_3.png`
 
 ## Why It Matters
 
@@ -41,5 +33,5 @@ This matters because ordered key-value data is common in telemetry and logging s
 
 ## Notes
 
-- The RocksDB Key-Value Store Action guide belongs to the SimpleChat 0.260.001 latest-feature set.
+- The RocksDB Key-Value Store Action guide belongs to the SimpleChat 0.261.001 latest-feature set.
 - The gallery for this page uses `release_260_rocksdb_action_1.png`, `release_260_rocksdb_action_2.png`, `release_260_rocksdb_action_3.png` from the app Latest Features catalog.

@@ -2,8 +2,8 @@
 # test_admin_latest_features_tab.py
 """
 Functional test for admin Latest Features tab.
-Version: 0.260.001
-Implemented in: 0.240.074; 0.240.085; 0.241.002; 0.241.164; 0.241.165; 0.241.166; 0.241.183; 0.241.184; 0.250.001; 0.250.026; 0.250.034; 0.250.036; 0.260.001
+Version: 0.261.001
+Implemented in: 0.240.074; 0.240.085; 0.241.002; 0.241.164; 0.241.165; 0.241.166; 0.241.183; 0.241.184; 0.250.001; 0.250.026; 0.250.034; 0.250.036; 0.260.001; 0.261.001
 
 This test ensures that the Admin Settings page exposes a data-driven,
 admin-only Latest Features tab while the user-facing support catalog remains
@@ -51,6 +51,16 @@ USER_CURRENT_FEATURE_IDS = [
     'release_260_message_audio_export',
     'release_260_public_workspace_display_name',
     'release_260_chat_scroll_508',
+    'release_260_workflow_run_control',
+    'release_260_workflow_alert_rules',
+    'release_260_agent_document_citations',
+    'release_260_cited_vs_retrieved_sources',
+    'release_260_source_continuity_followups',
+    'release_260_generated_json_xml',
+    'release_260_formula_extraction',
+    'release_260_document_filename_search',
+    'release_260_bulk_metadata_extraction',
+    'release_260_shared_conversation_collaboration',
 ]
 
 ADMIN_CURRENT_FEATURE_IDS = [
@@ -70,6 +80,8 @@ ADMIN_CURRENT_FEATURE_IDS = [
     'admin_release_260_terms_of_use',
     'admin_release_260_chat_ai_notice',
     'admin_release_260_public_workspace_display_name',
+    'admin_release_260_document_access_index',
+    'admin_release_260_cosmos_maintenance',
 ]
 
 USER_CURRENT_FEATURE_IMAGE_FILES = {
@@ -93,6 +105,16 @@ USER_CURRENT_FEATURE_IMAGE_FILES = {
     'release_260_message_audio_export': ['release_260_message_audio_export_1.png', 'release_260_message_audio_export_2.png', 'release_260_message_audio_export_3.png'],
     'release_260_public_workspace_display_name': ['release_260_public_workspace_display_name_1.png', 'release_260_public_workspace_display_name_2.png', 'release_260_public_workspace_display_name_3.png'],
     'release_260_chat_scroll_508': ['release_260_chat_scroll_508_1.png', 'release_260_chat_scroll_508_2.png', 'release_260_chat_scroll_508_3.png'],
+    'release_260_workflow_run_control': ['release_260_workflow_run_control_1.png', 'release_260_workflow_run_control_2.png'],
+    'release_260_workflow_alert_rules': ['release_260_workflow_alert_rules_1.png', 'release_260_workflow_alert_rules_2.png'],
+    'release_260_agent_document_citations': ['release_260_agent_document_citations_1.png', 'release_260_agent_document_citations_2.png'],
+    'release_260_cited_vs_retrieved_sources': ['release_260_cited_vs_retrieved_sources_1.png', 'release_260_cited_vs_retrieved_sources_2.png'],
+    'release_260_source_continuity_followups': ['release_260_source_continuity_followups_1.png', 'release_260_source_continuity_followups_2.png'],
+    'release_260_generated_json_xml': ['release_260_generated_json_xml_1.png', 'release_260_generated_json_xml_2.png'],
+    'release_260_formula_extraction': ['release_260_formula_extraction_1.png', 'release_260_formula_extraction_2.png'],
+    'release_260_document_filename_search': ['release_260_document_filename_search_1.png', 'release_260_document_filename_search_2.png'],
+    'release_260_bulk_metadata_extraction': ['release_260_bulk_metadata_extraction_1.png', 'release_260_bulk_metadata_extraction_2.png'],
+    'release_260_shared_conversation_collaboration': ['release_260_shared_conversation_collaboration_1.png', 'release_260_shared_conversation_collaboration_2.png'],
 }
 
 ADMIN_CURRENT_FEATURE_IMAGE_FILES = {
@@ -110,6 +132,8 @@ ADMIN_CURRENT_FEATURE_IMAGE_FILES = {
     'admin_release_260_terms_of_use': ['admin_release_260_terms_of_use.png'],
     'admin_release_260_chat_ai_notice': ['admin_release_260_chat_ai_notice.png'],
     'admin_release_260_public_workspace_display_name': ['admin_release_260_public_workspace_display_name.png'],
+    'admin_release_260_document_access_index': ['admin_release_260_document_access_index.png'],
+    'admin_release_260_cosmos_maintenance': ['admin_release_260_cosmos_maintenance.png'],
 }
 
 # These settings have no admin pane of their own to photograph: auto-login is an
@@ -171,7 +195,7 @@ def test_user_latest_features_catalog_release_groups():
         'previous_release',
         'archive_release',
     ]
-    assert release_groups[0]['release_version'] == '0.260.001'
+    assert release_groups[0]['release_version'] == '0.261.001'
     assert release_groups[1]['release_version'] == '0.250.001'
     assert release_groups[2]['release_version'] == '0.239.001 - 0.241.007'
 
@@ -187,7 +211,7 @@ def test_user_latest_features_catalog_release_groups():
     assert default_visibility['deployment'] is False
     assert default_visibility['redis_key_vault'] is False
     assert default_visibility['release_250_ai_access'] is True
-    assert all(default_visibility[feature_id] is True for feature_id in USER_CURRENT_FEATURE_IDS), 'v0.260.001 cards ship visible now that every screenshot is a real capture'
+    assert all(default_visibility[feature_id] is True for feature_id in USER_CURRENT_FEATURE_IDS), 'v0.261.001 cards ship visible now that every screenshot is a real capture'
 
     first_feature = release_groups[0]['features'][0]
     assert first_feature['id'] == 'release_260_enhanced_extraction'
@@ -218,7 +242,7 @@ def test_admin_latest_features_catalog_release_groups():
     assert release_groups[0]['label'] == 'Admin-Managed Latest Features'
     assert release_groups[1]['label'] == 'Previous Release Features'
     assert release_groups[2]['label'] == 'Archive Release Features'
-    assert release_groups[0]['release_version'] == '0.260.001'
+    assert release_groups[0]['release_version'] == '0.261.001'
     assert release_groups[1]['release_version'] == '0.250.001'
     assert release_groups[2]['release_version'] == '0.241.001 - 0.241.007'
 
@@ -451,8 +475,8 @@ def test_latest_features_supporting_assets():
         for image_names in ADMIN_CURRENT_FEATURE_IMAGE_FILES.values()
         for image_name in image_names
     ]
-    assert all(image_name.startswith('release_260_') for image_name in current_placeholder_images), 'Current screenshots should be 0.260.001 placeholder filenames'
-    assert all(image_name.startswith('admin_release_260_') for image_name in current_admin_images), 'Current admin screenshots should be 0.260.001 placeholder filenames'
+    assert all(image_name.startswith('release_260_') for image_name in current_placeholder_images), 'Current screenshots should be v0.261.001 tier filenames'
+    assert all(image_name.startswith('admin_release_260_') for image_name in current_admin_images), 'Current admin screenshots should be v0.261.001 tier filenames'
     assert 'admin_release_250_deep_research_url_access.png' not in current_admin_images, 'Deep Research and URL Access must use separate admin screenshot assets'
 
     for image_name in current_placeholder_images + current_admin_images:

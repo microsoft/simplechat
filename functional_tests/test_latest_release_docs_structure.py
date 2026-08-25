@@ -1,12 +1,18 @@
 #!/usr/bin/env python3
 """
 Functional test for latest-release documentation structure.
-Version: 0.260.001
-Implemented in: 0.241.002; 0.241.003; 0.241.164; 0.241.165; 0.241.166; 0.241.167; 0.241.183; 0.241.184; 0.250.001; 0.250.034; 0.250.035; 0.250.036; 0.250.041; 0.250.042; 0.250.043; 0.250.044; 0.250.045; 0.250.046; 0.250.047
+Version: 0.261.001
+Implemented in: 0.241.002; 0.241.003; 0.241.164; 0.241.165; 0.241.166; 0.241.167; 0.241.183; 0.241.184; 0.250.001; 0.250.034; 0.250.035; 0.250.036; 0.250.041; 0.250.042; 0.250.043; 0.250.044; 0.250.045; 0.250.046; 0.250.047; 0.261.001
 
 This test ensures the docs/latest-release landing page is driven by the latest
 release YAML data, exposes current, previous, and earlier release sections, and
 that every configured latest-feature guide exists as an individual markdown page.
+
+CURRENT_GUIDES and CURRENT_GUIDE_IMAGES are a floor, not an exact roster. The
+current release grows as cards are added to the app catalog, and pinning the full
+list here duplicates test_docs_latest_release_catalog_parity.py, which derives it
+from support_menu_config.py. Guides listed here must exist and stay well-formed;
+anything beyond them is validated from the catalog instead.
 """
 
 from pathlib import Path
@@ -106,35 +112,18 @@ def test_latest_release_docs_structure() -> bool:
     required_index_markers = [
         'layout: latest-release-index',
         'title: "Latest Release Highlights"',
-        'SimpleChat v0.260.001',
+        'SimpleChat v0.261.001',
         'v0.250.001',
         'v0.239.001',
     ]
     missing_index_markers = [marker for marker in required_index_markers if marker not in index_content]
     assert not missing_index_markers, f"Missing latest-release index markers: {missing_index_markers}"
 
-    assert release_data["current_release"]["slugs"] == [
-        'release-260-enhanced-extraction',
-        'release-260-office-embedded-images',
-        'release-260-workflow-task-sequences',
-        'release-260-mcp-platform',
-        'release-260-yamcs-action',
-        'release-260-rocksdb-action',
-        'release-260-agent-instruction-references',
-        'release-260-action-test-connection',
-        'release-260-azure-blob-file-sync',
-        'release-260-terms-of-use',
-        'release-260-audio-file-support',
-        'release-260-completion-notifications',
-        'release-260-chat-ai-notice',
-        'release-260-conversation-context-grounding',
-        'release-260-used-documents-fork',
-        'release-260-conversation-contents-drawer',
-        'release-260-font-size-zoom',
-        'release-260-message-audio-export',
-        'release-260-public-workspace-display-name',
-        'release-260-chat-scroll-508',
-    ]
+    current_slugs = release_data["current_release"]["slugs"]
+    pinned_slugs = [name[:-3] for name in CURRENT_GUIDES]
+    missing_pinned = [slug for slug in pinned_slugs if slug not in current_slugs]
+    assert not missing_pinned, f"Current release dropped pinned guides: {missing_pinned}"
+    assert len(current_slugs) == len(set(current_slugs)), "Current release lists a slug twice"
 
     previous_groups = release_data["previous_release_groups"]
     assert previous_groups[0]["release_version"] == "0.250.001"
@@ -149,11 +138,14 @@ def test_latest_release_docs_structure() -> bool:
 
     for slug in release_data["current_release"]["slugs"]:
         feature = lookup[slug]
-        expected_files = CURRENT_GUIDE_IMAGES[slug]
-        expected_paths = [f"/images/latest-release/{image_name}" for image_name in expected_files]
-        assert feature.get("image") == expected_paths[0], f"Primary docs image mismatch: {slug}"
+        pinned_files = CURRENT_GUIDE_IMAGES.get(slug)
+        gallery_paths = [image["path"] for image in feature.get("images", [])]
+        if pinned_files is not None:
+            expected_paths = [f"/images/latest-release/{image_name}" for image_name in pinned_files]
+            assert gallery_paths == expected_paths, f"Docs image gallery mismatch: {slug}"
+        assert gallery_paths, f"Current release card has no docs images: {slug}"
+        assert feature.get("image") == gallery_paths[0], f"Primary docs image mismatch: {slug}"
         assert feature.get("image_alt"), f"Missing primary docs image alt text: {slug}"
-        assert [image["path"] for image in feature.get("images", [])] == expected_paths, f"Docs image gallery mismatch: {slug}"
         for image in feature["images"]:
             assert image.get("caption"), f"Missing docs image caption: {slug}"
             assert image.get("label"), f"Missing docs image label: {slug}"
