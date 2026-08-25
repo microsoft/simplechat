@@ -15,7 +15,11 @@ Your organization can display its own AI guidance directly under the chat compos
 
 ## Admin Side
 
-Admins decide whether AI Usage Guidance in Chat is available in your environment. If you cannot find Open Chat, ask whether the related settings, governance policy, or workspace access has been enabled for your account.
+The notice is configured under Notices & Agreements, in the Chat AI Notice section. The text is Markdown, so guidance can link to an internal policy page instead of restating it.
+
+Display Behavior sets how insistent the notice is: always visible with no dismiss control, dismissible once per session, dismissible once per day, or dismissible once per message version. The last option is the useful default for guidance that changes, because editing the text brings the notice back for everyone who had already dismissed the previous version.
+
+This replaces the previous practice of editing templates to put usage guidance in front of users, which meant the wording drifted from whatever policy actually said.
 
 ## Why It Matters
 

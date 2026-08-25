@@ -15,7 +15,11 @@ Enhanced extraction now reads charts, diagrams, and figures inside your document
 
 ## Admin Side
 
-Admins decide whether Sharper Document Extraction with Figure Descriptions is available in your environment. If you cannot find Open Personal Workspace and Open Chat, ask whether the related settings, governance policy, or workspace access has been enabled for your account.
+Enhanced extraction is configured under Search & Extract. It now runs on Azure AI Content Understanding rather than Document Intelligence Layout, which is where the generated figure, chart, and diagram descriptions come from. Auto mode upgrades to the richer engine when a document actually contains figures, so simple text files are not pushed through a more expensive path for no benefit.
+
+Tenants already on Enhanced or Auto are migrated on upgrade rather than being silently reset. When Content Understanding cannot run, extraction falls back to Document Intelligence and records why, and users see the engine that ran plus the fallback reason on the document row. That visibility is the point: an admin diagnosing a weak answer can tell whether the document was ever read with the richer engine, instead of guessing.
+
+Documents processed before the change keep their original extraction until they are re-extracted, so figure-heavy documents that matter should be re-run deliberately.
 
 ## Why It Matters
 

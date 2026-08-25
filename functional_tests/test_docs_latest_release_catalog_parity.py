@@ -2,8 +2,8 @@
 # test_docs_latest_release_catalog_parity.py
 """
 Functional test for Latest Release documentation parity.
-Version: 0.261.002
-Implemented in: 0.261.002
+Version: 0.261.001
+Implemented in: 0.261.001
 
 This test ensures the documentation site's Latest Release catalog stays in step
 with the in-app Latest Features catalogs. It catches the drift class that let the
@@ -269,11 +269,11 @@ def test_generated_docs_are_current():
 
 
 def test_version_floor():
-    """The parity contract shipped in 0.261.002."""
+    """The parity contract shipped in 0.261.001."""
     print('Testing application version floor...')
 
     try:
-        assert_app_version_at_least('0.261.002')
+        assert_app_version_at_least('0.261.001')
         print('Application version is at or above the parity contract version')
         return True
 

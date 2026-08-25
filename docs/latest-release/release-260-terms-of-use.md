@@ -15,7 +15,11 @@ Your organization can require you to accept a terms of use or rules of behavior 
 
 ## Admin Side
 
-Admins configure the tenant policy behind Terms of Use Acceptance. If the experience does not appear when expected, ask your SimpleChat admin whether the organization has enabled this release item for your account.
+The gate is configured under Notices & Agreements, in the Terms of Use section. An admin supplies the popup title, the body text, and the wording on the accept and cancel buttons, so the notice can carry your organization's own language rather than a generic label.
+
+Show Frequency decides how often the gate returns: at the start of every session, once per day, or just once per terms version. The last option is the one that matters for policy changes, because editing the text makes the gate reappear for people who already accepted the previous wording.
+
+Declining sends the user to a configurable redirect, which defaults to `/`. That target is restricted to local paths, so the gate cannot be turned into an open redirect. Accept and decline are both written to the activity log, and enforcement happens on the server, so navigating straight to an internal URL does not bypass it.
 
 ## Why It Matters
 

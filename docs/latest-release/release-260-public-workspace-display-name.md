@@ -15,7 +15,11 @@ Your organization can rename the Public Workspace to something meaningful such a
 
 ## Admin Side
 
-Admins decide whether Public Workspace Can Carry Your Own Name is available in your environment. If you cannot find Open Chat and Open Profile, ask whether the related settings, governance policy, or workspace access has been enabled for your account.
+The label is set under Workspaces, on the Workspace Types tab, in the Public Workspaces section. The field is limited to 32 characters because the same string has to fit navigation, the chat scope selector, Profile, and the directory pages.
+
+Only the display label changes. Internal workspace identifiers, stored documents, and existing links are untouched, so renaming is not a migration and can be reversed by clearing the field, which restores the default "Public Workspace" and "Public Workspaces" wording.
+
+Worth doing at the same time: update whatever your help desk scripts and internal documentation call this area, because the app will use your term everywhere and support articles that still say "Public Workspace" will not match what users see.
 
 ## Why It Matters
 

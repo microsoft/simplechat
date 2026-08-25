@@ -15,7 +15,11 @@ Azure Blob Storage containers can now be used as File Sync sources for personal,
 
 ## Admin Side
 
-Admins decide whether Sync Documents From Azure Blob Storage is available in your environment. If you cannot find Open Workspace Sync and Open Group Workspaces, ask whether the related settings, governance policy, or workspace access has been enabled for your account.
+Blob sources are added under File Sync, which has separate sections for personal, group, and public workspace sync, so a container can be exposed to one workspace tier without exposing it to the others.
+
+A Blob source authenticates with a managed identity, a service principal client secret, or a connection string. Managed identity avoids storing a credential at all and is the better choice where the app already has an identity on the storage account. When a SAS URL is supplied, SimpleChat parses it and reports what it actually grants: whether it is an account, container, or blob SAS, which permissions are attached, and when it expires. An account SAS is flagged as broader than a single-container source needs, and permissions beyond Read and List are called out. If the SAS is bound to a stored access policy, the permissions cannot be read from the token, and SimpleChat says so rather than implying it validated something it could not see.
+
+Prefix and filter controls limit which part of a container users can pull from, and change detection is based on ETags, so a sync run moves changed blobs instead of re-ingesting everything.
 
 ## Why It Matters
 
