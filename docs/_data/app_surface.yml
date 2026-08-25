@@ -3,8 +3,8 @@
 counts:
   capabilities: 111
   admin_groups: 14
-  admin_tabs: 44
-  admin_sections: 93
+  admin_tabs: 45
+  admin_sections: 94
   actions: 27
   chat_controls: 47
   sub_elements: 3
@@ -284,6 +284,7 @@ admin_groups:
   - latest-features
   - send-feedback
   - support-menu
+  - user-facing-latest-features
 - id: knowledge
   label: Knowledge
   tabs:
@@ -397,7 +398,7 @@ admin_tabs:
   label: Jobs
   group: backup-recovery
 - id: latest-features
-  label: Latest Features
+  label: Admin Latest Features
   group: help
 - id: logging
   label: Logging & Health
@@ -440,6 +441,9 @@ admin_tabs:
   group: security
 - id: support-menu
   label: Support Menu
+  group: help
+- id: user-facing-latest-features
+  label: User-Facing Latest Features
   group: help
 - id: web-research
   label: Web & Research
@@ -806,6 +810,10 @@ admin_sections:
   label: User Agreement
   tab: notices
   group: appearance
+- id: user-facing-latest-features-section
+  label: User-Facing Latest Features
+  tab: user-facing-latest-features
+  group: help
 - id: user-feedback-section
   label: User Feedback
   tab: feedback-alerts

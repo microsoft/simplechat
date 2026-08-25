@@ -5,7 +5,7 @@ description: "Your organization can rename the Public Workspace to something mea
 section: "Latest Release"
 ---
 
-Current release version for Public Workspace Can Carry Your Own Name: **0.260.001**
+Current release version for Public Workspace Can Carry Your Own Name: **0.261.001**
 
 When admins set a display name, it replaces the generic label across navigation, your profile, chat scope selection, and directory pages. Only the label changes; the underlying workspace, its documents, and every link continue to work exactly as before.
 
@@ -16,14 +16,6 @@ Your organization can rename the Public Workspace to something meaningful such a
 ## Admin Side
 
 Admins decide whether Public Workspace Can Carry Your Own Name is available in your environment. If you cannot find Open Chat and Open Profile, ask whether the related settings, governance policy, or workspace access has been enabled for your account.
-
-## Screenshot Placeholder
-
-The v0.260.001 app catalog currently provides branded placeholder captures for Public Workspace Can Carry Your Own Name. Replace these copied documentation images when final screenshots are ready:
-
-- `/images/latest-release/release_260_public_workspace_display_name_1.png`
-- `/images/latest-release/release_260_public_workspace_display_name_2.png`
-- `/images/latest-release/release_260_public_workspace_display_name_3.png`
 
 ## Why It Matters
 
@@ -41,5 +33,5 @@ This matters because shared knowledge collections usually already have a name in
 
 ## Notes
 
-- The Public Workspace Can Carry Your Own Name guide belongs to the SimpleChat 0.260.001 latest-feature set.
+- The Public Workspace Can Carry Your Own Name guide belongs to the SimpleChat 0.261.001 latest-feature set.
 - The gallery for this page uses `release_260_public_workspace_display_name_1.png`, `release_260_public_workspace_display_name_2.png`, `release_260_public_workspace_display_name_3.png` from the app Latest Features catalog.

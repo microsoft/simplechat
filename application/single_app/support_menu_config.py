@@ -2218,11 +2218,11 @@ _SUPPORT_RELEASE_260_FEATURE_CATALOG = [
         [
             'Ask your admin whether formula extraction is enabled for your environment.',
             'Upload a PDF or image that contains mathematical equations.',
-            'Confirm the document is processed with Enhanced rather than Standard extraction.',
-            'Open the document details once processing finishes.',
-            'Look for equations captured as LaTeX rather than garbled inline text.',
+            'Expand the document row once processing finishes and confirm Extraction reads Enhanced rather than Standard.',
             'Open Chat and ground a question on that document.',
-            'Ask about a specific equation and confirm the answer reflects the real expression.',
+            'Ask about a specific equation.',
+            'Confirm the answer reproduces the real expression as LaTeX instead of garbled inline text.',
+            'Open the citation to read the captured LaTeX in the source passage.',
         ],
         actions=[
             {'label': 'Open Personal Workspace', 'description': 'Upload a document with equations and review the extracted formulas.', 'href': '/workspace#documents-tab', 'icon': 'bi-folder2-open', 'requires_settings': ['enable_user_workspace']},

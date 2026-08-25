@@ -5,7 +5,7 @@ description: "Workflows can now run an ordered sequence of tasks, each with its 
 section: "Latest Release"
 ---
 
-Current release version for Multi-Step Workflows With Alert Rules: **0.260.001**
+Current release version for Multi-Step Workflows With Alert Rules: **0.261.001**
 
 The workflow builder is now a stepped experience covering General, Trigger, Tasks, Reliability, and Review. Each task chooses its own model or agent, sets its own document action and targets, and passes context forward to the next task. Alerts moved to a rules engine supporting run status, text matches, regular expressions, File Sync results, and AI-judged conditions across five severity levels. Runs can also be cancelled while in flight.
 
@@ -16,14 +16,6 @@ Workflows can now run an ordered sequence of tasks, each with its own model, age
 ## Admin Side
 
 Admins decide whether Multi-Step Workflows With Alert Rules is available in your environment. If you cannot find Open Personal Workspace, Open Group Workspaces, and Open Workflow Activity, ask whether the related settings, governance policy, or workspace access has been enabled for your account.
-
-## Screenshot Placeholder
-
-The v0.260.001 app catalog currently provides branded placeholder captures for Multi-Step Workflows With Alert Rules. Replace these copied documentation images when final screenshots are ready:
-
-- `/images/latest-release/release_260_workflow_task_sequences_1.png`
-- `/images/latest-release/release_260_workflow_task_sequences_2.png`
-- `/images/latest-release/release_260_workflow_task_sequences_3.png`
 
 ## Why It Matters
 
@@ -41,5 +33,5 @@ This matters because real work is rarely one prompt, and chaining steps with tar
 
 ## Notes
 
-- The Multi-Step Workflows With Alert Rules guide belongs to the SimpleChat 0.260.001 latest-feature set.
+- The Multi-Step Workflows With Alert Rules guide belongs to the SimpleChat 0.261.001 latest-feature set.
 - The gallery for this page uses `release_260_workflow_task_sequences_1.png`, `release_260_workflow_task_sequences_2.png`, `release_260_workflow_task_sequences_3.png` from the app Latest Features catalog.

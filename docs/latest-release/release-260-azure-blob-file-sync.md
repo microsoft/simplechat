@@ -5,7 +5,7 @@ description: "Azure Blob Storage containers can now be used as File Sync sources
 section: "Latest Release"
 ---
 
-Current release version for Sync Documents From Azure Blob Storage: **0.260.001**
+Current release version for Sync Documents From Azure Blob Storage: **0.261.001**
 
 Blob Storage joins the existing File Sync connectors. Sources support managed identity, Key Vault backed service principals, connection strings, and SAS tokens, and you can browse virtual folders rather than typing paths blind. Change detection uses ETags so only changed blobs are reprocessed, and prefix and filter controls keep a sync narrow.
 
@@ -16,14 +16,6 @@ Azure Blob Storage containers can now be used as File Sync sources for personal,
 ## Admin Side
 
 Admins decide whether Sync Documents From Azure Blob Storage is available in your environment. If you cannot find Open Workspace Sync and Open Group Workspaces, ask whether the related settings, governance policy, or workspace access has been enabled for your account.
-
-## Screenshot Placeholder
-
-The v0.260.001 app catalog currently provides branded placeholder captures for Sync Documents From Azure Blob Storage. Replace these copied documentation images when final screenshots are ready:
-
-- `/images/latest-release/release_260_azure_blob_file_sync_1.png`
-- `/images/latest-release/release_260_azure_blob_file_sync_2.png`
-- `/images/latest-release/release_260_azure_blob_file_sync_3.png`
 
 ## Why It Matters
 
@@ -41,5 +33,5 @@ This matters because a lot of organizational content already lives in blob conta
 
 ## Notes
 
-- The Sync Documents From Azure Blob Storage guide belongs to the SimpleChat 0.260.001 latest-feature set.
+- The Sync Documents From Azure Blob Storage guide belongs to the SimpleChat 0.261.001 latest-feature set.
 - The gallery for this page uses `release_260_azure_blob_file_sync_1.png`, `release_260_azure_blob_file_sync_2.png`, `release_260_azure_blob_file_sync_3.png` from the app Latest Features catalog.

@@ -5,7 +5,7 @@ description: "Enhanced extraction now reads charts, diagrams, and figures inside
 section: "Latest Release"
 ---
 
-Current release version for Sharper Document Extraction with Figure Descriptions: **0.260.001**
+Current release version for Sharper Document Extraction with Figure Descriptions: **0.261.001**
 
 When your admins turn on Enhanced extraction, SimpleChat uses Azure AI Content Understanding to describe figures, charts, and diagrams as it processes a file. Those descriptions become searchable text, so a question about a chart can be answered from the chart itself. Workspace document rows show a badge naming which extraction engine actually ran, and why it fell back if a different one was used.
 
@@ -16,14 +16,6 @@ Enhanced extraction now reads charts, diagrams, and figures inside your document
 ## Admin Side
 
 Admins decide whether Sharper Document Extraction with Figure Descriptions is available in your environment. If you cannot find Open Personal Workspace and Open Chat, ask whether the related settings, governance policy, or workspace access has been enabled for your account.
-
-## Screenshot Placeholder
-
-The v0.260.001 app catalog currently provides branded placeholder captures for Sharper Document Extraction with Figure Descriptions. Replace these copied documentation images when final screenshots are ready:
-
-- `/images/latest-release/release_260_enhanced_extraction_1.png`
-- `/images/latest-release/release_260_enhanced_extraction_2.png`
-- `/images/latest-release/release_260_enhanced_extraction_3.png`
 
 ## Why It Matters
 
@@ -41,5 +33,5 @@ This matters because a large share of the meaning in reports, decks, and scanned
 
 ## Notes
 
-- The Sharper Document Extraction with Figure Descriptions guide belongs to the SimpleChat 0.260.001 latest-feature set.
+- The Sharper Document Extraction with Figure Descriptions guide belongs to the SimpleChat 0.261.001 latest-feature set.
 - The gallery for this page uses `release_260_enhanced_extraction_1.png`, `release_260_enhanced_extraction_2.png`, `release_260_enhanced_extraction_3.png` from the app Latest Features catalog.
