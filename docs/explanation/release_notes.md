@@ -2,6 +2,17 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.260.029)**
+
+#### Bug Fixes
+
+*   **Logout No Longer Redirects To A Missing Easy Auth Endpoint**
+    *   Logout could redirect to `/.auth/logout?post_logout_redirect_uri=%2Flogin` and return a 404 on Azure App Service deployments that were not actually serving App Service Easy Auth. This affected production deployments as well as development ones.
+    *   The root cause was Easy Auth detection treating the manually configured `WEBSITE_AUTH_AAD_ALLOWED_TENANTS` application setting as proof that Easy Auth was intercepting requests. SimpleChat's own advanced environment variable guidance instructs operators to set that value by hand, so it was never a reliable signal.
+    *   Detection now relies only on the `X-MS-CLIENT-PRINCIPAL` request headers that App Service Easy Auth injects on requests it actually intercepts, so deployments genuinely behind Easy Auth still clear the upstream platform session, and everyone else gets a clean local logout.
+    *   Idle-timeout logout uses the same local logout path, so automatic session expiration follows the corrected behavior as well.
+    *   (Ref: `route_frontend_authentication.py`, `_use_app_service_easy_auth_logout`, `test_app_service_easy_auth_logout.py`, [Easy Auth Logout Detection Fix](fixes/EASY_AUTH_LOGOUT_DETECTION_FIX.md))
+
 ### **(v0.260.025)**
 
 #### Bug Fixes
@@ -117,17 +128,6 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 *   **Document Access Index Diagnostics Appear When Enabled**
     *   The Cosmos DB tab checked the wrong thing for the debug setting, so the backfill controls, shadow validation metrics and reset option stayed hidden even after an admin turned the setting on.
     *   (Ref: `admin/_panes/cosmos.html`, `enable_dai_debug`)
-
-### **(v0.260.019)**
-
-#### Bug Fixes
-
-*   **Logout No Longer Redirects To A Missing Easy Auth Endpoint**
-    *   Logout could redirect to `/.auth/logout?post_logout_redirect_uri=%2Flogin` and return a 404 on Azure App Service deployments that were not actually serving App Service Easy Auth. This affected production deployments as well as development ones.
-    *   The root cause was Easy Auth detection treating the manually configured `WEBSITE_AUTH_AAD_ALLOWED_TENANTS` application setting as proof that Easy Auth was intercepting requests. SimpleChat's own advanced environment variable guidance instructs operators to set that value by hand, so it was never a reliable signal.
-    *   Detection now relies only on the `X-MS-CLIENT-PRINCIPAL` request headers that App Service Easy Auth injects on requests it actually intercepts, so deployments genuinely behind Easy Auth still clear the upstream platform session, and everyone else gets a clean local logout.
-    *   Idle-timeout logout uses the same local logout path, so automatic session expiration follows the corrected behavior as well.
-    *   (Ref: `route_frontend_authentication.py`, `_use_app_service_easy_auth_logout`, `test_app_service_easy_auth_logout.py`, [Easy Auth Logout Detection Fix](fixes/EASY_AUTH_LOGOUT_DETECTION_FIX.md))
 
 #### New Features
 
