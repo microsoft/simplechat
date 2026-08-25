@@ -215,6 +215,14 @@ The following suites also pass: `test_data_management_security_patterns.py`,
   `admin_settings.html` instead of the composed template, so it broke when the
   panes moved into includes. Confirmed pre-existing: it fails identically with
   the changes above stashed.
+- Around twenty functional tests assert the exact `config.py` version literal,
+  for example `assert_contains(CONFIG_FILE, 'VERSION = "0.239.129"')`. This is
+  the pattern the versioning instructions call out, and
+  `test_support.versioning.assert_app_version_at_least` exists to replace it.
+  They were already failing before this change: the highest literal in the suite
+  is `0.260.023` while `config.py` was `0.260.028`. The bump to `0.261.001`
+  breaks none of them further, since no test asserts either version, but
+  converting them to the shared helper is worthwhile follow-up work.
 - A broader probe found roughly 39 `getElementById` literals in
   `admin_settings.js` with no matching id in the composed Admin Settings
   template, for example `workspaces`, `agents-tab` and
