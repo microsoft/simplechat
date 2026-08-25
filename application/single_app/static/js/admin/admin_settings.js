@@ -10815,10 +10815,11 @@ window.isAdminSettingsFormModified = () => formModified;
 function updateSaveButtonState() {
     if (!saveButton) return;
 
-    const dataManagementPane = document.getElementById('data-management');
-    const isDataManagementActive = Boolean(dataManagementPane?.classList.contains('active'));
-    saveButton.classList.toggle('d-none', isDataManagementActive);
-    if (isDataManagementActive) {
+    // Backup & Recovery panes carry their own save button in a group-shared
+    // region, so the global one is hidden while any of those tabs is active.
+    const isBackupRecoveryActive = Boolean(document.querySelector('[data-admin-group-pane="backup-recovery"].active'));
+    saveButton.classList.toggle('d-none', isBackupRecoveryActive);
+    if (isBackupRecoveryActive) {
         return;
     }
     
