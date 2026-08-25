@@ -5,7 +5,7 @@ description: "A new Yamcs action type connects agents to Yamcs mission control s
 section: "Latest Release"
 ---
 
-Current release version for Yamcs Mission Control Integration: **0.260.001**
+Current release version for Yamcs Mission Control Integration: **0.261.001**
 
 The Yamcs action is strictly read-only by design, so an agent can investigate mission data but cannot command a spacecraft. Archive SQL access is opt-in and enforced as SELECT-only. Several authentication methods are supported, and a dedicated configuration panel plus a Test Connection button make setup verifiable before you rely on it.
 
@@ -16,14 +16,6 @@ A new Yamcs action type connects agents to Yamcs mission control servers with el
 ## Admin Side
 
 Admins decide whether Yamcs Mission Control Integration is available in your environment. If you cannot find Open Personal Workspace and Open Agents, ask whether the related settings, governance policy, or workspace access has been enabled for your account.
-
-## Screenshot Placeholder
-
-The v0.260.001 app catalog currently provides branded placeholder captures for Yamcs Mission Control Integration. Replace these copied documentation images when final screenshots are ready:
-
-- `/images/latest-release/release_260_yamcs_action_1.png`
-- `/images/latest-release/release_260_yamcs_action_2.png`
-- `/images/latest-release/release_260_yamcs_action_3.png`
 
 ## Why It Matters
 
@@ -41,5 +33,5 @@ This matters because mission operators can ask plain-language questions about te
 
 ## Notes
 
-- The Yamcs Mission Control Integration guide belongs to the SimpleChat 0.260.001 latest-feature set.
+- The Yamcs Mission Control Integration guide belongs to the SimpleChat 0.261.001 latest-feature set.
 - The gallery for this page uses `release_260_yamcs_action_1.png`, `release_260_yamcs_action_2.png`, `release_260_yamcs_action_3.png` from the app Latest Features catalog.

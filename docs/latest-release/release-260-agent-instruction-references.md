@@ -5,7 +5,7 @@ description: "Agent instructions can now name the exact actions and documents an
 section: "Latest Release"
 ---
 
-Current release version for Reference Actions and Knowledge Directly in Agent Instructions: **0.260.001**
+Current release version for Reference Actions and Knowledge Directly in Agent Instructions: **0.261.001**
 
 While writing agent instructions you can type a hash character to open an autocomplete listing the actions, capabilities, and documents that agent actually has, then insert a precise reference instead of describing the tool in prose. The agent modal now runs Actions, then Knowledge, then Instructions, so you choose capabilities before you write about them, and a collapsible summary panel shows your selections while you write.
 
@@ -16,14 +16,6 @@ Agent instructions can now name the exact actions and documents an agent holds u
 ## Admin Side
 
 Admins decide whether Reference Actions and Knowledge Directly in Agent Instructions is available in your environment. If you cannot find Open Agents and Open Chat, ask whether the related settings, governance policy, or workspace access has been enabled for your account.
-
-## Screenshot Placeholder
-
-The v0.260.001 app catalog currently provides branded placeholder captures for Reference Actions and Knowledge Directly in Agent Instructions. Replace these copied documentation images when final screenshots are ready:
-
-- `/images/latest-release/release_260_agent_instruction_references_1.png`
-- `/images/latest-release/release_260_agent_instruction_references_2.png`
-- `/images/latest-release/release_260_agent_instruction_references_3.png`
 
 ## Why It Matters
 
@@ -41,5 +33,5 @@ This matters because vague instructions are the most common reason an agent igno
 
 ## Notes
 
-- The Reference Actions and Knowledge Directly in Agent Instructions guide belongs to the SimpleChat 0.260.001 latest-feature set.
+- The Reference Actions and Knowledge Directly in Agent Instructions guide belongs to the SimpleChat 0.261.001 latest-feature set.
 - The gallery for this page uses `release_260_agent_instruction_references_1.png`, `release_260_agent_instruction_references_2.png`, `release_260_agent_instruction_references_3.png` from the app Latest Features catalog.

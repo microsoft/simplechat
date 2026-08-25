@@ -9,6 +9,11 @@ const targetCosmosDatabaseName = "SimpleChat";
 const cosmosEditorConfirmationPhrase = "I understand this can damage system data";
 const migrationMirrorConfirmationPhrase = "MAKE DESTINATION MATCH SOURCE";
 const restoreOverwriteConfirmationPhrase = "RESTORE WITH OVERWRITE";
+// Backup & Recovery was a single tab until the Admin Settings information
+// architecture was split. Its controls now live in five sibling panes, so the
+// module binds across every pane that declares the group rather than looking
+// for one root element that no longer exists.
+const dataManagementPaneSelector = "[data-admin-group-pane='backup-recovery']";
 const elements = {};
 let dataManagementModified = false;
 let storedBackupConnectionStringAvailable = false;
@@ -69,7 +74,7 @@ const migrationWorkflowState = {
 };
 document.addEventListener("DOMContentLoaded", () => {
     bindElements();
-    if (!elements.tabPane) {
+    if (!elements.tabPanes.length) {
         return;
     }
 
@@ -84,7 +89,6 @@ document.addEventListener("DOMContentLoaded", () => {
 
 function bindElements() {
     const ids = [
-        "data-management",
         "data-management-migration-section",
         "data-management-migration-readiness",
         "data-management-migration-step-error",
@@ -305,7 +309,7 @@ function bindElements() {
         elements[key] = document.getElementById(id);
     });
 
-    elements.tabPane = elements.dataManagement;
+    elements.tabPanes = Array.from(document.querySelectorAll(dataManagementPaneSelector));
 }
 
 function bindEvents() {
@@ -552,12 +556,14 @@ function activateMigrationScopeTab(targetType) {
 }
 
 function bindDataManagementChangeTracking() {
-    elements.tabPane?.querySelectorAll("input, select, textarea").forEach((element) => {
-        if (element.closest("[data-ignore-data-management-change='true']")) {
-            return;
-        }
-        const eventName = element.type === "checkbox" || element.type === "radio" || element.tagName === "SELECT" ? "change" : "input";
-        element.addEventListener(eventName, markDataManagementModified);
+    elements.tabPanes.forEach((pane) => {
+        pane.querySelectorAll("input, select, textarea").forEach((element) => {
+            if (element.closest("[data-ignore-data-management-change='true']")) {
+                return;
+            }
+            const eventName = element.type === "checkbox" || element.type === "radio" || element.tagName === "SELECT" ? "change" : "input";
+            element.addEventListener(eventName, markDataManagementModified);
+        });
     });
 }
 

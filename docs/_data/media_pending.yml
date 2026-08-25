@@ -7,7 +7,7 @@
 # To resolve one: capture the real screenshot and overwrite the file at the
 # listed path, then delete its entry here.
 
-release_v0_260_001:
-  label: "SimpleChat v0.260.001 Latest Features"
-  note: "All Latest Features screenshots for this release are captured."
+release_v0_261_001:
+  label: "SimpleChat v0.261.001 Latest Features"
+  note: "Every card in the user and admin Latest Features catalogs has a real 1280x720 capture. Two admin cards ship deliberately without a screenshot because they describe backend behavior with no dedicated panel: Feedback Safety Lifecycle and Index Auto-Login."
   items: []
