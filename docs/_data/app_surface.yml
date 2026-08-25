@@ -4,7 +4,7 @@ counts:
   capabilities: 111
   admin_groups: 14
   admin_tabs: 45
-  admin_sections: 94
+  admin_sections: 95
   actions: 27
   chat_controls: 47
   sub_elements: 3
@@ -634,6 +634,10 @@ admin_sections:
   label: External Links
   tab: custom-pages
   group: appearance
+- id: fact-memory-section
+  label: Fact Memory
+  tab: chat-experience
+  group: chat
 - id: file-download-settings-section
   label: File Downloads
   tab: files-sharing

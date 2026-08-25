@@ -107,7 +107,7 @@ The Actions Configuration section belongs to the Actions tab. Use it with the ad
 | Enable Math Action | Exposes the capability after required services, permissions, and rollout policy are ready. | On | `enable_math_plugin`; capability toggle |
 | Enable Text Action | Exposes the capability after required services, permissions, and rollout policy are ready. | On | `enable_text_plugin`; capability toggle |
 | Enable Default Embedding Model Action | Exposes the capability after required services, permissions, and rollout policy are ready. | Off | `enable_default_embedding_model_plugin`; capability toggle |
-| Enable Fact Memory Action | Exposes the capability after required services, permissions, and rollout policy are ready. | On | `enable_fact_memory_plugin`; capability toggle |
+| Fact Memory Action | Lets agents store, update, and remove durable facts and instructions for the current user or group. Fact memory is a chat capability, so its availability follows the Chat setting rather than being edited here. | On | `enable_fact_memory_plugin`; configured in [Chat settings]({{ '/admin/chat/#fact-memory-section' | relative_url }}) |
 | Tabular Processing Action | Makes the tabular-processing action available to agents for CSV and XLSX analysis when Enhanced Citations is enabled; the setting is normalized from Enhanced Citations rather than edited directly in the UI. | Off | `enable_tabular_processing_plugin`; effective value follows `enable_enhanced_citations` |
 
 ## Inbound MCP {#inbound-mcp}

@@ -29,6 +29,7 @@ FEATURE_DOC = os.path.join(
     'docs',
     'explanation',
     'features',
+    'v0.241.001',
     'FACT_MEMORY_PROFILE_AND_MINI_SK.md',
 )
 

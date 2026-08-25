@@ -32,6 +32,11 @@ from model_endpoint_clients import (
     normalize_chat_completion_text,
 )
 from functions_model_endpoint_identity_header import build_model_endpoint_identity_headers
+from functions_fact_memory_autosave import (
+    run_fact_memory_autosave,
+    should_run_fact_memory_autosave,
+    user_requested_memory_update,
+)
 from functions_model_endpoint_runtime import (
     MODEL_ENDPOINT_PROVIDER_ALLOWLIST,
     build_model_endpoint_context,
@@ -19866,6 +19871,25 @@ def register_route_backend_chats(bp):
                 token_usage_data = None
             ai_message = _append_inline_chart_blocks_to_message(ai_message, agent_citations_list)
 
+            if should_run_fact_memory_autosave(user_message, fact_memory_enabled, selected_agent):
+                fact_memory_autosave_payload = asyncio.run(run_fact_memory_autosave(
+                    user_message=user_message,
+                    assistant_message=ai_message,
+                    settings=settings,
+                    gpt_model=gpt_model,
+                    scope_id=scope_id,
+                    scope_type=scope_type,
+                    conversation_id=conversation_id,
+                    user_id=user_id,
+                    model_context=tabular_model_context,
+                ))
+                for thought in fact_memory_autosave_payload.get('thoughts', []):
+                    thought_tracker.add_thought(
+                        thought.get('step_type') or 'fact_memory',
+                        thought.get('content'),
+                        thought.get('detail'),
+                    )
+
             # Emit responded thought for non-agent paths (agent paths emit their own inside callbacks)
             if not selected_agent:
                 gpt_total_duration_s = round(time.time() - request_start_time, 1)
@@ -23907,6 +23931,26 @@ def register_route_backend_chats(bp):
                     if appended_chart_content:
                         if not suppress_streamed_file_payload:
                             yield f"data: {json.dumps({'content': appended_chart_content})}\n\n"
+
+                    if should_run_fact_memory_autosave(user_message, fact_memory_enabled, selected_agent):
+                        fact_memory_autosave_payload = asyncio.run(run_fact_memory_autosave(
+                            user_message=user_message,
+                            assistant_message=accumulated_content,
+                            settings=settings,
+                            gpt_model=gpt_model,
+                            scope_id=scope_id,
+                            scope_type=scope_type,
+                            conversation_id=conversation_id,
+                            user_id=user_id,
+                            model_context=tabular_model_context,
+                        ))
+                        for thought in fact_memory_autosave_payload.get('thoughts', []):
+                            yield emit_thought(
+                                thought.get('step_type') or 'fact_memory',
+                                thought.get('content'),
+                                thought.get('detail'),
+                            )
+
                     user_info_for_assistant = response_message_context.get('user_info')
                     user_thread_id = response_message_context.get('thread_id')
                     user_previous_thread_id = response_message_context.get('previous_thread_id')
