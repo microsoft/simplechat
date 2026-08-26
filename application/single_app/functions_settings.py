@@ -2161,6 +2161,19 @@ def coerce_multi_model_endpoint_enablement(existing_enabled, requested_enabled):
     return bool(existing_enabled) or bool(requested_enabled)
 
 
+# Embedding chunk budget. Chunk sizes are configured in words, characters, or structural units,
+# but the embedding endpoint rejects any single input past its token context window, so configured
+# units must be converted before they can act as a bound. These ratios are deliberately more
+# conservative than typical English prose (~4 characters and ~0.75 tokens per word) because
+# markdown tables, code fences, and long URLs tokenize far worse than prose.
+EMBEDDING_CONTEXT_FALLBACK_TOKENS = 8192
+EMBEDDING_CHUNK_UTILIZATION = 0.85
+EMBEDDING_CHARS_PER_TOKEN = 3
+EMBEDDING_TOKENS_PER_WORD = 2
+# Retained for structural units (pages, slides) whose token size is unknowable before extraction.
+CHUNK_SIZE_STRUCTURAL_FALLBACK_CAP = 16384
+
+
 def get_chunk_size_defaults():
     """Return the baseline chunk size configuration used when overrides are disabled."""
     return {
@@ -2185,37 +2198,95 @@ def get_chunk_size_defaults():
     }
 
 
-def get_chunk_size_cap(settings=None):
-    """Return the maximum allowed chunk size (2x embedding context window, fallback 16,384)."""
-    fallback_cap = 16384
+def get_embedding_context_tokens(settings=None):
+    """Return the selected embedding model's context window in tokens."""
     try:
-        settings = settings or get_settings()
+        settings = settings if settings is not None else get_settings()
         embedding_model = settings.get('embedding_model', {}) if isinstance(settings, dict) else {}
         selected_models = embedding_model.get('selected') or []
 
-        base_context = None
         for model in selected_models:
             if not isinstance(model, dict):
                 continue
             for key in ['context_window', 'contextWindow', 'maxContextTokens', 'context_length', 'contextLength', 'maxTokens']:
                 value = model.get(key)
-                if value is not None:
-                    try:
-                        parsed_value = int(value)
-                        if parsed_value > 0:
-                            base_context = parsed_value
-                            break
-                    except Exception:
-                        continue
-            if base_context:
-                break
+                if value is None:
+                    continue
+                try:
+                    parsed_value = int(value)
+                except Exception:
+                    continue
+                if parsed_value > 0:
+                    return parsed_value
+    except Exception:
+        pass
 
+    return EMBEDDING_CONTEXT_FALLBACK_TOKENS
+
+
+def get_embedding_usable_tokens(settings=None):
+    """Return the token budget one chunk may occupy, leaving headroom for tokenizer variance."""
+    return max(1, int(get_embedding_context_tokens(settings) * EMBEDDING_CHUNK_UTILIZATION))
+
+
+def get_embedding_safe_chunk_characters(settings=None):
+    """Return the largest chunk length in characters expected to embed successfully."""
+    return max(1, int(get_embedding_usable_tokens(settings) * EMBEDDING_CHARS_PER_TOKEN))
+
+
+def get_embedding_safe_chunk_words(settings=None):
+    """Return the largest chunk length in words expected to embed successfully."""
+    return max(1, int(get_embedding_usable_tokens(settings) / EMBEDDING_TOKENS_PER_WORD))
+
+
+def get_chunk_size_cap(settings=None, unit=None):
+    """Return the maximum allowed chunk size for a unit.
+
+    Chunk sizes are configured per file type in different units, so a single numeric cap cannot be
+    correct for all of them. Word and character caps come from the embedding token budget, because
+    a value above that can never embed successfully no matter what an admin saves. Structural units
+    such as pages and slides have no knowable token size before extraction, so they keep the
+    historical cap and are bounded at embed time instead.
+    """
+    try:
+        settings = settings if settings is not None else get_settings()
+    except Exception:
+        settings = None
+
+    normalized_unit = str(unit).strip().lower() if unit else None
+
+    try:
+        if normalized_unit == 'words':
+            return get_embedding_safe_chunk_words(settings)
+        if normalized_unit == 'characters':
+            return get_embedding_safe_chunk_characters(settings)
+
+        base_context = get_embedding_context_tokens(settings)
         if base_context and base_context > 0:
             return base_context * 2
     except Exception:
         pass
 
-    return fallback_cap
+    return CHUNK_SIZE_STRUCTURAL_FALLBACK_CAP
+
+
+def get_chunk_size_caps_by_key(settings=None):
+    """Return the effective cap for every configurable chunk size key, keyed by file type."""
+    try:
+        settings = settings if settings is not None else get_settings()
+    except Exception:
+        settings = None
+
+    defaults = get_chunk_size_defaults()
+    stored = settings.get('chunk_size', {}) if isinstance(settings, dict) else {}
+
+    caps = {}
+    for key, default_meta in defaults.items():
+        incoming_meta = stored.get(key, {}) if isinstance(stored, dict) else {}
+        unit = incoming_meta.get('unit', default_meta['unit']) if isinstance(incoming_meta, dict) else default_meta['unit']
+        caps[key] = get_chunk_size_cap(settings, unit)
+
+    return caps
 
 
 def get_chunk_size_config(settings=None):
@@ -2227,7 +2298,6 @@ def get_chunk_size_config(settings=None):
     defaults = get_chunk_size_defaults()
     use_custom = isinstance(settings, dict) and settings.get('enable_chunk_size_override', False)
     stored = settings.get('chunk_size', {}) if isinstance(settings, dict) else {}
-    cap = get_chunk_size_cap(settings)
 
     normalized = {}
     for key, default_meta in defaults.items():
@@ -2239,7 +2309,7 @@ def get_chunk_size_config(settings=None):
             raw_value = default_meta['value']
 
         value = max(1, raw_value)
-        value = min(value, cap)
+        value = min(value, get_chunk_size_cap(settings, unit))
 
         normalized[key] = {
             'value': value,

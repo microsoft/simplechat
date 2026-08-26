@@ -51,10 +51,9 @@ def load_document_functions(function_names):
     namespace = {
         "logging": logging,
         "log_event": lambda *args, **kwargs: None,
-        "get_chunk_size_cap": lambda settings=None: 16384,
-        "OFFICE_IMAGE_MERGE_CHARS_PER_TOKEN": 4,
-        "OFFICE_IMAGE_MERGE_UTILIZATION": 0.9,
-        "OFFICE_IMAGE_MERGE_FALLBACK_CAP": 16384,
+        "get_chunk_size_cap": lambda settings=None, unit=None: 16384,
+        "get_embedding_safe_chunk_characters": lambda settings=None: 20889,
+        "OFFICE_IMAGE_MERGE_FALLBACK_CHAR_LIMIT": 20889,
         "OFFICE_IMAGE_MERGE_MIN_CHAR_LIMIT": 4000,
     }
 

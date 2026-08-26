@@ -6389,25 +6389,30 @@ function setupChunkSizeControls() {
         return;
     }
 
-    const capValue = capInput ? parseInt(capInput.value, 10) : null;
+    const fallbackCap = capInput ? parseInt(capInput.value, 10) : NaN;
+
+    // Each field has its own cap because word, character, and page counts cannot share one limit.
+    const capForInput = input => {
+        const perFieldCap = parseInt(input.dataset.cap || '', 10);
+        return Number.isNaN(perFieldCap) ? fallbackCap : perFieldCap;
+    };
 
     const updateCapWarning = () => {
-        if (!capValue || Number.isNaN(capValue)) {
-            if (capWarning) capWarning.classList.add('d-none');
-            return;
-        }
-
         const exceeding = [];
         chunkInputs.forEach(input => {
+            const cap = capForInput(input);
+            if (Number.isNaN(cap)) {
+                return;
+            }
             const raw = parseInt(input.value || '0', 10);
-            if (!Number.isNaN(raw) && raw > capValue) {
-                exceeding.push(input.dataset.label || input.name || 'A chunk size');
+            if (!Number.isNaN(raw) && raw > cap) {
+                exceeding.push(`${input.dataset.label || input.name || 'A chunk size'} (max ${cap})`);
             }
         });
 
         if (capWarning && capWarningText) {
             if (exceeding.length > 0 && overrideToggle.checked) {
-                capWarningText.textContent = `${exceeding.join(', ')} will be reduced to ${capValue} because of the cap.`;
+                capWarningText.textContent = `${exceeding.join(', ')} will be reduced to what a single chunk can embed.`;
                 capWarning.classList.remove('d-none');
             } else {
                 capWarning.classList.add('d-none');
