@@ -127,4 +127,30 @@
                     </div>
                 </div>
 
+                <div class="card p-3 mb-4" id="fact-memory-section">
+                    <h5>
+                        <i class="bi bi-journal-text me-2"></i>Fact Memory
+                    </h5>
+                    <p class="text-muted">Lets the assistant carry durable context between conversations, so users do not have to restate preferences, working style, or background details every time they start a new chat.</p>
+                    <div class="form-group form-check form-switch mb-3">
+                        <input
+                            type="checkbox"
+                            class="form-check-input"
+                            id="enable_fact_memory_plugin"
+                            name="enable_fact_memory_plugin"
+                            {% if settings.enable_fact_memory_plugin %}checked{% endif %}
+                        >
+                        <label class="form-check-label ms-2" for="enable_fact_memory_plugin">
+                            Enable Fact Memory
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Saved memories are recalled during chat and can be created or removed when a user asks. Instruction memories apply to every prompt; fact memories are recalled only when relevant to the request."></i>
+                    </div>
+                    <p class="text-muted small mb-1">
+                        This is a chat capability and does not require agents or actions. Turning it on is enough for standard chat to use memories.
+                    </p>
+                    <p class="text-muted small mb-0">
+                        Users review, edit, and delete their own entries from <strong>Profile &gt; Fact Memory</strong>. They can also ask in chat to remember something or to stop doing something, and the assistant updates their saved memories. Existing entries are preserved while this is off, but they stay inactive.
+                    </p>
+                </div>
+
             </div>

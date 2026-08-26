@@ -5,7 +5,7 @@ description: "Every response now carries a Conversation Context citation showing
 section: "Latest Release"
 ---
 
-Current release version for See Exactly What Shaped Each Answer: **0.260.001**
+Current release version for See Exactly What Shaped Each Answer: **0.261.001**
 
 The context snapshot is both given to the model as hidden grounding and shown to you as a citation on the response. It covers streaming answers, retries, fallbacks, collaboration conversations, and document actions, so the record is consistent no matter which path produced the answer.
 
@@ -16,14 +16,6 @@ Every response now carries a Conversation Context citation showing the model, ap
 ## Admin Side
 
 Admins decide whether See Exactly What Shaped Each Answer is available in your environment. If you cannot find Open Chat, ask whether the related settings, governance policy, or workspace access has been enabled for your account.
-
-## Screenshot Placeholder
-
-The v0.260.001 app catalog currently provides branded placeholder captures for See Exactly What Shaped Each Answer. Replace these copied documentation images when final screenshots are ready:
-
-- `/images/latest-release/release_260_conversation_context_grounding_1.png`
-- `/images/latest-release/release_260_conversation_context_grounding_2.png`
-- `/images/latest-release/release_260_conversation_context_grounding_3.png`
 
 ## Why It Matters
 
@@ -41,5 +33,5 @@ This matters because when an answer surprises you, the first question is usually
 
 ## Notes
 
-- The See Exactly What Shaped Each Answer guide belongs to the SimpleChat 0.260.001 latest-feature set.
+- The See Exactly What Shaped Each Answer guide belongs to the SimpleChat 0.261.001 latest-feature set.
 - The gallery for this page uses `release_260_conversation_context_grounding_1.png`, `release_260_conversation_context_grounding_2.png`, `release_260_conversation_context_grounding_3.png` from the app Latest Features catalog.

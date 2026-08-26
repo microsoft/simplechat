@@ -56,6 +56,16 @@ The Conversation History section belongs to the Chat Experience tab. Use it with
 
 The Default System Prompt section belongs to the Chat Experience tab. Use it with the adjacent settings in this group so related rollout, access, and operational choices stay aligned.
 
+### Fact Memory {#fact-memory-section}
+
+Fact memory lets the assistant carry durable context between conversations, so users do not have to restate their role, preferences, or working style every time they open a new chat. Two kinds of entries are stored. Instruction memories are durable rules about how to respond, and are applied to every prompt. Fact memories are details about the user, and are recalled only when they are relevant to the current request.
+
+This is a chat capability. It does not require agents or actions, and it does not depend on the Agents & Actions tab. Once it is on, standard chat recalls memories, users manage their own entries from Profile > Fact Memory, and the assistant saves or removes memories when a user asks it to in conversation.
+
+Enable it when users repeatedly restate the same context, or when you want response preferences such as tone, format, or naming to persist without a custom agent. Leave it off in environments where per-user retained context is not acceptable. Existing entries are preserved while the setting is off, but they stay inactive and are not used in chat.
+
+Memories are stored per user or per group and are only readable inside that scope. Because they persist, they are not an appropriate place for secrets or regulated data.
+
 #### Settings
 
 | Setting | What it does | Default | Notes |
@@ -68,6 +78,7 @@ The Default System Prompt section belongs to the Chat Experience tab. Use it wit
 | Collaborative conversations | Enables shared conversation records and collaboration endpoints so permitted users can create and participate in collaborative conversations instead of only single-user conversation threads. | On | `enable_collaborative_conversations`; no visible field in `admin_settings.html` |
 | Require ChatFileUploadUser App Role | Requires the `ChatFileUploadUser` app role before users can use this capability or view. | Off | `require_member_of_chat_file_upload_user` |
 | Enforce Workspace Scope Lock | Defines behavior for the related admin workflow; verify the affected feature after saving. | On | `enforce_workspace_scope_lock` |
+| Enable Fact Memory | Lets standard chat recall a user's saved instruction and fact memories, and lets the assistant save, change, or remove them when the user asks. Works without agents or actions. | Off | `enable_fact_memory_plugin`; capability toggle |
 
 ## Feedback & Alerts {#feedback-alerts}
 

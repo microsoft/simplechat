@@ -5,7 +5,7 @@ description: "Your organization can require you to accept a terms of use or rule
 section: "Latest Release"
 ---
 
-Current release version for Terms of Use Acceptance: **0.260.001**
+Current release version for Terms of Use Acceptance: **0.261.001**
 
 When enabled, an acceptance screen appears before you reach the app. Admins choose whether it returns every session, once per day, or only when the text changes. Your accept and decline choices are recorded in the activity log, and the gate is enforced on the server so it cannot be skipped by navigating directly to a page.
 
@@ -15,15 +15,11 @@ Your organization can require you to accept a terms of use or rules of behavior 
 
 ## Admin Side
 
-Admins configure the tenant policy behind Terms of Use Acceptance. If the experience does not appear when expected, ask your SimpleChat admin whether the organization has enabled this release item for your account.
+The gate is configured under Notices & Agreements, in the Terms of Use section. An admin supplies the popup title, the body text, and the wording on the accept and cancel buttons, so the notice can carry your organization's own language rather than a generic label.
 
-## Screenshot Placeholder
+Show Frequency decides how often the gate returns: at the start of every session, once per day, or just once per terms version. The last option is the one that matters for policy changes, because editing the text makes the gate reappear for people who already accepted the previous wording.
 
-The v0.260.001 app catalog currently provides branded placeholder captures for Terms of Use Acceptance. Replace these copied documentation images when final screenshots are ready:
-
-- `/images/latest-release/release_260_terms_of_use_1.png`
-- `/images/latest-release/release_260_terms_of_use_2.png`
-- `/images/latest-release/release_260_terms_of_use_3.png`
+Declining sends the user to a configurable redirect, which defaults to `/`. That target is restricted to local paths, so the gate cannot be turned into an open redirect. Accept and decline are both written to the activity log, and enforcement happens on the server, so navigating straight to an internal URL does not bypass it.
 
 ## Why It Matters
 
@@ -41,5 +37,5 @@ This matters because many organizations must record that users acknowledged acce
 
 ## Notes
 
-- The Terms of Use Acceptance guide belongs to the SimpleChat 0.260.001 latest-feature set.
+- The Terms of Use Acceptance guide belongs to the SimpleChat 0.261.001 latest-feature set.
 - The gallery for this page uses `release_260_terms_of_use_1.png`, `release_260_terms_of_use_2.png`, `release_260_terms_of_use_3.png` from the app Latest Features catalog.

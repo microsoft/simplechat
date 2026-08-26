@@ -1,7 +1,7 @@
 ---
 layout: page
 title: "Security settings"
-description: "Security covers access roles, Key Vault integration, Content Safety, idle session behavior, and Front Door-aware network URLs."
+description: "Security covers access roles, Key Vault integration, Content Safety, idle session behavior, Front Door-aware network URLs, and the message shown to rate limited users."
 section: "Administration"
 audience: admin
 admin_tab: security
@@ -14,7 +14,7 @@ redirect_from:
 
 ## What this group controls
 
-Security covers access roles, Key Vault integration, Content Safety, idle session behavior, and Front Door-aware network URLs.
+Security covers access roles, Key Vault integration, Content Safety, idle session behavior, Front Door-aware network URLs, and the message shown to rate limited users.
 
 ## Why it matters
 
@@ -124,6 +124,23 @@ The Azure Front Door section belongs to the Network tab. Use it with the adjacen
 | Enable Front Door Support | Generates user-facing and OAuth redirect URLs using the configured Front Door or load-balancer base URL. | Off | `enable_front_door`; capability toggle |
 | Front Door URL | The base URL of your Front Door or load balancer. The system will automatically generate: Home redirect: https://your-frontdoor.azurefd.net OAuth2 redirect: https://your-frontdoor.azurefd.net/getAToken | Empty | `front_door_url` |
 
+## Rate Limiting {#rate-limiting}
+
+### Rate Limit Message {#rate-limit-message-section}
+
+SimpleChat retries throttled calls with backoff, so most rate limiting is absorbed before anyone notices. This section covers what happens when that runs out: the request finally fails with HTTP 429 and the user has to be told something.
+
+Without a message configured, a throttled chat response reads like an unexplained failure, which sends users straight to a retry loop or a support ticket. This matters most in deployments that front their model endpoints with API Management, where throttling is a deliberate capacity decision rather than a fault, and where the admin usually knows something useful to say: how long the window is, which quota was hit, or who to contact for more capacity.
+
+The message is Markdown, so it can carry a link to an internal runbook or request form. It reaches every surface that returns a 429, including chat, text to speech, the Swagger specification endpoints, and inbound MCP tool calls.
+
+#### Settings
+
+| Setting | What it does | Default | Notes |
+| --- | --- | --- | --- |
+| Use a custom rate limit message | Replaces the built-in throttling explanation with your own wording. | Off | `enable_custom_rate_limit_message`; capability toggle |
+| Rate Limit Message (Markdown supported) | The Markdown shown to a user whose request was refused with HTTP 429. Clearing it falls back to the built-in message, so users never receive an empty response. | You have reached the request limit. Too many requests were sent in a short period of time. Please wait a moment and try again. | `rate_limit_message` |
+
 ## Common tasks
 
 1. **Require roles.** Enable a role requirement and test with assigned and unassigned users. Outcome to verify: Only assigned users can enter the protected surface.
@@ -135,6 +152,7 @@ The Azure Front Door section belongs to the Network tab. Use it with the adjacen
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
 | Sign-in redirects use the wrong host | Front Door support is off or the base URL is wrong. | Correct the URL and test sign-in through the routed domain. |
+| Throttled users still see the built-in rate limit wording | The custom message toggle is off, or the message field was saved empty. | Turn on the custom message and save non-empty Markdown. |
 
 ## Related
 

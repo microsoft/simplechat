@@ -75,9 +75,15 @@ The Request a Feature section belongs to the Send Feedback tab. Use it with the 
 | Organization | Defines behavior for the related admin workflow; verify the affected feature after saving. | Not specified in defaults | `send_feedback_feature_org` |
 | Feature Request Details | Defines behavior for the related admin workflow; verify the affected feature after saving. | Not specified in defaults | `send_feedback_feature_details` |
 
-## Latest Features {#latest-features}
+## User-Facing Latest Features {#user-facing-latest-features}
 
-Latest Features is rendered from the release catalog and does not declare static settings sections in `admin_settings_nav.py`.
+This tab shows the release catalog exactly as end users see it under Support > Latest Features. It was split out of the Support Menu tab so the full card set can be reviewed on its own page instead of scrolling past the Support Menu settings.
+
+Nothing is published from here. Visibility is still controlled by **Enable Latest Features Destination** on the Support Menu tab, and per-card visibility is stored with the catalog. Use this tab to read the cards, confirm the screenshots and wording are right for your tenant, and decide what to announce before turning the destination on.
+
+## Admin Latest Features {#latest-features}
+
+Admin Latest Features is the companion catalog covering capabilities admins configure rather than ones end users act on. It is rendered from the release catalog and does not declare static settings sections in `admin_settings_nav.py`.
 
 #### Settings
 

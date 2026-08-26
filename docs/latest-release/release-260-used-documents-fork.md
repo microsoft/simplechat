@@ -5,7 +5,7 @@ description: "A Used Documents mode shows only the documents actually cited in a
 section: "Latest Release"
 ---
 
-Current release version for Used Documents View and Conversation Forking: **0.260.001**
+Current release version for Used Documents View and Conversation Forking: **0.261.001**
 
 The chat side pane gained a Used Documents mode that lists the documents a conversation has genuinely drawn on, without opening the full details modal, and it opens automatically the first time cited documents appear. Separately, forking from an assistant response creates an independent copy of the conversation through that message, so the original stays intact.
 
@@ -16,14 +16,6 @@ A Used Documents mode shows only the documents actually cited in a conversation,
 ## Admin Side
 
 Admins decide whether Used Documents View and Conversation Forking is available in your environment. If you cannot find Open Chat and Open Conversations, ask whether the related settings, governance policy, or workspace access has been enabled for your account.
-
-## Screenshot Placeholder
-
-The v0.260.001 app catalog currently provides branded placeholder captures for Used Documents View and Conversation Forking. Replace these copied documentation images when final screenshots are ready:
-
-- `/images/latest-release/release_260_used_documents_fork_1.png`
-- `/images/latest-release/release_260_used_documents_fork_2.png`
-- `/images/latest-release/release_260_used_documents_fork_3.png`
 
 ## Why It Matters
 
@@ -41,5 +33,5 @@ This matters because long conversations accumulate a lot of context, and both kn
 
 ## Notes
 
-- The Used Documents View and Conversation Forking guide belongs to the SimpleChat 0.260.001 latest-feature set.
+- The Used Documents View and Conversation Forking guide belongs to the SimpleChat 0.261.001 latest-feature set.
 - The gallery for this page uses `release_260_used_documents_fork_1.png`, `release_260_used_documents_fork_2.png`, `release_260_used_documents_fork_3.png` from the app Latest Features catalog.

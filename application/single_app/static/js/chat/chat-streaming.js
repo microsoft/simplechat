@@ -268,9 +268,37 @@ function buildStreamingRequestError(errorData, status) {
     return streamError;
 }
 
+function toPlainTextSummary(markdownText, maxLength = 160) {
+    const plain = String(markdownText || '')
+        .replace(/`{1,3}([^`]*)`{1,3}/g, '$1')
+        .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')
+        .replace(/^\s{0,3}#{1,6}\s+/gm, '')
+        .replace(/^\s{0,3}>\s?/gm, '')
+        .replace(/(\*\*|__)(.*?)\1/g, '$2')
+        .replace(/(\*|_)(.*?)\1/g, '$2')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+    return plain.length > maxLength ? `${plain.slice(0, maxLength - 1)}\u2026` : plain;
+}
+
+function appendRateLimitMessage(errorBanner, markdownText) {
+    const messageContainer = document.createElement('div');
+    messageContainer.className = 'rate-limit-message mt-1';
+
+    if (typeof marked === 'undefined' || typeof DOMPurify === 'undefined') {
+        messageContainer.textContent = markdownText;
+    } else {
+        messageContainer.innerHTML = DOMPurify.sanitize(marked.parse(markdownText));
+    }
+
+    errorBanner.appendChild(messageContainer);
+}
+
 function appendStreamErrorBanner(contentElement, errorMessage, errorDetails = {}) {
     const errorPayload = getStreamErrorPayload(errorDetails);
     const authRequired = errorPayload.auth_required === true;
+    const rateLimited = errorPayload.rate_limited === true;
     const authUrl = getStreamAuthUrl(errorPayload);
     const displayMessage = String(
         errorMessage || errorPayload.error || errorPayload.message || 'An unknown streaming error occurred.'
@@ -280,15 +308,30 @@ function appendStreamErrorBanner(contentElement, errorMessage, errorDetails = {}
     errorBanner.className = 'alert alert-warning mt-2 mb-0';
 
     const icon = document.createElement('i');
-    icon.className = 'bi bi-exclamation-triangle me-2';
+    icon.className = rateLimited
+        ? 'bi bi-hourglass-split me-2'
+        : 'bi bi-exclamation-triangle me-2';
     icon.setAttribute('aria-hidden', 'true');
 
     const title = document.createElement('strong');
-    title.textContent = authRequired ? 'Foundry access required:' : 'Stream interrupted:';
+    if (rateLimited) {
+        title.textContent = 'Rate limited:';
+    } else if (authRequired) {
+        title.textContent = 'Foundry access required:';
+    } else {
+        title.textContent = 'Stream interrupted:';
+    }
 
     errorBanner.appendChild(icon);
     errorBanner.appendChild(title);
-    errorBanner.appendChild(document.createTextNode(` ${displayMessage}`));
+
+    if (rateLimited) {
+        // The rate limit message is admin-authored Markdown, so it is rendered
+        // rather than shown as raw text the way other stream errors are.
+        appendRateLimitMessage(errorBanner, displayMessage);
+    } else {
+        errorBanner.appendChild(document.createTextNode(` ${displayMessage}`));
+    }
 
     if (authRequired && authUrl) {
         const actionRow = document.createElement('div');
@@ -308,9 +351,13 @@ function appendStreamErrorBanner(contentElement, errorMessage, errorDetails = {}
     detailRow.className = 'mt-1';
 
     const detailText = document.createElement('small');
-    detailText.textContent = authRequired
-        ? 'After access is granted, send the message again.'
-        : 'Response may be incomplete. The partial content above has been saved.';
+    if (rateLimited) {
+        detailText.textContent = 'Wait a moment before sending the message again. Any partial content above has been saved.';
+    } else if (authRequired) {
+        detailText.textContent = 'After access is granted, send the message again.';
+    } else {
+        detailText.textContent = 'Response may be incomplete. The partial content above has been saved.';
+    }
 
     detailRow.appendChild(detailText);
     errorBanner.appendChild(detailRow);
@@ -1393,7 +1440,13 @@ function handleStreamError(messageId, partialContent, errorMessage, errorDetails
         appendStreamErrorBanner(contentElement, displayMessage, errorPayload);
     }
 
-    showToast(`Stream error: ${displayMessage}`, 'error');
+    if (errorPayload.rate_limited === true) {
+        // The banner carries the rendered Markdown, so the toast only needs a
+        // short plain-text summary of it.
+        showToast(toPlainTextSummary(displayMessage), 'warning');
+    } else {
+        showToast(`Stream error: ${displayMessage}`, 'error');
+    }
 }
 
 function finalizeStreamingMessage(messageId, userMessageId, finalData, fallbackAgentInfo = null) {
