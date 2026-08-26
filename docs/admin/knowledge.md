@@ -116,7 +116,24 @@ The Document Intelligence section belongs to the Document Extraction tab. Use it
 
 ### Chunk Sizes {#chunk-size-section}
 
-The Chunk Sizes section belongs to the Document Extraction tab. Use it with the adjacent settings in this group so related rollout, access, and operational choices stay aligned.
+Documents are split into chunks before they are indexed, and each chunk is embedded as a single
+request. That makes chunk size a retrieval decision and a hard technical limit at the same time:
+smaller chunks return more precise citations, larger chunks keep more surrounding context in one
+result, and a chunk that does not fit in the embedding model's context window cannot be indexed
+at all.
+
+Because of that limit, overrides are capped per unit rather than by one shared number. Word fields
+and character fields have different ceilings, both derived from the embedding model's context
+window, and the tab shows the current values. A value above the ceiling is reduced on save and the
+page reports which fields were changed.
+
+Page and slide counts are structural: how much text a page holds is not known until extraction
+runs, so they are not capped here. If an extracted chunk still turns out to be too large to embed,
+its text is stored and remains searchable and citable while only the portion used to compute its
+vector is trimmed, and the event is logged.
+
+Custom sizes apply to new uploads only. Existing documents keep the chunks they were indexed with
+until they are uploaded again.
 
 ### Metadata Extraction {#metadata-extraction-section}
 
@@ -163,7 +180,7 @@ The Multi-Modal Vision Analysis section belongs to the Document Extraction tab. 
 | DOCM (words) | Defines a capacity or timing boundary that keeps the feature inside supported limits. | 400 words | `chunk_size_docm` |
 | DOCX (words) | Defines a capacity or timing boundary that keeps the feature inside supported limits. | configured WORD_CHUNK_SIZE words | `chunk_size_docx` |
 | HTML (words) | Minimum enforced at 50% of target on merge. | 1200 words | `chunk_size_html` |
-| Markdown (words) | Defines a capacity or timing boundary that keeps the feature inside supported limits. | 1200 words | `chunk_size_md` |
+| Markdown (words) | Target words per chunk. Heading sections larger than this are split, so a long section under one heading cannot become a single unindexable chunk. Minimum enforced at 50% of target on merge. | 1200 words | `chunk_size_md` |
 | XML (characters) | Defines a capacity or timing boundary that keeps the feature inside supported limits. | 4000 characters | `chunk_size_xml` |
 | YAML (characters) | Defines a capacity or timing boundary that keeps the feature inside supported limits. | 4000 characters | `chunk_size_yaml` |
 | YML (characters) | Defines a capacity or timing boundary that keeps the feature inside supported limits. | 4000 characters | `chunk_size_yml` |
