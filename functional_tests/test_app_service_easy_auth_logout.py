@@ -1,8 +1,8 @@
 # test_app_service_easy_auth_logout.py
 """
 Functional test for Azure App Service Easy Auth logout detection.
-Version: 0.260.029
-Implemented in: 0.260.029
+Version: 0.261.002
+Implemented in: 0.261.002
 
 This test ensures logout routes through /.auth/logout only when App Service Easy Auth is
 actually serving the request, so deployments that are not behind Easy Auth no longer hit a

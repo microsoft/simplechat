@@ -1,6 +1,6 @@
 # Easy Auth Logout Detection Fix
 
-Fixed/Implemented in version: **0.260.029**
+Fixed/Implemented in version: **0.261.002**
 
 ## Issue Description
 
@@ -49,7 +49,7 @@ so it needs an explicit opt-out.
   "Logout Behavior Across Environments" section to
   `docs/explanation/running_simplechat_locally.md` covering the behavior per environment
   and the troubleshooting steps for a logout 404.
-- Updated `application/single_app/config.py` to version `0.260.029`.
+- Updated `application/single_app/config.py` to version `0.261.002`.
 - Reworked regression coverage in `functional_tests/test_app_service_easy_auth_logout.py`.
 
 ### Behavior by environment
