@@ -109,6 +109,22 @@ enhanced-citations:
   reference:
     - title: "Feature reference"
       url: /reference/features/
+chat-memory:
+  name: "Chat memory"
+  area: "Chat and retrieval"
+  audience: "End users"
+  summary: "Lets standard chat recall a user's saved instruction and fact memories, and lets the assistant save, change, or remove them on request."
+  why: "Use this when users repeatedly restate the same context, or when response preferences such as tone, format, or naming should persist without building a custom agent. It is a chat capability rather than an agent action, so it does not require agents or actions to be enabled. Leave it off where per-user retained context is not acceptable; memories persist across conversations, so they are not a place for secrets or regulated data."
+  default_state: "Disabled"
+  admin_tab: chat
+  setting_keys:
+    - enable_fact_memory_plugin
+  guides:
+    - title: "Update profile preferences"
+      url: /guides/update-profile-preferences/
+  reference:
+    - title: "Fact memory action"
+      url: /reference/actions/fact-memory/
 web-search:
   name: "Web search"
   area: "Chat and retrieval"
@@ -408,13 +424,12 @@ core-actions:
   name: "Core actions"
   area: "Agents and actions"
   audience: "End users"
-  summary: "Controls built-in action plugins for HTTP access, math, text transformation, time, waits, fact memory, and embedding utilities."
+  summary: "Controls built-in action plugins for HTTP access, math, text transformation, time, waits, and embedding utilities."
   why: "Use these actions to give agents small, predictable tools for common tasks without building custom integrations. Disable tools that are not needed in your environment, especially HTTP access, because actions expand what an agent can do beyond plain chat."
   default_state: "Mixed"
   admin_tab: agents-actions
   setting_keys:
     - enable_default_embedding_model_plugin
-    - enable_fact_memory_plugin
     - enable_http_plugin
     - enable_math_plugin
     - enable_text_plugin
@@ -599,6 +614,19 @@ front-door-and-session-security:
   reference:
     - title: "Admin configuration reference"
       url: /reference/admin_configuration/
+rate-limit-response-message:
+  name: "Rate limit response message"
+  area: "Platform and operations"
+  audience: "Admins"
+  summary: "Replaces the built-in HTTP 429 explanation with admin-authored Markdown shown wherever a request is throttled."
+  why: "Use this when throttling is a planned capacity control rather than a fault, such as a deployment fronted by API Management, and users need to know the retry window or who to ask for more capacity. Leave it off when the built-in wording is sufficient, because a stale custom message is worse than a generic accurate one."
+  default_state: "Disabled"
+  admin_tab: security
+  setting_keys:
+    - enable_custom_rate_limit_message
+  reference:
+    - title: "Security settings"
+      url: /admin/security/
 thoughts-display:
   name: "Thoughts display"
   area: "Platform and operations"

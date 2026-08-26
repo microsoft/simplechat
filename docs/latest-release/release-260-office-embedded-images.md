@@ -5,7 +5,7 @@ description: "Images embedded in Word and PowerPoint files, including SmartArt, 
 section: "Latest Release"
 ---
 
-Current release version for Pictures Inside Word and PowerPoint Are Now Searchable: **0.260.001**
+Current release version for Pictures Inside Word and PowerPoint Are Now Searchable: **0.261.001**
 
 SimpleChat now pulls images out of DOCX, PPTX, and the legacy DOC and PPT formats, including EMF and WMF metafile diagrams that older Office documents use. Each image is indexed as its own citable chunk with proper page or slide attribution, duplicate images are collapsed, and figures stay in the same chunk as the text around them instead of being dumped at the end of the document.
 
@@ -16,14 +16,6 @@ Images embedded in Word and PowerPoint files, including SmartArt, Visio drawings
 ## Admin Side
 
 Admins decide whether Pictures Inside Word and PowerPoint Are Now Searchable is available in your environment. If you cannot find Open Personal Workspace and Open Chat, ask whether the related settings, governance policy, or workspace access has been enabled for your account.
-
-## Screenshot Placeholder
-
-The v0.260.001 app catalog currently provides branded placeholder captures for Pictures Inside Word and PowerPoint Are Now Searchable. Replace these copied documentation images when final screenshots are ready:
-
-- `/images/latest-release/release_260_office_embedded_images_1.png`
-- `/images/latest-release/release_260_office_embedded_images_2.png`
-- `/images/latest-release/release_260_office_embedded_images_3.png`
 
 ## Why It Matters
 
@@ -41,5 +33,5 @@ This matters because architecture diagrams, org charts, and process flows are of
 
 ## Notes
 
-- The Pictures Inside Word and PowerPoint Are Now Searchable guide belongs to the SimpleChat 0.260.001 latest-feature set.
+- The Pictures Inside Word and PowerPoint Are Now Searchable guide belongs to the SimpleChat 0.261.001 latest-feature set.
 - The gallery for this page uses `release_260_office_embedded_images_1.png`, `release_260_office_embedded_images_2.png`, `release_260_office_embedded_images_3.png` from the app Latest Features catalog.

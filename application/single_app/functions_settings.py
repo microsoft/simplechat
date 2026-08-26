@@ -21,6 +21,11 @@ from functions_model_endpoint_identity_header import (
     normalize_model_endpoint_identity_header_value_type,
 )
 from functions_mcp_server_config import INBOUND_MCP_SETTINGS_DEFAULTS, normalize_inbound_mcp_settings
+from functions_rate_limit import (
+    RATE_LIMIT_MESSAGE_DEFAULT,
+    build_rate_limit_error_payload,
+    build_rate_limit_message,
+)
 from functions_service_health import get_default_service_health
 import app_settings_cache
 import inspect
@@ -479,6 +484,11 @@ def invalidate_user_settings_caches(user_id):
 def is_tabular_processing_enabled(settings):
     """Tabular processing is available whenever enhanced citations is enabled."""
     return bool((settings or {}).get('enable_enhanced_citations', False))
+
+
+def is_fact_memory_enabled(settings):
+    """Fact memory is a Chat capability and never requires agents or actions."""
+    return bool((settings or {}).get('enable_fact_memory_plugin', False))
 
 
 def is_mixed_source_manifest_enabled(settings):
@@ -1835,6 +1845,11 @@ def get_settings(use_cosmos=False, include_source=False):
         # Access denied message shown on the home page for signed-in users who lack required roles.
         # Default is hard-coded; admins can override via Admin Settings (persisted in Cosmos DB).
         'access_denied_message': 'You are logged in but do not have the required permissions to access this application.\nPlease contact an administrator for access.',
+        # Markdown message shown whenever a request is rate limited (HTTP 429).
+        # Leaving the toggle off keeps the built-in default, so a throttled user
+        # always gets a usable explanation.
+        'enable_custom_rate_limit_message': False,
+        'rate_limit_message': RATE_LIMIT_MESSAGE_DEFAULT,
         'access_request_button_enabled': False,
         'access_request_button_text': 'Request Access',
         'access_request_page_url': '/custom/request-access',
@@ -2091,6 +2106,17 @@ def get_settings(use_cosmos=False, include_source=False):
             exceptionTraceback=True
         )
         return _format_result(None, "error")
+
+
+def get_rate_limit_message(settings=None):
+    """Return the configured Markdown message for a rate limited (429) response.
+
+    Callers that already hold a settings dict should pass it in; the rest can
+    rely on the lookup here so no 429 surface has to reach for settings itself.
+    """
+    resolved_settings = settings if isinstance(settings, dict) else get_settings()
+    return build_rate_limit_message(resolved_settings)
+
 
 def update_settings(new_settings):
     try:

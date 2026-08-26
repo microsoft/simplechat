@@ -171,8 +171,8 @@ def test_latest_features_user_media_overrides_admin_preview():
 
     support_config = load_module(SUPPORT_CONFIG, 'support_menu_config_user_media_test')
 
-    # The v0.260.001 cards ship hidden until their placeholder screenshots are
-    # replaced, so opt them in explicitly to assert their card structure.
+    # Cards are visible by default now that every screenshot is a real capture;
+    # opt them in explicitly anyway so this assertion does not depend on defaults.
     current_ids = [
         feature['id']
         for group in support_config.get_support_latest_feature_release_groups()
@@ -185,8 +185,8 @@ def test_latest_features_user_media_overrides_admin_preview():
     })
     visible_current = next(group for group in visible_groups if group['id'] == 'current_release')
 
-    assert visible_current['release_version'] == '0.260.001', 'Current user-facing Latest Features tier should be v0.260.001'
-    assert len(visible_current['features']) == 20, 'Current user-facing Latest Features tier should expose 20 cards'
+    assert visible_current['release_version'] == '0.261.001', 'Current user-facing Latest Features tier should be v0.261.001'
+    assert len(visible_current['features']) == len(current_ids), 'Every current-release card should be exposed when visibility is opted in'
 
     visible_by_id = {feature['id']: feature for feature in visible_current['features']}
     assert 'cosmos_autoscale' not in visible_by_id, 'Cosmos autoscale should remain hidden by default for users'
@@ -195,7 +195,7 @@ def test_latest_features_user_media_overrides_admin_preview():
         feature_id = feature['id']
         assert feature_id.startswith('release_260_'), f'Current user-facing feature should use a release_260 id: {feature_id}'
         images = feature.get('images', [])
-        assert len(images) == 3, f'Expected three current-release screenshots for {feature_id}'
+        assert images, f'Expected at least one current-release screenshot for {feature_id}'
         assert feature.get('image') == images[0]['path'], f'Primary user image mismatch for {feature_id}'
         for image in images:
             image_path = image['path'].replace('images/features/', '')

@@ -5,7 +5,7 @@ description: "Audio uploads now cover a much wider set of formats including AAC,
 section: "Latest Release"
 ---
 
-Current release version for Upload Almost Any Audio File: **0.260.001**
+Current release version for Upload Almost Any Audio File: **0.261.001**
 
 Media handling is now bundled directly into SimpleChat container builds, which greatly expands the audio formats it can recognize and transcribe. Transcription degrades gracefully when the media tooling is unavailable rather than failing outright, and iPhone M4A voice memo uploads work correctly.
 
@@ -16,14 +16,6 @@ Audio uploads now cover a much wider set of formats including AAC, FLAC, M4A, OG
 ## Admin Side
 
 Admins decide whether Upload Almost Any Audio File is available in your environment. If you cannot find Open Personal Workspace and Open Chat, ask whether the related settings, governance policy, or workspace access has been enabled for your account.
-
-## Screenshot Placeholder
-
-The v0.260.001 app catalog currently provides branded placeholder captures for Upload Almost Any Audio File. Replace these copied documentation images when final screenshots are ready:
-
-- `/images/latest-release/release_260_audio_file_support_1.png`
-- `/images/latest-release/release_260_audio_file_support_2.png`
-- `/images/latest-release/release_260_audio_file_support_3.png`
 
 ## Why It Matters
 
@@ -41,5 +33,5 @@ This matters because meeting recordings and voice memos arrive in whatever forma
 
 ## Notes
 
-- The Upload Almost Any Audio File guide belongs to the SimpleChat 0.260.001 latest-feature set.
+- The Upload Almost Any Audio File guide belongs to the SimpleChat 0.261.001 latest-feature set.
 - The gallery for this page uses `release_260_audio_file_support_1.png`, `release_260_audio_file_support_2.png`, `release_260_audio_file_support_3.png` from the app Latest Features catalog.
