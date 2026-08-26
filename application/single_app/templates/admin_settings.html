@@ -1009,6 +1009,7 @@
             {% include "admin/_panes/access-roles.html" %}
             {% include "admin/_panes/content-safety.html" %}
             {% include "admin/_panes/session.html" %}
+            {% include "admin/_panes/rate-limiting.html" %}
 
 
             {% include "admin/_panes/agents.html" %}
@@ -1079,8 +1080,9 @@
 
             {% include "admin/_panes/support-menu.html" %}
             {% include "admin/_panes/send-feedback.html" %}
+            {% include "admin/_panes/user-facing-latest-features.html" %}
 
-            {# Latest Features stays last so it never opens by default #}
+            {# Admin Latest Features stays last so it never opens by default #}
             {% include "admin/_panes/latest-features.html" %}
         </div>
         <!-- End of Admin tab content -->
@@ -2132,6 +2134,7 @@
      // We’ll store the SimpleMDE instance globally so we can destroy or read its content
     let simplemde = null;
     let contentSafetyViolationMessageEditor = null;
+    let rateLimitMessageEditor = null;
 
     // Grab references to the toggle, the editor container, and the preview container
     const toggleLandingPageEditor = document.getElementById("toggleLandingPageEditor");
@@ -2233,6 +2236,63 @@
     }
 
     initializeContentSafetyViolationMessageEditor();
+
+    function initializeRateLimitMessageEditor() {
+        if (rateLimitMessageEditor || typeof SimpleMDE === "undefined") {
+            return;
+        }
+
+        const rateLimitMessageInput = document.getElementById("rate_limit_message");
+        if (!rateLimitMessageInput) {
+            return;
+        }
+
+        try {
+            rateLimitMessageEditor = new SimpleMDE({
+                element: rateLimitMessageInput,
+                spellChecker: false,
+                autoDownloadFontAwesome: false,
+                forceSync: true
+            });
+            rateLimitMessageEditor.codemirror.on("change", () => {
+                if (typeof window.markFormAsModified === "function") {
+                    window.markFormAsModified();
+                }
+            });
+        } catch (error) {
+            console.error("Failed to initialize SimpleMDE for the rate limit message:", error);
+        }
+    }
+
+    function refreshRateLimitMessageEditor() {
+        if (!rateLimitMessageEditor?.codemirror) {
+            return;
+        }
+
+        // CodeMirror measures itself as zero height while the field is hidden,
+        // so it has to be refreshed every time the pane or toggle reveals it.
+        window.setTimeout(() => {
+            rateLimitMessageEditor.codemirror.refresh();
+        }, 100);
+    }
+
+    initializeRateLimitMessageEditor();
+
+    // The two navigation layouts activate panes differently: the top tab strip
+    // fires shown.bs.tab, while the sidebar toggles classes directly. Refresh on
+    // both, and when the toggle reveals the field, so CodeMirror is never left
+    // measured at zero height.
+    document.addEventListener("shown.bs.tab", refreshRateLimitMessageEditor);
+    document.querySelectorAll('.admin-nav-tab[data-tab="rate-limiting"]').forEach(link => {
+        link.addEventListener("click", refreshRateLimitMessageEditor);
+    });
+    document
+        .getElementById("enable_custom_rate_limit_message")
+        ?.addEventListener("change", refreshRateLimitMessageEditor);
+    if (document.getElementById("rate-limiting")?.classList.contains("show")) {
+        refreshRateLimitMessageEditor();
+    }
+    window.addEventListener("load", refreshRateLimitMessageEditor);
 
     const safetyTab = document.getElementById("safety-tab");
     if (safetyTab) {

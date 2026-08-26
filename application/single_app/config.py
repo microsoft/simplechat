@@ -34,6 +34,7 @@ import jwt
 import pandas
 from functions_latest_features_nav import is_development_env_enabled
 from functions_appinsights import log_event
+from functions_azure_endpoint_validation import validate_azure_blob_endpoint
 
 from functions_environment import load_simplechat_dotenv
 from flask import (
@@ -96,7 +97,11 @@ DOTENV_LOAD_RESULT = load_simplechat_dotenv()
 EXECUTOR_TYPE = 'thread'
 EXECUTOR_MAX_WORKERS = 30
 SESSION_TYPE = 'filesystem'
+<<<<<<< HEAD
 VERSION = "0.260.029"
+=======
+VERSION = "0.261.001"
+>>>>>>> upstream/Development
 IS_DEVELOPMENT = is_development_env_enabled()
 
 # Opt-out for deployments where App Service Easy Auth is active but the platform
@@ -527,7 +532,9 @@ def build_enhanced_citations_blob_service_client(settings):
         blob_endpoint = str(settings.get("office_docs_storage_account_blob_endpoint") or "").strip()
         if not blob_endpoint:
             raise ValueError("Enhanced Citations blob endpoint is required for managed identity authentication.")
-        return BlobServiceClient(account_url=blob_endpoint, credential=DefaultAzureCredential())
+        safe_blob_endpoint = validate_azure_blob_endpoint(blob_endpoint)
+        # codeql[py/full-ssrf]
+        return BlobServiceClient(account_url=safe_blob_endpoint, credential=DefaultAzureCredential())
 
     connection_string = str(settings.get("office_docs_storage_account_url") or "").strip()
     if not connection_string:

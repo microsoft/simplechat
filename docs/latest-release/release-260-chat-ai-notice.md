@@ -5,7 +5,7 @@ description: "Your organization can display its own AI guidance directly under t
 section: "Latest Release"
 ---
 
-Current release version for AI Usage Guidance in Chat: **0.260.001**
+Current release version for AI Usage Guidance in Chat: **0.261.001**
 
 Admins write the notice in Markdown and choose how it behaves: always visible, dismissible for the session, dismissible for the day, or dismissible until the wording changes. If your organization updates the text, the notice comes back automatically so you see the current guidance rather than a stale version you dismissed months ago.
 
@@ -15,15 +15,11 @@ Your organization can display its own AI guidance directly under the chat compos
 
 ## Admin Side
 
-Admins decide whether AI Usage Guidance in Chat is available in your environment. If you cannot find Open Chat, ask whether the related settings, governance policy, or workspace access has been enabled for your account.
+The notice is configured under Notices & Agreements, in the Chat AI Notice section. The text is Markdown, so guidance can link to an internal policy page instead of restating it.
 
-## Screenshot Placeholder
+Display Behavior sets how insistent the notice is: always visible with no dismiss control, dismissible once per session, dismissible once per day, or dismissible once per message version. The last option is the useful default for guidance that changes, because editing the text brings the notice back for everyone who had already dismissed the previous version.
 
-The v0.260.001 app catalog currently provides branded placeholder captures for AI Usage Guidance in Chat. Replace these copied documentation images when final screenshots are ready:
-
-- `/images/latest-release/release_260_chat_ai_notice_1.png`
-- `/images/latest-release/release_260_chat_ai_notice_2.png`
-- `/images/latest-release/release_260_chat_ai_notice_3.png`
+This replaces the previous practice of editing templates to put usage guidance in front of users, which meant the wording drifted from whatever policy actually said.
 
 ## Why It Matters
 
@@ -41,5 +37,5 @@ This matters because AI usage rules differ by organization, and the reminder is 
 
 ## Notes
 
-- The AI Usage Guidance in Chat guide belongs to the SimpleChat 0.260.001 latest-feature set.
+- The AI Usage Guidance in Chat guide belongs to the SimpleChat 0.261.001 latest-feature set.
 - The gallery for this page uses `release_260_chat_ai_notice_1.png`, `release_260_chat_ai_notice_2.png`, `release_260_chat_ai_notice_3.png` from the app Latest Features catalog.

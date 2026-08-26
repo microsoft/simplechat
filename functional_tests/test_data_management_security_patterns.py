@@ -416,11 +416,11 @@ def test_admin_ui_exposes_data_management_without_external_assets():
     for marker in [
         # Backup, Migrate & Restore is now five tabs rather than one, so each
         # pane is asserted individually.
-        'id="backup" role="tabpanel" aria-labelledby="backup-tab" data-testid="backup-tab-pane" data-ignore-settings-change="true"',
-        'id="migrate" role="tabpanel" aria-labelledby="migrate-tab" data-testid="migrate-tab-pane" data-ignore-settings-change="true"',
-        'id="restore" role="tabpanel" aria-labelledby="restore-tab" data-testid="restore-tab-pane" data-ignore-settings-change="true"',
-        'id="cosmos-editor" role="tabpanel" aria-labelledby="cosmos-editor-tab" data-testid="cosmos-editor-tab-pane" data-ignore-settings-change="true"',
-        'id="jobs" role="tabpanel" aria-labelledby="jobs-tab" data-testid="jobs-tab-pane" data-ignore-settings-change="true"',
+        'id="backup" role="tabpanel" aria-labelledby="backup-tab" data-testid="backup-tab-pane" data-admin-group-pane="backup-recovery" data-ignore-settings-change="true"',
+        'id="migrate" role="tabpanel" aria-labelledby="migrate-tab" data-testid="migrate-tab-pane" data-admin-group-pane="backup-recovery" data-ignore-settings-change="true"',
+        'id="restore" role="tabpanel" aria-labelledby="restore-tab" data-testid="restore-tab-pane" data-admin-group-pane="backup-recovery" data-ignore-settings-change="true"',
+        'id="cosmos-editor" role="tabpanel" aria-labelledby="cosmos-editor-tab" data-testid="cosmos-editor-tab-pane" data-admin-group-pane="backup-recovery" data-ignore-settings-change="true"',
+        'id="jobs" role="tabpanel" aria-labelledby="jobs-tab" data-testid="jobs-tab-pane" data-admin-group-pane="backup-recovery" data-ignore-settings-change="true"',
         'id="data-management-save-settings-btn"',
         'id="data-management-save-settings-btn" disabled aria-disabled="true"',
         'id="data-management-operational-warning"',
@@ -565,7 +565,11 @@ def test_admin_ui_exposes_data_management_without_external_assets():
     assert 'data-management-migration-dry-run-btn' not in template
     admin_settings_js = read_text(APP_ROOT / "static" / "js" / "admin" / "admin_settings.js")
     assert "closest('[data-ignore-settings-change=\"true\"]')" in admin_settings_js
-    assert "saveButton.classList.toggle('d-none', isDataManagementActive);" in admin_settings_js
+    # Backup & Recovery panes are detected through the group attribute they
+    # declare, because the single 'data-management' pane id they used to share
+    # no longer exists.
+    assert '[data-admin-group-pane="backup-recovery"].active' in admin_settings_js
+    assert "saveButton.classList.toggle('d-none', isBackupRecoveryActive);" in admin_settings_js
     assert "window.updateAdminSettingsSaveButtonState = updateSaveButtonState;" in admin_settings_js
     assert '<span class="nav-text">Target Cosmos</span>' not in sidebar
     # Sidebar labels now come from the navigation map, which both the sidebar
