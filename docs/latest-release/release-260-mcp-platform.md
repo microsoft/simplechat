@@ -5,7 +5,7 @@ description: "SimpleChat can now act as a governed MCP server for approved exter
 section: "Latest Release"
 ---
 
-Current release version for Model Context Protocol Connections: **0.260.001**
+Current release version for Model Context Protocol Connections: **0.261.001**
 
 Model Context Protocol connections work in both directions. Outbound, your agents reach MCP servers using presets and admin-curated catalogs rather than hand-typed configuration, and you can verify a connection before saving it. Inbound, approved MCP clients can reach SimpleChat conversations, documents, prompts, tags, and workflow tools under admin governance.
 
@@ -15,15 +15,13 @@ SimpleChat can now act as a governed MCP server for approved external clients, a
 
 ## Admin Side
 
-Admins decide whether Model Context Protocol Connections is available in your environment. If you cannot find Open Personal Workspace and Open Agents, ask whether the related settings, governance policy, or workspace access has been enabled for your account.
+MCP runs in two directions and they are configured in different places.
 
-## Screenshot Placeholder
+**Outbound** — SimpleChat calling someone else's MCP server — is an action type configured under Agents. Presets and a server-side preconfiguration catalog let an admin publish a known-good destination instead of asking every user to type a URL, and Test Connection verifies a destination before users depend on it. Governance policy decides who can reach which destination.
 
-The v0.260.001 app catalog currently provides branded placeholder captures for Model Context Protocol Connections. Replace these copied documentation images when final screenshots are ready:
+**Inbound** — SimpleChat acting as an MCP server so a Copilot-style client can reach your conversations, documents, prompts, tags, and workflow tools — has its own **Inbound MCP** tab, which only appears when MCP is enabled for the tenant. It is off until an admin turns on the inbound server, and it is not an open door: access is gated on an Entra scope (`DelegatedMcpServerAccess` by default), on app and user roles (`InboundMCPUserAccess` and `InboundMCPAppAccess` by default), and optionally on explicit allow-lists of client application IDs and tenant IDs. External tenants are refused unless deliberately allowed. The server publishes OAuth protected-resource metadata under `/.well-known/oauth-protected-resource` so compliant clients can discover how to authenticate against the `/api/mcp` endpoint.
 
-- `/images/latest-release/release_260_mcp_platform_1.png`
-- `/images/latest-release/release_260_mcp_platform_2.png`
-- `/images/latest-release/release_260_mcp_platform_3.png`
+Governance carries a dedicated Inbound MCP Source Governance section, so a request arriving over MCP can be held to different rules than the same user working in the browser.
 
 ## Why It Matters
 
@@ -41,5 +39,5 @@ This matters because it lets SimpleChat participate in the wider tool ecosystem 
 
 ## Notes
 
-- The Model Context Protocol Connections guide belongs to the SimpleChat 0.260.001 latest-feature set.
+- The Model Context Protocol Connections guide belongs to the SimpleChat 0.261.001 latest-feature set.
 - The gallery for this page uses `release_260_mcp_platform_1.png`, `release_260_mcp_platform_2.png`, `release_260_mcp_platform_3.png` from the app Latest Features catalog.

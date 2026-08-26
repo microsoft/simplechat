@@ -5,7 +5,7 @@ description: "You can opt in to a sound when a response completes, a desktop not
 section: "Latest Release"
 ---
 
-Current release version for Know When a Long Answer Finishes: **0.260.001**
+Current release version for Know When a Long Answer Finishes: **0.261.001**
 
 Two independent opt-in preferences live on your profile. Completion audio cues offer ten bundled sounds with volume control and a preview button. Desktop notifications use your browser notification permission and appear when the response finishes in a hidden or unfocused tab, showing only the app and conversation title rather than the response content, and clicking one focuses the existing tab instead of opening a new one.
 
@@ -16,14 +16,6 @@ You can opt in to a sound when a response completes, a desktop notification when
 ## Admin Side
 
 Admins decide whether Know When a Long Answer Finishes is available in your environment. If you cannot find Open Profile and Open Chat, ask whether the related settings, governance policy, or workspace access has been enabled for your account.
-
-## Screenshot Placeholder
-
-The v0.260.001 app catalog currently provides branded placeholder captures for Know When a Long Answer Finishes. Replace these copied documentation images when final screenshots are ready:
-
-- `/images/latest-release/release_260_completion_notifications_1.png`
-- `/images/latest-release/release_260_completion_notifications_2.png`
-- `/images/latest-release/release_260_completion_notifications_3.png`
 
 ## Why It Matters
 
@@ -41,5 +33,5 @@ This matters because long research answers are worth stepping away from, and the
 
 ## Notes
 
-- The Know When a Long Answer Finishes guide belongs to the SimpleChat 0.260.001 latest-feature set.
+- The Know When a Long Answer Finishes guide belongs to the SimpleChat 0.261.001 latest-feature set.
 - The gallery for this page uses `release_260_completion_notifications_1.png`, `release_260_completion_notifications_2.png`, `release_260_completion_notifications_3.png` from the app Latest Features catalog.

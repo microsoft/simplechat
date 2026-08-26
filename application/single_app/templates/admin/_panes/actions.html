@@ -181,10 +181,12 @@
                                     <label class="form-check-label ms-2" for="toggle-default-embedding-model-plugin">Enable Default Embedding Model Action</label>
                                     <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Enables agents to access and use the default embedding model for text similarity and vector operations."></i>
                                 </div>
-                                <div class="form-check form-switch mb-2">
-                                    <input class="form-check-input" type="checkbox" role="switch" id="toggle-fact-memory-plugin" name="enable_fact_memory_plugin" {% if settings.enable_fact_memory_plugin %}checked{% endif %}>
-                                    <label class="form-check-label ms-2" for="toggle-fact-memory-plugin">Enable Fact Memory Action</label>
-                                    <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Enables agents to store and retrieve facts and information across conversations for improved memory and context retention."></i>
+                                <div class="mb-2" id="fact-memory-toggle-wrapper">
+                                    <div class="d-flex align-items-center">
+                                        <span class="fw-semibold">Fact Memory Action</span>
+                                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Agents can store, update, and remove durable facts and instructions for the current user or group. Fact memory is a chat capability, so it is configured in Chat rather than here."></i>
+                                    </div>
+                                    <small class="text-muted d-block ms-4" id="fact-memory-dependency-note">Configured in Chat &gt; Chat Experience &gt; Fact Memory</small>
                                 </div>
                                 <div class="mb-2" id="tabular-processing-toggle-wrapper">
                                     <div class="d-flex align-items-center">

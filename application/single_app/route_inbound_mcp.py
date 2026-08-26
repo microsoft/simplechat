@@ -28,6 +28,7 @@ from functions_mcp_server_registry import (
 )
 from functions_mcp_server_config import build_inbound_mcp_public_base_url, get_inbound_mcp_runtime_config
 from functions_mcp_server_tools import InboundMcpToolConflict, execute_inbound_mcp_tool
+from functions_settings import get_rate_limit_message
 from swagger_wrapper import swagger_route, get_auth_security
 
 
@@ -373,7 +374,7 @@ def _call_tool(auth_context, request_id, params, mcp_request_id, runtime_config)
         return _jsonrpc_error(
             request_id,
             -32029,
-            "Inbound MCP tool rate limit exceeded.",
+            get_rate_limit_message(),
             data=rate_limit.to_public_dict(),
             status_code=429,
             mcp_request_id=mcp_request_id,
