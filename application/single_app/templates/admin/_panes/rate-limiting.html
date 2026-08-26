@@ -1,0 +1,47 @@
+<!-- templates/admin/_panes/rate-limiting.html -->
+            <div class="tab-pane fade{% if admin_landing_tab == 'rate-limiting' %} show active{% endif %}" id="rate-limiting" role="tabpanel" aria-labelledby="rate-limiting-tab">
+                <div class="card p-3 mb-3" id="rate-limit-message-section">
+                    <h5>
+                        <i class="bi bi-hourglass-split me-2"></i>Rate Limit Message
+                    </h5>
+                    <p class="text-muted">
+                        Shown when a request is refused with HTTP 429, including a chat response that ran out of retries against a throttled model endpoint.
+                    </p>
+                    <div class="form-check form-switch mb-3">
+                        <input
+                            type="checkbox"
+                            class="form-check-input"
+                            id="enable_custom_rate_limit_message"
+                            name="enable_custom_rate_limit_message"
+                            {% if settings.enable_custom_rate_limit_message %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="enable_custom_rate_limit_message">
+                            Use a custom rate limit message
+                        </label>
+                        <button
+                            type="button"
+                            class="btn btn-link p-0 ms-2"
+                            data-bs-toggle="tooltip"
+                            title="Leave this off to keep the built-in message. SimpleChat never shows an empty response, so clearing the text below also falls back to the built-in message."
+                            aria-label="More information about the rate limit message">
+                            <i class="bi bi-info-circle" aria-hidden="true"></i>
+                        </button>
+                    </div>
+                    <div id="rate_limit_message_settings" class="{% if not settings.enable_custom_rate_limit_message %}d-none{% endif %}">
+                        <div class="mb-3">
+                            <label for="rate_limit_message" class="form-label">
+                                Rate Limit Message <span class="text-muted fw-normal">(Markdown supported)</span>
+                            </label>
+                            <textarea
+                                class="form-control"
+                                id="rate_limit_message"
+                                name="rate_limit_message"
+                                rows="5"
+                                maxlength="3000"
+                            >{{ settings.rate_limit_message or '' }}</textarea>
+                            <div class="form-text">
+                                Tell users what the limit is and what to do next. Deployments that throttle through API Management often point at the retry window or an internal support channel here.
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>

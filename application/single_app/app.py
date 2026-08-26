@@ -35,13 +35,14 @@ from admin_settings_nav import ADMIN_NAV, get_landing_tab_id
 from functions_search import *
 from functions_settings import *
 from functions_mcp_server_config import is_mcp_ui_enabled
+from functions_rate_limit import build_rate_limit_error_payload
 from functions_appinsights import *
 from functions_activity_logging import *
 
 import threading
 import time
 from datetime import datetime
-from flask import Blueprint, g
+from flask import Blueprint, g, make_response
 from urllib.parse import urlparse
 
 from route_frontend_authentication import *
@@ -1098,6 +1099,58 @@ def nl2br_filter(value):
     return Markup(str(escape(value)).replace('\n', '<br>\n'))  # xss-check: ignore - value is escaped before adding static br tags.
 
 app.jinja_env.filters['nl2br'] = nl2br_filter
+
+
+# =================== Rate Limiting (429) Responses =====================
+def rate_limited_caller_wants_json():
+    """Return True when a rate limited caller expects JSON over a rendered page."""
+    path = request.path or ''
+    if path.startswith('/api/') or path.startswith('/external/'):
+        return True
+
+    if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+        return True
+
+    accept = request.accept_mimetypes
+    return accept.accept_json and not accept.accept_html
+
+
+@app.errorhandler(429)
+def handle_rate_limited_request(error):
+    """Return the admin-configured message whenever a request is rate limited.
+
+    Views that build their own 429 body resolve the message themselves, so this
+    handler covers ``abort(429)`` and any 429 raised from within the stack.
+    """
+    settings = get_settings()
+    retry_after = getattr(error, 'retry_after', None)
+
+    if rate_limited_caller_wants_json():
+        response = jsonify(build_rate_limit_error_payload(settings, retry_after=retry_after))
+    else:
+        message = get_rate_limit_message(settings)
+        try:
+            response = make_response(render_template(
+                'errors/429.html',
+                rate_limit_message_html=markdown_filter(message),
+            ))
+        except Exception as render_error:
+            # The message still has to reach the user even if the shell fails
+            # to render, so fall back to the raw Markdown as plain text.
+            log_event(
+                f"[RATE_LIMIT] Failed to render the 429 page: {render_error}",
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            response = make_response(message)
+            response.mimetype = 'text/plain'
+
+    response.status_code = 429
+    if retry_after:
+        response.headers['Retry-After'] = str(retry_after)
+
+    return response
+
 
 public_app_bp = Blueprint('public_app', __name__)
 

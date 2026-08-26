@@ -11,6 +11,7 @@ from flask import current_app, jsonify, request
 from functions_keyvault import keyvault_model_endpoint_cleanup_helper, keyvault_model_endpoint_delete_helper, keyvault_model_endpoint_save_helper, redact_model_endpoint_secret_values
 from functions_settings import *
 from functions_content_safety import normalize_content_safety_violation_message
+from functions_rate_limit import normalize_rate_limit_message
 from functions_mcp_server_config import (
     check_inbound_mcp_easy_auth_exclusions,
     INBOUND_MCP_SETTINGS_DEFAULTS,
@@ -1183,6 +1184,12 @@ def register_route_frontend_admin_settings(bp):
             content_safety_include_trigger_information = form_data.get(
                 'content_safety_include_trigger_information'
             ) == 'on'
+            enable_custom_rate_limit_message = form_data.get(
+                'enable_custom_rate_limit_message'
+            ) == 'on'
+            rate_limit_message = normalize_rate_limit_message(
+                form_data.get('rate_limit_message')
+            )
             require_member_of_safety_violation_admin = form_data.get('require_member_of_safety_violation_admin') == 'on'
             require_member_of_control_center_admin = form_data.get('require_member_of_control_center_admin') == 'on'
             require_member_of_control_center_dashboard_reader = form_data.get('require_member_of_control_center_dashboard_reader') == 'on'
@@ -2804,6 +2811,10 @@ def register_route_frontend_admin_settings(bp):
                 'idle_warning_message': idle_warning_message,
                 'default_system_prompt': form_data.get('default_system_prompt', '').strip(),
                 'access_denied_message': form_data.get('access_denied_message', settings.get('access_denied_message', '')).strip(),
+
+                # Rate limiting (HTTP 429) response message
+                'enable_custom_rate_limit_message': enable_custom_rate_limit_message,
+                'rate_limit_message': rate_limit_message,
 
                 # Video file settings with Azure Video Indexer Settings
                 'video_indexer_endpoint': form_data.get('video_indexer_endpoint', video_indexer_endpoint).strip(),

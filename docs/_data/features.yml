@@ -614,6 +614,19 @@ front-door-and-session-security:
   reference:
     - title: "Admin configuration reference"
       url: /reference/admin_configuration/
+rate-limit-response-message:
+  name: "Rate limit response message"
+  area: "Platform and operations"
+  audience: "Admins"
+  summary: "Replaces the built-in HTTP 429 explanation with admin-authored Markdown shown wherever a request is throttled."
+  why: "Use this when throttling is a planned capacity control rather than a fault, such as a deployment fronted by API Management, and users need to know the retry window or who to ask for more capacity. Leave it off when the built-in wording is sufficient, because a stale custom message is worse than a generic accurate one."
+  default_state: "Disabled"
+  admin_tab: security
+  setting_keys:
+    - enable_custom_rate_limit_message
+  reference:
+    - title: "Security settings"
+      url: /admin/security/
 thoughts-display:
   name: "Thoughts display"
   area: "Platform and operations"

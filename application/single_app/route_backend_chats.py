@@ -14297,6 +14297,29 @@ def register_route_backend_chats(bp):
     def is_provider_bad_request_error(error_message, exc):
         return '400' in str(error_message or '') and 'BadRequestError' in str(type(exc))
 
+    def is_rate_limit_error(error_message, exc=None):
+        """Return True when a failure is upstream throttling rather than a fault.
+
+        Retries already absorb transient 429s, so reaching this point means the
+        throttle outlasted them. That is the case an admin wants to explain in
+        their own words instead of showing a generic failure.
+        """
+        if exc is not None:
+            if isinstance(exc, RateLimitError):
+                return True
+            if str(getattr(exc, 'status_code', '')) == '429':
+                return True
+
+        normalized_message = str(error_message or '').lower()
+        return (
+            # Bounded so an unrelated number such as 14290 cannot look like a 429.
+            re.search(r'\b429\b', normalized_message) is not None
+            or 'rate limit' in normalized_message
+            or 'rate_limit' in normalized_message
+            or 'too many requests' in normalized_message
+            or 'throttl' in normalized_message
+        )
+
     def build_background_stream_response(event_generator_factory, stream_session=None):
         """Run SSE generation in background execution so it survives disconnects."""
         stream_bridge = BackgroundStreamBridge(stream_session=stream_session)
@@ -16130,6 +16153,9 @@ def register_route_backend_chats(bp):
             if is_content_safety_error(error_message):
                 error_message = 'Image generation was blocked by content safety policies. Please edit the prompt and try again.'
                 status_code = 400
+            elif is_rate_limit_error(error_message, exc):
+                error_message = get_rate_limit_message()
+                status_code = 429
             elif is_provider_bad_request_error(error_message, exc):
                 error_message = 'Image generation request was invalid. Please edit the prompt and try again.'
                 status_code = 400
@@ -16142,7 +16168,10 @@ def register_route_backend_chats(bp):
                 level=logging.ERROR,
                 exceptionTraceback=True,
             )
-            return jsonify({'error': error_message}), status_code
+            return jsonify({
+                'error': error_message,
+                **({'rate_limited': True} if status_code == 429 else {}),
+            }), status_code
 
     @bp.route('/api/chat', methods=['POST'])
     @swagger_route(security=get_auth_security())
@@ -18327,6 +18356,9 @@ def register_route_backend_chats(bp):
                     if is_content_safety_error(error_message):
                         user_friendly_message = "Image generation was blocked by content safety policies. Please try a different prompt that doesn't involve potentially harmful content."
                         status_code = 400  # Bad request rather than server error
+                    elif is_rate_limit_error(error_message, e):
+                        user_friendly_message = get_rate_limit_message()
+                        status_code = 429
                     elif is_provider_bad_request_error(error_message, e):
                         user_friendly_message = "Image generation request was invalid. Please edit the prompt and try again."
                         status_code = 400
@@ -18341,7 +18373,8 @@ def register_route_backend_chats(bp):
                     )
 
                     return jsonify({
-                        'error': user_friendly_message
+                        'error': user_friendly_message,
+                        **({'rate_limited': True} if status_code == 429 else {}),
                     }), status_code
 
             workspace_tabular_file_contexts = []
@@ -24320,6 +24353,15 @@ def register_route_backend_chats(bp):
                     error_msg = str(e)
                     debug_print(f"Error during streaming: {error_msg}")
 
+                    # Retries have already been exhausted by the time a throttle
+                    # reaches here, so tell the user that plainly rather than
+                    # letting it look like an unexplained stream failure.
+                    stream_rate_limited = is_rate_limit_error(error_msg, e)
+                    stream_failure_message = (
+                        get_rate_limit_message() if stream_rate_limited
+                        else CLIENT_SAFE_STREAM_ERROR_MESSAGE
+                    )
+
                     # Save partial response if we have content
                     interrupted_message_persisted = False
                     interrupted_citation_tracking = {}
@@ -24368,8 +24410,8 @@ def register_route_backend_chats(bp):
                             'agent_name': agent_name_used if use_agent_streaming else None,
                             'metadata': {
                                 'incomplete': True,
-                                'error': 'stream_interrupted',
-                                'error_message': CLIENT_SAFE_STREAM_ERROR_MESSAGE,
+                                'error': 'rate_limited' if stream_rate_limited else 'stream_interrupted',
+                                'error_message': stream_failure_message,
                                 'reasoning_effort': reasoning_effort,
                                 'history_context': history_debug_info,
                                 'capability_usage': build_streaming_capability_usage(),
@@ -24434,7 +24476,9 @@ def register_route_backend_chats(bp):
                             )
 
                     yield build_stream_error_event(
-                        CLIENT_SAFE_STREAM_ERROR_MESSAGE,
+                        stream_failure_message,
+                        rate_limited=stream_rate_limited or None,
+                        status_code=429 if stream_rate_limited else None,
                         partial_content=accumulated_content,
                         conversation_id=conversation_id,
                         user_message_id=user_message_id,
@@ -24464,7 +24508,14 @@ def register_route_backend_chats(bp):
                     level=logging.ERROR,
                     exceptionTraceback=True,
                 )
-                yield build_stream_error_event()
+                if is_rate_limit_error(str(e), e):
+                    yield build_stream_error_event(
+                        get_rate_limit_message(),
+                        rate_limited=True,
+                        status_code=429,
+                    )
+                else:
+                    yield build_stream_error_event()
 
         return build_background_stream_response(generate, stream_session=stream_session)
 

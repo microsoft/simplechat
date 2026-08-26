@@ -6790,6 +6790,16 @@ function setupToggles() {
         });
     }
 
+    const enableCustomRateLimitMessage = document.getElementById('enable_custom_rate_limit_message');
+    const rateLimitMessageSettingsDiv = document.getElementById('rate_limit_message_settings');
+    if (enableCustomRateLimitMessage && rateLimitMessageSettingsDiv) {
+        rateLimitMessageSettingsDiv.classList.toggle('d-none', !enableCustomRateLimitMessage.checked);
+        enableCustomRateLimitMessage.addEventListener('change', function () {
+            rateLimitMessageSettingsDiv.classList.toggle('d-none', !this.checked);
+            markFormAsModified();
+        });
+    }
+
     const enableEnhancedCitation = document.getElementById('enable_enhanced_citations');
     if (enableEnhancedCitation) {
         toggleEnhancedCitation(enableEnhancedCitation.checked);

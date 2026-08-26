@@ -13,6 +13,12 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Instruction memories still apply to every prompt, fact memories are still recalled only when relevant, and memory activity appears in processing thoughts. Users continue to review, edit, and delete their own entries from Profile > Fact Memory.
     *   (Ref: `functions_fact_memory_autosave.py`, `route_backend_chats.py`, `fact_memory_plugin.py`, [#1352](https://github.com/microsoft/simplechat/issues/1352), [#1153](https://github.com/microsoft/simplechat/issues/1153))
 
+*   **Admin-Configurable Rate Limit Message With Markdown Support**
+    *   A new **Security → Rate Limiting** tab in Admin Settings controls what a user is told when a request is refused with HTTP 429. The message supports Markdown, so it can link to an internal runbook or a capacity request form.
+    *   Leaving the toggle off, or saving an empty message, keeps the built-in wording. A throttled user never receives an empty response.
+    *   The same message now reaches every surface that returns a 429: chat, chat image generation, text to speech, the Swagger specification endpoints, and inbound MCP tool calls. Inbound MCP keeps its structured limit, window, and reset values so clients can still back off correctly.
+    *   (Ref: `functions_rate_limit.py`, `enable_custom_rate_limit_message`, `rate_limit_message`, Security settings, [#1354](https://github.com/microsoft/simplechat/issues/1354))
+
 #### User Interface Enhancements
 
 *   **Fact Memory Moved To Chat Settings**
@@ -20,6 +26,11 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   It was previously only reachable from **Agents & Actions > Actions** as "Enable Fact Memory Action", so administrators running plain chat had no reason to open that tab and never found it.
     *   The Actions tab now shows a read-only note pointing at the Chat setting, matching how Tabular Processing points at Enhanced Citations. Existing configurations are unchanged; the underlying setting and any saved memories are preserved.
     *   (Ref: `chat-experience.html`, `actions.html`, `admin_settings.js`, `admin_settings_nav.py`, [#1352](https://github.com/microsoft/simplechat/issues/1352))
+
+*   **Throttled Chat Responses Now Explain Themselves**
+    *   SimpleChat retries throttled model calls with backoff, but once those retries ran out the chat response fell through to the generic "Something went wrong while streaming the response" error. That was indistinguishable from a genuine failure, which mattered most in deployments that throttle deliberately through API Management.
+    *   An exhausted throttle is now recognized as rate limiting and shown in its own banner, with an hourglass icon, a "Rate limited:" heading, and the administrator's rendered Markdown. Any partial content already streamed is still saved.
+    *   (Ref: `chat-streaming.js`, `appendStreamErrorBanner`, `is_rate_limit_error`, [#1354](https://github.com/microsoft/simplechat/issues/1354))
 
 #### Bug Fixes
 
