@@ -1,8 +1,9 @@
 # test_data_management_search_write_fence.py
 """
 Functional test for Data Management target AI Search write fencing.
-Version: 0.250.071
+Version: 0.260.030
 Implemented in: 0.250.071
+Updated in: 0.260.030 for upload contention retry coverage.
 
 This test ensures target SimpleChat Search writes drain before a migration
 freezes them and cannot resume until the owning migration releases the fence.
@@ -74,6 +75,21 @@ class FakeGateContainer:
             if current is None or (etag and current.get("_etag") != etag):
                 raise ConflictError("stale fence")
             self.items.pop(item, None)
+
+
+class ConflictHeavyGateContainer(FakeGateContainer):
+    """Simulate repeated optimistic-concurrency conflicts under upload fan-in."""
+
+    def __init__(self, conflicts_before_success):
+        super().__init__()
+        self.conflicts_before_success = conflicts_before_success
+
+    def replace_item(self, item, body, etag=None, **kwargs):
+        with self.lock:
+            if self.conflicts_before_success > 0:
+                self.conflicts_before_success -= 1
+                raise ConflictError("simulated concurrent writer")
+        return super().replace_item(item, body, etag=etag, **kwargs)
 
 
 def load_fence_module():
@@ -204,3 +220,16 @@ def test_ambiguous_target_search_write_retains_slot_until_quarantine_expires(mon
         lease_seconds=150,
     )
     assert fence["migration_id"] == "55555555-5555-5555-5555-555555555555"
+
+
+def test_target_search_write_slot_waits_through_transient_contention(monkeypatch):
+    """Large small-file upload batches should not fail after a few rapid ETag conflicts."""
+    module = load_fence_module()
+    monkeypatch.setattr(module, "DATA_MANAGEMENT_SEARCH_WRITE_GATE_POLL_SECONDS", 0.001)
+    monkeypatch.setattr(module, "DATA_MANAGEMENT_SEARCH_WRITE_REQUEST_TIMEOUT_SECONDS", 1)
+    container = ConflictHeavyGateContainer(conflicts_before_success=20)
+
+    lease_token = module.acquire_data_management_search_write_slot(container)
+
+    assert lease_token
+    assert module.release_data_management_search_write_slot(container, lease_token) is True

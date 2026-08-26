@@ -186,7 +186,8 @@ def _open_expired_gate(container, gate, now=None):
 
 def acquire_data_management_search_write_slot(container):
     """Reserve one bounded target Search write before issuing the data-plane request."""
-    for _attempt in range(12):
+    deadline = time.monotonic() + DATA_MANAGEMENT_SEARCH_WRITE_REQUEST_TIMEOUT_SECONDS
+    while time.monotonic() < deadline:
         now = _now_utc()
         gate = _create_or_read_gate(container)
         if gate.get("type") != DATA_MANAGEMENT_SEARCH_WRITE_GATE_TYPE:
@@ -217,8 +218,9 @@ def acquire_data_management_search_write_slot(container):
         })
         if _replace_gate(container, gate, replacement) is not None:
             return lease_token
+        time.sleep(DATA_MANAGEMENT_SEARCH_WRITE_GATE_POLL_SECONDS)
     raise DataManagementSearchWriteGateError(
-        "The Data Management Search write gate changed too often to reserve a write slot."
+        "The Data Management Search write gate could not reserve a write slot before the request timeout."
     )
 
 
