@@ -1,9 +1,9 @@
 # test_data_management_search_write_fence.py
 """
 Functional test for Data Management target AI Search write fencing.
-Version: 0.260.030
+Version: 0.261.003
 Implemented in: 0.250.071
-Updated in: 0.260.030 for upload contention retry coverage.
+Updated in: 0.261.003 for upload contention retry coverage.
 
 This test ensures target SimpleChat Search writes drain before a migration
 freezes them and cannot resume until the owning migration releases the fence.

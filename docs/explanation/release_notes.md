@@ -2,6 +2,16 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.003)**
+
+#### Bug Fixes
+
+*   **Large Personal Workspace Uploads No Longer Fail On Search Write Gate Contention**
+    *   Fixed partial failures when uploading many small Markdown, JSON, or YAML files to a personal workspace at once. Document processing could fail with a message that the Data Management Search write gate changed too often to reserve a write slot.
+    *   The write gate now waits within the existing request timeout budget and briefly backs off after transient Cosmos ETag conflicts, so burst uploads can continue while preserving the migration freeze protection for Azure AI Search writes.
+    *   Added regression coverage for repeated transient gate conflicts before a successful slot reservation.
+    *   (Ref: `functions_data_management_search_write_fence.py`, `test_data_management_search_write_fence.py`, [Search Write Gate Upload Contention Fix](fixes/SEARCH_WRITE_GATE_UPLOAD_CONTENTION_FIX.md))
+
 ### **(v0.261.002)**
 
 #### Bug Fixes

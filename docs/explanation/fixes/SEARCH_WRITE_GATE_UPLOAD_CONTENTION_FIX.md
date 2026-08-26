@@ -1,6 +1,6 @@
 # Search Write Gate Upload Contention Fix
 
-Fixed in version: **0.260.030**
+Fixed in version: **0.261.003**
 
 ## Issue
 
