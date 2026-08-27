@@ -2218,8 +2218,8 @@ def get_embedding_context_tokens(settings=None):
                     continue
                 if parsed_value > 0:
                     return parsed_value
-    except Exception:
-        pass
+    except Exception as exc:
+        log_event("get_embedding_context_tokens_failed", {"error": str(exc)})
 
     return EMBEDDING_CONTEXT_FALLBACK_TOKENS
 
