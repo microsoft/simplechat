@@ -2,8 +2,8 @@
 """
 UI test for admin governance tab rendering and API wiring.
 
-Version: 0.250.208
-Implemented in: 0.241.009; 0.241.025; 0.242.012; 0.242.013; 0.242.014; 0.242.018; 0.242.019; 0.250.204; 0.250.205; 0.250.206; 0.250.207; 0.250.208
+Version: 0.261.002
+Implemented in: 0.241.009; 0.241.025; 0.242.012; 0.242.013; 0.242.014; 0.242.018; 0.242.019; 0.250.204; 0.250.205; 0.250.206; 0.250.207; 0.250.208; 0.261.002
 
 This test ensures the Governance tab is present in admin settings, the
 sidebar navigation exposes the same destination, feature policy fetch/save
@@ -191,9 +191,9 @@ def test_admin_governance_tab_and_api_wiring():
             page.goto(f"{BASE_URL}/admin/settings", wait_until="domcontentloaded")
 
             page.get_by_role("link", name="Governance").click()
-            page.wait_for_selector("#governance-feature-policies-table")
-
-            page.get_by_role("tab", name="Governance").click()
+            page.locator("#feature-governance-tab").click()
+            page.wait_for_selector("#governance-info-guide-btn")
+            page.locator("#governance-policies-tab").click()
             page.wait_for_selector("#governance-feature-policies-table")
 
             page.locator("#governance-info-guide-btn").click()

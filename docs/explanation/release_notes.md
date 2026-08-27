@@ -2,6 +2,15 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.002)**
+
+#### Bug Fixes
+
+*   **Delegated Governance New Policy Modal Opens On Split Governance Tabs**
+    *   Fixed the delegated item governance **New Policy** button so it opens the policy editor after Admin Settings governance was split into Feature Governance, Policies, and MCP Governance tabs.
+    *   Updated governance quick links to target the correct split tab panes instead of the retired aggregate Governance pane.
+    *   (Ref: `admin_governance.js`, delegated item policy editor, [#1362](https://github.com/microsoft/simplechat/issues/1362))
+
 ### **(v0.261.001)**
 
 #### New Features
