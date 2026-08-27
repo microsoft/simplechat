@@ -402,7 +402,7 @@ def test_inbound_mcp_governance_ui_policy_creation_contract():
     assert "Quick-create inbound MCP policies open in restricted user/group mode by default." in admin_template
     assert "document.querySelectorAll('.governance-new-inbound-mcp-policy-btn')" in governance_js
     assert "button.dataset.governanceOpenTab === 'true'" in governance_js
-    assert "window.openAdminSettingsTab('#governance', 'governance-inbound-mcp-section')" in governance_js
+    assert "window.openAdminSettingsTab(GOVERNANCE_MCP_TAB_HASH, 'governance-inbound-mcp-section')" in governance_js
     assert "policyName: button.dataset.governanceInboundMcpPolicyName || ''" in governance_js
     assert "resourceLabel: button.dataset.governanceInboundMcpResourceLabel || ''" in governance_js
     assert "System-managed policies cannot be edited." in governance_js
