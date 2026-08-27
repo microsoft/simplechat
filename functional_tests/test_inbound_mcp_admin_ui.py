@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for the inbound MCP admin UI settings slice.
-Version: 0.250.098
+Version: 0.261.002
 Implemented in: 0.250.071
 Easy Auth enablement guard implemented in: 0.250.072
 Cloud-aware Easy Auth script implemented in: 0.250.073
@@ -28,12 +28,13 @@ Inbound MCP source governance CTA guidance implemented in: 0.250.093
 Inbound MCP enterprise readiness hardening implemented in: 0.250.096
 Inbound MCP admin throttle controls implemented in: 0.250.097
 Inbound MCP observability query panel implemented in: 0.250.098
+Inbound MCP disabled-state guidance implemented in: 0.261.002
 
 This test ensures inbound MCP runtime configuration is stored in app_settings,
-the minimal Admin Settings UI is gated by an OS-only feature flag, and the
-feature flag itself is not exposed as an editable UI setting. It also verifies
-that enabling inbound MCP requires the Easy Auth exclusion confirmation and
-server-side endpoint check.
+the full Admin Settings UI is gated by an OS-only feature flag, the disabled
+state explains how to enable the preview UI, and the feature flag itself is not
+exposed as an editable UI setting. It also verifies that enabling inbound MCP
+requires the Easy Auth exclusion confirmation and server-side endpoint check.
 """
 
 import sys
@@ -114,14 +115,18 @@ def test_mcp_ui_gate_is_os_environment_only():
     assert "'enable_mcp_ui'" not in admin_route_source
 
 
-def test_admin_settings_mcp_ui_is_gated_and_minimal():
-    """Validate the Admin Settings card and sidebar are behind mcp_ui_enabled."""
+def test_admin_settings_mcp_ui_disabled_message_and_enabled_form():
+    """Validate the Inbound MCP tab shows guidance when the full UI is gated."""
     admin_template = read_repo_file("application/single_app/templates/admin_settings.html")
     admin_route_source = read_repo_file("application/single_app/route_frontend_admin_settings.py")
-    sidebar_template = read_repo_file("application/single_app/templates/_sidebar_nav.html")
 
     assert "{% if mcp_ui_enabled %}" in admin_template
+    assert "{% else %}" in admin_template
     assert 'id="inbound-mcp-configuration"' in admin_template
+    assert "Inbound MCP admin UI is disabled." in admin_template
+    assert "Azure App Service application setting" in admin_template
+    assert "ENABLE_MCP_UI" in admin_template
+    assert "The inbound MCP runtime remains off" in admin_template
     assert 'name="enable_inbound_mcp_server"' in admin_template
     assert 'name="inbound_mcp_required_user_role"' in admin_template
     assert 'name="inbound_mcp_required_app_role"' in admin_template
@@ -166,7 +171,6 @@ def test_admin_settings_mcp_ui_is_gated_and_minimal():
     assert "About MCP &amp; Tools" in admin_template
     assert "{% for tool in inbound_mcp_tools %}" in admin_template
     assert 'name="enable_mcp_ui"' not in admin_template
-    assert "ENABLE_MCP_UI" not in admin_template
     assert "'enable_inbound_mcp_rate_limits': form_data.get('enable_inbound_mcp_rate_limits') == 'on'" in admin_route_source
     for operational_setting in [
         "inbound_mcp_max_request_bytes",
@@ -179,8 +183,23 @@ def test_admin_settings_mcp_ui_is_gated_and_minimal():
         assert f"'{operational_setting}'," in admin_route_source
         assert f"INBOUND_MCP_SETTINGS_DEFAULTS['{operational_setting}']" in admin_route_source
 
-    # The Inbound MCP navigation entry is gated by the same flag as its card,
-    # declared in the navigation map rather than inline in the sidebar.
+    # The Inbound MCP navigation entry stays visible so admins can discover the
+    # enablement guidance even when the full preview form is gated.
+    inbound_tab = next(
+        (
+            tab
+            for _, tab in iter_tabs()
+            if tab["id"] == "inbound-mcp"
+        ),
+        None,
+    )
+    assert inbound_tab is not None, (
+        "Inbound MCP tab missing from the navigation map"
+    )
+    assert inbound_tab.get("condition") is None, (
+        "Inbound MCP tab must stay visible even when mcp_ui_enabled is false"
+    )
+
     inbound_section = next(
         (
             section
@@ -193,8 +212,8 @@ def test_admin_settings_mcp_ui_is_gated_and_minimal():
     assert inbound_section is not None, (
         "Inbound MCP navigation entry missing from the navigation map"
     )
-    assert inbound_section.get("condition") == "mcp_ui_enabled", (
-        "Inbound MCP navigation entry must be gated by mcp_ui_enabled"
+    assert inbound_section.get("condition") is None, (
+        "Inbound MCP navigation entry must stay visible even when mcp_ui_enabled is false"
     )
     assert inbound_section["label"] == "Inbound MCP", (
         f"Unexpected Inbound MCP navigation label: {inbound_section['label']}"
@@ -386,10 +405,11 @@ def test_inbound_mcp_governance_ui_policy_creation_contract():
     assert "window.openAdminSettingsTab('#governance', 'governance-inbound-mcp-section')" in governance_js
     assert "policyName: button.dataset.governanceInboundMcpPolicyName || ''" in governance_js
     assert "resourceLabel: button.dataset.governanceInboundMcpResourceLabel || ''" in governance_js
-    assert "editButton.disabled = systemManaged;" in governance_js
-    assert "deleteButton.disabled = systemManaged;" in governance_js
-    assert "editButton.dataset.policyId = policyId;" in governance_js
-    assert "policy_id: editButton.dataset.policyId || ''" in governance_js
+    assert "System-managed policies cannot be edited." in governance_js
+    assert "System-managed policies cannot be deleted." in governance_js
+    assert "disabled: systemManaged" in governance_js
+    assert "applyGovernanceItemPolicyActionDataset(button, policyDetails)" in governance_js
+    assert "policy_id: button?.dataset?.policyId || ''" in governance_js
     assert "policy_id: String(policyIdInput?.value || '').trim()" in governance_js
     assert "The wildcard inbound MCP source policy is system-managed." not in governance_js
     assert "disallowWildcard: true" in admin_js
@@ -407,7 +427,7 @@ if __name__ == "__main__":
     tests = [
         test_inbound_mcp_runtime_settings_are_app_settings,
         test_mcp_ui_gate_is_os_environment_only,
-        test_admin_settings_mcp_ui_is_gated_and_minimal,
+        test_admin_settings_mcp_ui_disabled_message_and_enabled_form,
         test_inbound_mcp_auth_uses_settings_runtime_config,
         test_inbound_mcp_easy_auth_guard_contract,
         test_inbound_mcp_governance_ui_policy_creation_contract,

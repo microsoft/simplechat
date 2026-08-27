@@ -2,6 +2,15 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.002)**
+
+#### User Interface Enhancements
+
+*   **Inbound MCP Enablement Guidance**
+    *   Added a visible **Inbound MCP** tab state for deployments where the preview admin UI is disabled by the missing `ENABLE_MCP_UI=true` App Service application setting.
+    *   The disabled-state card explains how to enable the preview UI while making clear that the inbound MCP runtime remains off until an admin turns on **Enable inbound MCP server** after authentication, client allowlist, source, and governance prerequisites are ready.
+    *   (Ref: `admin/_panes/inbound-mcp.html`, `admin_settings_nav.py`, [#1364](https://github.com/microsoft/simplechat/issues/1364))
+
 ### **(v0.261.001)**
 
 #### New Features
