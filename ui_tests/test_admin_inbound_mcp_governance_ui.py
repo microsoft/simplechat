@@ -2,7 +2,7 @@
 """
 UI test for inbound MCP governance policy creation controls.
 
-Version: 0.250.098
+Version: 0.261.002
 Implemented in: 0.250.077
 Inbound MCP restricted policy defaults implemented in: 0.250.078
 MCP governance help modal implemented in: 0.250.079
@@ -14,9 +14,12 @@ Inbound MCP source-only governance implemented in: 0.250.092
 Inbound MCP source governance CTA guidance implemented in: 0.250.093
 Inbound MCP admin throttle controls implemented in: 0.250.097
 Inbound MCP observability query panel implemented in: 0.250.098
+Inbound MCP disabled-state guidance implemented in: 0.261.002
 
 This test ensures Admin Settings exposes inbound MCP source governance policy
-controls and can open the delegated item policy editor for source policies.
+controls when the preview UI is enabled, explains how to enable the preview UI
+when it is disabled, and can open the delegated item policy editor for source
+policies.
 """
 
 import os
@@ -54,39 +57,46 @@ def test_admin_inbound_mcp_governance_policy_editor_controls():
     page = context.new_page()
 
     try:
-        response = page.goto(f"{BASE_URL}/admin/settings#governance", wait_until="networkidle")
+        response = page.goto(f"{BASE_URL}/admin/settings#inbound-mcp", wait_until="networkidle")
         assert response is not None, "Expected a navigation response when loading admin settings."
 
         if response.status in SKIP_RESPONSE_CODES:
             pytest.skip(f"Admin settings page unavailable in this environment (HTTP {response.status}).")
         assert response.ok, f"Expected admin settings to load successfully, got HTTP {response.status}."
 
-        agents_tab = page.locator("#agents-tab")
-        if agents_tab.count() > 0:
-            agents_tab.click()
-            inbound_config = page.locator("#inbound-mcp-configuration")
-            expect(inbound_config).to_be_visible()
-            expect(inbound_config).to_contain_text("admins must still create an inbound MCP source governance policy")
-            expect(inbound_config).to_contain_text("Create Wildcard Source Policy")
-            expect(inbound_config).to_contain_text("Create Source Policy")
-            expect(inbound_config).to_contain_text("Request Size & Throttling")
-            expect(inbound_config).to_contain_text("Enable tool throttles")
-            expect(page.locator("#enable_inbound_mcp_rate_limits")).to_be_visible()
-            expect(page.locator("#inbound_mcp_max_request_bytes")).to_be_visible()
-            expect(page.locator("#inbound_mcp_rate_limit_window_seconds")).to_be_visible()
-            expect(inbound_config).not_to_contain_text("Default on creates a locked governance policy")
-            inbound_config.locator("button[data-bs-target=\"#inboundMcpInfoModal\"]").click()
-            overview_modal = page.locator("#inboundMcpInfoModal")
-            expect(overview_modal).to_be_visible()
-            expect(overview_modal).to_contain_text("Application Insights starter queries")
-            expect(overview_modal).to_contain_text("Request and failure trends")
-            expect(overview_modal).to_contain_text("Rate-limit denials")
-            expect(overview_modal.locator(".inbound-mcp-kql-copy-btn")).to_have_count(4)
-            expect(overview_modal.locator("#inbound-mcp-kql-tool-latency")).to_contain_text("percentile")
-            page.keyboard.press("Escape")
-            expect(overview_modal).to_be_hidden()
+        inbound_tab = page.locator("#inbound-mcp-tab")
+        if inbound_tab.count() > 0:
+            inbound_tab.click()
 
-        governance_tab = page.locator("#governance-tab")
+        inbound_config = page.locator("#inbound-mcp-configuration")
+        expect(inbound_config).to_be_visible()
+        enable_toggle = page.locator("#enable_inbound_mcp_server")
+        if enable_toggle.count() == 0:
+            expect(inbound_config).to_contain_text("Inbound MCP admin UI is disabled")
+            expect(inbound_config).to_contain_text("ENABLE_MCP_UI")
+            return
+
+        expect(inbound_config).to_contain_text("admins must still create an inbound MCP source governance policy")
+        expect(inbound_config).to_contain_text("Create Wildcard Source Policy")
+        expect(inbound_config).to_contain_text("Create Source Policy")
+        expect(inbound_config).to_contain_text("Request Size & Throttling")
+        expect(inbound_config).to_contain_text("Enable tool throttles")
+        expect(page.locator("#enable_inbound_mcp_rate_limits")).to_be_visible()
+        expect(page.locator("#inbound_mcp_max_request_bytes")).to_be_visible()
+        expect(page.locator("#inbound_mcp_rate_limit_window_seconds")).to_be_visible()
+        expect(inbound_config).not_to_contain_text("Default on creates a locked governance policy")
+        inbound_config.locator("button[data-bs-target=\"#inboundMcpInfoModal\"]").click()
+        overview_modal = page.locator("#inboundMcpInfoModal")
+        expect(overview_modal).to_be_visible()
+        expect(overview_modal).to_contain_text("Application Insights starter queries")
+        expect(overview_modal).to_contain_text("Request and failure trends")
+        expect(overview_modal).to_contain_text("Rate-limit denials")
+        expect(overview_modal.locator(".inbound-mcp-kql-copy-btn")).to_have_count(4)
+        expect(overview_modal.locator("#inbound-mcp-kql-tool-latency")).to_contain_text("percentile")
+        page.keyboard.press("Escape")
+        expect(overview_modal).to_be_hidden()
+
+        governance_tab = page.locator("#mcp-governance-tab")
         if governance_tab.count() > 0:
             governance_tab.click()
 

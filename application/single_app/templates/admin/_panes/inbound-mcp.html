@@ -531,5 +531,39 @@
                         </div>
                     </div>
                 </div>
+                {% else %}
+                <div class="card p-3 mb-4" id="inbound-mcp-configuration">
+                    <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-start gap-3 mb-3">
+                        <div>
+                            <h5 class="card-title mb-1">
+                                <i class="bi bi-diagram-3 me-2"></i>Inbound MCP Server
+                            </h5>
+                            <p class="text-muted small mb-0">
+                                The Inbound MCP admin UI is hidden until the preview app setting is enabled for this deployment.
+                            </p>
+                        </div>
+                        <span class="badge text-bg-secondary align-self-start align-self-lg-end">Disabled</span>
+                    </div>
+
+                    <div class="alert alert-warning small" role="alert">
+                        <strong>Inbound MCP admin UI is disabled.</strong>
+                        Add an Azure App Service application setting or environment variable named
+                        <code>ENABLE_MCP_UI</code> with value <code>true</code>, then save the configuration and restart the app if your host does not restart it automatically.
+                    </div>
+
+                    <div class="border rounded-3 p-3 mb-3">
+                        <h6 class="mb-2">How to enable this tab</h6>
+                        <ol class="small mb-0">
+                            <li>Open the Azure App Service that hosts SimpleChat.</li>
+                            <li>Go to <strong>Configuration</strong> and add an application setting named <code>ENABLE_MCP_UI</code>.</li>
+                            <li>Set the value to <code>true</code>, save the change, and restart the app if needed.</li>
+                            <li>Reload Admin Settings and return to <strong>Agents &amp; Actions -> Inbound MCP</strong>.</li>
+                        </ol>
+                    </div>
+
+                    <div class="alert alert-info small mb-0" role="alert">
+                        This app setting only exposes the preview admin configuration UI. The inbound MCP runtime remains off until an admin enables <strong>Enable inbound MCP server</strong> after authentication, client allowlist, source, and governance prerequisites are configured.
+                    </div>
+                </div>
                 {% endif %}
             </div>
