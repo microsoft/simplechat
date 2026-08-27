@@ -147,6 +147,14 @@ const GOVERNANCE_ALLOWLIST_TRUNCATE_ID_LENGTH = 35;
 
 const GOVERNANCE_ITEM_REVIEW_DEFAULT_PAGE_SIZE = 25;
 const GOVERNANCE_ITEM_EDITOR_PAGE_SIZE_DEFAULT = 50;
+const GOVERNANCE_FEATURE_TAB_HASH = '#feature-governance';
+const GOVERNANCE_POLICIES_TAB_HASH = '#governance-policies';
+const GOVERNANCE_MCP_TAB_HASH = '#mcp-governance';
+const GOVERNANCE_ADMIN_TAB_IDS = [
+    'feature-governance',
+    'governance-policies',
+    'mcp-governance',
+];
 
 const governanceItemReviewState = {
     search: '',
@@ -957,6 +965,10 @@ function showGovernanceToast(message, variant = 'success') {
     toastEl.addEventListener('hidden.bs.toast', () => {
         toastEl.remove();
     });
+}
+
+function hasGovernanceAdminSurface() {
+    return GOVERNANCE_ADMIN_TAB_IDS.some((tabId) => document.getElementById(tabId));
 }
 
 function getGovernanceFeatureToggle(featureKey) {
@@ -1854,7 +1866,7 @@ async function openGovernanceDelegatedItemEditorFromResource(options = {}) {
     }
 
     if (typeof window.openAdminSettingsTab === 'function') {
-        window.openAdminSettingsTab('#governance');
+        window.openAdminSettingsTab(GOVERNANCE_POLICIES_TAB_HASH, 'governance-item-policies-section');
     }
 
     await openGovernanceItemPolicyEditor({
@@ -4174,7 +4186,7 @@ function wireGovernanceHandlers() {
         linkButton.addEventListener('click', () => {
             const targetId = String(linkButton.getAttribute('data-governance-target') || '').trim();
             if (typeof window.openAdminSettingsTab === 'function') {
-                window.openAdminSettingsTab('#governance');
+                window.openAdminSettingsTab(GOVERNANCE_FEATURE_TAB_HASH);
             }
             window.setTimeout(() => {
                 const target = document.getElementById(targetId);
@@ -4208,7 +4220,7 @@ function wireGovernanceHandlers() {
         button.addEventListener('click', async () => {
             try {
                 if (button.dataset.governanceOpenTab === 'true' && typeof window.openAdminSettingsTab === 'function') {
-                    window.openAdminSettingsTab('#governance', 'governance-inbound-mcp-section');
+                    window.openAdminSettingsTab(GOVERNANCE_MCP_TAB_HASH, 'governance-inbound-mcp-section');
                 }
                 await openGovernanceInboundMcpPolicyEditor({
                     entityType: button.dataset.governanceInboundMcpEntity || '',
@@ -4395,7 +4407,7 @@ function wireGovernanceHandlers() {
 }
 
 async function initializeGovernanceTab() {
-    if (!document.getElementById('governance')) {
+    if (!hasGovernanceAdminSurface()) {
         return;
     }
 

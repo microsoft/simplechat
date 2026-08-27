@@ -6,6 +6,11 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 
 #### Bug Fixes
 
+*   **Delegated Governance New Policy Modal Opens On Split Governance Tabs**
+    *   Fixed the delegated item governance **New Policy** button so it opens the policy editor after Admin Settings governance was split into Feature Governance, Policies, and MCP Governance tabs.
+    *   Updated governance quick links to target the correct split tab panes instead of the retired aggregate Governance pane.
+    *   (Ref: `admin_governance.js`, delegated item policy editor, [#1362](https://github.com/microsoft/simplechat/issues/1362))
+
 *   **Large Markdown Files No Longer Fail To Upload**
     *   Uploading a Markdown file could fail with `Failed processing Markdown file ...` and take down the whole document, not just the oversized part of it. Long pages with a big section under a single heading, such as a release notes file, were the usual trigger.
     *   Markdown was the only ingestion path with no maximum chunk size. Its splitter divided the file on headings, and the step afterwards only ever merged chunks that were **too small** — nothing split a chunk that was too large. A heading with no subheading beneath it therefore became one chunk as large as all the text under it, which the embedding model refused.
