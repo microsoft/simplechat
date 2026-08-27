@@ -2,15 +2,16 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
-### **(v0.261.003)**
+### **(v0.261.004)**
 
 #### Bug Fixes
 
 *   **Large Workspace Uploads No Longer Fail On Search Write Gate Contention**
     *   Fixed partial failures when uploading many small Markdown, JSON, or YAML files to personal, group, or public workspaces at once. Document processing could fail with a message that the Data Management Search write gate changed too often to reserve a write slot.
-    *   The shared write gate now waits within the existing request timeout budget and briefly backs off after transient Cosmos ETag conflicts, so burst uploads can continue across all workspace Search indexes while preserving the migration freeze protection for Azure AI Search writes.
-    *   Added regression coverage for repeated transient gate conflicts before a successful slot reservation.
-    *   (Ref: `functions_data_management_search_write_fence.py`, `test_data_management_search_write_fence.py`, [Search Write Gate Upload Contention Fix](fixes/SEARCH_WRITE_GATE_UPLOAD_CONTENTION_FIX.md))
+    *   The shared write gate now waits within the existing request timeout budget, briefly backs off after transient Cosmos ETag conflicts, and serializes Search writes inside each worker process. This prevents local upload threads from stampeding the same gate document while preserving the migration freeze protection for Azure AI Search writes.
+    *   Markdown processing now batches its chunk embeddings and Search upload instead of reserving the gate once per chunk, which reduces contention and avoids the intermittent `OrderedDict mutated during iteration` failures seen during concurrent Markdown ingestion.
+    *   Added regression coverage for repeated transient gate conflicts, local worker serialization, and Markdown use of the batch chunk writer.
+    *   (Ref: `functions_data_management_search_write_fence.py`, `functions_documents.py`, `test_data_management_search_write_fence.py`, `test_markdown_processing_batches_search_writes.py`, [Search Write Gate Upload Contention Fix](fixes/SEARCH_WRITE_GATE_UPLOAD_CONTENTION_FIX.md))
 
 ### **(v0.261.002)**
 

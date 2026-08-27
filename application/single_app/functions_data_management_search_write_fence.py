@@ -2,6 +2,7 @@
 """Cross-app Azure AI Search write fencing for Data Management migrations."""
 
 import copy
+import threading
 import time
 import uuid
 from contextlib import contextmanager
@@ -25,6 +26,7 @@ DATA_MANAGEMENT_TARGET_MIGRATION_COORDINATOR_ID = (
 DATA_MANAGEMENT_TARGET_MIGRATION_COORDINATOR_TYPE = (
     "data_management_target_migration_coordinator"
 )
+DATA_MANAGEMENT_SEARCH_WRITE_GATE_LOCAL_LOCK = threading.Lock()
 
 
 class DataManagementSearchWriteGateError(RuntimeError):
@@ -200,6 +202,7 @@ def acquire_data_management_search_write_slot(container):
             )
         if gate.get("state") != DATA_MANAGEMENT_SEARCH_WRITE_GATE_STATE_OPEN:
             if _open_expired_gate(container, gate, now) is None:
+                time.sleep(DATA_MANAGEMENT_SEARCH_WRITE_GATE_POLL_SECONDS)
                 continue
             continue
         lease_token = uuid.uuid4().hex
@@ -253,14 +256,15 @@ def release_data_management_search_write_slot(container, lease_token):
 @contextmanager
 def hold_data_management_search_write_slot(container):
     """Hold a target Search write slot until a response is known or its ambiguity lease expires."""
-    lease_token = acquire_data_management_search_write_slot(container)
-    response_confirmed = False
-    try:
-        yield
-        response_confirmed = True
-    finally:
-        if response_confirmed:
-            release_data_management_search_write_slot(container, lease_token)
+    with DATA_MANAGEMENT_SEARCH_WRITE_GATE_LOCAL_LOCK:
+        lease_token = acquire_data_management_search_write_slot(container)
+        response_confirmed = False
+        try:
+            yield
+            response_confirmed = True
+        finally:
+            if response_confirmed:
+                release_data_management_search_write_slot(container, lease_token)
 
 
 def acquire_data_management_search_write_fence(

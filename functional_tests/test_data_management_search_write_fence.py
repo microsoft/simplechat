@@ -1,9 +1,9 @@
 # test_data_management_search_write_fence.py
 """
 Functional test for Data Management target AI Search write fencing.
-Version: 0.261.003
+Version: 0.261.004
 Implemented in: 0.250.071
-Updated in: 0.261.003 for upload contention retry coverage.
+Updated in: 0.261.004 for upload contention retry coverage.
 
 This test ensures target SimpleChat Search writes drain before a migration
 freezes them and cannot resume until the owning migration releases the fence.
@@ -233,3 +233,42 @@ def test_target_search_write_slot_waits_through_transient_contention(monkeypatch
 
     assert lease_token
     assert module.release_data_management_search_write_slot(container, lease_token) is True
+
+
+def test_local_search_writes_are_serialized_before_touching_gate(monkeypatch):
+    """Concurrent uploads in one worker should not stampede the shared Cosmos gate document."""
+    module = load_fence_module()
+    monkeypatch.setattr(module, "DATA_MANAGEMENT_SEARCH_WRITE_GATE_POLL_SECONDS", 0.001)
+    container = FakeGateContainer()
+    started = threading.Event()
+    release_first_write = threading.Event()
+    second_write_entered = []
+
+    def first_write():
+        with module.hold_data_management_search_write_slot(container):
+            started.set()
+            release_first_write.wait(timeout=2.0)
+
+    def second_write():
+        started.wait(timeout=2.0)
+        with module.hold_data_management_search_write_slot(container):
+            second_write_entered.append(True)
+
+    first_thread = threading.Thread(target=first_write)
+    second_thread = threading.Thread(target=second_write)
+    first_thread.start()
+    second_thread.start()
+    started.wait(timeout=2.0)
+    time.sleep(0.05)
+
+    assert second_write_entered == []
+    gate = container.items[module.DATA_MANAGEMENT_SEARCH_WRITE_GATE_ID]
+    assert gate["active_writer_count"] == 1
+
+    release_first_write.set()
+    first_thread.join(timeout=2.0)
+    second_thread.join(timeout=2.0)
+
+    assert second_write_entered == [True]
+    gate = container.items[module.DATA_MANAGEMENT_SEARCH_WRITE_GATE_ID]
+    assert gate["active_writer_count"] == 0

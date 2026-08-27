@@ -6564,7 +6564,7 @@ def process_md(document_id, user_id, temp_file_path, original_filename, enable_e
             if current_word_count >= min_chunk_words or i == len(initial_chunks_content) - 1:
                  # If the combined chunk meets min size OR it's the last chunk, save it
                 if current_chunk_text.strip():
-                     final_chunks.append(current_chunk_text)
+                    final_chunks.append(current_chunk_text)
                 buffer_chunk = "" # Reset buffer
             else:
                 # Accumulate in buffer if below min size and not the last chunk
@@ -6573,32 +6573,36 @@ def process_md(document_id, user_id, temp_file_path, original_filename, enable_e
         num_chunks_final = len(final_chunks)
         update_callback(number_of_pages=num_chunks_final)
 
-        for idx, chunk_content in enumerate(final_chunks, start=1):
-            update_callback(
-                current_file_chunk=idx,
-                status=f"Saving chunk {idx}/{num_chunks_final}..."
-            )
-            args = {
+        all_chunks = []
+        for chunk_content in final_chunks:
+            if not chunk_content or not chunk_content.strip():
+                continue
+            all_chunks.append({
                 "page_text_content": chunk_content,
-                "page_number": idx,
+                "page_number": len(all_chunks) + 1,
                 "file_name": original_filename,
-                "user_id": user_id,
-                "document_id": document_id
-            }
+            })
 
-            if is_public_workspace:
-                args["public_workspace_id"] = public_workspace_id
-            elif is_group:
-                args["group_id"] = group_id
+        if all_chunks:
+            if len(all_chunks) != num_chunks_final:
+                num_chunks_final = len(all_chunks)
+                update_callback(number_of_pages=num_chunks_final)
+            update_callback(
+                current_file_chunk=1,
+                status=f"Batch saving {num_chunks_final} Markdown chunk(s)..."
+            )
+            token_usage = save_chunks_batch(
+                all_chunks,
+                user_id,
+                document_id,
+                group_id=group_id,
+                public_workspace_id=public_workspace_id
+            )
+            total_chunks_saved = len(all_chunks)
 
-            token_usage = save_chunks(**args)
-            total_chunks_saved += 1
-
-            # Accumulate embedding tokens
             if token_usage:
-                total_embedding_tokens += token_usage.get('total_tokens', 0)
-                if not embedding_model_name:
-                    embedding_model_name = token_usage.get('model_deployment_name')
+                total_embedding_tokens = token_usage.get('total_tokens', 0)
+                embedding_model_name = token_usage.get('model_deployment_name')
 
     except Exception as e:
         raise Exception(f"Failed processing Markdown file {original_filename}: {e}")
