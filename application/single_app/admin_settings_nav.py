@@ -150,14 +150,13 @@ ADMIN_NAV = [
                 ],
             },
             {
-                # The whole tab is behind mcp_ui_enabled, so the tab carries the
-                # condition rather than the single section inside it.
+                # Keep the tab visible when the preview UI gate is off so admins
+                # can see how to enable the required App Service setting.
                 "id": "inbound-mcp",
                 "label": "Inbound MCP",
                 "icon": "bi-diagram-3",
-                "condition": "mcp_ui_enabled",
                 "sections": [
-                    {"id": "inbound-mcp-configuration", "label": "Inbound MCP", "icon": "bi-diagram-3", "condition": "mcp_ui_enabled"},
+                    {"id": "inbound-mcp-configuration", "label": "Inbound MCP", "icon": "bi-diagram-3"},
                 ],
             },
         ],

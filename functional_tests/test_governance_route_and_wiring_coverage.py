@@ -2,8 +2,8 @@
 #!/usr/bin/env python3
 """
 Functional test for governance route and enforcement wiring coverage.
-Version: 0.250.208
-Implemented in: 0.242.011; 0.242.012; 0.242.013; 0.242.014; 0.242.018; 0.242.019; 0.250.204; 0.250.205; 0.250.206; 0.250.207; 0.250.208
+Version: 0.261.002
+Implemented in: 0.242.011; 0.242.012; 0.242.013; 0.242.014; 0.242.018; 0.242.019; 0.250.204; 0.250.205; 0.250.206; 0.250.207; 0.250.208; 0.261.002
 
 This test ensures governance routes are registered and guarded, and that
 updated backend modules include governance enforcement hooks for endpoint,
@@ -133,6 +133,8 @@ def test_governance_enforcement_hooks_across_changed_routes():
 
     for marker in [
         "id=\"feature-governance\"",
+        "id=\"governance-policies\"",
+        "id=\"mcp-governance\"",
         "governance-feature-policies-table",
         "governance-item-policies-table",
         "governance-item-policy-card-controls",
@@ -223,10 +225,25 @@ def test_governance_enforcement_hooks_across_changed_routes():
         "openGovernanceItemPolicyUsersModal",
         "A new policy ID will be assigned when saved",
         "Allowed and blocked users/groups were swapped",
+        "GOVERNANCE_ADMIN_TAB_IDS",
+        "hasGovernanceAdminSurface()",
+        "GOVERNANCE_FEATURE_TAB_HASH",
+        "GOVERNANCE_POLICIES_TAB_HASH",
+        "GOVERNANCE_MCP_TAB_HASH",
+        "window.openAdminSettingsTab(GOVERNANCE_POLICIES_TAB_HASH, 'governance-item-policies-section')",
+        "window.openAdminSettingsTab(GOVERNANCE_FEATURE_TAB_HASH)",
+        "window.openAdminSettingsTab(GOVERNANCE_MCP_TAB_HASH, 'governance-inbound-mcp-section')",
     ]:
         assert marker in admin_governance_js_content or marker in admin_settings_template_content or marker in frontend_chats_content or marker in agents_content, (
             f"Missing governance UI visibility marker: {marker}"
         )
+
+    assert "document.getElementById('governance')" not in admin_governance_js_content, (
+        "Governance initialization must not depend on the retired aggregate #governance tab pane"
+    )
+    assert "window.openAdminSettingsTab('#governance')" not in admin_governance_js_content, (
+        "Governance quick links must target the split governance tab panes"
+    )
 
     item_policy_table_header_section = admin_settings_template_content.split(
         'id="governance-item-policies-table"',
