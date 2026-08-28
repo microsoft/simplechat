@@ -2,6 +2,24 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.006)**
+
+#### Bug Fixes
+
+*   **Markdown Uploads Retry Transient OrderedDict Parser Failures**
+    *   Markdown document processing now retries the known transient `OrderedDict mutated during iteration` parser failure before marking a document failed.
+    *   The retry is limited to this specific Markdown failure signature, so unrelated parsing, validation, or service errors still fail normally with their original error.
+    *   (Ref: Markdown upload processing, `functions_documents.py`, `test_markdown_processing_batches_search_writes.py`, [Search Write Gate Upload Contention Fix](fixes/SEARCH_WRITE_GATE_UPLOAD_CONTENTION_FIX.md))
+
+### **(v0.261.005)**
+
+#### User Interface Enhancements
+
+*   **Workspace Upload Progress Now Separates Request Status From Document Processing Status**
+    *   The temporary upload summary no longer labels unconfirmed browser upload requests as final document failures. This avoids misleading summaries such as `Uploaded 77/204, Failed: 127` when the document list later shows that most documents were queued and processed successfully.
+    *   Personal, group, and public workspace uploads now use `Queued` for confirmed upload requests and direct users to the refreshed document list for final processing status.
+    *   (Ref: workspace upload progress summary, `workspace-documents.js`, `public_workspace.js`, `group_workspaces.html`, [Workspace Upload Status Counter Fix](fixes/WORKSPACE_UPLOAD_STATUS_COUNTER_FIX.md))
+
 ### **(v0.261.004)**
 
 #### Bug Fixes

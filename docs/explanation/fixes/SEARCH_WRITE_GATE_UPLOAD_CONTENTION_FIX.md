@@ -1,6 +1,6 @@
 # Search Write Gate Upload Contention Fix
 
-Fixed in version: **0.261.004**
+Fixed in version: **0.261.006**
 
 ## Issue
 
@@ -20,8 +20,8 @@ Files modified:
 - `functional_tests/test_markdown_processing_batches_search_writes.py`
 - `application/single_app/config.py`
 
-The write-slot reservation loop now waits until the existing request timeout budget is exhausted, sleeps briefly after each ETag conflict, and serializes Search writes inside each worker process. Markdown processing now collects non-empty chunks and sends them through `save_chunks_batch`, matching the existing batched processors and reducing both Search write gate mutations and embedding/Search client churn.
+The write-slot reservation loop now waits until the existing request timeout budget is exhausted, sleeps briefly after each ETag conflict, and serializes Search writes inside each worker process. Markdown processing now collects non-empty chunks and sends them through `save_chunks_batch`, matching the existing batched processors and reducing both Search write gate mutations and embedding/Search client churn. If Markdown processing still hits the known transient `OrderedDict mutated during iteration` error, the background processor retries the same queued document before marking it failed.
 
 ## Validation
 
-Added regression coverage for repeated transient write-gate conflicts before a successful reservation, worker-local Search write serialization, and Markdown use of the batch chunk writer. Validated the concurrency scenarios with direct Python execution because `pytest` was not installed in the selected environment, and compiled the touched Python files successfully.
+Added regression coverage for repeated transient write-gate conflicts before a successful reservation, worker-local Search write serialization, Markdown use of the batch chunk writer, and the OrderedDict retry dispatch. Validated the concurrency scenarios with direct Python execution because `pytest` was not installed in the selected environment, and compiled the touched Python files successfully.

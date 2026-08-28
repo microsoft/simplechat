@@ -3,6 +3,7 @@
 import re
 import shutil
 import subprocess
+import time
 import traceback
 import zipfile
 from io import BytesIO
@@ -43,6 +44,11 @@ _AUDIO_RUNTIME_CAPABILITIES_CACHE = None
 
 class DocumentSearchAclProjectionDeferredError(RuntimeError):
     """Raised when an authorization-reducing Search ACL update must be retried safely."""
+
+
+MARKDOWN_ORDERED_DICT_MUTATION_MESSAGE = "OrderedDict mutated during iteration"
+MARKDOWN_ORDERED_DICT_RETRY_ATTEMPTS = 2
+MARKDOWN_ORDERED_DICT_RETRY_DELAY_SECONDS = 0.5
 
 
 def _search_indexing_results_succeeded(results):
@@ -9007,6 +9013,48 @@ def _resolve_processing_complete_status(total_chunks_saved, file_ext, image_exte
 
     return "Processing complete"
 
+
+def _is_markdown_ordered_dict_mutation_error(exc):
+    """Return whether Markdown processing hit the transient OrderedDict mutation failure."""
+    return MARKDOWN_ORDERED_DICT_MUTATION_MESSAGE in str(exc or "")
+
+
+def _process_markdown_with_ordered_dict_retry(processor_args, update_callback):
+    """Retry Markdown processing when the parser hits a transient OrderedDict mutation."""
+    for attempt in range(MARKDOWN_ORDERED_DICT_RETRY_ATTEMPTS + 1):
+        try:
+            return process_md(**{k: v for k, v in processor_args.items() if k != "file_ext"})
+        except Exception as exc:
+            if (
+                not _is_markdown_ordered_dict_mutation_error(exc) or
+                attempt >= MARKDOWN_ORDERED_DICT_RETRY_ATTEMPTS
+            ):
+                raise
+
+            retry_number = attempt + 1
+            original_filename = processor_args.get("original_filename")
+            document_id = processor_args.get("document_id")
+            log_event(
+                "[DOCUMENTS] Retrying Markdown processing after transient OrderedDict mutation.",
+                extra={
+                    "document_id": document_id,
+                    "file_name": original_filename,
+                    "retry_number": retry_number,
+                    "max_retries": MARKDOWN_ORDERED_DICT_RETRY_ATTEMPTS,
+                    "error_type": type(exc).__name__,
+                },
+                level=logging.WARNING,
+                exceptionTraceback=True,
+            )
+            update_callback(
+                status=(
+                    "Retrying Markdown processing after a transient parser concurrency error "
+                    f"({retry_number}/{MARKDOWN_ORDERED_DICT_RETRY_ATTEMPTS})..."
+                )
+            )
+            time.sleep(MARKDOWN_ORDERED_DICT_RETRY_DELAY_SECONDS * retry_number)
+
+
 def process_document_upload_background(document_id, user_id, temp_file_path, original_filename, group_id=None, public_workspace_id=None, extraction_mode_override=None):
     """
     Main background task dispatcher for document processing.
@@ -9132,7 +9180,10 @@ def process_document_upload_background(document_id, user_id, temp_file_path, ori
             else:
                 total_chunks_saved = result
         elif file_ext == '.md':
-            result = process_md(**{k: v for k, v in processor_args_without_auto_metadata.items() if k != "file_ext"})
+            result = _process_markdown_with_ordered_dict_retry(
+                processor_args_without_auto_metadata,
+                update_doc_callback,
+            )
             if isinstance(result, tuple) and len(result) == 3:
                 total_chunks_saved, total_embedding_tokens, embedding_model_name = result
             else:

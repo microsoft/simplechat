@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
 Functional test for Markdown document processing batch Search writes.
-Version: 0.261.004
+Version: 0.261.006
 Implemented in: 0.261.004
+Updated in: 0.261.006 for transient OrderedDict retry coverage.
 
-This test ensures Markdown processing uses the batch chunk writer so large
-workspace uploads do not reserve the Data Management Search write gate once per
-chunk.
+This test ensures Markdown processing uses the batch chunk writer and retries
+transient OrderedDict parser concurrency errors during large workspace uploads.
 """
 
 import ast
@@ -47,9 +47,25 @@ def test_process_md_uses_batch_chunk_writer():
     assert "save_chunks" not in call_names
 
 
+def test_markdown_dispatch_uses_ordered_dict_retry_helper():
+    """The background dispatcher should retry the known transient Markdown parser error."""
+    module_tree = ast.parse(FUNCTIONS_DOCUMENTS_PATH.read_text(encoding="utf-8"))
+    dispatcher = _find_function(module_tree, "process_document_upload_background")
+    retry_helper = _find_function(module_tree, "_process_markdown_with_ordered_dict_retry")
+    source = FUNCTIONS_DOCUMENTS_PATH.read_text(encoding="utf-8")
+    dispatcher_calls = _called_function_names(dispatcher)
+    retry_helper_calls = _called_function_names(retry_helper)
+
+    assert "_process_markdown_with_ordered_dict_retry" in dispatcher_calls
+    assert "process_md" in retry_helper_calls
+    assert "MARKDOWN_ORDERED_DICT_MUTATION_MESSAGE" in source
+    assert "OrderedDict mutated during iteration" in source
+
+
 if __name__ == "__main__":
     try:
         test_process_md_uses_batch_chunk_writer()
+        test_markdown_dispatch_uses_ordered_dict_retry_helper()
     except Exception as exc:
         print(f"Test failed: {exc}")
         raise
