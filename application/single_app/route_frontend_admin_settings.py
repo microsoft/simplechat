@@ -1020,6 +1020,9 @@ def register_route_frontend_admin_settings(bp):
                 chunk_size_defaults=get_chunk_size_defaults(),
                 chunk_size_settings=settings.get('chunk_size', {}),
                 chunk_size_cap=get_chunk_size_cap(settings),
+                chunk_size_caps=get_chunk_size_caps_by_key(settings),
+                chunk_size_word_cap=get_embedding_safe_chunk_words(settings),
+                chunk_size_character_cap=get_embedding_safe_chunk_characters(settings),
                 chunk_size_effective=get_chunk_size_config(settings),
                 audio_runtime_capabilities=audio_runtime_capabilities,
                 source_review_runtime_capabilities=source_review_runtime_capabilities,
@@ -2296,7 +2299,7 @@ def register_route_frontend_admin_settings(bp):
             # --- Chunk Size Overrides ---
             chunk_size_defaults = get_chunk_size_defaults()
             existing_chunk_sizes = settings.get('chunk_size', {}) if isinstance(settings, dict) else {}
-            chunk_size_cap = get_chunk_size_cap(settings)
+            chunk_size_caps = get_chunk_size_caps_by_key(settings)
             enable_chunk_size_override = form_data.get('enable_chunk_size_override') == 'on'
             normalized_chunk_sizes = {}
             chunk_size_warning_keys = []
@@ -2311,14 +2314,19 @@ def register_route_frontend_admin_settings(bp):
                 except Exception:
                     parsed_value = meta.get('value', 1)
 
+                unit = stored_meta.get('unit', meta.get('unit', 'words'))
+                # Each unit has its own cap, because a word count and a character count cannot
+                # share one numeric limit and still stay inside the embedding token budget.
+                key_cap = chunk_size_caps.get(key, get_chunk_size_cap(settings, unit))
+
                 sanitized_value = max(1, parsed_value)
-                if sanitized_value > chunk_size_cap:
-                    chunk_size_warning_keys.append(key.upper())
-                sanitized_value = min(sanitized_value, chunk_size_cap)
+                if sanitized_value > key_cap:
+                    chunk_size_warning_keys.append(f"{key.upper()} ({key_cap} {unit})")
+                sanitized_value = min(sanitized_value, key_cap)
 
                 normalized_chunk_sizes[key] = {
                     'value': sanitized_value,
-                    'unit': stored_meta.get('unit', meta.get('unit', 'words'))
+                    'unit': unit
                 }
 
             chunk_size_changed = (
@@ -2328,7 +2336,8 @@ def register_route_frontend_admin_settings(bp):
 
             if chunk_size_warning_keys:
                 flash(
-                    f"Chunk sizes capped at {chunk_size_cap} for: {', '.join(chunk_size_warning_keys)}.",
+                    "Chunk sizes were reduced to what a single chunk can embed for: "
+                    f"{', '.join(chunk_size_warning_keys)}.",
                     'warning'
                 )
 
@@ -3230,7 +3239,7 @@ def register_route_frontend_admin_settings(bp):
                             description='Updated chunk size overrides for document processing.',
                             additional_context={
                                 'override_enabled': enable_chunk_size_override,
-                                'chunk_size_cap': chunk_size_cap,
+                                'chunk_size_caps': chunk_size_caps,
                                 'chunk_sizes': normalized_chunk_sizes
                             }
                         )
@@ -3243,7 +3252,7 @@ def register_route_frontend_admin_settings(bp):
                             message="Admins updated chunk size defaults. New uploads will use the latest limits.",
                             metadata={
                                 'override_enabled': enable_chunk_size_override,
-                                'chunk_size_cap': chunk_size_cap
+                                'chunk_size_caps': chunk_size_caps
                             }
                         )
                     except Exception as e:
