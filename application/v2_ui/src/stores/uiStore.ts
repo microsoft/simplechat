@@ -8,9 +8,11 @@
 import { create } from 'zustand';
 
 export type ThemeMode = 'light' | 'dark';
+export type ChatWidth = 'comfortable' | 'wide';
 
 const THEME_STORAGE_KEY = 'simplechat.v2.theme';
 const RAIL_STORAGE_KEY = 'simplechat.v2.rail-collapsed';
+const WIDTH_STORAGE_KEY = 'simplechat.v2.chat-width';
 
 function readStoredTheme(): ThemeMode {
     try {
@@ -32,6 +34,14 @@ function readStoredRailCollapsed(): boolean {
     }
 }
 
+function readStoredChatWidth(): ChatWidth {
+    try {
+        return localStorage.getItem(WIDTH_STORAGE_KEY) === 'wide' ? 'wide' : 'comfortable';
+    } catch {
+        return 'comfortable';
+    }
+}
+
 function applyThemeToDocument(theme: ThemeMode) {
     const root = document.documentElement;
     root.classList.toggle('dark', theme === 'dark');
@@ -44,9 +54,18 @@ interface UiState {
     railCollapsed: boolean;
     /** Mobile-only overlay state for the rail; separate from the desktop collapse. */
     mobileNavOpen: boolean;
+    /**
+     * How wide the message thread is allowed to grow.
+     *
+     * "comfortable" keeps a fixed reading measure, which is easier to read but leaves the
+     * composer controls crowded on a wide screen. "wide" lets the thread and composer fill
+     * the pane. It is a preference because neither is right for everyone.
+     */
+    chatWidth: ChatWidth;
     setTheme: (theme: ThemeMode) => void;
     toggleTheme: () => void;
     toggleRail: () => void;
+    toggleChatWidth: () => void;
     setMobileNavOpen: (open: boolean) => void;
 }
 
@@ -54,6 +73,7 @@ export const useUiStore = create<UiState>((set, get) => ({
     theme: readStoredTheme(),
     railCollapsed: readStoredRailCollapsed(),
     mobileNavOpen: false,
+    chatWidth: readStoredChatWidth(),
 
     setTheme: (theme) => {
         applyThemeToDocument(theme);
@@ -77,6 +97,16 @@ export const useUiStore = create<UiState>((set, get) => ({
             /* Non-fatal. */
         }
         set({ railCollapsed });
+    },
+
+    toggleChatWidth: () => {
+        const chatWidth: ChatWidth = get().chatWidth === 'wide' ? 'comfortable' : 'wide';
+        try {
+            localStorage.setItem(WIDTH_STORAGE_KEY, chatWidth);
+        } catch {
+            /* Non-fatal. */
+        }
+        set({ chatWidth });
     },
 
     setMobileNavOpen: (mobileNavOpen) => set({ mobileNavOpen }),

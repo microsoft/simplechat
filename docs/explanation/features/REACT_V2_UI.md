@@ -178,6 +178,8 @@ Wired to the live APIs:
 - A per-message inspector with the sources a response cited, the reasoning behind it, and
   how it was produced
 - Masking part or all of a message, so its content is withheld from the model
+- Conversation details with a generated summary, categorised tags and paged source documents
+- Composer controls that appear only when they are relevant, and a chat width preference
 - Citations rendered as inline chips that open either the cited source itself — the PDF
   page, image, media clip, spreadsheet or Visio page — or the passage that was extracted
   from it
@@ -278,6 +280,50 @@ in the raw content and citation parsing rewrites the string.
 There is no `can_*` field on any payload, so the client mirrors the server's rule — the
 message's author, falling back to the conversation's owner for messages that record no author
 — to decide what to offer, and still handles a 403.
+
+### Conversation details
+
+The metadata endpoint returns considerably more than a flat list. Its `tags` array is
+heterogeneous — every entry carries a `category` of `document`, `model`, `agent`,
+`participant`, `semantic` or `web`, and the useful fields differ per category. Rendering
+them as one row of chips is what mixed documents in with model names, so each category is
+presented on its own terms.
+
+**Source documents** get their own paged section. Which list is authoritative depends on the
+conversation: `used_documents` once `used_documents_tracking_version` is at least 1,
+otherwise `legacy_used_documents`, otherwise the document tags — the same order the classic
+client uses. Documents a response actually referenced are marked as cited; a conversation
+that predates citation tracking says so rather than showing everything as uncited.
+
+The **summary** is produced by a model, so it is generated on demand rather than
+automatically, and the panel re-reads the conversation afterwards rather than trusting the
+response.
+
+A `web` tag's value comes from model output, so only `http(s)` values become links.
+
+### Composer gating
+
+Every control being visible whenever its capability was enabled is what made the composer
+row crowded, and offering "Read URLs" with no URL present invites a confusing result. The
+rules from `chat-input-actions.js` are reproduced:
+
+- **Read URLs** requires `enable_url_access` **and** a URL in what is currently typed.
+- **Deep research** requires `enable_source_review` **and** somewhere to research: web
+  search active, or URLs present.
+- **Image generation** is mutually exclusive. While it is on, the retrieval controls and
+  file upload are disabled and the model picker is hidden, because the request goes to an
+  image endpoint that takes neither.
+
+A control that stops being relevant also clears its option, so a request never carries a
+capability the user can no longer see they enabled.
+
+### Chat width
+
+A header control switches between a fixed reading measure and using the full pane, and the
+choice persists alongside the theme. The thread and the composer widen together: widening
+one without the other leaves the composer just as cramped, which is the problem it exists to
+solve. Bubbles stay narrower than the container in both modes, since a line spanning a large
+monitor is unreadable either way.
 
 ### Conversation badgesThe badges beside the conversation title reproduce `addChatTypeBadges`
 (`static/js/chat/chat-conversations.js`) so both interfaces describe a conversation the same
@@ -458,6 +504,7 @@ this entirely and is the recommended layout.
 | `functional_tests/test_v2_chat_phase1_fixes.py` | Exports send JSON rather than a form, email has its own path, images resolve from `content`, attempts are one-based, the title badge comes from conversation metadata, `agent_info` is an object, newlines match across roles, and failures are announced |
 | `functional_tests/test_v2_message_inspector.py` | Role-dependent metadata shape, reasoning fetched per message, shared renderer for live and historical reasoning, citation URL scheme checking, enabled-versus-used capability reporting |
 | `functional_tests/test_v2_message_masking.py` | All mask actions, selection carries text not just offsets, rejection is explained, masked text never reaches the DOM, masks applied before citation parsing, attribution, permission rule, popup stays on screen |
+| `functional_tests/test_v2_conversation_details_and_gating.py` | Tags split by category, source documents paged with the citation-tracking note, summary generated on demand, URL access and deep research gated on what is typed, image generation exclusivity, chat width persisted, unsafe tag values not linked |
 | `functional_tests/test_csrf_state_changing_route_guard.py` | Cross-site mutations require an explicitly trusted origin; CORS preflights answered before authentication and never wildcarded |
 | `functional_tests/route_tests/` | Blueprint policy classification for `frontend_v2`, `backend_v2`, `backend_v2_admin` |
 

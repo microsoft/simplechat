@@ -171,7 +171,11 @@ def test_details_render_only_real_metadata_fields():
     print("Testing details field fidelity...")
 
     route_source = _read(APP_DIR / "route_backend_conversations.py")
-    details = _read(V2_SRC / "components" / "chat" / "ConversationDetails.tsx")
+    # The details view is the component plus the module that reads the payload for it, so
+    # both are searched: a field surfaced through a helper is still surfaced.
+    details = _read(V2_SRC / "components" / "chat" / "ConversationDetails.tsx") + _read(
+        V2_SRC / "lib" / "conversationDetails.ts"
+    )
 
     for field in (
         "conversation_id",

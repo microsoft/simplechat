@@ -22,6 +22,9 @@ import { useChatStore, type ComposerOptions } from '../../stores/chatStore';
 import { useBootstrapStore } from '../../stores/bootstrapStore';
 import { uploadDocument } from '../../lib/endpoints';
 import { agentSelectionKey } from '../../lib/agents';
+import { resolveGating } from '../../lib/composerGating';
+import { useUiStore } from '../../stores/uiStore';
+import { chatWidthClass } from '../../lib/chatWidth';
 import {
     getModelSupportedLevels,
     REASONING_LABELS,
@@ -76,6 +79,7 @@ export function Composer() {
     const [text, setText] = useState('');
     const [uploading, setUploading] = useState(false);
     const [uploadNotice, setUploadNotice] = useState<string | null>(null);
+    const chatWidth = useUiStore((state) => state.chatWidth);
 
     const [options, setOptions] = useState<ComposerOptions>({
         documentSearch: false,
@@ -86,6 +90,38 @@ export function Composer() {
         selectedDocumentIds: [],
         docScope: 'all',
     });
+
+    // Which controls are relevant right now. Deep research and Read URLs depend on what is
+    // currently typed, not only on what is enabled.
+    const gating = useMemo(
+        () =>
+            resolveGating({
+                prompt: text,
+                features: features as Record<string, unknown>,
+                webSearchActive: options.webSearch,
+                urlAccessActive: options.urlAccess,
+                imageGenerationActive: options.imageGeneration,
+            }),
+        [text, features, options.webSearch, options.urlAccess, options.imageGeneration],
+    );
+
+    // A control that stops being relevant must not leave its option set behind it, or the
+    // request would carry a capability the user can no longer see they enabled.
+    useEffect(() => {
+        setOptions((current) => {
+            const next = { ...current };
+            let changed = false;
+            if (!gating.showUrlAccess && next.urlAccess) {
+                next.urlAccess = false;
+                changed = true;
+            }
+            if (!gating.showDeepResearch && next.deepResearch) {
+                next.deepResearch = false;
+                changed = true;
+            }
+            return changed ? next : current;
+        });
+    }, [gating.showUrlAccess, gating.showDeepResearch]);
 
     // Apply the server's preferred model once bootstrap resolves.
     useEffect(() => {
@@ -218,7 +254,7 @@ export function Composer() {
 
     return (
         <div className="shrink-0 px-4 pb-4">
-            <div className="mx-auto w-full max-w-4xl">
+            <div className={clsx('mx-auto w-full', chatWidthClass(chatWidth))}>
                 {uploadNotice && (
                     <p className="mb-2 rounded-xl border border-edge bg-surface-1 px-3 py-2 text-xs text-text-2">
                         {uploadNotice}
@@ -244,14 +280,21 @@ export function Composer() {
                     />
 
                     <div className="flex flex-wrap items-center gap-1.5 px-1 pt-1">
-                        <Dropdown
-                            options={modelOptions}
-                            value={options.modelDeployment}
-                            placeholder="Model"
-                            onChange={(value) =>
-                                setOptions((current) => ({ ...current, modelDeployment: value }))
-                            }
-                        />
+                        {/* Hidden while generating an image: the request goes to an image
+                            endpoint that does not take a chat model. */}
+                        {gating.showModelPicker && (
+                            <Dropdown
+                                options={modelOptions}
+                                value={options.modelDeployment}
+                                placeholder="Model"
+                                onChange={(value) =>
+                                    setOptions((current) => ({
+                                        ...current,
+                                        modelDeployment: value,
+                                    }))
+                                }
+                            />
+                        )}
 
                         {agentOptions.length > 0 && (
                             <Dropdown
@@ -284,6 +327,7 @@ export function Composer() {
 
                         <ToolToggle
                             active={options.documentSearch}
+                            disabled={gating.disabledByImageGeneration}
                             onClick={() =>
                                 setOptions((current) => ({
                                     ...current,
@@ -294,9 +338,10 @@ export function Composer() {
                             label="Documents"
                         />
 
-                        {features.enable_web_search && (
+                        {gating.showWeb && (
                             <ToolToggle
                                 active={options.webSearch}
+                                disabled={gating.disabledByImageGeneration}
                                 onClick={() =>
                                     setOptions((current) => ({
                                         ...current,
@@ -308,7 +353,7 @@ export function Composer() {
                             />
                         )}
 
-                        {features.enable_image_generation && (
+                        {gating.showImage && (
                             <ToolToggle
                                 active={options.imageGeneration}
                                 onClick={() =>
@@ -323,10 +368,13 @@ export function Composer() {
                         )}
 
                         {/* Deep research sets both source_review_enabled and
-                            deep_research_enabled, matching the existing client. */}
-                        {features.enable_source_review && (
+                            deep_research_enabled, matching the existing client. It appears
+                            only once there is something to research: web search, or URLs
+                            in the prompt. */}
+                        {gating.showDeepResearch && (
                             <ToolToggle
                                 active={options.deepResearch}
+                                disabled={gating.disabledByImageGeneration}
                                 onClick={() =>
                                     setOptions((current) => ({
                                         ...current,
@@ -338,9 +386,11 @@ export function Composer() {
                             />
                         )}
 
-                        {features.enable_url_access && (
+                        {/* Only offered when the prompt actually contains a URL. */}
+                        {gating.showUrlAccess && (
                             <ToolToggle
                                 active={options.urlAccess}
+                                disabled={gating.disabledByImageGeneration}
                                 onClick={() =>
                                     setOptions((current) => ({
                                         ...current,
@@ -391,7 +441,11 @@ export function Composer() {
                             <button
                                 type="button"
                                 onClick={() => fileInputRef.current?.click()}
-                                disabled={uploading || features.enable_chat_file_uploads === false}
+                                disabled={
+                                    uploading ||
+                                    !gating.showFileUpload ||
+                                    gating.disabledByImageGeneration
+                                }
                                 title="Attach a file"
                                 aria-label="Attach a file"
                                 className={clsx(

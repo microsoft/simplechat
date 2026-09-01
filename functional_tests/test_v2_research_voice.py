@@ -66,11 +66,20 @@ def test_research_controls_are_gated_on_their_settings():
     print("Testing research gating...")
 
     composer = _read(V2_SRC / "components" / "chat" / "Composer.tsx")
-    assert "features.enable_source_review" in composer, (
+    gating = _read(V2_SRC / "lib" / "composerGating.ts")
+
+    # The capability checks live in the gating module; the composer consumes its result.
+    assert "enable_source_review" in gating, (
         "Deep research must be gated on enable_source_review"
     )
-    assert "features.enable_url_access" in composer, (
+    assert "gating.showDeepResearch" in composer, (
+        "The composer must respect the resolved deep research gate"
+    )
+    assert "enable_url_access" in gating, (
         "URL access must be gated on enable_url_access"
+    )
+    assert "gating.showUrlAccess" in composer, (
+        "The composer must respect the resolved URL access gate"
     )
     assert "features.enable_speech_to_text_input" in composer, (
         "Voice input must be gated on enable_speech_to_text_input"

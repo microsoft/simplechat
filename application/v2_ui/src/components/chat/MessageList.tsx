@@ -9,6 +9,8 @@ import remarkBreaks from 'remark-breaks';
 import { Brain, ChevronDown, EyeOff, ImageOff, Sparkles, TriangleAlert } from 'lucide-react';
 import { useChatStore } from '../../stores/chatStore';
 import { useBootstrapStore } from '../../stores/bootstrapStore';
+import { useUiStore } from '../../stores/uiStore';
+import { bubbleWidthClass, chatWidthClass } from '../../lib/chatWidth';
 import { rehypeHighlightSubset } from '../../lib/rehypeHighlightSubset';
 import { resolveImageSource } from '../../lib/images';
 import {
@@ -208,6 +210,7 @@ function ThoughtsPanel({ thoughts }: { thoughts: ThoughtEntry[] }) {
 
 function ImageMessage({ message }: { message: ChatMessage }) {
     const [failed, setFailed] = useState(false);
+    const chatWidth = useUiStore((state) => state.chatWidth);
     const source = resolveImageSource(message.content);
 
     // An unrecognised content shape, or an image that will not load, falls back to the
@@ -215,7 +218,7 @@ function ImageMessage({ message }: { message: ChatMessage }) {
     if (!source || failed) {
         return (
             <div id={`message-${message.id}`} className="flex justify-start">
-                <div className="glass-flat max-w-[min(46rem,85%)] rounded-2xl px-4 py-3">
+                <div className={clsx('glass-flat rounded-2xl px-4 py-3', bubbleWidthClass(chatWidth))}>
                     <p className="flex items-center gap-2 text-sm text-text-2">
                         <ImageOff size={15} className="shrink-0 text-text-3" />
                         {failed ? 'This image could not be loaded.' : 'Image unavailable.'}
@@ -264,6 +267,7 @@ function MessageBubble({ message }: { message: ChatMessage }) {
     const editMessage = useChatStore((state) => state.editMessage);
     const applyMask = useChatStore((state) => state.applyMask);
     const currentUserId = useBootstrapStore((state) => state.data?.user?.id);
+    const chatWidth = useUiStore((state) => state.chatWidth);
 
     const masks = readMaskState(message);
     const maskingAllowed = canMask(message, currentUserId);
@@ -291,7 +295,7 @@ function MessageBubble({ message }: { message: ChatMessage }) {
     if (editing) {
         return (
             <div id={`message-${message.id}`} className="flex justify-end">
-                <div className="w-full max-w-[min(46rem,85%)]">
+                <div className={clsx('w-full', bubbleWidthClass(chatWidth))}>
                     <textarea
                         autoFocus
                         value={draft}
@@ -336,7 +340,8 @@ function MessageBubble({ message }: { message: ChatMessage }) {
             <div
                 ref={bodyRef}
                 className={clsx(
-                    'max-w-[min(46rem,85%)] rounded-2xl px-4 py-3',
+                    bubbleWidthClass(chatWidth),
+                    'rounded-2xl px-4 py-3',
                     // These are repeated per message, so they use the non-blurred surface:
                     // a backdrop-filter per bubble makes long threads scroll badly.
                     isUser
@@ -428,10 +433,11 @@ function MessageBubble({ message }: { message: ChatMessage }) {
 
 function StreamingBubble() {
     const { streamingContent, thoughts } = useChatStore();
+    const chatWidth = useUiStore((state) => state.chatWidth);
 
     return (
         <div className="flex justify-start">
-            <div className="glass-flat max-w-[min(46rem,85%)] rounded-2xl px-4 py-3">
+            <div className={clsx('glass-flat rounded-2xl px-4 py-3', bubbleWidthClass(chatWidth))}>
                 <ThoughtsPanel thoughts={thoughts} />
                 {streamingContent ? (
                     <AssistantMarkdown content={streamingContent} />
@@ -465,6 +471,7 @@ export function MessageList() {
         activeConversationId,
     } = useChatStore();
     const appTitle = useBootstrapStore((state) => state.data?.branding?.app_title);
+    const chatWidth = useUiStore((state) => state.chatWidth);
 
     const scrollRef = useRef<HTMLDivElement>(null);
     const bottomRef = useRef<HTMLDivElement>(null);
@@ -499,7 +506,7 @@ export function MessageList() {
             onScroll={onScroll}
             className="min-h-0 flex-1 overflow-y-auto px-4 py-6"
         >
-            <div className="mx-auto w-full max-w-4xl space-y-4">
+            <div className={clsx('mx-auto w-full space-y-4', chatWidthClass(chatWidth))}>
                 {messagesLoading && (
                     <div className="space-y-4">
                         <Skeleton className="ml-auto h-16 w-2/3" />

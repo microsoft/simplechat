@@ -332,7 +332,7 @@ export function MessageInspector({
     const active = available.includes(section) ? section : 'details';
 
     return (
-        <div className="glass-flat mt-1.5 w-full max-w-[min(46rem,85%)] rounded-xl border border-edge">
+        <div className="glass-flat mt-1.5 w-full max-w-[min(64rem,92%)] rounded-xl border border-edge">
             <div className="flex items-center gap-1 border-b border-edge px-2 py-1.5">
                 {available.map((entry) => (
                     <button

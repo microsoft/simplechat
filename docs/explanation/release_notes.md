@@ -2,6 +2,32 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.015)**
+
+#### New Features
+
+*   **V2 Conversation Details Rebuilt**
+    *   The details panel previously listed every tag as one undifferentiated row of chips, which mixed documents in with model names, participants and topics, and reduced source documents to a bare count.
+    *   Each kind of information now has its own section: **Source documents**, **Workspaces**, **Models and agents**, **Participants**, **Topics** and **Web sources**.
+    *   **Source documents** are listed properly — file name, the pages or sheets used, how many excerpts, workspace and classification — and marked as **cited** when a response actually referenced them. The list is paged, since a long conversation can draw on dozens of documents.
+    *   Conversations that predate citation tracking say so, rather than showing every document as though it went unused.
+    *   A conversation **summary** can now be generated on demand from the panel, and regenerated later, showing the model used and when it was produced.
+    *   (Ref: V2 conversation details, `/api/conversations/<id>/metadata`, `/api/conversations/<id>/summary`)
+
+#### User Interface Enhancements
+
+*   **Composer Controls Appear When They Are Relevant**
+    *   **Read URLs** now appears only once the message you are writing actually contains a URL, and **Deep research** only when there is something for it to research — web search being on, or URLs in the message.
+    *   Turning on **Image generation** now disables the controls it is incompatible with and hides the model picker, since the request goes to an image endpoint that ignores them.
+    *   A control that disappears also clears its setting, so a request never carries a capability you can no longer see you enabled.
+    *   Together this removes the permanently crowded row of buttons in the composer.
+    *   (Ref: V2 composer gating)
+
+*   **Chat Width Can Be Changed**
+    *   A control in the chat header switches between a comfortable reading width and using the full width of the pane. The choice is remembered.
+    *   The message thread and the composer widen together, so the composer controls get the extra room too.
+    *   (Ref: V2 chat width)
+
 ### **(v0.261.014)**
 
 #### New Features

@@ -15,6 +15,7 @@ import type {
     Citation,
     ConversationFeedPage,
     ConversationMetadata,
+    ConversationSummary,
     Json,
     PersistedThought,
     WorkspaceDocument,
@@ -163,6 +164,25 @@ export const switchAttempt = (messageId: string, direction: 'prev' | 'next') =>
     api.post<{ success: boolean; target_attempt: number; available_attempts: number[] }>(
         `/api/message/${encodeURIComponent(messageId)}/switch-attempt`,
         { direction },
+    );
+
+/* -------------------------------------------------------------------------- */
+/* Conversation summary                                                        */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Generate (or regenerate) a conversation summary.
+ *
+ * The summary is produced on demand and persisted, so it is also returned by the metadata
+ * endpoint afterwards. Its body is under `content`, not `text`.
+ */
+export const generateConversationSummary = (
+    conversationId: string,
+    body: { model_deployment?: string } = {},
+) =>
+    api.post<{ success: boolean; summary: ConversationSummary }>(
+        `/api/conversations/${encodeURIComponent(conversationId)}/summary`,
+        body,
     );
 
 /* -------------------------------------------------------------------------- */

@@ -3,9 +3,10 @@
 
 import { useState } from 'react';
 import { clsx } from 'clsx';
-import { Files, Info, ListOrdered } from 'lucide-react';
+import { Files, Info, ListOrdered, Maximize2, Minimize2 } from 'lucide-react';
 import { useChatStore } from '../stores/chatStore';
 import { useBootstrapStore } from '../stores/bootstrapStore';
+import { useUiStore } from '../stores/uiStore';
 import { MessageList } from '../components/chat/MessageList';
 import { Composer } from '../components/chat/Composer';
 import { ConversationDrawer } from '../components/chat/ConversationDrawer';
@@ -18,6 +19,8 @@ function ChatHeader({ onOpenDetails }: { onOpenDetails: () => void }) {
     const contentsEnabled = useBootstrapStore((state) =>
         Boolean(state.data?.features?.enable_conversation_contents_drawer),
     );
+    const chatWidth = useUiStore((state) => state.chatWidth);
+    const toggleChatWidth = useUiStore((state) => state.toggleChatWidth);
 
     const active = conversations.find(
         (conversation) => conversation.id === activeConversationId,
@@ -51,6 +54,30 @@ function ChatHeader({ onOpenDetails }: { onOpenDetails: () => void }) {
 
             {activeConversationId && (
                 <div className="ml-auto flex items-center gap-1">
+                    <button
+                        type="button"
+                        onClick={toggleChatWidth}
+                        aria-pressed={chatWidth === 'wide'}
+                        title={
+                            chatWidth === 'wide'
+                                ? 'Use a narrower reading width'
+                                : 'Use the full width of the pane'
+                        }
+                        aria-label="Toggle chat width"
+                        className={clsx(
+                            'rounded-lg p-2 transition-colors',
+                            chatWidth === 'wide'
+                                ? 'bg-accent-soft text-accent'
+                                : 'text-text-3 hover:bg-surface-2 hover:text-text-1',
+                        )}
+                    >
+                        {chatWidth === 'wide' ? (
+                            <Minimize2 size={17} />
+                        ) : (
+                            <Maximize2 size={17} />
+                        )}
+                    </button>
+
                     <button
                         type="button"
                         onClick={onOpenDetails}
