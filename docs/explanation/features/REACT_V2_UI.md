@@ -384,9 +384,11 @@ imported in a test environment.
   plugin, so a `blob:` PDF frame is blank there regardless of correctness. PDF rendering
   was verified in a headed browser instead; automated coverage asserts the request, the
   `X-Sub-PDF-Page` handling and the frame wiring rather than the pixels.
-- **Video playback has only been verified structurally.** Element wiring, the seek offset
-  and the fallback path are covered, but no sample video was played end to end, so
-  codec-dependent behaviour in a real deployment is unproven.
+- **Video codec support is the browser's, not the application's.** A real H.264/AAC clip
+  was played end to end against the viewer, confirming decode, the seek to the cited
+  offset, and streaming from the endpoint rather than a blob. What a given browser will
+  decode is still its own affair, so an exotic codec in an uploaded file may fail; that
+  path falls back to the cited passage with a visible notice.
 - **Voice and speech could not be verified end to end.** Voice input needs a real
   microphone and speech output needs Azure Speech configured in the tenant. Both were
   verified structurally — correct controls, correct gating, correct requests and payloads —
