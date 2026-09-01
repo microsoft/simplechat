@@ -100,6 +100,13 @@ This page includes the latest release notes inline. Older release sections are s
     *   Added `functional_tests/test_docs_web_search_accuracy.py`, which ties the published privacy claim to the implementation. If the web search query builder ever starts folding conversation history back into the outbound query, the test fails and forces the documentation to be corrected with it.
     *   (Ref: `test_docs_link_integrity.py`, `test_docs_web_search_accuracy.py`, [#1371](https://github.com/microsoft/simplechat/issues/1371))
 
+*   **First Batch Of Documentation Screenshots**
+    *   Filled 19 empty screenshot slots, taking documentation screenshot coverage from 18 of 122 to 37 of 122. The Administration group is now fully illustrated.
+    *   Added the four admin settings overviews (Backup & Recovery, Data Lifecycle, Governance, Workflow), six chat control references (conversation list, conversation header, composer, selectors, grounded search, and advanced conversation search), and nine task guide steps covering web search, Deep Research, workspace scope lock, group workspaces, tags, and agent, action, and workflow creation.
+    *   The web search screenshot captures the live data notice, so the guide's claim that only the current message is sent is now visible rather than only asserted.
+    *   Replaced the generated placeholder alt text on every filled slot with a description of what the reader actually learns from the image.
+    *   (Ref: `docs/images/admin/`, `docs/images/reference/`, `docs/images/guides/`, [#1371](https://github.com/microsoft/simplechat/issues/1371))
+
 ### **(v0.261.002)**
 
 #### User Interface Enhancements
