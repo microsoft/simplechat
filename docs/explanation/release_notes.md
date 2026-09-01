@@ -2,6 +2,16 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.011)**
+
+#### Bug Fixes
+
+*   **V2 Composer Menus Opened Off-Screen**
+    *   The Model, Agent, Prompt and Reasoning pickers in the V2 chat page dropped their menus downward from a composer that sits at the bottom of the window, so the options rendered below the bottom edge of the browser and could not be seen or clicked.
+    *   These menus now open upward when there is not enough room below, and size themselves to the space actually available so they stay on screen in short browser windows. Menus still open downward wherever there is room for them.
+    *   The Reasoning picker was the most affected, since it sits on the composer's lower row.
+    *   (Ref: V2 composer pickers, shared dropdown placement)
+
 ### **(v0.261.010)**
 
 #### New Features

@@ -364,6 +364,7 @@ this entirely and is the recommended layout.
 | `functional_tests/test_v2_citations.py` | Citation marker grammar parity with `chat-citations.js`, the four link kinds |
 | `functional_tests/test_v2_enhanced_citations.py` | Extension-to-viewer map parity with `getFileType`, the permissive metadata gate, `X-Sub-PDF-Page` handling, timestamp conversion, fallback on every failure |
 | `functional_tests/test_v2_research_voice.py` | Deep research's two fields, URL access, per-model reasoning effort, voice in and out |
+| `functional_tests/test_v2_dropdown_placement.py` | Composer pickers flip above the trigger when the bottom-anchored composer leaves no room below, and clamp their height to the viewport |
 | `functional_tests/test_csrf_state_changing_route_guard.py` | Cross-site mutations require an explicitly trusted origin; CORS preflights answered before authentication and never wildcarded |
 | `functional_tests/route_tests/` | Blueprint policy classification for `frontend_v2`, `backend_v2`, `backend_v2_admin` |
 

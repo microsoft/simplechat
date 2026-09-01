@@ -1,9 +1,18 @@
 // Dropdown.tsx
 // Accessible popover menu used by the chat toolbar pickers.
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { clsx } from 'clsx';
 import { Check, ChevronDown } from 'lucide-react';
+
+/** Tallest the menu is allowed to get, matching the max-h-80 ceiling. */
+const MENU_MAX_HEIGHT = 320;
+/** Gap between the trigger and the menu, matching the mt-2 / mb-2 spacing. */
+const MENU_GAP = 8;
+/** Breathing room kept between the menu and the viewport edge. */
+const VIEWPORT_MARGIN = 12;
+/** Below this a flipped menu is more awkward than a scrolling one. */
+const MIN_USABLE_HEIGHT = 140;
 
 export interface DropdownOption {
     value: string;
@@ -38,9 +47,34 @@ export function Dropdown({
     compact = false,
 }: DropdownProps) {
     const [open, setOpen] = useState(false);
+    // These pickers sit in the composer at the bottom of the viewport, where a menu that
+    // always drops downward runs off the bottom of the window. Placement is measured on
+    // open rather than fixed, so the same component works wherever it is used.
+    const [placement, setPlacement] = useState<'down' | 'up'>('down');
+    const [maxHeight, setMaxHeight] = useState(MENU_MAX_HEIGHT);
     const containerRef = useRef<HTMLDivElement>(null);
 
     const selected = options.find((option) => option.value === value);
+
+    const measure = useCallback(() => {
+        const element = containerRef.current;
+        if (!element) {
+            return;
+        }
+
+        const rect = element.getBoundingClientRect();
+        const spaceBelow = window.innerHeight - rect.bottom - MENU_GAP - VIEWPORT_MARGIN;
+        const spaceAbove = rect.top - MENU_GAP - VIEWPORT_MARGIN;
+
+        if (spaceBelow >= MENU_MAX_HEIGHT || spaceBelow >= spaceAbove) {
+            setPlacement('down');
+            setMaxHeight(Math.max(MIN_USABLE_HEIGHT, Math.min(MENU_MAX_HEIGHT, spaceBelow)));
+            return;
+        }
+
+        setPlacement('up');
+        setMaxHeight(Math.max(MIN_USABLE_HEIGHT, Math.min(MENU_MAX_HEIGHT, spaceAbove)));
+    }, []);
 
     useEffect(() => {
         if (!open) {
@@ -60,11 +94,16 @@ export function Dropdown({
 
         document.addEventListener('mousedown', onPointerDown);
         document.addEventListener('keydown', onKeyDown);
+        window.addEventListener('resize', measure);
+        // Capture, so the menu keeps up with any scrolling ancestor and not just the page.
+        window.addEventListener('scroll', measure, true);
         return () => {
             document.removeEventListener('mousedown', onPointerDown);
             document.removeEventListener('keydown', onKeyDown);
+            window.removeEventListener('resize', measure);
+            window.removeEventListener('scroll', measure, true);
         };
-    }, [open]);
+    }, [open, measure]);
 
     // Options arrive pre-grouped by scope (personal / group / public), so headings are
     // emitted whenever the group changes rather than by re-sorting the list.
@@ -75,7 +114,12 @@ export function Dropdown({
             <button
                 type="button"
                 disabled={disabled}
-                onClick={() => setOpen((isOpen) => !isOpen)}
+                onClick={() => {
+                    if (!open) {
+                        measure();
+                    }
+                    setOpen((isOpen) => !isOpen);
+                }}
                 aria-haspopup="listbox"
                 aria-expanded={open}
                 title={compact ? (selected?.label ?? placeholder) : undefined}
@@ -99,8 +143,10 @@ export function Dropdown({
             {open && (
                 <div
                     role="listbox"
+                    style={{ maxHeight }}
                     className={clsx(
-                        'glass-modal absolute z-50 mt-2 max-h-80 w-72 overflow-y-auto rounded-2xl p-1.5',
+                        'glass-modal absolute z-50 w-72 overflow-y-auto rounded-2xl p-1.5',
+                        placement === 'up' ? 'bottom-full mb-2' : 'top-full mt-2',
                         align === 'right' ? 'right-0' : 'left-0',
                     )}
                 >
