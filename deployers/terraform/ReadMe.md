@@ -1,6 +1,6 @@
 # Simple Chat - Deployment using Terraform
 
-[Return to Main](../README.md)
+[Return to Main](../../README.md)
 
 ## Login to Azure CLI
 
@@ -49,7 +49,7 @@ If you plan to reuse enterprise-managed networking, make sure these prerequisite
 For detailed networking guidance, see:
 
 - [../bicep/README.md](../bicep/README.md)
-- [../../docs/how-to/enterprise_networking.md](../../docs/how-to/enterprise_networking.md)
+- [../../docs/guides/enterprise-networking.md](../../docs/guides/enterprise-networking.md)
 
 ## Configure Terraform Secrets
  
@@ -93,7 +93,7 @@ If you use `az acr build`, run it from the repository root so the Docker build c
 
 - For **code-only** container updates, publish a new image to ACR and follow the existing App Service container rollout process instead of rerunning Terraform for every release.
 - Use Terraform when you are intentionally changing infrastructure or configuration that belongs in Terraform state.
-- See [../../docs/how-to/upgrade_paths.md](../../docs/how-to/upgrade_paths.md) for the native-vs-container upgrade guide and the ACR/image-only rollout notes.
+- See [../../docs/guides/upgrade-paths.md](../../docs/guides/upgrade-paths.md) for the native-vs-container upgrade guide and the ACR/image-only rollout notes.
 
 ## Terraform deployment
 
