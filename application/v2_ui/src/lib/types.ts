@@ -14,12 +14,14 @@ export interface Conversation {
     title: string;
     last_updated?: string;
     created_at?: string;
-    pinned?: boolean;
-    hidden?: boolean;
+    /** Server field name. Pin state is toggled server-side, not set by the client. */
+    is_pinned?: boolean;
+    is_hidden?: boolean;
+    /** Set when an assistant reply arrived that the user has not seen yet. */
+    has_unread_assistant_response?: boolean;
     classification?: string | string[] | null;
-    unread?: boolean;
+    /** 'collaborative' conversations live in a different container and have their own APIs. */
     conversation_kind?: string;
-    _feed_source?: string;
     [key: string]: unknown;
 }
 
@@ -97,6 +99,18 @@ export interface WorkspaceDocument {
     num_chunks?: number;
     upload_date?: string;
     [key: string]: unknown;
+}
+
+/**
+ * A workspace tag as returned by /api/documents/tags.
+ *
+ * build_workspace_tags_from_counts returns objects, not strings:
+ * [{'name': 'tag1', 'count': 5, 'color': '#3b82f6'}, ...]
+ */
+export interface WorkspaceTag {
+    name: string;
+    count?: number;
+    color?: string;
 }
 
 export interface AdminNavSection {

@@ -2,10 +2,11 @@
 // Loads bootstrap, then renders the shell and routes.
 
 import { useEffect } from 'react';
-import { Navigate, Route, Routes } from 'react-router-dom';
+import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { LogIn, TriangleAlert } from 'lucide-react';
 import { AppShell } from './components/layout/AppShell';
 import { GlassPanel, Skeleton } from './components/ui/primitives';
+import { ErrorBoundary } from './components/ui/ErrorBoundary';
 import { useBootstrapStore } from './stores/bootstrapStore';
 import { initializeTheme } from './stores/uiStore';
 import { ChatPage } from './pages/ChatPage';
@@ -60,6 +61,7 @@ function BootError({ message, authExpired }: { message: string; authExpired: boo
 
 export function App() {
     const { data, loading, error, authExpired, load } = useBootstrapStore();
+    const location = useLocation();
 
     useEffect(() => {
         initializeTheme();
@@ -83,6 +85,9 @@ export function App() {
 
     return (
         <AppShell>
+            {/* Scoped to the content pane so a failed page never takes the rail with it,
+            and keyed on the route so navigating away clears the error. */}
+            <ErrorBoundary resetKey={location.pathname}>
             <Routes>
                 <Route path="/" element={<Navigate to="/chat" replace />} />
                 <Route path="/chat" element={<ChatPage />} />
@@ -122,7 +127,8 @@ export function App() {
                     }
                 />
                 <Route path="*" element={<Navigate to="/chat" replace />} />
-            </Routes>
+                </Routes>
+            </ErrorBoundary>
         </AppShell>
     );
 }

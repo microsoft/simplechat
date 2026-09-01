@@ -71,13 +71,13 @@ function ConversationRow({ conversation }: { conversation: Conversation }) {
                         : 'text-text-2 hover:bg-surface-2 hover:text-text-1',
                 )}
             >
-                {conversation.pinned && (
+                {conversation.is_pinned && (
                     <Pin size={12} className="shrink-0 fill-current opacity-70" />
                 )}
                 <span className="truncate text-sm">
                     {conversation.title || 'Untitled conversation'}
                 </span>
-                {conversation.unread && (
+                {conversation.has_unread_assistant_response && (
                     <span
                         aria-label="Unread"
                         className="ml-auto h-1.5 w-1.5 shrink-0 rounded-full bg-accent"
@@ -125,7 +125,7 @@ function ConversationRow({ conversation }: { conversation: Conversation }) {
                             }}
                             className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-sm text-text-1 hover:bg-surface-2"
                         >
-                            <Pin size={14} /> {conversation.pinned ? 'Unpin' : 'Pin'}
+                            <Pin size={14} /> {conversation.is_pinned ? 'Unpin' : 'Pin'}
                         </button>
                         <button
                             type="button"

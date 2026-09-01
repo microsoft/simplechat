@@ -9,8 +9,8 @@ import {
     fetchMessages,
     markConversationRead,
     renameConversation as renameConversationApi,
-    setConversationHidden,
-    setConversationPinned,
+    toggleConversationHidden,
+    toggleConversationPinned,
 } from '../lib/endpoints';
 import { cancelStream, streamChat } from '../lib/sse';
 import type {
@@ -165,9 +165,29 @@ export const useChatStore = create<ChatState>((set, get) => ({
         try {
             const { messages } = await fetchMessages(conversationId);
             set({ messages: messages ?? [], messagesLoading: false });
-            void markConversationRead(conversationId).catch(() => {
-                /* Read receipts are advisory. */
-            });
+
+            // Only clear the marker when there is one. Calling unconditionally produced a
+            // 404 for collaboration conversations, which are stored separately and have
+            // their own endpoint.
+            const conversation = get().conversations.find((item) => item.id === conversationId);
+            if (conversation?.has_unread_assistant_response) {
+                void markConversationRead(
+                    conversationId,
+                    conversation.conversation_kind === 'collaborative',
+                )
+                    .then(() => {
+                        set((state) => ({
+                            conversations: state.conversations.map((item) =>
+                                item.id === conversationId
+                                    ? { ...item, has_unread_assistant_response: false }
+                                    : item,
+                            ),
+                        }));
+                    })
+                    .catch(() => {
+                        /* Read receipts are advisory; the thread still opened fine. */
+                    });
+            }
         } catch (error) {
             set({
                 messagesLoading: false,
@@ -231,20 +251,29 @@ export const useChatStore = create<ChatState>((set, get) => ({
         if (!conversation) {
             return;
         }
-        const pinned = !conversation.pinned;
+        // The server owns the toggle, so the optimistic value is only a guess at what it
+        // will return; the authoritative value replaces it below.
+        const optimistic = !conversation.is_pinned;
         set({
             conversations: get().conversations.map((item) =>
-                item.id === conversationId ? { ...item, pinned } : item,
+                item.id === conversationId ? { ...item, is_pinned: optimistic } : item,
             ),
         });
         try {
-            await setConversationPinned(conversationId, pinned);
+            const result = await toggleConversationPinned(conversationId);
+            set({
+                conversations: get().conversations.map((item) =>
+                    item.id === conversationId
+                        ? { ...item, is_pinned: Boolean(result.is_pinned) }
+                        : item,
+                ),
+            });
             // Pinning changes ordering, so the feed is re-read rather than re-sorted here.
             await get().loadConversations({ reset: true });
         } catch {
             set({
                 conversations: get().conversations.map((item) =>
-                    item.id === conversationId ? { ...item, pinned: !pinned } : item,
+                    item.id === conversationId ? { ...item, is_pinned: !optimistic } : item,
                 ),
             });
         }
@@ -255,12 +284,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
         if (!conversation) {
             return;
         }
-        const hidden = !conversation.hidden;
+        // Hidden conversations drop out of the default feed, so the row is removed rather
+        // than re-rendered with a new flag.
         set({
             conversations: get().conversations.filter((item) => item.id !== conversationId),
         });
         try {
-            await setConversationHidden(conversationId, hidden);
+            await toggleConversationHidden(conversationId);
         } catch {
             await get().loadConversations({ reset: true });
         }

@@ -12,11 +12,29 @@ import {
 } from '../lib/endpoints';
 import { PageHeader } from '../components/layout/PageHeader';
 import { EmptyState, GlassButton, GlassPanel, Skeleton } from '../components/ui/primitives';
-import type { WorkspaceDocument } from '../lib/types';
+import type { WorkspaceDocument, WorkspaceTag } from '../lib/types';
 
-function normalizeTags(tags: WorkspaceDocument['tags']): string[] {
+/**
+ * Reduce a tag of any shape to its name.
+ *
+ * Tags arrive in more than one form: /api/documents/tags returns
+ * `{name, count, color}` objects, while a document's own `tags` field may be an array of
+ * strings or a comma-separated string. Rendering an object directly is what caused React
+ * error #31 on this page, so every tag is funnelled through here.
+ */
+function tagName(tag: unknown): string {
+    if (typeof tag === 'string') {
+        return tag.trim();
+    }
+    if (tag && typeof tag === 'object' && 'name' in tag) {
+        return String((tag as { name: unknown }).name ?? '').trim();
+    }
+    return '';
+}
+
+function normalizeTags(tags: unknown): string[] {
     if (Array.isArray(tags)) {
-        return tags.map(String);
+        return tags.map(tagName).filter(Boolean);
     }
     if (typeof tags === 'string' && tags.trim()) {
         return tags.split(',').map((tag) => tag.trim()).filter(Boolean);
@@ -46,7 +64,7 @@ function ProcessingBadge({ document }: { document: WorkspaceDocument }) {
 
 export function WorkspacePage() {
     const [documents, setDocuments] = useState<WorkspaceDocument[]>([]);
-    const [tags, setTags] = useState<string[]>([]);
+    const [tags, setTags] = useState<WorkspaceTag[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [query, setQuery] = useState('');
@@ -179,21 +197,30 @@ export function WorkspacePage() {
                             />
                         </div>
 
-                        {tags.slice(0, 8).map((tag) => (
-                            <button
-                                key={tag}
-                                type="button"
-                                onClick={() => setActiveTag(activeTag === tag ? null : tag)}
-                                className={clsx(
-                                    'rounded-full border px-2.5 py-1 text-xs transition-colors',
-                                    activeTag === tag
-                                        ? 'border-transparent bg-accent-soft text-accent'
-                                        : 'border-edge bg-surface-1 text-text-2 hover:bg-surface-2',
-                                )}
-                            >
-                                {tag}
-                            </button>
-                        ))}
+                        {tags.slice(0, 8).map((tag) => {
+                            const name = tagName(tag);
+                            if (!name) {
+                                return null;
+                            }
+                            return (
+                                <button
+                                    key={name}
+                                    type="button"
+                                    onClick={() => setActiveTag(activeTag === name ? null : name)}
+                                    className={clsx(
+                                        'rounded-full border px-2.5 py-1 text-xs transition-colors',
+                                        activeTag === name
+                                            ? 'border-transparent bg-accent-soft text-accent'
+                                            : 'border-edge bg-surface-1 text-text-2 hover:bg-surface-2',
+                                    )}
+                                >
+                                    {name}
+                                    {typeof tag === 'object' && tag.count ? (
+                                        <span className="ml-1 opacity-60">{tag.count}</span>
+                                    ) : null}
+                                </button>
+                            );
+                        })}
                     </div>
 
                     {error && (

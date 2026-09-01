@@ -14,6 +14,7 @@ import type {
     ConversationFeedPage,
     Json,
     WorkspaceDocument,
+    WorkspaceTag,
 } from './types';
 
 /* -------------------------------------------------------------------------- */
@@ -74,18 +75,36 @@ export const deleteConversations = (conversationIds: string[]) =>
         conversation_ids: conversationIds,
     });
 
-export const setConversationPinned = (conversationId: string, pinned: boolean) =>
-    api.post<Json>(`/api/conversations/${encodeURIComponent(conversationId)}/pin`, {
-        pinned,
-    });
+/**
+ * Toggle the pinned state.
+ *
+ * The server toggles and returns the new value; it does not accept a desired state, so
+ * no body is sent.
+ */
+export const toggleConversationPinned = (conversationId: string) =>
+    api.post<{ success: boolean; is_pinned: boolean }>(
+        `/api/conversations/${encodeURIComponent(conversationId)}/pin`,
+    );
 
-export const setConversationHidden = (conversationId: string, hidden: boolean) =>
-    api.post<Json>(`/api/conversations/${encodeURIComponent(conversationId)}/hide`, {
-        hidden,
-    });
+/** Toggle the hidden state. Also a server-side toggle with no request body. */
+export const toggleConversationHidden = (conversationId: string) =>
+    api.post<{ success: boolean; is_hidden: boolean }>(
+        `/api/conversations/${encodeURIComponent(conversationId)}/hide`,
+    );
 
-export const markConversationRead = (conversationId: string) =>
-    api.post<Json>(`/api/conversations/${encodeURIComponent(conversationId)}/mark-read`);
+/**
+ * Clear the unread marker.
+ *
+ * Collaboration conversations are stored separately and 404 on the personal endpoint, so
+ * they are routed to their own. Callers should only invoke this when the conversation is
+ * actually unread.
+ */
+export const markConversationRead = (conversationId: string, isCollaborative = false) =>
+    api.post<Json>(
+        isCollaborative
+            ? `/api/collaboration/conversations/${encodeURIComponent(conversationId)}/mark-read`
+            : `/api/conversations/${encodeURIComponent(conversationId)}/mark-read`,
+    );
 
 export const fetchConversationMetadata = (conversationId: string, signal?: AbortSignal) =>
     api.get<Conversation>(
@@ -122,7 +141,7 @@ export function fetchPersonalDocuments(pageSize = 1000, signal?: AbortSignal) {
 }
 
 export const fetchPersonalDocumentTags = (signal?: AbortSignal) =>
-    api.get<{ tags?: string[] }>('/api/documents/tags', signal);
+    api.get<{ tags?: WorkspaceTag[] }>('/api/documents/tags', signal);
 
 export const deletePersonalDocument = (documentId: string) =>
     api.delete<Json>(`/api/documents/${encodeURIComponent(documentId)}`);

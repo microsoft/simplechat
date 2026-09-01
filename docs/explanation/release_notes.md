@@ -2,6 +2,30 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.004)**
+
+#### Bug Fixes
+
+*   **V2 Workspace Page Crashed To A Blank Screen**
+    *   Opening **My Workspace** in the V2 interface blanked the page, leaving only a minified React error in the browser console.
+    *   Workspace tags are returned as objects carrying a name, a usage count and a colour, but the V2 tag filter rendered the object itself, which React cannot display. The failure then unmounted the whole interface rather than just the tag row.
+    *   Tags are now read correctly in every shape the API uses, and the chips show their document counts.
+    *   (Ref: `/api/documents/tags`, `build_workspace_tags_from_counts`, V2 workspace page)
+
+*   **V2 Chat Logged A 404 When Opening A Conversation**
+    *   Selecting a conversation in the V2 interface fired a "mark as read" request every time, which failed with a 404 for shared conversations because those are stored separately and have their own endpoint.
+    *   The request is now sent only when a conversation actually has an unread response, and shared conversations use the shared endpoint — matching how the existing interface behaves.
+    *   (Ref: conversation feed, mark-read endpoints, V2 conversation rail)
+
+*   **V2 Pin And Unread Indicators Never Appeared**
+    *   Pinned conversations showed no pin icon and unread conversations showed no dot, because the V2 rail read the wrong field names from the conversation feed. The underlying pin and hide actions worked, so only the indicators were affected.
+    *   Pin and hide are also server-side toggles rather than settable states, so V2 now applies whatever the server reports back instead of assuming the result.
+    *   (Ref: `is_pinned`, `is_hidden`, `has_unread_assistant_response`, V2 conversation rail)
+
+*   **A Single View Failure No Longer Takes Down The V2 Interface**
+    *   Added an error boundary around the V2 content area. An unexpected render failure now shows a contained message with the error and a retry button while the navigation rail keeps working, instead of blanking the entire application.
+    *   (Ref: V2 error boundary, `App.tsx`)
+
 ### **(v0.261.003)**
 
 #### New Features
