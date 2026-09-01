@@ -90,7 +90,7 @@ function UserMenu({ collapsed }: { collapsed: boolean }) {
     return (
         <div className="relative">
             {open && !collapsed && (
-                <div className="glass-raised absolute bottom-full left-0 mb-2 w-full overflow-hidden rounded-2xl p-1.5">
+                <div className="glass-modal absolute bottom-full left-0 mb-2 w-full overflow-hidden rounded-2xl p-1.5">
                     <a
                         href="/profile"
                         className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-text-1 hover:bg-surface-2"

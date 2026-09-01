@@ -100,7 +100,7 @@ export function Dropdown({
                 <div
                     role="listbox"
                     className={clsx(
-                        'glass-raised absolute z-50 mt-2 max-h-80 w-72 overflow-y-auto rounded-2xl p-1.5',
+                        'glass-modal absolute z-50 mt-2 max-h-80 w-72 overflow-y-auto rounded-2xl p-1.5',
                         align === 'right' ? 'right-0' : 'left-0',
                     )}
                 >

@@ -4,13 +4,15 @@
 import { clsx } from 'clsx';
 import type { ButtonHTMLAttributes, HTMLAttributes, ReactNode } from 'react';
 
-type PanelElevation = 'flat' | 'glass' | 'raised';
+type PanelElevation = 'flat' | 'glass' | 'raised' | 'modal';
 
 const elevationClass: Record<PanelElevation, string> = {
     // `glass-flat` skips backdrop-filter, which matters for anything repeated in a list.
     flat: 'glass-flat',
     glass: 'glass',
     raised: 'glass-raised',
+    // Near-opaque; use for dialogs, which sit over arbitrary content.
+    modal: 'glass-modal',
 };
 
 interface GlassPanelProps extends HTMLAttributes<HTMLDivElement> {

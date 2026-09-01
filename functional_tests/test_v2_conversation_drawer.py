@@ -166,10 +166,85 @@ def test_message_anchors_exist_for_contents_navigation():
     return True
 
 
+def test_details_render_only_real_metadata_fields():
+    """The details view shows only fields the metadata route actually returns."""
+    print("Testing details field fidelity...")
+
+    route_source = _read(APP_DIR / "route_backend_conversations.py")
+    details = _read(V2_SRC / "components" / "chat" / "ConversationDetails.tsx")
+
+    for field in (
+        "conversation_id",
+        "last_updated",
+        "chat_type",
+        "workflow_id",
+        "is_pinned",
+        "is_hidden",
+        "scope_locked",
+        "locked_contexts",
+        "classification",
+        "summary",
+    ):
+        assert field in details, f"The details view should surface {field!r}"
+        assert f'"{field}"' in route_source, (
+            f"The metadata route no longer returns {field!r}, which the details view reads"
+        )
+
+    # An exploration pass produced a plausible sample response containing these; none of
+    # them exist, and showing them would mean rendering permanently blank rows. Matching
+    # on property access rather than the bare word so documentation may still mention them.
+    for invented in ("participants", "created_at", "can_delete_conversation"):
+        assert f"metadata.{invented}" not in details, (
+            f"The details view reads metadata.{invented}, which the route does not return"
+        )
+        assert f"metadata?.{invented}" not in details, (
+            f"The details view reads metadata?.{invented}, which the route does not return"
+        )
+
+    print("Details field fidelity test passed!")
+    return True
+
+
+def test_dialog_surfaces_are_opaque_enough_to_read():
+    """Overlay surfaces use the near-opaque modal token, not the chrome glass token.
+
+    The chrome glass surface is translucent by design, which leaves page text legible
+    straight through anything layered over content. Dialogs and popovers therefore use a
+    dedicated near-opaque surface.
+    """
+    print("Testing overlay surface opacity...")
+
+    theme = _read(V2_SRC / "styles" / "theme.css")
+    assert "--surface-modal:" in theme, "A dedicated modal surface token is required"
+    assert ".glass-modal {" in theme, "A .glass-modal overlay class is required"
+
+    # Reduced-transparency users must get the solid treatment for overlays too.
+    reduced_block = theme[theme.index("prefers-reduced-transparency") :]
+    assert ".glass-modal" in reduced_block[:400], (
+        "The reduced-transparency rule must cover .glass-modal"
+    )
+
+    overlay_files = [
+        V2_SRC / "components" / "chat" / "ConversationDetails.tsx",
+        V2_SRC / "components" / "chat" / "ConversationRail.tsx",
+        V2_SRC / "components" / "ui" / "Dropdown.tsx",
+        V2_SRC / "components" / "layout" / "Sidebar.tsx",
+    ]
+    for path in overlay_files:
+        source = _read(path)
+        assert "glass-raised" not in source, (
+            f"{path.name} uses the translucent glass-raised surface for an overlay; "
+            "use glass-modal so content behind it is not legible through the panel"
+        )
+
+    print("Overlay surface opacity test passed!")
+    return True
+
+
 def test_version_is_at_least_implementation_version():
     """The application version is at or beyond the version that added the drawer."""
     print("Testing application version...")
-    assert_app_version_at_least("0.261.005")
+    assert_app_version_at_least("0.261.006")
     print("Application version test passed!")
     return True
 
@@ -181,6 +256,8 @@ if __name__ == "__main__":
         test_contents_mode_is_gated_like_the_server,
         test_drawer_merges_all_three_document_sources,
         test_message_anchors_exist_for_contents_navigation,
+        test_details_render_only_real_metadata_fields,
+        test_dialog_surfaces_are_opaque_enough_to_read,
         test_version_is_at_least_implementation_version,
     ]
 

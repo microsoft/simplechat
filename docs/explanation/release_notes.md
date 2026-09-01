@@ -2,6 +2,23 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.006)**
+
+#### New Features
+
+*   **V2 Conversation Details**
+    *   Added a conversation details view to the V2 chat page, opened from an info button in the header. It shows the title, identifier, last updated time, conversation type, pinned/hidden/scope-locked state, classification, tags, how many documents were used, and the generated summary along with which model produced it and when.
+    *   The conversation can be renamed inline from this view. Renaming to the same title does nothing rather than issuing a pointless save.
+    *   Only fields the server actually returns are displayed, so the panel never shows permanently blank rows for data that does not exist.
+    *   (Ref: V2 conversation details, `/api/conversations/<id>/metadata`)
+
+#### User Interface Enhancements
+
+*   **V2 Dialogs And Menus Are Now Readable Over Content**
+    *   Dialogs, dropdown menus, and the account menu in the V2 interface used the same translucent glass treatment as the fixed page furniture, which left chat text legible straight through them and made the panel itself hard to read.
+    *   Overlays now use a dedicated near-opaque surface in both light and dark themes, while keeping the glass look. Users who ask their system for reduced transparency continue to get fully solid panels.
+    *   (Ref: V2 design tokens, dialog and popover surfaces)
+
 ### **(v0.261.005)**
 
 #### New Features

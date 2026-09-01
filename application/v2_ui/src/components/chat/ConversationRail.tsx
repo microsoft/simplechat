@@ -106,7 +106,7 @@ function ConversationRow({ conversation }: { conversation: Conversation }) {
                         aria-hidden="true"
                         onClick={() => setMenuOpen(false)}
                     />
-                    <div className="glass-raised absolute top-8 right-1 z-50 w-44 rounded-xl p-1">
+                    <div className="glass-modal absolute top-8 right-1 z-50 w-44 rounded-xl p-1">
                         <button
                             type="button"
                             onClick={() => {

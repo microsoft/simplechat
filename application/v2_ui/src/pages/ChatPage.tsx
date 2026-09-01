@@ -1,15 +1,17 @@
 // ChatPage.tsx
 // Chat surface: header, message thread, composer, and the right-hand drawer.
 
+import { useState } from 'react';
 import { clsx } from 'clsx';
-import { Files, ListOrdered } from 'lucide-react';
+import { Files, Info, ListOrdered } from 'lucide-react';
 import { useChatStore } from '../stores/chatStore';
 import { useBootstrapStore } from '../stores/bootstrapStore';
 import { MessageList } from '../components/chat/MessageList';
 import { Composer } from '../components/chat/Composer';
 import { ConversationDrawer } from '../components/chat/ConversationDrawer';
+import { ConversationDetails } from '../components/chat/ConversationDetails';
 
-function ChatHeader() {
+function ChatHeader({ onOpenDetails }: { onOpenDetails: () => void }) {
     const { activeConversationId, conversations, drawerMode, setDrawerMode, metadata } =
         useChatStore();
     const scope = useBootstrapStore((state) => state.data?.scope);
@@ -51,6 +53,16 @@ function ChatHeader() {
 
             {activeConversationId && (
                 <div className="ml-auto flex items-center gap-1">
+                    <button
+                        type="button"
+                        onClick={onOpenDetails}
+                        title="View conversation details"
+                        aria-label="View conversation details"
+                        className="rounded-lg p-2 text-text-3 transition-colors hover:bg-surface-2 hover:text-text-1"
+                    >
+                        <Info size={17} />
+                    </button>
+
                     {contentsEnabled && (
                         <button
                             type="button"
@@ -96,14 +108,17 @@ function ChatHeader() {
 }
 
 export function ChatPage() {
+    const [detailsOpen, setDetailsOpen] = useState(false);
+
     return (
         <div className="flex min-h-0 flex-1">
             <div className="flex min-w-0 flex-1 flex-col">
-                <ChatHeader />
+                <ChatHeader onOpenDetails={() => setDetailsOpen(true)} />
                 <MessageList />
                 <Composer />
             </div>
             <ConversationDrawer />
+            {detailsOpen && <ConversationDetails onClose={() => setDetailsOpen(false)} />}
         </div>
     );
 }

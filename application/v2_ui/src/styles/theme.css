@@ -27,6 +27,9 @@
     --surface-1: rgb(255 255 255 / 0.62);
     --surface-2: rgb(255 255 255 / 0.74);
     --surface-3: rgb(255 255 255 / 0.86);
+    /* Dialogs sit over arbitrary content, so they need far more opacity than chrome
+       panels do. Anything translucent enough to read page text through is unusable. */
+    --surface-modal: rgb(252 253 255 / 0.97);
     --surface-solid: #ffffff;
     --surface-sunken: rgb(15 23 42 / 0.04);
 
@@ -73,6 +76,9 @@
     --surface-1: rgb(255 255 255 / 0.055);
     --surface-2: rgb(255 255 255 / 0.085);
     --surface-3: rgb(255 255 255 / 0.12);
+    /* Built from the solid dark base rather than a white overlay: a translucent white
+       film over a dark backdrop stays see-through no matter how much blur is applied. */
+    --surface-modal: rgb(22 29 46 / 0.97);
     --surface-solid: #101728;
     --surface-sunken: rgb(0 0 0 / 0.25);
 
@@ -107,6 +113,7 @@
     --color-surface-1: var(--surface-1);
     --color-surface-2: var(--surface-2);
     --color-surface-3: var(--surface-3);
+    --color-surface-modal: var(--surface-modal);
     --color-surface-solid: var(--surface-solid);
     --color-surface-sunken: var(--surface-sunken);
 
@@ -226,6 +233,19 @@
         box-shadow: var(--shadow-lift);
     }
 
+    /*
+     * Dialog surface. Deliberately near-opaque: a modal sits over arbitrary page content,
+     * and the glass treatment used for chrome leaves body text legible straight through
+     * it, which makes the dialog itself hard to read.
+     */
+    .glass-modal {
+        background-color: var(--surface-modal);
+        border: 1px solid var(--edge);
+        backdrop-filter: blur(calc(var(--blur-glass) * 1.5)) saturate(180%);
+        -webkit-backdrop-filter: blur(calc(var(--blur-glass) * 1.5)) saturate(180%);
+        box-shadow: var(--shadow-lift);
+    }
+
     /* Specular top edge. Purely decorative, hidden from assistive tech by virtue of
        being a pseudo-element. */
     .glass-edge {
@@ -268,7 +288,8 @@
     @media (prefers-reduced-transparency: reduce) {
         .glass,
         .glass-flat,
-        .glass-raised {
+        .glass-raised,
+        .glass-modal {
             background-color: var(--surface-solid);
             backdrop-filter: none;
             -webkit-backdrop-filter: none;
