@@ -338,3 +338,60 @@ export interface ThoughtEntry {
     title: string;
     content: string;
 }
+
+/**
+ * A reasoning step as returned by the persisted-thoughts endpoint.
+ *
+ * This is NOT the same shape as `ThoughtEntry`, which comes from a live stream frame. The
+ * stored record has `step_type` where the live one has `title`, plus timing and progress
+ * fields the stream does not carry. Keys are quoted from `route_backend_thoughts.py`.
+ */
+export interface PersistedThought {
+    id?: string;
+    message_id?: string;
+    step_index?: number;
+    step_type?: string;
+    content?: string;
+    detail?: string;
+    activity?: string;
+    progress?: number | null;
+    duration_ms?: number | null;
+    timestamp?: string;
+}
+
+/**
+ * A document citation on an assistant message, under `hybrid_citations`.
+ *
+ * Field names are those `createCitationsHtml` reads in chat-messages.js.
+ */
+export interface HybridCitation {
+    citation_id?: string;
+    file_name?: string;
+    document_id?: string;
+    location_label?: string;
+    location_value?: string | number;
+    sheet_name?: string;
+    page_number?: string | number;
+    chunk_id?: string | number;
+    /** Present when the citation points at a document summary rather than a passage. */
+    metadata_type?: string;
+    metadata_content?: string;
+    [key: string]: unknown;
+}
+
+/** A web result cited by an assistant message, under `web_search_citations`. */
+export interface WebCitation {
+    url?: string;
+    title?: string;
+    [key: string]: unknown;
+}
+
+/** A tool invocation recorded on an assistant message, under `agent_citations`. */
+export interface AgentCitation {
+    tool_name?: string;
+    function_arguments?: unknown;
+    function_result?: unknown;
+    timestamp?: string;
+    artifact_id?: string;
+    [key: string]: unknown;
+}

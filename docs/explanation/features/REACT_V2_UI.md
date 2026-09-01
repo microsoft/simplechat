@@ -175,6 +175,8 @@ Wired to the live APIs:
 - Conversation details with inline rename
 - Per-message actions: copy, retry, edit and resend, delete, feedback, fork, exports, read
   aloud, and attempt paging once a message has been retried
+- A per-message inspector with the sources a response cited, the reasoning behind it, and
+  how it was produced
 - Citations rendered as inline chips that open either the cited source itself — the PDF
   page, image, media clip, spreadsheet or Visio page — or the passage that was extracted
   from it
@@ -216,8 +218,37 @@ source rather than inferred:
   cannot carry attachments. All three require a JSON request body and reject a form post.
 - **The conversation summary's body is `summary.content`**, not `summary.text`.
 
-### Conversation badges
+### Message inspector
 
+Three controls in the hover row open a panel beneath the message: **Sources**, **Reasoning**
+and **Details**. One panel with three sections rather than three panels, because comparing
+what a response cited against how it was produced should not mean closing one to open
+another.
+
+**Sources** are already on the message document — `hybrid_citations`,
+`web_search_citations` and `agent_citations` — so no request is needed. A citation URL is
+model-influenced input, so only `http(s)` becomes a live link; anything else is shown as
+text.
+
+**Reasoning** is not on the message. It is stored separately and fetched per message from
+`/api/conversations/<id>/messages/<id>/thoughts`, whose records use `step_type`, `detail`,
+`activity` and `duration_ms` where a live stream frame carries `title` and `content`. The
+stored shape is mapped onto the streamed one so a single renderer draws both: historical
+reasoning looks exactly like reasoning being generated, rather than becoming a different
+presentation once the response finishes. The endpoint distinguishes "none recorded" from
+"capture is disabled", and the panel says which.
+
+**Details** reports the model or agent, reasoning effort, and capability usage. Enabled and
+used are tracked separately, and the difference is the useful part: a response where web
+search was available but never exercised explains itself. It also surfaces `history_context`,
+which records how many earlier messages were kept, summarised, or skipped as an inactive
+attempt or as masked — usually the answer to why a response lacked context the user expected.
+
+The response shape of `/api/message/<id>/metadata` **depends on the message's role**: a user
+message returns its nested `metadata` object alone, while assistant, image and file messages
+return the whole document with `metadata` nested inside. Both are handled.
+
+### Conversation badges
 The badges beside the conversation title reproduce `addChatTypeBadges`
 (`static/js/chat/chat-conversations.js`) so both interfaces describe a conversation the same
 way: classification pills, then a single workspace badge — the group name, `public - <name>`,
@@ -395,6 +426,7 @@ this entirely and is the recommended layout.
 | `functional_tests/test_v2_research_voice.py` | Deep research's two fields, URL access, per-model reasoning effort, voice in and out |
 | `functional_tests/test_v2_dropdown_placement.py` | Composer pickers flip above the trigger when the bottom-anchored composer leaves no room below, and clamp their height to the viewport |
 | `functional_tests/test_v2_chat_phase1_fixes.py` | Exports send JSON rather than a form, email has its own path, images resolve from `content`, attempts are one-based, the title badge comes from conversation metadata, `agent_info` is an object, newlines match across roles, and failures are announced |
+| `functional_tests/test_v2_message_inspector.py` | Role-dependent metadata shape, reasoning fetched per message, shared renderer for live and historical reasoning, citation URL scheme checking, enabled-versus-used capability reporting |
 | `functional_tests/test_csrf_state_changing_route_guard.py` | Cross-site mutations require an explicitly trusted origin; CORS preflights answered before authentication and never wildcarded |
 | `functional_tests/route_tests/` | Blueprint policy classification for `frontend_v2`, `backend_v2`, `backend_v2_admin` |
 

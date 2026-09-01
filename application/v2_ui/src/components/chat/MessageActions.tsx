@@ -8,6 +8,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { clsx } from 'clsx';
 import {
+    BookOpen,
+    Brain,
     ChevronLeft,
     ChevronRight,
     Clipboard,
@@ -15,6 +17,7 @@ import {
     Copy,
     Ellipsis,
     FileDown,
+    Info,
     Loader2,
     Mail,
     Pencil,
@@ -31,6 +34,9 @@ import { useBootstrapStore } from '../../stores/bootstrapStore';
 import { toast } from '../../stores/toastStore';
 import { ApiError } from '../../lib/apiClient';
 import { attemptState } from '../../lib/threads';
+import { readSources } from '../../lib/messageDetails';
+import type { InspectorSection } from './MessageInspector';
+import type { ChatMessage, Json } from '../../lib/types';
 import {
     downloadMessageExport,
     emailDraftMailtoUrl,
@@ -39,9 +45,7 @@ import {
     type MessageExportFormat,
 } from '../../lib/endpoints';
 import { synthesizeSpeech } from '../../lib/voice';
-import type { ChatMessage } from '../../lib/types';
 
-/** Thread bookkeeping the server stores on each message. */
 function IconButton({
     label,
     onClick,
@@ -314,9 +318,14 @@ function OverflowMenu({
 export function MessageActions({
     message,
     onEdit,
+    inspector,
+    onInspect,
 }: {
     message: ChatMessage;
     onEdit?: () => void;
+    /** Section currently open below the message, or null when the panel is closed. */
+    inspector?: InspectorSection | null;
+    onInspect?: (section: InspectorSection | null) => void;
 }) {
     const { retryMessage, changeAttempt, sendFeedback, forkFromMessage, streaming, attemptsByThread } =
         useChatStore();
@@ -330,6 +339,7 @@ export function MessageActions({
     const [copied, setCopied] = useState(false);
     const isUser = message.role === 'user';
     const attempts = attemptState(message, attemptsByThread);
+    const sources = readSources(message as unknown as Json);
 
     const copy = async () => {
         try {
@@ -341,15 +351,21 @@ export function MessageActions({
         }
     };
 
+    /** Toggle a section, closing the panel when the open one is clicked again. */
+    const inspect = (section: InspectorSection) =>
+        onInspect?.(inspector === section ? null : section);
+
     return (
         <div
             className={clsx(
-                'mt-1 flex items-center gap-0.5',
+                // Groups are separated by a wider gap than the buttons within them, so the
+                // row reads as related sets rather than one long undifferentiated strip.
+                'mt-1 flex items-center gap-3',
                 isUser ? 'justify-end' : 'justify-start',
             )}
         >
             {attempts.show && (
-                <div className="mr-1 flex items-center gap-0.5">
+                <div className="flex items-center gap-0.5">
                     <IconButton
                         label="Previous attempt"
                         onClick={() => void changeAttempt(message.id, 'prev')}
@@ -379,22 +395,29 @@ export function MessageActions({
                 </div>
             )}
 
-            <IconButton label={copied ? 'Copied' : 'Copy'} onClick={() => void copy()}>
-                {copied ? <ClipboardCheck size={15} className="text-ok" /> : <Copy size={15} />}
-            </IconButton>
+            {/* Working with the message itself. */}
+            <div className="flex items-center gap-0.5">
+                <IconButton label={copied ? 'Copied' : 'Copy'} onClick={() => void copy()}>
+                    {copied ? (
+                        <ClipboardCheck size={15} className="text-ok" />
+                    ) : (
+                        <Copy size={15} />
+                    )}
+                </IconButton>
 
-            <IconButton
-                label="Retry"
-                onClick={() => void retryMessage(message.id)}
-                disabled={streaming}
-            >
-                <RefreshCw size={15} />
-            </IconButton>
+                <IconButton
+                    label="Retry"
+                    onClick={() => void retryMessage(message.id)}
+                    disabled={streaming}
+                >
+                    <RefreshCw size={15} />
+                </IconButton>
 
-            {!isUser && ttsEnabled && <SpeakButton message={message} />}
+                {!isUser && ttsEnabled && <SpeakButton message={message} />}
+            </div>
 
             {!isUser && feedbackEnabled && (
-                <>
+                <div className="flex items-center gap-0.5">
                     <IconButton
                         label="Good response"
                         active={message.feedbackType === 'positive'}
@@ -414,20 +437,58 @@ export function MessageActions({
                     >
                         <ThumbsDown size={15} />
                     </IconButton>
-                </>
+                </div>
             )}
 
-            {!isUser && (
-                <IconButton
-                    label="Fork conversation from here"
-                    onClick={() => void forkFromMessage(message.id)}
-                    disabled={streaming}
-                >
-                    <Split size={15} />
-                </IconButton>
+            {/* Looking into how the message was produced. */}
+            {onInspect && (
+                <div className="flex items-center gap-0.5">
+                    {!isUser && (
+                        <IconButton
+                            label={
+                                sources.total > 0
+                                    ? `Show sources (${sources.total})`
+                                    : 'Show sources'
+                            }
+                            active={inspector === 'sources'}
+                            onClick={() => inspect('sources')}
+                        >
+                            <BookOpen size={15} />
+                        </IconButton>
+                    )}
+                    {!isUser && (
+                        <IconButton
+                            label="Show reasoning"
+                            active={inspector === 'reasoning'}
+                            onClick={() => inspect('reasoning')}
+                        >
+                            <Brain size={15} />
+                        </IconButton>
+                    )}
+                    <IconButton
+                        label="Message details"
+                        active={inspector === 'details'}
+                        onClick={() => inspect('details')}
+                    >
+                        <Info size={15} />
+                    </IconButton>
+                </div>
             )}
 
-            <OverflowMenu message={message} onEdit={onEdit} />
+            {/* Branching and everything else. */}
+            <div className="flex items-center gap-0.5">
+                {!isUser && (
+                    <IconButton
+                        label="Fork conversation from here"
+                        onClick={() => void forkFromMessage(message.id)}
+                        disabled={streaming}
+                    >
+                        <Split size={15} />
+                    </IconButton>
+                )}
+
+                <OverflowMenu message={message} onEdit={onEdit} />
+            </div>
         </div>
     );
 }

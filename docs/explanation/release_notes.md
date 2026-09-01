@@ -2,6 +2,25 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.013)**
+
+#### New Features
+
+*   **Message Details, Sources And Reasoning In V2**
+    *   Hovering a message now offers three new controls that open a panel beneath it, so you can see what a response was built from without leaving the conversation.
+    *   **Sources** lists the documents a response cited and where in each one, the web results it used, and any tools it called with their arguments and results.
+    *   **Reasoning** shows the steps taken to produce a response *after the fact*, not only while it is being generated. It is presented exactly as it appears live, so the same information does not look like a different feature once the response has finished.
+    *   **Details** covers the model or agent used, the reasoning effort, and which capabilities were available versus actually exercised — a response where web search was enabled but never used now says so.
+    *   Details also explains how the conversation history was assembled: how many earlier messages were kept, summarised, or skipped because they were an inactive retry attempt or were masked. This is often the answer to "why didn't it know that?".
+    *   User messages get their own details panel covering the retry thread and the capabilities that were active when the message was sent.
+    *   (Ref: V2 message inspector, `/api/message/<id>/metadata`, `/api/conversations/<id>/messages/<id>/thoughts`)
+
+#### User Interface Enhancements
+
+*   **V2 Message Actions Grouped**
+    *   The hover row beneath each message is now spaced into related groups — retry attempts, working with the message, feedback, inspecting it, and branching — rather than one long strip of undifferentiated icons.
+    *   (Ref: V2 message actions)
+
 ### **(v0.261.012)**
 
 #### Bug Fixes

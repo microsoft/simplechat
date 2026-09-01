@@ -15,6 +15,7 @@ import type {
     ConversationFeedPage,
     ConversationMetadata,
     Json,
+    PersistedThought,
     WorkspaceDocument,
     WorkspaceTag,
 } from './types';
@@ -161,6 +162,46 @@ export const switchAttempt = (messageId: string, direction: 'prev' | 'next') =>
     api.post<{ success: boolean; target_attempt: number; available_attempts: number[] }>(
         `/api/message/${encodeURIComponent(messageId)}/switch-attempt`,
         { direction },
+    );
+
+/* -------------------------------------------------------------------------- */
+/* Message inspection                                                          */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Per-message diagnostics.
+ *
+ * The response shape depends on the message's role (route_frontend_conversations.py):
+ * a **user** message returns its nested `metadata` object alone, while assistant, image and
+ * file messages return the **whole document**, with `role`, `model_deployment_name`,
+ * citations and so on at the top level and `metadata` nested inside it. Callers must handle
+ * both rather than assuming one.
+ */
+export const fetchMessageMetadata = (messageId: string, signal?: AbortSignal) =>
+    api.get<Json>(`/api/message/${encodeURIComponent(messageId)}/metadata`, signal);
+
+/** Response of the persisted-thoughts endpoint. */
+export interface MessageThoughtsResponse {
+    thoughts: PersistedThought[];
+    /** False when `enable_thoughts` is off; the empty list then means "disabled". */
+    enabled: boolean;
+}
+
+/**
+ * Reasoning steps recorded while a message was generated.
+ *
+ * Thoughts are stored separately from the message, so a historical message carries none of
+ * this in its own payload and it has to be fetched per message.
+ */
+export const fetchMessageThoughts = (
+    conversationId: string,
+    messageId: string,
+    signal?: AbortSignal,
+) =>
+    api.get<MessageThoughtsResponse>(
+        `/api/conversations/${encodeURIComponent(conversationId)}` +
+            `/messages/${encodeURIComponent(messageId)}/thoughts`,
+        signal,
     );
 
 export const submitFeedback = (

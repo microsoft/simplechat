@@ -18,6 +18,8 @@ import {
 } from '../../lib/citations';
 import { EmptyState, GlassButton, GlassPanel, Skeleton } from '../ui/primitives';
 import { MessageActions } from './MessageActions';
+import { MessageInspector, type InspectorSection } from './MessageInspector';
+import { ThoughtsList } from './ThoughtsList';
 import { CitationChip } from './CitationChip';
 import type { ChatMessage, ThoughtEntry } from '../../lib/types';
 
@@ -138,14 +140,9 @@ function ThoughtsPanel({ thoughts }: { thoughts: ThoughtEntry[] }) {
             </button>
 
             {open && (
-                <ol className="mt-1.5 space-y-1.5 border-l border-edge-strong pl-3">
-                    {thoughts.map((thought) => (
-                        <li key={thought.id} className="text-xs text-text-3">
-                            <span className="font-medium text-text-2">{thought.title}</span>
-                            <p className="mt-0.5 whitespace-pre-wrap">{thought.content}</p>
-                        </li>
-                    ))}
-                </ol>
+                <div className="mt-1.5">
+                    <ThoughtsList thoughts={thoughts} />
+                </div>
             )}
         </div>
     );
@@ -204,6 +201,7 @@ function MessageBubble({ message }: { message: ChatMessage }) {
     const isUser = message.role === 'user';
     const [editing, setEditing] = useState(false);
     const [draft, setDraft] = useState(message.content);
+    const [inspector, setInspector] = useState<InspectorSection | null>(null);
     const editMessage = useChatStore((state) => state.editMessage);
 
     if (message.role === 'image') {
@@ -293,13 +291,30 @@ function MessageBubble({ message }: { message: ChatMessage }) {
             </div>
 
             {/* Revealed on hover or keyboard focus so a long thread stays uncluttered,
-                while remaining reachable without a pointer. */}
-            <div className="opacity-0 transition-opacity group-hover/message:opacity-100 focus-within:opacity-100">
+                while remaining reachable without a pointer. The inspector, once opened,
+                stays visible so it does not vanish when the pointer moves into it. */}
+            <div
+                className={clsx(
+                    'transition-opacity group-hover/message:opacity-100 focus-within:opacity-100',
+                    inspector ? 'opacity-100' : 'opacity-0',
+                )}
+            >
                 <MessageActions
                     message={message}
                     onEdit={isUser ? () => setEditing(true) : undefined}
+                    inspector={inspector}
+                    onInspect={setInspector}
                 />
             </div>
+
+            {inspector && (
+                <MessageInspector
+                    message={message}
+                    section={inspector}
+                    onSection={setInspector}
+                    onClose={() => setInspector(null)}
+                />
+            )}
         </div>
     );
 }
