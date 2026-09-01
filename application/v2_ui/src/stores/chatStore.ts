@@ -5,10 +5,16 @@ import { create } from 'zustand';
 import {
     createConversation,
     deleteConversation as deleteConversationApi,
+    deleteMessage as deleteMessageApi,
+    editMessage as editMessageApi,
     fetchConversationFeed,
     fetchMessages,
+    forkConversation as forkConversationApi,
     markConversationRead,
     renameConversation as renameConversationApi,
+    retryMessage as retryMessageApi,
+    submitFeedback as submitFeedbackApi,
+    switchAttempt as switchAttemptApi,
     toggleConversationHidden,
     toggleConversationPinned,
 } from '../lib/endpoints';
@@ -83,6 +89,18 @@ interface ChatState {
 
     setDrawerMode: (mode: DrawerMode) => void;
     loadMetadata: (conversationId: string) => Promise<void>;
+
+    reloadMessages: () => Promise<void>;
+    removeMessage: (messageId: string, deleteThread?: boolean) => Promise<void>;
+    retryMessage: (messageId: string, options?: ComposerOptions) => Promise<void>;
+    editMessage: (messageId: string, content: string) => Promise<void>;
+    changeAttempt: (messageId: string, direction: 'prev' | 'next') => Promise<void>;
+    forkFromMessage: (messageId: string) => Promise<void>;
+    sendFeedback: (
+        messageId: string,
+        feedbackType: 'positive' | 'negative',
+        reason?: string,
+    ) => Promise<void>;
 }
 
 /** Controller for the in-flight stream, kept outside the store as it is not render state. */
@@ -96,6 +114,157 @@ let activeStreamController: AbortController | null = null;
  * streaming, not whichever one happens to be on screen.
  */
 let streamingConversationId: string | null = null;
+
+/**
+ * Run a chat stream and fold its events into the store.
+ *
+ * Shared by three callers that all end in the same place: a normal send, a retry, and an
+ * edit. Retry and edit do not generate anything themselves — their endpoints create the
+ * next thread attempt and hand back a ready-made request body for this endpoint — so they
+ * reuse this rather than duplicating the event handling.
+ */
+async function runChatStream(
+    requestBody: ChatStreamRequest,
+    conversationId: string,
+    options: { isNewConversation?: boolean; reloadOnDone?: boolean } = {},
+): Promise<void> {
+    const { set, getState } = {
+        set: (partial: Partial<ChatState> | ((state: ChatState) => Partial<ChatState>)) =>
+            useChatStore.setState(partial as never),
+        getState: () => useChatStore.getState(),
+    };
+
+    const controller = new AbortController();
+    activeStreamController = controller;
+    streamingConversationId = conversationId;
+
+    // A stream is "current" only while it is still the active one. If the user switches
+    // threads or starts a new chat mid-response, this goes false and the remaining
+    // handlers stop writing into what is now a different conversation's message list.
+    const isCurrent = () => activeStreamController === controller;
+
+    await streamChat(
+        requestBody,
+        {
+            onContent: (_delta, accumulated) => {
+                if (!isCurrent()) {
+                    return;
+                }
+                set({ streamingContent: accumulated });
+            },
+            onThought: (event) => {
+                const content =
+                    typeof event.content === 'string'
+                        ? event.content
+                        : String(event.thought ?? '');
+                if (!content || !isCurrent()) {
+                    return;
+                }
+                set((state) => ({
+                    thoughts: [
+                        ...state.thoughts,
+                        {
+                            id: `${state.thoughts.length}`,
+                            title: String(event.title ?? 'Thinking'),
+                            content,
+                        },
+                    ],
+                }));
+            },
+            onConversationMetadata: (event) => {
+                // Applied even when superseded: the title belongs to a conversation in the
+                // rail, not to the message list on screen.
+                const title = event.conversation_title;
+                if (typeof title === 'string' && title) {
+                    set((state) => ({
+                        conversations: state.conversations.map((item) =>
+                            item.id === conversationId ? { ...item, title } : item,
+                        ),
+                    }));
+                }
+            },
+            onDone: (event, accumulated) => {
+                if (!isCurrent()) {
+                    return;
+                }
+                const finalMessage: ChatMessage = {
+                    id: String(event.message_id ?? STREAMING_MESSAGE_ID),
+                    conversation_id: conversationId,
+                    role: 'assistant',
+                    content: accumulated,
+                    timestamp: new Date().toISOString(),
+                    model_deployment_name: event.model_deployment_name,
+                    agent_display_name: event.agent_display_name,
+                    augmented: event.augmented,
+                    metadata: event.metadata,
+                    // Carried onto the finished message so the reasoning steps stay
+                    // available after the stream ends instead of disappearing with the
+                    // streaming placeholder.
+                    thoughts:
+                        getState().thoughts.length > 0 ? [...getState().thoughts] : undefined,
+                };
+                set((state) => ({
+                    messages: [...state.messages, finalMessage],
+                    streaming: false,
+                    streamingContent: '',
+                }));
+            },
+            onCancelled: (_event, accumulated) => {
+                if (!isCurrent()) {
+                    return;
+                }
+                // Partial output is kept: discarding what was already generated is more
+                // annoying than useful when someone stops a long answer.
+                if (accumulated) {
+                    set((state) => ({
+                        messages: [
+                            ...state.messages,
+                            {
+                                id: `cancelled-${Date.now()}`,
+                                conversation_id: conversationId,
+                                role: 'assistant',
+                                content: accumulated,
+                                timestamp: new Date().toISOString(),
+                                thoughts:
+                                    state.thoughts.length > 0 ? [...state.thoughts] : undefined,
+                            },
+                        ],
+                    }));
+                }
+                set({ streaming: false, streamingContent: '' });
+            },
+            onError: (message) => {
+                if (!isCurrent()) {
+                    return;
+                }
+                set({ streaming: false, streamingContent: '', streamError: message });
+            },
+        },
+        controller.signal,
+    );
+
+    // Only tear down if this stream is still the active one; a newer send may already have
+    // installed its own controller. Captured before the teardown because clearing the
+    // controller makes isCurrent() false for every check after it.
+    const wasCurrent = isCurrent();
+    if (wasCurrent) {
+        activeStreamController = null;
+        streamingConversationId = null;
+        set({ streaming: false });
+    }
+
+    // Retry and edit rewrite thread state server-side, so the authoritative message list
+    // has to be re-read rather than patched locally.
+    if (options.reloadOnDone && wasCurrent) {
+        await getState().reloadMessages();
+    }
+
+    // Refresh the rail so a newly created conversation appears with its server-side
+    // generated title.
+    if (options.isNewConversation) {
+        await getState().loadConversations({ reset: true });
+    }
+}
 
 export const useChatStore = create<ChatState>((set, get) => ({
     conversations: [],
@@ -388,129 +557,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
             requestBody.reasoning_effort = options.reasoningEffort;
         }
 
-        const controller = new AbortController();
-        activeStreamController = controller;
-        streamingConversationId = conversationId;
-
-        // A stream is "current" only while it is still the active one. If the user
-        // switches threads or starts a new chat mid-response, this goes false and the
-        // remaining handlers stop writing into what is now a different conversation's
-        // message list.
-        const isCurrent = () => activeStreamController === controller;
-
-        await streamChat(
-            requestBody,
-            {
-                onContent: (_delta, accumulated) => {
-                    if (!isCurrent()) {
-                        return;
-                    }
-                    set({ streamingContent: accumulated });
-                },
-                onThought: (event) => {
-                    const content =
-                        typeof event.content === 'string'
-                            ? event.content
-                            : String(event.thought ?? '');
-                    if (!content || !isCurrent()) {
-                        return;
-                    }
-                    set((state) => ({
-                        thoughts: [
-                            ...state.thoughts,
-                            {
-                                id: `${state.thoughts.length}`,
-                                title: String(event.title ?? 'Thinking'),
-                                content,
-                            },
-                        ],
-                    }));
-                },
-                onConversationMetadata: (event) => {
-                    // Applied even when superseded: the title belongs to a conversation in
-                    // the rail, not to the message list on screen.
-                    const title = event.conversation_title;
-                    if (typeof title === 'string' && title && conversationId) {
-                        set((state) => ({
-                            conversations: state.conversations.map((item) =>
-                                item.id === conversationId ? { ...item, title } : item,
-                            ),
-                        }));
-                    }
-                },
-                onDone: (event, accumulated) => {
-                    if (!isCurrent()) {
-                        return;
-                    }
-                    const finalMessage: ChatMessage = {
-                        id: String(event.message_id ?? STREAMING_MESSAGE_ID),
-                        conversation_id: conversationId as string,
-                        role: 'assistant',
-                        content: accumulated,
-                        timestamp: new Date().toISOString(),
-                        model_deployment_name: event.model_deployment_name,
-                        agent_display_name: event.agent_display_name,
-                        augmented: event.augmented,
-                        metadata: event.metadata,
-                        // Carried onto the finished message so the reasoning steps stay
-                        // available after the stream ends instead of disappearing with
-                        // the streaming placeholder.
-                        thoughts: get().thoughts.length > 0 ? [...get().thoughts] : undefined,
-                    };
-                    set((state) => ({
-                        messages: [...state.messages, finalMessage],
-                        streaming: false,
-                        streamingContent: '',
-                    }));
-                },
-                onCancelled: (_event, accumulated) => {
-                    if (!isCurrent()) {
-                        return;
-                    }
-                    // Partial output is kept: discarding what was already generated is
-                    // more annoying than useful when someone stops a long answer.
-                    if (accumulated) {
-                        set((state) => ({
-                            messages: [
-                                ...state.messages,
-                                {
-                                    id: `cancelled-${Date.now()}`,
-                                    conversation_id: conversationId as string,
-                                    role: 'assistant',
-                                    content: accumulated,
-                                    timestamp: new Date().toISOString(),
-                                    thoughts:
-                                        state.thoughts.length > 0 ? [...state.thoughts] : undefined,
-                                },
-                            ],
-                        }));
-                    }
-                    set({ streaming: false, streamingContent: '' });
-                },
-                onError: (message) => {
-                    if (!isCurrent()) {
-                        return;
-                    }
-                    set({ streaming: false, streamingContent: '', streamError: message });
-                },
-            },
-            controller.signal,
-        );
-
-        // Only tear down if this stream is still the active one; a newer send may already
-        // have installed its own controller.
-        if (isCurrent()) {
-            activeStreamController = null;
-            streamingConversationId = null;
-            set({ streaming: false });
-        }
-
-        // Refresh the rail so a newly created conversation appears with its server-side
-        // generated title.
-        if (isNewConversation) {
-            await get().loadConversations({ reset: true });
-        }
+        await runChatStream(requestBody, conversationId, { isNewConversation });
     },
+
 
     stopStreaming: () => {
         if (!activeStreamController) {
@@ -558,6 +607,158 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 metadataError:
                     error instanceof Error ? error.message : 'Failed to load conversation details.',
             });
+        }
+    },
+
+    reloadMessages: async () => {
+        const conversationId = get().activeConversationId;
+        if (!conversationId) {
+            return;
+        }
+        try {
+            const { messages } = await fetchMessages(conversationId);
+            if (get().activeConversationId !== conversationId) {
+                return;
+            }
+            set({ messages: messages ?? [] });
+            // Attempt switches and deletions change which documents the conversation
+            // cites, so cached metadata is no longer trustworthy.
+            set({ metadata: null });
+        } catch (error) {
+            set({
+                messagesError:
+                    error instanceof Error ? error.message : 'Failed to reload messages.',
+            });
+        }
+    },
+
+    removeMessage: async (messageId, deleteThread = false) => {
+        const previous = get().messages;
+        set({ messages: previous.filter((message) => message.id !== messageId) });
+        try {
+            await deleteMessageApi(messageId, deleteThread);
+            // Deletion is soft when archiving is enabled: the server masks the message
+            // rather than removing it, so the authoritative list is re-read instead of
+            // trusting the optimistic removal.
+            await get().reloadMessages();
+        } catch (error) {
+            set({
+                messages: previous,
+                streamError:
+                    error instanceof Error ? error.message : 'Could not delete the message.',
+            });
+        }
+    },
+
+    retryMessage: async (messageId, options) => {
+        if (get().streaming) {
+            return;
+        }
+        set({ streaming: true, streamingContent: '', thoughts: [], streamError: null });
+        try {
+            const result = await retryMessageApi(messageId, {
+                model: options?.modelDeployment,
+                reasoning_effort: options?.reasoningEffort,
+            });
+            if (!result?.chat_request) {
+                throw new Error('The server did not return a retry request.');
+            }
+            // The retry endpoint only creates the next attempt; this second call is what
+            // actually generates the response.
+            await runChatStream(
+                result.chat_request,
+                result.chat_request.conversation_id,
+                { reloadOnDone: true },
+            );
+        } catch (error) {
+            set({
+                streaming: false,
+                streamError: error instanceof Error ? error.message : 'Retry failed.',
+            });
+        }
+    },
+
+    editMessage: async (messageId, content) => {
+        const trimmed = content.trim();
+        if (!trimmed || get().streaming) {
+            return;
+        }
+        set({ streaming: true, streamingContent: '', thoughts: [], streamError: null });
+        try {
+            const result = await editMessageApi(messageId, trimmed);
+            if (!result?.chat_request) {
+                throw new Error('The server did not return an edit request.');
+            }
+            await runChatStream(
+                result.chat_request,
+                result.chat_request.conversation_id,
+                { reloadOnDone: true },
+            );
+        } catch (error) {
+            set({
+                streaming: false,
+                streamError: error instanceof Error ? error.message : 'Edit failed.',
+            });
+        }
+    },
+
+    changeAttempt: async (messageId, direction) => {
+        try {
+            await switchAttemptApi(messageId, direction);
+            // The server flips active_thread in storage and /api/get_messages filters on
+            // it, so the list must be re-read rather than reordered locally.
+            await get().reloadMessages();
+        } catch (error) {
+            set({
+                streamError:
+                    error instanceof Error ? error.message : 'Could not switch attempt.',
+            });
+        }
+    },
+
+    forkFromMessage: async (messageId) => {
+        const conversationId = get().activeConversationId;
+        if (!conversationId) {
+            return;
+        }
+        try {
+            const result = await forkConversationApi(conversationId, messageId);
+            const forkedId = result?.conversation_id;
+            if (!forkedId) {
+                throw new Error('The server did not return the forked conversation.');
+            }
+            // Refresh the rail first so the new conversation exists in it before it is
+            // selected, otherwise the header has no title to show.
+            await get().loadConversations({ reset: true });
+            await get().selectConversation(forkedId);
+        } catch (error) {
+            set({
+                streamError:
+                    error instanceof Error ? error.message : 'Could not fork the conversation.',
+            });
+        }
+    },
+
+    sendFeedback: async (messageId, feedbackType, reason = '') => {
+        const conversationId = get().activeConversationId;
+        if (!conversationId) {
+            return;
+        }
+        // Recorded locally first so the control reflects the choice immediately; feedback
+        // is advisory and a failure should not disrupt the conversation.
+        set((state) => ({
+            messages: state.messages.map((message) =>
+                message.id === messageId ? { ...message, feedbackType } : message,
+            ),
+        }));
+        try {
+            await submitFeedbackApi(messageId, conversationId, feedbackType, reason);
+        } catch {
+            set((state) => ({
+                messages: state.messages.map((message) =>
+                    message.id === messageId ? { ...message, feedbackType: undefined } : message,
+                ),
+            }));
         }
     },
 }));

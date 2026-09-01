@@ -9,7 +9,8 @@ import { Brain, ChevronDown, Sparkles, TriangleAlert } from 'lucide-react';
 import { useChatStore } from '../../stores/chatStore';
 import { useBootstrapStore } from '../../stores/bootstrapStore';
 import { rehypeHighlightSubset } from '../../lib/rehypeHighlightSubset';
-import { EmptyState, GlassPanel, Skeleton } from '../ui/primitives';
+import { EmptyState, GlassButton, GlassPanel, Skeleton } from '../ui/primitives';
+import { MessageActions } from './MessageActions';
 import type { ChatMessage, ThoughtEntry } from '../../lib/types';
 
 /**
@@ -91,6 +92,9 @@ function ThoughtsPanel({ thoughts }: { thoughts: ThoughtEntry[] }) {
 
 function MessageBubble({ message }: { message: ChatMessage }) {
     const isUser = message.role === 'user';
+    const [editing, setEditing] = useState(false);
+    const [draft, setDraft] = useState(message.content);
+    const editMessage = useChatStore((state) => state.editMessage);
 
     if (message.role === 'image' && message.image_url) {
         return (
@@ -104,11 +108,51 @@ function MessageBubble({ message }: { message: ChatMessage }) {
         );
     }
 
+    if (editing) {
+        return (
+            <div id={`message-${message.id}`} className="flex justify-end">
+                <div className="w-full max-w-[min(46rem,85%)]">
+                    <textarea
+                        autoFocus
+                        value={draft}
+                        onChange={(event) => setDraft(event.target.value)}
+                        rows={Math.min(10, draft.split('\n').length + 1)}
+                        aria-label="Edit message"
+                        className="w-full resize-y rounded-2xl border border-accent bg-surface-solid px-4 py-3 text-[15px] text-text-1 outline-none"
+                    />
+                    <div className="mt-1.5 flex justify-end gap-2">
+                        <GlassButton
+                            size="sm"
+                            onClick={() => {
+                                setDraft(message.content);
+                                setEditing(false);
+                            }}
+                        >
+                            Cancel
+                        </GlassButton>
+                        <GlassButton
+                            size="sm"
+                            variant="primary"
+                            disabled={!draft.trim() || draft === message.content}
+                            onClick={() => {
+                                setEditing(false);
+                                void editMessage(message.id, draft);
+                            }}
+                        >
+                            Save and resend
+                        </GlassButton>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
     return (
         <div
             id={`message-${message.id}`}
-            className={clsx('flex transition-shadow', isUser ? 'justify-end' : 'justify-start')}
+            className={clsx('group/message flex flex-col transition-shadow', isUser && 'items-end')}
         >
+            <div className={clsx('flex w-full', isUser ? 'justify-end' : 'justify-start')}>
             <div
                 className={clsx(
                     'max-w-[min(46rem,85%)] rounded-2xl px-4 py-3',
@@ -143,6 +187,16 @@ function MessageBubble({ message }: { message: ChatMessage }) {
                         )}
                     </>
                 )}
+            </div>
+            </div>
+
+            {/* Revealed on hover or keyboard focus so a long thread stays uncluttered,
+                while remaining reachable without a pointer. */}
+            <div className="opacity-0 transition-opacity group-hover/message:opacity-100 focus-within:opacity-100">
+                <MessageActions
+                    message={message}
+                    onEdit={isUser ? () => setEditing(true) : undefined}
+                />
             </div>
         </div>
     );

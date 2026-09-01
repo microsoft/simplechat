@@ -54,6 +54,8 @@ export interface ChatMessage {
     metadata?: Json;
     /** Present on image messages, produced by hydrate_image_messages server-side. */
     image_url?: string;
+    /** Set locally when the user rates a response, so the control reflects their choice. */
+    feedbackType?: 'positive' | 'negative';
     /** Reasoning steps captured while this message was streaming. */
     thoughts?: ThoughtEntry[];
     [key: string]: unknown;

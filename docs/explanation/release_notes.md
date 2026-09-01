@@ -2,6 +2,18 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.007)**
+
+#### New Features
+
+*   **V2 Per-Message Actions**
+    *   Added an action row to every message in the V2 chat page, appearing on hover and reachable by keyboard.
+    *   **Both roles**: copy, retry, use as prompt, download as Markdown, export to Word or PowerPoint, open as an email draft, and delete.
+    *   **Your messages**: edit in place and resend, which creates a new attempt rather than overwriting the original.
+    *   **Responses**: rate with thumbs up or down (a thumbs down asks for an optional reason), and fork the conversation from that point into a new one, which then opens.
+    *   **Attempt navigation**: when a message has been retried or edited, arrows appear showing which attempt you are viewing and let you page between them.
+    *   (Ref: V2 message actions, `/api/message/<id>` retry, edit, switch-attempt, delete, `/feedback/submit`, conversation fork)
+
 ### **(v0.261.006)**
 
 #### New Features

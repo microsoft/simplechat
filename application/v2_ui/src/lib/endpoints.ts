@@ -9,6 +9,7 @@ import { api, uploadFile } from './apiClient';
 import type {
     BootstrapPayload,
     ChatMessage,
+    ChatStreamRequest,
     Citation,
     ConversationFeedPage,
     ConversationMetadata,
@@ -121,6 +122,75 @@ export const fetchMessages = (conversationId: string, signal?: AbortSignal) =>
         `/api/get_messages?conversation_id=${encodeURIComponent(conversationId)}`,
         signal,
     );
+
+/* -------------------------------------------------------------------------- */
+/* Message actions                                                             */
+/* -------------------------------------------------------------------------- */
+
+export const deleteMessage = (messageId: string, deleteThread = false) =>
+    api.delete<Json>(`/api/message/${encodeURIComponent(messageId)}`, {
+        delete_thread: deleteThread,
+    });
+
+/**
+ * Response of the retry and edit endpoints.
+ *
+ * Neither generates a reply on its own: they create the next thread attempt and hand back
+ * a ready-made body to POST to /api/chat/stream, which is what actually produces the
+ * response. Skipping that second call leaves the new attempt permanently empty.
+ */
+export interface AttemptChatRequest {
+    success: boolean;
+    new_attempt?: number;
+    user_message_id?: string;
+    chat_request: ChatStreamRequest & { conversation_id: string };
+}
+
+export const retryMessage = (
+    messageId: string,
+    options: { model?: string; reasoning_effort?: string; agent_info?: unknown } = {},
+) => api.post<AttemptChatRequest>(`/api/message/${encodeURIComponent(messageId)}/retry`, options);
+
+export const editMessage = (messageId: string, content: string) =>
+    api.post<AttemptChatRequest>(`/api/message/${encodeURIComponent(messageId)}/edit`, {
+        content,
+    });
+
+export const switchAttempt = (messageId: string, direction: 'prev' | 'next') =>
+    api.post<{ success: boolean; target_attempt: number; available_attempts: number[] }>(
+        `/api/message/${encodeURIComponent(messageId)}/switch-attempt`,
+        { direction },
+    );
+
+export const submitFeedback = (
+    messageId: string,
+    conversationId: string,
+    feedbackType: 'positive' | 'negative',
+    reason = '',
+) =>
+    api.post<{ success: boolean }>('/feedback/submit', {
+        messageId,
+        conversationId,
+        feedbackType,
+        reason,
+    });
+
+export const forkConversation = (conversationId: string, messageId: string) =>
+    api.post<{ conversation_id?: string }>(
+        `/api/conversations/${encodeURIComponent(conversationId)}/fork`,
+        { message_id: messageId },
+    );
+
+/** Server-rendered exports. Markdown is produced client-side; no endpoint exists for it. */
+export type MessageExportFormat = 'word' | 'powerpoint' | 'email-draft';
+
+const EXPORT_PATHS: Record<MessageExportFormat, string> = {
+    word: '/api/message/export-word',
+    powerpoint: '/api/message/export-powerpoint',
+    'email-draft': '/api/message/export-email-draft',
+};
+
+export const exportMessagePath = (format: MessageExportFormat) => EXPORT_PATHS[format];
 
 /* -------------------------------------------------------------------------- */
 /* Citations                                                                   */
