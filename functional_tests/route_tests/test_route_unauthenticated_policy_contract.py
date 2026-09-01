@@ -87,6 +87,7 @@ USER_SESSION_PATH_PREFIXES = (
     "/set_active_public_workspace",
     "/support/",
     "/upload",
+    "/v2",
     "/view_document",
     "/view_pdf",
     "/workspace",

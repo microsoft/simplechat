@@ -30,6 +30,12 @@
     "nativeWebAppName": {
       "value": "${NATIVE_WEBAPP_NAME}"
     },
+    "deployV2FrontendAppService": {
+      "value": "${DEPLOY_V2_FRONTEND_APP_SERVICE}"
+    },
+    "v2WebAppName": {
+      "value": "${V2_WEBAPP_NAME}"
+    },
     "enterpriseAppClientId": {
       "value": "${ENTERPRISE_APP_CLIENT_ID}"
     },

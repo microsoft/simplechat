@@ -15,6 +15,34 @@ services:
     docker:
       context: ../../
       dockerfile: application/single_app/Dockerfile
+
+  # ---------------------------------------------------------------------------
+  # Optional: host the V2 React UI on its own App Service.
+  #
+  # By DEFAULT this is not used. The `web` container above already serves the compiled
+  # V2 bundle at /v2, which keeps the SPA same-origin so the Entra session cookie, the
+  # same-origin CSRF check and the default-src 'self' CSP all work with no extra config.
+  #
+  # To split the SPA onto its own App Service:
+  #   1. Provision with deployV2FrontendAppService=true so the tagged app service exists:
+  #        azd env set DEPLOY_V2_FRONTEND_APP_SERVICE true
+  #   2. Set V2_UI_ALLOWED_ORIGIN on the `web` app service to the V2 app's https origin
+  #      (emitted as the var_v2WebServiceOrigin output). That single setting enables CORS
+  #      for the origin, adds it to CSRF_TRUSTED_ORIGINS, and switches the session cookie
+  #      to SameSite=None; Secure.
+  #   3. Add the V2 app's URL as a redirect URI on the Entra app registration.
+  #   4. Build the bundle against the API origin:
+  #        cd application/v2_ui && VITE_API_BASE=https://<web-app>.azurewebsites.net npm run build
+  #   5. Uncomment the block below and run `azd deploy v2ui`.
+  #
+  # Leave this commented out unless all of the above is in place: azd deploys every
+  # declared service, so an entry with no matching azd-service-name tag fails the deploy.
+  #
+  # v2ui:
+  #   project: ../application/v2_ui/../single_app/static/v2
+  #   language: js
+  #   host: appservice
+  # ---------------------------------------------------------------------------
 hooks:
   preprovision:
     # this is run before infrastructure provisioning begins

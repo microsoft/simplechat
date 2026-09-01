@@ -2,6 +2,32 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.003)**
+
+#### New Features
+
+*   **React V2 Interface (Preview)**
+    *   Added an optional React interface at **/v2**, running alongside the existing UI rather than replacing it. Both surfaces share one login, so you can move between `/chats` and `/v2` freely and compare them directly.
+    *   Built with React 18, TypeScript, Vite and Tailwind on a custom glassmorphism design system, with full dark and light modes. The theme is remembered per browser and applied before first paint, so switching to dark mode never flashes white.
+    *   Keeps the current layout language: logo in the upper left, a single collapsible left rail carrying navigation, conversations, theme and account, and no top bar. All content lives in the right-hand pane.
+    *   Chat is wired to the existing APIs — conversation list with paging and search, rename, pin, hide and delete, streaming responses with a collapsible reasoning panel, stop generation, model, agent and prompt pickers, document and web search toggles, and file upload. Controls that are part of the design but not yet connected are visibly marked **Preview** rather than silently doing nothing.
+    *   Personal workspace documents can be listed, searched, filtered by tag, uploaded and deleted.
+    *   Nothing in the existing interface changed. No current route, template, or JavaScript module was modified.
+    *   (Ref: `application/v2_ui/`, `route_frontend_v2.py`, `route_backend_v2.py`, `docs/explanation/features/REACT_V2_UI.md`)
+
+*   **Search-First Admin Settings In V2**
+    *   Reimagined Admin Settings for the V2 interface. The classic page nests 14 groups into 46 tabs into 96 sections, so reaching one toggle can take several clicks through two levels of tabs.
+    *   V2 flattens it: a category rail, one scrollable pane, and a search box that matches across every section, tab, group and capability key at once. Press `/` to focus search from anywhere on the page — searching either `retention` or `data lifecycle` finds the retention settings.
+    *   Toggles save individually and roll back visually if the save fails, so the switch never claims a change that did not persist.
+    *   The structure is still generated from `admin_settings_nav.py`, so it cannot drift from the classic page. Settings needing more than a switch — endpoints, keys, prompts, connection tests — remain on the classic page, which is linked from the V2 page.
+    *   (Ref: `admin_settings_nav.py`, `/api/v2/admin/settings`, V2 admin surface)
+
+*   **Optional Standalone Hosting For The V2 Interface**
+    *   The V2 interface is served by the existing App Service at `/v2` by default, so it needs no new infrastructure and inherits the current sign-in, CSRF protection and content security policy unchanged.
+    *   For deployments that want the front end deployed and scaled on its own, a new opt-in `deployV2FrontendAppService` parameter provisions a dedicated App Service for it. Setting `V2_UI_ALLOWED_ORIGIN` on the API app is the single switch that enables the cross-origin configuration this requires.
+    *   Both settings are off by default and have no effect on existing deployments.
+    *   (Ref: `deployers/bicep/modules/v2FrontendAppService.bicep`, `main.bicep`, `deployers/azure.yaml`, `V2_UI_ALLOWED_ORIGIN`)
+
 ### **(v0.261.002)**
 
 #### User Interface Enhancements

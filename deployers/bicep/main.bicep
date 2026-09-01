@@ -59,6 +59,22 @@ param deployNativePythonWebApp bool = false
 - Used only when deployNativePythonWebApp is true.''')
 param nativeWebAppName string = toLower('${appName}-${environment}-native-app')
 
+@description('''Deploy the V2 React UI to its own App Service instead of serving it from the primary app.
+- Default is false. By default the Flask App Service serves the compiled V2 bundle at /v2,
+  which keeps the SPA same-origin so the Entra session cookie, the same-origin CSRF check
+  and the default-src 'self' CSP all apply unchanged.
+- Enabling this splits the SPA onto its own origin, which requires cross-origin
+  configuration: V2_UI_ALLOWED_ORIGIN on the API app, a VITE_API_BASE build argument for
+  the bundle, and an extra Entra redirect URI. The session cookie becomes a third-party
+  cookie, so browsers that block those will break this topology.''')
+param deployV2FrontendAppService bool = false
+
+@minLength(2)
+@maxLength(60)
+@description('''Optional name for the standalone V2 React UI Web App.
+- Used only when deployV2FrontendAppService is true.''')
+param v2WebAppName string = toLower('${appName}-${environment}-v2-app')
+
 @description('''Azure AD Application Client ID for enterprise authentication.
 - Should be the client ID of the registered Azure AD application''')
 param enterpriseAppClientId string
@@ -681,6 +697,27 @@ module nativeAppService 'modules/appServiceNativePython.bicep' = if (deployNativ
 }
 
 //=========================================================
+// Create Optional App Service (V2 React UI, standalone)
+//=========================================================
+// Off by default: the primary App Service already serves the V2 bundle at /v2, same-origin.
+// See modules/v2FrontendAppService.bicep for what enabling this requires.
+module v2FrontendAppService 'modules/v2FrontendAppService.bicep' = if (deployV2FrontendAppService) {
+  name: 'v2FrontendAppService'
+  scope: rg
+  params: {
+    location: location
+    v2WebAppName: v2WebAppName
+    tags: tags
+    appServicePlanId: appServicePlan.outputs.appServicePlanId
+    enableDiagLogging: enableDiagLogging
+    logAnalyticsId: logAnalytics.outputs.logAnalyticsId
+    appInsightsName: applicationInsights.outputs.appInsightsName
+    enablePrivateNetworking: enablePrivateNetworking
+    appServiceSubnetId: resolvedAppServiceSubnetId
+  }
+}
+
+//=========================================================
 // configure optional services
 //=========================================================
 
@@ -911,6 +948,12 @@ output var_imageTag string = contains(imageName, ':')
 output var_webService string = appService.outputs.name
 #disable-next-line BCP318 // expect one value to be null
 output var_nativeWebService string = deployNativePythonWebApp ? nativeAppService.outputs.name : ''
+#disable-next-line BCP318 // expect one value to be null
+output var_v2WebService string = deployV2FrontendAppService ? v2FrontendAppService.outputs.name : ''
+
+// Origin to set as V2_UI_ALLOWED_ORIGIN on the API app when the split topology is used.
+#disable-next-line BCP318 // expect one value to be null
+output var_v2WebServiceOrigin string = deployV2FrontendAppService ? v2FrontendAppService.outputs.origin : ''
 
 // output values required for postup script in azure.yaml
 output var_enablePrivateNetworking bool = enablePrivateNetworking

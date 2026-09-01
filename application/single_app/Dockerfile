@@ -3,6 +3,38 @@ ARG UID=65532
 ARG GID=65532
 ARG INSTALL_PLAYWRIGHT_CHROMIUM=true
 ARG INSTALL_AUDIO_FFMPEG=true
+# Origin of the Flask API for the V2 SPA. Left empty for the default deployment, where
+# Flask serves the SPA from the same App Service and every request is same-origin. Set
+# only when the SPA is deployed to its own App Service, which also requires
+# V2_UI_ALLOWED_ORIGIN on the Flask app so it emits CORS headers and trusts the origin.
+ARG V2_UI_API_BASE=""
+
+# ---------------------------------------------------------------------------
+# V2 React UI build stage
+#
+# Compiles application/v2_ui into a static bundle. Kept in its own stage so Node and
+# node_modules never reach the runtime image, and so a clean checkout produces the same
+# bundle as a developer running `npm run build` locally.
+#
+# Uses the Azure Linux Node image to stay consistent with the Python stages below and to
+# avoid introducing a Docker Hub dependency, which matters for sovereign-cloud builds.
+# ---------------------------------------------------------------------------
+FROM mcr.microsoft.com/azurelinux/base/nodejs:20 AS v2uibuilder
+
+ARG V2_UI_API_BASE
+ENV VITE_API_BASE=${V2_UI_API_BASE}
+
+WORKDIR /v2_ui
+
+# Manifests are copied first so the dependency layer is only rebuilt when they change.
+COPY application/v2_ui/package.json application/v2_ui/package-lock.json* ./
+RUN npm ci --no-audit --no-fund
+
+COPY application/v2_ui/ ./
+
+# Vite is configured to emit into ../single_app/static/v2, so the build output lands at
+# /single_app/static/v2 relative to this stage's working directory.
+RUN npm run build
 
 FROM mcr.microsoft.com/azurelinux/base/python:3.12 AS builder
 
@@ -210,6 +242,11 @@ WORKDIR /app
 
 # Copy application code and set ownership
 COPY --chown=${UID}:${GID} application/single_app ./
+
+# The compiled V2 SPA is copied after the application code so it is not clobbered by the
+# copy above. static/v2 is gitignored, so it is absent from the build context and only
+# ever arrives from the v2uibuilder stage.
+COPY --from=v2uibuilder --chown=${UID}:${GID} /single_app/static/v2 ./static/v2
 
 # Expose port
 EXPOSE 5000

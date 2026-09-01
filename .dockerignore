@@ -31,3 +31,10 @@ scripts/
 application/single_app/flask_session/
 application/single_app/uploaded_openapi_files/
 application/single_app/instance/
+# V2 React UI: never ship host build artifacts into the image context.
+# node_modules would overwrite the container's Linux dependency tree with the host's
+# platform-specific one, and a stale static/v2 from a local build would survive alongside
+# the freshly compiled bundle because COPY merges rather than replaces.
+application/v2_ui/node_modules/
+application/v2_ui/dist/
+application/single_app/static/v2/

@@ -61,9 +61,14 @@ from route_frontend_feedback import *
 from route_frontend_support import *
 from route_frontend_notifications import *
 from route_frontend_terms_of_use import register_route_frontend_terms_of_use
+from route_frontend_v2 import register_route_frontend_v2
 from route_custom_pages import register_route_custom_pages
 
 from route_backend_chats import *
+from route_backend_v2 import (
+    register_route_backend_v2,
+    register_route_backend_v2_admin,
+)
 from route_backend_search import *
 from route_backend_conversations import *
 from route_backend_documents import *
@@ -757,6 +762,17 @@ def _state_changing_request_has_same_origin_boundary():
     referer_header = request.headers.get('Referer', '').strip()
 
     if fetch_site == 'cross-site':
+        # A genuinely cross-site request is rejected unless its Origin is explicitly
+        # trusted. This is what allows a deliberately separate front-end origin (the
+        # standalone V2 UI app service, declared via V2_UI_ALLOWED_ORIGIN) to mutate
+        # state, while an arbitrary attacker origin still cannot: the browser sets
+        # Origin itself and it must match the configured allowlist exactly.
+        if origin_header:
+            request_origin = _normalize_origin_from_url(origin_header)
+            if request_origin and _origin_matches_any_allowed_origin(
+                request_origin, _build_allowed_request_origins()
+            ):
+                return True, 'cross-site origin explicitly trusted'
         return False, 'cross-site fetch metadata'
     if fetch_site == 'same-origin':
         return True, 'same-origin fetch metadata'
@@ -787,6 +803,40 @@ def _requires_same_origin_state_change_boundary():
     if request.method == 'GET':
         return any(request.path.startswith(prefix) for prefix in GET_STATE_CHANGING_PATH_PREFIXES)
     return False
+
+
+@app.before_request
+def answer_cors_preflight_for_allowed_origins():
+    """Answer CORS preflight requests before the authentication guards run.
+
+    A cross-origin JSON request triggers an OPTIONS preflight, and preflights deliberately
+    carry no cookies. Blueprint auth guards run after app-level before_request handlers, so
+    without this a preflight would be rejected with 401 and every state-changing call from
+    a separately hosted V2 UI would fail before it was ever sent.
+
+    This is inert unless V2_UI_ALLOWED_ORIGIN is configured, and it only ever answers for an
+    Origin that exactly matches the allowlist.
+    """
+    if not V2_UI_ALLOWED_ORIGINS or request.method != 'OPTIONS':
+        return None
+
+    # Access-Control-Request-Method is only present on a real preflight, which keeps this
+    # from intercepting an ordinary OPTIONS request.
+    if not request.headers.get('Access-Control-Request-Method'):
+        return None
+
+    request_origin = request.headers.get('Origin', '').strip()
+    if not request_origin or request_origin not in V2_UI_ALLOWED_ORIGINS:
+        return None
+
+    response = make_response('', 204)
+    response.headers['Access-Control-Allow-Origin'] = request_origin
+    response.headers['Access-Control-Allow-Credentials'] = 'true'
+    response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Accept'
+    response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, PATCH, DELETE, OPTIONS'
+    response.headers['Access-Control-Max-Age'] = '600'
+    response.headers['Vary'] = 'Origin'
+    return response
 
 
 @app.before_request
@@ -1029,7 +1079,7 @@ def add_security_headers(response):
     Add comprehensive security headers to all responses to protect against
     various web vulnerabilities including MIME sniffing attacks.
     """
-    from config import SECURITY_HEADERS, ENABLE_STRICT_TRANSPORT_SECURITY, HSTS_MAX_AGE
+    from config import SECURITY_HEADERS, ENABLE_STRICT_TRANSPORT_SECURITY, HSTS_MAX_AGE, V2_UI_ALLOWED_ORIGINS
     
     # Apply all configured security headers
     for header_name, header_value in SECURITY_HEADERS.items():
@@ -1043,7 +1093,26 @@ def add_security_headers(response):
     # This provides extra protection against MIME sniffing attacks
     if response.content_type and any(ct in response.content_type.lower() for ct in ['text/', 'application/json', 'application/javascript', 'application/octet-stream']):
         response.headers['X-Content-Type-Options'] = 'nosniff'
-    
+
+    # Cross-origin support for a separately hosted V2 UI.
+    #
+    # Only the exact configured origin is ever echoed back, never a wildcard, because
+    # Allow-Credentials is required to carry the session cookie and the two are mutually
+    # exclusive with '*'. This block does nothing unless V2_UI_ALLOWED_ORIGIN is set, so
+    # the default same-origin deployment emits no CORS headers at all.
+    if V2_UI_ALLOWED_ORIGINS:
+        request_origin = request.headers.get('Origin')
+        if request_origin and request_origin in V2_UI_ALLOWED_ORIGINS:
+            response.headers['Access-Control-Allow-Origin'] = request_origin
+            response.headers['Access-Control-Allow-Credentials'] = 'true'
+            response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Accept'
+            response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, PATCH, DELETE, OPTIONS'
+            response.headers['Access-Control-Max-Age'] = '600'
+            # Responses vary by Origin, so caches must not serve one origin's response
+            # to another.
+            existing_vary = response.headers.get('Vary')
+            response.headers['Vary'] = f'{existing_vary}, Origin' if existing_vary else 'Origin'
+
     return response
 
 # Register a custom Jinja filter for Markdown
@@ -1303,8 +1372,15 @@ register_route_blueprint('frontend_notifications', register_route_frontend_notif
 # ------------------- Custom Pages Routes ---------------
 register_route_blueprint('custom_pages', register_route_custom_pages, login_required_blueprint)
 
+# ------------------- V2 React UI Routes ----------------
+register_route_blueprint('frontend_v2', register_route_frontend_v2, user_required_blueprint)
+
 # ------------------- API Chat Routes --------------------
 register_route_blueprint('backend_chats', register_route_backend_chats, user_required_blueprint)
+
+# ------------------- API V2 UI Routes -------------------
+register_route_blueprint('backend_v2', register_route_backend_v2, user_required_blueprint)
+register_route_blueprint('backend_v2_admin', register_route_backend_v2_admin, admin_required_blueprint)
 
 # ------------------- API Search Routes ------------------
 register_route_blueprint('backend_search', register_route_backend_search, user_required_blueprint)

@@ -97,7 +97,7 @@ DOTENV_LOAD_RESULT = load_simplechat_dotenv()
 EXECUTOR_TYPE = 'thread'
 EXECUTOR_MAX_WORKERS = 30
 SESSION_TYPE = 'filesystem'
-VERSION = "0.261.002"
+VERSION = "0.261.003"
 IS_DEVELOPMENT = is_development_env_enabled()
 
 SESSION_COOKIE_SAMESITE = os.getenv('SESSION_COOKIE_SAMESITE', 'Lax')
@@ -161,6 +161,15 @@ def _split_env_list(raw_value, lowercase=False):
 
 
 CSRF_TRUSTED_ORIGINS = _split_origin_list(os.getenv('CSRF_TRUSTED_ORIGINS', ''))
+
+# Origin of a separately hosted V2 React UI.
+#
+# Empty by default, which is the standard deployment: Flask serves the V2 SPA itself from
+# /v2, so every request is same-origin and no cross-origin handling is needed. Set this
+# only when the SPA is deployed to its own App Service. Doing so enables CORS for that
+# single origin, adds it to the CSRF trusted origins, and switches the session cookie to
+# SameSite=None so the browser will send it cross-site.
+V2_UI_ALLOWED_ORIGINS = _split_origin_list(os.getenv('V2_UI_ALLOWED_ORIGIN', ''))
 
 SECRET_KEY = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
 
@@ -414,6 +423,17 @@ if ENABLE_TEAMS_SSO:
     SESSION_COOKIE_SECURE = True
 
 TEAMS_APP_RESOURCE = TEAMS_APP_RESOURCE or (f"api://{CLIENT_ID}" if CLIENT_ID else "")
+
+# When the V2 SPA is hosted on its own App Service, its origin has to be trusted for CSRF
+# and the session cookie has to be sent cross-site. This mirrors the Teams SSO handling
+# above and stays completely inert when V2_UI_ALLOWED_ORIGIN is unset, so the default
+# same-origin deployment keeps SameSite=Lax.
+if V2_UI_ALLOWED_ORIGINS:
+    CSRF_TRUSTED_ORIGINS = list(dict.fromkeys(CSRF_TRUSTED_ORIGINS + V2_UI_ALLOWED_ORIGINS))
+    if SESSION_COOKIE_SAMESITE.lower() != 'none':
+        SESSION_COOKIE_SAMESITE = 'None'
+    SESSION_COOKIE_SECURE = True
+
 FRAME_ANCESTORS_DIRECTIVE = "frame-ancestors 'self'"
 if TEAMS_FRAME_ANCESTORS:
     FRAME_ANCESTORS_DIRECTIVE = f"{FRAME_ANCESTORS_DIRECTIVE} {' '.join(TEAMS_FRAME_ANCESTORS)}"

@@ -198,3 +198,5 @@ cython_debug/
 .env.*
 
 deploy.zip
+# V2 React UI build output (compiled from application/v2_ui, produced during image build)
+static/v2/
