@@ -7,6 +7,7 @@
 
 import { api, apiUrl, uploadFile, ApiError, API_BASE } from './apiClient';
 import type { EnhancedCitationMetadata } from './enhancedCitations';
+import type { MaskAction, MaskedRange, MaskSelection } from './masking';
 import type {
     BootstrapPayload,
     ChatMessage,
@@ -163,6 +164,38 @@ export const switchAttempt = (messageId: string, direction: 'prev' | 'next') =>
         `/api/message/${encodeURIComponent(messageId)}/switch-attempt`,
         { direction },
     );
+
+/* -------------------------------------------------------------------------- */
+/* Message masking                                                             */
+/* -------------------------------------------------------------------------- */
+
+/** Response of POST /api/message/<id>/mask. */
+export interface MaskResponse {
+    success: boolean;
+    message_id: string;
+    masked: boolean;
+    masked_ranges: MaskedRange[];
+}
+
+/**
+ * Add or remove a mask on a message.
+ *
+ * `conversation_id` is optional to the server but lets it read the message by partition key
+ * instead of running a cross-partition query, so it is always sent.
+ *
+ * A `mask_selection` whose text can no longer be located in the stored content is rejected
+ * with a 400: the server resolves the selection against the message rather than trusting the
+ * offsets, and a selection spanning rendered elements may not correspond to any single span
+ * of the original.
+ */
+export const maskMessage = (
+    messageId: string,
+    body: {
+        action: MaskAction;
+        conversation_id: string;
+        selection?: MaskSelection;
+    },
+) => api.post<MaskResponse>(`/api/message/${encodeURIComponent(messageId)}/mask`, body);
 
 /* -------------------------------------------------------------------------- */
 /* Message inspection                                                          */

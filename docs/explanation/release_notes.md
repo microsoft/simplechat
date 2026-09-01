@@ -2,6 +2,19 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.014)**
+
+#### New Features
+
+*   **Message Masking In V2**
+    *   You can now mask content in the V2 chat page, which the classic interface has always supported. Masked content is withheld from the AI model when it builds conversation history, so it is a real protection rather than a display setting.
+    *   Select any text in a message and a small **Mask selection** control appears over it. The selected text is replaced with a redaction marker.
+    *   The hover row also offers masking the whole message, and clearing masks once any exist.
+    *   Hovering a redaction shows who applied it and when, so in a shared conversation it is clear whose masking you are looking at.
+    *   Masked text is removed before the message is rendered rather than hidden with styling, so it is never present in the page.
+    *   If a selection cannot be matched back to the stored message — which can happen when it spans citations or formatting — the interface says so instead of appearing to succeed.
+    *   (Ref: V2 message masking, `/api/message/<id>/mask`)
+
 ### **(v0.261.013)**
 
 #### New Features

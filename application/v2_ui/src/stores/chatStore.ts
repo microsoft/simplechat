@@ -11,6 +11,7 @@ import {
     fetchMessages,
     forkConversation as forkConversationApi,
     markConversationRead,
+    maskMessage as maskMessageApi,
     renameConversation as renameConversationApi,
     retryMessage as retryMessageApi,
     submitFeedback as submitFeedbackApi,
@@ -21,7 +22,10 @@ import {
 import { cancelStream, streamChat } from '../lib/sse';
 import { agentInfoForSelection } from '../lib/agents';
 import { messageThreadId } from '../lib/threads';
+import { toast } from './toastStore';
+import { ApiError } from '../lib/apiClient';
 import { useBootstrapStore } from './bootstrapStore';
+import type { MaskAction, MaskSelection } from '../lib/masking';
 import type {
     ChatMessage,
     ChatStreamRequest,
@@ -111,6 +115,11 @@ interface ChatState {
     editMessage: (messageId: string, content: string) => Promise<void>;
     changeAttempt: (messageId: string, direction: 'prev' | 'next') => Promise<void>;
     forkFromMessage: (messageId: string) => Promise<void>;
+    applyMask: (
+        messageId: string,
+        action: MaskAction,
+        selection?: MaskSelection,
+    ) => Promise<void>;
     sendFeedback: (
         messageId: string,
         feedbackType: 'positive' | 'negative',
@@ -776,14 +785,87 @@ export const useChatStore = create<ChatState>((set, get) => ({
         }
     },
 
+    applyMask: async (messageId, action, selection) => {
+        const conversationId = get().activeConversationId;
+        if (!conversationId) {
+            return;
+        }
+
+        try {
+            const result = await maskMessageApi(messageId, {
+                action,
+                conversation_id: conversationId,
+                selection,
+            });
+
+            // The response carries the authoritative mask state, including ranges the
+            // server merged or re-placed, so it replaces the local copy rather than being
+            // assumed to match what was sent.
+            //
+            // It does NOT return the whole-message attribution fields
+            // (route_backend_chats.py returns only `masked` and `masked_ranges`), so they
+            // are filled in from the acting user -- who, for a mask just applied, is
+            // exactly who applied it. A reload replaces them with the stored values.
+            const actor = useBootstrapStore.getState().data?.user;
+            const attribution =
+                action === 'mask_all'
+                    ? {
+                          masked_by_display_name: actor?.display_name || actor?.email || undefined,
+                          masked_by_user_id: actor?.id,
+                          masked_timestamp: new Date().toISOString(),
+                      }
+                    : {
+                          masked_by_display_name: undefined,
+                          masked_by_user_id: undefined,
+                          masked_timestamp: undefined,
+                      };
+
+            set((state) => ({
+                messages: state.messages.map((message) =>
+                    message.id === messageId
+                        ? {
+                              ...message,
+                              metadata: {
+                                  ...(message.metadata as Record<string, unknown>),
+                                  ...attribution,
+                                  masked: result.masked,
+                                  masked_ranges: result.masked_ranges ?? [],
+                              },
+                          }
+                        : message,
+                ),
+            }));
+
+            toast.success(
+                action === 'mask_all'
+                    ? 'Message masked. It will not be sent to the model.'
+                    : action === 'mask_selection'
+                      ? 'Selection masked.'
+                      : 'Mask removed.',
+            );
+        } catch (error) {
+            // A selection the server cannot place in the stored content is rejected, and
+            // saying so is more useful than a generic failure.
+            const message =
+                error instanceof ApiError && error.status === 400
+                    ? 'That selection could not be matched to the stored message. Try selecting a distinct phrase.'
+                    : error instanceof ApiError && error.status === 403
+                      ? 'You can only mask your own messages.'
+                      : error instanceof Error
+                        ? error.message
+                        : 'The mask could not be updated.';
+            toast.error(message);
+        }
+    },
+
     forkFromMessage: async (messageId) => {
         const conversationId = get().activeConversationId;
         if (!conversationId) {
             return;
         }
+
         try {
-            const result = await forkConversationApi(conversationId, messageId);
-            const forkedId = result?.conversation_id;
+            const result = await forkConversationApi(conversationId, messageId);            const forkedId = result?.conversation_id;
             if (!forkedId) {
                 throw new Error('The server did not return the forked conversation.');
             }

@@ -16,6 +16,8 @@ import {
     ClipboardCheck,
     Copy,
     Ellipsis,
+    Eye,
+    EyeOff,
     FileDown,
     Info,
     Loader2,
@@ -35,6 +37,7 @@ import { toast } from '../../stores/toastStore';
 import { ApiError } from '../../lib/apiClient';
 import { attemptState } from '../../lib/threads';
 import { readSources } from '../../lib/messageDetails';
+import { canMask, readMaskState } from '../../lib/masking';
 import type { InspectorSection } from './MessageInspector';
 import type { ChatMessage, Json } from '../../lib/types';
 import {
@@ -327,7 +330,7 @@ export function MessageActions({
     inspector?: InspectorSection | null;
     onInspect?: (section: InspectorSection | null) => void;
 }) {
-    const { retryMessage, changeAttempt, sendFeedback, forkFromMessage, streaming, attemptsByThread } =
+    const { retryMessage, changeAttempt, sendFeedback, forkFromMessage, streaming, attemptsByThread, applyMask } =
         useChatStore();
     const feedbackEnabled = useBootstrapStore((state) =>
         Boolean(state.data?.features?.enable_user_feedback),
@@ -335,11 +338,14 @@ export function MessageActions({
     const ttsEnabled = useBootstrapStore((state) =>
         Boolean(state.data?.features?.enable_text_to_speech),
     );
+    const currentUserId = useBootstrapStore((state) => state.data?.user?.id);
 
     const [copied, setCopied] = useState(false);
     const isUser = message.role === 'user';
     const attempts = attemptState(message, attemptsByThread);
     const sources = readSources(message as unknown as Json);
+    const masks = readMaskState(message);
+    const maskingAllowed = canMask(message, currentUserId);
 
     const copy = async () => {
         try {
@@ -472,6 +478,38 @@ export function MessageActions({
                     >
                         <Info size={15} />
                     </IconButton>
+                </div>
+            )}
+
+            {/* Masking, when the user may change it. */}
+            {onInspect && maskingAllowed && (
+                <div className="flex items-center gap-0.5">
+                    {!masks.hasAnyMask && (
+                        <IconButton
+                            label="Mask this message"
+                            onClick={() => void applyMask(message.id, 'mask_all')}
+                        >
+                            <EyeOff size={15} />
+                        </IconButton>
+                    )}
+                    {masks.hasAnyMask && (
+                        <IconButton
+                            label={
+                                masks.fullyMasked
+                                    ? 'Remove the mask from this message'
+                                    : 'Clear all masks on this message'
+                            }
+                            active
+                            onClick={() =>
+                                void applyMask(
+                                    message.id,
+                                    masks.fullyMasked ? 'unmask_message' : 'clear_all_masks',
+                                )
+                            }
+                        >
+                            <Eye size={15} />
+                        </IconButton>
+                    )}
                 </div>
             )}
 

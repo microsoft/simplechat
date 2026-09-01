@@ -177,6 +177,7 @@ Wired to the live APIs:
   aloud, and attempt paging once a message has been retried
 - A per-message inspector with the sources a response cited, the reasoning behind it, and
   how it was produced
+- Masking part or all of a message, so its content is withheld from the model
 - Citations rendered as inline chips that open either the cited source itself — the PDF
   page, image, media clip, spreadsheet or Visio page — or the passage that was extracted
   from it
@@ -248,8 +249,37 @@ The response shape of `/api/message/<id>/metadata` **depends on the message's ro
 message returns its nested `metadata` object alone, while assistant, image and file messages
 return the whole document with `metadata` nested inside. Both are handled.
 
-### Conversation badges
-The badges beside the conversation title reproduce `addChatTypeBadges`
+### Message masking
+
+Selecting text inside a message offers a **Mask selection** control; the hover row offers
+masking the whole message and clearing masks once any exist.
+
+Masking is not a display setting. The server strips masked content from the history it sends
+to the model, so the client's job is to show what is masked and to make the correct calls,
+never to enforce anything. Consistent with that, masked text is **cut out of the content
+before rendering** rather than hidden with styling — it is never present in the page, and the
+component that stands in for it is given only the range's metadata.
+
+Two details of the endpoint shape the implementation:
+
+- **The server does not trust the offsets it is sent.** It resolves the selection against the
+  stored content, first by the offsets, then by locating the selected text, then against a
+  markdown-stripped projection of it (`_resolve_selection_offsets`). A selection it cannot
+  place uniquely is rejected with a 400 — which happens when a selection spans citations or
+  formatting and so is not a contiguous span of the original. The interface reports that
+  rather than showing a mask that does not exist.
+- **The response reports only `masked` and `masked_ranges`.** It does not return who applied
+  a whole-message mask, so the attribution shown immediately afterwards comes from the acting
+  user; a reload replaces it with the stored value.
+
+Masks are applied **before** citation parsing, because their offsets are canonical positions
+in the raw content and citation parsing rewrites the string.
+
+There is no `can_*` field on any payload, so the client mirrors the server's rule — the
+message's author, falling back to the conversation's owner for messages that record no author
+— to decide what to offer, and still handles a 403.
+
+### Conversation badgesThe badges beside the conversation title reproduce `addChatTypeBadges`
 (`static/js/chat/chat-conversations.js`) so both interfaces describe a conversation the same
 way: classification pills, then a single workspace badge — the group name, `public - <name>`,
 `shared`, or nothing at all for a personal conversation — and the scope-lock indicator.
@@ -427,6 +457,7 @@ this entirely and is the recommended layout.
 | `functional_tests/test_v2_dropdown_placement.py` | Composer pickers flip above the trigger when the bottom-anchored composer leaves no room below, and clamp their height to the viewport |
 | `functional_tests/test_v2_chat_phase1_fixes.py` | Exports send JSON rather than a form, email has its own path, images resolve from `content`, attempts are one-based, the title badge comes from conversation metadata, `agent_info` is an object, newlines match across roles, and failures are announced |
 | `functional_tests/test_v2_message_inspector.py` | Role-dependent metadata shape, reasoning fetched per message, shared renderer for live and historical reasoning, citation URL scheme checking, enabled-versus-used capability reporting |
+| `functional_tests/test_v2_message_masking.py` | All mask actions, selection carries text not just offsets, rejection is explained, masked text never reaches the DOM, masks applied before citation parsing, attribution, permission rule, popup stays on screen |
 | `functional_tests/test_csrf_state_changing_route_guard.py` | Cross-site mutations require an explicitly trusted origin; CORS preflights answered before authentication and never wildcarded |
 | `functional_tests/route_tests/` | Blueprint policy classification for `frontend_v2`, `backend_v2`, `backend_v2_admin` |
 

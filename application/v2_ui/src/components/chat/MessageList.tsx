@@ -6,7 +6,7 @@ import { clsx } from 'clsx';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
-import { Brain, ChevronDown, ImageOff, Sparkles, TriangleAlert } from 'lucide-react';
+import { Brain, ChevronDown, EyeOff, ImageOff, Sparkles, TriangleAlert } from 'lucide-react';
 import { useChatStore } from '../../stores/chatStore';
 import { useBootstrapStore } from '../../stores/bootstrapStore';
 import { rehypeHighlightSubset } from '../../lib/rehypeHighlightSubset';
@@ -20,6 +20,15 @@ import { EmptyState, GlassButton, GlassPanel, Skeleton } from '../ui/primitives'
 import { MessageActions } from './MessageActions';
 import { MessageInspector, type InspectorSection } from './MessageInspector';
 import { ThoughtsList } from './ThoughtsList';
+import { MaskedSpan, MaskSelectionPopup } from './MaskedSpan';
+import {
+    applyMasks,
+    canMask,
+    describeMask,
+    MASK_PLACEHOLDER_PATTERN,
+    readMaskState,
+    type MaskedRange,
+} from '../../lib/masking';
 import { CitationChip } from './CitationChip';
 import type { ChatMessage, ThoughtEntry } from '../../lib/types';
 
@@ -39,30 +48,65 @@ import type { ChatMessage, ThoughtEntry } from '../../lib/types';
  * newline. Models also emit single newlines expecting them to be honoured, and the classic
  * UI's own Word export uses markdown2's `break-on-newline` for exactly that reason.
  */
-function Markdown({ content, citations }: { content: string; citations?: CitationGroup[] }) {
+function Markdown({
+    content,
+    citations,
+    masks,
+}: {
+    content: string;
+    citations?: CitationGroup[];
+    masks?: MaskedRange[];
+}) {
     const groups = citations ?? [];
+    const maskRanges = masks ?? [];
 
-    // Splits text nodes on the citation placeholder and substitutes the chip component.
-    const renderWithCitations = (children: React.ReactNode): React.ReactNode => {
-        if (groups.length === 0) {
+    /**
+     * Substitute components for the placeholder tokens left in the text.
+     *
+     * Citations and masks both survive markdown as inert tokens and are swapped back in
+     * here, so neither injects HTML into model output. A text node can contain both, so it
+     * is split on each in turn rather than on one or the other.
+     */
+    const renderTokens = (children: React.ReactNode): React.ReactNode => {
+        if (groups.length === 0 && maskRanges.length === 0) {
             return children;
         }
+
         return Children.map(children, (child) => {
             if (typeof child !== 'string') {
                 return child;
             }
-            const parts = child.split(CITATION_PLACEHOLDER_PATTERN);
-            if (parts.length === 1) {
-                return child;
-            }
+
             // String.split with a capturing group interleaves text and captures, so odd
-            // indices are the captured group index.
-            return parts.map((part, index) => {
-                if (index % 2 === 0) {
-                    return part;
+            // indices hold the captured index.
+            const withMasks: React.ReactNode[] = [];
+            child.split(MASK_PLACEHOLDER_PATTERN).forEach((part, index) => {
+                if (index % 2 === 1) {
+                    withMasks.push(
+                        <MaskedSpan key={`mask-${index}`} range={maskRanges[Number(part)]} />,
+                    );
+                    return;
                 }
-                const group = groups[Number(part)];
-                return group ? <CitationChip key={`${index}-${part}`} group={group} /> : null;
+                withMasks.push(part);
+            });
+
+            return withMasks.map((node, outer) => {
+                if (typeof node !== 'string') {
+                    return node;
+                }
+                const parts = node.split(CITATION_PLACEHOLDER_PATTERN);
+                if (parts.length === 1) {
+                    return node;
+                }
+                return parts.map((part, index) => {
+                    if (index % 2 === 0) {
+                        return part;
+                    }
+                    const group = groups[Number(part)];
+                    return group ? (
+                        <CitationChip key={`${outer}-${index}-${part}`} group={group} />
+                    ) : null;
+                });
             });
         });
     };
@@ -92,9 +136,9 @@ function Markdown({ content, citations }: { content: string; citations?: Citatio
                 remarkPlugins={[remarkGfm, remarkBreaks]}
                 rehypePlugins={[rehypeHighlightSubset]}
                 components={{
-                    p: ({ children }) => <p>{renderWithCitations(children)}</p>,
-                    li: ({ children }) => <li>{renderWithCitations(children)}</li>,
-                    td: ({ children }) => <td>{renderWithCitations(children)}</td>,
+                    p: ({ children }) => <p>{renderTokens(children)}</p>,
+                    li: ({ children }) => <li>{renderTokens(children)}</li>,
+                    td: ({ children }) => <td>{renderTokens(children)}</td>,
                 }}
             >
                 {content}
@@ -104,14 +148,28 @@ function Markdown({ content, citations }: { content: string; citations?: Citatio
 }
 
 /**
- * Assistant text with its citation markers turned into chips.
+ * Assistant text with its citation markers turned into chips and masked spans redacted.
+ *
+ * Masks are applied FIRST: their offsets are canonical positions in the raw content, and
+ * citation parsing rewrites the string, which would invalidate them.
  *
  * Parsing is memoised because it runs on every render of a long thread, and the streaming
  * bubble re-renders on each token.
  */
-function AssistantMarkdown({ content }: { content: string }) {
-    const { text, groups } = useMemo(() => parseCitations(content), [content]);
-    return <Markdown content={text} citations={groups} />;
+function AssistantMarkdown({
+    content,
+    masks,
+}: {
+    content: string;
+    masks?: MaskedRange[];
+}) {
+    const { text, groups, ranges } = useMemo(() => {
+        const masked = applyMasks(content, masks ?? []);
+        const parsed = parseCitations(masked.text);
+        return { ...parsed, ranges: masked.ranges };
+    }, [content, masks]);
+
+    return <Markdown content={text} citations={groups} masks={ranges} />;
 }
 
 function ThoughtsPanel({ thoughts }: { thoughts: ThoughtEntry[] }) {
@@ -202,7 +260,29 @@ function MessageBubble({ message }: { message: ChatMessage }) {
     const [editing, setEditing] = useState(false);
     const [draft, setDraft] = useState(message.content);
     const [inspector, setInspector] = useState<InspectorSection | null>(null);
+    const bodyRef = useRef<HTMLDivElement>(null);
     const editMessage = useChatStore((state) => state.editMessage);
+    const applyMask = useChatStore((state) => state.applyMask);
+    const currentUserId = useBootstrapStore((state) => state.data?.user?.id);
+
+    const masks = readMaskState(message);
+    const maskingAllowed = canMask(message, currentUserId);
+
+    // A user message is plain text, so its masked spans can be cut straight out of the
+    // content rather than going through the markdown placeholder path.
+    const maskedUserContent = useMemo(() => {
+        if (!isUser || masks.ranges.length === 0) {
+            return message.content;
+        }
+        const applied = applyMasks(message.content, masks.ranges);
+        return applied.text.split(MASK_PLACEHOLDER_PATTERN).map((part, index) =>
+            index % 2 === 1 ? (
+                <MaskedSpan key={index} range={applied.ranges[Number(part)]} />
+            ) : (
+                part
+            ),
+        );
+    }, [isUser, message.content, masks.ranges]);
 
     if (message.role === 'image') {
         return <ImageMessage message={message} />;
@@ -254,6 +334,7 @@ function MessageBubble({ message }: { message: ChatMessage }) {
         >
             <div className={clsx('flex w-full', isUser ? 'justify-end' : 'justify-start')}>
             <div
+                ref={bodyRef}
                 className={clsx(
                     'max-w-[min(46rem,85%)] rounded-2xl px-4 py-3',
                     // These are repeated per message, so they use the non-blurred surface:
@@ -263,16 +344,35 @@ function MessageBubble({ message }: { message: ChatMessage }) {
                         : 'glass-flat text-text-1',
                 )}
             >
-                {isUser ? (
+                {masks.fullyMasked ? (
+                    // The whole message is masked, so none of it is rendered. The server
+                    // also withholds it from the model.
+                    <p
+                        title={describeMask({
+                            start: 0,
+                            end: 0,
+                            display_name: masks.maskedBy,
+                            timestamp: masks.maskedAt,
+                        })}
+                        className={clsx(
+                            'flex items-center gap-2 text-[15px] italic',
+                            isUser ? 'text-on-accent/80' : 'text-text-3',
+                        )}
+                    >
+                        <EyeOff size={14} className="shrink-0" />
+                        This message is masked
+                        {masks.maskedBy ? ` by ${masks.maskedBy}` : ''}.
+                    </p>
+                ) : isUser ? (
                     <p className="text-[15px] leading-relaxed whitespace-pre-wrap">
-                        {message.content}
+                        {maskedUserContent}
                     </p>
                 ) : (
                     <>
                         {message.thoughts && message.thoughts.length > 0 && (
                             <ThoughtsPanel thoughts={message.thoughts} />
                         )}
-                        <AssistantMarkdown content={message.content} />
+                        <AssistantMarkdown content={message.content} masks={masks.ranges} />
                         {(message.model_deployment_name || message.agent_display_name) && (
                             <p className="mt-2 flex items-center gap-1.5 text-[11px] text-text-3">
                                 {message.agent_display_name ? (
@@ -289,6 +389,13 @@ function MessageBubble({ message }: { message: ChatMessage }) {
                 )}
             </div>
             </div>
+
+            {maskingAllowed && !masks.fullyMasked && (
+                <MaskSelectionPopup
+                    containerRef={bodyRef}
+                    onMask={(selection) => applyMask(message.id, 'mask_selection', selection)}
+                />
+            )}
 
             {/* Revealed on hover or keyboard focus so a long thread stays uncluttered,
                 while remaining reachable without a pointer. The inspector, once opened,
