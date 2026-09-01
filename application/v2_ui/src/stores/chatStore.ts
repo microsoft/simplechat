@@ -19,6 +19,9 @@ import {
     toggleConversationPinned,
 } from '../lib/endpoints';
 import { cancelStream, streamChat } from '../lib/sse';
+import { agentInfoForSelection } from '../lib/agents';
+import { messageThreadId } from '../lib/threads';
+import { useBootstrapStore } from './bootstrapStore';
 import type {
     ChatMessage,
     ChatStreamRequest,
@@ -75,6 +78,15 @@ interface ChatState {
     metadata: ConversationMetadata | null;
     metadataLoading: boolean;
     metadataError: string | null;
+
+    /**
+     * Attempt numbers known to exist, keyed by thread id.
+     *
+     * `/api/get_messages` filters to the active attempt, so the loaded list can never reveal
+     * how many attempts a thread has. The switch-attempt endpoint is the only thing that
+     * reports the full set, so what it returns is remembered here.
+     */
+    attemptsByThread: Record<string, number[]>;
 
     loadConversations: (options?: { reset?: boolean; search?: string }) => Promise<void>;
     loadMore: () => Promise<void>;
@@ -291,6 +303,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     metadata: null,
     metadataLoading: false,
     metadataError: null,
+    attemptsByThread: {},
 
     loadConversations: async (options = {}) => {
         const { reset = true, search } = options;
@@ -350,6 +363,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
             // shows another thread's documents.
             metadata: null,
             metadataError: null,
+            // Thread ids are per conversation, so learned attempt sets do not carry over.
+            attemptsByThread: {},
         });
 
         if (!conversationId) {
@@ -360,6 +375,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
         try {
             const { messages } = await fetchMessages(conversationId);
             set({ messages: messages ?? [], messagesLoading: false });
+
+            // The header badges describe what this conversation is bound to, so its
+            // metadata is needed as soon as it opens rather than only when a drawer is
+            // expanded. Advisory: a failure leaves the badges off, not the thread broken.
+            void get().loadMetadata(conversationId);
 
             // Only clear the marker when there is one. Calling unconditionally produced a
             // 404 for collaboration conversations, which are stored separately and have
@@ -559,7 +579,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
             requestBody.model_endpoint_id = options.modelEndpointId;
         }
         if (options.agentSelection) {
-            requestBody.agent_selection = options.agentSelection;
+            // The server reads `agent_info` and requires a dict; a bare string is silently
+            // ignored, so the picker would appear to do nothing.
+            const agentInfo = agentInfoForSelection(
+                useBootstrapStore.getState().data?.catalogs?.agents as
+                    | Record<string, unknown>[]
+                    | undefined,
+                options.agentSelection,
+            );
+            if (agentInfo) {
+                requestBody.agent_info = agentInfo;
+            }
         }
         if (options.reasoningEffort) {
             requestBody.reasoning_effort = options.reasoningEffort;
@@ -667,6 +697,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
             const result = await retryMessageApi(messageId, {
                 model: options?.modelDeployment,
                 reasoning_effort: options?.reasoningEffort,
+                agent_info:
+                    agentInfoForSelection(
+                        useBootstrapStore.getState().data?.catalogs?.agents as
+                            | Record<string, unknown>[]
+                            | undefined,
+                        options?.agentSelection,
+                    ) ?? undefined,
             });
             if (!result?.chat_request) {
                 throw new Error('The server did not return a retry request.');
@@ -712,7 +749,22 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     changeAttempt: async (messageId, direction) => {
         try {
-            await switchAttemptApi(messageId, direction);
+            const result = await switchAttemptApi(messageId, direction);
+
+            // The only place the server reports the full attempt set, so it is remembered
+            // against the thread rather than discarded.
+            const threadId = messageThreadId(
+                get().messages.find((message) => message.id === messageId),
+            );
+            if (threadId && Array.isArray(result?.available_attempts)) {
+                set((state) => ({
+                    attemptsByThread: {
+                        ...state.attemptsByThread,
+                        [threadId]: result.available_attempts,
+                    },
+                }));
+            }
+
             // The server flips active_thread in storage and /api/get_messages filters on
             // it, so the list must be re-read rather than reordered locally.
             await get().reloadMessages();

@@ -23,6 +23,7 @@ JavaScript module was modified to support it.
 | zustand | Client state (theme, bootstrap, conversations, chat) |
 | react-router-dom | Client-side routing under `/v2` |
 | react-markdown + remark-gfm | Assistant message rendering |
+| remark-breaks | Single newlines render as line breaks |
 | lowlight | Code block syntax highlighting |
 | lucide-react | Icons |
 
@@ -177,6 +178,8 @@ Wired to the live APIs:
 - Citations rendered as inline chips that open either the cited source itself — the PDF
   page, image, media clip, spreadsheet or Visio page — or the passage that was extracted
   from it
+- Generated images rendered inline, and a conversation badge showing the group or public
+  workspace the conversation is working in
 
 The SSE reader in `src/lib/sse.ts` reproduces the framing rules of
 `static/js/chat/chat-streaming.js` exactly, including the repair for frames whose blank-line
@@ -199,6 +202,32 @@ source rather than inferred:
   is hidden entirely when a model offers no choice.
 - **Citation markers** follow the grammar in `chat-citations.js`; a functional test asserts
   the two patterns stay identical so markers never render as raw text.
+- **`thread_attempt` is one-based**, and `/api/get_messages` filters to the active attempt.
+  The number of attempts therefore cannot be counted from the loaded messages; only
+  `switch-attempt` reports the full set, in `available_attempts`.
+- **Agent selection is `agent_info`, and must be a dict.** The chat route reads
+  `data.get('agent_info')` and ignores anything that is not a dictionary, so a bare string
+  is accepted by the request and then silently dropped. Agent catalog records carry no
+  `selection_key`; that field belongs to models.
+- **Image messages carry the image in `content`**, as a data URI, an `/api/image/<id>` path,
+  or an external URL. There is no `image_url` field.
+- **The three message exports are not alike.** Word and PowerPoint stream a document; the
+  email draft returns JSON, whose images must be saved separately because a `mailto:` URL
+  cannot carry attachments. All three require a JSON request body and reject a form post.
+- **The conversation summary's body is `summary.content`**, not `summary.text`.
+
+### Conversation badges
+
+The badges beside the conversation title reproduce `addChatTypeBadges`
+(`static/js/chat/chat-conversations.js`) so both interfaces describe a conversation the same
+way: classification pills, then a single workspace badge — the group name, `public - <name>`,
+`shared`, or nothing at all for a personal conversation — and the scope-lock indicator.
+
+All of it comes from that conversation's own metadata. Reading the user's globally active
+group here instead is what made every conversation show the same badge.
+
+A null `scope_locked` means no workspace data has been used yet, which is not the same as
+being unlocked, so nothing is shown rather than an open padlock.
 
 ### Enhanced citations
 
@@ -365,6 +394,7 @@ this entirely and is the recommended layout.
 | `functional_tests/test_v2_enhanced_citations.py` | Extension-to-viewer map parity with `getFileType`, the permissive metadata gate, `X-Sub-PDF-Page` handling, timestamp conversion, fallback on every failure |
 | `functional_tests/test_v2_research_voice.py` | Deep research's two fields, URL access, per-model reasoning effort, voice in and out |
 | `functional_tests/test_v2_dropdown_placement.py` | Composer pickers flip above the trigger when the bottom-anchored composer leaves no room below, and clamp their height to the viewport |
+| `functional_tests/test_v2_chat_phase1_fixes.py` | Exports send JSON rather than a form, email has its own path, images resolve from `content`, attempts are one-based, the title badge comes from conversation metadata, `agent_info` is an object, newlines match across roles, and failures are announced |
 | `functional_tests/test_csrf_state_changing_route_guard.py` | Cross-site mutations require an explicitly trusted origin; CORS preflights answered before authentication and never wildcarded |
 | `functional_tests/route_tests/` | Blueprint policy classification for `frontend_v2`, `backend_v2`, `backend_v2_admin` |
 

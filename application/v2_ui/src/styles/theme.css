@@ -59,6 +59,10 @@
     --warn-soft: rgb(217 119 6 / 0.12);
     --ok: #059669;
     --ok-soft: rgb(5 150 105 / 0.12);
+    /* Informational, used for the group workspace badge. Distinct from --accent so a
+       group badge is not mistaken for a selected control. */
+    --info: #0e7490;
+    --info-soft: rgb(14 116 144 / 0.12);
 
     --shadow-glass: 0 8px 32px rgb(15 23 42 / 0.10), 0 2px 8px rgb(15 23 42 / 0.06);
     --shadow-lift: 0 16px 48px rgb(15 23 42 / 0.16), 0 4px 12px rgb(15 23 42 / 0.08);
@@ -103,6 +107,8 @@
     --warn-soft: rgb(251 191 36 / 0.16);
     --ok: #34d399;
     --ok-soft: rgb(52 211 153 / 0.16);
+    --info: #22d3ee;
+    --info-soft: rgb(34 211 238 / 0.16);
 
     --shadow-glass: 0 8px 32px rgb(0 0 0 / 0.45), 0 2px 8px rgb(0 0 0 / 0.30);
     --shadow-lift: 0 16px 48px rgb(0 0 0 / 0.55), 0 4px 12px rgb(0 0 0 / 0.35);
@@ -137,6 +143,8 @@
     --color-warn-soft: var(--warn-soft);
     --color-ok: var(--ok);
     --color-ok-soft: var(--ok-soft);
+    --color-info: var(--info);
+    --color-info-soft: var(--info-soft);
 
     --shadow-glass: var(--shadow-glass);
     --shadow-lift: var(--shadow-lift);

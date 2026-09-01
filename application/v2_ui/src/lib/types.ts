@@ -52,8 +52,14 @@ export interface ChatMessage {
     agent_display_name?: string;
     augmented?: boolean;
     metadata?: Json;
-    /** Present on image messages, produced by hydrate_image_messages server-side. */
-    image_url?: string;
+    /**
+     * Image messages carry their image in `content`, not in a dedicated field.
+     *
+     * `hydrate_image_messages` (functions_image_messages.py) rewrites `content` to either a
+     * `data:image/...` URI for small inline images or the path `/api/image/<message_id>` when
+     * the bytes live in blob storage or exceed the inline limit. An externally hosted image
+     * arrives as a plain http(s) URL. There is no `image_url` key on the payload.
+     */
     /** Set locally when the user rates a response, so the control reflects their choice. */
     feedbackType?: 'positive' | 'negative';
     /** Reasoning steps captured while this message was streaming. */
@@ -141,11 +147,19 @@ export interface UsedDocument {
     [key: string]: unknown;
 }
 
-/** Generated conversation summary, present once one has been produced. */
+/**
+ * Generated conversation summary, present once one has been produced.
+ *
+ * The body is under `content`, not `text` (route_backend_conversation_export.py builds
+ * `{'content', 'model_deployment', 'generated_at', 'message_time_start',
+ * 'message_time_end'}`).
+ */
 export interface ConversationSummary {
-    text?: string;
+    content?: string;
     generated_at?: string;
     model_deployment?: string;
+    message_time_start?: string;
+    message_time_end?: string;
     [key: string]: unknown;
 }
 

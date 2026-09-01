@@ -319,9 +319,9 @@ export function ConversationDetails({ onClose }: { onClose: () => void }) {
                                 </Row>
                             )}
 
-                            {metadata.summary?.text && (
+                            {metadata.summary?.content && (
                                 <Row label="Summary">
-                                    <p className="whitespace-pre-wrap">{metadata.summary.text}</p>
+                                    <p className="whitespace-pre-wrap">{metadata.summary.content}</p>
                                     {(metadata.summary.generated_at ||
                                         metadata.summary.model_deployment) && (
                                         <p className="mt-1 text-xs text-text-3">

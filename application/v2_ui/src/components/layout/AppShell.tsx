@@ -5,6 +5,7 @@
 
 import type { ReactNode } from 'react';
 import { Sidebar } from './Sidebar';
+import { Toaster } from '../ui/Toaster';
 import { useBootstrapStore } from '../../stores/bootstrapStore';
 
 function ClassificationBanner() {
@@ -33,6 +34,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                 <Sidebar />
                 <main className="flex min-w-0 flex-1 flex-col">{children}</main>
             </div>
+            <Toaster />
         </div>
     );
 }

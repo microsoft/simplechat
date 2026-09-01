@@ -2,6 +2,44 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.012)**
+
+#### Bug Fixes
+
+*   **V2 Chat Exports Now Work**
+    *   Export to Word, Export to PowerPoint and Open as email did nothing in the V2 chat page. The request was submitted as a web form, but these endpoints only accept a JSON body, so every attempt was rejected before it started.
+    *   All three now work. Word and PowerPoint download the document, and Open as email opens your mail client with the subject and body filled in, saving any charts or images from the response so you can attach them.
+    *   Failures are now reported instead of appearing to do nothing.
+    *   (Ref: V2 message export, `/api/message/export-word`, `/api/message/export-powerpoint`, `/api/message/export-email-draft`)
+
+*   **Generated Images Display In V2**
+    *   Images produced in a conversation showed their internal address as a line of text instead of the picture. V2 now renders the image, and selecting it opens the full-size version.
+    *   An image that cannot be loaded now says so and shows the prompt that produced it, rather than leaving a broken image.
+    *   (Ref: V2 image messages, `/api/image/<id>`)
+
+*   **Message Retry Counter Was Always Wrong**
+    *   Every message in the V2 chat page claimed to be attempt "2 of 2", including messages that had never been retried.
+    *   The counter is now correct and only appears once a message actually has more than one attempt.
+    *   (Ref: V2 message actions, retry attempts)
+
+*   **Conversation Tag Was The Same On Every Conversation**
+    *   The badge beside the conversation title showed your currently selected group rather than anything about the conversation you were reading, so it never changed.
+    *   It now shows what the conversation itself is working in: the group or public workspace name, a "shared" marker for shared conversations, nothing for personal ones, plus classification labels and whether the workspace scope is locked.
+    *   (Ref: V2 chat header, conversation metadata)
+
+*   **Selecting An Agent Had No Effect In V2**
+    *   Choosing an agent in the V2 composer appeared to work but was ignored, because the selection was sent in a form the server does not read.
+    *   Agent selection now applies to both new messages and retries.
+    *   (Ref: V2 composer, agent selection)
+
+*   **Line Breaks Lost In V2 Responses**
+    *   A response written as several short lines was run together into one paragraph, while the same text in your own message kept its line breaks. The two now render the same way, and a single line break is preserved.
+    *   (Ref: V2 message rendering)
+
+*   **Conversation Summary Never Displayed In V2**
+    *   The summary section of V2's conversation details read a field that does not exist, so a generated summary was never shown.
+    *   (Ref: V2 conversation details, conversation summary)
+
 ### **(v0.261.011)**
 
 #### Bug Fixes

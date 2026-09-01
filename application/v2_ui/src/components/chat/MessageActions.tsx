@@ -28,24 +28,20 @@ import {
 } from 'lucide-react';
 import { useChatStore } from '../../stores/chatStore';
 import { useBootstrapStore } from '../../stores/bootstrapStore';
-import { apiUrl } from '../../lib/apiClient';
-import { exportMessagePath, type MessageExportFormat } from '../../lib/endpoints';
+import { toast } from '../../stores/toastStore';
+import { ApiError } from '../../lib/apiClient';
+import { attemptState } from '../../lib/threads';
+import {
+    downloadMessageExport,
+    emailDraftMailtoUrl,
+    fetchMessageEmailDraft,
+    saveEmailDraftAttachments,
+    type MessageExportFormat,
+} from '../../lib/endpoints';
 import { synthesizeSpeech } from '../../lib/voice';
 import type { ChatMessage } from '../../lib/types';
 
 /** Thread bookkeeping the server stores on each message. */
-interface ThreadInfo {
-    thread_id?: string;
-    thread_attempt?: number;
-    active_thread?: boolean;
-}
-
-function threadInfo(message: ChatMessage): ThreadInfo {
-    const metadata = message.metadata as Record<string, unknown> | undefined;
-    const info = metadata?.thread_info;
-    return (info && typeof info === 'object' ? info : {}) as ThreadInfo;
-}
-
 function IconButton({
     label,
     onClick,
@@ -138,34 +134,42 @@ function SpeakButton({ message }: { message: ChatMessage }) {
 }
 
 /**
- * Submit a hidden form to a server export endpoint.
+ * Run a server-rendered export, reporting the outcome.
  *
- * A normal fetch would put the file in memory with no way to hand it to the browser's
- * download machinery; a form POST lets the response's Content-Disposition do that.
+ * Word and PowerPoint stream a file. Email is not a download at all: it returns a JSON
+ * draft, whose images are saved separately because a `mailto:` URL cannot carry
+ * attachments, before the mail client is opened.
  */
-function postExport(format: MessageExportFormat, message: ChatMessage) {
-    const form = document.createElement('form');
-    form.method = 'POST';
-    form.action = apiUrl(exportMessagePath(format));
-    form.target = '_blank';
-    form.style.display = 'none';
-
-    const fields: Record<string, string> = {
+async function runExport(format: MessageExportFormat, message: ChatMessage) {
+    const body = {
         message_id: message.id,
         conversation_id: message.conversation_id,
     };
 
-    for (const [name, value] of Object.entries(fields)) {
-        const input = document.createElement('input');
-        input.type = 'hidden';
-        input.name = name;
-        input.value = value;
-        form.appendChild(input);
-    }
+    try {
+        if (format === 'email-draft') {
+            const draft = await fetchMessageEmailDraft(body);
+            const saved = saveEmailDraftAttachments(draft.attachments);
+            window.location.href = emailDraftMailtoUrl(draft);
+            toast.success(
+                saved > 0
+                    ? `Email draft opened. ${saved} image${saved === 1 ? '' : 's'} downloaded to attach.`
+                    : 'Email draft opened.',
+            );
+            return;
+        }
 
-    document.body.appendChild(form);
-    form.submit();
-    document.body.removeChild(form);
+        await downloadMessageExport(format, body);
+        toast.success(format === 'word' ? 'Exported as a Word document.' : 'Exported as a PowerPoint.');
+    } catch (error) {
+        const label =
+            format === 'word' ? 'Word' : format === 'powerpoint' ? 'PowerPoint' : 'email';
+        toast.error(
+            error instanceof ApiError && error.message
+                ? `${label} export failed: ${error.message}`
+                : `${label} export failed.`,
+        );
+    }
 }
 
 function downloadMarkdown(message: ChatMessage) {
@@ -287,13 +291,13 @@ function OverflowMenu({
                         downloadMarkdown(message),
                     )}
                     {item('Export to Word', <FileDown size={14} />, () =>
-                        postExport('word', message),
+                        void runExport('word', message),
                     )}
                     {item('Export to PowerPoint', <FileDown size={14} />, () =>
-                        postExport('powerpoint', message),
+                        void runExport('powerpoint', message),
                     )}
                     {item('Open as email', <Mail size={14} />, () =>
-                        postExport('email-draft', message),
+                        void runExport('email-draft', message),
                     )}
                     {item(
                         'Delete',
@@ -314,7 +318,7 @@ export function MessageActions({
     message: ChatMessage;
     onEdit?: () => void;
 }) {
-    const { retryMessage, changeAttempt, sendFeedback, forkFromMessage, streaming, messages } =
+    const { retryMessage, changeAttempt, sendFeedback, forkFromMessage, streaming, attemptsByThread } =
         useChatStore();
     const feedbackEnabled = useBootstrapStore((state) =>
         Boolean(state.data?.features?.enable_user_feedback),
@@ -325,21 +329,7 @@ export function MessageActions({
 
     const [copied, setCopied] = useState(false);
     const isUser = message.role === 'user';
-    const info = threadInfo(message);
-
-    // Attempt controls only make sense once a thread has more than one attempt. The
-    // message list is filtered to the active attempt, so the count is derived from the
-    // highest attempt number seen for this thread rather than from the visible rows.
-    const attemptCount = info.thread_id
-        ? messages.reduce((highest, item) => {
-              const other = threadInfo(item);
-              return other.thread_id === info.thread_id
-                  ? Math.max(highest, (other.thread_attempt ?? 0) + 1)
-                  : highest;
-          }, 0)
-        : 0;
-    const currentAttempt = (info.thread_attempt ?? 0) + 1;
-    const showAttempts = attemptCount > 1;
+    const attempts = attemptState(message, attemptsByThread);
 
     const copy = async () => {
         try {
@@ -358,7 +348,7 @@ export function MessageActions({
                 isUser ? 'justify-end' : 'justify-start',
             )}
         >
-            {showAttempts && (
+            {attempts.show && (
                 <div className="mr-1 flex items-center gap-0.5">
                     <IconButton
                         label="Previous attempt"
@@ -367,8 +357,17 @@ export function MessageActions({
                     >
                         <ChevronLeft size={15} />
                     </IconButton>
-                    <span className="font-mono text-[11px] text-text-3">
-                        {currentAttempt}/{attemptCount}
+                    <span
+                        className="font-mono text-[11px] text-text-3"
+                        title={
+                            attempts.total === null
+                                ? 'Use the arrows to move between attempts'
+                                : `Attempt ${attempts.current} of ${attempts.total}`
+                        }
+                    >
+                        {attempts.total === null
+                            ? attempts.current
+                            : `${attempts.current}/${attempts.total}`}
                     </span>
                     <IconButton
                         label="Next attempt"

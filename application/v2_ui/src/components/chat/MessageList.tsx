@@ -5,10 +5,12 @@ import { Children, useEffect, useMemo, useRef, useState } from 'react';
 import { clsx } from 'clsx';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { Brain, ChevronDown, Sparkles, TriangleAlert } from 'lucide-react';
+import remarkBreaks from 'remark-breaks';
+import { Brain, ChevronDown, ImageOff, Sparkles, TriangleAlert } from 'lucide-react';
 import { useChatStore } from '../../stores/chatStore';
 import { useBootstrapStore } from '../../stores/bootstrapStore';
 import { rehypeHighlightSubset } from '../../lib/rehypeHighlightSubset';
+import { resolveImageSource } from '../../lib/images';
 import {
     CITATION_PLACEHOLDER_PATTERN,
     parseCitations,
@@ -27,6 +29,13 @@ import type { ChatMessage, ThoughtEntry } from '../../lib/types';
  *
  * Citation markers are lifted out before rendering and swapped back in afterwards as
  * chips, so the markdown pipeline never sees them and no HTML is injected to support them.
+ *
+ * `remark-breaks` makes a single newline a line break. This deliberately differs from the
+ * classic UI, which uses marked's defaults (`breaks: false`) so single newlines collapse
+ * into the surrounding paragraph. Without it, identical text renders differently depending
+ * on who sent it, because user messages are shown with `whitespace-pre-wrap` and keep every
+ * newline. Models also emit single newlines expecting them to be honoured, and the classic
+ * UI's own Word export uses markdown2's `break-on-newline` for exactly that reason.
  */
 function Markdown({ content, citations }: { content: string; citations?: CitationGroup[] }) {
     const groups = citations ?? [];
@@ -78,7 +87,7 @@ function Markdown({ content, citations }: { content: string; citations?: Citatio
             )}
         >
             <ReactMarkdown
-                remarkPlugins={[remarkGfm]}
+                remarkPlugins={[remarkGfm, remarkBreaks]}
                 rehypePlugins={[rehypeHighlightSubset]}
                 components={{
                     p: ({ children }) => <p>{renderWithCitations(children)}</p>,
@@ -142,22 +151,63 @@ function ThoughtsPanel({ thoughts }: { thoughts: ThoughtEntry[] }) {
     );
 }
 
+function ImageMessage({ message }: { message: ChatMessage }) {
+    const [failed, setFailed] = useState(false);
+    const source = resolveImageSource(message.content);
+
+    // An unrecognised content shape, or an image that will not load, falls back to the
+    // prompt text. A broken image element tells the user nothing.
+    if (!source || failed) {
+        return (
+            <div id={`message-${message.id}`} className="flex justify-start">
+                <div className="glass-flat max-w-[min(46rem,85%)] rounded-2xl px-4 py-3">
+                    <p className="flex items-center gap-2 text-sm text-text-2">
+                        <ImageOff size={15} className="shrink-0 text-text-3" />
+                        {failed ? 'This image could not be loaded.' : 'Image unavailable.'}
+                    </p>
+                    {message.prompt ? (
+                        <p className="mt-1 text-xs text-text-3">{String(message.prompt)}</p>
+                    ) : null}
+                </div>
+            </div>
+        );
+    }
+
+    const alt = String(message.prompt || message.filename || 'Generated image');
+
+    return (
+        <div id={`message-${message.id}`} className="group/message flex flex-col">
+            <div className="flex justify-start">
+                <a
+                    href={source.src}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    title="Open the full-size image"
+                    className="glass-flat block overflow-hidden rounded-2xl p-1.5"
+                >
+                    <img
+                        src={source.src}
+                        alt={alt}
+                        onError={() => setFailed(true)}
+                        className="max-h-[28rem] max-w-md rounded-xl object-contain"
+                    />
+                </a>
+            </div>
+            <div className="opacity-0 transition-opacity group-hover/message:opacity-100 focus-within:opacity-100">
+                <MessageActions message={message} />
+            </div>
+        </div>
+    );
+}
+
 function MessageBubble({ message }: { message: ChatMessage }) {
     const isUser = message.role === 'user';
     const [editing, setEditing] = useState(false);
     const [draft, setDraft] = useState(message.content);
     const editMessage = useChatStore((state) => state.editMessage);
 
-    if (message.role === 'image' && message.image_url) {
-        return (
-            <div id={`message-${message.id}`} className="flex justify-start">
-                <img
-                    src={message.image_url}
-                    alt={message.content || 'Generated image'}
-                    className="max-w-md rounded-2xl border border-edge"
-                />
-            </div>
-        );
+    if (message.role === 'image') {
+        return <ImageMessage message={message} />;
     }
 
     if (editing) {

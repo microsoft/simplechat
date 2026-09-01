@@ -10,11 +10,11 @@ import { MessageList } from '../components/chat/MessageList';
 import { Composer } from '../components/chat/Composer';
 import { ConversationDrawer } from '../components/chat/ConversationDrawer';
 import { ConversationDetails } from '../components/chat/ConversationDetails';
+import { ConversationBadges } from '../components/chat/ConversationBadges';
 
 function ChatHeader({ onOpenDetails }: { onOpenDetails: () => void }) {
     const { activeConversationId, conversations, drawerMode, setDrawerMode, metadata } =
         useChatStore();
-    const scope = useBootstrapStore((state) => state.data?.scope);
     const contentsEnabled = useBootstrapStore((state) =>
         Boolean(state.data?.features?.enable_conversation_contents_drawer),
     );
@@ -45,11 +45,9 @@ function ChatHeader({ onOpenDetails }: { onOpenDetails: () => void }) {
             <h1 className="truncate text-[15px] font-semibold text-text-1">
                 {active?.title || 'New chat'}
             </h1>
-            {scope?.active_group_name && (
-                <span className="rounded-full border border-edge bg-surface-2 px-2 py-0.5 text-xs text-text-2">
-                    {scope.active_group_name}
-                </span>
-            )}
+            {/* Derived from this conversation's own metadata. Reading the user's active
+                group here instead made every conversation show the same badge. */}
+            <ConversationBadges metadata={metadata} />
 
             {activeConversationId && (
                 <div className="ml-auto flex items-center gap-1">

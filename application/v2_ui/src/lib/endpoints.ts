@@ -182,7 +182,19 @@ export const forkConversation = (conversationId: string, messageId: string) =>
         { message_id: messageId },
     );
 
-/** Server-rendered exports. Markdown is produced client-side; no endpoint exists for it. */
+/* -------------------------------------------------------------------------- */
+/* Message export                                                              */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Exports rendered by the server.
+ *
+ * Markdown is produced client-side; no endpoint exists for it.
+ *
+ * All three endpoints read their parameters with `request.get_json()` and reject a request
+ * with no JSON body (`route_backend_conversation_export.py`), so they must be called with
+ * `Content-Type: application/json`. A form submission is silently rejected with a 400.
+ */
 export type MessageExportFormat = 'word' | 'powerpoint' | 'email-draft';
 
 const EXPORT_PATHS: Record<MessageExportFormat, string> = {
@@ -192,6 +204,157 @@ const EXPORT_PATHS: Record<MessageExportFormat, string> = {
 };
 
 export const exportMessagePath = (format: MessageExportFormat) => EXPORT_PATHS[format];
+
+/** File extension the server names each download with. */
+const EXPORT_EXTENSIONS: Record<'word' | 'powerpoint', string> = {
+    word: 'docx',
+    powerpoint: 'pptx',
+};
+
+interface MessageExportRequest {
+    message_id: string;
+    conversation_id: string;
+}
+
+/** `YYYYMMDD_HHMMSS`, matching the server's own download naming. */
+function exportTimestamp(): string {
+    const now = new Date();
+    const pad = (value: number) => String(value).padStart(2, '0');
+    return (
+        `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}` +
+        `_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`
+    );
+}
+
+/** Hand a blob to the browser's download machinery. */
+function saveBlob(blob: Blob, filename: string): void {
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+}
+
+/** Read an error out of a non-OK export response, whatever its content type. */
+async function exportError(response: Response): Promise<ApiError> {
+    let message = `Export failed (${response.status})`;
+    try {
+        const payload = (await response.json()) as { error?: string } | null;
+        if (payload?.error) {
+            message = payload.error;
+        }
+    } catch {
+        /* A non-JSON error body leaves the status-based message in place. */
+    }
+    return new ApiError(message, response.status, null);
+}
+
+/**
+ * Download a message as a Word or PowerPoint file.
+ *
+ * Both endpoints stream the document itself rather than a link to it, so the response is
+ * read as a blob and saved locally.
+ */
+export async function downloadMessageExport(
+    format: 'word' | 'powerpoint',
+    body: MessageExportRequest,
+): Promise<void> {
+    const response = await fetch(apiUrl(EXPORT_PATHS[format]), {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', Accept: '*/*' },
+        body: JSON.stringify(body),
+    });
+
+    if (!response.ok) {
+        throw await exportError(response);
+    }
+
+    saveBlob(await response.blob(), `message_export_${exportTimestamp()}.${EXPORT_EXTENSIONS[format]}`);
+}
+
+/** One image the server extracted from the message for the user to attach by hand. */
+export interface EmailDraftAttachment {
+    data_uri?: string;
+    filename?: string;
+    content_type?: string;
+}
+
+/** Response of POST /api/message/export-email-draft. */
+export interface EmailDraft {
+    subject?: string;
+    subject_source?: string;
+    body?: string;
+    attachments?: EmailDraftAttachment[];
+}
+
+export async function fetchMessageEmailDraft(body: MessageExportRequest): Promise<EmailDraft> {
+    return api.post<EmailDraft>(EXPORT_PATHS['email-draft'], body);
+}
+
+/**
+ * Save any charts or images the email draft carried.
+ *
+ * A `mailto:` URL cannot carry attachments, so the server returns the images separately and
+ * the user attaches them to the draft themselves. Returns how many were saved so the caller
+ * can tell them what to expect.
+ */
+export function saveEmailDraftAttachments(attachments: EmailDraftAttachment[] | undefined): number {
+    if (!Array.isArray(attachments) || attachments.length === 0) {
+        return 0;
+    }
+
+    let saved = 0;
+    attachments.forEach((attachment, index) => {
+        const dataUri = String(attachment?.data_uri || '').trim();
+        if (!dataUri.startsWith('data:image/')) {
+            return;
+        }
+
+        const [header, base64] = dataUri.split(',', 2);
+        if (!base64) {
+            return;
+        }
+
+        try {
+            const binary = atob(base64);
+            const bytes = new Uint8Array(binary.length);
+            for (let i = 0; i < binary.length; i += 1) {
+                bytes[i] = binary.charCodeAt(i);
+            }
+            const type =
+                attachment.content_type || header.slice(5).split(';')[0] || 'image/png';
+            saveBlob(new Blob([bytes], { type }), attachment.filename || `message_chart_${index + 1}.png`);
+            saved += 1;
+        } catch {
+            /* A malformed data URI is skipped rather than failing the whole draft. */
+        }
+    });
+
+    return saved;
+}
+
+/**
+ * `mailto:` has no formal length limit but user agents and mail clients impose their own,
+ * and an over-long URL is silently dropped by some of them. The body is trimmed to stay
+ * inside the most restrictive common ceiling.
+ */
+const MAILTO_BODY_LIMIT = 1800;
+
+/** Build the `mailto:` URL for a draft, trimming an over-long body. */
+export function emailDraftMailtoUrl(draft: EmailDraft): string {
+    const subject = draft.subject || 'Shared chat message';
+    let body = draft.body || '';
+
+    if (body.length > MAILTO_BODY_LIMIT) {
+        body = `${body.slice(0, MAILTO_BODY_LIMIT)}\n\n[Message truncated — see SimpleChat for the full response.]`;
+    }
+
+    return `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+}
 
 /* -------------------------------------------------------------------------- */
 /* Citations                                                                   */

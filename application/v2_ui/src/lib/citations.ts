@@ -141,5 +141,10 @@ export function parseCitations(message: string): ParsedMessage {
     // removed rather than shown to the user as raw ids.
     text = text.replace(ORPHAN_BRACKET_RUN, '');
 
+    // Collapse runs of blank lines, matching the classic UI's `\n{3,}` -> `\n\n`. With
+    // remark-breaks enabled every newline becomes a line break, so an unclipped run of
+    // blank lines would otherwise open a large gap in the middle of an answer.
+    text = text.replace(/\n{3,}/g, '\n\n');
+
     return { text, groups };
 }

@@ -112,8 +112,11 @@ def test_attempt_switching_refetches_messages():
 
     store = _read(V2_SRC / "stores" / "chatStore.ts")
     # Anchored on the implementation, since the same name also appears in the interface.
+    # Sliced to the end of the function rather than a fixed character count, which breaks
+    # whenever anything is added ahead of the call.
     changed = store[store.index("changeAttempt: async") :]
-    assert "reloadMessages()" in changed[:800], (
+    changed = changed[: changed.index("\n    },")]
+    assert "reloadMessages()" in changed, (
         "changeAttempt must refetch messages; the active attempt is server-side state"
     )
 

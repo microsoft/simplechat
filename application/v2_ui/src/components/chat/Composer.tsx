@@ -21,6 +21,7 @@ import {
 import { useChatStore, type ComposerOptions } from '../../stores/chatStore';
 import { useBootstrapStore } from '../../stores/bootstrapStore';
 import { uploadDocument } from '../../lib/endpoints';
+import { agentSelectionKey } from '../../lib/agents';
 import {
     getModelSupportedLevels,
     REASONING_LABELS,
@@ -131,12 +132,11 @@ export function Composer() {
         }),
     );
 
+    // The catalog record has no `selection_key` (that is a model concept), so the agent is
+    // identified by id, falling back to name for a record that somehow lacks one.
     const agentOptions: DropdownOption[] = (bootstrap?.catalogs?.agents ?? []).map(
         (agent, index) => ({
-            value:
-                (agent.selection_key as string) ??
-                (agent.name as string) ??
-                String(index),
+            value: agentSelectionKey(agent) || String(index),
             label: (agent.display_name as string) || (agent.name as string) || 'Agent',
             description: agent.description as string | undefined,
             group: agent.scope_type ? String(agent.scope_type) : undefined,
