@@ -113,6 +113,73 @@ export interface WorkspaceTag {
     color?: string;
 }
 
+/** Where a cited document lives, from functions_citation_tracking._scope_from_citation. */
+export interface UsedDocumentScope {
+    type?: 'personal' | 'group' | 'public' | string;
+    id?: string;
+    name?: string;
+}
+
+/**
+ * A document-level citation aggregate, as built by
+ * functions_citation_tracking.build_used_documents and stored on the conversation.
+ */
+export interface UsedDocument {
+    category?: string;
+    document_id: string;
+    title?: string;
+    file_name?: string;
+    classification?: string;
+    scope?: UsedDocumentScope;
+    chunk_ids?: string[];
+    citation_ids?: string[];
+    page_numbers?: (number | string)[];
+    sheet_names?: string[];
+    citation_locations?: Array<Record<string, unknown>>;
+    [key: string]: unknown;
+}
+
+/** Generated conversation summary, present once one has been produced. */
+export interface ConversationSummary {
+    text?: string;
+    generated_at?: string;
+    model_deployment?: string;
+    [key: string]: unknown;
+}
+
+/**
+ * Response of GET /api/conversations/<id>/metadata.
+ *
+ * Field names are taken from the route itself. Note the identifier key is
+ * `conversation_id`, not `id`, and the response carries no `created_at`, `participants`
+ * or permission flags.
+ */
+export interface ConversationMetadata {
+    conversation_id: string;
+    title: string;
+    user_id?: string;
+    last_updated?: string;
+    classification?: string[] | string;
+    context?: unknown[];
+    tags?: Array<Record<string, unknown>>;
+    used_documents_tracking_version?: number | null;
+    legacy_used_documents?: UsedDocument[];
+    used_documents?: UsedDocument[];
+    strict?: boolean;
+    is_pinned?: boolean;
+    is_hidden?: boolean;
+    has_unread_assistant_response?: boolean;
+    last_unread_assistant_message_id?: string | null;
+    last_unread_assistant_at?: string | null;
+    scope_locked?: boolean | null;
+    locked_contexts?: unknown[];
+    chat_type?: string | null;
+    workflow_id?: string | null;
+    summary?: ConversationSummary | null;
+    linked_workspace_documents?: UsedDocument[];
+    [key: string]: unknown;
+}
+
 export interface AdminNavSection {
     id: string;
     label: string;

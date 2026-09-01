@@ -10,8 +10,8 @@ import type {
     BootstrapPayload,
     ChatMessage,
     Citation,
-    Conversation,
     ConversationFeedPage,
+    ConversationMetadata,
     Json,
     WorkspaceDocument,
     WorkspaceTag,
@@ -107,7 +107,7 @@ export const markConversationRead = (conversationId: string, isCollaborative = f
     );
 
 export const fetchConversationMetadata = (conversationId: string, signal?: AbortSignal) =>
-    api.get<Conversation>(
+    api.get<ConversationMetadata>(
         `/api/conversations/${encodeURIComponent(conversationId)}/metadata`,
         signal,
     );

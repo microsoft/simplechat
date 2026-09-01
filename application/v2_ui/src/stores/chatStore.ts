@@ -17,13 +17,18 @@ import type {
     ChatMessage,
     ChatStreamRequest,
     Conversation,
+    ConversationMetadata,
     ThoughtEntry,
 } from '../lib/types';
+import { fetchConversationMetadata } from '../lib/endpoints';
 
 const FEED_PAGE_SIZE = 30;
 
 /** Identifier for the optimistic assistant message shown while a stream is running. */
 const STREAMING_MESSAGE_ID = '__streaming__';
+
+/** Which mode the right-hand drawer is showing, or null when it is closed. */
+export type DrawerMode = 'contents' | 'documents' | null;
 
 export interface ComposerOptions {
     modelDeployment?: string;
@@ -56,6 +61,12 @@ interface ChatState {
     thoughts: ThoughtEntry[];
     streamError: string | null;
 
+    /** Right-hand drawer state. Null means closed. */
+    drawerMode: DrawerMode;
+    metadata: ConversationMetadata | null;
+    metadataLoading: boolean;
+    metadataError: string | null;
+
     loadConversations: (options?: { reset?: boolean; search?: string }) => Promise<void>;
     loadMore: () => Promise<void>;
     setSearchTerm: (term: string) => void;
@@ -69,6 +80,9 @@ interface ChatState {
 
     sendMessage: (text: string, options: ComposerOptions) => Promise<void>;
     stopStreaming: () => void;
+
+    setDrawerMode: (mode: DrawerMode) => void;
+    loadMetadata: (conversationId: string) => Promise<void>;
 }
 
 /** Controller for the in-flight stream, kept outside the store as it is not render state. */
@@ -100,6 +114,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
     streamingContent: '',
     thoughts: [],
     streamError: null,
+
+    drawerMode: null,
+    metadata: null,
+    metadataLoading: false,
+    metadataError: null,
 
     loadConversations: async (options = {}) => {
         const { reset = true, search } = options;
@@ -155,6 +174,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
             streamingContent: '',
             thoughts: [],
             streamError: null,
+            // Metadata belongs to the previous conversation; drop it so the drawer never
+            // shows another thread's documents.
+            metadata: null,
+            metadataError: null,
         });
 
         if (!conversationId) {
@@ -212,6 +235,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
             streamingContent: '',
             thoughts: [],
             streamError: null,
+            metadata: null,
+            metadataError: null,
         });
     },
 
@@ -500,5 +525,39 @@ export const useChatStore = create<ChatState>((set, get) => ({
         activeStreamController = null;
         streamingConversationId = null;
         set({ streaming: false, streamingContent: '' });
+    },
+
+    setDrawerMode: (drawerMode) => {
+        set({ drawerMode });
+        // Documents are derived from conversation metadata, so opening that mode loads it
+        // on demand rather than on every conversation switch.
+        const { activeConversationId, metadata, metadataLoading } = get();
+        if (
+            drawerMode === 'documents' &&
+            activeConversationId &&
+            !metadata &&
+            !metadataLoading
+        ) {
+            void get().loadMetadata(activeConversationId);
+        }
+    },
+
+    loadMetadata: async (conversationId) => {
+        set({ metadataLoading: true, metadataError: null });
+        try {
+            const metadata = await fetchConversationMetadata(conversationId);
+            // Discard if the user moved on while this was in flight.
+            if (get().activeConversationId !== conversationId) {
+                set({ metadataLoading: false });
+                return;
+            }
+            set({ metadata, metadataLoading: false });
+        } catch (error) {
+            set({
+                metadataLoading: false,
+                metadataError:
+                    error instanceof Error ? error.message : 'Failed to load conversation details.',
+            });
+        }
     },
 }));

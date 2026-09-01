@@ -94,7 +94,7 @@ function MessageBubble({ message }: { message: ChatMessage }) {
 
     if (message.role === 'image' && message.image_url) {
         return (
-            <div className="flex justify-start">
+            <div id={`message-${message.id}`} className="flex justify-start">
                 <img
                     src={message.image_url}
                     alt={message.content || 'Generated image'}
@@ -105,7 +105,10 @@ function MessageBubble({ message }: { message: ChatMessage }) {
     }
 
     return (
-        <div className={clsx('flex', isUser ? 'justify-end' : 'justify-start')}>
+        <div
+            id={`message-${message.id}`}
+            className={clsx('flex transition-shadow', isUser ? 'justify-end' : 'justify-start')}
+        >
             <div
                 className={clsx(
                     'max-w-[min(46rem,85%)] rounded-2xl px-4 py-3',

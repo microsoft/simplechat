@@ -2,6 +2,17 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.005)**
+
+#### New Features
+
+*   **V2 Chat Conversation Drawer**
+    *   Added a right-hand panel to the V2 chat page with two modes, matching the drawer in the current interface.
+    *   **Contents** lists your questions in order so you can jump straight to a point in a long conversation; selecting one scrolls the thread there and briefly highlights it. It respects the same **Conversation Contents Drawer** admin setting and per-user preference the current interface uses, so turning it off hides it in both.
+    *   **Documents** lists the documents behind a conversation, marking which were actually **Cited**, where the citations landed (pages or sheets), which workspace each came from, and its classification. The toggle carries a count badge.
+    *   Documents are gathered from all three places the server records them, de-duplicated, so files attached directly to a chat appear alongside ones found through search.
+    *   (Ref: V2 conversation drawer, `/api/conversations/<id>/metadata`, `build_used_documents`)
+
 ### **(v0.261.004)**
 
 #### Bug Fixes
