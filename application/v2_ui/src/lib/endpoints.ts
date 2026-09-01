@@ -196,8 +196,16 @@ export const exportMessagePath = (format: MessageExportFormat) => EXPORT_PATHS[f
 /* Citations                                                                   */
 /* -------------------------------------------------------------------------- */
 
-export const fetchCitation = (citationId: string) =>
-    api.post<Citation>('/api/get_citation', { citation_id: citationId });
+/** Request body for /api/get_citation. Only citation_id is required. */
+export interface CitationRequest {
+    citation_id: string;
+    document_id?: string;
+    page_number?: string;
+    chunk_id?: string;
+}
+
+export const fetchCitation = (payload: CitationRequest) =>
+    api.post<Citation>('/api/get_citation', payload);
 
 /* -------------------------------------------------------------------------- */
 /* Documents                                                                   */

@@ -1,7 +1,7 @@
 // MessageList.tsx
 // Renders the message thread, the in-flight streaming bubble and the reasoning panel.
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Children, useEffect, useMemo, useRef, useState } from 'react';
 import { clsx } from 'clsx';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -9,8 +9,14 @@ import { Brain, ChevronDown, Sparkles, TriangleAlert } from 'lucide-react';
 import { useChatStore } from '../../stores/chatStore';
 import { useBootstrapStore } from '../../stores/bootstrapStore';
 import { rehypeHighlightSubset } from '../../lib/rehypeHighlightSubset';
+import {
+    CITATION_PLACEHOLDER_PATTERN,
+    parseCitations,
+    type CitationGroup,
+} from '../../lib/citations';
 import { EmptyState, GlassButton, GlassPanel, Skeleton } from '../ui/primitives';
 import { MessageActions } from './MessageActions';
+import { CitationChip } from './CitationChip';
 import type { ChatMessage, ThoughtEntry } from '../../lib/types';
 
 /**
@@ -18,8 +24,38 @@ import type { ChatMessage, ThoughtEntry } from '../../lib/types';
  *
  * Raw HTML is deliberately not enabled (no rehype-raw): model output is untrusted input,
  * and react-markdown's default of escaping HTML is what keeps this XSS-safe.
+ *
+ * Citation markers are lifted out before rendering and swapped back in afterwards as
+ * chips, so the markdown pipeline never sees them and no HTML is injected to support them.
  */
-function Markdown({ content }: { content: string }) {
+function Markdown({ content, citations }: { content: string; citations?: CitationGroup[] }) {
+    const groups = citations ?? [];
+
+    // Splits text nodes on the citation placeholder and substitutes the chip component.
+    const renderWithCitations = (children: React.ReactNode): React.ReactNode => {
+        if (groups.length === 0) {
+            return children;
+        }
+        return Children.map(children, (child) => {
+            if (typeof child !== 'string') {
+                return child;
+            }
+            const parts = child.split(CITATION_PLACEHOLDER_PATTERN);
+            if (parts.length === 1) {
+                return child;
+            }
+            // String.split with a capturing group interleaves text and captures, so odd
+            // indices are the captured group index.
+            return parts.map((part, index) => {
+                if (index % 2 === 0) {
+                    return part;
+                }
+                const group = groups[Number(part)];
+                return group ? <CitationChip key={`${index}-${part}`} group={group} /> : null;
+            });
+        });
+    };
+
     return (
         <div
             className={clsx(
@@ -44,11 +80,27 @@ function Markdown({ content }: { content: string }) {
             <ReactMarkdown
                 remarkPlugins={[remarkGfm]}
                 rehypePlugins={[rehypeHighlightSubset]}
+                components={{
+                    p: ({ children }) => <p>{renderWithCitations(children)}</p>,
+                    li: ({ children }) => <li>{renderWithCitations(children)}</li>,
+                    td: ({ children }) => <td>{renderWithCitations(children)}</td>,
+                }}
             >
                 {content}
             </ReactMarkdown>
         </div>
     );
+}
+
+/**
+ * Assistant text with its citation markers turned into chips.
+ *
+ * Parsing is memoised because it runs on every render of a long thread, and the streaming
+ * bubble re-renders on each token.
+ */
+function AssistantMarkdown({ content }: { content: string }) {
+    const { text, groups } = useMemo(() => parseCitations(content), [content]);
+    return <Markdown content={text} citations={groups} />;
 }
 
 function ThoughtsPanel({ thoughts }: { thoughts: ThoughtEntry[] }) {
@@ -172,7 +224,7 @@ function MessageBubble({ message }: { message: ChatMessage }) {
                         {message.thoughts && message.thoughts.length > 0 && (
                             <ThoughtsPanel thoughts={message.thoughts} />
                         )}
-                        <Markdown content={message.content} />
+                        <AssistantMarkdown content={message.content} />
                         {(message.model_deployment_name || message.agent_display_name) && (
                             <p className="mt-2 flex items-center gap-1.5 text-[11px] text-text-3">
                                 {message.agent_display_name ? (
@@ -210,7 +262,7 @@ function StreamingBubble() {
             <div className="glass-flat max-w-[min(46rem,85%)] rounded-2xl px-4 py-3">
                 <ThoughtsPanel thoughts={thoughts} />
                 {streamingContent ? (
-                    <Markdown content={streamingContent} />
+                    <AssistantMarkdown content={streamingContent} />
                 ) : (
                     <span className="flex items-center gap-1.5 text-sm text-text-3">
                         <span className="flex gap-1">

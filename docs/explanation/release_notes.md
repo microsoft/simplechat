@@ -2,6 +2,17 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.008)**
+
+#### New Features
+
+*   **V2 Citations**
+    *   Responses in the V2 chat page now show citations as compact inline chips instead of the raw `(Source: ...)` text the model emits. Each chip names the file and the page, sheet, or location it came from.
+    *   Selecting a chip opens the passage that was actually cited, along with its file name and location.
+    *   Citations that point at a web page render as an outbound link instead, opening in a new tab, since there is no stored passage to show for them.
+    *   Answers without citations are unaffected, and tables, code blocks, and other formatting continue to render normally around the chips.
+    *   (Ref: V2 citations, `/api/get_citation`, citation marker format)
+
 ### **(v0.261.007)**
 
 #### New Features
