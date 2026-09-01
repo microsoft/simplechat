@@ -5,7 +5,8 @@
 // route_backend_chats.py, route_backend_documents.py and functions_conversation_feed.py.
 // Keeping them in one module means a backend path change is a one-line edit here.
 
-import { api, uploadFile } from './apiClient';
+import { api, apiUrl, uploadFile, ApiError, API_BASE } from './apiClient';
+import type { EnhancedCitationMetadata } from './enhancedCitations';
 import type {
     BootstrapPayload,
     ChatMessage,
@@ -206,6 +207,126 @@ export interface CitationRequest {
 
 export const fetchCitation = (payload: CitationRequest) =>
     api.post<Citation>('/api/get_citation', payload);
+
+/* -------------------------------------------------------------------------- */
+/* Enhanced citations                                                          */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Per-document gate for enhanced rendering.
+ *
+ * Returns null when the document cannot be resolved. V1 treats that as "attempt enhanced
+ * anyway and fall back on error" rather than as a refusal, so callers should not read a
+ * null as a denial.
+ */
+export async function fetchEnhancedCitationMetadata(
+    docId: string,
+): Promise<EnhancedCitationMetadata | null> {
+    try {
+        return await api.get<EnhancedCitationMetadata>(
+            `/api/enhanced_citations/document_metadata?doc_id=${encodeURIComponent(docId)}`,
+        );
+    } catch {
+        return null;
+    }
+}
+
+/** Direct URL for a media element's src, so the browser can issue its own requests. */
+export function enhancedCitationMediaUrl(kind: 'video' | 'audio', docId: string): string {
+    return apiUrl(`/api/enhanced_citations/${kind}?doc_id=${encodeURIComponent(docId)}`);
+}
+
+export function enhancedCitationImageUrl(docId: string): string {
+    return apiUrl(`/api/enhanced_citations/image?doc_id=${encodeURIComponent(docId)}`);
+}
+
+export function enhancedCitationVisioUrl(docId: string, page = 1, download = false): string {
+    const params = new URLSearchParams({ doc_id: docId, page: String(page) });
+    if (download) {
+        params.set('download', 'true');
+    }
+    return apiUrl(`/api/enhanced_citations/visio?${params.toString()}`);
+}
+
+export function workspaceDocumentDownloadUrl(docId: string): string {
+    return apiUrl(`/api/workspace_documents/download?doc_id=${encodeURIComponent(docId)}`);
+}
+
+export function tabularWorkspaceDownloadUrl(docId: string): string {
+    return apiUrl(
+        `/api/enhanced_citations/tabular_workspace?doc_id=${encodeURIComponent(docId)}`,
+    );
+}
+
+export interface PdfCitationResult {
+    blob: Blob;
+    /**
+     * Which page of the returned extract corresponds to the citation.
+     *
+     * The server returns a narrow window around the cited page rather than the whole
+     * document, so the citation is rarely on page 1 of what comes back. This comes from
+     * the X-Sub-PDF-Page response header, which a JSON helper would discard.
+     */
+    page: number;
+}
+
+export async function fetchEnhancedCitationPdf(
+    docId: string,
+    page: number,
+    showAll = false,
+): Promise<PdfCitationResult> {
+    const params = new URLSearchParams({ doc_id: docId, page: String(page) });
+    if (showAll) {
+        params.set('show_all', 'true');
+    }
+
+    const response = await fetch(apiUrl(`/api/enhanced_citations/pdf?${params.toString()}`), {
+        credentials: API_BASE ? 'include' : 'same-origin',
+    });
+
+    if (!response.ok) {
+        const payload = (await response.json().catch(() => ({}))) as { error?: string };
+        throw new ApiError(
+            payload.error || `Could not load the PDF (${response.status}).`,
+            response.status,
+            payload,
+        );
+    }
+
+    const headerPage = Number.parseInt(response.headers.get('X-Sub-PDF-Page') || '1', 10);
+    return {
+        blob: await response.blob(),
+        page: Number.isFinite(headerPage) && headerPage > 0 ? headerPage : 1,
+    };
+}
+
+export interface TabularPreview {
+    filename?: string;
+    selected_sheet?: string | null;
+    sheet_names?: string[];
+    sheet_count?: number;
+    total_rows?: number | null;
+    total_columns?: number;
+    columns?: string[];
+    rows?: string[][];
+    truncated?: boolean;
+}
+
+export function fetchTabularPreview(
+    docId: string,
+    options: { sheetName?: string; maxRows?: number } = {},
+) {
+    const params = new URLSearchParams({ doc_id: docId });
+    if (options.sheetName) {
+        params.set('sheet_name', options.sheetName);
+    }
+    if (options.maxRows) {
+        params.set('max_rows', String(options.maxRows));
+    }
+    return api.get<TabularPreview>(
+        `/api/enhanced_citations/tabular_preview?${params.toString()}`,
+    );
+}
 
 /* -------------------------------------------------------------------------- */
 /* Documents                                                                   */

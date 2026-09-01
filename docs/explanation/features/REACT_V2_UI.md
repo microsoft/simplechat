@@ -33,7 +33,7 @@ loaded from a CDN, so the `default-src 'self'` Content-Security-Policy is unchan
 
 ```
 application/v2_ui/                     source (React + TypeScript)
-  src/lib/          apiClient, sse, endpoints, types, syntax highlighting
+  src/lib/          apiClient, sse, endpoints, types, enhancedCitations, syntax highlighting
   src/stores/       uiStore (theme, rail), bootstrapStore, chatStore
   src/components/   layout/, ui/, chat/
   src/pages/        ChatPage, AdminSettingsPage, WorkspacePage, PlaceholderPage
@@ -174,7 +174,9 @@ Wired to the live APIs:
 - Conversation details with inline rename
 - Per-message actions: copy, retry, edit and resend, delete, feedback, fork, exports, read
   aloud, and attempt paging once a message has been retried
-- Citations rendered as inline chips that open the passage that was actually cited
+- Citations rendered as inline chips that open either the cited source itself — the PDF
+  page, image, media clip, spreadsheet or Visio page — or the passage that was extracted
+  from it
 
 The SSE reader in `src/lib/sse.ts` reproduces the framing rules of
 `static/js/chat/chat-streaming.js` exactly, including the repair for frames whose blank-line
@@ -197,6 +199,54 @@ source rather than inferred:
   is hidden entirely when a model offers no choice.
 - **Citation markers** follow the grammar in `chat-citations.js`; a functional test asserts
   the two patterns stay identical so markers never render as raw text.
+
+### Enhanced citations
+
+A citation into a PDF is more useful when it opens the page than when it quotes the
+sentence, and a citation into a recording is only meaningful if it plays from the moment
+being cited. V2 reproduces that behaviour against the existing
+`/api/enhanced_citations/*` endpoints.
+
+Clicking a chip resolves in three steps:
+
+1. `enable_enhanced_citations` must be on. It arrives with the bootstrap feature flags.
+2. `GET /api/enhanced_citations/document_metadata?doc_id=` is consulted, and the result is
+   cached per document so repeated citations into the same file do not refetch. The gate is
+   deliberately permissive, matching `chat-citations.js`: only an explicit
+   `enhanced_citations === false` opts a document out. Missing or unreadable metadata still
+   attempts the viewer and relies on the fallback below.
+3. The viewer is chosen from the file extension alone, exactly as `getFileType` does. There
+   is no content-type negotiation.
+
+| Extensions | Viewer | Behaviour |
+|---|---|---|
+| `pdf` | PDF | Opens at the cited page, with a toggle for the whole document |
+| `jpg` `jpeg` `png` `bmp` `tiff` `tif` | Image | Fit-to-pane and actual-size zoom |
+| `mp4` `mov` `avi` `mkv` `flv` `webm` `wmv` `m4v` `3gp` | Video | Seeks to the cited offset |
+| `mp3` `wav` `ogg` `aac` `flac` `m4a` | Audio | Seeks to the cited offset |
+| `csv` `xlsx` `xls` `xlsm` | Tabular | Sheet switcher, truncation notice, download |
+| `vsdx` | Visio | Server-rendered PNG per page, with page stepping |
+
+Anything else — a `.txt` or `.docx`, say — has no viewer and goes straight to the text
+passage. So does any failure at any stage, and the text panel says so rather than opening
+silently, because a fallback that looks identical to success hides a broken deployment.
+
+Three details are worth recording:
+
+- **No PDF engine is bundled.** The client fetches the bytes, creates an object URL and
+  points an `<iframe>` at `blob:…#page=N`, which is what V1 does and what the existing
+  `frame-src 'self' blob:` policy already permits. Vendoring a PDF renderer would have
+  added a large third-party browser asset for no benefit. Object URLs are revoked when the
+  viewer closes.
+- **The server, not the client, narrows the PDF.** `serve_enhanced_citation_pdf_content`
+  extracts a one-page window either side of the citation and returns `X-Sub-PDF-Page`
+  naming the page *within that extract* to open at. The client reads that response header;
+  it does not compute the page itself.
+- **Media citations carry a time offset, not a page.** The location field may be a seconds
+  count, `MM:SS` or `HH:MM:SS`, and is converted before `currentTime` is set. V2's
+  conversion tests the clock forms before attempting a plain number, so `0:02` seeks to two
+  seconds. Doing it the other way round makes `parseFloat` return `0` and every cited
+  moment plays from the start.
 
 ### Admin settings
 
@@ -308,6 +358,12 @@ this entirely and is the recommended layout.
 | `functional_tests/test_v2_ui_spa_route.py` | Shell serving for `/v2` and deep links, `no-store` caching, missing-bundle handling, bundle location |
 | `functional_tests/test_v2_api_security.py` | Bootstrap sanitization, swagger decorators, admin role gating, admin nav withheld from non-admins |
 | `functional_tests/test_v2_ui_local_assets.py` | No CDN references in source or compiled bundle, shell loads only `/static/` assets, build output gitignored |
+| `functional_tests/test_v2_api_payload_shapes.py` | Client field names match what the routes actually return, and bodyless toggle endpoints are called as toggles |
+| `functional_tests/test_v2_conversation_drawer.py` | Contents and Documents drawer, conversation details, inline rename |
+| `functional_tests/test_v2_message_actions.py` | Per-message actions, the two-step retry and edit contracts, attempt switching by refetch |
+| `functional_tests/test_v2_citations.py` | Citation marker grammar parity with `chat-citations.js`, the four link kinds |
+| `functional_tests/test_v2_enhanced_citations.py` | Extension-to-viewer map parity with `getFileType`, the permissive metadata gate, `X-Sub-PDF-Page` handling, timestamp conversion, fallback on every failure |
+| `functional_tests/test_v2_research_voice.py` | Deep research's two fields, URL access, per-model reasoning effort, voice in and out |
 | `functional_tests/test_csrf_state_changing_route_guard.py` | Cross-site mutations require an explicitly trusted origin; CORS preflights answered before authentication and never wildcarded |
 | `functional_tests/route_tests/` | Blueprint policy classification for `frontend_v2`, `backend_v2`, `backend_v2_admin` |
 
@@ -317,10 +373,19 @@ imported in a test environment.
 
 ## Known limitations
 
-- **Enhanced citations are not built.** Citations resolve to their stored text; the
-  `/api/enhanced_citations/*` viewers for rendered PDF pages, images, video, audio,
-  tabular data and Visio are not implemented, so a citation into a PDF shows the passage
-  rather than the page.
+- **Seeking in long media waits for the whole file.**
+  `serve_enhanced_citation_content` advertises `Accept-Ranges: bytes` but returns a
+  complete body through a plain Flask `Response`; nothing calls `make_conditional`, so a
+  `206 Partial Content` is never produced. A video citation therefore downloads the file
+  before it can seek. This is pre-existing server behaviour that the V2 client cannot fix,
+  and it affects the classic UI identically.
+- **Headless browsers cannot render the PDF viewer.** Headless Chromium ships no PDF
+  plugin, so a `blob:` PDF frame is blank there regardless of correctness. PDF rendering
+  was verified in a headed browser instead; automated coverage asserts the request, the
+  `X-Sub-PDF-Page` handling and the frame wiring rather than the pixels.
+- **Video playback has only been verified structurally.** Element wiring, the seek offset
+  and the fallback path are covered, but no sample video was played end to end, so
+  codec-dependent behaviour in a real deployment is unproven.
 - **Voice and speech could not be verified end to end.** Voice input needs a real
   microphone and speech output needs Azure Speech configured in the tenant. Both were
   verified structurally — correct controls, correct gating, correct requests and payloads —

@@ -2,6 +2,18 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.010)**
+
+#### New Features
+
+*   **V2 Enhanced Citations**
+    *   Selecting a citation in the V2 chat page now opens the source itself rather than only the extracted passage. PDFs open at the cited page, images open in a zoomable viewer, video and audio play from the cited moment, spreadsheets open as a browsable table with a sheet switcher, and Visio drawings render page by page.
+    *   Each viewer offers a download of the original file, so the source can be opened in its own application when the in-browser view is not enough.
+    *   Documents can still be opted out individually, and file types with no viewer — plain text or Word, for example — continue to show the cited passage as before.
+    *   When a source cannot be loaded, the passage is shown instead and the panel says that it fell back, so a misconfigured deployment is visible rather than presenting an empty viewer.
+    *   PDFs are rendered by the browser's own viewer, so no PDF engine or other third-party browser asset was added.
+    *   (Ref: V2 enhanced citations, `/api/enhanced_citations/*`, `X-Sub-PDF-Page`, `enable_enhanced_citations`)
+
 ### **(v0.261.009)**
 
 #### New Features
