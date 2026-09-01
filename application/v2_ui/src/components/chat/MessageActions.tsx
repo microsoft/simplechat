@@ -15,6 +15,7 @@ import {
     Copy,
     Ellipsis,
     FileDown,
+    Loader2,
     Mail,
     Pencil,
     RefreshCw,
@@ -22,11 +23,14 @@ import {
     ThumbsDown,
     ThumbsUp,
     Trash2,
+    Volume2,
+    VolumeX,
 } from 'lucide-react';
 import { useChatStore } from '../../stores/chatStore';
 import { useBootstrapStore } from '../../stores/bootstrapStore';
 import { apiUrl } from '../../lib/apiClient';
 import { exportMessagePath, type MessageExportFormat } from '../../lib/endpoints';
+import { synthesizeSpeech } from '../../lib/voice';
 import type { ChatMessage } from '../../lib/types';
 
 /** Thread bookkeeping the server stores on each message. */
@@ -71,6 +75,65 @@ function IconButton({
         >
             {children}
         </button>
+    );
+}
+
+/** Play a message aloud via the speech endpoint. */
+function SpeakButton({ message }: { message: ChatMessage }) {
+    const [state, setState] = useState<'idle' | 'loading' | 'playing'>('idle');
+    const audioRef = useRef<HTMLAudioElement | null>(null);
+    const urlRef = useRef<string | null>(null);
+
+    // Release the object URL and stop playback if the message unmounts mid-play.
+    useEffect(
+        () => () => {
+            audioRef.current?.pause();
+            if (urlRef.current) {
+                URL.revokeObjectURL(urlRef.current);
+            }
+        },
+        [],
+    );
+
+    const toggle = async () => {
+        if (state === 'playing') {
+            audioRef.current?.pause();
+            setState('idle');
+            return;
+        }
+
+        setState('loading');
+        try {
+            const url = await synthesizeSpeech(message.content);
+            urlRef.current = url;
+            const audio = new Audio(url);
+            audioRef.current = audio;
+            audio.onended = () => setState('idle');
+            audio.onerror = () => setState('idle');
+            await audio.play();
+            setState('playing');
+        } catch {
+            // Speech is optional; a failure leaves the control back at rest rather than
+            // interrupting the conversation.
+            setState('idle');
+        }
+    };
+
+    return (
+        <IconButton
+            label={state === 'playing' ? 'Stop reading' : 'Read aloud'}
+            onClick={() => void toggle()}
+            active={state === 'playing'}
+            disabled={state === 'loading'}
+        >
+            {state === 'loading' ? (
+                <Loader2 size={15} className="animate-spin" />
+            ) : state === 'playing' ? (
+                <VolumeX size={15} />
+            ) : (
+                <Volume2 size={15} />
+            )}
+        </IconButton>
     );
 }
 
@@ -256,6 +319,9 @@ export function MessageActions({
     const feedbackEnabled = useBootstrapStore((state) =>
         Boolean(state.data?.features?.enable_user_feedback),
     );
+    const ttsEnabled = useBootstrapStore((state) =>
+        Boolean(state.data?.features?.enable_text_to_speech),
+    );
 
     const [copied, setCopied] = useState(false);
     const isUser = message.role === 'user';
@@ -325,6 +391,8 @@ export function MessageActions({
             >
                 <RefreshCw size={15} />
             </IconButton>
+
+            {!isUser && ttsEnabled && <SpeakButton message={message} />}
 
             {!isUser && feedbackEnabled && (
                 <>

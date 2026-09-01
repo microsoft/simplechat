@@ -2,6 +2,18 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.009)**
+
+#### New Features
+
+*   **V2 Research, Reasoning And Voice Controls**
+    *   **Deep research** and **Read URLs** are now working controls in the V2 composer rather than placeholders, each appearing only when the corresponding capability is enabled for you.
+    *   **Reasoning effort** can be set per message, and the control only appears for models that actually support it — offering the levels that model allows rather than a fixed list. Models with no reasoning support show no control at all.
+    *   **Voice input** records from your microphone and inserts the transcription into the composer, with an explicit send or cancel so a misheard phrase can be discarded rather than sent.
+    *   **Read aloud** plays any response using the configured speech service.
+    *   Every composer control is now wired; none remain marked as previews.
+    *   (Ref: V2 composer, `/api/speech/transcribe-chat`, `/api/chat/tts`, deep research and URL access request fields)
+
 ### **(v0.261.008)**
 
 #### New Features

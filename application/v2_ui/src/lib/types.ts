@@ -296,6 +296,10 @@ export interface ChatStreamRequest {
     hybrid_search?: boolean;
     web_search_enabled?: boolean;
     image_generation?: boolean;
+    /** Deep research. Both fields are sent together, matching the existing client. */
+    source_review_enabled?: boolean;
+    deep_research_enabled?: boolean;
+    url_access_enabled?: boolean;
     doc_scope?: string;
     selected_document_id?: string | null;
     selected_document_ids?: string[];

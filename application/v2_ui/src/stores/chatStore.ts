@@ -45,6 +45,9 @@ export interface ComposerOptions {
     documentSearch: boolean;
     webSearch: boolean;
     imageGeneration: boolean;
+    /** Deep research sets both source_review_enabled and deep_research_enabled. */
+    deepResearch: boolean;
+    urlAccess: boolean;
     selectedDocumentIds: string[];
     docScope: string;
 }
@@ -542,6 +545,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
             image_generation: options.imageGeneration,
             doc_scope: options.docScope,
             selected_document_ids: options.selectedDocumentIds,
+            // Deep research is carried by two fields: the server reads source_review_enabled
+            // for the fetching machinery and deep_research_enabled for query planning.
+            source_review_enabled: options.deepResearch,
+            deep_research_enabled: options.deepResearch,
+            url_access_enabled: options.urlAccess,
         };
 
         if (options.modelDeployment) {

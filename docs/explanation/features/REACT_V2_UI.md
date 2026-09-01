@@ -166,17 +166,37 @@ Wired to the live APIs:
   a collapsible reasoning panel, `conversation_metadata` for server-generated titles,
   `user_message_persisted` acknowledgements, and cancellation
 - Model, agent and prompt pickers populated from the bootstrap catalogs
-- Document search, web search and image generation toggles
-- File upload to `/upload`
+- Document search, web search, image generation, deep research, URL access and per-model
+  reasoning effort
+- File upload to `/upload`, and voice input via `/api/speech/transcribe-chat`
+- A right-hand drawer with Contents (jump to any of your turns) and Documents (what the
+  conversation cited, and where)
+- Conversation details with inline rename
+- Per-message actions: copy, retry, edit and resend, delete, feedback, fork, exports, read
+  aloud, and attempt paging once a message has been retried
+- Citations rendered as inline chips that open the passage that was actually cited
 
 The SSE reader in `src/lib/sse.ts` reproduces the framing rules of
 `static/js/chat/chat-streaming.js` exactly, including the repair for frames whose blank-line
 delimiter was emitted as a literal escaped `\n\n`. The native `EventSource` API cannot be
 used because the endpoint is a `POST` with a JSON body.
 
-Long-tail controls — deep research, voice reply, voice input — are rendered in the toolbar
-and visibly marked `Preview`, because a control that silently does nothing is worse than one
-that says it is not finished.
+Several contracts here are two-step or otherwise non-obvious, and were read from the route
+source rather than inferred:
+
+- **Retry and edit generate nothing on their own.** Each creates the next thread attempt
+  and returns a ready-made `chat_request` body, which must then be POSTed to
+  `/api/chat/stream`. Skipping that second call leaves the new attempt permanently empty.
+- **Attempt switching is server-side state.** `switch-attempt` flips `active_thread` in
+  storage and `/api/get_messages` filters on it, so the client re-reads the list rather
+  than reordering locally.
+- **Deep research is carried by two fields.** Both `source_review_enabled` and
+  `deep_research_enabled` are sent; only one disables half the behaviour.
+- **Reasoning effort is per model family.** `gpt-4o` supports none, `gpt-5-pro` only
+  `high`, the 5.1 series skips `low`, and the o-series offers low/medium/high. The control
+  is hidden entirely when a model offers no choice.
+- **Citation markers** follow the grammar in `chat-citations.js`; a functional test asserts
+  the two patterns stay identical so markers never render as raw text.
 
 ### Admin settings
 
@@ -297,12 +317,20 @@ imported in a test environment.
 
 ## Known limitations
 
-- Chat covers the core loop. Collaboration, forking, message retry/edit, tabular runs,
-  export, TTS, voice input and deep research are not wired.
+- **Enhanced citations are not built.** Citations resolve to their stored text; the
+  `/api/enhanced_citations/*` viewers for rendered PDF pages, images, video, audio,
+  tabular data and Visio are not implemented, so a citation into a PDF shows the passage
+  rather than the page.
+- **Voice and speech could not be verified end to end.** Voice input needs a real
+  microphone and speech output needs Azure Speech configured in the tenant. Both were
+  verified structurally — correct controls, correct gating, correct requests and payloads —
+  but neither actual capture nor actual playback has been exercised.
+- Collaboration, tabular runs, conversation export, workflow activity, scope lock and the
+  chat tutorial are not wired.
 - Stream reattachment (`/api/chat/stream/reattach/{id}`) is not used; a dropped connection
   surfaces an error rather than silently resuming.
 - Admin settings edits boolean capabilities only.
 - Group and public workspaces are not rebuilt.
-- The bundle is ~487 KB raw / ~151 KB gzipped, dominated by React, the markdown pipeline and
-  syntax highlighting grammars. It is not code-split, because the chat page needs nearly all
-  of it on first paint.
+- The bundle is ~530 KB raw / ~162 KB gzipped, dominated by React, the markdown pipeline
+  and syntax highlighting grammars. It is not code-split, because the chat page needs
+  nearly all of it on first paint.

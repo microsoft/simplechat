@@ -2,27 +2,32 @@
 // The message input surface: textarea, send/stop control, model / agent / prompt pickers
 // and the capability toggles that map onto the /api/chat/stream request fields.
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { clsx } from 'clsx';
 import {
     ArrowUp,
     Bot,
     FileText,
+    Gauge,
     Globe,
     Image as ImageIcon,
+    Link2,
     Loader2,
-    Mic,
     Paperclip,
     Search,
     Square,
     Telescope,
-    Volume2,
 } from 'lucide-react';
 import { useChatStore, type ComposerOptions } from '../../stores/chatStore';
 import { useBootstrapStore } from '../../stores/bootstrapStore';
 import { uploadDocument } from '../../lib/endpoints';
+import {
+    getModelSupportedLevels,
+    REASONING_LABELS,
+    supportsReasoning,
+} from '../../lib/reasoning';
 import { Dropdown, type DropdownOption } from '../ui/Dropdown';
-import { NotWiredBadge } from '../ui/primitives';
+import { VoiceInput } from './VoiceInput';
 
 /** A capability toggle in the composer toolbar. */
 function ToolToggle({
@@ -31,14 +36,12 @@ function ToolToggle({
     icon,
     label,
     disabled = false,
-    preview = false,
 }: {
     active: boolean;
     onClick: () => void;
     icon: React.ReactNode;
     label: string;
     disabled?: boolean;
-    preview?: boolean;
 }) {
     return (
         <button
@@ -46,7 +49,7 @@ function ToolToggle({
             onClick={onClick}
             disabled={disabled}
             aria-pressed={active}
-            title={preview ? `${label} (not wired up yet)` : label}
+            title={label}
             className={clsx(
                 'inline-flex h-9 items-center gap-1.5 rounded-xl border px-2.5 text-sm transition-colors',
                 'disabled:cursor-not-allowed disabled:opacity-40',
@@ -57,7 +60,6 @@ function ToolToggle({
         >
             {icon}
             <span className="hidden lg:inline">{label}</span>
-            {preview && <NotWiredBadge className="hidden lg:inline" />}
         </button>
     );
 }
@@ -78,6 +80,8 @@ export function Composer() {
         documentSearch: false,
         webSearch: false,
         imageGeneration: false,
+        deepResearch: false,
+        urlAccess: false,
         selectedDocumentIds: [],
         docScope: 'all',
     });
@@ -146,6 +150,22 @@ export function Composer() {
             group: prompt.scope_type ? String(prompt.scope_type) : undefined,
         }),
     );
+
+    // Reasoning support is per-model, so the control appears only when the current model
+    // actually offers a choice.
+    const reasoningLevels: DropdownOption[] = useMemo(() => {
+        const modelName =
+            modelOptions.find((option) => option.value === options.modelDeployment)?.label ??
+            options.modelDeployment;
+        if (!supportsReasoning(modelName)) {
+            return [];
+        }
+        return getModelSupportedLevels(modelName).map((level) => ({
+            value: level,
+            label: REASONING_LABELS[level],
+        }));
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [options.modelDeployment, bootstrap]);
 
     const submit = () => {
         if (!text.trim() || streaming) {
@@ -302,27 +322,53 @@ export function Composer() {
                             />
                         )}
 
-                        {/* Long-tail controls are shown so the V2 layout can be judged in
-                            full, but are explicitly marked rather than silently inert. */}
+                        {/* Deep research sets both source_review_enabled and
+                            deep_research_enabled, matching the existing client. */}
                         {features.enable_source_review && (
                             <ToolToggle
-                                active={false}
-                                onClick={() => undefined}
+                                active={options.deepResearch}
+                                onClick={() =>
+                                    setOptions((current) => ({
+                                        ...current,
+                                        deepResearch: !current.deepResearch,
+                                    }))
+                                }
                                 icon={<Telescope size={15} />}
                                 label="Deep research"
-                                disabled
-                                preview
                             />
                         )}
 
-                        <ToolToggle
-                            active={false}
-                            onClick={() => undefined}
-                            icon={<Volume2 size={15} />}
-                            label="Voice reply"
-                            disabled
-                            preview
-                        />
+                        {features.enable_url_access && (
+                            <ToolToggle
+                                active={options.urlAccess}
+                                onClick={() =>
+                                    setOptions((current) => ({
+                                        ...current,
+                                        urlAccess: !current.urlAccess,
+                                    }))
+                                }
+                                icon={<Link2 size={15} />}
+                                label="Read URLs"
+                            />
+                        )}
+
+                        {/* Only shown when the selected model offers a real choice; the
+                            endpoint strips the parameter for models that reject it. */}
+                        {reasoningLevels.length > 0 && (
+                            <Dropdown
+                                options={reasoningLevels}
+                                value={options.reasoningEffort}
+                                placeholder="Reasoning"
+                                clearable
+                                icon={<Gauge size={15} />}
+                                onChange={(value) =>
+                                    setOptions((current) => ({
+                                        ...current,
+                                        reasoningEffort: value,
+                                    }))
+                                }
+                            />
+                        )}
 
                         <div className="ml-auto flex items-center gap-1.5">
                             <input
@@ -332,16 +378,15 @@ export function Composer() {
                                 onChange={onSelectFile}
                             />
 
-                            <button
-                                type="button"
-                                onClick={() => undefined}
-                                disabled
-                                title="Voice input (not wired up yet)"
-                                aria-label="Voice input"
-                                className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-edge bg-surface-1 text-text-3 disabled:opacity-40"
-                            >
-                                <Mic size={16} />
-                            </button>
+                            {features.enable_speech_to_text_input && (
+                                <VoiceInput
+                                    onTranscribed={(transcript) =>
+                                        setText((current) =>
+                                            current ? `${current} ${transcript}` : transcript,
+                                        )
+                                    }
+                                />
+                            )}
 
                             <button
                                 type="button"
