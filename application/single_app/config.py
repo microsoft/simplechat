@@ -97,11 +97,7 @@ DOTENV_LOAD_RESULT = load_simplechat_dotenv()
 EXECUTOR_TYPE = 'thread'
 EXECUTOR_MAX_WORKERS = 30
 SESSION_TYPE = 'filesystem'
-<<<<<<< HEAD
 VERSION = "0.261.006"
-=======
-VERSION = "0.261.003"
->>>>>>> upstream/Development
 IS_DEVELOPMENT = is_development_env_enabled()
 
 # Opt-out for deployments where App Service Easy Auth is active but the platform
