@@ -2,6 +2,16 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.016)**
+
+#### Bug Fixes
+
+*   **Document Search Failed In V2**
+    *   Turning on **Documents** in the V2 chat page ended with "Something went wrong while streaming the response", while the same search worked in the classic interface.
+    *   Two request problems were behind it. First, V2 identified the chosen model by its deployment name alone, but when multiple model endpoints are configured a name is not unique — the server could not resolve the selection and quietly fell back to a different endpoint than the one shown in the picker. Second, the document scope was fixed to "all workspaces" but the workspace identifiers were never sent, so the search was asked to cover workspaces it was given no way to look in.
+    *   V2 now sends the full model identity with every message and retry, so the model you pick is the model that answers. The document scope is worked out from the workspaces actually in use — personal only, or personal plus the group or public workspace you are working in — and the matching identifiers travel with it.
+    *   (Ref: V2 model selection, document search scope, `/api/chat/stream`)
+
 ### **(v0.261.015)**
 
 #### New Features

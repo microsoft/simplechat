@@ -21,6 +21,8 @@ import {
 } from '../lib/endpoints';
 import { cancelStream, streamChat } from '../lib/sse';
 import { agentInfoForSelection } from '../lib/agents';
+import { modelIdentityForSelection, type ModelCatalogEntry } from '../lib/models';
+import { resolveDocumentScope } from '../lib/documentScope';
 import { messageThreadId } from '../lib/threads';
 import { toast } from './toastStore';
 import { ApiError } from '../lib/apiClient';
@@ -44,8 +46,13 @@ const STREAMING_MESSAGE_ID = '__streaming__';
 export type DrawerMode = 'contents' | 'documents' | null;
 
 export interface ComposerOptions {
+    /**
+     * The picker's selection key for the chosen model, NOT its deployment name.
+     *
+     * The deployment name does not identify a model on its own when several endpoints
+     * offer the same one, so the full identity is resolved from the catalog at send time.
+     */
     modelDeployment?: string;
-    modelEndpointId?: string;
     agentSelection?: string;
     promptId?: string;
     reasoningEffort?: string;
@@ -56,7 +63,6 @@ export interface ComposerOptions {
     deepResearch: boolean;
     urlAccess: boolean;
     selectedDocumentIds: string[];
-    docScope: string;
 }
 
 interface ChatState {
@@ -565,6 +571,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
             streamError: null,
         }));
 
+        const bootstrap = useBootstrapStore.getState().data;
+        const scope = resolveDocumentScope({
+            activeGroupId: bootstrap?.scope?.active_group_id,
+            activePublicWorkspaceId: bootstrap?.scope?.active_public_workspace_id,
+        });
+
         const requestBody: ChatStreamRequest = {
             message: trimmed,
             conversation_id: conversationId,
@@ -572,8 +584,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
             hybrid_search: options.documentSearch,
             web_search_enabled: options.webSearch,
             image_generation: options.imageGeneration,
-            doc_scope: options.docScope,
             selected_document_ids: options.selectedDocumentIds,
+            // The scope and its workspace ids travel together: the server filters the ids
+            // down to what the caller may see, so a scope without them covers nothing.
+            ...scope,
             // Deep research is carried by two fields: the server reads source_review_enabled
             // for the fetching machinery and deep_research_enabled for query planning.
             source_review_enabled: options.deepResearch,
@@ -581,19 +595,22 @@ export const useChatStore = create<ChatState>((set, get) => ({
             url_access_enabled: options.urlAccess,
         };
 
-        if (options.modelDeployment) {
-            requestBody.model_deployment = options.modelDeployment;
-        }
-        if (options.modelEndpointId) {
-            requestBody.model_endpoint_id = options.modelEndpointId;
-        }
+        // A model is identified by four fields together, not by its deployment name alone.
+        // Sending only the name makes the multi-endpoint resolver give up and fall back to
+        // the legacy endpoint, silently using a different model than the one chosen.
+        Object.assign(
+            requestBody,
+            modelIdentityForSelection(
+                bootstrap?.catalogs?.models as ModelCatalogEntry[] | undefined,
+                options.modelDeployment,
+            ),
+        );
+
         if (options.agentSelection) {
             // The server reads `agent_info` and requires a dict; a bare string is silently
             // ignored, so the picker would appear to do nothing.
             const agentInfo = agentInfoForSelection(
-                useBootstrapStore.getState().data?.catalogs?.agents as
-                    | Record<string, unknown>[]
-                    | undefined,
+                bootstrap?.catalogs?.agents as Record<string, unknown>[] | undefined,
                 options.agentSelection,
             );
             if (agentInfo) {
@@ -703,14 +720,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
         }
         set({ streaming: true, streamingContent: '', thoughts: [], streamError: null });
         try {
+            const bootstrap = useBootstrapStore.getState().data;
+            // `modelDeployment` holds the picker's selection key, so the deployment name
+            // is resolved from the catalog rather than sent as-is.
+            const identity = modelIdentityForSelection(
+                bootstrap?.catalogs?.models as ModelCatalogEntry[] | undefined,
+                options?.modelDeployment,
+            );
             const result = await retryMessageApi(messageId, {
-                model: options?.modelDeployment,
+                model: identity.model_deployment,
                 reasoning_effort: options?.reasoningEffort,
                 agent_info:
                     agentInfoForSelection(
-                        useBootstrapStore.getState().data?.catalogs?.agents as
-                            | Record<string, unknown>[]
-                            | undefined,
+                        bootstrap?.catalogs?.agents as Record<string, unknown>[] | undefined,
                         options?.agentSelection,
                     ) ?? undefined,
             });

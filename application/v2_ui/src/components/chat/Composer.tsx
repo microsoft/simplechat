@@ -22,6 +22,7 @@ import { useChatStore, type ComposerOptions } from '../../stores/chatStore';
 import { useBootstrapStore } from '../../stores/bootstrapStore';
 import { uploadDocument } from '../../lib/endpoints';
 import { agentSelectionKey } from '../../lib/agents';
+import { modelSelectionKey, findModel, type ModelCatalogEntry } from '../../lib/models';
 import { resolveGating } from '../../lib/composerGating';
 import { useUiStore } from '../../stores/uiStore';
 import { chatWidthClass } from '../../lib/chatWidth';
@@ -88,7 +89,6 @@ export function Composer() {
         deepResearch: false,
         urlAccess: false,
         selectedDocumentIds: [],
-        docScope: 'all',
     });
 
     // Which controls are relevant right now. Deep research and Read URLs depend on what is
@@ -123,23 +123,19 @@ export function Composer() {
         });
     }, [gating.showUrlAccess, gating.showDeepResearch]);
 
-    // Apply the server's preferred model once bootstrap resolves.
+    // Apply the server's preferred model once bootstrap resolves. Stored as the same
+    // selection key the picker uses, so the full identity can be resolved from it.
     useEffect(() => {
         const initial = bootstrap?.catalogs?.initial_model_selection;
         if (!initial) {
             return;
         }
+        const key = modelSelectionKey(initial as ModelCatalogEntry);
+        if (!key) {
+            return;
+        }
         setOptions((current) =>
-            current.modelDeployment
-                ? current
-                : {
-                      ...current,
-                      modelDeployment:
-                          (initial.option_value as string) ??
-                          (initial.deployment_name as string) ??
-                          undefined,
-                      modelEndpointId: initial.model_endpoint_id as string | undefined,
-                  },
+            current.modelDeployment ? current : { ...current, modelDeployment: key },
         );
     }, [bootstrap]);
 
@@ -154,13 +150,12 @@ export function Composer() {
 
     useEffect(autoGrow, [text]);
 
+    // A model is identified by endpoint + id + provider + deployment together, so the
+    // option is keyed on `selection_key` (unique per endpoint) rather than the deployment
+    // name, which can repeat across endpoints.
     const modelOptions: DropdownOption[] = (bootstrap?.catalogs?.models ?? []).map(
         (model, index) => ({
-            value:
-                (model.option_value as string) ??
-                (model.selection_key as string) ??
-                (model.deployment_name as string) ??
-                String(index),
+            value: modelSelectionKey(model as ModelCatalogEntry) || String(index),
             label:
                 (model.display_name as string) ||
                 (model.deployment_name as string) ||
@@ -188,10 +183,17 @@ export function Composer() {
     );
 
     // Reasoning support is per-model, so the control appears only when the current model
-    // actually offers a choice.
+    // actually offers a choice. Resolved from the catalog record rather than the label,
+    // since the display name can be anything an administrator typed.
     const reasoningLevels: DropdownOption[] = useMemo(() => {
+        const selected = findModel(
+            bootstrap?.catalogs?.models as ModelCatalogEntry[] | undefined,
+            options.modelDeployment,
+        );
         const modelName =
-            modelOptions.find((option) => option.value === options.modelDeployment)?.label ??
+            (selected?.deployment_name as string) ||
+            (selected?.model_id as string) ||
+            modelOptions.find((option) => option.value === options.modelDeployment)?.label ||
             options.modelDeployment;
         if (!supportsReasoning(modelName)) {
             return [];

@@ -303,8 +303,15 @@ export interface ChatStreamRequest {
     message: string;
     conversation_id?: string | null;
     chat_type?: string;
+    /**
+     * A model is identified by these four fields together, not by the deployment name
+     * alone. `resolve_streaming_multi_endpoint_gpt_config` returns None when the endpoint
+     * id is missing, which silently falls back to the legacy single-endpoint client.
+     */
     model_deployment?: string;
+    model_id?: string;
     model_endpoint_id?: string;
+    model_provider?: string;
     agent_selection?: string;
     reasoning_effort?: string;
     hybrid_search?: boolean;

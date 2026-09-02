@@ -214,6 +214,17 @@ source rather than inferred:
   `data.get('agent_info')` and ignores anything that is not a dictionary, so a bare string
   is accepted by the request and then silently dropped. Agent catalog records carry no
   `selection_key`; that field belongs to models.
+- **A model needs four fields, not one.** `model_endpoint_id`, `model_id`, `model_provider`
+  and `model_deployment` are resolved together. With multiple endpoints configured a
+  deployment name is not unique, so `resolve_streaming_multi_endpoint_gpt_config` returns
+  `None` when the endpoint id is missing and the request falls back to the legacy
+  single-endpoint client — a different model than the one selected, with no error. The
+  picker therefore keys on `selection_key`, which is unique per endpoint.
+- **The document scope travels with its workspace ids.** `_get_authorized_chat_scope_context`
+  filters requested ids down to what the caller may see, so `doc_scope: 'all'` with no ids
+  covers only personal documents. The scope is computed from the workspaces in play, as
+  `chat-messages.js` does: personal alone gives `'personal'`, anything wider gives `'all'`
+  together with the group and public workspace ids.
 - **Image messages carry the image in `content`**, as a data URI, an `/api/image/<id>` path,
   or an external URL. There is no `image_url` field.
 - **The three message exports are not alike.** Word and PowerPoint stream a document; the
@@ -505,6 +516,7 @@ this entirely and is the recommended layout.
 | `functional_tests/test_v2_message_inspector.py` | Role-dependent metadata shape, reasoning fetched per message, shared renderer for live and historical reasoning, citation URL scheme checking, enabled-versus-used capability reporting |
 | `functional_tests/test_v2_message_masking.py` | All mask actions, selection carries text not just offsets, rejection is explained, masked text never reaches the DOM, masks applied before citation parsing, attribution, permission rule, popup stays on screen |
 | `functional_tests/test_v2_conversation_details_and_gating.py` | Tags split by category, source documents paged with the citation-tracking note, summary generated on demand, URL access and deep research gated on what is typed, image generation exclusivity, chat width persisted, unsafe tag values not linked |
+| `functional_tests/test_v2_model_identity_and_scope.py` | The whole model identity is sent and the picker keys on `selection_key`, the document scope is computed rather than hardcoded, and workspace ids travel with it |
 | `functional_tests/test_csrf_state_changing_route_guard.py` | Cross-site mutations require an explicitly trusted origin; CORS preflights answered before authentication and never wildcarded |
 | `functional_tests/route_tests/` | Blueprint policy classification for `frontend_v2`, `backend_v2`, `backend_v2_admin` |
 
