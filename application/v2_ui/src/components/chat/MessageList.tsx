@@ -31,6 +31,12 @@ import {
     readMaskState,
 } from '../../lib/masking';
 import { ImageLightbox } from './ImageLightbox';
+import { ImageProposalScope } from './ImageProposalContext';
+import {
+    extractProposalSpecs,
+    findResultForSpec,
+    groupProposalImages,
+} from '../../lib/imageProposalSpec';
 import type { ChatMessage, ThoughtEntry } from '../../lib/types';
 
 function ThoughtsPanel({ thoughts }: { thoughts: ThoughtEntry[] }) {
@@ -139,7 +145,14 @@ function ImageMessage({ message }: { message: ChatMessage }) {
     );
 }
 
-function MessageBubble({ message }: { message: ChatMessage }) {
+function MessageBubble({
+    message,
+    proposalImages,
+}: {
+    message: ChatMessage;
+    /** Images generated from this message's own proposals, shown inside their cards. */
+    proposalImages?: ChatMessage[];
+}) {
     const isUser = message.role === 'user';
     const [editing, setEditing] = useState(false);
     const [draft, setDraft] = useState(message.content);
@@ -258,7 +271,12 @@ function MessageBubble({ message }: { message: ChatMessage }) {
                         {message.thoughts && message.thoughts.length > 0 && (
                             <ThoughtsPanel thoughts={message.thoughts} />
                         )}
-                        <AssistantMarkdown content={message.content} masks={masks.ranges} />
+                        <ImageProposalScope
+                            assistantMessageId={message.id}
+                            results={proposalImages}
+                        >
+                            <AssistantMarkdown content={message.content} masks={masks.ranges} />
+                        </ImageProposalScope>
                         {(message.model_deployment_name || message.agent_display_name) && (
                             <p className="mt-2 flex items-center gap-1.5 text-[11px] text-text-3">
                                 {message.agent_display_name ? (
@@ -416,6 +434,48 @@ export function MessageList() {
         [messages.length, streaming, messagesLoading],
     );
 
+    /**
+     * Approved image proposals, filed under the assistant message that proposed them.
+     *
+     * The server stores an approved proposal as an ordinary `image` message carrying
+     * `metadata.image_proposal.source_assistant_message_id`. Rendered as-is it would appear a
+     * second time at the end of the thread, cut off from the paragraph that asked for it, so
+     * it is routed to its own card instead — the same regrouping the classic client does in
+     * `groupGeneratedImageProposalMessages`.
+     *
+     * An image is only taken out of the thread once a card in that message has been shown to
+     * claim it, which is why the message's own fences are read here. Hiding an image on the
+     * strength of the metadata alone would make it disappear entirely whenever a card could
+     * not match it — after the prompt was edited before approval, say — and an image the user
+     * paid to generate must never end up visible nowhere.
+     */
+    const { threadMessages, proposalImagesByMessage } = useMemo(() => {
+        const grouped = groupProposalImages(messages);
+        if (grouped.size === 0) {
+            return { threadMessages: messages, proposalImagesByMessage: grouped };
+        }
+
+        const claimed = new Set<string>();
+        for (const message of messages) {
+            const candidates = message.role === 'assistant' ? grouped.get(message.id) : undefined;
+            if (!candidates?.length) {
+                continue;
+            }
+            for (const spec of extractProposalSpecs(message.content)) {
+                const result = findResultForSpec(spec, candidates);
+                if (result) {
+                    claimed.add(result.id);
+                }
+            }
+        }
+
+        const visible = messages.filter(
+            (message) => message.role !== 'image' || !claimed.has(message.id),
+        );
+
+        return { threadMessages: visible, proposalImagesByMessage: grouped };
+    }, [messages]);
+
     return (
         <div
             ref={scrollRef}
@@ -452,8 +512,12 @@ export function MessageList() {
                 {/* Streaming output is announced politely so screen reader users are told
                     a response arrived without every token interrupting them. */}
                 <div aria-live="polite" aria-atomic="false" className="space-y-4">
-                    {messages.map((message) => (
-                        <MessageBubble key={message.id} message={message} />
+                    {threadMessages.map((message) => (
+                        <MessageBubble
+                            key={message.id}
+                            message={message}
+                            proposalImages={proposalImagesByMessage.get(message.id)}
+                        />
                     ))}
                     {streaming && <StreamingBubble />}
                 </div>

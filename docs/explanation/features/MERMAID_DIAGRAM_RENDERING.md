@@ -9,7 +9,7 @@ block and is meaningless to a screen reader.
 This feature closes both halves of that gap. The model is now told which fence actually
 renders, and the classic chat interface renders that fence instead of printing it.
 
-Implemented in version: **0.261.029**
+Implemented in version: **0.261.031**
 
 Dependencies: the vendored Mermaid bundle already shipped for export rendering, served
 from SimpleChat's own static files. No new setting and no new browser dependency.

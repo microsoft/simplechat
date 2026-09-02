@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Functional test for classic-UI inline Mermaid diagram rendering.
-Version: 0.261.029
-Implemented in: 0.261.029
+Version: 0.261.031
+Implemented in: 0.261.031
 
 The classic chat client used to render a ```mermaid fence as a plain code block, because
 Mermaid was only wired into the export rasterizer. This test ensures chat-inline-diagrams.js
@@ -253,8 +253,8 @@ def test_app_version_covers_the_fix():
     print('Testing application version...')
 
     assert_app_version_at_least(
-        '0.261.029',
-        reason='Classic-UI inline Mermaid rendering landed in 0.261.029.',
+        '0.261.031',
+        reason='Classic-UI inline Mermaid rendering landed in 0.261.031.',
     )
 
     print('PASS: application version')

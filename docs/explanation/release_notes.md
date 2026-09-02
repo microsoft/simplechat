@@ -2,7 +2,7 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
-### **(v0.261.029)**
+### **(v0.261.031)**
 
 #### New Features
 
@@ -29,6 +29,18 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 *   **Spoken And Preview Text No Longer Read Out Internal Placeholders**
     *   Reply previews and read-aloud could include internal placeholder text left behind where a chart, diagram or image card sits in a message. Those placeholders are now removed before the text is previewed or spoken.
     *   (Ref: reply preview, text-to-speech, inline visuals)
+
+### **(v0.261.029)**
+
+#### New Features
+
+*   **Image Suggestions Can Now Be Approved In The New Interface**
+    *   When a reply would be clearer with a picture — a timeline, a slide visual, a diagram — the assistant can suggest one instead of producing it unasked. The new interface previously showed those suggestions as a block of raw JSON, so there was no way to act on them.
+    *   Each suggestion now appears as a card in the reply, exactly where the assistant put it, with **Approve** to generate the image, **Edit** to reword the prompt first, and **Cancel** to dismiss it. Nothing is generated until you ask for it.
+    *   A reply containing more than two suggestions gets an **Approve all** button, and approvals are run one at a time with their place in the queue shown, rather than starting every image at once.
+    *   An approved image appears inside its own card rather than at the end of the conversation, so it stays next to the paragraph it illustrates — including after the conversation is reopened. Clicking it opens the same full-size viewer as any other image.
+    *   Approval is refused in shared conversations, which the card now tells you rather than failing silently. A suggestion can only be approved once the reply has finished arriving.
+    *   (Ref: `simpleimage` proposals, V2 chat interface, `/api/chat/image-proposals/generate`, image generation)
 
 ### **(v0.261.028)**
 
