@@ -1,5 +1,6 @@
 // chat-export.js
 import { showToast } from "./chat-toast.js";
+import { buildConversationVisualAssets } from "./chat-visual-rasterizer.js";
 
 'use strict';
 
@@ -543,6 +544,7 @@ async function _executeExport() {
     }
 
     try {
+        const visualAssets = await buildExportVisualAssets(statusDiv);
         const response = await fetch('/api/conversations/export', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -554,7 +556,8 @@ async function _executeExport() {
                 summary_model_deployment: includeSummaryIntro ? summaryModelDeployment : null,
                 summary_model_endpoint_id: includeSummaryIntro ? summaryModelEndpointId : null,
                 summary_model_id: includeSummaryIntro ? summaryModelId : null,
-                summary_model_provider: includeSummaryIntro ? summaryModelProvider : null
+                summary_model_provider: includeSummaryIntro ? summaryModelProvider : null,
+                visual_assets: visualAssets
             })
         });
 
@@ -611,6 +614,29 @@ async function _executeExport() {
 }
 
 // --- Utility ---
+
+/**
+ * Rasterize diagrams found in the selected conversations so the export can embed
+ * them as images. JSON exports keep the original markdown, so they are skipped.
+ * Diagrams that fail to render stay as code blocks in the exported file.
+ */
+async function buildExportVisualAssets(statusDiv) {
+    if (exportFormat === 'json') {
+        return [];
+    }
+
+    try {
+        const visualAssets = await buildConversationVisualAssets(exportConversationIds);
+        if (visualAssets.length > 0 && statusDiv) {
+            statusDiv.innerHTML =
+                `<span class="text-muted small">Rendered ${visualAssets.length} diagram${visualAssets.length === 1 ? '' : 's'}, building the export...</span>`;
+        }
+        return visualAssets;
+    } catch (err) {
+        console.warn('Unable to render diagrams for export:', err);
+        return [];
+    }
+}
 
 function _escapeHtml(text) {
     const div = document.createElement('div');

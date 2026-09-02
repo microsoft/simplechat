@@ -51,6 +51,7 @@ category: Version History
 
 ## Versioned Features
 
+- [Mermaid And TeX Rendering In Exports](EXPORT_MERMAID_AND_TEX_RENDERING.md)
 - [Data Management Durable Backup Jobs](DATA_MANAGEMENT_BACKUP_MIGRATION.md)
 - [Data Management Migration Resilience](DATA_MANAGEMENT_MIGRATION_RESILIENCE.md)
 - [Migration Provenance](MIGRATION_PROVENANCE.md)

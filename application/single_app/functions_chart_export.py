@@ -8,10 +8,13 @@ import json
 import math
 import re
 from functools import lru_cache
-from html import escape as escape_html
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from functions_chart_operations import INLINE_CHART_BLOCK_LANGUAGE
+from functions_export_visuals import (
+    EXPORT_VISUAL_KIND_CHART,
+    build_export_visual_html,
+)
 
 
 INLINE_CHART_EXPORT_REGEX = re.compile(
@@ -114,23 +117,11 @@ def _build_export_chart_html_from_payload(payload_text: str) -> str:
     if not image_data_uri or not isinstance(chart_spec, dict):
         return ''
 
-    alt_text = _build_chart_alt_text(chart_spec)
-    caption_text = _build_chart_caption_text(chart_spec)
-    caption_html = ''
-    if caption_text:
-        caption_html = (
-            '<p class="export-inline-chart-caption">'
-            f'<em>{escape_html(caption_text)}</em>'
-            '</p>'
-        )
-
-    return (
-        '\n\n'
-        '<div class="export-inline-chart">'
-        f'<p><img src="{escape_html(image_data_uri)}" alt="{escape_html(alt_text)}" /></p>'
-        f'{caption_html}'
-        '</div>'
-        '\n\n'
+    return build_export_visual_html(
+        EXPORT_VISUAL_KIND_CHART,
+        image_data_uri,
+        alt_text=_build_chart_alt_text(chart_spec),
+        caption_text=_build_chart_caption_text(chart_spec),
     )
 
 
