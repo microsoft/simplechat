@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Functional test for the browser-side Mermaid export rasterizer.
-Version: 0.261.026
-Implemented in: 0.261.026
+Version: 0.261.027
+Implemented in: 0.261.027
 
 This test ensures the vendored Mermaid bundle loads from its local static path with no
 external network dependency, and that chat-visual-rasterizer.js turns a diagram into a

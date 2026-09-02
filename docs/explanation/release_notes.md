@@ -2,7 +2,7 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
-### **(v0.261.026)**
+### **(v0.261.027)**
 
 #### New Features
 
@@ -10,6 +10,7 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Assistant replies often contain Mermaid diagrams and LaTeX formulas. Until now these arrived in an exported file as raw code — a wall of `graph TD` lines or `\frac{a}{b}` — which was unreadable for anyone the file was sent to.
     *   Word, PowerPoint, PDF, Markdown and email exports now render them as images, the same way inline charts have always been handled, so an exported file matches what the conversation shows.
     *   Recognised formula syntax is ` ```math `, ` ```latex ` and ` ```tex ` blocks, `$$…$$`, and `\[…\]`. Single-dollar text is deliberately left alone so a sentence like "costs $100 to $200" is never mistaken for a formula, and a ` ```text ` block is never mistaken for one either.
+    *   Diagrams are drawn by your browser when you export from it, and otherwise on the server using the Chromium the app already installs. No new dependency was added and nothing is fetched from the internet.
     *   **Open in Email** treats them like charts: each diagram and formula downloads as a PNG file with a matching reference in the draft body, because a `mailto:` draft cannot carry inline images.
     *   Anything that cannot be drawn — an unusual diagram, or a formula using an environment such as `align` or `matrix` — keeps its original code block rather than failing the export.
     *   (Ref: conversation and message exports, Mermaid diagrams, TeX math, inline export visuals)

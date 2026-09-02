@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Functional tests for Mermaid and TeX graphics in exports.
-Version: 0.261.026
-Implemented in: 0.261.026
+Version: 0.261.027
+Implemented in: 0.261.027
 
 This test ensures TeX math blocks are rendered to PNG server-side, and that
 browser-rasterized Mermaid diagrams supplied as `visual_assets` are embedded into
