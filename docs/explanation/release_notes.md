@@ -2,6 +2,22 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.020)**
+
+#### New Features
+
+*   **Workspace Tags In The Conversation List**
+    *   The conversation list now labels each conversation with the workspace it belongs to — the group or public workspace name, or a note that it is shared with other people. Personal conversations stay unlabelled, so the label means something when it appears.
+    *   Previously the only way to tell a group conversation from a personal one was to open it and read the badge beside its title, which made a long list of conversations hard to navigate for anyone working across several groups.
+    *   The label is drawn from information the conversation list already receives, so it costs no extra loading time.
+    *   (Ref: conversation list, workspace badges, V2 interface)
+
+*   **Personal Settings In The V2 Interface**
+    *   A new **Settings** page, reachable from the account menu, gives the V2 interface its own home for personal preferences. It opens on Preferences and keeps the familiar sections from the classic profile page — Stats, Groups, Public, Feedback and Violations — each appearing only when the relevant capability is enabled.
+    *   Preferences save as you change them rather than behind a Save button, and a preference that fails to save is put back to its stored value rather than left showing something that was never recorded.
+    *   The first preferences available are the new workspace tags toggle and the conversation contents drawer. The remaining sections currently link through to the classic page while they are rebuilt.
+    *   (Ref: V2 settings page, `/api/user/settings`, personal preferences)
+
 ### **(v0.261.019)**
 
 #### User Interface Enhancements

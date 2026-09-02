@@ -17,6 +17,7 @@ import {
     MessagesSquare,
     Moon,
     Settings,
+    SlidersHorizontal,
     Sparkles,
     Sun,
     User,
@@ -91,6 +92,13 @@ function UserMenu({ collapsed }: { collapsed: boolean }) {
         <div className="relative">
             {open && !collapsed && (
                 <div className="glass-modal absolute bottom-full left-0 mb-2 w-full overflow-hidden rounded-2xl p-1.5">
+                    <NavLink
+                        to="/settings"
+                        onClick={() => setOpen(false)}
+                        className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-text-1 hover:bg-surface-2"
+                    >
+                        <SlidersHorizontal size={15} /> Settings
+                    </NavLink>
                     <a
                         href="/profile"
                         className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-text-1 hover:bg-surface-2"

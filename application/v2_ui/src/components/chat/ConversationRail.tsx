@@ -6,8 +6,54 @@ import { useEffect, useRef, useState } from 'react';
 import { clsx } from 'clsx';
 import { MoreHorizontal, Pin, Search, Trash2, EyeOff, Pencil } from 'lucide-react';
 import { useChatStore } from '../../stores/chatStore';
+import { useUserSettingsStore } from '../../stores/userSettingsStore';
+import { workspaceBadge, type WorkspaceBadgeTone } from '../../lib/conversationBadges';
 import { Skeleton } from '../ui/primitives';
 import type { Conversation } from '../../lib/types';
+
+/**
+ * Tag colours, matching the badges shown beside an open conversation's title so the list
+ * and the header describe a conversation the same way.
+ */
+const TAG_TONE: Record<WorkspaceBadgeTone, string> = {
+    group: 'text-info',
+    public: 'text-ok',
+    shared: 'text-accent',
+};
+
+const TAG_TITLE: Record<WorkspaceBadgeTone, string> = {
+    group: 'Working in a group workspace',
+    public: 'Working in a public workspace',
+    shared: 'Shared with other people',
+};
+
+/**
+ * The workspace this conversation belongs to, shown under its title.
+ *
+ * Derived from the conversation the list already has: the feed returns the whole
+ * conversation document, `chat_type` and `context` included, so no per-row request is
+ * needed. A second line rather than an inline pill because the rail is narrow and group
+ * names are long — inline, one of the two would always be truncated.
+ */
+function WorkspaceTag({ conversation }: { conversation: Conversation }) {
+    const enabled = useUserSettingsStore(
+        (state) => state.settings.showConversationWorkspaceTags !== false,
+    );
+    const badge = enabled ? workspaceBadge(conversation) : null;
+
+    if (!badge) {
+        return null;
+    }
+
+    return (
+        <span
+            title={TAG_TITLE[badge.tone]}
+            className={clsx('block truncate text-[11px] leading-tight', TAG_TONE[badge.tone])}
+        >
+            {badge.label}
+        </span>
+    );
+}
 
 function ConversationRow({ conversation }: { conversation: Conversation }) {
     const {
@@ -74,13 +120,16 @@ function ConversationRow({ conversation }: { conversation: Conversation }) {
                 {conversation.is_pinned && (
                     <Pin size={12} className="shrink-0 fill-current opacity-70" />
                 )}
-                <span className="truncate text-sm">
-                    {conversation.title || 'Untitled conversation'}
+                <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm">
+                        {conversation.title || 'Untitled conversation'}
+                    </span>
+                    <WorkspaceTag conversation={conversation} />
                 </span>
                 {conversation.has_unread_assistant_response && (
                     <span
                         aria-label="Unread"
-                        className="ml-auto h-1.5 w-1.5 shrink-0 rounded-full bg-accent"
+                        className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent"
                     />
                 )}
             </button>

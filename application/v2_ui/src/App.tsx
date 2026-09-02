@@ -8,9 +8,11 @@ import { AppShell } from './components/layout/AppShell';
 import { GlassPanel, Skeleton } from './components/ui/primitives';
 import { ErrorBoundary } from './components/ui/ErrorBoundary';
 import { useBootstrapStore } from './stores/bootstrapStore';
+import { useUserSettingsStore } from './stores/userSettingsStore';
 import { initializeTheme } from './stores/uiStore';
 import { ChatPage } from './pages/ChatPage';
 import { AdminSettingsPage } from './pages/AdminSettingsPage';
+import { SettingsPage } from './pages/SettingsPage';
 import { WorkspacePage } from './pages/WorkspacePage';
 import { PlaceholderPage } from './pages/PlaceholderPage';
 
@@ -61,12 +63,17 @@ function BootError({ message, authExpired }: { message: string; authExpired: boo
 
 export function App() {
     const { data, loading, error, authExpired, load } = useBootstrapStore();
+    const loadUserSettings = useUserSettingsStore((state) => state.load);
     const location = useLocation();
 
     useEffect(() => {
         initializeTheme();
         void load();
-    }, [load]);
+        // Loaded at startup rather than when the settings page opens, because preferences
+        // shape the chat interface itself — the conversation list reads one of them.
+        // Advisory: a failure leaves defaults in place rather than blocking the app.
+        void loadUserSettings();
+    }, [load, loadUserSettings]);
 
     useEffect(() => {
         const title = data?.branding?.app_title;
@@ -92,6 +99,7 @@ export function App() {
                 <Route path="/" element={<Navigate to="/chat" replace />} />
                 <Route path="/chat" element={<ChatPage />} />
                 <Route path="/workspace" element={<WorkspacePage />} />
+                <Route path="/settings" element={<SettingsPage />} />
                 <Route path="/admin" element={<AdminSettingsPage />} />
                 <Route
                     path="/agents"

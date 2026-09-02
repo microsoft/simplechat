@@ -9,7 +9,7 @@
 // the user's globally active group instead, which is why every conversation showed the same
 // badge no matter which one was open.
 
-import type { ConversationMetadata } from './types';
+import type { Conversation, ConversationMetadata } from './types';
 
 export type WorkspaceBadgeTone = 'group' | 'public' | 'shared';
 
@@ -18,6 +18,16 @@ export interface WorkspaceBadge {
     label: string;
 }
 
+/**
+ * Anything carrying the two fields a badge is derived from.
+ *
+ * Both the metadata endpoint and the conversation feed supply `chat_type` and `context`,
+ * because the feed returns the whole conversation document — `_strip_internal_feed_fields`
+ * removes only `_feed_source`. That is what lets the conversation list badge every row
+ * without fetching metadata per row.
+ */
+export type BadgeSource = ConversationMetadata | Conversation;
+
 interface ContextEntry {
     type?: string;
     scope?: string;
@@ -25,14 +35,14 @@ interface ContextEntry {
     id?: string;
 }
 
-function contexts(metadata: ConversationMetadata | null | undefined): ContextEntry[] {
+function contexts(metadata: BadgeSource | null | undefined): ContextEntry[] {
     const value = metadata?.context;
     return Array.isArray(value) ? (value as ContextEntry[]) : [];
 }
 
 /** The context a conversation is primarily bound to, for a given scope. */
 function primaryContext(
-    metadata: ConversationMetadata | null | undefined,
+    metadata: BadgeSource | null | undefined,
     scope: 'group' | 'public',
 ): ContextEntry | undefined {
     return contexts(metadata).find(
@@ -47,7 +57,7 @@ function primaryContext(
  * type from the primary context's scope, and conversations predating the field rely on that
  * fallback, so it is reproduced here rather than defaulting everything to personal.
  */
-export function resolveChatType(metadata: ConversationMetadata | null | undefined): string {
+export function resolveChatType(metadata: BadgeSource | null | undefined): string {
     const declared = String(metadata?.chat_type ?? '').trim();
     if (declared) {
         return declared === 'personal' ? 'personal_single_user' : declared;
@@ -71,7 +81,7 @@ export function resolveChatType(metadata: ConversationMetadata | null | undefine
  * conversation and would say nothing.
  */
 export function workspaceBadge(
-    metadata: ConversationMetadata | null | undefined,
+    metadata: BadgeSource | null | undefined,
 ): WorkspaceBadge | null {
     const chatType = resolveChatType(metadata);
 

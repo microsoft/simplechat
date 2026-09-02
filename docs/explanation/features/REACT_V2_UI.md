@@ -389,7 +389,9 @@ one without the other leaves the composer just as cramped, which is the problem 
 solve. Bubbles stay narrower than the container in both modes, since a line spanning a large
 monitor is unreadable either way.
 
-### Conversation badgesThe badges beside the conversation title reproduce `addChatTypeBadges`
+### Conversation badges
+
+The badges beside the conversation title reproduce `addChatTypeBadges`
 (`static/js/chat/chat-conversations.js`) so both interfaces describe a conversation the same
 way: classification pills, then a single workspace badge — the group name, `public - <name>`,
 `shared`, or nothing at all for a personal conversation — and the scope-lock indicator.
@@ -399,6 +401,23 @@ group here instead is what made every conversation show the same badge.
 
 A null `scope_locked` means no workspace data has been used yet, which is not the same as
 being unlocked, so nothing is shown rather than an open padlock.
+
+### Workspace tags in the conversation list
+
+The same derivation labels every row of the conversation list, so a user working across
+several groups can tell their conversations apart without opening them.
+
+This needs no extra request. `chat_type` and `context` are stored on the conversation
+document itself (`functions_conversation_metadata.py`), and the feed returns that document
+whole — `_strip_internal_feed_fields` removes only `_feed_source`. The badge helper therefore
+accepts either the metadata payload or a feed conversation, and the list derives the tag
+from what it already holds. Fetching metadata per row would be one request per conversation
+on every page of the feed.
+
+The tag renders as a muted second line under the title rather than an inline pill, because
+the rail is narrow and group names are long: inline, either the title or the tag would always
+be truncated. It is controlled by `showConversationWorkspaceTags`, which defaults to shown
+when unset.
 
 ### Enhanced citations
 
@@ -472,10 +491,44 @@ on the classic admin page, which is linked from the bottom of the V2 page.
 Personal documents: list, search, tag filter, upload, processing status and delete, against
 `/api/documents` and `/api/documents/tags`.
 
+### Personal settings
+
+`/settings`, reached from the account menu, is the V2 home for per-user preferences. It
+keeps the classic profile page's six sections — Preferences, Stats, Groups, Public, Feedback
+and Violations — but leads with Preferences, since that is why a V2 user opens the page, and
+renders the sections as a vertical rail rather than Bootstrap tabs. The active section is in
+the query string, so a section can be linked to and survives a reload.
+
+Each tab is registered once in `components/settings/tabs.tsx` and owns its own component,
+which is what lets the remaining tabs be built without touching the page shell, the router
+or the sidebar.
+
+Two things about `/api/user/settings` shape the client:
+
+- **The route keeps a whitelist.** `allowed_keys` in `route_backend_users.py` silently drops
+  anything outside it — the POST still succeeds and the value never arrives, so the
+  preference appears to save and resets on the next load. `WRITABLE_USER_SETTING_KEYS` lists
+  every key V2 writes and a functional test checks each one against that set.
+- **`activeGroupOid` and `activePublicWorkspaceOid` are not settings.** They are popped from
+  the payload and routed to `update_active_group_for_user()` /
+  `update_active_public_workspace_for_user()`, returning 404 for an unknown workspace and 403
+  for one the caller is not in, and they never come back from a later GET. Treating them as
+  ordinary settings would make the store believe a save had been lost.
+
+Saves are debounced and merged rather than sitting behind per-section Save buttons: dragging
+a slider produces one request, and because the route merges partial updates server-side,
+sending pending keys separately would race. A failed save reverts the affected keys to the
+last value the server confirmed, since a control showing something that was never stored
+gives the user no way to discover the failure.
+
+Tabs whose capability is disabled are hidden rather than shown empty — their endpoints fail
+in that state, so they could only ever render an error.
+
 ### Not rebuilt yet
 
 Agents, group workspaces and public workspaces appear in the rail and link through to their
-classic pages rather than dead-ending.
+classic pages rather than dead-ending. Within settings, the Stats, Groups, Public, Feedback
+and Violations tabs link to the equivalent classic profile tab for the same reason.
 
 ## Building
 

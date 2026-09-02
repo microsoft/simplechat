@@ -513,6 +513,8 @@ def register_route_backend_users(bp):
                     'aiNoticeDismissal',
                     'sidebarToggleStyle', 'sidebarMenuState', 'fontSizePreference',
                     'conversationContentsDrawerEnabled',
+                    # Conversation list display, used by the V2 interface
+                    'showConversationWorkspaceTags',
                     LATEST_FEATURES_HIDDEN_VERSION_SETTING,
                     # Microphone permission settings
                     'microphonePermissionPreference', 'microphonePermissionState',

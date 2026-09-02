@@ -1,0 +1,226 @@
+#!/usr/bin/env python3
+"""
+Functional test for the V2 personal settings page and conversation workspace tags.
+
+Version: 0.261.020
+Implemented in: 0.261.020
+
+Two things are pinned here.
+
+**Settings keys must be whitelisted.** `/api/user/settings` validates against `allowed_keys`
+in route_backend_users.py and drops anything outside it **without complaining** -- the POST
+still returns success and the value simply never arrives. A client writing an unlisted key
+therefore appears to work and silently loses the preference on every reload. That is the
+same failure mode as the model-identity and document-scope defects fixed earlier in the V2
+work, where the client sent a field the server never acted on.
+
+**Workspace tags need no server change.** The conversation feed returns the whole
+conversation document -- `_strip_internal_feed_fields` removes only `_feed_source` -- and
+`chat_type` and `context` are stored on that document. The badge is therefore derivable from
+what the list already has. If the feed ever starts projecting a subset of fields, the tags
+would silently disappear, so the test asserts the feed still passes the document through.
+"""
+
+import re
+import sys
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+APP_DIR = REPO_ROOT / "application" / "single_app"
+V2_SRC = REPO_ROOT / "application" / "v2_ui" / "src"
+
+sys.path.insert(0, str(REPO_ROOT / "functional_tests"))
+
+from test_support.versioning import assert_app_version_at_least  # noqa: E402
+
+
+def _read(path):
+    return path.read_text(encoding="utf-8")
+
+
+def _allowed_keys():
+    """The whitelist the settings route validates against."""
+    users = _read(APP_DIR / "route_backend_users.py")
+    block = re.search(r"allowed_keys = \{(.*?)\}", users, re.DOTALL)
+    assert block, "Could not find allowed_keys in route_backend_users.py"
+    return set(re.findall(r"['\"]([A-Za-z_][A-Za-z0-9_]*)['\"]", block.group(1)))
+
+
+def _writable_keys():
+    """The keys the V2 client may write, read from its literal list."""
+    settings = _read(V2_SRC / "lib" / "userSettings.ts")
+    block = re.search(
+        r"export const WRITABLE_USER_SETTING_KEYS = \[(.*?)\] as const;", settings, re.DOTALL
+    )
+    assert block, "Could not find WRITABLE_USER_SETTING_KEYS in userSettings.ts"
+    return [key for key in re.findall(r"'([^']+)'", block.group(1))]
+
+
+def test_every_key_the_client_writes_is_whitelisted():
+    """An unlisted key is dropped silently, so this must never regress."""
+    print("Testing settings key whitelist...")
+
+    allowed = _allowed_keys()
+    writable = _writable_keys()
+
+    assert writable, "The V2 client should declare the settings keys it writes"
+
+    missing = [key for key in writable if key not in allowed]
+    assert not missing, (
+        "These keys are written by the V2 client but are not in allowed_keys, so the "
+        f"server will accept the request and discard them: {missing}"
+    )
+
+    print(f"All {len(writable)} client-written keys are whitelisted!")
+    return True
+
+
+def test_the_workspace_tag_setting_exists_on_both_sides():
+    """The new preference has to be declared by the client and accepted by the route."""
+    print("Testing the workspace tag setting...")
+
+    assert "showConversationWorkspaceTags" in _allowed_keys(), (
+        "showConversationWorkspaceTags must be added to allowed_keys or the toggle will "
+        "appear to save and then reset on reload"
+    )
+    assert "showConversationWorkspaceTags" in _writable_keys(), (
+        "The client must declare the key it writes so the whitelist check covers it"
+    )
+
+    rail = _read(V2_SRC / "components" / "chat" / "ConversationRail.tsx")
+    assert "showConversationWorkspaceTags" in rail, (
+        "The conversation list must respect the setting"
+    )
+    # Absent means on: the information is useful and was previously missing entirely.
+    assert "!== false" in rail, (
+        "The tag should default to shown when the preference has never been set"
+    )
+
+    preferences = _read(V2_SRC / "components" / "settings" / "PreferencesTab.tsx")
+    assert "showConversationWorkspaceTags" in preferences, (
+        "The setting needs a control on the preferences tab"
+    )
+
+    print("Workspace tag setting test passed!")
+    return True
+
+
+def test_tags_are_derived_from_the_feed_without_extra_requests():
+    """The list must not fetch metadata per row to label a conversation."""
+    print("Testing tag derivation...")
+
+    feed = _read(APP_DIR / "functions_conversation_feed.py")
+    strip = re.search(r"def _strip_internal_feed_fields\((.|\n)*?\n\n", feed).group(0)
+    popped = re.findall(r"public_item\.pop\('([^']+)'", strip)
+    assert popped == ["_feed_source"], (
+        "The feed no longer passes the whole conversation document through -- it now "
+        f"removes {popped}. Workspace tags read chat_type and context from the feed, so "
+        "they would silently disappear."
+    )
+
+    metadata = _read(APP_DIR / "functions_conversation_metadata.py")
+    assert "conversation_item['chat_type']" in metadata, (
+        "chat_type is expected to live on the conversation document"
+    )
+    assert "conversation_item['context']" in metadata, (
+        "context is expected to live on the conversation document"
+    )
+
+    # The badge helper must accept a feed conversation, not only the metadata payload.
+    badges = _read(V2_SRC / "lib" / "conversationBadges.ts")
+    assert "export type BadgeSource" in badges, (
+        "The badge helper needs to accept both the metadata payload and a feed conversation"
+    )
+    assert "Conversation, ConversationMetadata" in badges or "ConversationMetadata | Conversation" in badges
+
+    rail = _read(V2_SRC / "components" / "chat" / "ConversationRail.tsx")
+    assert "workspaceBadge(conversation)" in rail, (
+        "The tag must be derived from the conversation the list already holds"
+    )
+    assert "fetchMessageMetadata" not in rail and "loadMetadata" not in rail, (
+        "The list must not fetch metadata per row; that would be one request per "
+        "conversation on every page of the feed"
+    )
+
+    print("Tag derivation test passed!")
+    return True
+
+
+def test_settings_saves_are_debounced_and_recoverable():
+    """A dropped save must not leave a control showing a value that was never stored."""
+    print("Testing settings save behaviour...")
+
+    store = _read(V2_SRC / "stores" / "userSettingsStore.ts")
+
+    assert "SAVE_DEBOUNCE_MS" in store, (
+        "Saves must be debounced, or dragging a slider issues one request per frame"
+    )
+    assert "pending = { ...pending, ...partial }" in store, (
+        "Pending keys must be merged into one request; separate requests would race"
+    )
+    assert "rollback" in store, (
+        "A failed save must revert the control, otherwise the user sees a value the "
+        "server never stored and has no way to find out"
+    )
+    assert re.search(r"catch \(error\)(.|\n)*?\.\.\.previous", store), (
+        "The rollback must be applied in the failure branch"
+    )
+
+    print("Settings save behaviour test passed!")
+    return True
+
+
+def test_gated_tabs_are_hidden_rather_than_empty():
+    """A tab whose capability is off can only render an error, so it must not appear."""
+    print("Testing settings tab gating...")
+
+    tabs = _read(V2_SRC / "components" / "settings" / "tabs.tsx")
+    for flag in (
+        "enable_group_workspaces",
+        "enable_public_workspaces",
+        "enable_user_feedback",
+        "enable_content_safety",
+    ):
+        assert flag in tabs, f"The tab registry should gate on {flag}"
+
+    page = _read(V2_SRC / "pages" / "SettingsPage.tsx")
+    assert re.search(r"SETTINGS_TABS\.filter\((.|\n)*?features\[tab\.feature\] === true", page), (
+        "Tabs must be filtered by their capability flag before rendering"
+    )
+
+    print("Settings tab gating test passed!")
+    return True
+
+
+def test_version_is_at_least_implementation_version():
+    """The application version is at or beyond the version that added this."""
+    print("Testing application version...")
+    assert_app_version_at_least("0.261.020")
+    print("Application version test passed!")
+    return True
+
+
+if __name__ == "__main__":
+    tests = [
+        test_every_key_the_client_writes_is_whitelisted,
+        test_the_workspace_tag_setting_exists_on_both_sides,
+        test_tags_are_derived_from_the_feed_without_extra_requests,
+        test_settings_saves_are_debounced_and_recoverable,
+        test_gated_tabs_are_hidden_rather_than_empty,
+        test_version_is_at_least_implementation_version,
+    ]
+
+    results = []
+    for test in tests:
+        print(f"\nRunning {test.__name__}...")
+        try:
+            results.append(bool(test()))
+        except Exception as exc:  # noqa: BLE001 - surface any failure with a traceback
+            print(f"Test failed: {exc}")
+            import traceback
+
+            traceback.print_exc()
+            results.append(False)
+
+    print(f"\nResults: {sum(results)}/{len(results)} tests passed")
+    sys.exit(0 if all(results) else 1)
