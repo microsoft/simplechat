@@ -32,7 +32,9 @@ import {
     supportsReasoning,
 } from '../../lib/reasoning';
 import { Dropdown, type DropdownOption } from '../ui/Dropdown';
+import { AiNotice } from './AiNotice';
 import { VoiceInput } from './VoiceInput';
+import { WebSearchNotice } from './WebSearchNotice';
 
 /** A capability toggle in the composer toolbar. */
 function ToolToggle({
@@ -263,6 +265,10 @@ export function Composer() {
                     </p>
                 )}
 
+                {/* Above the input, matching the classic interface: the warning belongs
+                    next to the message it is about, not below the send button. */}
+                <WebSearchNotice active={options.webSearch} />
+
                 <div className="glass glass-edge rounded-2xl p-2">
                     <label htmlFor="composer-input" className="sr-only">
                         Message
@@ -491,9 +497,7 @@ export function Composer() {
                     </div>
                 </div>
 
-                <p className="mt-2 text-center text-[11px] text-text-3">
-                    AI responses can be inaccurate. Verify important information.
-                </p>
+                <AiNotice />
             </div>
         </div>
     );

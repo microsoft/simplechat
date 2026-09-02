@@ -2,8 +2,8 @@
 """
 Functional test for conversation deep linking in the V2 interface.
 
-Version: 0.261.028
-Implemented in: 0.261.028
+Version: 0.261.030
+Implemented in: 0.261.030
 
 The classic interface has supported linking straight to a conversation since v0.237.001:
 chat-onload.js reads ?conversationId= (or the older ?conversation_id=) on load, and
@@ -279,7 +279,7 @@ def test_crossing_back_to_classic_carries_the_conversation():
 def test_version_is_at_least_implementation_version():
     """The change is present from the version that introduced it onwards."""
     print("Testing application version...")
-    assert_app_version_at_least("0.261.028")
+    assert_app_version_at_least("0.261.030")
     print("Application version test passed!")
     return True
 

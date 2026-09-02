@@ -39,6 +39,7 @@ from functions_public_workspaces import (
     get_user_visible_public_workspace_ids_from_settings,
 )
 from functions_settings import (
+    WEB_SEARCH_USER_NOTICE_DEFAULT_TEXT,
     get_settings,
     get_user_settings,
     is_chat_file_upload_enabled_for_user,
@@ -57,6 +58,7 @@ from route_frontend_chats import (
     _is_chat_agent_allowed_by_governance,
 )
 from functions_agent_catalog import build_accessible_agent_catalog
+from functions_ai_notice import get_ai_notice_config, is_ai_notice_dismissed
 from config import VERSION
 from swagger_wrapper import get_auth_security, swagger_route
 
@@ -121,6 +123,43 @@ def _build_feature_flags(public_settings, per_user_overrides):
     }
     features.update(per_user_overrides)
     return features
+
+
+def _build_notices(public_settings, user_settings_dict):
+    """Describe the administrator-configured notices the chat surface must render.
+
+    Both notices exist in the server-rendered interface, where the AI notice arrives as
+    template context and the web search notice as a Jinja condition over three settings
+    keys. The SPA can read neither, so they are resolved here rather than in the browser:
+
+    - The AI notice carries a SHA-256 of its message and frequency, and whether the caller
+      has already dismissed it depends on a stored, server-timestamped record. Recomputing
+      either client-side would let the two interfaces disagree about whether an
+      administrator's edit should re-surface a notice somebody had dismissed.
+    - The web search notice depends on ``web_search_consent_accepted``, which is not an
+      ``enable_*`` key and so never reaches the feature flags the composer branches on.
+    """
+    ai_notice = get_ai_notice_config(public_settings)
+    ai_notice["dismissed"] = is_ai_notice_dismissed(ai_notice, user_settings_dict)
+
+    # All three are required, matching the condition in chats.html: the capability, the
+    # administrator's acknowledgement that messages leave the tenant, and the notice itself.
+    web_search_notice_enabled = bool(
+        public_settings.get("enable_web_search")
+        and public_settings.get("web_search_consent_accepted")
+        and public_settings.get("enable_web_search_user_notice")
+    )
+    web_search_notice_text = str(
+        public_settings.get("web_search_user_notice_text") or ""
+    ).strip()
+
+    return {
+        "ai": ai_notice,
+        "web_search": {
+            "enabled": web_search_notice_enabled,
+            "text": web_search_notice_text or WEB_SEARCH_USER_NOTICE_DEFAULT_TEXT,
+        },
+    }
 
 
 def register_route_backend_v2(bp):
@@ -299,6 +338,7 @@ def register_route_backend_v2(bp):
                     "public_workspaces": public_workspaces,
                 },
                 "admin_nav": ADMIN_NAV if "Admin" in current_user_roles else [],
+                "notices": _build_notices(public_settings, user_settings_dict),
                 "settings": public_settings,
             }
 

@@ -2,7 +2,7 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
-### **(v0.261.028)**
+### **(v0.261.030)**
 
 #### New Features
 
@@ -14,6 +14,31 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   A link to a conversation that was deleted, or that belongs to somebody else, says so and returns you to an empty chat, rather than leaving an error that reappeared on every refresh.
     *   **Back to classic UI** in the account menu carries the conversation across, so switching interfaces keeps your place.
     *   (Ref: V2 chat, conversation deep linking, conversation list)
+
+### **(v0.261.029)**
+
+#### New Features
+
+*   **Image Suggestions Can Now Be Approved In The New Interface**
+    *   When a reply would be clearer with a picture — a timeline, a slide visual, a diagram — the assistant can suggest one instead of producing it unasked. The new interface previously showed those suggestions as a block of raw JSON, so there was no way to act on them.
+    *   Each suggestion now appears as a card in the reply, exactly where the assistant put it, with **Approve** to generate the image, **Edit** to reword the prompt first, and **Cancel** to dismiss it. Nothing is generated until you ask for it.
+    *   A reply containing more than two suggestions gets an **Approve all** button, and approvals are run one at a time with their place in the queue shown, rather than starting every image at once.
+    *   An approved image appears inside its own card rather than at the end of the conversation, so it stays next to the paragraph it illustrates — including after the conversation is reopened. Clicking it opens the same full-size viewer as any other image.
+    *   Approval is refused in shared conversations, which the card now tells you rather than failing silently. A suggestion can only be approved once the reply has finished arriving.
+    *   (Ref: `simpleimage` proposals, V2 chat interface, `/api/chat/image-proposals/generate`, image generation)
+
+### **(v0.261.028)**
+
+#### Bug Fixes
+
+*   **Your Configured Chat Notices Now Appear In The V2 Interface**
+    *   Two notices administrators can configure — the data-handling notice shown when web search is used, and the AI notice shown under the message box — appeared in the classic interface but never in V2. Anyone who switched interfaces stopped seeing them.
+    *   The web search notice now appears above the message box while web search is turned on, using your configured wording, and can be dismissed for the rest of the browser session. It requires the same three settings as before, including the consent acknowledgement.
+    *   The AI notice now appears below the message box and respects all four display behaviours: always visible, dismissible once per session, once per day, or once per message version. Editing the notice text still brings it back for everyone who had dismissed the previous wording.
+    *   A dismissal now carries across both interfaces in the same browser session, rather than reappearing when you switch.
+    *   Dismissing the notice waits for the change to save, so it no longer disappears and then return on the next page load. A failed save is now reported instead of looking like a dead button.
+    *   **Behaviour change**: V2 previously showed its own fixed line, "AI responses can be inaccurate. Verify important information.", regardless of your settings. That line has been removed. If you want a notice under the message box, enable the AI notice in Admin Settings → Notices & Agreements → Chat AI Notice and set your own wording; if the AI notice is turned off, V2 now shows nothing there, matching the classic interface.
+    *   (Ref: V2 chat composer, web search user notice, chat AI notice, `/api/v2/bootstrap`)
 
 ### **(v0.261.027)**
 
