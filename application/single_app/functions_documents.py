@@ -9093,6 +9093,8 @@ def _process_markdown_with_ordered_dict_retry(processor_args, update_callback):
             )
             time.sleep(MARKDOWN_ORDERED_DICT_RETRY_DELAY_SECONDS * retry_number)
 
+    raise RuntimeError("Markdown processing retry loop exited unexpectedly.")
+
 
 def process_document_upload_background(document_id, user_id, temp_file_path, original_filename, group_id=None, public_workspace_id=None, extraction_mode_override=None):
     """

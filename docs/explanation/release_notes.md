@@ -2,6 +2,15 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.007)**
+
+#### Bug Fixes
+
+*   **Markdown Retry Helper Return Contract Clarified**
+    *   Added an explicit defensive exception at the end of the Markdown `OrderedDict` retry helper so static analysis no longer sees a possible implicit `None` return.
+    *   Runtime behavior is unchanged for normal success and retry-exhaustion paths.
+    *   (Ref: `functions_documents.py`, [Markdown Retry Return Contract Fix](fixes/MARKDOWN_RETRY_RETURN_CONTRACT_FIX.md))
+
 ### **(v0.261.006)**
 
 #### Bug Fixes
