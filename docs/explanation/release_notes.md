@@ -2,6 +2,34 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.031)**
+
+#### New Features
+
+*   **Ask For A Diagram, Get A Diagram**
+    *   Asking for a diagram, flowchart, sequence, architecture or data flow used to come back as ASCII box art in a plain code block — unreadable, impossible to export as a picture, and meaningless to a screen reader. The assistant was never told that SimpleChat can draw real diagrams, so it fell back on drawing with keyboard characters.
+    *   Diagram requests now get an answer the app actually draws. Chart requests are unaffected: "plot the sales trend" is still a chart, "draw the request flow" is now a diagram.
+    *   The assistant is also steered toward diagram syntax that renders on the first attempt, and toward a diagram rather than a generated image for structural content, so the result stays selectable, searchable and accessible.
+    *   (Ref: chat prompt guidance, Mermaid diagrams, inline charts)
+
+*   **Diagrams Now Render In The Classic Chat Interface**
+    *   The classic interface could turn a diagram into a picture when you exported it, but showed the same diagram as a block of code in the conversation itself. Diagrams now render on screen where you are reading them.
+    *   Diagrams follow light and dark mode, appear as they finish streaming rather than flickering through half-written source, and a diagram that cannot be drawn shows its source instead of vanishing.
+    *   Copying a message and exporting one both still produce the original diagram code, so nothing downstream changes.
+    *   The diagram library is only downloaded the first time a conversation shows a diagram.
+    *   (Ref: classic chat rendering, Mermaid diagrams, dark mode)
+
+#### Bug Fixes
+
+*   **Chart Guidance No Longer Suppresses Genuine Diagrams**
+    *   Guidance intended to stop the assistant from answering a chart request with diagram code was worded broadly enough to discourage diagrams entirely, including in answers where a process or architecture diagram was the right thing to show.
+    *   It now rules out diagram code only as a substitute for a data chart, and explicitly allows a diagram alongside charts in the same answer.
+    *   (Ref: chart guidance, Mermaid diagrams)
+
+*   **Spoken And Preview Text No Longer Read Out Internal Placeholders**
+    *   Reply previews and read-aloud could include internal placeholder text left behind where a chart, diagram or image card sits in a message. Those placeholders are now removed before the text is previewed or spoken.
+    *   (Ref: reply preview, text-to-speech, inline visuals)
+
 ### **(v0.261.029)**
 
 #### New Features

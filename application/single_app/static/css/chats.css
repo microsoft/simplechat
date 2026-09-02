@@ -3164,6 +3164,44 @@ ol {
   border-color: rgba(248, 250, 252, 0.24);
 }
 
+.sc-inline-diagram {
+  background: rgba(var(--bs-secondary-bg-rgb), 0.5);
+  border: 1px solid rgba(100, 116, 139, 0.18);
+  border-radius: 0.5rem;
+  margin-inline: 0;
+  overflow-x: auto;
+  padding: 0.75rem;
+}
+
+.sc-inline-diagram-stage {
+  display: flex;
+  justify-content: center;
+  min-height: 2rem;
+}
+
+.sc-inline-diagram-stage svg {
+  height: auto;
+  max-width: 100%;
+}
+
+.sc-inline-diagram-fallback {
+  width: 100%;
+}
+
+.sc-inline-diagram-fallback pre {
+  overflow-x: auto;
+  white-space: pre;
+}
+
+.sc-inline-diagram-pending .sc-inline-diagram-stage {
+  align-items: center;
+}
+
+[data-bs-theme="dark"] .sc-inline-diagram {
+  background: rgba(17, 24, 39, 0.72);
+  border-color: rgba(148, 163, 184, 0.26);
+}
+
 .sc-inline-image-proposal-title {
   line-height: 1.25;
   overflow-wrap: anywhere;
