@@ -64,6 +64,15 @@ export interface UserSettings {
     /** Read-only here; the route sets it when the user hides the shortcut. */
     latestFeaturesHiddenVersion?: string | null;
 
+    /**
+     * The AI notice dismissal.
+     *
+     * Written through `dismissAiNotice()` rather than this store, and read back in a
+     * different shape: the client posts `{ hash, frequency }` and the route stores a
+     * server-timestamped record. Only the server reads it, at bootstrap.
+     */
+    aiNoticeDismissal?: { hash: string; frequency: string };
+
     [key: string]: unknown;
 }
 
@@ -92,6 +101,9 @@ export const WRITABLE_USER_SETTING_KEYS = [
     'ttsVoice',
     'ttsSpeed',
     'ttsAutoplay',
+    // Written by dismissAiNotice() rather than the preferences store, but listed here so
+    // the whitelist test still proves the route will accept it.
+    'aiNoticeDismissal',
 ] as const;
 
 export type WritableUserSettingKey = (typeof WRITABLE_USER_SETTING_KEYS)[number];

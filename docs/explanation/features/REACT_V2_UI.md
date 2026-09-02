@@ -137,6 +137,7 @@ Response fields:
 | `catalogs` | Models, agents, prompts, and the initial model selection |
 | `scope` | Active group and public workspace, plus the lists the user can pick from |
 | `admin_nav` | The `ADMIN_NAV` structure — **only** for users holding the Admin role |
+| `notices` | The two administrator-configured chat notices, resolved server-side |
 | `settings` | Settings passed through `sanitize_settings_for_user()` |
 
 Settings returned here are always sanitized. The logo is reported as a URL rather than the
@@ -231,6 +232,7 @@ Wired to the live APIs:
 - Generated images rendered inline, opening in a viewer with fit and actual-size zoom, a
   download and a link to the raw file, and a conversation badge showing the group or public
   workspace the conversation is working in
+- The administrator-configured web search and AI notices
 
 The SSE reader in `src/lib/sse.ts` reproduces the framing rules of
 `static/js/chat/chat-streaming.js` exactly, including the repair for frames whose blank-line
@@ -484,6 +486,44 @@ rules from `chat-input-actions.js` are reproduced:
 
 A control that stops being relevant also clears its option, so a request never carries a
 capability the user can no longer see they enabled.
+
+### Notices
+
+Two notices are configured by an administrator, and both are reproduced from the classic
+interface rather than reinvented.
+
+The **web search notice** (`enable_web_search_user_notice`, text in
+`web_search_user_notice_text`) sits above the input and appears only while the Web toggle is
+armed. A banner that is always present stops being read, and the thing it warns about — this
+message leaving the tenant — only happens when web search is on. Turning web search off hides
+it again without consuming the dismissal, which is held for the browser session.
+
+The **AI notice** (`enable_ai_notice`, `ai_notice_message`, `ai_notice_frequency`) sits below
+the composer. Where a dismissal is stored depends on how long it has to last:
+`every_session` is a browser-session fact and stays in `sessionStorage`; `daily` and `once`
+outlive the tab, so they are written to `/api/user/settings` as `aiNoticeDismissal` and the
+server decides on each load whether the window still applies. `non_dismissible` renders no
+dismiss control at all. The notice is hidden only after the write succeeds — hiding first
+would tell a user the notice is gone for the day when it may be back on the next load.
+
+Neither is derivable from `features`, which is why `/api/v2/bootstrap` carries a `notices`
+block instead:
+
+- The AI notice's version hash is a SHA-256 of its message and frequency, computed by
+  `functions_ai_notice.py`. Editing the notice changes the hash and invalidates every stored
+  dismissal, so the new wording is shown again. Recomputing that in the browser would let the
+  two interfaces disagree about whether somebody had dismissed it.
+- The web search notice additionally requires `web_search_consent_accepted`, which is not an
+  `enable_*` key and therefore never reaches the feature flags.
+
+When an administrator has not enabled the AI notice, V2 shows nothing there. It deliberately
+does not substitute a generic disclaimer of its own: an organisation that turned the notice
+off did so on purpose, and the classic interface honours that.
+
+Both notices render administrator text as an ordinary React child, so it is escaped. Session
+storage is read through `src/lib/notices.ts`, which tolerates the privacy modes where
+`sessionStorage` throws instead of returning `null` — a notice is not worth taking the page
+down for, so a read that fails leaves the notice visible and a write that fails says so.
 
 ### Chat width
 
@@ -751,6 +791,7 @@ this entirely and is the recommended layout.
 | `functional_tests/test_v2_model_identity_and_scope.py` | The whole model identity is sent and the picker keys on `selection_key`, the document scope is computed rather than hardcoded, and workspace ids travel with it |
 | `functional_tests/test_v2_rich_rendering.py` | Browser libraries vendored into the repository with their licences and pinned versions, no equivalent npm dependency, KaTeX fonts complete and locally resolvable, a sanitizer boundary at every HTML sink and nowhere else, KaTeX `trust: false`, mermaid strict with no autostart or icon packs, single `$` not treated as maths, fence wiring and chart language parity with the backend, charts copied as data, CSP unchanged |
 | `functional_tests/test_v2_generated_image_lightbox.py` | The image thumbnail opens a dialog rather than a new tab, the dialog is dismissable and manages focus, every source kind is handled by download and open-in-new-tab, and `window.open` is not given `noopener` |
+| `functional_tests/test_v2_chat_notices.py` | Both notices resolved server-side from the shared helpers, the web search notice's three-key condition including consent, all four AI notice frequencies, dismissal only after a successful write, session keys shared with the classic interface, no hardcoded disclaimer, notice text escaped |
 | `functional_tests/test_csrf_state_changing_route_guard.py` | Cross-site mutations require an explicitly trusted origin; CORS preflights answered before authentication and never wildcarded |
 | `functional_tests/route_tests/` | Blueprint policy classification for `frontend_v2`, `backend_v2`, `backend_v2_admin` |
 

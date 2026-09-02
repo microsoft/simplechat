@@ -15,10 +15,11 @@ Implemented in version: **0.250.102**
 - Session-only dismissals use browser session storage.
 - Daily and once-per-version dismissals use the authenticated user-settings API and are timestamped by the server.
 - Changing the notice text or display behavior creates a new hash, invalidating older dismissals.
+- Both interfaces render the notice. The classic interface receives it as template context; the React V2 interface receives it in the `notices` block of `/api/v2/bootstrap`, built from the same helpers, and shares the session dismissal key so a dismissal is not undone by switching interfaces.
 
 ### Configuration
 
-The **General** tab in Admin Settings provides:
+The **Notices & Agreements** tab in Admin Settings provides:
 
 - **Show a custom AI notice below the chat input**
 - **Notice Text**, limited to 1,000 plain-text characters
@@ -35,7 +36,7 @@ The message is rendered as escaped plain text with line breaks preserved. The fe
 ## Usage
 
 1. Open **Admin Settings**.
-2. Select the **General** tab.
+2. Select the **Notices & Agreements** tab.
 3. Enable **Chat AI Notice**.
 4. Enter the notice text and choose a display behavior.
 5. Save the settings.
@@ -46,6 +47,7 @@ The configured notice appears beneath the chat composer for users who have not d
 
 - `functional_tests/test_ai_notice.py` covers normalization, hashing, record validation, and recurrence behavior.
 - `functional_tests/test_user_settings_allowlist_keys.py` covers dismissal persistence allowlisting.
+- `functional_tests/test_v2_chat_notices.py` covers the React V2 interface: the bootstrap `notices` block, all four frequencies, and the shared session dismissal key.
 - `ui_tests/test_chat_ai_notice_ui.py` covers admin controls and desktop/mobile placement.
 
 Known limitation: session-only dismissals are specific to the current browser tab session. Daily and once-per-version dismissals follow the signed-in user across supported clients.
