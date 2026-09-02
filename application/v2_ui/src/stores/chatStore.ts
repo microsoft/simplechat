@@ -129,6 +129,14 @@ interface ChatState {
     setSearchTerm: (term: string) => void;
 
     selectConversation: (conversationId: string | null) => Promise<void>;
+    /**
+     * Open a conversation named by the URL rather than clicked in the rail.
+     *
+     * Kept apart from `selectConversation` because the two have different failure
+     * modes. A row the user clicked is one the server just sent; a link can name a
+     * conversation that has since been deleted, or that belongs to somebody else.
+     */
+    openLinkedConversation: (conversationId: string) => Promise<void>;
     startNewConversation: () => void;
     renameConversation: (conversationId: string, title: string) => Promise<void>;
     removeConversation: (conversationId: string) => Promise<void>;
@@ -157,6 +165,32 @@ interface ChatState {
         feedbackType: 'positive' | 'negative',
         reason?: string,
     ) => Promise<void>;
+}
+
+/**
+ * Build a conversation list row out of a metadata response.
+ *
+ * The two shapes differ in more than depth: metadata keys the conversation as
+ * `conversation_id` where the feed uses `id`, and carries no `created_at`. The id is passed
+ * in rather than read from the response so the row is guaranteed to match the conversation
+ * it was fetched for, which is what the rail highlights on. Only the fields the rail and the
+ * header actually read are mapped; everything else is left off rather than guessed at.
+ */
+function conversationFromMetadata(
+    conversationId: string,
+    metadata: ConversationMetadata,
+): Conversation {
+    return {
+        id: conversationId,
+        title: metadata.title || 'Untitled conversation',
+        last_updated: metadata.last_updated,
+        is_pinned: metadata.is_pinned ?? false,
+        is_hidden: metadata.is_hidden ?? false,
+        has_unread_assistant_response: metadata.has_unread_assistant_response ?? false,
+        classification: metadata.classification ?? null,
+        context: metadata.context,
+        chat_type: metadata.chat_type ?? undefined,
+    };
 }
 
 /** Controller for the in-flight stream, kept outside the store as it is not render state. */
@@ -571,6 +605,43 @@ export const useChatStore = create<ChatState>((set, get) => ({
         }
     },
 
+    /**
+     * Open a conversation named by the URL.
+     *
+     * The load itself is `selectConversation`'s job; what is different here is that a link
+     * can name a conversation that has been deleted, or one belonging to somebody else,
+     * whereas a row in the rail is one the server has just listed.
+     *
+     * Existence is checked against the metadata endpoint rather than inferred from the
+     * message load, because `/api/get_messages` is not an existence check: it turns a
+     * not-found conversation into `{'messages': []}` with a 200
+     * (`route_backend_conversations.py`), so a deleted conversation would open as an empty
+     * chat, keep its id in the address bar, and remain the target of the next message sent.
+     * The metadata endpoint answers 404 when the conversation is gone and 403 when it is
+     * someone else's, which is the question actually being asked. It costs one request on
+     * a path that runs once per page load.
+     */
+    openLinkedConversation: async (conversationId) => {
+        try {
+            await fetchConversationMetadata(conversationId);
+        } catch {
+            toast.error(
+                'Could not open that conversation. It may have been deleted, or you may not have access to it.',
+            );
+            return;
+        }
+
+        await get().selectConversation(conversationId);
+
+        // Still checked: the conversation exists, but its messages may not have loaded.
+        if (get().messagesError) {
+            toast.error(
+                'Could not open that conversation. It may have been deleted, or you may not have access to it.',
+            );
+            get().startNewConversation();
+        }
+    },
+
     startNewConversation: () => {
         // Stop first: the running stream belongs to the previous thread and must not
         // deliver its response into the empty new one.
@@ -818,7 +889,20 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 set({ metadataLoading: false });
                 return;
             }
-            set({ metadata, metadataLoading: false });
+            set((state) => ({
+                metadata,
+                metadataLoading: false,
+                // A conversation reached by a link can be older than the first page of the
+                // feed, or hidden, in which case the list has no row for it: the rail
+                // highlights nothing and the header falls back to "New chat" for a thread
+                // that is plainly open. Metadata is already being fetched here, so the row
+                // is built from it rather than costing another request. It goes to the top
+                // because the list is cursor-paged — there is no correct place to insert an
+                // older conversation into a page that has not been loaded.
+                conversations: state.conversations.some((item) => item.id === conversationId)
+                    ? state.conversations
+                    : [conversationFromMetadata(conversationId, metadata), ...state.conversations],
+            }));
         } catch (error) {
             set({
                 metadataLoading: false,

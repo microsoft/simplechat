@@ -114,6 +114,43 @@ through Flask's built-in static handler and its caching, so no asset request eve
 through the SPA catch-all. The shell itself is never cached, because it references
 content-hashed asset filenames that change on every deploy.
 
+### Linking to a conversation
+
+`/v2/chat` names the conversation it has open, in the same query parameter the classic
+interface uses:
+
+```
+/v2/chat?conversationId=<conversation-uuid>
+```
+
+The parameter is read when the chat page first renders, and written whenever the open
+conversation changes — including when the server creates one on the first message sent, and
+when a conversation is forked. Starting a new chat or deleting the open conversation
+removes it. Copying the address bar therefore always shares what is on screen, and a
+refresh returns to it rather than to an empty chat.
+
+Both spellings are accepted on arrival. The server emits `conversationId` from notifications
+and workflow runs, and `conversation_id` from chat responses and workspace document rows, so
+a link built by any part of the application opens. Only `conversationId` is ever written: an
+incoming `conversation_id` link is rewritten to it, so a URL never carries both.
+
+The parameter is a description of what is open, not a navigation step. It is written with a
+history *replace*, matching `history.replaceState` in the classic client, so opening ten
+conversations does not put ten entries behind the back button.
+
+A conversation reached this way need not be in the loaded conversation list — it can be
+older than the first page of the feed, or hidden. Its list row is built from the metadata
+the chat page already fetches, so the rail highlights it and the header shows its real
+title. A link naming a conversation that has been deleted, or that belongs to somebody else,
+reports that it cannot be opened and falls back to an empty chat; leaving the failure in
+place would strand the parameter in the URL and reproduce the same error on every refresh.
+
+**Back to classic UI** in the account menu carries the open conversation across as
+`/chats?conversationId=<id>`, so crossing between the two interfaces keeps your place.
+
+Server-generated links — notifications, workflow runs, document sources — still point at the
+classic `/chats`. They are not interface-aware.
+
 ## API surface
 
 ### `GET /api/v2/bootstrap`
@@ -751,6 +788,7 @@ this entirely and is the recommended layout.
 | `functional_tests/test_v2_model_identity_and_scope.py` | The whole model identity is sent and the picker keys on `selection_key`, the document scope is computed rather than hardcoded, and workspace ids travel with it |
 | `functional_tests/test_v2_rich_rendering.py` | Browser libraries vendored into the repository with their licences and pinned versions, no equivalent npm dependency, KaTeX fonts complete and locally resolvable, a sanitizer boundary at every HTML sink and nowhere else, KaTeX `trust: false`, mermaid strict with no autostart or icon packs, single `$` not treated as maths, fence wiring and chart language parity with the backend, charts copied as data, CSP unchanged |
 | `functional_tests/test_v2_generated_image_lightbox.py` | The image thumbnail opens a dialog rather than a new tab, the dialog is dismissable and manages focus, every source kind is handled by download and open-in-new-tab, and `window.open` is not given `noopener` |
+| `functional_tests/test_v2_conversation_deep_link.py` | Both parameter spellings read and only the canonical one written, the incoming link captured before any effect can strip it, the URL replaced rather than pushed, a dead link reported instead of stranded, a list row backfilled behind the stale-response guard, and the classic handover carrying the conversation |
 | `functional_tests/test_csrf_state_changing_route_guard.py` | Cross-site mutations require an explicitly trusted origin; CORS preflights answered before authentication and never wildcarded |
 | `functional_tests/route_tests/` | Blueprint policy classification for `frontend_v2`, `backend_v2`, `backend_v2_admin` |
 
