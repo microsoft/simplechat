@@ -41,7 +41,7 @@ Use an action when a model needs to do more than write an answer, such as query 
 6. Complete the type-specific configuration, including **OpenAPI Specification File**, **Base URL**, **Authentication Type**, **Reusable Identity**, or MCP discovery fields when shown.
 
 {% include media.html src="guides/create-an-action-step-6.png"
-                      alt="Screenshot showing create an action step 6."
+                      alt="The Add Action wizard on the Configuration step for an Azure Maps action, showing the credentials section, the subscription key field, and a Test Connection button."
                       title="Create an action step 6"
                       capture="Capture the create an action task at this step in SimpleChat with realistic sample data and redact secrets." %}
 

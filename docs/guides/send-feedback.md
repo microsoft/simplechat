@@ -32,7 +32,7 @@ Use the feedback form when admins need enough context to reproduce a problem or 
 3. For a bug, use **Bug Report** and fill **Name**, **Email**, **Organization**, and **Bug Details**.
 
 {% include media.html src="guides/send-feedback-step-3.png"
-                      alt="Screenshot showing send feedback step 3."
+                      alt="The Send Feedback page with side-by-side Bug Report and Feature Request forms, each carrying name, email, organization, and details fields above a button that opens an email draft."
                       title="Send feedback step 3"
                       capture="Capture the send feedback task at this step in SimpleChat with realistic sample data and redact secrets." %}
 

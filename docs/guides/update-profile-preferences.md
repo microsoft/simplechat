@@ -32,7 +32,7 @@ Profile preferences are for personal comfort and control: font size, navigation 
 3. In **Appearance Preferences**, pick **Font size** and select **Save Font Size**.
 
 {% include media.html src="guides/update-profile-preferences-step-3.png"
-                      alt="Screenshot showing update profile preferences step 3."
+                      alt="The profile Settings tab showing preference cards for font size, response completion audio, navigation, Latest Features visibility, tutorials, desktop notifications, conversation navigation, fact memory, microphone permission, and text-to-speech voice."
                       title="Update profile preferences step 3"
                       capture="Capture the update profile preferences task at this step in SimpleChat with realistic sample data and redact secrets." %}
 
