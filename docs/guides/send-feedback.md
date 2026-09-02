@@ -41,7 +41,7 @@ Use the feedback form when admins need enough context to reproduce a problem or 
 6. For an improvement, use **Feature Request**, fill the same contact fields, and describe the problem and desired outcome.
 
 {% include media.html src="guides/send-feedback-step-6.png"
-                      alt="Screenshot showing send feedback step 6."
+                      alt="The Feature Request form completed with contact details and a description of the requested improvement, ready for Open Feature Request Draft to hand it to the local mail client."
                       title="Send feedback step 6"
                       capture="Capture the send feedback task at this step in SimpleChat with realistic sample data and redact secrets." %}
 
