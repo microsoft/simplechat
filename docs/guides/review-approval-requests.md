@@ -32,7 +32,7 @@ Approvals create a checkpoint before sensitive actions execute. Use this page wh
 3. Set **Pending Only** or **All Statuses**.
 
 {% include media.html src="guides/review-approval-requests-step-3.png"
-                      alt="Screenshot showing review approval requests step 3."
+                      alt="The Approval Requests page with the search box, the Pending Only status filter, the request type filter, and the results table, shown here with an empty queue."
                       title="Review approval requests step 3"
                       capture="Capture the review approval requests task at this step in SimpleChat with realistic sample data and redact secrets." %}
 

@@ -32,16 +32,16 @@ Use a group workspace when a team needs common source documents, prompts, agents
 3. Open **Group Workspaces**.
 
 {% include media.html src="guides/manage-group-workspaces-step-3.png"
-                      alt="Screenshot showing manage group workspaces step 3."
-                      title="Manage group workspaces step 3"
+                      alt="The Group Workspace page showing the active group banner, the group selector with the viewer's role, and the Documents, Prompts, Identities, Sync, Actions, Agents, and Workflows tabs."
+                      title="The group workspace and its tabs"
                       capture="Capture the manage group workspaces task at this step in SimpleChat with realistic sample data and redact secrets." %}
 
 4. Select the active group from the group selector.
 5. Use **Documents** to upload, filter, tag, and chat with shared files.
 
 {% include media.html src="guides/manage-group-workspaces-step-5.png"
-                      alt="Screenshot showing manage group workspaces step 5."
-                      title="Manage group workspaces step 5"
+                      alt="The group Documents tab with search and filter fields expanded, showing filters for file name, author, keywords, abstract, and tags above the shared document list."
+                      title="Filtering shared group documents"
                       capture="Capture the manage group workspaces task at this step in SimpleChat with realistic sample data and redact secrets." %}
 
 6. Use **Prompts**, **Sync**, **Workflows**, **Agents**, or **Actions** when those tabs are enabled and your role allows them.

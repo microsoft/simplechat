@@ -31,7 +31,7 @@ Some Admin Settings tabs unlock experiences that depend on earlier tabs. Workspa
 Start with [General settings]({{ '/admin/appearance/' | relative_url }}). Publish the approved application title, logo, landing page copy, access-denied message, support destinations, health-check behavior, Terms of Use, AI notice, idle timeout, and upload/session limits. These are first because every user sees them before feature-specific settings matter.
 
 {% include media.html src="guides/admin-first-configuration-general.png"
-                      alt="General settings page showing tenant branding, terms, support, health check, and session controls."
+                      alt="The Branding settings pane showing the application title field, logo visibility toggles, the home page logo size slider, and upload fields for light-mode and dark-mode logos and a favicon."
                       title="Configure general settings first"
                       capture="Capture the General tab after tenant-facing copy and support controls are populated, with any private URLs redacted." %}
 
@@ -44,7 +44,7 @@ Use [Security settings]({{ '/admin/security/' | relative_url }}) if the deployme
 Open [AI Models settings]({{ '/admin/ai-models/' | relative_url }}) and configure GPT routing before users test chat or agents. Configure embeddings before enabling document-heavy workspace use because retrieval depends on embeddings and Azure AI Search. Add image generation only after the image deployment, quota, and policy approval are ready.
 
 {% include media.html src="guides/admin-first-configuration-models.png"
-                      alt="AI Models settings page with chat and embedding endpoint sections configured."
+                      alt="The Model Endpoints pane showing the agent default model review panel with its readiness counts, the saved default model, and the model endpoint identity header settings."
                       title="Configure model endpoints"
                       capture="Capture the AI Models tab showing chat and embedding sections complete, with keys and subscription details redacted." %}
 
@@ -57,7 +57,7 @@ Use [Search and Extract settings]({{ '/admin/knowledge/' | relative_url }}) next
 Move to [Workspaces settings]({{ '/admin/workspaces/' | relative_url }}) after model and retrieval prerequisites are ready. Enable only the personal, group, public, workflow, upload, download, retention, classification, and agreement capabilities the tenant has approved. Test role-gated behavior with assigned and unassigned users before wider rollout.
 
 {% include media.html src="guides/admin-first-configuration-workspaces.png"
-                      alt="Workspaces settings page showing enabled scopes, role requirements, retention, and agreement choices."
+                      alt="The Workspace Types pane showing the personal, group, and public workspace switches alongside the group creation and app role requirements that gate who can create each kind of workspace."
                       title="Set workspace scope and retention"
                       capture="Capture the Workspaces tab with approved scopes and retention controls visible." %}
 

@@ -205,7 +205,7 @@ azd up
 - The repo-provided `azd`, Bicep, Terraform, and Azure CLI deployers are **container-based** App Service deployments.
 - For those container deployments, do **not** set an App Service Stack Settings Startup command.
     - The container already starts Gunicorn through `application/single_app/Dockerfile`.
-- If your environment needs private or self-signed certificate authorities for outbound TLS checks to internal services, add them during image build using [docs/how-to/docker_customization.md](docs/how-to/docker_customization.md).
+- If your environment needs private or self-signed certificate authorities for outbound TLS checks to internal services, add them during image build using [docs/guides/docker-customization.md](docs/guides/docker-customization.md).
 
 ### Native Python
 - For **native Python App Service** deployments, deploy the `application/single_app` folder and set the App Service Startup command explicitly.
@@ -236,11 +236,11 @@ python -m gunicorn -c gunicorn.conf.py app:app
 
 ## Upgrade Paths
 
-- For a concise upgrade decision guide, see [docs/how-to/upgrade_paths.md](docs/how-to/upgrade_paths.md).
+- For a concise upgrade decision guide, see [docs/guides/upgrade-paths.md](docs/guides/upgrade-paths.md).
 
 ### Container
 - **Container-based upgrades** should usually start with `azd deploy` for code-only changes. Use `azd up` only when the release also changes infrastructure.
-- If your App Service is already configured to pull from ACR and you want image-only rollouts, use the ACR/image refresh approach described in [docs/how-to/upgrade_paths.md](docs/how-to/upgrade_paths.md) instead of treating every release as a full reprovisioning event.
+- If your App Service is already configured to pull from ACR and you want image-only rollouts, use the ACR/image refresh approach described in [docs/guides/upgrade-paths.md](docs/guides/upgrade-paths.md) instead of treating every release as a full reprovisioning event.
 
 ### Native Python
 - **Native Python App Service upgrades** should reuse the manual deployment path, validate the Startup command above, and deploy the `application/single_app` folder with VS Code or Azure CLI ZIP deploy.
