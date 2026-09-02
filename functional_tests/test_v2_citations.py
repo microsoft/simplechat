@@ -138,11 +138,11 @@ def test_markers_are_replaced_without_injecting_html():
         "charge of the surrounding text"
     )
 
-    message_list = _read(V2_SRC / "components" / "chat" / "MessageList.tsx")
-    assert "dangerouslySetInnerHTML" not in message_list, (
+    assistant_markdown = _read(V2_SRC / "components" / "chat" / "AssistantMarkdown.tsx")
+    assert "dangerouslySetInnerHTML" not in assistant_markdown, (
         "Citations must never be injected as raw HTML into untrusted model output"
     )
-    assert "CitationChip" in message_list, "Placeholders must render as chip components"
+    assert "CitationChip" in assistant_markdown, "Placeholders must render as chip components"
 
     print("Citation rendering safety test passed!")
     return True
@@ -207,10 +207,10 @@ def test_placeholders_are_substituted_in_every_block_element():
     """
     print("Testing placeholder substitution coverage...")
 
-    message_list = _read(V2_SRC / "components" / "chat" / "MessageList.tsx")
+    assistant_markdown = _read(V2_SRC / "components" / "chat" / "AssistantMarkdown.tsx")
 
     for element in ("p", "li", "td", "th", "h1", "h2", "h3", "h4", "blockquote", "em", "strong"):
-        assert re.search(rf"\b{element}:\s*\(", message_list), (
+        assert re.search(rf"\b{element}:\s*\(", assistant_markdown), (
             f"The markdown component map has no {element!r} handler, so a citation "
             "landing there would render as a raw placeholder"
         )

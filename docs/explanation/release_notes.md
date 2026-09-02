@@ -2,6 +2,32 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.024)**
+
+#### New Features
+
+*   **Equations, Diagrams And Charts Render In The V2 Chat**
+    *   Answers containing mathematics now show it set as mathematics rather than as raw TeX. `$$…$$`, `\[…\]` and `\(…\)` are recognised. A single `$` is deliberately left alone, so an answer about pricing still reads "costs $5 to $10 per user" rather than turning the sentence into an equation.
+    *   Mermaid diagrams render as diagrams. These have been reaching the chat for some time without anyone being able to see them: documents processed with Content Understanding have their figures extracted as Mermaid, so a document containing a flowchart was arriving as diagram source in the middle of an answer.
+    *   Charts produced by the built-in chart action now draw in V2 as they already do in the classic interface, instead of showing the underlying data as a block of JSON.
+    *   A diagram or chart that cannot be read falls back to showing its source rather than disappearing, and one that is still being written shows a placeholder until it is complete.
+    *   (Ref: V2 chat rendering, KaTeX, Mermaid, Chart.js, `AssistantMarkdown.tsx`)
+
+*   **Chart Data And Image Download**
+    *   Each chart carries its title, subtitle and description, plus a **Data** control that reveals the numbers behind it and a **PNG** control that downloads the image. The data table starts closed, so the chart stays the answer, and the download is composited onto a solid background so it stays readable wherever it is pasted.
+    *   Charts and diagrams follow the light and dark theme rather than staying fixed to whichever was active when they first drew.
+    *   (Ref: V2 inline charts, chart data table, PNG export)
+
+#### User Interface Enhancements
+
+*   **Copying A Message Containing A Chart**
+    *   Copying an answer with a chart in it used to paste several kilobytes of chart data into the middle of the text. The chart's title and its numbers are now pasted as a small table instead. Equation and diagram sources are left as they are, since those are still readable as text.
+    *   (Ref: V2 message copy, `messageText.ts`)
+
+#### Breaking Changes
+
+*   **None.** No settings were added, and the Content-Security-Policy is unchanged. The libraries behind this work are committed to the repository under `application/v2_ui/public/vendor/` and served from SimpleChat itself, so nothing is fetched from a public CDN at run time or from a package registry at build time. Pinning them this way means any future change to that third-party code is a reviewable commit rather than a silent substitution.
+
 ### **(v0.261.023)**
 
 #### User Interface Enhancements

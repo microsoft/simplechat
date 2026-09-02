@@ -30,6 +30,42 @@ JavaScript module was modified to support it.
 All dependencies are bundled locally by Vite and served from `/static/v2/`. Nothing is
 loaded from a CDN, so the `default-src 'self'` Content-Security-Policy is unchanged.
 
+### Vendored browser libraries
+
+The libraries behind maths, diagrams and charts are **not** npm dependencies. They are
+downloaded once, committed to this repository under
+`application/v2_ui/public/vendor/<library>-<version>/`, and loaded at runtime from that
+local path.
+
+| Library | Vendored file | Purpose |
+|---|---|---|
+| KaTeX 0.18.4 | `katex.min.js`, `katex.min.css`, `fonts/` | TeX rendering |
+| Mermaid 11.17.2 | `mermaid.min.js` | Diagram rendering |
+| Chart.js 4.5.1 | `chart.umd.min.js` | Inline chart rendering |
+| DOMPurify 3.4.14 | `purify.min.js` | Sanitizer boundary in front of both HTML sinks |
+
+Resolving these from a registry at build time would mean the code the browser executes is
+not the code in this repository. Vendoring pins it: a change to any of these libraries is a
+reviewable commit rather than a silent substitution. Vite copies `public/` into the build
+output verbatim, so the committed bytes are exactly what is served.
+
+They are loaded on demand rather than bundled. Mermaid alone is 3.4 MB, and a conversation
+with no diagram, chart or equation downloads none of it.
+
+To upgrade one, replace the directory and its `LICENSE`, then update `VENDOR_PATHS` in
+`src/lib/vendorAssets.ts` and the expected version in
+`functional_tests/test_v2_rich_rendering.py`:
+
+```powershell
+$v = "11.17.3"
+$dir = "application/v2_ui/public/vendor/mermaid-$v"
+New-Item -ItemType Directory -Force -Path $dir
+curl.exe -s -o "$dir/mermaid.min.js" "https://cdn.jsdelivr.net/npm/mermaid@$v/dist/mermaid.min.js"
+curl.exe -s -o "$dir/LICENSE" "https://cdn.jsdelivr.net/npm/mermaid@$v/LICENSE"
+```
+
+Verify the download against the registry's published SHA-256 before committing it.
+
 ## Architecture
 
 ```
@@ -293,6 +329,61 @@ source rather than inferred:
   email draft returns JSON, whose images must be saved separately because a `mailto:` URL
   cannot carry attachments. All three require a JSON request body and reject a form post.
 - **The conversation summary's body is `summary.content`**, not `summary.text`.
+
+### Maths, diagrams and charts
+
+Three kinds of block that the application already produces render as themselves rather than
+as raw text. All of it is handled in `AssistantMarkdown.tsx`, which is split out of
+`MessageList.tsx` because how a message renders is a separate concern from how the thread is
+laid out.
+
+**TeX** is recognised as `$$…$$`, `\[…\]` and `\(…\)`. A single `$…$` is deliberately *not*
+recognised: it is ordinary in prose about money, and rendering "costs $5 to $10 per user" as
+an equation is a worse failure than leaving a rare inline expression unrendered.
+
+`remark-math` is not used, for two reasons. CommonMark treats a backslash before ASCII
+punctuation as an escape, so by the time an mdast node exists `\(x\)` has already become the
+literal text `(x)` — a post-parse plugin cannot see those delimiters at all. And the renderer
+already has the right mechanism: citations and masks are lifted out of the text as inert
+`⟦cite:N⟧` tokens and swapped back in as components, so that nothing injects HTML into model
+output. Maths uses the same path, as `⟦math:N⟧`.
+
+**Mermaid** has been reaching the chat since before it could be rendered: Content
+Understanding writes ```` ```mermaid ```` fences into extracted document text
+(`functions_content_understanding.py`), so a document containing a diagram was arriving as
+diagram source.
+
+**SimpleChart** renders the ```` ```simplechart ```` payload the built-in chart action emits,
+matching what the classic client draws for the same message. The payload grammar,
+sanitisation limits and colour palette are ported from `chat-inline-charts.js`; its
+colour-editing half is not, because that rewrites the stored message. Below the chart sit a
+**Data** disclosure and a **PNG** download. The disclosure is closed by default — the chart is
+the answer, and a 500-row table opened automatically would bury the rest of the reply — but it
+is one click away, because a chart without its numbers cannot be checked. A payload with no
+`table` of its own has one derived from its labels and series.
+
+Some details worth recording:
+
+- **Untrusted input is the whole design constraint.** KaTeX runs with `trust: false`, which
+  disables `\href`, `\url` and `\includegraphics`. Mermaid runs with `securityLevel: 'strict'`
+  and `htmlLabels: false`, never has `bindFunctions` called on it, and registers no icon packs
+  because those are fetched from the public Internet. Both produce markup that has to be
+  injected as HTML, so each passes through DOMPurify first — the only two places in the SPA
+  that use `dangerouslySetInnerHTML`, and a test fails if a third appears.
+- **A streaming reply would otherwise be handed half a diagram.** The bubble re-renders on
+  every token and markdown treats an unclosed fence as a code block running to the end of the
+  input, so an unterminated trailing diagram or chart fence renders a placeholder until it is
+  complete. The classic client solves the same problem the same way, with
+  `INLINE_CHART_PENDING_REGEX`. Completed diagrams are cached by source text, so the rest of
+  the stream re-renders nothing.
+- **Copying a chart gives you its numbers.** On screen a `simplechart` block is a chart;
+  pasted verbatim it is kilobytes of minified JSON in the middle of an answer. `messageText.ts`
+  substitutes the chart's title and a markdown table. TeX and mermaid sources are left alone,
+  because unlike a chart payload they are still meaningful to read.
+- **Charts and diagrams follow the theme.** Mermaid re-renders on a light/dark switch and
+  Chart.js takes its tick, grid and legend colours from the same CSS custom properties as the
+  rest of the interface. The downloaded PNG is composited onto the theme's solid surface
+  first, because a transparent chart is unreadable wherever it is pasted.
 
 ### Message inspector
 
@@ -654,6 +745,7 @@ this entirely and is the recommended layout.
 | `functional_tests/test_v2_message_masking.py` | All mask actions, selection carries text not just offsets, rejection is explained, masked text never reaches the DOM, masks applied before citation parsing, attribution, permission rule, popup stays on screen |
 | `functional_tests/test_v2_conversation_details_and_gating.py` | Tags split by category, source documents paged with the citation-tracking note, summary generated on demand, URL access and deep research gated on what is typed, image generation exclusivity, chat width persisted, unsafe tag values not linked |
 | `functional_tests/test_v2_model_identity_and_scope.py` | The whole model identity is sent and the picker keys on `selection_key`, the document scope is computed rather than hardcoded, and workspace ids travel with it |
+| `functional_tests/test_v2_rich_rendering.py` | Browser libraries vendored into the repository with their licences and pinned versions, no equivalent npm dependency, KaTeX fonts complete and locally resolvable, a sanitizer boundary at every HTML sink and nowhere else, KaTeX `trust: false`, mermaid strict with no autostart or icon packs, single `$` not treated as maths, fence wiring and chart language parity with the backend, charts copied as data, CSP unchanged |
 | `functional_tests/test_csrf_state_changing_route_guard.py` | Cross-site mutations require an explicitly trusted origin; CORS preflights answered before authentication and never wildcarded |
 | `functional_tests/route_tests/` | Blueprint policy classification for `frontend_v2`, `backend_v2`, `backend_v2_admin` |
 
