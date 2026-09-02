@@ -264,12 +264,12 @@ DI_MARKDOWN_TABLE_ROW_PATTERN = re.compile(r'(?m)^\s*\|.+\|\s*$')
 # treats them as a signal that Enhanced extraction is worth the extra cost, because Content
 # Understanding is the only engine that describes figures.
 DI_MARKDOWN_FIGURE_PATTERN = re.compile(r'(<figure\b|</figure>|!\[[^\]]*\]\()', re.IGNORECASE)
-# Budget for image content merged into an existing chunk. The cap is token-oriented, so it is
-# converted with a conservative characters-per-token estimate before being used as a length limit.
-OFFICE_IMAGE_MERGE_CHARS_PER_TOKEN = 4
-OFFICE_IMAGE_MERGE_UTILIZATION = 0.9
-OFFICE_IMAGE_MERGE_FALLBACK_CAP = 16384
+# Budget for image content merged into an existing chunk. The limit is the embedding character
+# budget, so a merged chunk can never grow past what the embedding endpoint accepts.
 OFFICE_IMAGE_MERGE_MIN_CHAR_LIMIT = 4000
+OFFICE_IMAGE_MERGE_FALLBACK_CHAR_LIMIT = int(
+    EMBEDDING_CONTEXT_FALLBACK_TOKENS * EMBEDDING_CHUNK_UTILIZATION * EMBEDDING_CHARS_PER_TOKEN
+)
 
 
 def is_pdf_file_name(file_name):
@@ -555,13 +555,10 @@ def _merge_embedded_images_into_chunks(final_chunks, image_blocks, total_body_wo
         return merged_chunks, 0, list(image_blocks)
 
     try:
-        chunk_size_cap = int(get_chunk_size_cap(settings))
+        embedding_char_budget = int(get_embedding_safe_chunk_characters(settings))
     except Exception:
-        chunk_size_cap = OFFICE_IMAGE_MERGE_FALLBACK_CAP
-    merged_char_limit = max(
-        OFFICE_IMAGE_MERGE_MIN_CHAR_LIMIT,
-        int(chunk_size_cap * OFFICE_IMAGE_MERGE_CHARS_PER_TOKEN * OFFICE_IMAGE_MERGE_UTILIZATION),
-    )
+        embedding_char_budget = OFFICE_IMAGE_MERGE_FALLBACK_CHAR_LIMIT
+    merged_char_limit = max(OFFICE_IMAGE_MERGE_MIN_CHAR_LIMIT, embedding_char_budget)
 
     merged_count = 0
     overflow_blocks = []
@@ -3014,7 +3011,29 @@ def save_chunks(page_text_content, page_number, file_name, user_id, document_id,
     try:
         #status = f"Generating embedding for page {page_number}"
         #update_document(document_id=document_id, user_id=user_id, status=status)
-        embedding, token_usage = generate_embedding(page_text_content)
+        embedding_input = page_text_content
+        max_embedding_characters = get_embedding_safe_chunk_characters()
+
+        # Last-resort guard. Every processor bounds its own chunks, so reaching this means content
+        # tokenized far worse than estimated. Splitting is not an option here because chunk ids are
+        # derived from the page number, so a second chunk would overwrite the first in the search
+        # index. Only the embedding input is clamped: the full text is still stored below, so the
+        # chunk stays readable and citable and only its vector comes from the leading portion.
+        if embedding_input and len(embedding_input) > max_embedding_characters:
+            log_event(
+                "Chunk exceeded the embedding character budget and was clamped for embedding only.",
+                extra={
+                    "document_id": document_id,
+                    "page_number": page_number,
+                    "file_name": file_name,
+                    "original_characters": len(embedding_input),
+                    "clamped_characters": max_embedding_characters
+                },
+                level=logging.WARNING
+            )
+            embedding_input = embedding_input[:max_embedding_characters]
+
+        embedding, token_usage = generate_embedding(embedding_input)
     except Exception as e:
         print(f"Error generating embedding for page {page_number} of document {document_id}: {e}")
         raise
@@ -6384,6 +6403,7 @@ def process_html(document_id, user_id, temp_file_path, original_filename, enable
     chunk_config = get_chunk_size_config(get_settings())
     target_chunk_words = chunk_config.get('html', {}).get('value', 1200) # Target size based on requirement
     min_chunk_words = max(1, int(target_chunk_words * 0.5)) # Minimum size based on requirement
+    max_chunk_characters = get_embedding_safe_chunk_characters()
 
     if enable_enhanced_citations:
         args = {
@@ -6437,6 +6457,10 @@ def process_html(document_id, user_id, temp_file_path, original_filename, enable
             else:
                 # Chunk is too small, add to buffer and continue to next chunk
                 buffer_chunk = current_chunk_text + " " # Add space between merged chunks
+
+        # Defensive: the splitter above is character-bounded, but merging small chunks can still
+        # push one past the embedding context window.
+        final_chunks = split_oversized_chunks(final_chunks, max_chunk_characters)
 
         num_chunks_final = len(final_chunks)
         update_callback(number_of_pages=num_chunks_final) # Use number_of_pages for chunk count
@@ -6512,9 +6536,11 @@ def process_md(document_id, user_id, temp_file_path, original_filename, enable_e
     total_chunks_saved = 0
     total_embedding_tokens = 0
     embedding_model_name = None
-    chunk_config = get_chunk_size_config(get_settings())
+    settings = get_settings()
+    chunk_config = get_chunk_size_config(settings)
     target_chunk_words = chunk_config.get('md', {}).get('value', 1200) # Target size based on requirement
     min_chunk_words = max(1, int(target_chunk_words * 0.5)) # Minimum size based on requirement
+    max_chunk_characters = get_embedding_safe_chunk_characters(settings)
 
     if enable_enhanced_citations:
         args = {
@@ -6550,6 +6576,14 @@ def process_md(document_id, user_id, temp_file_path, original_filename, enable_e
 
         initial_chunks_content = [doc.page_content for doc in md_header_splits]
 
+        # A header section has no inherent size bound: a heading with no nested subheading yields a
+        # section as large as the text under it. Cap each section before merging, otherwise an
+        # oversized section is sent to the embedding endpoint whole and fails the entire upload.
+        capped_chunks_content = []
+        for section_content in initial_chunks_content:
+            capped_chunks_content.extend(split_text_by_word_limit(section_content, target_chunk_words))
+        initial_chunks_content = capped_chunks_content
+
         # TODO: Advanced Table/Code Block Handling:
         # - Table header replication requires identifying markdown tables (`|---|`),
         #   detecting splits, and injecting headers.
@@ -6575,6 +6609,11 @@ def process_md(document_id, user_id, temp_file_path, original_filename, enable_e
             else:
                 # Accumulate in buffer if below min size and not the last chunk
                 buffer_chunk = current_chunk_text + "\n\n" # Add separator when buffering
+
+        # The merge loop above can still carry a small trailing chunk onto a full one, and word
+        # counts cannot predict how badly tables, code fences, or long URLs tokenize. Bound the
+        # final list by characters so no chunk can exceed the embedding context window.
+        final_chunks = split_oversized_chunks(final_chunks, max_chunk_characters)
 
         num_chunks_final = len(final_chunks)
         update_callback(number_of_pages=num_chunks_final)

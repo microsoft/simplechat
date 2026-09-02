@@ -20,18 +20,21 @@ This page includes the latest release notes inline. Older release sections are s
 
 | Version | Page |
 | --- | --- |
-| v0.260.025 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
-| v0.260.024 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
-| v0.260.023 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
-| v0.260.021 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
-| v0.260.020 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
-| v0.260.019 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
-| v0.260.018 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
-| v0.260.017 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
-| v0.260.016 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
-| v0.260.015 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
-| v0.260.014 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
-| v0.260.013 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
+| v0.261.003 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
+| v0.261.002 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
+| v0.261.001 | [Release notes 0.261 series]({{ '/explanation/release-notes/v0.261/' | relative_url }}) |
+| v0.260.025 | [Release notes 0.260 series]({{ '/explanation/release-notes/v0.260/' | relative_url }}) |
+| v0.260.024 | [Release notes 0.260 series]({{ '/explanation/release-notes/v0.260/' | relative_url }}) |
+| v0.260.023 | [Release notes 0.260 series]({{ '/explanation/release-notes/v0.260/' | relative_url }}) |
+| v0.260.021 | [Release notes 0.260 series]({{ '/explanation/release-notes/v0.260/' | relative_url }}) |
+| v0.260.020 | [Release notes 0.260 series]({{ '/explanation/release-notes/v0.260/' | relative_url }}) |
+| v0.260.019 | [Release notes 0.260 series]({{ '/explanation/release-notes/v0.260/' | relative_url }}) |
+| v0.260.018 | [Release notes 0.260 series]({{ '/explanation/release-notes/v0.260/' | relative_url }}) |
+| v0.260.017 | [Release notes 0.260 series]({{ '/explanation/release-notes/v0.260/' | relative_url }}) |
+| v0.260.016 | [Release notes 0.260 series]({{ '/explanation/release-notes/v0.260/' | relative_url }}) |
+| v0.260.015 | [Release notes 0.260 series]({{ '/explanation/release-notes/v0.260/' | relative_url }}) |
+| v0.260.014 | [Release notes 0.260 series]({{ '/explanation/release-notes/v0.260/' | relative_url }}) |
+| v0.260.013 | [Release notes 0.260 series]({{ '/explanation/release-notes/v0.260/' | relative_url }}) |
 | v0.260.012 | [Release notes 0.260 series]({{ '/explanation/release-notes/v0.260/' | relative_url }}) |
 | v0.260.011 | [Release notes 0.260 series]({{ '/explanation/release-notes/v0.260/' | relative_url }}) |
 | v0.260.010 | [Release notes 0.260 series]({{ '/explanation/release-notes/v0.260/' | relative_url }}) |
@@ -68,266 +71,69 @@ This page includes the latest release notes inline. Older release sections are s
 
 ## Latest release notes
 
-### **(v0.260.025)**
+### **(v0.261.003)**
 
 #### Bug Fixes
 
-*   **Agent Actions Are No Longer Skipped When A Workspace Is In Scope**
-    *   Selecting an agent that has actions and enabling a workspace produced answers that never invoked any of the agent's actions. The assistant answered from retrieved document text alone, even when the retrieved excerpts did not contain what the question asked for.
-    *   The retrieval prompt instructed the model to base its answer *only* on the retrieved excerpts, so although the agent's actions were attached and available, the model was told not to reach for them. Retrieved excerpts are now framed as starting evidence, and the model is directed to call an available action when the excerpts lack what the question needs, then reason over the excerpts and the action results together. The rule against fabricating unsupported values is unchanged.
-    *   (Ref: `build_search_augmentation_system_prompt`, `build_mixed_source_evidence_handoff`, agent actions, workspace search, [#1332](https://github.com/microsoft/simplechat/issues/1332))
+*   **Broken Documentation Links Repaired**
+    *   Clicking the upgrade guide, Docker customization, or enterprise networking links from the repository README or the deployer READMEs led to a "page not found". Those pages were reorganized from `docs/how-to/<snake_case>.md` to `docs/guides/<kebab-case>.md`, and the site kept redirects, but redirects do not apply when browsing files on GitHub. No documentation was ever lost, only mislinked.
+    *   Repaired 46 broken relative links in total: 12 in the README and deployer READMEs, and 34 in archived per-version engineering notes. Archived links whose target was never migrated now keep the prose without a dead link, rather than pointing at a file that does not exist.
+    *   Also corrected the "Return to Main" link in the Azure CLI and Terraform deployer READMEs, which pointed one directory too shallow.
+    *   (Ref: `README.md`, `deployers/*/README.md`, `docs/explanation/features/`, `docs/explanation/fixes/`, [#1371](https://github.com/microsoft/simplechat/issues/1371))
 
-*   **Spreadsheets In A Workspace Are Now Actually Computed**
-    *   A quantitative question about a spreadsheet could return values that were not in the file. Tabular computation was suppressed whenever workspace search also returned any narrative document, and the heuristic treated topic words such as "report", "policy", and "memo" as reasons to skip computation entirely.
-    *   Because only a truncated three-row preview of a spreadsheet is indexed for search, skipping computation left the model deriving totals and averages from those preview rows. Tabular sources in scope are now computed unless the question unambiguously names a narrative artifact such as a PDF or presentation, restoring parity with the behavior already used when mixed-source search is disabled.
-    *   (Ref: `should_run_tabular_evidence`, `functions_mixed_source_orchestration.py`, tabular processing, mixed-source evidence, [#1332](https://github.com/microsoft/simplechat/issues/1332))
+*   **Recovered 27 Release Note Sections Missing From The Source File**
+    *   `docs/explanation/release_notes.md` had been truncated from 46 version sections to 19, dropping every v0.260 entry along with v0.250.229 through v0.250.231. The published site still showed them, because the pages that render release notes are generated from this file and had not been rebuilt since the truncation.
+    *   That left the repository one routine `build_release_notes_pages.py` run away from erasing roughly 2,400 lines of release history from the site with no obvious cause. The sections have been restored from history and the pages regenerated, so the source and the site agree again.
+    *   (Ref: `docs/explanation/release_notes.md`, `scripts/build_release_notes_pages.py`, [#1371](https://github.com/microsoft/simplechat/issues/1371))
 
-*   **A Skipped Spreadsheet Now Tells The Model What It Is Missing**
-    *   When tabular computation is skipped, the evidence record previously said processing "was not needed", which implied the source was irrelevant and left the model free to compute from indexed preview rows.
-    *   It now states that the full table was never read, that any indexed excerpt is a truncated preview, that numeric conclusions must not be drawn from it, and that the tabular analysis action should be called if values from that source are required.
-    *   (Ref: `execute_tabular_evidence_sources`, evidence envelopes, tabular citations, [#1332](https://github.com/microsoft/simplechat/issues/1332))
+#### Documentation
 
-### **(v0.260.024)**
+*   **Web Search Documentation Now Describes What Actually Happens**
+    *   The web search guide still described the Bing Web Search API integration that was removed back in v0.229.001. Web search has since run through an Azure AI Foundry agent using the Grounding with Bing Search tool, which is why an admin has to configure a Foundry project and agent ID before the **Web** control appears.
+    *   Added a dedicated **What leaves SimpleChat** section stating the egress boundary plainly: only the message the user just typed is sent to the external search service. Conversation history, workspace documents, attached file contents, system prompts, agent instructions, and workspace or document names are never included. This behavior was hardened in v0.241.022 but was previously mentioned only in passing.
+    *   Documented the Deep Research nuance: it runs several planned queries instead of one, but every query is still derived from the current message alone, so no conversation history is introduced.
+    *   Added the Grounding with Bing Search compliance-boundary notice to the user-facing guide, replaced the placeholder text in the admin Web Search settings table with real descriptions, and reused the existing web search flow diagram instead of leaving a "recording planned" video card.
+    *   (Ref: `docs/guides/use-web-search.md`, `docs/admin/knowledge.md`, `docs/reference/chat-controls.md`, `build_web_search_query_text`, [#1371](https://github.com/microsoft/simplechat/issues/1371))
 
-#### Bug Fixes
+*   **Documentation Link Rot Now Fails A Test**
+    *   Added `functional_tests/test_docs_link_integrity.py`, which fails when any relative markdown link in the README, `docs/`, or `deployers/` points at a missing file, when a Jekyll `relative_url` page link does not resolve, or when a media include names an unregistered slot. Outstanding screenshots are reported but never fail the run.
+    *   Added `functional_tests/test_docs_web_search_accuracy.py`, which ties the published privacy claim to the implementation. If the web search query builder ever starts folding conversation history back into the outbound query, the test fails and forces the documentation to be corrected with it.
+    *   (Ref: `test_docs_link_integrity.py`, `test_docs_web_search_accuracy.py`, [#1371](https://github.com/microsoft/simplechat/issues/1371))
 
-*   **Inline Images And Videos Now Show Only Cited Media**
-    *   Assistant messages rendered an inline image or video gallery for every media file that retrieval returned, so a search that surfaced five workspace images produced five inline tiles even when the answer referenced only one of them, or none at all. Media that had nothing to do with the answer was presented inside the message bubble as though it supported the answer.
-    *   Inline galleries now render only the media the response actually cited. The five-item gallery cap therefore goes to genuinely cited media instead of retrieval noise, and unreferenced workspace files no longer trigger enhanced-citation fetches.
-    *   Galleries produced by an action or tool the assistant actually ran are unaffected, since those are executed results rather than unused search candidates. Conversations created before cited-source tracking existed also keep their previous behavior.
-    *   The **Sources** disclosure is unchanged and still lists every retrieved document and web result, so nothing becomes harder to find.
-    *   (Ref: `chat-citation-tracking.js`, `chat-inline-images.js`, `chat-inline-videos.js`, `chat-messages.js`, `cited_hybrid_citations`, [#1329](https://github.com/microsoft/simplechat/issues/1329))
+*   **First Batch Of Documentation Screenshots**
+    *   Filled 54 empty screenshot slots, taking documentation screenshot coverage from 18 of 122 to 72 of 122. The Administration group is now fully illustrated.
+    *   Added the four admin settings overviews (Backup & Recovery, Data Lifecycle, Governance, Workflow), six chat control references (conversation list, conversation header, composer, selectors, grounded search, and advanced conversation search), thirty-three task guide steps, and configuration panes for eleven action types (Azure Maps, Blob Storage, Chart, Cosmos Query, Databricks, Document Search, Log Analytics, MCP, Microsoft Graph, OpenAPI, RocksDB, and SimpleChat).
+    *   The web search screenshot captures the live data notice, so the guide's claim that only the current message is sent is now visible rather than only asserted.
+    *   Action configuration panes were captured without saving any action, so every credential field shows only its placeholder text and no tenant values were recorded. Where an admin settings pane already held real values, those fields were replaced with example values before capture and the page was reloaded without saving.
+    *   Replaced the generated placeholder alt text on every filled slot with a description of what the reader actually learns from the image.
+    *   (Ref: `docs/images/admin/`, `docs/images/reference/`, `docs/images/guides/`, [#1371](https://github.com/microsoft/simplechat/issues/1371))
 
-### **(v0.260.023)**
-
-#### Bug Fixes
-
-*   **Running Simple Chat Directly No Longer Fails To Start When An Agent Has Actions**
-    *   Starting Simple Chat with `python app.py` (including via `uv run`) aborted with `RuntimeError: Working outside of request context` whenever any agent had an action assigned. The app started normally until the first action was saved, which made the failure look intermittent.
-    *   Semantic Kernel initialization runs before any request exists on that path, but agent plugin loading read the signed-in user from the Flask session. It now resolves the user only when a request is actually in progress and otherwise loads with no user identity, matching how global plugin loading already behaved.
-    *   Container and App Service deployments were never affected, because they start through gunicorn and initialize during the first request. Their behavior is unchanged.
-    *   Three further identity lookups used for group scope and personal model endpoints had the same latent problem and were corrected at the same time.
-    *   (Ref: `semantic_kernel_loader.py`, `functions_authentication.py`, `get_current_user_id_or_none`, issue #1327)
-
-### **(v0.260.021)**
-
-#### Bug Fixes
-
-*   **Documentation Screenshot Viewer Validates Its Image Source**
-    *   The documentation site's click-to-enlarge screenshot viewer assigned an image URL taken from a data attribute in the page. Because that value flows from page content into a URL, CodeQL flagged it as a potential DOM-based cross-site scripting sink.
-    *   The viewer now resolves the value and requires a same-origin `http` or `https` URL ending in an image extension before using it, so scheme-based payloads such as `javascript:` and `data:` URLs, and any off-site source, are rejected. All documentation media is local, so no legitimate image is affected.
-    *   (Ref: `docs/assets/js/media.js`, `safeMediaUrl`, `ui_tests/test_docs_media_lightbox_source_validation.js`, CodeQL `js/xss-through-dom`)
-
-### **(v0.260.020)**
-
-#### New Features
-
-*   **Admin Documentation Rebuilt For The Grouped Settings Layout**
-    *   Admin Settings was reorganized from 18 flat tabs into 14 groups containing 44 tabs and 93 settings sections. The documentation was still written against the old flat layout, so it described tabs that no longer exist and omitted the new ones.
-    *   The admin documentation is now one page per group, with every tab reachable by its own anchor so links to a specific tab keep working. Every retired tab URL redirects to the group that now owns its settings, so existing links and bookmarks continue to resolve.
-    *   (Ref: `docs/admin/`, `application/single_app/admin_settings_nav.py`, `docs/_data/app_surface.yml`)
-
-*   **Collaborating In A Conversation Is Now Documented**
-    *   Added a guide covering shared conversations end to end: sharing a conversation, mentioning a participant with `@` and Tab completion, how shared files are approved before they become available, and what participants can and cannot do.
-    *   The Blob Storage action reference now explains its managed identity and account key options.
-    *   (Ref: `docs/guides/collaborate-in-a-conversation/`, `docs/reference/actions/blob-storage/`, `enable_collaborative_conversations`)
-
-*   **Documentation Site Now Reflects the v0.260.001 Release**
-    *   The documentation site's Latest Release section was a full release behind, still presenting v0.250.001 as current. It now mirrors the same three-tier model the application uses: v0.260.001 as the current release, v0.250.001 as the previous release, and v0.239.001-v0.241.007 in the archive.
-    *   Added 20 feature guides for the v0.260.001 release covering enhanced extraction, embedded Office images, workflow task sequences, the MCP platform, the Yamcs and RocksDB actions, agent instruction references, action test connections, Azure Blob file sync, terms of use, audio file support, completion notifications, the chat AI notice, conversation context grounding, used documents on fork, the conversation contents drawer, font size and zoom, message audio export, public workspace display names, and chat scroll accessibility.
-    *   (Ref: `docs/_data/latest_release_features.yml`, `docs/latest-release/release-260-*`, `application/single_app/support_menu_config.py`)
-
-*   **Placeholder Screenshots Are Now Tracked**
-    *   The v0.260.001 release ships branded "Screenshot pending" placeholder graphics so feature cards render while final captures are pending. Those placeholders are now listed on the documentation media status page with the exact file paths to overwrite, so they are visible work rather than a silent gap.
-    *   (Ref: `docs/_data/media_pending.yml`, `/contributing/media-status/`)
+### **(v0.261.002)**
 
 #### User Interface Enhancements
 
-*   **Admin Settings Pages Show Real Screenshots**
-    *   Fourteen admin settings tab pages were rendering "screenshot needed" placeholders even though real screenshots already existed in the repository. Those pages now display the actual screenshots for the General, AI Models, Search and Extract, Workspaces, File Sync, Workspace Identities, Citation, Safety, Security, Agents, Scale, Control Center, Logging, and Send Feedback tabs.
-    *   The four tabs with no captured screenshot still show a placeholder naming the exact file to create, so genuine gaps stay visible.
-    *   (Ref: `docs/admin/`, `docs/images/admin-settings/`)
+*   **Inbound MCP Enablement Guidance**
+    *   Added a visible **Inbound MCP** tab state for deployments where the preview admin UI is disabled by the missing `ENABLE_MCP_UI=true` App Service application setting.
+    *   The disabled-state card explains how to enable the preview UI while making clear that the inbound MCP runtime remains off until an admin turns on **Enable inbound MCP server** after authentication, client allowlist, source, and governance prerequisites are ready.
+    *   (Ref: `admin/_panes/inbound-mcp.html`, `admin_settings_nav.py`, [#1364](https://github.com/microsoft/simplechat/issues/1364))
 
 #### Bug Fixes
 
-*   **Release Notes Pages No Longer Break On Quoted Template Syntax**
-    *   Release notes legitimately quote template syntax when describing template work, such as a Jinja `block` tag. The page generator emitted that verbatim, so the site build failed with an unknown tag error. Quoted template syntax is now escaped in generated pages and renders as literal text.
-    *   (Ref: `scripts/build_release_notes_pages.py`)
+*   **Delegated Governance New Policy Modal Opens On Split Governance Tabs**
+    *   Fixed the delegated item governance **New Policy** button so it opens the policy editor after Admin Settings governance was split into Feature Governance, Policies, and MCP Governance tabs.
+    *   Updated governance quick links to target the correct split tab panes instead of the retired aggregate Governance pane.
+    *   (Ref: `admin_governance.js`, delegated item policy editor, [#1362](https://github.com/microsoft/simplechat/issues/1362))
 
-*   **Release Notes Links To Internal Engineering Notes**
-    *   Some release note entries linked to the internal feature and fix note trees, which are intentionally not published on the documentation site. Those links now point at the repository.
-    *   (Ref: `docs/explanation/release_notes.md`)
+*   **Large Markdown Files No Longer Fail To Upload**
+    *   Uploading a Markdown file could fail with `Failed processing Markdown file ...` and take down the whole document, not just the oversized part of it. Long pages with a big section under a single heading, such as a release notes file, were the usual trigger.
+    *   Markdown was the only ingestion path with no maximum chunk size. Its splitter divided the file on headings, and the step afterwards only ever merged chunks that were **too small** — nothing split a chunk that was too large. A heading with no subheading beneath it therefore became one chunk as large as all the text under it, which the embedding model refused.
+    *   Lowering **Markdown (words)** in Admin Settings did not work around this, because that value was only ever used as a minimum. It is now a real target, so the setting behaves the way its name implies.
+    *   Sections are now split to the configured size, a character limit is applied after merging to catch content such as tables and code blocks that take up more of the model's budget than their word count suggests, and a final safeguard keeps any remaining outlier inside the limit. That safeguard trims only the text used to build the chunk's search vector — the chunk itself is still stored in full, so citations and content are unaffected.
+    *   (Ref: `process_md`, `save_chunks`, `functions_content.py`, `functions_documents.py`)
 
-*   **Release Notes Index No Longer Exceeds Its Page Budget**
-    *   The release notes page generator inlined a fixed number of recent releases on its index. The consolidated v0.260.001 rollup is large enough on its own that this pushed the index past the maximum page size and failed generation. The index now fills its inline section by size rather than by count, so a single large rollup cannot break it.
-    *   (Ref: `scripts/build_release_notes_pages.py`)
-
-*   **Archived Release Notes Links**
-    *   The archived release notes page linked to the internal feature and fix note trees, which are intentionally not published on the documentation site. Those links now point at the repository instead.
-    *   (Ref: `docs/explanation/archive_release_notes.md`)
-
-### **(v0.260.019)**
-
-#### Bug Fixes
-
-*   **Admin Settings Loads Again**
-    *   Admin Settings returned a 500 error on every request after the settings restructure. The Document Action Capabilities card moved to the Actions tab but the two values it reads stayed behind in the Agents tab, and each tab is rendered separately, so those values were never there when the card asked for them.
-    *   Both values are now defined in the tab that uses them, and a new test renders the two tabs together to keep them there.
-    *   (Ref: `admin/_panes/actions.html`, `admin/_panes/agents.html`, document action capabilities)
-
-*   **Server Errors Are Visible In The App Service Log Again**
-    *   Once Application Insights was configured it took ownership of logging, which had the side effect of stopping Flask writing unhandled errors to the container log. A failing page left nothing behind but its access-log line, so diagnosing it meant querying Application Insights.
-    *   Unhandled errors are now written to both, so the reason for a failure is visible in the App Service log stream.
-    *   (Ref: `functions_appinsights.py`, `ensure_console_error_logging`, App Service console logs)
-
-*   **Document Access Index Diagnostics Appear When Enabled**
-    *   The Cosmos DB tab checked the wrong thing for the debug setting, so the backfill controls, shadow validation metrics and reset option stayed hidden even after an admin turned the setting on.
-    *   (Ref: `admin/_panes/cosmos.html`, `enable_dai_debug`)
-
-### **(v0.260.018)**
-
-#### Bug Fixes
-
-*   **Setup Walkthrough Lands On The Right Settings Again**
-    *   The guided setup walkthrough sent each step to a named tab. After the Admin Settings restructure, eleven of its twelve steps named tabs that no longer existed, so those steps would have moved nowhere and left the admin looking at whatever was already on screen.
-    *   Each step now names the setting it is about and the tab is worked out from the page, so the walkthrough follows settings wherever they live.
-    *   (Ref: setup walkthrough, `admin_settings.js`, `admin_card_links.js`)
-
-*   **Cosmos Throughput Validation Reveals The Invalid Field**
-    *   When Cosmos throughput values failed validation, the page tried to switch to a tab that no longer exists, so the field needing attention could be left on a hidden tab with no indication of where to look.
-    *   Validation now jumps to wherever the invalid field actually is.
-    *   (Ref: Cosmos throughput validation, `admin_settings.js`)
-
-#### User Interface Enhancements
-
-*   **Admin Settings Restructure Merged With Current Development**
-    *   Version bump covering the merge of the Admin Settings information architecture work with the generated file output fixes developed in parallel. Both reached v0.260.011 independently, so their release notes are combined under that version.
-    *   (Ref: Admin Settings navigation, generated file exports)
-
-### **(v0.260.017)**
-
-#### New Features
-
-*   **All App Role Requirements In One Place**
-    *   Ten settings across seven tabs can each require an Entra app role, which made the overall access policy impossible to read without hunting through the whole of Admin Settings.
-    *   **Security → Access & Roles** now lists every one of them with a switch and a link to the setting in its own tab. Changing a switch here changes the setting itself.
-    *   The list is built from the page, so a new role requirement added anywhere appears here automatically.
-    *   (Ref: `app-role-requirements-section`, `admin_access_roles_roster.js`)
-
-#### User Interface Enhancements
-
-*   **System Settings Card Split To Where Each Setting Belongs**
-    *   One card mixed maximum file size, conversation history, idle timeout, the default system prompt and the access denied message — five unrelated concerns under one heading.
-    *   Maximum File Size is now in **Workspaces → Files & Sharing**, Conversation History and Default System Prompt in **Chat → Chat Experience**, and Access Denied Message in **Security → Access & Roles**.
-    *   What remains in **Security → Session** is the idle timeout, and the card is now named for it.
-    *   Every setting keeps its saved value; nothing needs re-entering.
-    *   (Ref: `idle-timeout-section`, `file-size-limit-section`, `conversation-history-section`, `default-system-prompt-section`, `access-denied-message-section`)
-
-### **(v0.260.016)**
-
-#### User Interface Enhancements
-
-*   **Backup, Migrate & Restore Split Into Five Tabs**
-    *   One tab carried the entire backup, migration, restore, Cosmos editing and job history surface — over 1,600 lines in a single scroll.
-    *   Backup & Recovery now has **Backup** (readiness, backup, schedule, storage, encryption), **Migrate**, **Restore**, **Cosmos Editor** and **Jobs**.
-    *   The save button, status line and operational-hours warning are shared by all five tabs, so they sit above the tabs and stay available wherever you are in the group.
-    *   This completes the Admin Settings restructure: **14 groups and 44 tabs**, from an original 17 flat tabs.
-    *   (Ref: `backup`, `migrate`, `restore`, `cosmos-editor`, `jobs`)
-
-#### Bug Fixes
-
-*   **Backup Dialogs Remain Available From Every Tab**
-    *   The eleven Backup & Recovery dialogs are opened from more than one place and several are opened from code rather than a button. Left inside a tab, a dialog cannot appear while a different tab is showing.
-    *   They now sit outside the tabs, so restore, migration cancel, job detail, the Cosmos editor dialogs and the five setup guides all open wherever they are triggered from.
-    *   (Ref: Backup & Recovery dialogs, `admin_data_management.js`)
-
-*   **Shared Controls Work In Both Navigation Layouts**
-    *   Shared group controls resolve their group from whichever navigation is on screen, so the Backup & Recovery save button is present in the sidebar layout as well as the tab layout.
-    *   (Ref: `data-admin-group-shared`, `admin_sidebar_nav.js`)
-
-### **(v0.260.015)**
-
-#### User Interface Enhancements
-
-*   **AI Models Split By Model Purpose**
-    *   AI Models presented every model setting on one tab. It is now **Model Endpoints** (endpoint and fallback configuration, plus the Chat Model dialog opened from it), **Embeddings** and **Image Generation**.
-    *   (Ref: `model-endpoints`, `embeddings`, `image-generation`)
-
-*   **Agents And Actions Are Now Separate Tabs**
-    *   A single "Agents and Actions" tab carried agent configuration, template approvals, document action capabilities, action configuration and the whole inbound MCP surface.
-    *   It is now **Agents**, **Actions** and **Inbound MCP**.
-    *   Inbound MCP is a large area with its own dialogs and diagnostics, and the whole tab is hidden when the inbound MCP interface is turned off rather than showing an empty tab.
-    *   (Ref: `agents`, `actions`, `inbound-mcp`)
-
-#### Bug Fixes
-
-*   **Model Setup Guide Available From Every Model Tab**
-    *   The Azure OpenAI Model Setup Guide dialog is opened from the endpoints, embeddings and image generation cards. Once those moved to separate tabs it could only have opened from one of them.
-    *   The dialog now sits outside the tabs, so it opens from all three.
-    *   (Ref: `legacyModelDiscoveryIdentityGuideModal`)
-
-*   **Dangling Section Comments Removed**
-    *   Seven tabs ended with a comment labelling a card that had since moved to another tab.
-    *   (Ref: admin settings tab panes)
-
-### **(v0.260.014)**
-
-#### User Interface Enhancements
-
-*   **Knowledge Settings Split By What They Actually Do**
-    *   Search & Extract held eight cards spanning four unrelated jobs, from Bing consent to voice transcription.
-    *   Knowledge now has **Web & Research** (web search, URL access, deep research), **Search Index** (Azure AI Search), **Document Extraction** (document intelligence, chunk sizes, plus metadata extraction and multi-modal vision brought over from Workspaces) and **Audio & Video** (video intelligence, voice conversations), alongside the existing File Sync.
-    *   Voice and video sit under Knowledge rather than Chat because they are extraction pipelines that turn recordings into searchable content.
-    *   (Ref: `web-research`, `search-index`, `extraction`, `audio-video`)
-
-*   **Workspaces Focused On Workspaces**
-    *   Workspaces mixed workspace types with file rules, workflow and extraction settings.
-    *   It is now **Workspace Types** (personal, group, public), **Files & Sharing** (downloads, sharing, and shared conversation file approvals brought over from AI Models) and the existing Global Identities.
-    *   (Ref: `workspace-types`, `files-sharing`)
-
-*   **Workflow Is Its Own Area**
-    *   Workflow drives approvals and assignment across every workspace type and was too large to sit as one card inside Workspaces. It now has its own group.
-    *   (Ref: `workflow`, `workflow-settings-section`)
-
-#### Bug Fixes
-
-*   **Group Workflow Assignment Dialog Could Not Open**
-    *   The Group Workflow Assignment dialog ended up in a different tab from the button that opens it. Because an inactive tab is hidden, the dialog would not have appeared at all.
-    *   The dialog now sits with its button, and a new check verifies this for every dialog in Admin Settings so it cannot happen again.
-    *   (Ref: `groupWorkflowAssignmentModal`, `test_admin_settings_modal_placement.py`)
-
-*   **Misplaced Section Comments In AI Models**
-    *   Two section comments had drifted onto the wrong cards while settings were being regrouped, labelling the embeddings card as processing thoughts.
-    *   (Ref: `ai-models` pane)
-
-### **(v0.260.013)**
-
-#### User Interface Enhancements
-
-*   **General Tab Broken Up Into Focused Tabs**
-    *   General had grown into a catch-all of eleven unrelated cards: branding sat next to health checks, API documentation, terms of use and system settings.
-    *   Appearance now has **Branding** (branding, home page text, appearance), **Notices & Agreements** (classification banner, chat AI notice, terms of use and the user agreement pulled across from Workspaces) and **Pages & Links** (static pages plus external links).
-    *   Health Check and API Documentation moved to Operations, which is now **Logging & Health** — they report on how the app is running rather than how it looks.
-    *   Support moved to Help as its own **Support Menu** tab, next to Send Feedback.
-    *   (Ref: `branding`, `notices`, `custom-pages`, `logging`, `support-menu`)
-
-*   **Security Split Into Five Purposeful Tabs**
-    *   Security held a single Key Vault card while an unrelated Safety tab mixed content filtering with role permissions, which are different jobs.
-    *   Security is now **Access & Roles** (who gets in and with what role), **Secrets** (Key Vault), **Content Safety** (what may be said once you are in), **Session** (idle timeout and related system settings) and **Network** (Azure Front Door).
-    *   (Ref: `access-roles`, `secrets`, `content-safety`, `session`, `network`)
-
-#### Bug Fixes
-
-*   **"Open Key Vault Settings" Link No Longer Depends On A Hardcoded Tab**
-    *   The link from Data Management to Key Vault switched tabs by a hardcoded id, so it silently stopped working whenever that tab was renamed.
-    *   It now uses the standard card link, which finds the owning tab from the page itself and stays correct however the settings are grouped.
-    *   (Ref: `data-management-key-vault-link`, `admin_card_links.js`, `admin_data_management.js`)
-
-*   **Admin Settings Always Opens On A Real Tab**
-    *   The tab shown on arrival was pinned to a specific id in both the markup and the sidebar script. Regrouping settings could leave Admin Settings opening with no tab selected at all.
-    *   The landing tab is now taken from the navigation map, so it follows the settings and can never be Latest Features.
-    *   (Ref: `admin_landing_tab`, `get_landing_tab_id`, `admin_sidebar_nav.js`)
-
-*   **Stale Tab Names In Latest Features**
-    *   Several Latest Features entries pointed readers at tabs by their old names after the settings moved.
-    *   (Ref: `latest-features` pane)
+*   **Chunk Size Limits Now Respect Their Unit**
+    *   Chunk sizes are configured per file type in words, characters, or pages, but a single shared limit was applied to all of them. That let a word-based field be set to 16,384 words — far more than can be indexed — while implying the value was valid.
+    *   Word and character fields now have separate limits, both derived from the embedding model's context window, and the Document Extraction tab shows the current values. A value above its limit is reduced on save and the page names the fields it changed.
+    *   Page and slide counts are left uncapped here, since how much text a page holds is not known until extraction runs. They are bounded when the chunk is indexed instead.
+    *   No shipping default changed. Only custom overrides that could never have been indexed are affected.
+    *   (Ref: `get_chunk_size_cap`, `get_chunk_size_config`, Document Extraction settings, `admin_settings.js`)

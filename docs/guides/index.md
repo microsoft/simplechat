@@ -46,7 +46,7 @@ Use this section when you want momentum first: each page is a practical path thr
 | [Collaborate in a conversation]({{ '/guides/collaborate-in-a-conversation/' | relative_url }}) | Invite others into a shared chat, use mentions, and approve participant-generated files. | Users |
 | [Lock workspace scope in chat]({{ '/guides/lock-workspace-scope/' | relative_url }}) | Keep a conversation tied to the same selected workspaces after grounded answers. | Users |
 | [Use deep research]({{ '/guides/use-deep-research/' | relative_url }}) | Ask chat to perform deeper evidence review for URLs and sources in a message. | Users |
-| [Use web search]({{ '/guides/use-web-search/' | relative_url }}) | Send the current chat message to Bing web search when fresh web information is needed. | Users |
+| [Use web search]({{ '/guides/use-web-search/' | relative_url }}) | Ground an answer in current public web results, and see exactly what leaves SimpleChat when you do. | Users |
 | [Review pasted URLs]({{ '/guides/review-pasted-urls/' | relative_url }}) | Use URL Access to review links included in the current chat message. | Users |
 | [Generate images]({{ '/guides/generate-images/' | relative_url }}) | Use the chat Image control to request AI-generated images. | Users |
 

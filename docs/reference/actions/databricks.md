@@ -8,7 +8,7 @@ audience: user
 
 <!-- action-slug: databricks -->
 
-{% include media.html src="reference/actions-databricks-configuration.png" alt="Databricks action configuration UI." title="Databricks configuration" capture="Capture Workspace and Warehouse, Authentication, Execution Limits, and Test Connection. Redact tokens and IDs if needed." %}
+{% include media.html src="reference/actions-databricks-configuration.png" alt="The Databricks configuration pane showing workspace URL, cloud, SQL warehouse ID, default catalog and schema, personal access token authentication, and execution limits." title="Databricks action configuration" capture="Capture Workspace and Warehouse, Authentication, Execution Limits, and Test Connection. Redact tokens and IDs if needed." %}
 
 ## What this action does
 

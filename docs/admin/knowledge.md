@@ -37,7 +37,13 @@ These settings decide what evidence enters the system and how it becomes searcha
 
 ### Web Search {#web-search-section}
 
-The Web Search section belongs to the Web & Research tab. Use it with the adjacent settings in this group so related rollout, access, and operational choices stay aligned.
+Web Search lets chat ground a single message in current public web results. SimpleChat does not call a search API directly. It calls an Azure AI Foundry agent that you create and configure, and that agent uses the Grounding with Bing Search tool to run the query and return results with citations.
+
+Two things gate the capability, and both are required. `enable_web_search` turns it on, and `web_search_consent_accepted` records that an administrator acknowledged that Grounding with Bing Search moves data outside the Azure compliance boundary and operates under separate terms. Enabling the toggle without accepting the consent leaves the feature off.
+
+Only the user's current chat message is sent to the agent. Conversation history, workspace documents, attached file contents, and system prompts are never included in the outbound query. Decide your rollout policy on that basis, and use the notice settings below if you want users reminded of it in the composer.
+
+An agent ID is not optional. If it is missing, chat tells the user web search is unavailable rather than silently answering from training data, so a half-finished configuration fails loudly instead of quietly degrading.
 
 ### URL Access {#url-access-section}
 
@@ -51,19 +57,19 @@ The Deep Research section belongs to the Web & Research tab. Use it with the adj
 
 | Setting | What it does | Default | Notes |
 | --- | --- | --- | --- |
-| Enable Web Search via Foundry Agent | Adds web search through the configured Azure AI Foundry agent for approved chat flows. | Off | `enable_web_search`; capability toggle |
-| Show data notice to users when web search is used | Exposes the capability after required services, permissions, and rollout policy are ready. | Off | `enable_web_search_user_notice`; capability toggle |
-| Notice Text | This message will be shown to users once per session when they first use web search. | N/A (runtime control) | `web_search_user_notice_text` |
+| Enable Web Search via Foundry Agent | Adds web search through the configured Azure AI Foundry agent for approved chat flows. Requires accepted consent to take effect. | Off | `enable_web_search`; capability toggle |
+| Show data notice to users when web search is used | Shows a dismissible banner above the chat composer while web search is active, so users know the message will leave the tenant. | Off | `enable_web_search_user_notice`; capability toggle |
+| Notice Text | The banner wording. Shown once per browser session, from the first time the user activates web search until they dismiss it. | N/A (runtime control) | `web_search_user_notice_text` |
 | Foundry Project Endpoint | Project endpoint format: https://<foundry-resource>.services.ai.azure.com/api/projects/<project-name> (not the inference endpoint). | N/A (runtime control) | `web_search_foundry_endpoint` |
 | Foundry API Version | Pins the service API version SimpleChat sends with requests for this feature. | N/A (runtime control) | `web_search_foundry_api_version` |
-| Foundry Agent ID | Narrows the admin list shown for foundry agent id. | N/A (runtime control) | `web_search_foundry_agent_id` |
-| Authentication Type | Identity must have Cognitive Services User and AI Developer roles on the Foundry project. | N/A (runtime control) | `web_search_foundry_auth_type` |
-| Cloud | Narrows the admin list shown for cloud. | N/A (runtime control) | `web_search_foundry_cloud` |
-| Managed Identity Type | Narrows the admin list shown for managed identity type. | N/A (runtime control) | `web_search_foundry_managed_identity_type` |
-| Authority Endpoint (Custom Cloud) | Narrows the admin list shown for authority endpoint (custom cloud). | N/A (runtime control) | `web_search_foundry_authority` |
-| Managed Identity Client ID (UAMI) | Narrows the admin list shown for managed identity client id (uami). | N/A (runtime control) | `web_search_foundry_managed_identity_client_id` |
-| Tenant ID | Narrows the admin list shown for tenant id. | N/A (runtime control) | `web_search_foundry_tenant_id` |
-| Client ID | Narrows the admin list shown for client id. | N/A (runtime control) | `web_search_foundry_client_id` |
+| Foundry Agent ID | Identifies the agent that carries the Grounding with Bing Search tool. Without it, chat reports web search as unavailable. | N/A (runtime control) | `web_search_foundry_agent_id` |
+| Authentication Type | Selects how SimpleChat authenticates to the Foundry project. The identity must have Cognitive Services User and AI Developer roles on that project. | N/A (runtime control) | `web_search_foundry_auth_type` |
+| Cloud | Selects the Azure cloud whose endpoints and authority are used to reach the Foundry project. | N/A (runtime control) | `web_search_foundry_cloud` |
+| Managed Identity Type | Chooses between the system-assigned identity and a user-assigned identity when authenticating with a managed identity. | N/A (runtime control) | `web_search_foundry_managed_identity_type` |
+| Authority Endpoint (Custom Cloud) | Overrides the login authority when the selected cloud is a custom or sovereign environment. | N/A (runtime control) | `web_search_foundry_authority` |
+| Managed Identity Client ID (UAMI) | Identifies which user-assigned managed identity to authenticate with. | N/A (runtime control) | `web_search_foundry_managed_identity_client_id` |
+| Tenant ID | Directory the service principal authenticates against. | N/A (runtime control) | `web_search_foundry_tenant_id` |
+| Client ID | Application ID of the service principal used for authentication. | N/A (runtime control) | `web_search_foundry_client_id` |
 | Client Secret | Provides the secret credential used when the selected authentication mode requires one. | N/A (runtime control) | `web_search_foundry_client_secret` |
 | Enable URL Access for chat and workflows | Allows chat and workflows to inspect user-provided URLs within the configured URL limits and domain policy. | Off | `enable_url_access`; capability toggle |
 | Require UrlAccessUser App Role | Required app role value: UrlAccessUser. Assign this role to users or groups in the Enterprise App before enabling the requirement. When enabled, only assigned users can use URL Access in chat or enable it for workflows. | Off | `require_member_of_url_access_user` |
@@ -116,7 +122,24 @@ The Document Intelligence section belongs to the Document Extraction tab. Use it
 
 ### Chunk Sizes {#chunk-size-section}
 
-The Chunk Sizes section belongs to the Document Extraction tab. Use it with the adjacent settings in this group so related rollout, access, and operational choices stay aligned.
+Documents are split into chunks before they are indexed, and each chunk is embedded as a single
+request. That makes chunk size a retrieval decision and a hard technical limit at the same time:
+smaller chunks return more precise citations, larger chunks keep more surrounding context in one
+result, and a chunk that does not fit in the embedding model's context window cannot be indexed
+at all.
+
+Because of that limit, overrides are capped per unit rather than by one shared number. Word fields
+and character fields have different ceilings, both derived from the embedding model's context
+window, and the tab shows the current values. A value above the ceiling is reduced on save and the
+page reports which fields were changed.
+
+Page and slide counts are structural: how much text a page holds is not known until extraction
+runs, so they are not capped here. If an extracted chunk still turns out to be too large to embed,
+its text is stored and remains searchable and citable while only the portion used to compute its
+vector is trimmed, and the event is logged.
+
+Custom sizes apply to new uploads only. Existing documents keep the chunks they were indexed with
+until they are uploaded again.
 
 ### Metadata Extraction {#metadata-extraction-section}
 
@@ -163,7 +186,7 @@ The Multi-Modal Vision Analysis section belongs to the Document Extraction tab. 
 | DOCM (words) | Defines a capacity or timing boundary that keeps the feature inside supported limits. | 400 words | `chunk_size_docm` |
 | DOCX (words) | Defines a capacity or timing boundary that keeps the feature inside supported limits. | configured WORD_CHUNK_SIZE words | `chunk_size_docx` |
 | HTML (words) | Minimum enforced at 50% of target on merge. | 1200 words | `chunk_size_html` |
-| Markdown (words) | Defines a capacity or timing boundary that keeps the feature inside supported limits. | 1200 words | `chunk_size_md` |
+| Markdown (words) | Target words per chunk. Heading sections larger than this are split, so a long section under one heading cannot become a single unindexable chunk. Minimum enforced at 50% of target on merge. | 1200 words | `chunk_size_md` |
 | XML (characters) | Defines a capacity or timing boundary that keeps the feature inside supported limits. | 4000 characters | `chunk_size_xml` |
 | YAML (characters) | Defines a capacity or timing boundary that keeps the feature inside supported limits. | 4000 characters | `chunk_size_yaml` |
 | YML (characters) | Defines a capacity or timing boundary that keeps the feature inside supported limits. | 4000 characters | `chunk_size_yml` |

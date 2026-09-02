@@ -8,7 +8,7 @@ audience: user
 
 <!-- action-slug: openapi -->
 
-{% include media.html src="reference/actions-openapi-configuration.png" alt="OpenAPI action configuration UI." title="OpenAPI configuration" capture="Capture OpenAPI Configuration, Authentication Configuration, API Information, and Test Connection. Redact secrets." %}
+{% include media.html src="reference/actions-openapi-configuration.png" alt="The API configuration pane showing the OpenAPI specification file picker, the base URL field with a note that it is auto-populated from the spec, the authentication type selector, and a Test Connection button." title="OpenAPI action configuration" capture="Capture OpenAPI Configuration, Authentication Configuration, API Information, and Test Connection. Redact secrets." %}
 
 ## What this action does
 

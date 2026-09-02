@@ -116,6 +116,8 @@ The Actions Configuration section belongs to the Actions tab. Use it with the ad
 
 The Inbound MCP section belongs to the Inbound MCP tab. Use it with the adjacent settings in this group so related rollout, access, and operational choices stay aligned.
 
+If the tab shows that the Inbound MCP admin UI is disabled, add the Azure App Service application setting `ENABLE_MCP_UI=true`, save the configuration, and restart the app if your host does not restart it automatically. This only exposes the preview configuration UI; the inbound MCP runtime remains off until **Enable inbound MCP server** is turned on after authentication, client allowlist, source, and governance prerequisites are ready.
+
 #### Settings
 
 | Setting | What it does | Default | Notes |

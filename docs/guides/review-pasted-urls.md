@@ -32,7 +32,7 @@ Use URL Access when you already know the exact pages the model should review. It
 3. Select **URLs**; its tooltip is **Review pasted URLs**.
 
 {% include media.html src="guides/review-pasted-urls-step-3.png"
-                      alt="Screenshot showing review pasted urls step 3."
+                      alt="The chat composer with a message containing two pasted URLs, the URL review control now active in the toolbar alongside Research."
                       title="Review pasted URLs step 3"
                       capture="Capture the review pasted urls task at this step in SimpleChat with realistic sample data and redact secrets." %}
 
