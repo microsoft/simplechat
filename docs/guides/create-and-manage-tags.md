@@ -32,8 +32,8 @@ Use tags when folders and file names are not enough: a document can belong to a 
 3. Select **Manage Tags**.
 
 {% include media.html src="guides/create-and-manage-tags-step-3.png"
-                      alt="Screenshot showing create and manage tags step 3."
-                      title="Create and manage tags step 3"
+                      alt="The Manage Workspace Tags dialog with the Add New Tag name and color fields, and an Existing Tags table listing each tag with the number of documents using it."
+                      title="Managing workspace tags"
                       capture="Capture the create and manage tags task at this step in SimpleChat with realistic sample data and redact secrets." %}
 
 4. In **Manage Workspace Tags**, enter a name in **Tag name (lowercase, alphanumeric)**.
@@ -42,7 +42,7 @@ Use tags when folders and file names are not enough: a document can belong to a 
 7. Use **Tag Assignment** or **Tag Selected**.
 
 {% include media.html src="guides/create-and-manage-tags-step-7.png"
-                      alt="Screenshot showing create and manage tags step 7."
+                      alt="The Tag Assignment dialog for ten selected documents, showing the action selector set to Add Tags, the available tag chips to apply, and the Apply to Selected Documents button."
                       title="Create and manage tags step 7"
                       capture="Capture the create and manage tags task at this step in SimpleChat with realistic sample data and redact secrets." %}
 

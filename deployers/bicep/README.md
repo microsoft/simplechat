@@ -542,7 +542,7 @@ A: Base infrastructure (without optional services) costs approximately:
 ### Upgrading
 
 **Q: How do I upgrade to a new version?**
-A: For **code-only** container updates, prefer `azd deploy`. Use `azd provision --preview` and then `azd up` only when the release also changes infrastructure. See [../../docs/how-to/upgrade_paths.md](../../docs/how-to/upgrade_paths.md) for the upgrade decision guide.
+A: For **code-only** container updates, prefer `azd deploy`. Use `azd provision --preview` and then `azd up` only when the release also changes infrastructure. See [../../docs/guides/upgrade-paths.md](../../docs/guides/upgrade-paths.md) for the upgrade decision guide.
 
 ---
 

@@ -22,7 +22,7 @@ This catalog covers **38 capabilities** backed by **111 capability toggles**.
 | [Grounded document search](/features/grounded-document-search/) | Controls Azure AI Search-backed retrieval, cached search results, and mixed-source evidence reuse in chat. | End users | Mixed | [Search and Extract](/admin/knowledge/) |
 | [Source history summaries](/features/source-history-summaries/) | Summarizes older conversation context so search and long-running chats can keep useful history. | End users | Disabled | [Search and Extract](/admin/knowledge/) |
 | [URL access](/features/url-access/) | Lets chat and workflows fetch approved pasted URLs under admin-controlled limits and domain policy. | End users | Disabled | [Search and Extract](/admin/knowledge/) |
-| [Web search](/features/web-search/) | Adds Bing-backed web search through a configured Azure AI Foundry agent for current external information. | End users | Disabled | [Search and Extract](/admin/knowledge/) |
+| [Web search](/features/web-search/) | Grounds a chat message in current public web results through a configured Azure AI Foundry agent using Grounding with Bing Search. Only the current message leaves the application. | End users | Disabled | [Search and Extract](/admin/knowledge/) |
 
 ## Documents and workspaces
 
