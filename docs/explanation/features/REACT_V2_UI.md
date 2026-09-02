@@ -287,9 +287,13 @@ source rather than inferred:
   than reordering locally.
 - **Deep research is carried by two fields.** Both `source_review_enabled` and
   `deep_research_enabled` are sent; only one disables half the behaviour.
-- **Reasoning effort is per model family.** `gpt-4o` supports none, `gpt-5-pro` only
-  `high`, the 5.1 series skips `low`, and the o-series offers low/medium/high. The control
-  is hidden entirely when a model offers no choice.
+- **Reasoning effort is per model family, and remembered per model.** `gpt-4o` supports
+  none, `gpt-5-pro` only `high`, the 5.1 series skips `low`, and the o-series offers
+  low/medium/high. The control is hidden entirely when a model offers no choice. The chosen
+  level is stored in `reasoningEffortSettings`, the same map the classic interface writes,
+  keyed by model id — so it survives a reload, applies to that model alone, and means the
+  same thing in both interfaces. Where there is no model catalog to key on, which is a
+  single-endpoint deployment, no level is derived or sent unless one is chosen.
 - **Citation markers** follow the grammar in `chat-citations.js`; a functional test asserts
   the two patterns stay identical so markers never render as raw text.
 - **`thread_attempt` is one-based**, and `/api/get_messages` filters to the active attempt.
@@ -848,6 +852,7 @@ this entirely and is the recommended layout.
 | `functional_tests/test_v2_citations.py` | Citation marker grammar parity with `chat-citations.js`, the four link kinds |
 | `functional_tests/test_v2_enhanced_citations.py` | Extension-to-viewer map parity with `getFileType`, the permissive metadata gate, `X-Sub-PDF-Page` handling, timestamp conversion, fallback on every failure |
 | `functional_tests/test_v2_research_voice.py` | Deep research's two fields, URL access, per-model reasoning effort, voice in and out |
+| `functional_tests/test_v2_reasoning_effort_persistence.py` | The reasoning level and the model selection are stored in keys the settings route accepts, keyed the way the classic interface keys them, derived per model rather than remembered, and `none` never sent |
 | `functional_tests/test_v2_dropdown_placement.py` | Composer pickers flip above the trigger when the bottom-anchored composer leaves no room below, and clamp their height to the viewport |
 | `functional_tests/test_v2_chat_phase1_fixes.py` | Exports send JSON rather than a form, email has its own path, images resolve from `content`, attempts are one-based, the title badge comes from conversation metadata, `agent_info` is an object, newlines match across roles, and failures are announced |
 | `functional_tests/test_v2_message_inspector.py` | Role-dependent metadata shape, reasoning fetched per message, shared renderer for live and historical reasoning, citation URL scheme checking, enabled-versus-used capability reporting |

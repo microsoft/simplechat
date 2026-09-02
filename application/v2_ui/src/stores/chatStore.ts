@@ -30,6 +30,7 @@ import {
 } from '../lib/sse';
 import { agentInfoForSelection } from '../lib/agents';
 import { modelIdentityForSelection, type ModelCatalogEntry } from '../lib/models';
+import { requestReasoningEffort } from '../lib/reasoning';
 import { resolveDocumentScope } from '../lib/documentScope';
 import { messageThreadId } from '../lib/threads';
 import { proposalSourceMessageId, type ImageProposalSpec } from '../lib/imageProposalSpec';
@@ -878,8 +879,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 requestBody.agent_info = agentInfo;
             }
         }
-        if (options.reasoningEffort) {
-            requestBody.reasoning_effort = options.reasoningEffort;
+        // `none` is a real choice in the picker but not a value the endpoint takes: the
+        // classic client sends null for it, so the parameter is omitted here too.
+        const reasoningEffort = requestReasoningEffort(options.reasoningEffort);
+        if (reasoningEffort) {
+            requestBody.reasoning_effort = reasoningEffort;
         }
 
         await runChatStream(requestBody, conversationId, { isNewConversation });
@@ -1009,7 +1013,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             );
             const result = await retryMessageApi(messageId, {
                 model: identity.model_deployment,
-                reasoning_effort: options?.reasoningEffort,
+                reasoning_effort: requestReasoningEffort(options?.reasoningEffort),
                 agent_info:
                     agentInfoForSelection(
                         bootstrap?.catalogs?.agents as Record<string, unknown>[] | undefined,

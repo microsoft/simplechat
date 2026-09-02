@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import { useChatStore, type ComposerOptions } from '../../stores/chatStore';
 import { useBootstrapStore } from '../../stores/bootstrapStore';
+import { useUserSettingsStore } from '../../stores/userSettingsStore';
 import { uploadDocument } from '../../lib/endpoints';
 import { agentSelectionKey } from '../../lib/agents';
 import { modelSelectionKey, findModel, type ModelCatalogEntry } from '../../lib/models';
@@ -28,10 +29,14 @@ import { useUiStore } from '../../stores/uiStore';
 import { chatWidthClass } from '../../lib/chatWidth';
 import {
     getModelSupportedLevels,
+    reasoningModelKey,
+    resolveReasoningEffort,
     REASONING_LABELS,
     supportsReasoning,
+    type ReasoningEffortSettings,
 } from '../../lib/reasoning';
 import { Dropdown, type DropdownOption } from '../ui/Dropdown';
+import { toast } from '../../stores/toastStore';
 import { AiNotice } from './AiNotice';
 import { VoiceInput } from './VoiceInput';
 import { WebSearchNotice } from './WebSearchNotice';
@@ -75,6 +80,18 @@ export function Composer() {
     const { streaming, sendMessage, stopStreaming, activeConversationId } = useChatStore();
     const bootstrap = useBootstrapStore((state) => state.data);
     const features = bootstrap?.features ?? {};
+    // The level chosen per model, shared with the classic interface. Read from the store
+    // rather than held here so a change made anywhere is reflected without a reload.
+    const reasoningEffortSettings = useUserSettingsStore(
+        (state) => state.settings.reasoningEffortSettings as ReasoningEffortSettings | undefined,
+    );
+    // Unlike every other preference V2 writes, this one is a map rather than a scalar, and
+    // the route stores it whole. The app renders as soon as the bootstrap resolves, which is
+    // not necessarily after the settings have arrived, so merging into a map that has not
+    // been read would replace every other model's level with the single entry just chosen.
+    const settingsLoading = useUserSettingsStore((state) => state.loading);
+    const settingsFailed = useUserSettingsStore((state) => state.error !== null);
+    const settingsLoaded = !settingsLoading && !settingsFailed;
 
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
@@ -187,25 +204,141 @@ export function Composer() {
     // Reasoning support is per-model, so the control appears only when the current model
     // actually offers a choice. Resolved from the catalog record rather than the label,
     // since the display name can be anything an administrator typed.
-    const reasoningLevels: DropdownOption[] = useMemo(() => {
-        const selected = findModel(
-            bootstrap?.catalogs?.models as ModelCatalogEntry[] | undefined,
+    const selectedModel = findModel(
+        bootstrap?.catalogs?.models as ModelCatalogEntry[] | undefined,
+        options.modelDeployment,
+    );
+
+    // Both the offered levels and the key the chosen level is stored under come from this
+    // one name, so the classic interface finds the same entry in the shared map.
+    const reasoningKey = reasoningModelKey(
+        selectedModel,
+        modelOptions.find((option) => option.value === options.modelDeployment)?.label ||
             options.modelDeployment,
-        );
-        const modelName =
-            (selected?.deployment_name as string) ||
-            (selected?.model_id as string) ||
-            modelOptions.find((option) => option.value === options.modelDeployment)?.label ||
-            options.modelDeployment;
-        if (!supportsReasoning(modelName)) {
+    );
+
+    const reasoningLevels: DropdownOption[] = useMemo(() => {
+        if (!supportsReasoning(reasoningKey)) {
             return [];
         }
-        return getModelSupportedLevels(modelName).map((level) => ({
+        return getModelSupportedLevels(reasoningKey).map((level) => ({
             value: level,
             label: REASONING_LABELS[level],
         }));
+    }, [reasoningKey]);
+
+    // The level in effect is derived from the model and what has been stored for it, never
+    // remembered on its own. A level chosen for one model must not follow the user to
+    // another, and a model that offers no choice must not carry one into the request at all.
+    //
+    // Nothing is derived without a model to derive it from. A single-endpoint deployment has
+    // no model catalog, so the offered levels are a guess and a default would attach a
+    // parameter to every request that the user never asked for. There the control stays
+    // opt-in for the session, as it was before.
+    const derivedReasoning =
+        reasoningKey && reasoningLevels.length > 0
+            ? resolveReasoningEffort(reasoningKey, reasoningEffortSettings)
+            : undefined;
+
+    useEffect(() => {
+        if (!reasoningKey) {
+            return;
+        }
+        setOptions((current) =>
+            current.reasoningEffort === derivedReasoning
+                ? current
+                : { ...current, reasoningEffort: derivedReasoning },
+        );
+    }, [reasoningKey, derivedReasoning]);
+
+    /**
+     * Levels chosen before the stored map arrived.
+     *
+     * Held rather than written, because the map is stored whole and merging into one that
+     * has not been read would discard every other model's level. Held rather than dropped,
+     * because a preference that quietly fails to save is the defect this change is fixing.
+     * A map rather than a single entry, so choosing for two models in that window keeps both.
+     */
+    const pendingLevels = useRef<ReasoningEffortSettings>({});
+
+    const storeReasoningLevels = (levels: ReasoningEffortSettings) => {
+        // Read at write time rather than from the render's closure, so a map that arrived
+        // between the choice and the write is merged into rather than replaced.
+        const saved = useUserSettingsStore.getState().settings
+            .reasoningEffortSettings as ReasoningEffortSettings | undefined;
+        useUserSettingsStore.getState().update({
+            reasoningEffortSettings: { ...saved, ...levels },
+        });
+    };
+
+    useEffect(() => {
+        if (!settingsLoaded || Object.keys(pendingLevels.current).length === 0) {
+            return;
+        }
+        const held = pendingLevels.current;
+        pendingLevels.current = {};
+        storeReasoningLevels(held);
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [options.modelDeployment, bootstrap]);
+    }, [settingsLoaded]);
+
+    /** Store a chosen level against the current model, for both interfaces to read back. */
+    const chooseReasoningLevel = (level: string | undefined) => {
+        if (!level) {
+            // Only reachable where the control is clearable, which is where no level is
+            // stored, so there is nothing to clear but the session's own choice.
+            setOptions((current) => ({ ...current, reasoningEffort: undefined }));
+            return;
+        }
+
+        setOptions((current) => ({ ...current, reasoningEffort: level }));
+
+        // A single-endpoint deployment has no model catalog, so there is no identity to
+        // store the choice against. It still applies for the rest of the session.
+        if (!reasoningKey) {
+            return;
+        }
+
+        if (settingsLoaded) {
+            storeReasoningLevels({ [reasoningKey]: level });
+            return;
+        }
+
+        if (settingsFailed) {
+            // The map was never read, so writing would replace it. Saying so is better than
+            // a control that appears to save and does not.
+            toast.error(
+                'Your preferences could not be loaded, so this reasoning level applies to this conversation only.',
+            );
+            return;
+        }
+
+        pendingLevels.current = { ...pendingLevels.current, [reasoningKey]: level };
+    };
+
+    /**
+     * Remember the chosen model.
+     *
+     * The bootstrap resolves `initial_model_selection` from these keys on the next visit;
+     * without them the composer silently falls back to the first entry in the catalog.
+     */
+    const rememberModelSelection = (selection: string | undefined) => {
+        const model = findModel(
+            bootstrap?.catalogs?.models as ModelCatalogEntry[] | undefined,
+            selection,
+        );
+        if (!model) {
+            return;
+        }
+
+        const deployment =
+            typeof model.deployment_name === 'string' ? model.deployment_name.trim() : '';
+        useUserSettingsStore.getState().update({
+            preferredModelId: modelSelectionKey(model),
+            // The server falls back to the deployment name when the selection key no longer
+            // resolves, which is what happens after an endpoint is replaced.
+            ...(deployment ? { preferredModelDeployment: deployment } : {}),
+        });
+    };
 
     const submit = () => {
         if (!text.trim() || streaming) {
@@ -295,12 +428,13 @@ export function Composer() {
                                 options={modelOptions}
                                 value={options.modelDeployment}
                                 placeholder="Model"
-                                onChange={(value) =>
+                                onChange={(value) => {
                                     setOptions((current) => ({
                                         ...current,
                                         modelDeployment: value,
-                                    }))
-                                }
+                                    }));
+                                    rememberModelSelection(value);
+                                }}
                             />
                         )}
 
@@ -411,20 +545,19 @@ export function Composer() {
                         )}
 
                         {/* Only shown when the selected model offers a real choice; the
-                            endpoint strips the parameter for models that reject it. */}
+                            endpoint strips the parameter for models that reject it. The
+                            level is stored per model, so it survives a reload and applies
+                            to this model alone. It is clearable only where no level is in
+                            effect — a deployment with no model catalog — because that is
+                            the one case where "no level" is a state to get back to. */}
                         {reasoningLevels.length > 0 && (
                             <Dropdown
                                 options={reasoningLevels}
                                 value={options.reasoningEffort}
                                 placeholder="Reasoning"
-                                clearable
+                                clearable={!reasoningKey}
                                 icon={<Gauge size={15} />}
-                                onChange={(value) =>
-                                    setOptions((current) => ({
-                                        ...current,
-                                        reasoningEffort: value,
-                                    }))
-                                }
+                                onChange={chooseReasoningLevel}
                             />
                         )}
 
