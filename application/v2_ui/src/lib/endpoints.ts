@@ -9,6 +9,7 @@ import { api, apiUrl, uploadFile, ApiError, API_BASE } from './apiClient';
 import type { EnhancedCitationMetadata } from './enhancedCitations';
 import type { MaskAction, MaskedRange, MaskSelection } from './masking';
 import type {
+    AiNoticeFrequency,
     BootstrapPayload,
     ChatMessage,
     ChatStreamRequest,
@@ -28,6 +29,24 @@ import type {
 
 export const fetchBootstrap = (signal?: AbortSignal) =>
     api.get<BootstrapPayload>('/api/v2/bootstrap', signal);
+
+/**
+ * Record that the caller has dismissed the AI notice.
+ *
+ * Deliberately a direct write rather than one routed through `userSettingsStore`. That
+ * store debounces, and rolls a failure back silently into a preference cache -- but the
+ * route replaces the posted value with its own server-timestamped record, so the cached
+ * value would never match what was stored. The button also needs a definite success or
+ * failure to decide whether the notice may disappear, which a fire-and-forget write cannot
+ * give it.
+ *
+ * Only `daily` and `once` reach here; `every_session` is a browser-session fact and is kept
+ * in sessionStorage, and `non_dismissible` has no dismiss control at all.
+ */
+export const dismissAiNotice = (hash: string, frequency: AiNoticeFrequency) =>
+    api.post<{ message?: string }>('/api/user/settings', {
+        settings: { aiNoticeDismissal: { hash, frequency } },
+    });
 
 /* -------------------------------------------------------------------------- */
 /* Conversations                                                               */

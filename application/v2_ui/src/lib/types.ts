@@ -221,6 +221,31 @@ export interface WorkspaceRef {
     name: string;
 }
 
+/** How the AI notice may be dismissed. Mirrors `AI_NOTICE_FREQUENCIES`. */
+export type AiNoticeFrequency = 'non_dismissible' | 'every_session' | 'daily' | 'once';
+
+/**
+ * The administrator-configured notice shown below the composer.
+ *
+ * `hash` is a SHA-256 of the message and frequency, computed by `functions_ai_notice.py`.
+ * Editing the notice changes the hash, which invalidates every stored dismissal so the new
+ * wording is shown again. It is never recomputed in the browser.
+ */
+export interface AiNoticeConfig {
+    enabled: boolean;
+    message: string;
+    frequency: AiNoticeFrequency;
+    hash: string;
+    /** Whether the caller's stored dismissal still covers this notice. Server-decided. */
+    dismissed: boolean;
+}
+
+/** The notice shown while web search is armed, warning that the message leaves the tenant. */
+export interface WebSearchNoticeConfig {
+    enabled: boolean;
+    text: string;
+}
+
 /** Response shape of GET /api/v2/bootstrap. Assembled by route_backend_v2.py. */
 export interface BootstrapPayload {
     version: string;
@@ -259,6 +284,17 @@ export interface BootstrapPayload {
         public_workspaces: WorkspaceRef[];
     };
     admin_nav: AdminNavGroup[];
+    /**
+     * Administrator-configured chat notices, resolved server-side.
+     *
+     * Not derivable from `features`: the AI notice's dismissal state depends on a stored
+     * record, and the web search notice depends on `web_search_consent_accepted`, which is
+     * not an `enable_*` key and so never appears in `features`.
+     */
+    notices: {
+        ai: AiNoticeConfig;
+        web_search: WebSearchNoticeConfig;
+    };
     /** Sanitized settings. Never contains keys, secrets or connection strings. */
     settings: Json;
 }
