@@ -64,6 +64,9 @@ function BootError({ message, authExpired }: { message: string; authExpired: boo
 export function App() {
     const { data, loading, error, authExpired, load } = useBootstrapStore();
     const loadUserSettings = useUserSettingsStore((state) => state.load);
+    const fontSize = useUserSettingsStore(
+        (state) => (state.settings.fontSizePreference as string) || 'm',
+    );
     const location = useLocation();
 
     useEffect(() => {
@@ -81,6 +84,12 @@ export function App() {
             document.title = title;
         }
     }, [data]);
+
+    // Applied from the stored preference on every load. The attribute name and its scale
+    // are shared with the classic interface, so a size chosen in either applies to both.
+    useEffect(() => {
+        document.documentElement.dataset.fontSize = fontSize;
+    }, [fontSize]);
 
     if (loading) {
         return <BootScreen />;

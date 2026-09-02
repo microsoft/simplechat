@@ -9,6 +9,34 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 /*
+ * Text scale, driven by a `data-font-size` attribute on <html>.
+ *
+ * The attribute name and the percentages are taken verbatim from the classic interface
+ * (static/css/styles.css) so the two agree: a user who sets Large in one place sees the
+ * same size in the other. Everything in this design system is expressed in rem, so scaling
+ * the root scales the whole interface rather than only body copy.
+ */
+html[data-font-size='xs'] {
+    font-size: 75%;
+}
+
+html[data-font-size='s'] {
+    font-size: 87.5%;
+}
+
+html[data-font-size='m'] {
+    font-size: 100%;
+}
+
+html[data-font-size='l'] {
+    font-size: 150%;
+}
+
+html[data-font-size='xl'] {
+    font-size: 200%;
+}
+
+/*
  * Semantic tokens live as plain CSS variables so they can swap at runtime between light
  * and dark. `@theme inline` below maps them into Tailwind utilities by reference rather
  * than by value, which is what keeps `bg-surface-1` responsive to the theme class.

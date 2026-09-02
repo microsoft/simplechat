@@ -522,7 +522,15 @@ last value the server confirmed, since a control showing something that was neve
 gives the user no way to discover the failure.
 
 Tabs whose capability is disabled are hidden rather than shown empty — their endpoints fail
-in that state, so they could only ever render an error.
+in that state, so they could only ever render an error. The same applies within the
+Preferences tab: a section is offered only when its capability is on, **and** only when this
+interface actually acts on the setting. Several classic preferences drive V1-only surfaces
+(its tutorial buttons, its sidebar hide-control style); offering them here would either do
+nothing visible or silently change the other interface, so they stay on the classic page.
+
+Text size is shared. `data-font-size` on `<html>` and its five percentages are taken verbatim
+from `static/css/styles.css`, so a size chosen in either interface means the same in both,
+and the whole design system scales because it is expressed in rem.
 
 ### Not rebuilt yet
 

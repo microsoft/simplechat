@@ -32,6 +32,7 @@ import {
     VolumeX,
 } from 'lucide-react';
 import { useChatStore } from '../../stores/chatStore';
+import { useUserSettingsStore } from '../../stores/userSettingsStore';
 import { useBootstrapStore } from '../../stores/bootstrapStore';
 import { toast } from '../../stores/toastStore';
 import { ApiError } from '../../lib/apiClient';
@@ -87,6 +88,9 @@ function SpeakButton({ message }: { message: ChatMessage }) {
     const [state, setState] = useState<'idle' | 'loading' | 'playing'>('idle');
     const audioRef = useRef<HTMLAudioElement | null>(null);
     const urlRef = useRef<string | null>(null);
+    const preferredVoice = useUserSettingsStore((store) =>
+        String(store.settings.ttsVoice ?? ''),
+    );
 
     // Release the object URL and stop playback if the message unmounts mid-play.
     useEffect(
@@ -108,7 +112,13 @@ function SpeakButton({ message }: { message: ChatMessage }) {
 
         setState('loading');
         try {
-            const url = await synthesizeSpeech(message.content);
+            // The chosen voice comes from the user's preferences, and the message is read
+            // through the same conversion the clipboard uses: citation markers and masked
+            // spans should not be spoken aloud any more than they should be pasted.
+            const url = await synthesizeSpeech(
+                messageToPlainText(message),
+                preferredVoice || undefined,
+            );
             urlRef.current = url;
             const audio = new Audio(url);
             audioRef.current = audio;

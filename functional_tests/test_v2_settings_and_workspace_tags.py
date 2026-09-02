@@ -2,7 +2,7 @@
 """
 Functional test for the V2 personal settings page and conversation workspace tags.
 
-Version: 0.261.020
+Version: 0.261.021
 Implemented in: 0.261.020
 
 Two things are pinned here.
@@ -192,6 +192,66 @@ def test_gated_tabs_are_hidden_rather_than_empty():
     return True
 
 
+def test_only_settings_this_interface_honours_are_offered():
+    """A control that changes nothing here is worse than its absence.
+
+    Several classic preferences drive V1-only surfaces — the tutorial buttons on its pages,
+    its sidebar hide-control style. Offering them in V2 would either do nothing visible or
+    silently change the other interface, so the preferences tab covers the ones V2 acts on
+    and leaves the rest to the classic page.
+    """
+    print("Testing preference honouring...")
+
+    preferences = _read(V2_SRC / "components" / "settings" / "PreferencesTab.tsx")
+
+    # Each offered setting is wired to something.
+    app = _read(V2_SRC / "App.tsx")
+    assert "dataset.fontSize" in app, (
+        "Text size must be applied at startup, not only while the control is on screen"
+    )
+    theme_css = _read(V2_SRC / "styles" / "theme.css")
+    for size in ("xs", "s", "m", "l", "xl"):
+        assert f"html[data-font-size='{size}']" in theme_css, (
+            f"The {size!r} text scale has no rule, so choosing it would do nothing"
+        )
+
+    actions = _read(V2_SRC / "components" / "chat" / "MessageActions.tsx")
+    assert "settings.ttsVoice" in actions, (
+        "The chosen voice must reach the speech call, or the picker does nothing"
+    )
+
+    # Settings V2 does not act on are deliberately not offered.
+    for absent in ("sidebarToggleStyle", "showTutorialButtons"):
+        assert absent not in preferences, (
+            f"{absent!r} drives a classic-interface surface with no V2 equivalent; offering "
+            "it here would change the other interface with no visible effect in this one"
+        )
+
+    print("Preference honouring test passed!")
+    return True
+
+
+def test_the_text_scale_matches_the_classic_interface():
+    """A size chosen in one interface has to mean the same in the other."""
+    print("Testing text scale parity...")
+
+    classic = _read(APP_DIR / "static" / "css" / "styles.css")
+    v2 = _read(V2_SRC / "styles" / "theme.css")
+
+    for size, percent in (("xs", "75%"), ("s", "87.5%"), ("m", "100%"), ("l", "150%"), ("xl", "200%")):
+        assert re.search(
+            rf'html\[data-font-size="{size}"\]\s*\{{\s*font-size:\s*{re.escape(percent)}',
+            classic,
+        ), f"The classic scale for {size!r} is no longer {percent}; V2's copy has drifted"
+        assert re.search(
+            rf"html\[data-font-size='{size}'\]\s*\{{\s*font-size:\s*{re.escape(percent)}",
+            v2,
+        ), f"V2's scale for {size!r} does not match the classic interface"
+
+    print("Text scale parity test passed!")
+    return True
+
+
 def test_version_is_at_least_implementation_version():
     """The application version is at or beyond the version that added this."""
     print("Testing application version...")
@@ -207,6 +267,8 @@ if __name__ == "__main__":
         test_tags_are_derived_from_the_feed_without_extra_requests,
         test_settings_saves_are_debounced_and_recoverable,
         test_gated_tabs_are_hidden_rather_than_empty,
+        test_only_settings_this_interface_honours_are_offered,
+        test_the_text_scale_matches_the_classic_interface,
         test_version_is_at_least_implementation_version,
     ]
 

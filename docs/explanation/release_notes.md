@@ -2,6 +2,16 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.021)**
+
+#### New Features
+
+*   **Text Size And Spoken Reply Voice In V2 Settings**
+    *   The V2 Settings page now offers a text size choice that scales the whole interface, using the same sizes as the classic interface so a size chosen in one applies to the other.
+    *   When text-to-speech is enabled, you can choose which voice reads assistant replies aloud. Replies are also now read as clean prose: citation markers and masked text are no longer spoken.
+    *   Sections for capabilities your administrator has turned off do not appear, and preferences that only affect the classic interface are deliberately left there rather than shown as controls that would do nothing here.
+    *   (Ref: V2 settings, text size, text-to-speech voice)
+
 ### **(v0.261.020)**
 
 #### New Features
