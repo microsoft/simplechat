@@ -137,11 +137,65 @@ refusing to allocate the canvas.
 text rather than embedded HTML — and it is also what makes a diagram rasterizable at all, since
 a `<foreignObject>` label disappears when an SVG is painted onto a canvas.
 
+## Sizing a diagram
+
+A diagram's panel takes its width from the diagram's own measured natural width, read back out of
+the `max-width` Mermaid writes. This matters more than it sounds: the assistant bubble is
+shrink-to-fit, and Mermaid emits `width="100%"`, which contributes nothing to intrinsic sizing.
+Without a measured width the bubble collapsed to the width of the diagram's toolbar and the
+diagram was drawn at roughly a quarter of its natural size.
+
+The stage the diagram sits in is capped at 520 pixels tall by default and scrolls internally.
+Without a cap a large flowchart goes straight into the message list — one at Mermaid's own limit
+of 500 edges measures over 50,000 pixels tall — where the browser re-rasterizes it on every
+scroll frame.
+
+Three controls change what you see:
+
+| Control | Effect |
+|---|---|
+| `−` / `+` | Scales the diagram between 0.4x and 4x of the scale that fits it to the panel |
+| Fit | Returns to fitting the panel width |
+| **Expand** | Opens the diagram full screen, with its own zoom and PNG download |
+
+The bar along the bottom edge of the stage is a drag handle. It is exposed as a slider, so it can
+be moved with the arrow keys and reset to the automatic height with **Home**. The height you
+leave it at is saved on the message alongside the colours, and the two are independent: resetting
+the colours does not resize the diagram, and resizing it does not stop it following your default
+palette.
+
+Mermaid's `flowchart.wrappingWidth` is set to 500 rather than its default of 200. The default
+wraps the long labels models write into narrow columns of text, which makes a diagram taller and
+harder to read: the same diagram measures 273 x 955 at 200 and 497 x 867 at 500.
+
+## When a diagram will not render
+
+A diagram that Mermaid rejects falls back to its source, because the source is still the answer
+the model gave. The panel says why, behind **Show details**, and offers **Copy source**. The
+reason also goes to the browser console.
+
+Before the reader sees any of that, the source is repaired and rendered once more.
+`repairMermaidSource()` fixes the mistakes models actually make — reserved words used as node
+ids, a capitalised `End`, an unclosed `subgraph`, an empty label, unquoted parentheses or braces,
+a bare quote inside a label, two statements run onto one line, a dangling edge, and stray
+byte-order marks, non-breaking spaces and smart quotes.
+
+Two properties of the repair matter:
+
+- **It only runs after a failure.** A diagram Mermaid accepts is handed over untouched and can
+  never be rewritten, so nothing that renders today can change.
+- **It is scoped to flowcharts.** `subgraph`, `end`, square labels and piped edge labels all mean
+  something else in the other diagram types — `||--o{` in an `erDiagram`, for one — so anything
+  that is not a flowchart is left alone.
+
+Rendering is bounded either way: a diagram is given 10 seconds, and a source longer than 30,000
+characters is refused with its own message rather than being attempted.
+
 ## API
 
 ### `POST /api/message/<message_id>/visual-style`
 
-Saves or clears the colours for one block.
+Saves or clears the colours, and the chosen height, for one block.
 
 ```json
 {
@@ -153,12 +207,21 @@ Saves or clears the colours for one block.
     "palette": "vivid",
     "background": "#ffffff",
     "colors": { "0": "#123456" }
-  }
+  },
+  "height": 640
 }
 ```
 
-A `style` of `null` removes the entry, which is not the same as saving a style that happens to
+A `style` of `null` removes the colours, which is not the same as saving a style that happens to
 equal your current default: a removed entry follows the default when the default later changes.
+
+`height` is optional and independent of `style`. **Omitting the key** leaves whatever height is
+stored alone, so changing colours never resets a diagram you resized; **sending `null`** clears
+it so the block is sized automatically again. It is validated as a number and clamped to
+140–2000 pixels rather than refused, because it arrives from a drag and a value a few pixels past
+the limit is someone holding the mouse down, not a client misbehaving.
+
+An entry is removed entirely only once it holds neither colours nor a height.
 
 The response returns the whole stored map for the message, not just the entry that changed:
 
@@ -167,10 +230,14 @@ The response returns the whole stored map for the message, not just the entry th
   "success": true,
   "message_id": "msg-456",
   "visual_styles": {
-    "simplechart": { "1": { "palette": "vivid", "background": "#ffffff", "colors": {}, "source_hash": "a1b2c3d4" } }
+    "simplechart": { "1": { "palette": "vivid", "background": "#ffffff", "colors": {}, "source_hash": "a1b2c3d4", "height": 640 } }
   }
 }
 ```
+
+An entry carrying only a `height` is **not** a colour override. The client tells the two apart by
+the presence of `palette`, so a diagram you only resized still follows your default palette
+rather than being pinned to the built-in one.
 
 The endpoint authorizes the **conversation**, not the message. A diagram lives in an assistant
 message, which carries no author of its own, and authorizing the conversation also admits a
@@ -200,7 +267,8 @@ so the accepted form is deliberately narrow:
 - Unknown keys in a submitted style are dropped rather than stored, so a client ahead of the
   server cannot put arbitrary fields into a message document.
 - Sizes are capped: block index 0–199, 24 colour overrides per block, 100 styled blocks per
-  message. A message document cannot be grown without bound by repeated requests.
+  message, and a block height of 140–2000 pixels. A message document cannot be grown without
+  bound by repeated requests.
 
 The rendering guarantees that were already in place are unchanged. Mermaid still runs at
 `securityLevel: 'strict'` with `htmlLabels: false`, its output still passes through DOMPurify
@@ -212,9 +280,11 @@ as an independent second boundary, and `bindFunctions` is still never called.
 |---|---|
 | `application/v2_ui/src/lib/visualPalettes.ts` | Presets, colour maths, Mermaid theme mapping, fingerprint, resolver |
 | `application/v2_ui/src/lib/svgRaster.ts` | SVG element to PNG data URI |
-| `application/v2_ui/src/lib/blockVisualStyle.ts` | Hook resolving and saving one block's style |
+| `application/v2_ui/src/lib/blockVisualStyle.ts` | Hook resolving and saving one block's colours and height |
+| `application/v2_ui/src/lib/mermaidSource.ts` | Repairs and describes diagram source Mermaid has rejected |
 | `application/v2_ui/src/components/chat/VisualStyleMenu.tsx` | The shared colour controls |
-| `application/v2_ui/src/components/chat/MermaidDiagram.tsx` | Diagram rendering, toolbar and PNG download |
+| `application/v2_ui/src/components/chat/MermaidDiagram.tsx` | Diagram rendering, toolbar, PNG download and the full-screen viewer |
+| `application/v2_ui/src/components/chat/DiagramStage.tsx` | Natural-size measurement, the bounded stage and the resize handle |
 | `application/v2_ui/src/components/chat/InlineChart.tsx` | Chart rendering and toolbar |
 | `application/v2_ui/src/lib/richBlocks.ts` | Fence languages and the streaming placeholder guard |
 | `application/v2_ui/src/lib/rehypeRichBlockIndex.ts` | Numbers the blocks on the parsed tree |
@@ -229,11 +299,15 @@ as an independent second boundary, and `bindFunctions` is still never called.
 - `functional_tests/test_v2_visual_style_logic.ts` — behavioural checks of the colour and
   fence-numbering logic, bundled with esbuild and run by the test above when the front-end
   toolchain is installed.
+- `functional_tests/test_v2_diagram_viewer_controls.py` and
+  `functional_tests/test_v2_diagram_viewer_logic.ts` — sizing, the stage cap, the resize handle,
+  the expanded viewer, height storage, and the source repair.
 
 The most important assertion is a negative one: a block nobody has recoloured produces
 byte-identical Chart.js configuration to before this feature existed, and a diagram nobody has
 recoloured keeps Mermaid's stock `default` or `dark` theme. Existing conversations are
-unaffected.
+unaffected. The repair pass is held to the same standard — it must be a no-op for every diagram
+Mermaid already accepts.
 
 ## Known limitations
 

@@ -57,7 +57,17 @@ export interface MermaidConfig {
     fontFamily?: string;
     /** False keeps labels as SVG text rather than embedded foreignObject HTML. */
     htmlLabels?: boolean;
-    flowchart?: { htmlLabels?: boolean; useMaxWidth?: boolean };
+    flowchart?: {
+        htmlLabels?: boolean;
+        useMaxWidth?: boolean;
+        /**
+         * Pixel width a node label wraps at.
+         *
+         * Mermaid's default of 200 turns the long labels models write into narrow columns of
+         * text, which makes a diagram taller and harder to read rather than shorter.
+         */
+        wrappingWidth?: number;
+    };
     sequence?: { useMaxWidth?: boolean };
     gantt?: { useMaxWidth?: boolean };
     class?: { htmlLabels?: boolean; useMaxWidth?: boolean };

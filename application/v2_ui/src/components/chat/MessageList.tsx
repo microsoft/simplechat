@@ -1,7 +1,7 @@
 // MessageList.tsx
 // Renders the message thread, the in-flight streaming bubble and the reasoning panel.
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { clsx } from 'clsx';
 import {
     Brain,
@@ -145,7 +145,7 @@ function ImageMessage({ message }: { message: ChatMessage }) {
     );
 }
 
-function MessageBubble({
+function MessageBubbleInner({
     message,
     proposalImages,
 }: {
@@ -163,7 +163,9 @@ function MessageBubble({
     const currentUserId = useBootstrapStore((state) => state.data?.user?.id);
     const chatWidth = useUiStore((state) => state.chatWidth);
 
-    const masks = readMaskState(message);
+    // Memoised because it walks the message's mask metadata and is read on every render of
+    // the thread, which is often: the list re-renders on each streaming token.
+    const masks = useMemo(() => readMaskState(message), [message]);
     const maskingAllowed = canMask(message, currentUserId);
 
     // A user message is plain text, so its masked spans can be cut straight out of the
@@ -335,6 +337,19 @@ function MessageBubble({
 }
 
 /**
+ * A message in the thread, re-rendered only when that message itself changes.
+ *
+ * Without this every message re-runs its whole markdown pipeline — remark, rehype and a fresh
+ * React tree — on each streaming token and each time the scroll position crosses the pinned
+ * threshold, because those both re-render the list. In a thread containing a large diagram
+ * that is enough work per token to lock the interface up.
+ *
+ * The default shallow comparison is exactly right here: `message` is replaced by the store
+ * when it changes, and `proposalImages` comes from a memoised map.
+ */
+const MessageBubble = memo(MessageBubbleInner);
+
+/**
  * The bubble shown while a response is being generated.
  *
  * A recovered stream is deliberately made to look ordinary once it is flowing again. The
@@ -412,16 +427,61 @@ export function MessageList() {
     const chatWidth = useUiStore((state) => state.chatWidth);
 
     const scrollRef = useRef<HTMLDivElement>(null);
-    const bottomRef = useRef<HTMLDivElement>(null);
-    const [pinnedToBottom, setPinnedToBottom] = useState(true);
+
+    /**
+     * Whether the reader is at the bottom of the thread.
+     *
+     * A ref rather than state on purpose. Held in state, every scroll that crossed the
+     * threshold re-rendered the list and with it every message's markdown, which is expensive
+     * enough to stall a thread containing a large diagram. Nothing on screen depends on it, so
+     * nothing needs to re-render when it changes.
+     */
+    const pinnedRef = useRef(true);
+
+    const scrollToBottom = useCallback(() => {
+        const element = scrollRef.current;
+        if (element) {
+            // Set directly rather than through `scrollIntoView`, which also scrolls every
+            // scrollable ancestor and can drag the page itself around.
+            element.scrollTop = element.scrollHeight;
+        }
+    }, []);
 
     // Auto-scroll only while the user is already at the bottom, so reading back through a
     // long answer is not interrupted by incoming tokens.
     useEffect(() => {
-        if (pinnedToBottom) {
-            bottomRef.current?.scrollIntoView({ block: 'end' });
+        if (pinnedRef.current) {
+            scrollToBottom();
         }
-    }, [messages, streamingContent, pinnedToBottom]);
+    }, [messages, streamingContent, scrollToBottom]);
+
+    /**
+     * Follow content that grows after it was laid out.
+     *
+     * A diagram renders asynchronously: a 96px placeholder is replaced by a panel that can be
+     * several hundred pixels tall, long after the scroll that was meant to land at the bottom.
+     * Nothing re-ran, so the reader was left above the end of the thread, chasing a target that
+     * moved every time another diagram finished.
+     */
+    useEffect(() => {
+        const element = scrollRef.current;
+        if (!element || typeof ResizeObserver === 'undefined') {
+            return;
+        }
+        // The content, not the viewport: the viewport's own size changing is a window resize,
+        // which should not yank the reader to the bottom.
+        const content = element.firstElementChild;
+        if (!content) {
+            return;
+        }
+        const observer = new ResizeObserver(() => {
+            if (pinnedRef.current) {
+                scrollToBottom();
+            }
+        });
+        observer.observe(content);
+        return () => observer.disconnect();
+    }, [scrollToBottom]);
 
     const onScroll = () => {
         const element = scrollRef.current;
@@ -430,7 +490,7 @@ export function MessageList() {
         }
         const distanceFromBottom =
             element.scrollHeight - element.scrollTop - element.clientHeight;
-        setPinnedToBottom(distanceFromBottom < 80);
+        pinnedRef.current = distanceFromBottom < 80;
     };
 
     const isEmpty = useMemo(
@@ -535,8 +595,6 @@ export function MessageList() {
                         <span>{streamError}</span>
                     </GlassPanel>
                 )}
-
-                <div ref={bottomRef} />
             </div>
         </div>
     );
