@@ -19,7 +19,7 @@
 export const API_BASE: string = import.meta.env.VITE_API_BASE ?? '';
 
 /** Cross-origin deployments must send credentials explicitly to carry the session cookie. */
-const CREDENTIALS_MODE: RequestCredentials = API_BASE ? 'include' : 'same-origin';
+export const CREDENTIALS_MODE: RequestCredentials = API_BASE ? 'include' : 'same-origin';
 
 export class ApiError extends Error {
     readonly status: number;

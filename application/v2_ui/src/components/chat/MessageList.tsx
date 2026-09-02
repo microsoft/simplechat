@@ -30,6 +30,7 @@ import {
     MASK_PLACEHOLDER_PATTERN,
     readMaskState,
 } from '../../lib/masking';
+import { ImageLightbox } from './ImageLightbox';
 import type { ChatMessage, ThoughtEntry } from '../../lib/types';
 
 function ThoughtsPanel({ thoughts }: { thoughts: ThoughtEntry[] }) {
@@ -68,8 +69,15 @@ function ThoughtsPanel({ thoughts }: { thoughts: ThoughtEntry[] }) {
 
 function ImageMessage({ message }: { message: ChatMessage }) {
     const [failed, setFailed] = useState(false);
+    const [lightboxOpen, setLightboxOpen] = useState(false);
     const chatWidth = useUiStore((state) => state.chatWidth);
     const source = resolveImageSource(message.content);
+
+    // Stable so the lightbox's download callback is not rebuilt on every render.
+    const naming = useMemo(
+        () => ({ filename: message.filename, prompt: message.prompt, id: message.id }),
+        [message.filename, message.prompt, message.id],
+    );
 
     // An unrecognised content shape, or an image that will not load, falls back to the
     // prompt text. A broken image element tells the user nothing.
@@ -94,12 +102,18 @@ function ImageMessage({ message }: { message: ChatMessage }) {
     return (
         <div id={`message-${message.id}`} className="group/message flex flex-col">
             <div className="flex justify-start">
-                <a
-                    href={source.src}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    title="Open the full-size image"
-                    className="glass-flat block overflow-hidden rounded-2xl p-1.5"
+                {/*
+                  A button rather than a link: the image opens in a dialog, not a new
+                  document. It also keeps the thumbnail keyboard operable, which a plain
+                  clickable <img> would not be.
+                */}
+                <button
+                    type="button"
+                    onClick={() => setLightboxOpen(true)}
+                    title="View the full-size image"
+                    aria-label={`View the full-size image: ${alt}`}
+                    aria-haspopup="dialog"
+                    className="glass-flat block cursor-zoom-in overflow-hidden rounded-2xl p-1.5"
                 >
                     <img
                         src={source.src}
@@ -107,11 +121,20 @@ function ImageMessage({ message }: { message: ChatMessage }) {
                         onError={() => setFailed(true)}
                         className="max-h-[28rem] max-w-md rounded-xl object-contain"
                     />
-                </a>
+                </button>
             </div>
             <div className="opacity-0 transition-opacity group-hover/message:opacity-100 focus-within:opacity-100">
                 <MessageActions message={message} />
             </div>
+
+            {lightboxOpen && (
+                <ImageLightbox
+                    source={source}
+                    title={alt}
+                    naming={naming}
+                    onClose={() => setLightboxOpen(false)}
+                />
+            )}
         </div>
     );
 }
