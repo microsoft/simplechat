@@ -1,5 +1,9 @@
 // chat-message-export.js
 import { showToast } from "./chat-toast.js";
+import {
+    buildMessageVisualAssets,
+    extractMermaidSources,
+} from "./chat-visual-rasterizer.js";
 
 /**
  * Per-message export module.
@@ -56,7 +60,7 @@ function getMessageContentOverride(messageDiv, role) {
     return String(getMessageMarkdown(messageDiv, role) || '');
 }
 
-function buildMessageExportRequestBody(messageDiv, messageId, conversationId, role, extraFields = {}) {
+async function buildMessageExportRequestBody(messageDiv, messageId, conversationId, role, extraFields = {}) {
     const requestBody = {
         message_id: messageId,
         conversation_id: conversationId,
@@ -66,7 +70,32 @@ function buildMessageExportRequestBody(messageDiv, messageId, conversationId, ro
     if (messageContentOverride) {
         requestBody.message_content_override = messageContentOverride;
     }
+
+    const visualAssets = await buildExportVisualAssets(
+        messageContentOverride || getMessageMarkdown(messageDiv, role)
+    );
+    if (visualAssets.length > 0) {
+        requestBody.visual_assets = visualAssets;
+    }
     return requestBody;
+}
+
+/**
+ * Rasterize any diagrams in a message so the export can embed them as images.
+ * Diagrams that fail to render are skipped and stay as code blocks in the export.
+ */
+async function buildExportVisualAssets(markdownContent) {
+    if (extractMermaidSources(markdownContent).length === 0) {
+        return [];
+    }
+
+    showToast('Rendering diagrams for export...', 'info');
+    try {
+        return await buildMessageVisualAssets(markdownContent);
+    } catch (err) {
+        console.warn('Unable to render diagrams for export:', err);
+        return [];
+    }
 }
 
 /**
@@ -237,7 +266,9 @@ export async function exportMessageAsWord(messageDiv, messageId, role) {
         const response = await fetch('/api/message/export-word', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(buildMessageExportRequestBody(messageDiv, messageId, conversationId, role))
+            body: JSON.stringify(
+                await buildMessageExportRequestBody(messageDiv, messageId, conversationId, role)
+            )
         });
 
         if (!response.ok) {
@@ -275,7 +306,7 @@ export async function exportMessageAsPowerPoint(messageDiv, messageId, role, opt
     }
 
     try {
-        const requestBody = buildMessageExportRequestBody(messageDiv, messageId, conversationId, role);
+        const requestBody = await buildMessageExportRequestBody(messageDiv, messageId, conversationId, role);
         if (preferredArtifactSource?.artifactMessageId) {
             requestBody.artifact_message_id = preferredArtifactSource.artifactMessageId;
             delete requestBody.message_content_override;
@@ -355,7 +386,9 @@ export async function openInEmail(messageDiv, messageId, role) {
         const response = await fetch('/api/message/export-email-draft', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(buildMessageExportRequestBody(messageDiv, messageId, conversationId, role))
+            body: JSON.stringify(
+                await buildMessageExportRequestBody(messageDiv, messageId, conversationId, role)
+            )
         });
 
         const data = await response.json().catch(() => null);
