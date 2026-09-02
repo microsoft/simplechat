@@ -358,13 +358,26 @@ Understanding writes ```` ```mermaid ```` fences into extracted document text
 diagram source.
 
 **SimpleChart** renders the ```` ```simplechart ```` payload the built-in chart action emits,
-matching what the classic client draws for the same message. The payload grammar,
-sanitisation limits and colour palette are ported from `chat-inline-charts.js`; its
-colour-editing half is not, because that rewrites the stored message. Below the chart sit a
-**Data** disclosure and a **PNG** download. The disclosure is closed by default — the chart is
-the answer, and a 500-row table opened automatically would bury the rest of the reply — but it
-is one click away, because a chart without its numbers cannot be checked. A payload with no
-`table` of its own has one derived from its labels and series.
+matching what the classic client draws for the same message. The payload grammar and
+sanitisation limits are ported from `chat-inline-charts.js`. Below the chart sit a
+**Data** disclosure, a **PNG** download and a **Colors** control. The disclosure is closed by
+default — the chart is the answer, and a 500-row table opened automatically would bury the rest
+of the reply — but it is one click away, because a chart without its numbers cannot be checked.
+A payload with no `table` of its own has one derived from its labels and series.
+
+Diagrams carry the same **PNG** and **Colors** controls. The PNG is rasterized from the SVG
+already on screen rather than re-rendered, so the file matches what is displayed; the path is
+the one `chat-visual-rasterizer.js` already uses for exports. `htmlLabels: false` is what makes
+this possible at all, since a `<foreignObject>` label vanishes when an SVG is painted onto a
+canvas.
+
+**Colours** are resolved from the built-in palette, then a per-user default in Settings →
+Preferences, then an override saved against one block of one message. Recolouring one chart
+never affects another. See
+[V2 Diagram And Chart Styling](V2_DIAGRAM_AND_CHART_STYLING.md) for the palettes, the
+storage format and the validation rules. Unlike the classic client's colour editor, nothing
+rewrites the stored message: the payload the model produced stays as it was written, and the
+colours live beside it in message metadata.
 
 Some details worth recording:
 
@@ -373,21 +386,29 @@ Some details worth recording:
   and `htmlLabels: false`, never has `bindFunctions` called on it, and registers no icon packs
   because those are fetched from the public Internet. Both produce markup that has to be
   injected as HTML, so each passes through DOMPurify first — the only two places in the SPA
-  that use `dangerouslySetInnerHTML`, and a test fails if a third appears.
+  that use `dangerouslySetInnerHTML`, and a test fails if a third appears. Chosen colours are
+  reduced to `#rrggbb` before they reach a style attribute or Mermaid's configuration.
 - **A streaming reply would otherwise be handed half a diagram.** The bubble re-renders on
   every token and markdown treats an unclosed fence as a code block running to the end of the
   input, so an unterminated trailing diagram or chart fence renders a placeholder until it is
   complete. The classic client solves the same problem the same way, with
-  `INLINE_CHART_PENDING_REGEX`. Completed diagrams are cached by source text, so the rest of
-  the stream re-renders nothing.
+  `INLINE_CHART_PENDING_REGEX`. Completed diagrams are cached by source text and colours, so the
+  rest of the stream re-renders nothing.
+- **Rich fences are rendered from `pre`, not `code`.** The `<pre>` is the element the renderer
+  replaces outright, and `rehypeRichBlockIndex` stamps the `<code>` inside it with the block's
+  number — which is how a block is matched to any colours saved against it. That number comes
+  from walking the parsed tree, because a text scan disagrees with the parser about fences
+  nested in list items or behind a blockquote prefix.
 - **Copying a chart gives you its numbers.** On screen a `simplechart` block is a chart;
   pasted verbatim it is kilobytes of minified JSON in the middle of an answer. `messageText.ts`
   substitutes the chart's title and a markdown table. TeX and mermaid sources are left alone,
   because unlike a chart payload they are still meaningful to read.
 - **Charts and diagrams follow the theme.** Mermaid re-renders on a light/dark switch and
   Chart.js takes its tick, grid and legend colours from the same CSS custom properties as the
-  rest of the interface. The downloaded PNG is composited onto the theme's solid surface
-  first, because a transparent chart is unreadable wherever it is pasted.
+  rest of the interface. A block left on "Match theme" keeps doing so; one given an explicit
+  background has its label colours recomputed from that background's luminance instead. The
+  downloaded PNG is composited onto an opaque colour first, because a transparent chart or
+  diagram is unreadable wherever it is pasted.
 
 ### Message inspector
 
@@ -635,6 +656,13 @@ nothing visible or silently change the other interface, so they stay on the clas
 Text size is shared. `data-font-size` on `<html>` and its five percentages are taken verbatim
 from `static/css/styles.css`, so a size chosen in either interface means the same in both,
 and the whole design system scales because it is expressed in rem.
+
+The **Diagrams** and **Charts** sections set the default palette and background for rendered
+blocks. They are a starting point rather than a rule: a diagram or chart recoloured inside a
+conversation stores its own colours on that message and stops following the default, so
+changing it here restyles everything nobody has singled out. Both keys are validated
+server-side and reduced to `#rrggbb` before storage — see
+[V2 Diagram And Chart Styling](V2_DIAGRAM_AND_CHART_STYLING.md).
 
 Two things are worth noting about the other tabs:
 

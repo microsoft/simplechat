@@ -18,6 +18,18 @@ import {
 } from '../../lib/userSettings';
 import { Toggle, Skeleton } from '../ui/primitives';
 import { SettingsSection } from './TabScaffold';
+import { VISUAL_STYLE_SETTING_KEYS } from '../../lib/blockVisualStyle';
+import {
+    DEFAULT_VISUAL_STYLE,
+    PALETTE_PRESETS,
+    THEME_BACKGROUND,
+    normalizeHexColor,
+    resolveBackgroundColor,
+    sanitizeVisualStyle,
+    type PaletteId,
+    type VisualStyle,
+    type VisualStyleKind,
+} from '../../lib/visualPalettes';
 
 /** Voices offered for spoken replies, matching what the speech endpoint accepts. */
 const TTS_VOICES = [
@@ -60,12 +72,112 @@ function FontSizeChoice({
     );
 }
 
+/**
+ * The default palette and background for one kind of rendered block.
+ *
+ * This is a starting point, not a rule: a diagram or chart someone recolours in a conversation
+ * keeps its own colours and stops following this. Changing it here restyles everything nobody
+ * has singled out.
+ */
+function VisualStyleDefault({
+    label,
+    value,
+    onChange,
+}: {
+    label: string;
+    value: VisualStyle;
+    onChange: (next: VisualStyle) => void;
+}) {
+    const followsTheme = value.background === THEME_BACKGROUND;
+    const background = resolveBackgroundColor(value);
+
+    return (
+        <div className="space-y-2">
+            <div
+                role="radiogroup"
+                aria-label={`${label} palette`}
+                className="flex flex-wrap gap-1.5"
+            >
+                {PALETTE_PRESETS.map((preset) => {
+                    const active = preset.id === value.palette;
+                    return (
+                        <button
+                            key={preset.id}
+                            type="button"
+                            role="radio"
+                            aria-checked={active}
+                            onClick={() =>
+                                onChange({ ...value, palette: preset.id as PaletteId })
+                            }
+                            className={clsx(
+                                'flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm transition-colors',
+                                active
+                                    ? 'border-accent bg-accent-soft font-medium text-accent'
+                                    : 'border-edge text-text-2 hover:bg-surface-2 hover:text-text-1',
+                            )}
+                        >
+                            <span className="flex" aria-hidden="true">
+                                {preset.colors.slice(0, 5).map((color) => (
+                                    <span
+                                        key={color}
+                                        className="h-3.5 w-2 first:rounded-l-sm last:rounded-r-sm"
+                                        style={{ backgroundColor: color }}
+                                    />
+                                ))}
+                            </span>
+                            {preset.name}
+                        </button>
+                    );
+                })}
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+                <span className="text-sm text-text-2">Background</span>
+                <button
+                    type="button"
+                    aria-pressed={followsTheme}
+                    onClick={() => onChange({ ...value, background: THEME_BACKGROUND })}
+                    className={clsx(
+                        'rounded-lg border px-3 py-1.5 text-sm transition-colors',
+                        followsTheme
+                            ? 'border-accent bg-accent-soft font-medium text-accent'
+                            : 'border-edge text-text-2 hover:bg-surface-2 hover:text-text-1',
+                    )}
+                >
+                    Match theme
+                </button>
+                <label className="flex items-center gap-1.5 text-sm text-text-2">
+                    <input
+                        type="color"
+                        value={background}
+                        aria-label={`Default background colour for every ${label.toLowerCase()}`}
+                        onChange={(event) =>
+                            onChange({
+                                ...value,
+                                background: normalizeHexColor(event.target.value, background),
+                            })
+                        }
+                        className="h-7 w-7 cursor-pointer rounded border border-edge-strong bg-transparent p-0"
+                    />
+                    Custom
+                </label>
+            </div>
+        </div>
+    );
+}
+
 export function PreferencesTab() {
     const { settings, loading, error, update, saveError } = useUserSettingsStore();
     const features = useBootstrapStore((state) => state.data?.features ?? {});
     const enabled = (key: string) => features[key] === true;
 
     const fontSize = (settings.fontSizePreference as FontSizePreference) || 'm';
+
+    const visualStyle = (kind: VisualStyleKind): VisualStyle =>
+        sanitizeVisualStyle(settings[VISUAL_STYLE_SETTING_KEYS[kind]]) ?? {
+            ...DEFAULT_VISUAL_STYLE,
+            colors: {},
+        };
 
     // Applied here as well as at startup so the change is visible while it is being chosen,
     // rather than only after a reload.
@@ -118,6 +230,32 @@ export function PreferencesTab() {
                     onChange={(next) => update({ showConversationWorkspaceTags: next })}
                     label="Show workspace tags"
                     description="Label conversations that belong to a group or public workspace, or that are shared with other people. Personal conversations stay unlabelled."
+                />
+            </SettingsSection>
+
+            <SettingsSection
+                title="Diagrams"
+                description="Colours for diagrams drawn in replies. A diagram you recolour in a conversation keeps its own colours and is not affected by this."
+            >
+                <VisualStyleDefault
+                    label="Diagram"
+                    value={visualStyle('mermaid')}
+                    onChange={(next) =>
+                        update({ [VISUAL_STYLE_SETTING_KEYS.mermaid]: next })
+                    }
+                />
+            </SettingsSection>
+
+            <SettingsSection
+                title="Charts"
+                description="Colours for charts drawn in replies. Series you recolour on an individual chart are kept with that chart."
+            >
+                <VisualStyleDefault
+                    label="Chart"
+                    value={visualStyle('simplechart')}
+                    onChange={(next) =>
+                        update({ [VISUAL_STYLE_SETTING_KEYS.simplechart]: next })
+                    }
                 />
             </SettingsSection>
 

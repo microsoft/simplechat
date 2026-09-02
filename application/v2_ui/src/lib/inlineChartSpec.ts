@@ -9,6 +9,19 @@
 // Nothing here trusts the payload. Every string is length-capped, every number is checked for
 // finiteness, every colour is matched against a known form, and series and row counts are
 // bounded, because the payload is model output.
+//
+// Colours the reader chose are applied on top at configuration time rather than being written
+// back into the parsed spec, so the payload the model produced stays the payload the model
+// produced and a style can be removed by simply not applying it.
+
+import {
+    hexToRgba,
+    isDefaultVisualStyle,
+    mixHex,
+    readableTextColor,
+    seriesColor,
+    type VisualStyle,
+} from './visualPalettes';
 
 /** Fence language the chart action writes, from functions_chart_operations.py. */
 export const INLINE_CHART_LANGUAGE = 'simplechart';
@@ -642,23 +655,154 @@ export function resolveChartTable(spec: ChartSpec): ChartTable | null {
     return rows.length ? { columns, rows } : null;
 }
 
+/** True when a chart kind colours each slice rather than each series. */
+export function isSegmentChart(kind: string): boolean {
+    return kind === 'pie' || kind === 'doughnut' || kind === 'polar_area';
+}
+
+/** Matches CHART_COLOR_MAX_EDIT_TARGETS in the classic client. */
+const MAX_COLOR_TARGETS = 12;
+
+export interface ChartColorTarget {
+    /** Index into the palette, and the key an override is stored under. */
+    index: number;
+    label: string;
+    /** The colour currently in effect, for the swatch shown next to the label. */
+    color: string;
+}
+
+/**
+ * The series or slices a reader can recolour, with their current colours.
+ *
+ * Capped so a chart with fifty series does not produce fifty colour inputs; the classic
+ * client caps at the same number for the same reason.
+ */
+export function chartColorTargets(spec: ChartSpec, style: VisualStyle): ChartColorTarget[] {
+    const names = isSegmentChart(spec.kind)
+        ? spec.data.labels.map((label, index) => label || `Slice ${index + 1}`)
+        : spec.data.datasets.map((dataset, index) => dataset.label || `Series ${index + 1}`);
+
+    return names.slice(0, MAX_COLOR_TARGETS).map((label, index) => ({
+        index,
+        label,
+        color: seriesColor(style, index),
+    }));
+}
+
+/**
+ * Apply the reader's colours to a copy of the spec's datasets.
+ *
+ * A preset replaces every colour. An individual pick replaces only its own, which is why the
+ * palette is applied first and the explicit entries are read through `seriesColor` afterwards:
+ * a chart left on the Default palette keeps whatever colours its payload asked for, except for
+ * the one series someone deliberately changed.
+ */
+function styleDatasets(spec: ChartSpec, style: VisualStyle): ChartDataset[] {
+    const datasets = spec.data.datasets.map((dataset) => ({ ...dataset }));
+    const usePalette = style.palette !== 'default';
+
+    if (isSegmentChart(spec.kind)) {
+        const length = spec.data.labels.length || datasets[0]?.data.length || 0;
+        if (!length) {
+            return datasets;
+        }
+
+        return datasets.map((dataset) => {
+            const backgrounds = toColorArray(dataset.backgroundColor, length);
+            const borders = toColorArray(dataset.borderColor, length);
+
+            for (let index = 0; index < length; index += 1) {
+                const explicit = style.colors[String(index)];
+                if (!usePalette && !explicit) {
+                    continue;
+                }
+                // A styled slice is filled solid: a pale wash is hard to tell apart from its
+                // neighbour once someone has gone to the trouble of choosing the colour.
+                const color = seriesColor(style, index);
+                backgrounds[index] = color;
+                borders[index] = color;
+            }
+
+            return { ...dataset, backgroundColor: backgrounds, borderColor: borders };
+        });
+    }
+
+    return datasets.map((dataset, index) => {
+        const explicit = style.colors[String(index)];
+        if (!usePalette && !explicit) {
+            return dataset;
+        }
+        const color = seriesColor(style, index);
+        return { ...dataset, borderColor: color, backgroundColor: hexToRgba(color) };
+    });
+}
+
+function toColorArray(value: string | string[], length: number): string[] {
+    if (Array.isArray(value)) {
+        const colors = value.slice(0, length);
+        while (colors.length < length) {
+            colors.push(value[colors.length % value.length] ?? '#1c6ea4');
+        }
+        return colors;
+    }
+    return Array.from({ length }, () => value);
+}
+
+/**
+ * Fills the canvas before anything is drawn on it.
+ *
+ * Registered per chart rather than globally, so only a chart whose background someone actually
+ * chose is affected. It also means the fill is part of the canvas itself and therefore part of
+ * the downloaded PNG, rather than something the export has to reproduce separately.
+ */
+function backgroundPlugin(color: string) {
+    return {
+        id: 'simplechatBackground',
+        beforeDraw(chart: {
+            ctx: CanvasRenderingContext2D;
+            canvas: HTMLCanvasElement;
+        }) {
+            const { ctx, canvas } = chart;
+            ctx.save();
+            ctx.globalCompositeOperation = 'destination-over';
+            ctx.fillStyle = color;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.restore();
+        },
+    };
+}
+
 /**
  * Build the Chart.js configuration for a spec.
  *
  * The chart's own title and subtitle plugins are left off: V2 renders those as text above the
  * canvas so they use the application's typography, stay selectable, and are readable by a
  * screen reader rather than being baked into the bitmap.
+ *
+ * `background` is the colour the reader picked, or null to leave the canvas transparent as it
+ * has always been. When one is given, axis and legend colours are recomputed from it rather
+ * than taken from the app theme, because a dark background chosen in light mode would
+ * otherwise be labelled in dark grey on dark.
  */
 export function buildChartConfig(
     spec: ChartSpec,
     theme: { text: string; grid: string },
+    style?: VisualStyle | null,
+    background?: string | null,
 ): Record<string, unknown> {
     const baseType = getBaseChartType(spec.kind);
+    const text = background ? readableTextColor(background) : theme.text;
+    const grid = background ? mixHex(text, background, 0.18) : theme.grid;
+
+    const datasets =
+        style && !isDefaultVisualStyle(style)
+            ? styleDatasets(spec, style)
+            : spec.data.datasets.map((dataset) => ({ ...dataset }));
 
     const config: Record<string, unknown> = {
         type: baseType,
         data: {
-            datasets: spec.data.datasets.map((dataset) => ({ ...dataset })),
+            datasets,
             ...(spec.data.labels.length ? { labels: [...spec.data.labels] } : {}),
         },
         options: {
@@ -668,17 +812,18 @@ export function buildChartConfig(
             // streaming, and replaying the entry animation on each pass is distracting.
             animation: false,
             interaction: { mode: 'nearest', intersect: false },
-            color: theme.text,
+            color: text,
             plugins: {
                 legend: {
                     display: spec.options.showLegend,
                     position: spec.options.legendPosition,
-                    labels: { color: theme.text },
+                    labels: { color: text },
                 },
                 title: { display: false },
                 subtitle: { display: false },
             },
         },
+        ...(background ? { plugins: [backgroundPlugin(background)] } : {}),
     };
 
     const options = config.options as Record<string, unknown>;
@@ -687,23 +832,23 @@ export function buildChartConfig(
         options.scales = {
             x: {
                 stacked: spec.options.stacked,
-                ticks: { color: theme.text },
-                grid: { color: theme.grid },
+                ticks: { color: text },
+                grid: { color: grid },
                 title: {
                     display: Boolean(spec.options.xAxisLabel),
                     text: spec.options.xAxisLabel,
-                    color: theme.text,
+                    color: text,
                 },
             },
             y: {
                 stacked: spec.options.stacked,
                 beginAtZero: spec.options.beginAtZero,
-                ticks: { color: theme.text },
-                grid: { color: theme.grid },
+                ticks: { color: text },
+                grid: { color: grid },
                 title: {
                     display: Boolean(spec.options.yAxisLabel),
                     text: spec.options.yAxisLabel,
-                    color: theme.text,
+                    color: text,
                 },
             },
         };
@@ -721,10 +866,10 @@ export function buildChartConfig(
         options.scales = {
             r: {
                 beginAtZero: spec.options.beginAtZero,
-                ticks: { color: theme.text, backdropColor: 'transparent' },
-                grid: { color: theme.grid },
-                angleLines: { color: theme.grid },
-                pointLabels: { color: theme.text },
+                ticks: { color: text, backdropColor: 'transparent' },
+                grid: { color: grid },
+                angleLines: { color: grid },
+                pointLabels: { color: text },
             },
         };
     }

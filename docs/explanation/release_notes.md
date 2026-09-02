@@ -2,6 +2,23 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.028)**
+
+#### New Features
+
+*   **Save A Diagram As A Picture**
+    *   Diagrams in the new interface now have a **PNG** button, matching the one charts have always had. The image is captured from the diagram exactly as it appears on screen, so whatever colours and background you have chosen come with it.
+    *   The picture is saved on a solid background rather than a transparent one, so it stays readable wherever you paste it.
+    *   (Ref: V2 chat, Mermaid diagrams, PNG download)
+
+*   **Choose The Colours For Diagrams And Charts**
+    *   Every diagram and chart in the new interface now has a **Colors** button offering five palettes — Default, Calm, Vivid, Warm and Contrast — the same five the classic interface already used for charts.
+    *   Charts additionally let you set each series or slice individually, and both diagrams and charts let you set a background colour. Leaving the background on **Match theme** means it keeps following light and dark mode, as before.
+    *   Set your own defaults under Settings → Preferences, in the new **Diagrams** and **Charts** sections. Those apply everywhere you have not chosen something specific.
+    *   Colours you choose on an individual diagram or chart are saved with the conversation, so they are still there when you come back to it. Recolouring one chart never changes the others — three charts in a reply keep three independent sets of colours.
+    *   Anything you have not touched looks exactly as it did before.
+    *   (Ref: V2 chat, Mermaid diagrams, inline charts, user preferences)
+
 ### **(v0.261.027)**
 
 #### New Features

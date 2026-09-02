@@ -306,8 +306,13 @@ def test_rich_fences_are_wired_into_the_renderer():
     assert "INLINE_CHART_LANGUAGE" in source and "<InlineChart" in source, (
         "```simplechart fences must render as a chart"
     )
-    assert "isRichFence" in source, (
-        "The <pre> wrapper must be dropped for fences that render as something else"
+    assert "richFenceKind" in source and "<pre>{children}</pre>" in source, (
+        "The <pre> wrapper must be dropped for fences that render as something else, and kept "
+        "for every other code block"
+    )
+    assert "rehypeRichBlockIndex" in source, (
+        "Diagram and chart fences must be numbered on the parsed tree, which is what a saved "
+        "colour choice is filed under"
     )
     assert "markPendingFences" in source, (
         "An unterminated fence must be held back while a reply streams, or the renderer is "
@@ -319,9 +324,12 @@ def test_rich_fences_are_wired_into_the_renderer():
         "Raw HTML must stay disabled: react-markdown escaping HTML is what keeps untrusted "
         "model output safe here"
     )
-    assert "rehypePlugins={[rehypeHighlightSubset]}" in source, (
-        "The rehype pipeline must stay limited to the curated highlighter"
-    )
+    # Pinned as the exact list rather than a membership check, so adding a plugin is a
+    # deliberate, reviewable change. `rehypeRichBlockIndex` only stamps a number onto fences
+    # that already render as a diagram or chart; it introduces no new markup.
+    assert (
+        "rehypePlugins={[rehypeRichBlockIndex, rehypeHighlightSubset]}" in source
+    ), "The rehype pipeline must stay limited to the block numberer and the curated highlighter"
 
     print("Fence wiring test passed!")
     return True

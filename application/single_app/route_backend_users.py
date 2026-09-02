@@ -26,6 +26,10 @@ from functions_latest_features_nav import (
     LATEST_FEATURES_HIDDEN_VERSION_SETTING,
     normalize_latest_features_hidden_version,
 )
+from functions_message_visual_styles import (
+    VisualStyleError,
+    sanitize_visual_style,
+)
 from functions_public_workspaces import update_active_public_workspace_for_user
 from functions_settings import *
 from swagger_wrapper import swagger_route, get_auth_security
@@ -519,6 +523,9 @@ def register_route_backend_users(bp):
                     # dockedSidebarHidden / chatLayout, which describe the classic
                     # interface's own surfaces and would change its layout too.
                     'v2RailCollapsed', 'v2ChatWidth',
+                    # Default colours for diagrams and charts rendered in the V2 chat. A block
+                    # someone recolours individually stores its own style on the message.
+                    'v2MermaidStyle', 'v2ChartStyle',
                     LATEST_FEATURES_HIDDEN_VERSION_SETTING,
                     # Microphone permission settings
                     'microphonePermissionPreference', 'microphonePermissionState',
@@ -570,6 +577,19 @@ def register_route_backend_users(bp):
                 if "conversationContentsDrawerEnabled" in settings_to_update:
                     if not isinstance(settings_to_update["conversationContentsDrawerEnabled"], bool):
                         return jsonify({"error": "Invalid conversation contents drawer preference"}), 400
+
+                # Default diagram and chart colours end up in inline styles and in mermaid's
+                # theme configuration in the browser, so they are normalized to a single
+                # accepted colour form here rather than being stored as sent.
+                for style_key in ("v2MermaidStyle", "v2ChartStyle"):
+                    if style_key not in settings_to_update:
+                        continue
+                    try:
+                        settings_to_update[style_key] = sanitize_visual_style(
+                            settings_to_update[style_key]
+                        )
+                    except VisualStyleError as style_error:
+                        return jsonify({"error": f"Invalid {style_key}: {style_error}"}), 400
 
                 for boolean_key in (
                     "chatCompletionAudioEnabled",

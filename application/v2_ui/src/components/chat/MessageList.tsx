@@ -258,7 +258,11 @@ function MessageBubble({ message }: { message: ChatMessage }) {
                         {message.thoughts && message.thoughts.length > 0 && (
                             <ThoughtsPanel thoughts={message.thoughts} />
                         )}
-                        <AssistantMarkdown content={message.content} masks={masks.ranges} />
+                        <AssistantMarkdown
+                            content={message.content}
+                            masks={masks.ranges}
+                            messageId={message.id}
+                        />
                         {(message.model_deployment_name || message.agent_display_name) && (
                             <p className="mt-2 flex items-center gap-1.5 text-[11px] text-text-3">
                                 {message.agent_display_name ? (

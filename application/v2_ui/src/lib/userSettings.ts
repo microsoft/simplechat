@@ -84,6 +84,8 @@ export const WRITABLE_USER_SETTING_KEYS = [
     'showConversationWorkspaceTags',
     'v2RailCollapsed',
     'v2ChatWidth',
+    'v2MermaidStyle',
+    'v2ChartStyle',
     'chatCompletionAudioEnabled',
     'chatCompletionAudioMuted',
     'chatCompletionAudioSound',
