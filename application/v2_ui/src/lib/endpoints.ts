@@ -321,7 +321,7 @@ function exportTimestamp(): string {
 }
 
 /** Hand a blob to the browser's download machinery. */
-function saveBlob(blob: Blob, filename: string): void {
+export function saveBlob(blob: Blob, filename: string): void {
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;

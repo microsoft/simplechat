@@ -2,6 +2,18 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.025)**
+
+#### User Interface Enhancements
+
+*   **Generated Images Now Open In A Viewer Instead Of A New Tab**
+    *   In the V2 interface, clicking an image the assistant generated used to open the raw file in a new browser tab, dropping you out of your conversation. It now opens in a viewer over the page, matching how the classic interface has always behaved.
+    *   The viewer scales the image to fit and can switch to actual size, where a large image scrolls so its edges stay reachable. Clicking the image toggles between the two.
+    *   Saving the image and opening the raw file are both available from the viewer, so nothing is lost by staying in the app. Close it with the close button, the Escape key, or by clicking outside it.
+    *   Smaller images previously did nothing at all when clicked, because browsers refuse to open the inline format they arrive in. Those images now open correctly, and can be saved.
+    *   Images you upload benefit in the same way, since they are shown through the same message type.
+    *   (Ref: V2 chat image messages, image lightbox, image download)
+
 ### **(v0.261.024)**
 
 #### New Features

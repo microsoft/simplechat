@@ -228,7 +228,8 @@ Wired to the live APIs:
 - Citations rendered as inline chips that open either the cited source itself — the PDF
   page, image, media clip, spreadsheet or Visio page — or the passage that was extracted
   from it
-- Generated images rendered inline, and a conversation badge showing the group or public
+- Generated images rendered inline, opening in a viewer with fit and actual-size zoom, a
+  download and a link to the raw file, and a conversation badge showing the group or public
   workspace the conversation is working in
 
 The SSE reader in `src/lib/sse.ts` reproduces the framing rules of
@@ -324,7 +325,10 @@ source rather than inferred:
   **Copy with sources** and the saved file append the citations as a numbered reference
   list instead of interleaving them.
 - **Image messages carry the image in `content`**, as a data URI, an `/api/image/<id>` path,
-  or an external URL. There is no `image_url` field.
+  or an external URL. There is no `image_url` field. The three are not interchangeable once
+  the image leaves the page: `data:` URIs cannot be navigated to at the top level, and
+  `/api/image/<id>` is authenticated, so both saving and opening an image branch on the kind
+  rather than treating `content` as a plain URL.
 - **The three message exports are not alike.** Word and PowerPoint stream a document; the
   email draft returns JSON, whose images must be saved separately because a `mailto:` URL
   cannot carry attachments. All three require a JSON request body and reject a form post.
@@ -746,6 +750,7 @@ this entirely and is the recommended layout.
 | `functional_tests/test_v2_conversation_details_and_gating.py` | Tags split by category, source documents paged with the citation-tracking note, summary generated on demand, URL access and deep research gated on what is typed, image generation exclusivity, chat width persisted, unsafe tag values not linked |
 | `functional_tests/test_v2_model_identity_and_scope.py` | The whole model identity is sent and the picker keys on `selection_key`, the document scope is computed rather than hardcoded, and workspace ids travel with it |
 | `functional_tests/test_v2_rich_rendering.py` | Browser libraries vendored into the repository with their licences and pinned versions, no equivalent npm dependency, KaTeX fonts complete and locally resolvable, a sanitizer boundary at every HTML sink and nowhere else, KaTeX `trust: false`, mermaid strict with no autostart or icon packs, single `$` not treated as maths, fence wiring and chart language parity with the backend, charts copied as data, CSP unchanged |
+| `functional_tests/test_v2_generated_image_lightbox.py` | The image thumbnail opens a dialog rather than a new tab, the dialog is dismissable and manages focus, every source kind is handled by download and open-in-new-tab, and `window.open` is not given `noopener` |
 | `functional_tests/test_csrf_state_changing_route_guard.py` | Cross-site mutations require an explicitly trusted origin; CORS preflights answered before authentication and never wildcarded |
 | `functional_tests/route_tests/` | Blueprint policy classification for `frontend_v2`, `backend_v2`, `backend_v2_admin` |
 
