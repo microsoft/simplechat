@@ -2,6 +2,15 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.019)**
+
+#### User Interface Enhancements
+
+*   **A Recovered Response No Longer Looks Stalled**
+    *   After a dropped connection was picked back up, the message kept saying "Reconnecting" and kept a "Reconnected to the response still being generated" banner in place for the rest of the answer. Because both stayed put while the response was actually arriving, it read as though nothing was happening.
+    *   The two moments are now told apart. While the connection is being re-established the message says so plainly, alongside a spinner, and it does this even when part of the answer is already on screen — so a response that stopped mid-sentence no longer just looks frozen. Once content starts arriving again the wording changes to a brief "Reconnected." note, the activity indicator goes back to the usual "Thinking", and the note clears itself a few seconds later so the rest of the answer reads like any other.
+    *   (Ref: V2 streaming recovery, reconnect states)
+
 ### **(v0.261.018)**
 
 #### Bug Fixes

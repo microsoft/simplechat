@@ -53,6 +53,15 @@ export interface ChatStreamHandlers {
     /** An error frame arrived, or the transport failed. */
     onError?: (message: string, event?: ChatStreamEvent) => void;
     /**
+     * A reconnect is being attempted; nothing is arriving yet.
+     *
+     * Separate from `onReconnect` because the two mean different things to a reader: this
+     * is "trying to get back", while `onReconnect` is "back, and the answer is flowing
+     * again". Showing the first state for the whole reattached stream makes a working
+     * response look stalled.
+     */
+    onReconnecting?: () => void;
+    /**
      * A dropped stream is being resumed and everything received so far must be discarded.
      *
      * `/api/chat/stream/reattach` calls `iter_events()` with no start index
@@ -264,6 +273,10 @@ async function attachToLiveStream(
     result: ChatStreamResult,
     signal: AbortSignal | undefined,
 ): Promise<boolean> {
+    // Announced before the status check, because that round trip plus opening the stream is
+    // exactly the window where the user is looking at a response that has stopped moving.
+    handlers.onReconnecting?.();
+
     const status = await fetchStreamStatus(conversationId);
     if (!status?.pending) {
         return false;

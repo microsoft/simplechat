@@ -451,17 +451,46 @@ function MessageBubble({ message }: { message: ChatMessage }) {
     );
 }
 
+/**
+ * The bubble shown while a response is being generated.
+ *
+ * A recovered stream is deliberately made to look ordinary once it is flowing again. The
+ * interruption is worth a brief note, but leaving "Reconnecting" under an answer that is
+ * actively arriving reads as a stall, which is the opposite of what is happening.
+ */
 function StreamingBubble() {
-    const { streamingContent, thoughts, reconnecting } = useChatStore();
+    const { streamingContent, thoughts, reconnectPhase } = useChatStore();
     const chatWidth = useUiStore((state) => state.chatWidth);
+    const [showReconnectedNote, setShowReconnectedNote] = useState(false);
+
+    useEffect(() => {
+        if (reconnectPhase !== 'reconnected') {
+            setShowReconnectedNote(false);
+            return;
+        }
+        // Long enough to be read, short enough that it does not become part of the answer.
+        setShowReconnectedNote(true);
+        const timer = window.setTimeout(() => setShowReconnectedNote(false), 4000);
+        return () => window.clearTimeout(timer);
+    }, [reconnectPhase]);
+
+    const connecting = reconnectPhase === 'connecting';
 
     return (
         <div className="flex justify-start">
             <div className={clsx('glass-flat rounded-2xl px-4 py-3', bubbleWidthClass(chatWidth))}>
-                {reconnecting && (
+                {/* Shown while connecting even when partial content is already on screen:
+                    without it, a response that stopped mid-sentence just looks frozen. */}
+                {connecting && (
                     <p className="mb-2 flex items-center gap-1.5 text-xs text-text-3">
                         <RefreshCw size={12} className="animate-spin" />
-                        Reconnected to the response still being generated.
+                        Connection lost — picking the response back up…
+                    </p>
+                )}
+                {showReconnectedNote && (
+                    <p className="mb-2 flex items-center gap-1.5 text-xs text-text-3">
+                        <RefreshCw size={12} />
+                        Reconnected.
                     </p>
                 )}
                 <ThoughtsPanel thoughts={thoughts} />
@@ -478,7 +507,7 @@ function StreamingBubble() {
                                 />
                             ))}
                         </span>
-                        {reconnecting ? 'Reconnecting' : 'Thinking'}
+                        {connecting ? 'Reconnecting' : 'Thinking'}
                     </span>
                 )}
             </div>

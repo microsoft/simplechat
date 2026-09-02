@@ -51,6 +51,15 @@ const STREAMING_MESSAGE_ID = '__streaming__';
 /** Which mode the right-hand drawer is showing, or null when it is closed. */
 export type DrawerMode = 'contents' | 'documents' | null;
 
+/**
+ * How far a stream recovery has got.
+ *
+ * `connecting` means the answer has stopped arriving while the reattach is negotiated.
+ * `reconnected` means it is arriving again, and the interface should go back to looking
+ * like an ordinary response rather than continuing to advertise the interruption.
+ */
+export type ReconnectPhase = 'connecting' | 'reconnected' | null;
+
 export interface ComposerOptions {
     /**
      * The picker's selection key for the chosen model, NOT its deployment name.
@@ -89,13 +98,16 @@ interface ChatState {
     thoughts: ThoughtEntry[];
     streamError: string | null;
     /**
-     * True while a dropped stream is being resumed from the server.
+     * Where a stream recovery has got to, or null when nothing is being recovered.
      *
      * Generation continues server-side after the HTTP connection drops, so a broken
-     * transport is recoverable; this distinguishes "still working, re-attaching" from a
-     * genuine failure.
+     * transport is recoverable. The two phases are deliberately distinct because they mean
+     * different things to someone watching: `connecting` is a response that has genuinely
+     * stopped moving while the reattach is negotiated, whereas `reconnected` is a response
+     * that is flowing again and should look no different from any other. Leaving the UI in
+     * the first state for the whole reattached stream makes working output look stalled.
      */
-    reconnecting: boolean;
+    reconnectPhase: ReconnectPhase;
 
     /** Right-hand drawer state. Null means closed. */
     drawerMode: DrawerMode;
@@ -238,7 +250,7 @@ function buildStreamHandlers(
                 messages: [...state.messages, finalMessage],
                 streaming: false,
                 streamingContent: '',
-                reconnecting: false,
+                reconnectPhase: null,
             }));
         },
         onCancelled: (_event, accumulated) => {
@@ -263,7 +275,7 @@ function buildStreamHandlers(
                     ],
                 }));
             }
-            set({ streaming: false, streamingContent: '', reconnecting: false });
+            set({ streaming: false, streamingContent: '', reconnectPhase: null });
         },
         onError: (message) => {
             if (!isCurrent()) {
@@ -272,20 +284,32 @@ function buildStreamHandlers(
             set({
                 streaming: false,
                 streamingContent: '',
-                reconnecting: false,
+                reconnectPhase: null,
                 streamError: message,
             });
+        },
+        onReconnecting: () => {
+            if (!isCurrent()) {
+                return;
+            }
+            // Nothing is arriving yet: the status check and the reattach request are still
+            // in flight, and the response on screen really has stopped moving.
+            set({ reconnectPhase: 'connecting', streamError: null });
         },
         onReconnect: () => {
             if (!isCurrent()) {
                 return;
             }
-            // The reattached stream replays from the first event, so what is on screen
-            // is about to be sent again and has to be cleared or it would double up.
+            // Attached, and the replay starts at the first event, so what is on screen is
+            // about to be sent again and has to be cleared or it would double up.
+            //
+            // The phase moves to 'reconnected' rather than staying at 'connecting': from
+            // here the stream behaves like any other, so the interface should too. A
+            // response that is visibly working must not keep saying it is reconnecting.
             set({
                 streamingContent: '',
                 thoughts: [],
-                reconnecting: true,
+                reconnectPhase: 'reconnected',
                 streamError: null,
             });
         },
@@ -333,7 +357,7 @@ async function runChatStream(
     if (wasCurrent) {
         activeStreamController = null;
         streamingConversationId = null;
-        set({ streaming: false, reconnecting: false });
+        set({ streaming: false, reconnectPhase: null });
     }
 
     // Retry and edit rewrite thread state server-side, so the authoritative message list
@@ -390,7 +414,7 @@ async function resumeChatStream(conversationId: string): Promise<boolean> {
         streamingContent: '',
         thoughts: [],
         streamError: null,
-        reconnecting: true,
+        reconnectPhase: 'connecting',
     });
 
     await reattachChatStream(
@@ -401,7 +425,7 @@ async function resumeChatStream(conversationId: string): Promise<boolean> {
 
     if (isCurrent()) {
         activeStreamController = null;
-        set({ streaming: false, reconnecting: false });
+        set({ streaming: false, reconnectPhase: null });
     }
 
     return true;
@@ -424,7 +448,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     streamingContent: '',
     thoughts: [],
     streamError: null,
-    reconnecting: false,
+    reconnectPhase: null,
 
     drawerMode: null,
     metadata: null,
@@ -486,7 +510,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             streamingContent: '',
             thoughts: [],
             streamError: null,
-            reconnecting: false,
+            reconnectPhase: null,
             // Metadata belongs to the previous conversation; drop it so the drawer never
             // shows another thread's documents.
             metadata: null,
@@ -562,7 +586,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             streamingContent: '',
             thoughts: [],
             streamError: null,
-            reconnecting: false,
+            reconnectPhase: null,
             metadata: null,
             metadataError: null,
         });
@@ -690,7 +714,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             streamingContent: '',
             thoughts: [],
             streamError: null,
-            reconnecting: false,
+            reconnectPhase: null,
         }));
 
         const bootstrap = useBootstrapStore.getState().data;
@@ -767,7 +791,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         activeStreamController.abort();
         activeStreamController = null;
         streamingConversationId = null;
-        set({ streaming: false, streamingContent: '', reconnecting: false });
+        set({ streaming: false, streamingContent: '', reconnectPhase: null });
     },
 
     setDrawerMode: (drawerMode) => {
@@ -853,7 +877,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             streamingContent: '',
             thoughts: [],
             streamError: null,
-            reconnecting: false,
+            reconnectPhase: null,
         });
         try {
             const bootstrap = useBootstrapStore.getState().data;
@@ -900,7 +924,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             streamingContent: '',
             thoughts: [],
             streamError: null,
-            reconnecting: false,
+            reconnectPhase: null,
         });
         try {
             const result = await editMessageApi(messageId, trimmed);

@@ -247,6 +247,13 @@ source rather than inferred:
   cleared or the answer appears twice. Recovery is attempted once, as
   `chat-streaming.js` does with `allowRecovery: false`. Opening a conversation whose answer
   is still generating attaches the same way.
+- **Recovering and recovered are separate states.** While the status check and the reattach
+  request are in flight the answer genuinely has stopped arriving, and the interface says
+  so — including when part of the answer is already on screen, which would otherwise just
+  look frozen. Once frames are coming back the response is working normally, so the wording
+  becomes a brief confirmation that clears itself and the activity label returns to
+  "Thinking". Holding the "reconnecting" state for the whole reattached stream makes
+  working output look stalled, which is the opposite of what is happening.
 - **Attaching to a stream is not the same as owning it.** `stopStreaming` POSTs
   `/api/chat/stream/cancel`, a real server-side cancellation, and it addresses the
   conversation recorded as this tab's own stream. A resume therefore does not record one:

@@ -185,18 +185,103 @@ def test_opening_a_generating_conversation_resumes_it():
     return True
 
 
+def test_reconnecting_and_reconnected_are_distinct_states():
+    """A recovered stream must stop advertising the interruption once it is flowing.
+
+    Two different things happen during a recovery, and they need different treatment. While
+    the status check and the reattach request are in flight the answer really has stopped
+    arriving, and saying so is useful. Once frames are coming back the response is working
+    normally, and continuing to show "Reconnecting" under output that is actively arriving
+    reads as a stall -- the opposite of what is happening.
+    """
+    print("Testing reconnect phase separation...")
+
+    sse = _read(V2_SRC / "lib" / "sse.ts")
+    store = _read(V2_SRC / "stores" / "chatStore.ts")
+    message_list = _read(V2_SRC / "components" / "chat" / "MessageList.tsx")
+
+    # The stream reader signals both moments, not just the second one.
+    assert "onReconnecting?:" in sse, (
+        "The reader must signal that a reconnect has started, not only that it succeeded"
+    )
+    assert "handlers.onReconnecting?.()" in sse, "onReconnecting must actually be called"
+
+    attach = re.search(r"async function attachToLiveStream\((.|\n)*?\n\}", sse).group(0)
+    signal_at = attach.index("onReconnecting")
+    status_at = attach.index("fetchStreamStatus")
+    assert signal_at < status_at, (
+        "The connecting state must be announced before the status round trip, which is "
+        "part of the pause the user is looking at"
+    )
+
+    # The store models a phase rather than a boolean.
+    assert "export type ReconnectPhase = 'connecting' | 'reconnected' | null;" in store, (
+        "The two phases must be distinguishable; a boolean cannot express both"
+    )
+    assert re.search(r"onReconnecting: \(\) => \{(.|\n)*?reconnectPhase: 'connecting'", store), (
+        "onReconnecting must put the store in the connecting phase"
+    )
+    assert re.search(r"onReconnect: \(\) => \{(.|\n)*?reconnectPhase: 'reconnected'", store), (
+        "onReconnect must advance the phase; leaving it at 'connecting' is the bug this "
+        "test exists to prevent"
+    )
+
+    # The label reverts once connected.
+    assert "connecting ? 'Reconnecting' : 'Thinking'" in message_list, (
+        "The activity label must go back to Thinking once frames are arriving again"
+    )
+
+    print("Reconnect phase separation test passed!")
+    return True
+
+
+def test_the_reconnected_note_dismisses_itself():
+    """The interruption is worth a moment's note, not a permanent banner."""
+    print("Testing reconnect note dismissal...")
+
+    message_list = _read(V2_SRC / "components" / "chat" / "MessageList.tsx")
+
+    bubble = re.search(r"function StreamingBubble\((.|\n)*?\n\}", message_list).group(0)
+    assert "setTimeout" in bubble, (
+        "The reconnected note must clear itself on a timer rather than persisting for the "
+        "whole stream"
+    )
+    assert "clearTimeout" in bubble, (
+        "The timer must be cleared on unmount or phase change, or it fires against a gone "
+        "component"
+    )
+    assert re.search(r"reconnectPhase !== 'reconnected'(.|\n)*?setShowReconnectedNote\(false\)", bubble), (
+        "The note must be hidden whenever the phase is not 'reconnected'"
+    )
+
+    print("Reconnect note dismissal test passed!")
+    return True
+
+
 def test_reconnecting_state_is_visible_to_the_user():
     """A silent reconnect looks identical to a hang, so it is surfaced."""
     print("Testing reconnect visibility...")
 
     store = _read(V2_SRC / "stores" / "chatStore.ts")
-    assert "reconnecting: boolean;" in store, "The store must model the reconnecting state"
+    assert "reconnectPhase: ReconnectPhase;" in store, (
+        "The store must model the reconnect phase"
+    )
 
     message_list = _read(V2_SRC / "components" / "chat" / "MessageList.tsx")
-    assert "reconnecting" in message_list, (
-        "The streaming bubble must tell the user the response was picked back up"
+    assert "Connection lost" in message_list, (
+        "A dropped connection must be stated plainly while it is being recovered"
     )
-    assert "Reconnect" in message_list, "The reconnect state needs a visible label"
+    assert "Reconnected." in message_list, "The recovery needs a visible confirmation"
+
+    # The connecting note has to show even when partial content is already on screen,
+    # otherwise a response that stopped mid-sentence just looks frozen.
+    bubble = re.search(r"function StreamingBubble\((.|\n)*?\n\}", message_list).group(0)
+    connecting_note = bubble.index("Connection lost")
+    content_branch = bubble.index("streamingContent ?")
+    assert connecting_note < content_branch, (
+        "The connecting note must render above the content branch so it appears whether or "
+        "not part of the answer has already streamed"
+    )
 
     print("Reconnect visibility test passed!")
     return True
@@ -264,6 +349,8 @@ if __name__ == "__main__":
         test_only_one_recovery_attempt_is_made,
         test_opening_a_generating_conversation_resumes_it,
         test_reconnecting_state_is_visible_to_the_user,
+        test_reconnecting_and_reconnected_are_distinct_states,
+        test_the_reconnected_note_dismisses_itself,
         test_attaching_to_a_stream_does_not_take_ownership_of_it,
         test_version_is_at_least_implementation_version,
     ]
