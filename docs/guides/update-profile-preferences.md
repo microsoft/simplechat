@@ -40,7 +40,7 @@ Profile preferences are for personal comfort and control: font size, navigation 
 5. In **Tutorial Preferences**, choose whether tutorial buttons appear and select **Save Tutorial Preferences**.
 
 {% include media.html src="guides/update-profile-preferences-step-5.png"
-                      alt="Screenshot showing update profile preferences step 5."
+                      alt="The Tutorial Preferences card with the switch that shows or hides the floating guided tutorial launchers on Chat and Personal Workspace, and its Save Tutorial Preference button."
                       title="Update profile preferences step 5"
                       capture="Capture the update profile preferences task at this step in SimpleChat with realistic sample data and redact secrets." %}
 

@@ -40,7 +40,7 @@ Use public workspaces for curated materials intended for a broad audience, such 
 5. Switch between **List**, **Cards**, **Folders**, and **Folders + Cards** views as needed.
 
 {% include media.html src="guides/use-public-workspaces-step-5.png"
-                      alt="Screenshot showing use public workspaces step 5."
+                      alt="A public workspace in Cards view, showing the List, Cards, Folders and Folders + Cards view switcher above document cards that each carry status, version, page count, tags, and Chat and Edit actions."
                       title="Use public workspaces step 5"
                       capture="Capture the use public workspaces task at this step in SimpleChat with realistic sample data and redact secrets." %}
 
