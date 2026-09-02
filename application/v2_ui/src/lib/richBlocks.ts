@@ -2,16 +2,17 @@
 // Fence languages that render as something other than code, and the streaming guard for them.
 //
 // While a reply streams, `AssistantMarkdown` re-runs on every token and markdown treats an
-// unclosed fence as a code block running to the end of the input. A diagram or chart would
-// therefore be handed half of its own source, repeatedly, and fail to parse each time. The
-// classic client has the same problem and solves it the same way, with a pending state — see
-// `INLINE_CHART_PENDING_REGEX` in chat-inline-charts.js.
+// unclosed fence as a code block running to the end of the input. A diagram, chart or image
+// proposal would therefore be handed half of its own source, repeatedly, and fail to parse
+// each time. The classic client has the same problem and solves it the same way, with a
+// pending state — see `INLINE_CHART_PENDING_REGEX` in chat-inline-charts.js.
 
 import { INLINE_CHART_LANGUAGE } from './inlineChartSpec';
+import { IMAGE_PROPOSAL_LANGUAGE } from './imageProposalSpec';
 
 export const MERMAID_LANGUAGE = 'mermaid';
 
-export { INLINE_CHART_LANGUAGE };
+export { INLINE_CHART_LANGUAGE, IMAGE_PROPOSAL_LANGUAGE };
 
 /**
  * Info strings substituted for a fence that has not finished arriving.
@@ -24,6 +25,7 @@ export const PENDING_LANGUAGE_PREFIX = 'simplechat-pending-';
 export const PENDING_LANGUAGES: Record<string, string> = {
     [MERMAID_LANGUAGE]: `${PENDING_LANGUAGE_PREFIX}${MERMAID_LANGUAGE}`,
     [INLINE_CHART_LANGUAGE]: `${PENDING_LANGUAGE_PREFIX}${INLINE_CHART_LANGUAGE}`,
+    [IMAGE_PROPOSAL_LANGUAGE]: `${PENDING_LANGUAGE_PREFIX}${IMAGE_PROPOSAL_LANGUAGE}`,
 };
 
 /** The kind behind a pending info string, or null when it is not one. */
@@ -37,7 +39,8 @@ export function readPendingKind(language: string): string | null {
 const FENCE_LINE = /^([ \t]{0,3})(`{3,}|~{3,})[ \t]*(\S*)/;
 
 /**
- * Replace a still-arriving mermaid or chart fence with a closed placeholder fence.
+ * Replace a still-arriving mermaid, chart or image proposal fence with a closed placeholder
+ * fence.
  *
  * Only the final, unterminated fence is affected: anything already closed earlier in the
  * message is complete and renders normally, so a chart at the top of a long answer is drawn

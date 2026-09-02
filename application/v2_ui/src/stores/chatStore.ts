@@ -10,6 +10,7 @@ import {
     fetchConversationFeed,
     fetchMessages,
     forkConversation as forkConversationApi,
+    generateImageFromProposal,
     markConversationRead,
     maskMessage as maskMessageApi,
     renameConversation as renameConversationApi,
@@ -30,6 +31,7 @@ import { agentInfoForSelection } from '../lib/agents';
 import { modelIdentityForSelection, type ModelCatalogEntry } from '../lib/models';
 import { resolveDocumentScope } from '../lib/documentScope';
 import { messageThreadId } from '../lib/threads';
+import { proposalSourceMessageId, type ImageProposalSpec } from '../lib/imageProposalSpec';
 import { toast } from './toastStore';
 import { ApiError } from '../lib/apiClient';
 import { useBootstrapStore } from './bootstrapStore';
@@ -156,6 +158,24 @@ interface ChatState {
         messageId: string,
         feedbackType: 'positive' | 'negative',
         reason?: string,
+    ) => Promise<void>;
+    /**
+     * Generate the image a `simpleimage` proposal card describes.
+     *
+     * The conversation is passed in rather than read from the store, because approvals are
+     * queued: an "Approve all" started in one thread can still be draining when the user has
+     * moved to another, and reading the active conversation at that point would generate the
+     * image into whichever thread happens to be open. The server accepts that request quite
+     * happily — it is a conversation the same user owns — so nothing downstream would catch
+     * it.
+     *
+     * Resolves once the image has been stored and folded into the thread; rejects with the
+     * server's own message so the card can show why it failed.
+     */
+    approveImageProposal: (
+        conversationId: string,
+        assistantMessageId: string,
+        proposal: ImageProposalSpec,
     ) => Promise<void>;
 }
 
@@ -1089,6 +1109,54 @@ export const useChatStore = create<ChatState>((set, get) => ({
                     message.id === messageId ? { ...message, feedbackType: undefined } : message,
                 ),
             }));
+        }
+    },
+
+    approveImageProposal: async (conversationId, assistantMessageId, proposal) => {
+        if (!conversationId) {
+            throw new Error('Open a conversation before generating the image.');
+        }
+
+        const result = await generateImageFromProposal({
+            conversation_id: conversationId,
+            assistant_message_id: assistantMessageId,
+            proposal: { ...proposal },
+        });
+
+        const imageMessage = result?.image_message;
+        if (!imageMessage?.id || !imageMessage.content) {
+            throw new Error('The server did not return the generated image.');
+        }
+
+        // Approval is slow, so the thread may have been switched or reloaded underneath it.
+        // Dropping the message into a conversation it does not belong to would show someone
+        // else's image, so it is discarded instead — it is stored server-side either way and
+        // appears the next time this conversation is opened.
+        if (get().activeConversationId !== conversationId) {
+            return;
+        }
+
+        // Appended to the thread rather than held beside it. MessageList folds any image
+        // carrying a source assistant message id into that message's proposal card, so this
+        // one path serves both a fresh approval and a reloaded conversation, and there is no
+        // second copy of the result to keep in step.
+        set((state) => {
+            if (state.messages.some((message) => message.id === imageMessage.id)) {
+                return {};
+            }
+            return {
+                messages: [
+                    ...state.messages,
+                    { ...imageMessage, conversation_id: conversationId } as ChatMessage,
+                ],
+            };
+        });
+
+        if (!proposalSourceMessageId(imageMessage)) {
+            // Without the metadata the image cannot be placed under its card, so it lands in
+            // the thread as an ordinary image. Re-reading gives the server the last word on
+            // where it belongs.
+            void get().reloadMessages();
         }
     },
 }));

@@ -296,6 +296,43 @@ export const forkConversation = (conversationId: string, messageId: string) =>
     );
 
 /* -------------------------------------------------------------------------- */
+/* Inline image proposals                                                      */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Response of POST /api/chat/image-proposals/generate.
+ *
+ * `image_message` is the stored image, shaped like any other message in the thread, so it can
+ * be dropped straight into the message list rather than being held somewhere separate. Its
+ * `metadata.image_proposal` carries `source_assistant_message_id`, which is what lets it be
+ * shown under the assistant message that proposed it.
+ */
+export interface ImageProposalResult {
+    image_url?: string;
+    message_id?: string;
+    model_deployment_name?: string;
+    conversation_title?: string;
+    image_message?: ChatMessage;
+}
+
+export interface ImageProposalRequest {
+    conversation_id: string;
+    assistant_message_id?: string;
+    proposal: Json;
+}
+
+/**
+ * Approve a model-authored image proposal and generate the image.
+ *
+ * The server re-normalises the proposal and re-checks that the conversation belongs to the
+ * caller, so nothing here is a security boundary. Note that the route authorises **personal**
+ * conversations only, so approving inside a collaborative conversation returns 403 — a
+ * pre-existing limitation of the route, surfaced to the user rather than hidden.
+ */
+export const generateImageFromProposal = (body: ImageProposalRequest) =>
+    api.post<ImageProposalResult>('/api/chat/image-proposals/generate', body);
+
+/* -------------------------------------------------------------------------- */
 /* Message export                                                              */
 /* -------------------------------------------------------------------------- */
 
