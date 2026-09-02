@@ -15,8 +15,14 @@
 //
 // The attribution is still worth having, so it can be appended as a short reference list
 // instead of being interleaved with the prose.
+//
+//   - Chart fences are rendered as their title and data. On screen a ```simplechart block is
+//     a chart; pasted verbatim it is kilobytes of minified JSON dropped into the middle of an
+//     answer. TeX and mermaid sources are left alone, because unlike a chart payload they are
+//     still meaningful to read.
 
 import { parseCitations, type CitationGroup } from './citations';
+import { parseInlineChart, resolveChartTable, INLINE_CHART_LANGUAGE } from './inlineChartSpec';
 import { applyMasks, MASK_PLACEHOLDER_PATTERN, readMaskState } from './masking';
 import type { ChatMessage } from './types';
 
@@ -46,6 +52,75 @@ function describeSource(group: CitationGroup): string {
     return locations ? `${group.fileName} (${group.locationLabel}: ${locations})` : group.fileName;
 }
 
+/** Matches a ```simplechart fence and captures its payload. */
+const INLINE_CHART_FENCE = new RegExp(
+    `^[ \\t]{0,3}(\`{3,}|~{3,})[ \\t]*${INLINE_CHART_LANGUAGE}[^\\n]*\\n([\\s\\S]*?)\\n?[ \\t]{0,3}\\1[ \\t]*$`,
+    'gim',
+);
+
+/** A markdown table cell, with pipes escaped so one value cannot split the row. */
+function tableCell(value: unknown): string {
+    return String(value ?? '')
+        .replace(/\|/g, '\\|')
+        .replace(/\n/g, ' ')
+        .trim();
+}
+
+/**
+ * Replace chart fences with something a person can actually read.
+ *
+ * On screen a `simplechart` block is a chart. Copied verbatim it is several kilobytes of
+ * minified JSON in the middle of an answer, which is worse than useless in an email or a
+ * document. The chart's own title and its underlying numbers say the same thing in a form
+ * that survives being pasted anywhere.
+ *
+ * A payload that cannot be parsed is left exactly as it was: it is still the model's output,
+ * and silently dropping content would be worse than pasting something ugly.
+ */
+function renderChartsAsText(content: string): string {
+    if (!content.includes(INLINE_CHART_LANGUAGE)) {
+        return content;
+    }
+
+    return content.replace(INLINE_CHART_FENCE, (whole, _fence: string, payload: string) => {
+        const spec = parseInlineChart(payload);
+        if (!spec) {
+            return whole;
+        }
+
+        const lines: string[] = [];
+        if (spec.title) {
+            lines.push(`**${spec.title}**`);
+        }
+        if (spec.subtitle) {
+            lines.push(spec.subtitle);
+        }
+        if (spec.description) {
+            lines.push(spec.description);
+        }
+
+        const table = resolveChartTable(spec);
+        if (table) {
+            lines.push(
+                `| ${table.columns.map(tableCell).join(' | ')} |`,
+                `| ${table.columns.map(() => '---').join(' | ')} |`,
+                ...table.rows.map(
+                    (row) =>
+                        `| ${table.columns
+                            .map((_column, index) => tableCell(row[index]))
+                            .join(' | ')} |`,
+                ),
+            );
+        } else if (spec.summary) {
+            lines.push(spec.summary);
+        }
+
+        // Nothing readable came out of it, so the original block is kept rather than
+        // replaced with an empty gap.
+        return lines.length > 0 ? lines.join('\n\n') : whole;
+    });
+}
+
 /**
  * Render a message the way a person would want to paste it.
  *
@@ -72,7 +147,7 @@ export function messageToPlainText(
     // placeholders it leaves are what the renderer swaps for chips, so they go here.
     const { text, groups } = parseCitations(base);
 
-    let plain = text
+    let plain = renderChartsAsText(text)
         .replace(CITATION_PLACEHOLDER_WITH_LEADING_SPACE, '')
         // A citation that occupied a whole line leaves the line's indentation behind.
         .replace(/[ \t]+$/gm, '')

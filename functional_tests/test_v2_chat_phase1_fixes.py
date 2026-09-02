@@ -297,14 +297,16 @@ def test_newlines_render_the_same_for_both_roles():
     """A single newline is a line break regardless of who sent the message."""
     print("Testing newline rendering...")
     try:
-        message_list = read(V2_SRC, "components", "chat", "MessageList.tsx")
-        assert "remarkBreaks" in message_list, (
+        # The markdown renderer lives in its own module; the thread around it does not.
+        assistant_markdown = read(V2_SRC, "components", "chat", "AssistantMarkdown.tsx")
+        assert "remarkBreaks" in assistant_markdown, (
             "Assistant markdown must treat a single newline as a line break"
         )
-        assert "remarkPlugins={[remarkGfm, remarkBreaks]}" in message_list, (
+        assert "remarkPlugins={[remarkGfm, remarkBreaks]}" in assistant_markdown, (
             "remark-breaks must actually be registered, not just imported"
         )
         # User messages already preserved newlines; that is the behaviour being matched.
+        message_list = read(V2_SRC, "components", "chat", "MessageList.tsx")
         assert "whitespace-pre-wrap" in message_list
 
         citations = read(V2_SRC, "lib", "citations.ts")

@@ -175,9 +175,9 @@ def test_masks_apply_before_citation_parsing():
     """Mask offsets are canonical positions and citation parsing rewrites the string."""
     print("Testing mask and citation ordering...")
     try:
-        message_list = read(V2_SRC, "components", "chat", "MessageList.tsx")
-        applied_at = message_list.index("applyMasks(content")
-        parsed_at = message_list.index("parseCitations(masked.text")
+        assistant_markdown = read(V2_SRC, "components", "chat", "AssistantMarkdown.tsx")
+        applied_at = assistant_markdown.index("applyMasks(content")
+        parsed_at = assistant_markdown.index("parseCitations(masked.text")
         assert applied_at < parsed_at, (
             "Masks must be applied before citations are parsed, or the canonical offsets "
             "no longer match the string they index into"

@@ -1,11 +1,8 @@
 // MessageList.tsx
 // Renders the message thread, the in-flight streaming bubble and the reasoning panel.
 
-import { Children, useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { clsx } from 'clsx';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
-import remarkBreaks from 'remark-breaks';
 import {
     Brain,
     ChevronDown,
@@ -19,14 +16,9 @@ import { useChatStore } from '../../stores/chatStore';
 import { useBootstrapStore } from '../../stores/bootstrapStore';
 import { useUiStore } from '../../stores/uiStore';
 import { bubbleWidthClass, chatWidthClass } from '../../lib/chatWidth';
-import { rehypeHighlightSubset } from '../../lib/rehypeHighlightSubset';
 import { resolveImageSource } from '../../lib/images';
-import {
-    CITATION_PLACEHOLDER_PATTERN,
-    parseCitations,
-    type CitationGroup,
-} from '../../lib/citations';
 import { EmptyState, GlassButton, GlassPanel, Skeleton } from '../ui/primitives';
+import { AssistantMarkdown } from './AssistantMarkdown';
 import { MessageActions } from './MessageActions';
 import { MessageInspector, type InspectorSection } from './MessageInspector';
 import { ThoughtsList } from './ThoughtsList';
@@ -37,162 +29,8 @@ import {
     describeMask,
     MASK_PLACEHOLDER_PATTERN,
     readMaskState,
-    type MaskedRange,
 } from '../../lib/masking';
-import { CitationChip } from './CitationChip';
 import type { ChatMessage, ThoughtEntry } from '../../lib/types';
-
-/**
- * Markdown renderer for assistant output.
- *
- * Raw HTML is deliberately not enabled (no rehype-raw): model output is untrusted input,
- * and react-markdown's default of escaping HTML is what keeps this XSS-safe.
- *
- * Citation markers are lifted out before rendering and swapped back in afterwards as
- * chips, so the markdown pipeline never sees them and no HTML is injected to support them.
- *
- * `remark-breaks` makes a single newline a line break. This deliberately differs from the
- * classic UI, which uses marked's defaults (`breaks: false`) so single newlines collapse
- * into the surrounding paragraph. Without it, identical text renders differently depending
- * on who sent it, because user messages are shown with `whitespace-pre-wrap` and keep every
- * newline. Models also emit single newlines expecting them to be honoured, and the classic
- * UI's own Word export uses markdown2's `break-on-newline` for exactly that reason.
- */
-function Markdown({
-    content,
-    citations,
-    masks,
-}: {
-    content: string;
-    citations?: CitationGroup[];
-    masks?: MaskedRange[];
-}) {
-    const groups = citations ?? [];
-    const maskRanges = masks ?? [];
-
-    /**
-     * Substitute components for the placeholder tokens left in the text.
-     *
-     * Citations and masks both survive markdown as inert tokens and are swapped back in
-     * here, so neither injects HTML into model output. A text node can contain both, so it
-     * is split on each in turn rather than on one or the other.
-     */
-    const renderTokens = (children: React.ReactNode): React.ReactNode => {
-        if (groups.length === 0 && maskRanges.length === 0) {
-            return children;
-        }
-
-        return Children.map(children, (child) => {
-            if (typeof child !== 'string') {
-                return child;
-            }
-
-            // String.split with a capturing group interleaves text and captures, so odd
-            // indices hold the captured index.
-            const withMasks: React.ReactNode[] = [];
-            child.split(MASK_PLACEHOLDER_PATTERN).forEach((part, index) => {
-                if (index % 2 === 1) {
-                    withMasks.push(
-                        <MaskedSpan key={`mask-${index}`} range={maskRanges[Number(part)]} />,
-                    );
-                    return;
-                }
-                withMasks.push(part);
-            });
-
-            return withMasks.map((node, outer) => {
-                if (typeof node !== 'string') {
-                    return node;
-                }
-                const parts = node.split(CITATION_PLACEHOLDER_PATTERN);
-                if (parts.length === 1) {
-                    return node;
-                }
-                return parts.map((part, index) => {
-                    if (index % 2 === 0) {
-                        return part;
-                    }
-                    const group = groups[Number(part)];
-                    return group ? (
-                        <CitationChip key={`${outer}-${index}-${part}`} group={group} />
-                    ) : null;
-                });
-            });
-        });
-    };
-
-    return (
-        <div
-            className={clsx(
-                'text-[15px] leading-relaxed break-words',
-                '[&_p]:my-2 [&_p:first-child]:mt-0 [&_p:last-child]:mb-0',
-                '[&_ul]:my-2 [&_ul]:list-disc [&_ul]:pl-5',
-                '[&_ol]:my-2 [&_ol]:list-decimal [&_ol]:pl-5',
-                '[&_li]:my-0.5',
-                '[&_h1]:mt-4 [&_h1]:mb-2 [&_h1]:text-lg [&_h1]:font-semibold',
-                '[&_h2]:mt-4 [&_h2]:mb-2 [&_h2]:text-base [&_h2]:font-semibold',
-                '[&_h3]:mt-3 [&_h3]:mb-1.5 [&_h3]:text-sm [&_h3]:font-semibold',
-                '[&_a]:text-accent [&_a]:underline',
-                '[&_code]:rounded [&_code]:bg-surface-sunken [&_code]:px-1 [&_code]:py-0.5 [&_code]:font-mono [&_code]:text-[13px]',
-                '[&_pre]:my-3 [&_pre]:overflow-x-auto [&_pre]:rounded-xl [&_pre]:bg-surface-sunken [&_pre]:p-3',
-                '[&_pre_code]:bg-transparent [&_pre_code]:p-0',
-                '[&_blockquote]:my-2 [&_blockquote]:border-l-2 [&_blockquote]:border-edge-strong [&_blockquote]:pl-3 [&_blockquote]:text-text-2',
-                '[&_table]:my-3 [&_table]:w-full [&_table]:border-collapse [&_table]:text-sm',
-                '[&_th]:border [&_th]:border-edge-strong [&_th]:bg-surface-sunken [&_th]:px-2 [&_th]:py-1 [&_th]:text-left',
-                '[&_td]:border [&_td]:border-edge-strong [&_td]:px-2 [&_td]:py-1',
-            )}
-        >
-            <ReactMarkdown
-                remarkPlugins={[remarkGfm, remarkBreaks]}
-                rehypePlugins={[rehypeHighlightSubset]}
-                components={{
-                    // Every block a citation or mask placeholder can land in. A block left
-                    // out here would render the raw ⟦cite:N⟧ token as visible text.
-                    p: ({ children }) => <p>{renderTokens(children)}</p>,
-                    li: ({ children }) => <li>{renderTokens(children)}</li>,
-                    td: ({ children }) => <td>{renderTokens(children)}</td>,
-                    th: ({ children }) => <th>{renderTokens(children)}</th>,
-                    h1: ({ children }) => <h1>{renderTokens(children)}</h1>,
-                    h2: ({ children }) => <h2>{renderTokens(children)}</h2>,
-                    h3: ({ children }) => <h3>{renderTokens(children)}</h3>,
-                    h4: ({ children }) => <h4>{renderTokens(children)}</h4>,
-                    blockquote: ({ children }) => (
-                        <blockquote>{renderTokens(children)}</blockquote>
-                    ),
-                    em: ({ children }) => <em>{renderTokens(children)}</em>,
-                    strong: ({ children }) => <strong>{renderTokens(children)}</strong>,
-                }}
-            >
-                {content}
-            </ReactMarkdown>
-        </div>
-    );
-}
-
-/**
- * Assistant text with its citation markers turned into chips and masked spans redacted.
- *
- * Masks are applied FIRST: their offsets are canonical positions in the raw content, and
- * citation parsing rewrites the string, which would invalidate them.
- *
- * Parsing is memoised because it runs on every render of a long thread, and the streaming
- * bubble re-renders on each token.
- */
-function AssistantMarkdown({
-    content,
-    masks,
-}: {
-    content: string;
-    masks?: MaskedRange[];
-}) {
-    const { text, groups, ranges } = useMemo(() => {
-        const masked = applyMasks(content, masks ?? []);
-        const parsed = parseCitations(masked.text);
-        return { ...parsed, ranges: masked.ranges };
-    }, [content, masks]);
-
-    return <Markdown content={text} citations={groups} masks={ranges} />;
-}
 
 function ThoughtsPanel({ thoughts }: { thoughts: ThoughtEntry[] }) {
     const [open, setOpen] = useState(false);
@@ -495,7 +333,7 @@ function StreamingBubble() {
                 )}
                 <ThoughtsPanel thoughts={thoughts} />
                 {streamingContent ? (
-                    <AssistantMarkdown content={streamingContent} />
+                    <AssistantMarkdown content={streamingContent} streaming />
                 ) : (
                     <span className="flex items-center gap-1.5 text-sm text-text-3">
                         <span className="flex gap-1">
