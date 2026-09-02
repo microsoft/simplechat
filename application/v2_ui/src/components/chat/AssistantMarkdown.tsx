@@ -1,8 +1,9 @@
 // AssistantMarkdown.tsx
-// Markdown rendering for assistant output: prose, citations, masks, maths, diagrams and charts.
+// Markdown rendering for assistant output: prose, citations, masks, maths, diagrams, charts
+// and image proposals.
 //
 // Split out of MessageList so that "what a message looks like" is separable from "how the
-// thread is laid out". The renderer carries the whole substitution pipeline and three fence
+// thread is laid out". The renderer carries the whole substitution pipeline and the fence
 // types that render as something other than code, which is a distinct concern from the
 // scrolling list around it.
 
@@ -29,9 +30,11 @@ import { applyMasks, MASK_PLACEHOLDER_PATTERN, type MaskedRange } from '../../li
 import { MaskedSpan } from './MaskedSpan';
 import { CitationChip } from './CitationChip';
 import { InlineChart } from './InlineChart';
+import { InlineImageProposal } from './InlineImageProposal';
 import { MathDisplay, MathInline } from './MathBlock';
 import { MermaidDiagram } from './MermaidDiagram';
 import {
+    IMAGE_PROPOSAL_LANGUAGE,
     INLINE_CHART_LANGUAGE,
     MERMAID_LANGUAGE,
     markPendingFences,
@@ -52,15 +55,22 @@ function fenceCodeElement(node: unknown): Element | undefined {
 }
 
 /**
- * Stand-in for a diagram or chart that has not finished streaming.
+ * Stand-in for a diagram, chart or image proposal that has not finished streaming.
  *
  * Sized like the block it will become, so the reply below it does not jump when the real
  * thing renders.
  */
 function PendingRichBlock({ kind }: { kind: string }) {
+    const label =
+        kind === INLINE_CHART_LANGUAGE
+            ? 'Preparing chart…'
+            : kind === IMAGE_PROPOSAL_LANGUAGE
+              ? 'Preparing image proposal…'
+              : 'Preparing diagram…';
+
     return (
         <div className="my-3 flex h-24 items-center justify-center rounded-xl bg-surface-sunken text-xs text-text-3">
-            {kind === INLINE_CHART_LANGUAGE ? 'Preparing chart…' : 'Preparing diagram…'}
+            {label}
         </div>
     );
 }
@@ -224,13 +234,14 @@ function Markdown({
                     em: ({ children }) => <em>{renderTokens(children)}</em>,
                     strong: ({ children }) => <strong>{renderTokens(children)}</strong>,
 
-                    // A diagram or chart replaces the whole code block, so the <pre> wrapper
-                    // markdown puts around it is dropped: leaving it would box the rendered
-                    // output in the code block's background and padding.
+                    // A diagram, chart or image proposal replaces the whole code block, so the
+                    // <pre> wrapper markdown puts around it is dropped: leaving it would box
+                    // the rendered output in the code block's background and padding.
                     //
                     // Handled here rather than in `code` because the <pre> is the element the
-                    // renderer replaces; the index it is matched to any saved colours by comes
-                    // from `rehypeRichBlockIndex`, stamped on the <code> inside it.
+                    // renderer replaces; the index a diagram or chart is matched to any saved
+                    // colours by comes from `rehypeRichBlockIndex`, stamped on the <code>
+                    // inside it.
                     pre: ({ children, node }) => {
                         const code = fenceCodeElement(node);
                         if (richFenceKind(code) === null) {
@@ -243,13 +254,19 @@ function Markdown({
                             return <PendingRichBlock kind={pendingKind} />;
                         }
 
+                        // Read off the hast node rather than the rendered children, which may
+                        // already have been split into highlighted spans; a chart's JSON
+                        // payload has to come back intact.
+                        const source = code ? toText(code, { whitespace: 'pre' }) : '';
+
+                        if (language === IMAGE_PROPOSAL_LANGUAGE) {
+                            return <InlineImageProposal source={source} />;
+                        }
+
                         // Null only if the plugin did not run. Left undefined rather than
                         // defaulted to zero, because an unnumbered block sharing block zero's
                         // slot would overwrite that block's saved colours.
                         const index = readRichBlockIndex(code);
-                        const source = code
-                            ? toText(code, { whitespace: 'pre' })
-                            : '';
 
                         if (language === MERMAID_LANGUAGE) {
                             return (
@@ -304,9 +321,9 @@ function Markdown({
  * lifted LAST, so it scans text that already has its markers removed and cannot mistake a
  * citation marker for part of an expression.
  *
- * While streaming, an unterminated trailing diagram or chart fence is swapped for a pending
- * placeholder, because markdown would otherwise hand the renderer half a diagram on every
- * token.
+ * While streaming, an unterminated trailing diagram, chart or image proposal fence is swapped
+ * for a pending placeholder, because markdown would otherwise hand the renderer half a
+ * diagram on every token.
  *
  * Parsing is memoised because it runs on every render of a long thread, and the streaming
  * bubble re-renders on each token.

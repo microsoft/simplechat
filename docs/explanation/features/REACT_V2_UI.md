@@ -114,6 +114,43 @@ through Flask's built-in static handler and its caching, so no asset request eve
 through the SPA catch-all. The shell itself is never cached, because it references
 content-hashed asset filenames that change on every deploy.
 
+### Linking to a conversation
+
+`/v2/chat` names the conversation it has open, in the same query parameter the classic
+interface uses:
+
+```
+/v2/chat?conversationId=<conversation-uuid>
+```
+
+The parameter is read when the chat page first renders, and written whenever the open
+conversation changes — including when the server creates one on the first message sent, and
+when a conversation is forked. Starting a new chat or deleting the open conversation
+removes it. Copying the address bar therefore always shares what is on screen, and a
+refresh returns to it rather than to an empty chat.
+
+Both spellings are accepted on arrival. The server emits `conversationId` from notifications
+and workflow runs, and `conversation_id` from chat responses and workspace document rows, so
+a link built by any part of the application opens. Only `conversationId` is ever written: an
+incoming `conversation_id` link is rewritten to it, so a URL never carries both.
+
+The parameter is a description of what is open, not a navigation step. It is written with a
+history *replace*, matching `history.replaceState` in the classic client, so opening ten
+conversations does not put ten entries behind the back button.
+
+A conversation reached this way need not be in the loaded conversation list — it can be
+older than the first page of the feed, or hidden. Its list row is built from the metadata
+the chat page already fetches, so the rail highlights it and the header shows its real
+title. A link naming a conversation that has been deleted, or that belongs to somebody else,
+reports that it cannot be opened and falls back to an empty chat; leaving the failure in
+place would strand the parameter in the URL and reproduce the same error on every refresh.
+
+**Back to classic UI** in the account menu carries the open conversation across as
+`/chats?conversationId=<id>`, so crossing between the two interfaces keeps your place.
+
+Server-generated links — notifications, workflow runs, document sources — still point at the
+classic `/chats`. They are not interface-aware.
+
 ## API surface
 
 ### `GET /api/v2/bootstrap`
@@ -137,6 +174,7 @@ Response fields:
 | `catalogs` | Models, agents, prompts, and the initial model selection |
 | `scope` | Active group and public workspace, plus the lists the user can pick from |
 | `admin_nav` | The `ADMIN_NAV` structure — **only** for users holding the Admin role |
+| `notices` | The two administrator-configured chat notices, resolved server-side |
 | `settings` | Settings passed through `sanitize_settings_for_user()` |
 
 Settings returned here are always sanitized. The logo is reported as a URL rather than the
@@ -231,6 +269,7 @@ Wired to the live APIs:
 - Generated images rendered inline, opening in a viewer with fit and actual-size zoom, a
   download and a link to the raw file, and a conversation badge showing the group or public
   workspace the conversation is working in
+- The administrator-configured web search and AI notices
 
 The SSE reader in `src/lib/sse.ts` reproduces the framing rules of
 `static/js/chat/chat-streaming.js` exactly, including the repair for frames whose blank-line
@@ -506,6 +545,44 @@ rules from `chat-input-actions.js` are reproduced:
 A control that stops being relevant also clears its option, so a request never carries a
 capability the user can no longer see they enabled.
 
+### Notices
+
+Two notices are configured by an administrator, and both are reproduced from the classic
+interface rather than reinvented.
+
+The **web search notice** (`enable_web_search_user_notice`, text in
+`web_search_user_notice_text`) sits above the input and appears only while the Web toggle is
+armed. A banner that is always present stops being read, and the thing it warns about — this
+message leaving the tenant — only happens when web search is on. Turning web search off hides
+it again without consuming the dismissal, which is held for the browser session.
+
+The **AI notice** (`enable_ai_notice`, `ai_notice_message`, `ai_notice_frequency`) sits below
+the composer. Where a dismissal is stored depends on how long it has to last:
+`every_session` is a browser-session fact and stays in `sessionStorage`; `daily` and `once`
+outlive the tab, so they are written to `/api/user/settings` as `aiNoticeDismissal` and the
+server decides on each load whether the window still applies. `non_dismissible` renders no
+dismiss control at all. The notice is hidden only after the write succeeds — hiding first
+would tell a user the notice is gone for the day when it may be back on the next load.
+
+Neither is derivable from `features`, which is why `/api/v2/bootstrap` carries a `notices`
+block instead:
+
+- The AI notice's version hash is a SHA-256 of its message and frequency, computed by
+  `functions_ai_notice.py`. Editing the notice changes the hash and invalidates every stored
+  dismissal, so the new wording is shown again. Recomputing that in the browser would let the
+  two interfaces disagree about whether somebody had dismissed it.
+- The web search notice additionally requires `web_search_consent_accepted`, which is not an
+  `enable_*` key and therefore never reaches the feature flags.
+
+When an administrator has not enabled the AI notice, V2 shows nothing there. It deliberately
+does not substitute a generic disclaimer of its own: an organisation that turned the notice
+off did so on purpose, and the classic interface honours that.
+
+Both notices render administrator text as an ordinary React child, so it is escaped. Session
+storage is read through `src/lib/notices.ts`, which tolerates the privacy modes where
+`sessionStorage` throws instead of returning `null` — a notice is not worth taking the page
+down for, so a read that fails leaves the notice visible and a write that fails says so.
+
 ### Chat width
 
 A header control switches between a fixed reading measure and using the full pane, and the
@@ -779,6 +856,8 @@ this entirely and is the recommended layout.
 | `functional_tests/test_v2_model_identity_and_scope.py` | The whole model identity is sent and the picker keys on `selection_key`, the document scope is computed rather than hardcoded, and workspace ids travel with it |
 | `functional_tests/test_v2_rich_rendering.py` | Browser libraries vendored into the repository with their licences and pinned versions, no equivalent npm dependency, KaTeX fonts complete and locally resolvable, a sanitizer boundary at every HTML sink and nowhere else, KaTeX `trust: false`, mermaid strict with no autostart or icon packs, single `$` not treated as maths, fence wiring and chart language parity with the backend, charts copied as data, CSP unchanged |
 | `functional_tests/test_v2_generated_image_lightbox.py` | The image thumbnail opens a dialog rather than a new tab, the dialog is dismissable and manages focus, every source kind is handled by download and open-in-new-tab, and `window.open` is not given `noopener` |
+| `functional_tests/test_v2_chat_notices.py` | Both notices resolved server-side from the shared helpers, the web search notice's three-key condition including consent, all four AI notice frequencies, dismissal only after a successful write, session keys shared with the classic interface, no hardcoded disclaimer, notice text escaped |
+| `functional_tests/test_v2_conversation_deep_link.py` | Both parameter spellings read and only the canonical one written, the incoming link captured before any effect can strip it, the URL replaced rather than pushed, a dead link reported instead of stranded, a list row backfilled behind the stale-response guard, and the classic handover carrying the conversation |
 | `functional_tests/test_csrf_state_changing_route_guard.py` | Cross-site mutations require an explicitly trusted origin; CORS preflights answered before authentication and never wildcarded |
 | `functional_tests/route_tests/` | Blueprint policy classification for `frontend_v2`, `backend_v2`, `backend_v2_admin` |
 

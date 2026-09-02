@@ -2,7 +2,7 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
-### **(v0.261.028)**
+### **(v0.261.033)**
 
 #### New Features
 
@@ -18,6 +18,72 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Colours you choose on an individual diagram or chart are saved with the conversation, so they are still there when you come back to it. Recolouring one chart never changes the others — three charts in a reply keep three independent sets of colours.
     *   Anything you have not touched looks exactly as it did before.
     *   (Ref: V2 chat, Mermaid diagrams, inline charts, user preferences)
+
+### **(v0.261.032)**
+
+#### New Features
+
+*   **Links To A Conversation Now Work In The V2 Interface**
+    *   The V2 chat page never put the open conversation in the address bar, so copying the URL shared nothing and reloading the page dropped you into an empty chat. It now names the conversation you are reading, exactly as the classic interface has since v0.237.001.
+    *   A link such as `/v2/chat?conversationId=<id>` opens that conversation. Both spellings the application produces are accepted — `conversationId` from notifications and workflow runs, `conversation_id` from chat responses and workspace document rows — so an existing link opens either way.
+    *   The address bar keeps up on its own: it follows conversations you open from the list, the one created when you send your first message, and forks. Starting a new chat or deleting the open conversation clears it. Opening several conversations does not fill the back button with an entry for each.
+    *   A linked conversation that is older than the loaded list, or hidden, now appears in the rail with its real title instead of leaving the header reading "New chat".
+    *   A link to a conversation that was deleted, or that belongs to somebody else, says so and returns you to an empty chat, rather than leaving an error that reappeared on every refresh.
+    *   **Back to classic UI** in the account menu carries the conversation across, so switching interfaces keeps your place.
+    *   (Ref: V2 chat, conversation deep linking, conversation list)
+
+### **(v0.261.031)**
+
+#### New Features
+
+*   **Ask For A Diagram, Get A Diagram**
+    *   Asking for a diagram, flowchart, sequence, architecture or data flow used to come back as ASCII box art in a plain code block — unreadable, impossible to export as a picture, and meaningless to a screen reader. The assistant was never told that SimpleChat can draw real diagrams, so it fell back on drawing with keyboard characters.
+    *   Diagram requests now get an answer the app actually draws. Chart requests are unaffected: "plot the sales trend" is still a chart, "draw the request flow" is now a diagram.
+    *   The assistant is also steered toward diagram syntax that renders on the first attempt, and toward a diagram rather than a generated image for structural content, so the result stays selectable, searchable and accessible.
+    *   (Ref: chat prompt guidance, Mermaid diagrams, inline charts)
+
+*   **Diagrams Now Render In The Classic Chat Interface**
+    *   The classic interface could turn a diagram into a picture when you exported it, but showed the same diagram as a block of code in the conversation itself. Diagrams now render on screen where you are reading them.
+    *   Diagrams follow light and dark mode, appear as they finish streaming rather than flickering through half-written source, and a diagram that cannot be drawn shows its source instead of vanishing.
+    *   Copying a message and exporting one both still produce the original diagram code, so nothing downstream changes.
+    *   The diagram library is only downloaded the first time a conversation shows a diagram.
+    *   (Ref: classic chat rendering, Mermaid diagrams, dark mode)
+
+#### Bug Fixes
+
+*   **Chart Guidance No Longer Suppresses Genuine Diagrams**
+    *   Guidance intended to stop the assistant from answering a chart request with diagram code was worded broadly enough to discourage diagrams entirely, including in answers where a process or architecture diagram was the right thing to show.
+    *   It now rules out diagram code only as a substitute for a data chart, and explicitly allows a diagram alongside charts in the same answer.
+    *   (Ref: chart guidance, Mermaid diagrams)
+
+*   **Spoken And Preview Text No Longer Read Out Internal Placeholders**
+    *   Reply previews and read-aloud could include internal placeholder text left behind where a chart, diagram or image card sits in a message. Those placeholders are now removed before the text is previewed or spoken.
+    *   (Ref: reply preview, text-to-speech, inline visuals)
+
+### **(v0.261.029)**
+
+#### New Features
+
+*   **Image Suggestions Can Now Be Approved In The New Interface**
+    *   When a reply would be clearer with a picture — a timeline, a slide visual, a diagram — the assistant can suggest one instead of producing it unasked. The new interface previously showed those suggestions as a block of raw JSON, so there was no way to act on them.
+    *   Each suggestion now appears as a card in the reply, exactly where the assistant put it, with **Approve** to generate the image, **Edit** to reword the prompt first, and **Cancel** to dismiss it. Nothing is generated until you ask for it.
+    *   A reply containing more than two suggestions gets an **Approve all** button, and approvals are run one at a time with their place in the queue shown, rather than starting every image at once.
+    *   An approved image appears inside its own card rather than at the end of the conversation, so it stays next to the paragraph it illustrates — including after the conversation is reopened. Clicking it opens the same full-size viewer as any other image.
+    *   Approval is refused in shared conversations, which the card now tells you rather than failing silently. A suggestion can only be approved once the reply has finished arriving.
+    *   (Ref: `simpleimage` proposals, V2 chat interface, `/api/chat/image-proposals/generate`, image generation)
+
+### **(v0.261.028)**
+
+#### Bug Fixes
+
+*   **Your Configured Chat Notices Now Appear In The V2 Interface**
+    *   Two notices administrators can configure — the data-handling notice shown when web search is used, and the AI notice shown under the message box — appeared in the classic interface but never in V2. Anyone who switched interfaces stopped seeing them.
+    *   The web search notice now appears above the message box while web search is turned on, using your configured wording, and can be dismissed for the rest of the browser session. It requires the same three settings as before, including the consent acknowledgement.
+    *   The AI notice now appears below the message box and respects all four display behaviours: always visible, dismissible once per session, once per day, or once per message version. Editing the notice text still brings it back for everyone who had dismissed the previous wording.
+    *   A dismissal now carries across both interfaces in the same browser session, rather than reappearing when you switch.
+    *   Dismissing the notice waits for the change to save, so it no longer disappears and then return on the next page load. A failed save is now reported instead of looking like a dead button.
+    *   **Behaviour change**: V2 previously showed its own fixed line, "AI responses can be inaccurate. Verify important information.", regardless of your settings. That line has been removed. If you want a notice under the message box, enable the AI notice in Admin Settings → Notices & Agreements → Chat AI Notice and set your own wording; if the AI notice is turned off, V2 now shows nothing there, matching the classic interface.
+    *   (Ref: V2 chat composer, web search user notice, chat AI notice, `/api/v2/bootstrap`)
 
 ### **(v0.261.027)**
 

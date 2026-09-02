@@ -1,8 +1,8 @@
 // test_v2_visual_style_logic.ts
 // Behavioural checks for the V2 diagram and chart colour logic.
 //
-// Version: 0.261.028
-// Implemented in: 0.261.028
+// Version: 0.261.033
+// Implemented in: 0.261.033
 //
 // The V2 interface has no unit test runner, and adding one would pull in a test framework for
 // a single file. This is bundled with the esbuild that Vite already brings in and run under

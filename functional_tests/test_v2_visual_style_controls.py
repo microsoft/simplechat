@@ -2,8 +2,8 @@
 """
 Functional test for V2 diagram and chart colour controls, and mermaid PNG download.
 
-Version: 0.261.028
-Implemented in: 0.261.028
+Version: 0.261.033
+Implemented in: 0.261.033
 
 The V2 chat could render mermaid diagrams and SimpleChart charts, but a diagram could not be
 saved as an image and neither could be recoloured. This covers the feature that fixed both:
@@ -50,7 +50,7 @@ from functions_message_visual_styles import (  # noqa: E402
     sanitize_visual_style,
 )
 
-IMPLEMENTED_IN = "0.261.028"
+IMPLEMENTED_IN = "0.261.033"
 
 
 def _read(path):

@@ -26,6 +26,7 @@ import {
 import { useUiStore } from '../../stores/uiStore';
 import { useBootstrapStore } from '../../stores/bootstrapStore';
 import { useChatStore } from '../../stores/chatStore';
+import { classicChatHref } from '../../lib/conversationUrl';
 import { ConversationRail } from '../chat/ConversationRail';
 
 interface NavItem {
@@ -78,6 +79,7 @@ function BrandMark({ collapsed }: { collapsed: boolean }) {
 
 function UserMenu({ collapsed }: { collapsed: boolean }) {
     const user = useBootstrapStore((state) => state.data?.user);
+    const activeConversationId = useChatStore((state) => state.activeConversationId);
     const [open, setOpen] = useState(false);
 
     const initials =
@@ -105,8 +107,11 @@ function UserMenu({ collapsed }: { collapsed: boolean }) {
                     >
                         <User size={15} /> Profile
                     </a>
+                    {/* Carries the open conversation across, since both interfaces read the
+                        same parameter. Crossing over otherwise lands on the conversation
+                        list, leaving you to find your place again. */}
                     <a
-                        href="/chats"
+                        href={classicChatHref(activeConversationId)}
                         className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-text-1 hover:bg-surface-2"
                     >
                         <ChevronLeft size={15} /> Back to classic UI

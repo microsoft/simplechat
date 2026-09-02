@@ -10,6 +10,7 @@ import {
     fetchConversationFeed,
     fetchMessages,
     forkConversation as forkConversationApi,
+    generateImageFromProposal,
     markConversationRead,
     maskMessage as maskMessageApi,
     renameConversation as renameConversationApi,
@@ -31,6 +32,7 @@ import { agentInfoForSelection } from '../lib/agents';
 import { modelIdentityForSelection, type ModelCatalogEntry } from '../lib/models';
 import { resolveDocumentScope } from '../lib/documentScope';
 import { messageThreadId } from '../lib/threads';
+import { proposalSourceMessageId, type ImageProposalSpec } from '../lib/imageProposalSpec';
 import { toast } from './toastStore';
 import { ApiError } from '../lib/apiClient';
 import { useBootstrapStore } from './bootstrapStore';
@@ -131,6 +133,14 @@ interface ChatState {
     setSearchTerm: (term: string) => void;
 
     selectConversation: (conversationId: string | null) => Promise<void>;
+    /**
+     * Open a conversation named by the URL rather than clicked in the rail.
+     *
+     * Kept apart from `selectConversation` because the two have different failure
+     * modes. A row the user clicked is one the server just sent; a link can name a
+     * conversation that has since been deleted, or that belongs to somebody else.
+     */
+    openLinkedConversation: (conversationId: string) => Promise<void>;
     startNewConversation: () => void;
     renameConversation: (conversationId: string, title: string) => Promise<void>;
     removeConversation: (conversationId: string) => Promise<void>;
@@ -173,6 +183,50 @@ interface ChatState {
         feedbackType: 'positive' | 'negative',
         reason?: string,
     ) => Promise<void>;
+    /**
+     * Generate the image a `simpleimage` proposal card describes.
+     *
+     * The conversation is passed in rather than read from the store, because approvals are
+     * queued: an "Approve all" started in one thread can still be draining when the user has
+     * moved to another, and reading the active conversation at that point would generate the
+     * image into whichever thread happens to be open. The server accepts that request quite
+     * happily — it is a conversation the same user owns — so nothing downstream would catch
+     * it.
+     *
+     * Resolves once the image has been stored and folded into the thread; rejects with the
+     * server's own message so the card can show why it failed.
+     */
+    approveImageProposal: (
+        conversationId: string,
+        assistantMessageId: string,
+        proposal: ImageProposalSpec,
+    ) => Promise<void>;
+}
+
+/**
+ * Build a conversation list row out of a metadata response.
+ *
+ * The two shapes differ in more than depth: metadata keys the conversation as
+ * `conversation_id` where the feed uses `id`, and carries no `created_at`. The id is passed
+ * in rather than read from the response so the row is guaranteed to match the conversation
+ * it was fetched for, which is what the rail highlights on. Only the fields the rail and the
+ * header actually read are mapped; everything else is left off rather than guessed at.
+ */
+function conversationFromMetadata(
+    conversationId: string,
+    metadata: ConversationMetadata,
+): Conversation {
+    return {
+        id: conversationId,
+        title: metadata.title || 'Untitled conversation',
+        last_updated: metadata.last_updated,
+        is_pinned: metadata.is_pinned ?? false,
+        is_hidden: metadata.is_hidden ?? false,
+        has_unread_assistant_response: metadata.has_unread_assistant_response ?? false,
+        classification: metadata.classification ?? null,
+        context: metadata.context,
+        chat_type: metadata.chat_type ?? undefined,
+    };
 }
 
 /** Controller for the in-flight stream, kept outside the store as it is not render state. */
@@ -587,6 +641,43 @@ export const useChatStore = create<ChatState>((set, get) => ({
         }
     },
 
+    /**
+     * Open a conversation named by the URL.
+     *
+     * The load itself is `selectConversation`'s job; what is different here is that a link
+     * can name a conversation that has been deleted, or one belonging to somebody else,
+     * whereas a row in the rail is one the server has just listed.
+     *
+     * Existence is checked against the metadata endpoint rather than inferred from the
+     * message load, because `/api/get_messages` is not an existence check: it turns a
+     * not-found conversation into `{'messages': []}` with a 200
+     * (`route_backend_conversations.py`), so a deleted conversation would open as an empty
+     * chat, keep its id in the address bar, and remain the target of the next message sent.
+     * The metadata endpoint answers 404 when the conversation is gone and 403 when it is
+     * someone else's, which is the question actually being asked. It costs one request on
+     * a path that runs once per page load.
+     */
+    openLinkedConversation: async (conversationId) => {
+        try {
+            await fetchConversationMetadata(conversationId);
+        } catch {
+            toast.error(
+                'Could not open that conversation. It may have been deleted, or you may not have access to it.',
+            );
+            return;
+        }
+
+        await get().selectConversation(conversationId);
+
+        // Still checked: the conversation exists, but its messages may not have loaded.
+        if (get().messagesError) {
+            toast.error(
+                'Could not open that conversation. It may have been deleted, or you may not have access to it.',
+            );
+            get().startNewConversation();
+        }
+    },
+
     startNewConversation: () => {
         // Stop first: the running stream belongs to the previous thread and must not
         // deliver its response into the empty new one.
@@ -834,7 +925,20 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 set({ metadataLoading: false });
                 return;
             }
-            set({ metadata, metadataLoading: false });
+            set((state) => ({
+                metadata,
+                metadataLoading: false,
+                // A conversation reached by a link can be older than the first page of the
+                // feed, or hidden, in which case the list has no row for it: the rail
+                // highlights nothing and the header falls back to "New chat" for a thread
+                // that is plainly open. Metadata is already being fetched here, so the row
+                // is built from it rather than costing another request. It goes to the top
+                // because the list is cursor-paged — there is no correct place to insert an
+                // older conversation into a page that has not been loaded.
+                conversations: state.conversations.some((item) => item.id === conversationId)
+                    ? state.conversations
+                    : [conversationFromMetadata(conversationId, metadata), ...state.conversations],
+            }));
         } catch (error) {
             set({
                 metadataLoading: false,
@@ -1172,6 +1276,54 @@ export const useChatStore = create<ChatState>((set, get) => ({
                     message.id === messageId ? { ...message, feedbackType: undefined } : message,
                 ),
             }));
+        }
+    },
+
+    approveImageProposal: async (conversationId, assistantMessageId, proposal) => {
+        if (!conversationId) {
+            throw new Error('Open a conversation before generating the image.');
+        }
+
+        const result = await generateImageFromProposal({
+            conversation_id: conversationId,
+            assistant_message_id: assistantMessageId,
+            proposal: { ...proposal },
+        });
+
+        const imageMessage = result?.image_message;
+        if (!imageMessage?.id || !imageMessage.content) {
+            throw new Error('The server did not return the generated image.');
+        }
+
+        // Approval is slow, so the thread may have been switched or reloaded underneath it.
+        // Dropping the message into a conversation it does not belong to would show someone
+        // else's image, so it is discarded instead — it is stored server-side either way and
+        // appears the next time this conversation is opened.
+        if (get().activeConversationId !== conversationId) {
+            return;
+        }
+
+        // Appended to the thread rather than held beside it. MessageList folds any image
+        // carrying a source assistant message id into that message's proposal card, so this
+        // one path serves both a fresh approval and a reloaded conversation, and there is no
+        // second copy of the result to keep in step.
+        set((state) => {
+            if (state.messages.some((message) => message.id === imageMessage.id)) {
+                return {};
+            }
+            return {
+                messages: [
+                    ...state.messages,
+                    { ...imageMessage, conversation_id: conversationId } as ChatMessage,
+                ],
+            };
+        });
+
+        if (!proposalSourceMessageId(imageMessage)) {
+            // Without the metadata the image cannot be placed under its card, so it lands in
+            // the thread as an ordinary image. Re-reading gives the server the last word on
+            // where it belongs.
+            void get().reloadMessages();
         }
     },
 }));

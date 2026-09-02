@@ -15,7 +15,7 @@ This feature adds:
 - **Two levels of persistence**: a default per user, and an override saved against one
   individual block of one message.
 
-**Implemented in version: 0.261.028**
+**Implemented in version: 0.261.033**
 
 ### Dependencies
 

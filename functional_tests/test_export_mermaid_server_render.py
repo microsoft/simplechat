@@ -41,6 +41,7 @@ from functions_mermaid_server_render import (  # noqa: E402
 )
 
 RASTERIZER_PATH = os.path.join(APP_DIR, 'static', 'js', 'chat', 'chat-visual-rasterizer.js')
+MERMAID_RUNTIME_PATH = os.path.join(APP_DIR, 'static', 'js', 'chat', 'chat-mermaid-runtime.js')
 
 FLOWCHART_SOURCE = (
     'graph TD\n'
@@ -140,18 +141,30 @@ def test_capability_probe_reports_a_complete_shape():
 
 
 def test_server_and_browser_renderers_share_configuration():
-    """Both renderers must disable htmlLabels, or labels vanish when drawn to canvas."""
+    """Both renderers must disable htmlLabels, or labels vanish when drawn to canvas.
+
+    The browser-side configuration lives in the shared Mermaid runtime, because inline chat
+    rendering and export rendering drive the same global Mermaid instance and would otherwise
+    overwrite each other's settings. The rasterizer must ask that runtime for the export
+    preset, which is what keeps the neutral theme and fixed sizing this parity depends on.
+    """
     print("Testing renderer configuration parity...")
 
     with open(RASTERIZER_PATH, 'r', encoding='utf-8') as handle:
         client_source = handle.read()
+
+    with open(MERMAID_RUNTIME_PATH, 'r', encoding='utf-8') as handle:
+        runtime_source = handle.read()
+
+    assert 'MERMAID_PRESET_EXPORT' in client_source, 'rasterizer must request the export preset'
+    assert "theme: 'neutral'" in runtime_source, 'export preset must keep the neutral theme'
 
     for required in (
         'htmlLabels: false',
         "securityLevel: 'strict'",
         'suppressErrorRendering: true',
     ):
-        assert required in client_source, f'missing from client rasterizer: {required}'
+        assert required in runtime_source, f'missing from browser Mermaid runtime: {required}'
         assert required in MERMAID_RENDER_SCRIPT, f'missing from server renderer: {required}'
 
     print("Renderer configuration parity passed!")

@@ -13,7 +13,12 @@
 
 import { visit } from 'unist-util-visit';
 import type { Element, Root } from 'hast';
-import { INLINE_CHART_LANGUAGE, MERMAID_LANGUAGE, readPendingKind } from './richBlocks';
+import {
+    IMAGE_PROPOSAL_LANGUAGE,
+    INLINE_CHART_LANGUAGE,
+    MERMAID_LANGUAGE,
+    readPendingKind,
+} from './richBlocks';
 
 /**
  * The hast property the index is stamped on.
@@ -23,7 +28,18 @@ import { INLINE_CHART_LANGUAGE, MERMAID_LANGUAGE, readPendingKind } from './rich
  */
 export const RICH_BLOCK_INDEX_PROPERTY = 'dataScBlockIndex';
 
-const RICH_LANGUAGES = new Set<string>([MERMAID_LANGUAGE, INLINE_CHART_LANGUAGE]);
+/**
+ * Fences that render as something other than a code block.
+ *
+ * Every one is numbered, even though only diagrams and charts currently have colours saved
+ * against them: the numbering is per kind, so an image proposal costs nothing and the same
+ * function answers both "is this a rich fence" and "which one is it".
+ */
+const RICH_LANGUAGES = new Set<string>([
+    MERMAID_LANGUAGE,
+    INLINE_CHART_LANGUAGE,
+    IMAGE_PROPOSAL_LANGUAGE,
+]);
 
 /** Read the `language-xxx` class a fenced code block carries. */
 export function readFenceLanguage(className: unknown): string {

@@ -1,17 +1,85 @@
 // ChatPage.tsx
 // Chat surface: header, message thread, composer, and the right-hand drawer.
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { clsx } from 'clsx';
 import { Files, Info, ListOrdered, Maximize2, Minimize2 } from 'lucide-react';
 import { useChatStore } from '../stores/chatStore';
 import { useBootstrapStore } from '../stores/bootstrapStore';
 import { useUiStore } from '../stores/uiStore';
+import { readConversationParam, syncedConversationParams } from '../lib/conversationUrl';
 import { MessageList } from '../components/chat/MessageList';
 import { Composer } from '../components/chat/Composer';
 import { ConversationDrawer } from '../components/chat/ConversationDrawer';
 import { ConversationDetails } from '../components/chat/ConversationDetails';
 import { ConversationBadges } from '../components/chat/ConversationBadges';
+
+/**
+ * Keep the address bar and the open conversation describing each other.
+ *
+ * The two directions are not symmetrical, and that asymmetry is the whole design. The URL
+ * is read exactly once, when the page first renders, and written on every change of the
+ * open conversation after that. Reading continuously would fight the writing.
+ *
+ * The incoming id is captured in a lazy `useState` initialiser rather than inside an effect
+ * because effect order would otherwise decide the outcome: the effect that writes the URL
+ * also runs on mount, and with nothing open yet it would strip the parameter before the
+ * effect that reads it ever ran. A lazy initialiser runs during the first render, before
+ * any effect, so the link cannot be lost that way.
+ */
+function useConversationUrlSync() {
+    const [searchParams, setSearchParams] = useSearchParams();
+    const activeConversationId = useChatStore((state) => state.activeConversationId);
+    const openLinkedConversation = useChatStore((state) => state.openLinkedConversation);
+
+    const [linkedConversationId] = useState(() => readConversationParam(searchParams));
+    // Two flags with two jobs. The ref makes opening the link happen exactly once: React's
+    // StrictMode runs effects twice on mount, and a state flag is still false in the second
+    // invocation's closure, so it would open the conversation — and refetch its messages —
+    // twice. The state flag is what the write effect waits on, and has to be state because
+    // that effect must re-run once the link has been dealt with.
+    const linkConsumed = useRef(false);
+    const [linkHandled, setLinkHandled] = useState(!linkedConversationId);
+
+    useEffect(() => {
+        if (linkConsumed.current || !linkedConversationId) {
+            return;
+        }
+        linkConsumed.current = true;
+
+        // Read from the store rather than the subscribed value: leaving the chat page and
+        // coming back re-runs this with a conversation already open, and re-opening it
+        // would throw away a running stream for no reason.
+        if (linkedConversationId === useChatStore.getState().activeConversationId) {
+            setLinkHandled(true);
+            return;
+        }
+
+        // Released only once the open has settled, either way. Releasing it up front would
+        // let the write effect run during the moment before the conversation is open, see
+        // nothing open, and strip the very parameter that named it.
+        void openLinkedConversation(linkedConversationId).finally(() => setLinkHandled(true));
+    }, [linkedConversationId, openLinkedConversation]);
+
+    useEffect(() => {
+        // Held back until the link has been consumed, so the parameter survives long enough
+        // to be read.
+        if (!linkHandled) {
+            return;
+        }
+
+        const next = syncedConversationParams(searchParams, activeConversationId);
+        if (!next) {
+            return;
+        }
+
+        // `replace` rather than a new entry, matching the classic interface's
+        // `history.replaceState`: the address bar should describe what is open, not turn the
+        // back button into a list of every conversation visited.
+        setSearchParams(next, { replace: true });
+    }, [activeConversationId, linkHandled, searchParams, setSearchParams]);
+}
 
 function ChatHeader({ onOpenDetails }: { onOpenDetails: () => void }) {
     const { activeConversationId, conversations, drawerMode, setDrawerMode, metadata } =
@@ -134,6 +202,8 @@ function ChatHeader({ onOpenDetails }: { onOpenDetails: () => void }) {
 
 export function ChatPage() {
     const [detailsOpen, setDetailsOpen] = useState(false);
+
+    useConversationUrlSync();
 
     return (
         <div className="flex min-h-0 flex-1">

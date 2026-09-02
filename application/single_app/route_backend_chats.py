@@ -188,6 +188,10 @@ from functions_conversation_context import (
     inject_conversation_context_message,
     serialize_conversation_context_snapshot,
 )
+from functions_diagram_operations import (
+    build_diagram_guidance_message,
+    user_requested_diagram,
+)
 from functions_agent_document_citations import apply_agent_document_citations
 from functions_citation_tracking import (
     build_cited_source_subsets,
@@ -7804,6 +7808,11 @@ def build_image_proposal_system_message():
     return build_image_proposal_guidance_message()
 
 
+def build_diagram_system_message():
+    """Instruct final generation to answer diagram requests with renderable Mermaid."""
+    return build_diagram_guidance_message()
+
+
 def insert_system_message_after_existing_system_messages(conversation_history, system_message_content):
     """Insert a system message after existing system messages while avoiding duplicates."""
     if not isinstance(conversation_history, list):
@@ -7862,6 +7871,18 @@ def maybe_append_image_proposal_system_message(conversation_history, user_messag
     return insert_system_message_after_existing_system_messages(
         conversation_history,
         build_image_proposal_system_message(),
+    )
+
+
+def maybe_append_diagram_system_message(conversation_history, user_message, selected_agent=None):
+    """Add Mermaid guidance when the user asks for a structural diagram."""
+    del selected_agent
+    if not user_requested_diagram(user_message):
+        return conversation_history
+
+    return insert_system_message_after_existing_system_messages(
+        conversation_history,
+        build_diagram_system_message(),
     )
 
 
@@ -19369,6 +19390,12 @@ def register_route_backend_chats(bp):
                     selected_agent,
                 )
 
+                conversation_history_for_api = maybe_append_diagram_system_message(
+                    conversation_history_for_api,
+                    user_message,
+                    selected_agent,
+                )
+
                 def build_agent_message_history(context_agent):
                     nonlocal conversation_history_for_api
                     conversation_history_for_api, _ = _prepare_conversation_context_for_invocation(
@@ -19762,6 +19789,12 @@ def register_route_backend_chats(bp):
                 conversation_history_for_api,
                 user_message,
                 settings,
+                selected_agent,
+            )
+
+            conversation_history_for_api = maybe_append_diagram_system_message(
+                conversation_history_for_api,
+                user_message,
                 selected_agent,
             )
 
@@ -23282,6 +23315,11 @@ def register_route_backend_chats(bp):
                     conversation_history_for_api,
                     user_message,
                     settings,
+                    selected_agent,
+                )
+                conversation_history_for_api = maybe_append_diagram_system_message(
+                    conversation_history_for_api,
+                    user_message,
                     selected_agent,
                 )
                 conversation_history_for_api, _ = _prepare_conversation_context_for_invocation(
