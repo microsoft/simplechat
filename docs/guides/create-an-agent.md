@@ -43,7 +43,7 @@ Create an agent when a task benefits from consistent behavior, such as policy re
 8. In **Instructions**, write **Agent Instructions** or use **Instruction Brief** and **Draft Instructions**.
 
 {% include media.html src="guides/create-an-agent-step-8.png"
-                      alt="Screenshot showing create an agent step 8."
+                      alt="The Instructions step of the Add Agent wizard, with the Instruction Brief box and Draft Instructions button above the agent instructions editor, and the seven-step progress bar showing Basic Info through Knowledge already complete."
                       title="Create an agent step 8"
                       capture="Capture the create an agent task at this step in SimpleChat with realistic sample data and redact secrets." %}
 
