@@ -6,7 +6,15 @@ import { clsx } from 'clsx';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
-import { Brain, ChevronDown, EyeOff, ImageOff, Sparkles, TriangleAlert } from 'lucide-react';
+import {
+    Brain,
+    ChevronDown,
+    EyeOff,
+    ImageOff,
+    RefreshCw,
+    Sparkles,
+    TriangleAlert,
+} from 'lucide-react';
 import { useChatStore } from '../../stores/chatStore';
 import { useBootstrapStore } from '../../stores/bootstrapStore';
 import { useUiStore } from '../../stores/uiStore';
@@ -138,9 +146,21 @@ function Markdown({
                 remarkPlugins={[remarkGfm, remarkBreaks]}
                 rehypePlugins={[rehypeHighlightSubset]}
                 components={{
+                    // Every block a citation or mask placeholder can land in. A block left
+                    // out here would render the raw ⟦cite:N⟧ token as visible text.
                     p: ({ children }) => <p>{renderTokens(children)}</p>,
                     li: ({ children }) => <li>{renderTokens(children)}</li>,
                     td: ({ children }) => <td>{renderTokens(children)}</td>,
+                    th: ({ children }) => <th>{renderTokens(children)}</th>,
+                    h1: ({ children }) => <h1>{renderTokens(children)}</h1>,
+                    h2: ({ children }) => <h2>{renderTokens(children)}</h2>,
+                    h3: ({ children }) => <h3>{renderTokens(children)}</h3>,
+                    h4: ({ children }) => <h4>{renderTokens(children)}</h4>,
+                    blockquote: ({ children }) => (
+                        <blockquote>{renderTokens(children)}</blockquote>
+                    ),
+                    em: ({ children }) => <em>{renderTokens(children)}</em>,
+                    strong: ({ children }) => <strong>{renderTokens(children)}</strong>,
                 }}
             >
                 {content}
@@ -432,12 +452,18 @@ function MessageBubble({ message }: { message: ChatMessage }) {
 }
 
 function StreamingBubble() {
-    const { streamingContent, thoughts } = useChatStore();
+    const { streamingContent, thoughts, reconnecting } = useChatStore();
     const chatWidth = useUiStore((state) => state.chatWidth);
 
     return (
         <div className="flex justify-start">
             <div className={clsx('glass-flat rounded-2xl px-4 py-3', bubbleWidthClass(chatWidth))}>
+                {reconnecting && (
+                    <p className="mb-2 flex items-center gap-1.5 text-xs text-text-3">
+                        <RefreshCw size={12} className="animate-spin" />
+                        Reconnected to the response still being generated.
+                    </p>
+                )}
                 <ThoughtsPanel thoughts={thoughts} />
                 {streamingContent ? (
                     <AssistantMarkdown content={streamingContent} />
@@ -452,7 +478,7 @@ function StreamingBubble() {
                                 />
                             ))}
                         </span>
-                        Thinking
+                        {reconnecting ? 'Reconnecting' : 'Thinking'}
                     </span>
                 )}
             </div>

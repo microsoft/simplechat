@@ -225,6 +225,41 @@ source rather than inferred:
   covers only personal documents. The scope is computed from the workspaces in play, as
   `chat-messages.js` does: personal alone gives `'personal'`, anything wider gives `'all'`
   together with the group and public workspace ids.
+- **`chat_type` is part of that scope, not a constant.** The streaming route accepts only
+  `'user'` or `'group'` and derives `scope_id` / `scope_type` from it, so a group
+  conversation that reports `'user'` is searched and attributed as a personal one. It is
+  set to `'group'` exactly when a group is active; a public workspace stays `'user'`,
+  matching `chat-messages.js:7149`.
+- **`chat_type` stays `'user'`, deliberately.** The streaming route turns it into
+  `scope_id` / `scope_type`, and those feed the fact-memory read and autosave — so sending
+  `'group'` because a group happens to be selected would publish a personal conversation's
+  extracted facts into that group. The classic client appears to send `'group'` when a
+  group is active, but its guard reads `window.activeChatTabType`, which is read in two
+  places and assigned in none, so the branch is unreachable and V1 always sends `'user'`.
+  Group documents are reached through the scope ids above, which widens the search without
+  re-scoping the request.
+- **A dropped stream is recoverable, because generation outlives the connection.** The
+  answer is written into a server-side stream session, so a broken transport is not a lost
+  answer. On a stream that ends without a terminal frame, `GET /api/chat/stream/status/<id>`
+  is consulted and, if it reports `pending`, `GET /api/chat/stream/reattach/<id>` is
+  consumed. That route calls `iter_events()` with no start index, so it **replays from the
+  first event rather than resuming at an offset** — everything already rendered has to be
+  cleared or the answer appears twice. Recovery is attempted once, as
+  `chat-streaming.js` does with `allowRecovery: false`. Opening a conversation whose answer
+  is still generating attaches the same way.
+- **Attaching to a stream is not the same as owning it.** `stopStreaming` POSTs
+  `/api/chat/stream/cancel`, a real server-side cancellation, and it addresses the
+  conversation recorded as this tab's own stream. A resume therefore does not record one:
+  the generation may belong to another tab or to this page before a reload, so navigating
+  away detaches locally instead of truncating someone else's answer. The classic client
+  behaves the same way — a thread switch only aborts its own reader, and cancellation is
+  reached solely from the Stop button.
+- **Citation replacement must restore the whitespace it consumed.** The marker grammar ends
+  in `((?:\[#.*?\]\s*)+)`, and `\s` matches newlines, so the pattern absorbs the blank line
+  that separates the citation from the next markdown block. Because the whole match is
+  replaced, dropping that whitespace merges the following bullet list, heading or paragraph
+  into the citation's own line. `chat-citations.js` captures and re-appends it; V2 does the
+  same, at both exits from the replacer.
 - **Image messages carry the image in `content`**, as a data URI, an `/api/image/<id>` path,
   or an external URL. There is no `image_url` field.
 - **The three message exports are not alike.** Word and PowerPoint stream a document; the

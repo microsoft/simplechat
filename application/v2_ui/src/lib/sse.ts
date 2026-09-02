@@ -52,6 +52,15 @@ export interface ChatStreamHandlers {
     onCancelled?: (event: ChatStreamEvent, accumulated: string) => void;
     /** An error frame arrived, or the transport failed. */
     onError?: (message: string, event?: ChatStreamEvent) => void;
+    /**
+     * A dropped stream is being resumed and everything received so far must be discarded.
+     *
+     * `/api/chat/stream/reattach` calls `iter_events()` with no start index
+     * (route_backend_chats.py:24643), and that replays the session from its first event
+     * rather than resuming at an offset. Keeping the earlier content would therefore
+     * duplicate the whole answer.
+     */
+    onReconnect?: () => void;
 }
 
 export interface ChatStreamResult {
@@ -59,70 +68,64 @@ export interface ChatStreamResult {
     completed: boolean;
     cancelled: boolean;
     errored: boolean;
+    /** True when the answer was finished by a reattached stream rather than the original. */
+    reconnected: boolean;
 }
 
 /**
- * Open a chat stream and dispatch frames to the supplied handlers.
+ * Status snapshot from `/api/chat/stream/status/<id>`.
  *
- * Resolves once the stream reaches a terminal state. Aborting via `signal` resolves with
- * `cancelled: true` rather than throwing, because a user pressing Stop is a normal outcome
- * rather than an error.
+ * `_build_stream_status_payload` (route_backend_chats.py:2819) derives `pending` and
+ * `reattachable` from `active`, so all three agree; `pending` is used here because that is
+ * the field chat-streaming.js gates recovery on.
  */
-export async function streamChat(
-    body: ChatStreamRequest,
-    handlers: ChatStreamHandlers,
-    signal?: AbortSignal,
-): Promise<ChatStreamResult> {
-    const result: ChatStreamResult = {
-        accumulated: '',
-        completed: false,
-        cancelled: false,
-        errored: false,
-    };
+export interface ChatStreamStatus {
+    active?: boolean;
+    pending?: boolean;
+    reattachable?: boolean;
+    status?: string;
+    [key: string]: unknown;
+}
 
-    let response: Response;
+/** Ask whether a conversation still has a live stream that could be reattached. */
+export async function fetchStreamStatus(
+    conversationId: string,
+): Promise<ChatStreamStatus | null> {
     try {
-        response = await fetch(apiUrl('/api/chat/stream'), {
-            method: 'POST',
-            credentials: CREDENTIALS_MODE,
-            headers: {
-                'Content-Type': 'application/json',
-                Accept: 'text/event-stream',
-            },
-            body: JSON.stringify(body),
-            signal,
-        });
-    } catch (error) {
-        if (signal?.aborted) {
-            result.cancelled = true;
-            return result;
+        const response = await fetch(
+            apiUrl(`/api/chat/stream/status/${encodeURIComponent(conversationId)}`),
+            { credentials: CREDENTIALS_MODE, headers: { Accept: 'application/json' } },
+        );
+        if (!response.ok) {
+            return null;
         }
-        const message = error instanceof Error ? error.message : 'Network error';
-        result.errored = true;
-        handlers.onError?.(message);
-        return result;
+        return (await response.json()) as ChatStreamStatus;
+    } catch {
+        return null;
     }
+}
 
-    if (!response.ok || !response.body) {
-        // A failure before the stream opens comes back as a normal JSON error response.
-        let message = `Stream failed with status ${response.status}`;
-        try {
-            const payload = (await response.json()) as { error?: string };
-            if (payload?.error) {
-                message = payload.error;
-            }
-        } catch {
-            /* Non-JSON error body; keep the status-based message. */
-        }
-        // Reported through onError and returned rather than thrown: failure is already
-        // modelled by result.errored, and throwing here would escape as an unhandled
-        // rejection and skip the caller's post-stream cleanup.
-        result.errored = true;
-        handlers.onError?.(message);
-        return result;
-    }
+/** Reported instead of invoking `onError` directly, so recovery can suppress it. */
+interface DeferredStreamError {
+    message: string;
+    event?: ChatStreamEvent;
+}
 
-    const reader = response.body.getReader();
+/**
+ * Read one already-open SSE response to a terminal frame.
+ *
+ * Shared by the initial POST and by a reattached GET so both consume byte-for-byte the
+ * same framing. Errors are handed to `reportError` rather than to `handlers.onError` so
+ * the caller can decide whether a reconnect makes them moot.
+ */
+async function consumeStreamResponse(
+    response: Response,
+    handlers: ChatStreamHandlers,
+    result: ChatStreamResult,
+    signal: AbortSignal | undefined,
+    reportError: (message: string, event?: ChatStreamEvent) => void,
+): Promise<void> {
+    const reader = response.body!.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
 
@@ -130,7 +133,7 @@ export async function streamChat(
     const handleEvent = (event: ChatStreamEvent): boolean => {
         if (event.error) {
             result.errored = true;
-            handlers.onError?.(event.error, event);
+            reportError(event.error, event);
             return true;
         }
 
@@ -222,7 +225,7 @@ export async function streamChat(
                     // so the caller can offer a retry instead of leaving a half-written
                     // message on screen with no explanation.
                     result.errored = true;
-                    handlers.onError?.('The response ended unexpectedly.');
+                    reportError('The response ended unexpectedly.');
                 }
                 break;
             }
@@ -240,12 +243,196 @@ export async function streamChat(
             result.cancelled = true;
         } else {
             result.errored = true;
-            handlers.onError?.(error instanceof Error ? error.message : 'Stream read error');
+            reportError(error instanceof Error ? error.message : 'Stream read error');
         }
     } finally {
         reader.cancel().catch(() => {
             /* Reader already closed. */
         });
+    }
+}
+
+/**
+ * Open the reattach stream for a conversation whose generation is still running.
+ *
+ * Returns false when there is nothing to attach to, which is the normal case: the server
+ * answers 404 once the session is no longer active.
+ */
+async function attachToLiveStream(
+    conversationId: string,
+    handlers: ChatStreamHandlers,
+    result: ChatStreamResult,
+    signal: AbortSignal | undefined,
+): Promise<boolean> {
+    const status = await fetchStreamStatus(conversationId);
+    if (!status?.pending) {
+        return false;
+    }
+
+    let response: Response;
+    try {
+        response = await fetch(
+            apiUrl(`/api/chat/stream/reattach/${encodeURIComponent(conversationId)}`),
+            {
+                method: 'GET',
+                credentials: CREDENTIALS_MODE,
+                headers: { Accept: 'text/event-stream' },
+                signal,
+            },
+        );
+    } catch {
+        return false;
+    }
+
+    if (!response.ok || !response.body) {
+        return false;
+    }
+
+    // The replay starts at the first event, so anything already rendered is a duplicate.
+    result.accumulated = '';
+    result.errored = false;
+    result.reconnected = true;
+    handlers.onReconnect?.();
+
+    let recoveryError: DeferredStreamError | null = null;
+    await consumeStreamResponse(response, handlers, result, signal, (message, event) => {
+        recoveryError = { message, event };
+    });
+
+    if (recoveryError) {
+        // Only one attempt, matching chat-streaming.js passing allowRecovery: false to the
+        // reattached consumer. A second failure is reported rather than retried forever.
+        const failure = recoveryError as DeferredStreamError;
+        result.errored = true;
+        handlers.onError?.(failure.message, failure.event);
+    }
+
+    return true;
+}
+
+/**
+ * Resume an in-flight stream for a conversation, if one is still running.
+ *
+ * Used when a conversation is opened while its answer is still generating, which is what
+ * chat-conversations.js:1695 does after selecting a conversation.
+ */
+export async function reattachChatStream(
+    conversationId: string,
+    handlers: ChatStreamHandlers,
+    signal?: AbortSignal,
+): Promise<ChatStreamResult | null> {
+    const result: ChatStreamResult = {
+        accumulated: '',
+        completed: false,
+        cancelled: false,
+        errored: false,
+        reconnected: false,
+    };
+
+    const attached = await attachToLiveStream(conversationId, handlers, result, signal);
+    return attached ? result : null;
+}
+
+/**
+ * Open a chat stream and dispatch frames to the supplied handlers.
+ *
+ * Resolves once the stream reaches a terminal state. Aborting via `signal` resolves with
+ * `cancelled: true` rather than throwing, because a user pressing Stop is a normal outcome
+ * rather than an error.
+ *
+ * If the transport drops before a terminal frame, the generation usually survives on the
+ * server, so one reattach is attempted before the failure is reported.
+ */
+export async function streamChat(
+    body: ChatStreamRequest,
+    handlers: ChatStreamHandlers,
+    signal?: AbortSignal,
+): Promise<ChatStreamResult> {
+    const result: ChatStreamResult = {
+        accumulated: '',
+        completed: false,
+        cancelled: false,
+        errored: false,
+        reconnected: false,
+    };
+
+    // A new conversation has no id until the server assigns one, and recovery needs it.
+    let conversationId = body.conversation_id ?? undefined;
+    const trackingHandlers: ChatStreamHandlers = {
+        ...handlers,
+        onConversationMetadata: (event) => {
+            if (typeof event.conversation_id === 'string' && event.conversation_id) {
+                conversationId = event.conversation_id;
+            }
+            handlers.onConversationMetadata?.(event);
+        },
+    };
+
+    let pendingError: DeferredStreamError | null = null;
+    const captureError = (message: string, event?: ChatStreamEvent) => {
+        pendingError = { message, event };
+    };
+
+    let response: Response;
+    try {
+        response = await fetch(apiUrl('/api/chat/stream'), {
+            method: 'POST',
+            credentials: CREDENTIALS_MODE,
+            headers: {
+                'Content-Type': 'application/json',
+                Accept: 'text/event-stream',
+            },
+            body: JSON.stringify(body),
+            signal,
+        });
+    } catch (error) {
+        if (signal?.aborted) {
+            result.cancelled = true;
+            return result;
+        }
+        const message = error instanceof Error ? error.message : 'Network error';
+        result.errored = true;
+        captureError(message);
+        response = undefined as unknown as Response;
+    }
+
+    if (!pendingError && (!response.ok || !response.body)) {
+        // A failure before the stream opens comes back as a normal JSON error response.
+        let message = `Stream failed with status ${response.status}`;
+        try {
+            const payload = (await response.json()) as { error?: string };
+            if (payload?.error) {
+                message = payload.error;
+            }
+        } catch {
+            /* Non-JSON error body; keep the status-based message. */
+        }
+        // Reported through onError and returned rather than thrown: failure is already
+        // modelled by result.errored, and throwing here would escape as an unhandled
+        // rejection and skip the caller's post-stream cleanup.
+        result.errored = true;
+        captureError(message);
+    } else if (!pendingError) {
+        await consumeStreamResponse(response, trackingHandlers, result, signal, captureError);
+    }
+
+    if (pendingError && !signal?.aborted && conversationId) {
+        // The answer is generated on the server and outlives the HTTP connection, so a
+        // dropped transport is recoverable. attachToLiveStream reports its own failures.
+        const attached = await attachToLiveStream(
+            conversationId,
+            trackingHandlers,
+            result,
+            signal,
+        );
+        if (attached) {
+            pendingError = null;
+        }
+    }
+
+    if (pendingError) {
+        const failure = pendingError as DeferredStreamError;
+        handlers.onError?.(failure.message, failure.event);
     }
 
     return result;

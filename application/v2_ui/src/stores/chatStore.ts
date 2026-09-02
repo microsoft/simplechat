@@ -19,7 +19,13 @@ import {
     toggleConversationHidden,
     toggleConversationPinned,
 } from '../lib/endpoints';
-import { cancelStream, streamChat } from '../lib/sse';
+import {
+    cancelStream,
+    fetchStreamStatus,
+    reattachChatStream,
+    streamChat,
+    type ChatStreamHandlers,
+} from '../lib/sse';
 import { agentInfoForSelection } from '../lib/agents';
 import { modelIdentityForSelection, type ModelCatalogEntry } from '../lib/models';
 import { resolveDocumentScope } from '../lib/documentScope';
@@ -82,6 +88,14 @@ interface ChatState {
     streamingContent: string;
     thoughts: ThoughtEntry[];
     streamError: string | null;
+    /**
+     * True while a dropped stream is being resumed from the server.
+     *
+     * Generation continues server-side after the HTTP connection drops, so a broken
+     * transport is recoverable; this distinguishes "still working, re-attaching" from a
+     * genuine failure.
+     */
+    reconnecting: boolean;
 
     /** Right-hand drawer state. Null means closed. */
     drawerMode: DrawerMode;
@@ -145,6 +159,139 @@ let activeStreamController: AbortController | null = null;
  */
 let streamingConversationId: string | null = null;
 
+/** Store writer used by the stream handlers, kept narrow so they can be shared. */
+type StreamStateSetter = (
+    partial: Partial<ChatState> | ((state: ChatState) => Partial<ChatState>),
+) => void;
+
+/**
+ * Build the event handlers that fold a stream into the store.
+ *
+ * Shared by a fresh send and by a resume of an already-running generation, so a reattached
+ * stream produces exactly the same message, thoughts and error handling as the original.
+ */
+function buildStreamHandlers(
+    conversationId: string,
+    isCurrent: () => boolean,
+    set: StreamStateSetter,
+    getState: () => ChatState,
+): ChatStreamHandlers {
+    return {
+        onContent: (_delta, accumulated) => {
+            if (!isCurrent()) {
+                return;
+            }
+            set({ streamingContent: accumulated });
+        },
+        onThought: (event) => {
+            const content =
+                typeof event.content === 'string'
+                    ? event.content
+                    : String(event.thought ?? '');
+            if (!content || !isCurrent()) {
+                return;
+            }
+            set((state) => ({
+                thoughts: [
+                    ...state.thoughts,
+                    {
+                        id: `${state.thoughts.length}`,
+                        title: String(event.title ?? 'Thinking'),
+                        content,
+                    },
+                ],
+            }));
+        },
+        onConversationMetadata: (event) => {
+            // Applied even when superseded: the title belongs to a conversation in the
+            // rail, not to the message list on screen.
+            const title = event.conversation_title;
+            if (typeof title === 'string' && title) {
+                set((state) => ({
+                    conversations: state.conversations.map((item) =>
+                        item.id === conversationId ? { ...item, title } : item,
+                    ),
+                }));
+            }
+        },
+        onDone: (event, accumulated) => {
+            if (!isCurrent()) {
+                return;
+            }
+            const finalMessage: ChatMessage = {
+                id: String(event.message_id ?? STREAMING_MESSAGE_ID),
+                conversation_id: conversationId,
+                role: 'assistant',
+                content: accumulated,
+                timestamp: new Date().toISOString(),
+                model_deployment_name: event.model_deployment_name,
+                agent_display_name: event.agent_display_name,
+                augmented: event.augmented,
+                metadata: event.metadata,
+                // Carried onto the finished message so the reasoning steps stay
+                // available after the stream ends instead of disappearing with the
+                // streaming placeholder.
+                thoughts:
+                    getState().thoughts.length > 0 ? [...getState().thoughts] : undefined,
+            };
+            set((state) => ({
+                messages: [...state.messages, finalMessage],
+                streaming: false,
+                streamingContent: '',
+                reconnecting: false,
+            }));
+        },
+        onCancelled: (_event, accumulated) => {
+            if (!isCurrent()) {
+                return;
+            }
+            // Partial output is kept: discarding what was already generated is more
+            // annoying than useful when someone stops a long answer.
+            if (accumulated) {
+                set((state) => ({
+                    messages: [
+                        ...state.messages,
+                        {
+                            id: `cancelled-${Date.now()}`,
+                            conversation_id: conversationId,
+                            role: 'assistant',
+                            content: accumulated,
+                            timestamp: new Date().toISOString(),
+                            thoughts:
+                                state.thoughts.length > 0 ? [...state.thoughts] : undefined,
+                        },
+                    ],
+                }));
+            }
+            set({ streaming: false, streamingContent: '', reconnecting: false });
+        },
+        onError: (message) => {
+            if (!isCurrent()) {
+                return;
+            }
+            set({
+                streaming: false,
+                streamingContent: '',
+                reconnecting: false,
+                streamError: message,
+            });
+        },
+        onReconnect: () => {
+            if (!isCurrent()) {
+                return;
+            }
+            // The reattached stream replays from the first event, so what is on screen
+            // is about to be sent again and has to be cleared or it would double up.
+            set({
+                streamingContent: '',
+                thoughts: [],
+                reconnecting: true,
+                streamError: null,
+            });
+        },
+    };
+}
+
 /**
  * Run a chat stream and fold its events into the store.
  *
@@ -175,101 +322,7 @@ async function runChatStream(
 
     await streamChat(
         requestBody,
-        {
-            onContent: (_delta, accumulated) => {
-                if (!isCurrent()) {
-                    return;
-                }
-                set({ streamingContent: accumulated });
-            },
-            onThought: (event) => {
-                const content =
-                    typeof event.content === 'string'
-                        ? event.content
-                        : String(event.thought ?? '');
-                if (!content || !isCurrent()) {
-                    return;
-                }
-                set((state) => ({
-                    thoughts: [
-                        ...state.thoughts,
-                        {
-                            id: `${state.thoughts.length}`,
-                            title: String(event.title ?? 'Thinking'),
-                            content,
-                        },
-                    ],
-                }));
-            },
-            onConversationMetadata: (event) => {
-                // Applied even when superseded: the title belongs to a conversation in the
-                // rail, not to the message list on screen.
-                const title = event.conversation_title;
-                if (typeof title === 'string' && title) {
-                    set((state) => ({
-                        conversations: state.conversations.map((item) =>
-                            item.id === conversationId ? { ...item, title } : item,
-                        ),
-                    }));
-                }
-            },
-            onDone: (event, accumulated) => {
-                if (!isCurrent()) {
-                    return;
-                }
-                const finalMessage: ChatMessage = {
-                    id: String(event.message_id ?? STREAMING_MESSAGE_ID),
-                    conversation_id: conversationId,
-                    role: 'assistant',
-                    content: accumulated,
-                    timestamp: new Date().toISOString(),
-                    model_deployment_name: event.model_deployment_name,
-                    agent_display_name: event.agent_display_name,
-                    augmented: event.augmented,
-                    metadata: event.metadata,
-                    // Carried onto the finished message so the reasoning steps stay
-                    // available after the stream ends instead of disappearing with the
-                    // streaming placeholder.
-                    thoughts:
-                        getState().thoughts.length > 0 ? [...getState().thoughts] : undefined,
-                };
-                set((state) => ({
-                    messages: [...state.messages, finalMessage],
-                    streaming: false,
-                    streamingContent: '',
-                }));
-            },
-            onCancelled: (_event, accumulated) => {
-                if (!isCurrent()) {
-                    return;
-                }
-                // Partial output is kept: discarding what was already generated is more
-                // annoying than useful when someone stops a long answer.
-                if (accumulated) {
-                    set((state) => ({
-                        messages: [
-                            ...state.messages,
-                            {
-                                id: `cancelled-${Date.now()}`,
-                                conversation_id: conversationId,
-                                role: 'assistant',
-                                content: accumulated,
-                                timestamp: new Date().toISOString(),
-                                thoughts:
-                                    state.thoughts.length > 0 ? [...state.thoughts] : undefined,
-                            },
-                        ],
-                    }));
-                }
-                set({ streaming: false, streamingContent: '' });
-            },
-            onError: (message) => {
-                if (!isCurrent()) {
-                    return;
-                }
-                set({ streaming: false, streamingContent: '', streamError: message });
-            },
-        },
+        buildStreamHandlers(conversationId, isCurrent, set, getState),
         controller.signal,
     );
 
@@ -280,7 +333,7 @@ async function runChatStream(
     if (wasCurrent) {
         activeStreamController = null;
         streamingConversationId = null;
-        set({ streaming: false });
+        set({ streaming: false, reconnecting: false });
     }
 
     // Retry and edit rewrite thread state server-side, so the authoritative message list
@@ -294,6 +347,64 @@ async function runChatStream(
     if (options.isNewConversation) {
         await getState().loadConversations({ reset: true });
     }
+}
+
+/**
+ * Attach to a generation that is still running for a conversation.
+ *
+ * The answer is produced on the server and survives the HTTP connection, so opening a
+ * conversation whose response is still being written should show it continuing rather than
+ * a truncated message. chat-conversations.js:1695 does the same after selecting a thread.
+ *
+ * Returns false when there is nothing live to attach to, which is the ordinary case.
+ */
+async function resumeChatStream(conversationId: string): Promise<boolean> {
+    const set = (partial: Partial<ChatState> | ((state: ChatState) => Partial<ChatState>)) =>
+        useChatStore.setState(partial as never);
+    const getState = () => useChatStore.getState();
+
+    // Checked before any state is touched so opening an ordinary conversation never
+    // flickers a streaming placeholder.
+    const status = await fetchStreamStatus(conversationId);
+    if (!status?.pending) {
+        return false;
+    }
+
+    // A stream started in the meantime owns the UI; do not displace it.
+    if (activeStreamController || getState().activeConversationId !== conversationId) {
+        return false;
+    }
+
+    const controller = new AbortController();
+    activeStreamController = controller;
+    // Deliberately NOT setting streamingConversationId. That marks a stream this tab
+    // started, and stopStreaming uses it to POST /api/chat/stream/cancel, which is a real
+    // server-side cancellation. This stream belongs to whoever started it — possibly
+    // another tab, or this page before a reload — so leaving the conversation must detach
+    // locally without killing the generation. The classic client does the same: a thread
+    // switch only aborts its own reader, and cancel is reached solely from the Stop button.
+    const isCurrent = () => activeStreamController === controller;
+
+    set({
+        streaming: true,
+        streamingContent: '',
+        thoughts: [],
+        streamError: null,
+        reconnecting: true,
+    });
+
+    await reattachChatStream(
+        conversationId,
+        buildStreamHandlers(conversationId, isCurrent, set, getState),
+        controller.signal,
+    );
+
+    if (isCurrent()) {
+        activeStreamController = null;
+        set({ streaming: false, reconnecting: false });
+    }
+
+    return true;
 }
 
 export const useChatStore = create<ChatState>((set, get) => ({
@@ -313,6 +424,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     streamingContent: '',
     thoughts: [],
     streamError: null,
+    reconnecting: false,
 
     drawerMode: null,
     metadata: null,
@@ -374,6 +486,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             streamingContent: '',
             thoughts: [],
             streamError: null,
+            reconnecting: false,
             // Metadata belongs to the previous conversation; drop it so the drawer never
             // shows another thread's documents.
             metadata: null,
@@ -395,6 +508,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
             // metadata is needed as soon as it opens rather than only when a drawer is
             // expanded. Advisory: a failure leaves the badges off, not the thread broken.
             void get().loadMetadata(conversationId);
+
+            // Generation outlives the connection that started it, so a thread opened while
+            // its answer is still being written picks the stream back up instead of showing
+            // a message that stops mid-sentence.
+            void resumeChatStream(conversationId).catch(() => {
+                /* Advisory: the thread is readable whether or not a resume was possible. */
+            });
 
             // Only clear the marker when there is one. Calling unconditionally produced a
             // 404 for collaboration conversations, which are stored separately and have
@@ -442,6 +562,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             streamingContent: '',
             thoughts: [],
             streamError: null,
+            reconnecting: false,
             metadata: null,
             metadataError: null,
         });
@@ -569,6 +690,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             streamingContent: '',
             thoughts: [],
             streamError: null,
+            reconnecting: false,
         }));
 
         const bootstrap = useBootstrapStore.getState().data;
@@ -580,6 +702,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
         const requestBody: ChatStreamRequest = {
             message: trimmed,
             conversation_id: conversationId,
+            // Deliberately always 'user'. The server derives scope_id/scope_type from this
+            // (route_backend_chats.py:20692) and those feed fact-memory reads and writes,
+            // so sending 'group' would move a personal conversation's extracted facts into
+            // a shared group scope. The classic client's group branch is unreachable —
+            // `window.activeChatTabType` is read in two places and assigned in none — so
+            // 'user' is what it actually sends, and matching that is the real parity.
             chat_type: 'user',
             hybrid_search: options.documentSearch,
             web_search_enabled: options.webSearch,
@@ -587,6 +715,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
             selected_document_ids: options.selectedDocumentIds,
             // The scope and its workspace ids travel together: the server filters the ids
             // down to what the caller may see, so a scope without them covers nothing.
+            // Document search is widened to the group this way, without re-scoping the
+            // request itself.
             ...scope,
             // Deep research is carried by two fields: the server reads source_review_enabled
             // for the fetching machinery and deep_research_enabled for query planning.
@@ -637,7 +767,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         activeStreamController.abort();
         activeStreamController = null;
         streamingConversationId = null;
-        set({ streaming: false, streamingContent: '' });
+        set({ streaming: false, streamingContent: '', reconnecting: false });
     },
 
     setDrawerMode: (drawerMode) => {
@@ -718,7 +848,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
         if (get().streaming) {
             return;
         }
-        set({ streaming: true, streamingContent: '', thoughts: [], streamError: null });
+        set({
+            streaming: true,
+            streamingContent: '',
+            thoughts: [],
+            streamError: null,
+            reconnecting: false,
+        });
         try {
             const bootstrap = useBootstrapStore.getState().data;
             // `modelDeployment` holds the picker's selection key, so the deployment name
@@ -759,7 +895,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
         if (!trimmed || get().streaming) {
             return;
         }
-        set({ streaming: true, streamingContent: '', thoughts: [], streamError: null });
+        set({
+            streaming: true,
+            streamingContent: '',
+            thoughts: [],
+            streamError: null,
+            reconnecting: false,
+        });
         try {
             const result = await editMessageApi(messageId, trimmed);
             if (!result?.chat_request) {

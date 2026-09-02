@@ -2,6 +2,22 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.017)**
+
+#### Bug Fixes
+
+*   **Lists And Line Breaks Disappeared After A Citation In V2**
+    *   In the V2 chat page, a bullet list, heading or new paragraph that followed a citation was pulled up onto the citation's own line, so answers that cited a source lost their formatting from that point on.
+    *   The citation pattern deliberately absorbs the spacing after a citation marker while it removes the marker, and V2 was discarding that spacing instead of putting it back. The blank line that separates one markdown block from the next went with it, so the following block was no longer recognised as a block.
+    *   Answers now keep their structure after a citation. Citations that land inside a heading, list item, table cell or quote are also rendered properly rather than leaving a stray placeholder behind.
+    *   (Ref: V2 citation rendering, markdown blocks, `chat-citations.js` parity)
+
+*   **A Dropped Connection Lost The Answer In V2**
+    *   If the connection carrying a response was interrupted — a sleeping laptop, a flaky network, a proxy timeout — V2 showed "The response ended unexpectedly" and the answer was lost, even though the server was still writing it.
+    *   Responses are generated on the server and outlive the connection that requested them. V2 now checks whether the response is still being produced and picks it back up where the classic interface does, replacing what was on screen with the replayed answer so nothing is duplicated. Opening a conversation whose answer is still being written also joins it in progress rather than showing a message that stops mid-sentence.
+    *   A short "Reconnected to the response still being generated" note makes it clear what happened. A reconnect is attempted once; if it fails the error is reported as before.
+    *   (Ref: V2 streaming recovery, `/api/chat/stream/status`, `/api/chat/stream/reattach`)
+
 ### **(v0.261.016)**
 
 #### Bug Fixes

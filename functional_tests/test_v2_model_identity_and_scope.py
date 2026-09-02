@@ -26,6 +26,7 @@ document scope is computed from the workspaces actually in play.
 """
 
 import os
+import re
 import sys
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -233,6 +234,113 @@ def test_retry_resolves_the_model_the_same_way():
         return False
 
 
+def test_chat_type_stays_user_so_fact_memory_is_not_re_scoped():
+    """A personal conversation must not write its extracted facts into a group scope.
+
+    `chat_stream_api` turns `chat_type` into `scope_id`/`scope_type`, and those feed the
+    fact-memory read and autosave. Sending 'group' because the user happens to have an
+    active group selected would publish a personal conversation's facts to that group.
+
+    The classic client looks like it sends 'group' in that situation, but its guard reads
+    `window.activeChatTabType`, which is never assigned anywhere in the application -- so
+    the branch is unreachable and V1 always sends 'user'.
+    """
+    print("Testing chat_type scoping...")
+    try:
+        route = read(APP, "route_backend_chats.py")
+
+        # The server contract that makes this matter, read from the route.
+        assert "if chat_type not in ('user', 'group'):" in route
+        assert "scope_id = active_group_id if chat_type == 'group' else user_id" in route, (
+            "chat_type no longer selects the scope id; this test's premise needs rechecking"
+        )
+
+        # V1's group branch is dead code: it is read but never assigned.
+        legacy_dir = os.path.join(APP, "static", "js")
+        assignment = re.compile(r"activeChatTabType\s*=(?!=)")
+        comparison = re.compile(r"activeChatTabType\s*===")
+        assignments = 0
+        reads = 0
+        for root, _dirs, files in os.walk(legacy_dir):
+            for name in files:
+                if not name.endswith(".js"):
+                    continue
+                text = read(root, name)
+                assignments += len(assignment.findall(text))
+                reads += len(comparison.findall(text))
+        assert reads > 0, "Expected the classic client to still read activeChatTabType"
+        assert assignments == 0, (
+            "activeChatTabType is now assigned somewhere, so V1 can send chat_type='group'. "
+            "Re-evaluate whether V2 should follow, keeping in mind that chat_type re-scopes "
+            "fact memory writes to the group."
+        )
+
+        store = read(V2_SRC, "stores", "chatStore.ts")
+        assert "chat_type: 'user'," in store, (
+            "chat_type must stay 'user'; deriving it from the active group would move "
+            "personal conversations' fact memory into a shared group scope"
+        )
+
+        # Document search is still widened to the group -- via the scope, not chat_type.
+        scope = read(V2_SRC, "lib", "documentScope.ts")
+        assert "chat_type" not in scope, (
+            "Document scope must not set chat_type; widening the search and re-scoping the "
+            "request are different things"
+        )
+        assert "active_group_ids: groupIds," in scope
+
+        print("chat_type scoping test passed!")
+        return True
+    except Exception as e:
+        print(f"Test failed: {e}")
+        import traceback
+
+        traceback.print_exc()
+        return False
+
+
+def test_web_search_flag_matches_what_the_route_reads():
+    """The web search toggle has to use the field name the streaming route reads."""
+    print("Testing web search request contract...")
+    try:
+        route = read(APP, "route_backend_chats.py")
+
+        # The streaming route reads the flag and gates the search on it directly, with no
+        # enclosing condition, so the flag alone decides whether a web search happens.
+        assert "web_search_enabled = data.get('web_search_enabled')" in route, (
+            "The streaming route no longer reads web_search_enabled from the request"
+        )
+        assert "if web_search_enabled:" in route, (
+            "The route no longer gates the web search on the request flag"
+        )
+        # A string 'true' is accepted too, but a real boolean is what the client sends.
+        assert "if isinstance(web_search_enabled, str):" in route
+
+        store = read(V2_SRC, "stores", "chatStore.ts")
+        assert "web_search_enabled: options.webSearch," in store, (
+            "The composer's Web toggle must be sent as web_search_enabled"
+        )
+
+        # The button is only offered when the capability is actually on; `enabled` is a
+        # strict identity check so a missing flag hides the control rather than showing a
+        # button that silently does nothing server-side.
+        gating = read(V2_SRC, "lib", "composerGating.ts")
+        assert "return features?.[key] === true;" in gating, (
+            "Capability gating must be strict, or the Web button appears for deployments "
+            "where enable_web_search is off and the server discards the request"
+        )
+        assert "showWeb: enabled(features, 'enable_web_search')" in gating
+
+        print("Web search request contract test passed!")
+        return True
+    except Exception as e:
+        print(f"Test failed: {e}")
+        import traceback
+
+        traceback.print_exc()
+        return False
+
+
 def test_version_is_at_least_implementation_version():
     """The fix must be present in at least the version that introduced it."""
     print("Testing application version...")
@@ -256,6 +364,8 @@ if __name__ == "__main__":
         test_document_scope_is_computed_not_hardcoded,
         test_scope_ids_travel_with_the_scope,
         test_retry_resolves_the_model_the_same_way,
+        test_chat_type_stays_user_so_fact_memory_is_not_re_scoped,
+        test_web_search_flag_matches_what_the_route_reads,
         test_version_is_at_least_implementation_version,
     ]
 

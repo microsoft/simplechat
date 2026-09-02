@@ -94,6 +94,12 @@ export function parseCitations(message: string): ParsedMessage {
     let text = message.replace(
         CITATION_MARKER,
         (_whole, fileName: string, locationLabel: string, locations: string, brackets: string) => {
+            // The bracket group's trailing `\s*` swallows whatever followed the last
+            // `[#id]`, which is usually the blank line separating the citation from the
+            // next markdown block. Dropping it merges that block into the citation's
+            // paragraph, so bullet lists and line breaks after a citation stop working.
+            // Captured here and restored below, as chat-citations.js does.
+            const trailingWhitespace = /\s*$/.exec(brackets)?.[0] ?? '';
             const ids = brackets.match(/\[#.*?\]/g) ?? [];
 
             const citations: ParsedCitation[] = [];
@@ -109,8 +115,8 @@ export function parseCitations(message: string): ParsedMessage {
             }
 
             if (citations.length === 0) {
-                // Nothing resolvable; drop the marker rather than leaving raw text behind.
-                return '';
+                // Nothing resolvable; drop the marker but keep the structure around it.
+                return trailingWhitespace;
             }
 
             const normalizedLabel = locationLabel.toLowerCase();
@@ -133,7 +139,7 @@ export function parseCitations(message: string): ParsedMessage {
                 citations,
             });
 
-            return CITATION_PLACEHOLDER(groupIndex);
+            return `${CITATION_PLACEHOLDER(groupIndex)}${trailingWhitespace}`;
         },
     );
 

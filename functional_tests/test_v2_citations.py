@@ -148,6 +148,77 @@ def test_markers_are_replaced_without_injecting_html():
     return True
 
 
+def test_citation_replacement_restores_the_whitespace_it_consumed():
+    """The blank line after a citation must survive, or the next block merges into it.
+
+    The marker grammar ends with ``((?:\\[#.*?\\]\\s*)+)``. ``\\s`` matches newlines, so
+    that trailing ``\\s*`` swallows the blank line separating the citation from whatever
+    follows it. Because the whole match is replaced, dropping that whitespace glues the
+    next markdown block onto the citation's paragraph, and bullet lists, headings and
+    paragraph breaks after a citation stop rendering.
+
+    chat-citations.js avoids this by capturing the whitespace and appending it to the
+    replacement, so this asserts V2 does the same thing.
+    """
+    print("Testing citation trailing whitespace restoration...")
+
+    legacy = _read(APP_DIR / "static" / "js" / "chat" / "chat-citations.js")
+    v2 = _read(V2_SRC / "lib" / "citations.ts")
+
+    assert re.search(r"/\\s\*\$/\.exec\(bracketSection\)", legacy), (
+        "chat-citations.js no longer captures the whitespace after the bracket run; "
+        "this test's premise needs rechecking against the current client"
+    )
+
+    assert re.search(r"/\\s\*\$/\.exec\(brackets\)", v2), (
+        "The V2 parser must capture the whitespace the bracket group consumed. Without "
+        "it, a bullet list or paragraph following a citation is merged into the "
+        "citation's own line."
+    )
+
+    # Both exits from the replacer have to restore it: the resolvable case that emits a
+    # placeholder, and the unresolvable case that drops the marker entirely.
+    assert "${CITATION_PLACEHOLDER(groupIndex)}${trailingWhitespace}" in v2, (
+        "The placeholder replacement must re-append the captured whitespace"
+    )
+    assert "return trailingWhitespace;" in v2, (
+        "Dropping an unresolvable marker must still preserve the structure around it"
+    )
+
+    # The orphan-bracket sweep runs over text that has already been through the marker
+    # replacement, so it must not eat newlines of its own.
+    orphan = re.search(r"const ORPHAN_BRACKET_RUN =\s*(/.+?/g);", v2, re.DOTALL)
+    assert orphan, "Could not find ORPHAN_BRACKET_RUN in the V2 citation parser"
+    assert "\\s*" not in orphan.group(1), (
+        "The orphan bracket sweep must use [ \\t]* rather than \\s* so it cannot consume "
+        f"paragraph breaks: {orphan.group(1)}"
+    )
+
+    print("Citation trailing whitespace test passed!")
+    return True
+
+
+def test_placeholders_are_substituted_in_every_block_element():
+    """A placeholder must resolve wherever markdown puts it, not just in a paragraph.
+
+    Citations legitimately land in list items, table cells, headings and blockquotes. Any
+    block type missing from the renderer's component map would print the raw
+    ``[cite:N]`` sentinel as visible text.
+    """
+    print("Testing placeholder substitution coverage...")
+
+    message_list = _read(V2_SRC / "components" / "chat" / "MessageList.tsx")
+
+    for element in ("p", "li", "td", "th", "h1", "h2", "h3", "h4", "blockquote", "em", "strong"):
+        assert re.search(rf"\b{element}:\s*\(", message_list), (
+            f"The markdown component map has no {element!r} handler, so a citation "
+            "landing there would render as a raw placeholder"
+        )
+
+    print("Placeholder substitution coverage test passed!")
+    return True
+
+
 def test_version_is_at_least_implementation_version():
     """The application version is at or beyond the version that added citations."""
     print("Testing application version...")
@@ -163,6 +234,8 @@ if __name__ == "__main__":
         test_citation_kinds_are_distinguished,
         test_citation_lookup_payload_matches_the_route,
         test_markers_are_replaced_without_injecting_html,
+        test_citation_replacement_restores_the_whitespace_it_consumed,
+        test_placeholders_are_substituted_in_every_block_element,
         test_version_is_at_least_implementation_version,
     ]
 
