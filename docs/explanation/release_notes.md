@@ -2,6 +2,28 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.018)**
+
+#### Bug Fixes
+
+*   **Copying A Message Pasted Unusable Citation Text In V2**
+    *   Copying an answer put the raw citation markers on the clipboard, so a pasted paragraph read `...up to 0.2 mm/s at full load. (Source: NanoPZ.pdf, Page: 13) [#0d4d4eb0-fbbb-4821-a809-8bbd649be6ef_13]` — unusable in an email or a document.
+    *   Copy now produces the answer as a person would want to read it: the citation markers are removed, along with the space in front of them so no stray gaps or double spaces are left behind, while bold, lists, headings and paragraph breaks are kept intact.
+    *   The same conversion is used when saving a message as Markdown and when reusing one as a prompt, so neither carries the markers either.
+    *   (Ref: V2 message copy, citation markers, `messageText.ts`)
+
+*   **Copying A Message Could Reveal Masked Text In V2**
+    *   A masked span hides text from other readers, but copying the message wrote the underlying content to the clipboard, so the hidden text could be recovered by pasting it. Saving the message as Markdown had the same problem.
+    *   Redactions now survive leaving the app: masked spans are replaced with `[masked]`, and a message masked in its entirety is withheld rather than partially copied.
+    *   (Ref: V2 message masking, clipboard, message download)
+
+#### User Interface Enhancements
+
+*   **Copy With Sources**
+    *   Removing citations from a copy also removes the attribution, which is sometimes the reason for copying in the first place. The message overflow menu now offers **Copy with sources**, which appends the cited documents and pages as a short numbered list under the answer instead of interleaving them with the prose.
+    *   Saved Markdown files include the same reference list, since a file is more likely to be read later by someone who wants to check where a claim came from.
+    *   (Ref: V2 message actions, citation references)
+
 ### **(v0.261.017)**
 
 #### Bug Fixes

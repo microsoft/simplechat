@@ -37,6 +37,7 @@ import { toast } from '../../stores/toastStore';
 import { ApiError } from '../../lib/apiClient';
 import { attemptState } from '../../lib/threads';
 import { readSources } from '../../lib/messageDetails';
+import { messageToPlainText } from '../../lib/messageText';
 import { canMask, readMaskState } from '../../lib/masking';
 import type { InspectorSection } from './MessageInspector';
 import type { ChatMessage, Json } from '../../lib/types';
@@ -181,8 +182,11 @@ async function runExport(format: MessageExportFormat, message: ChatMessage) {
 
 function downloadMarkdown(message: ChatMessage) {
     // No server endpoint exists for markdown; the content is already markdown, so it is
-    // written client-side.
-    const blob = new Blob([message.content], { type: 'text/markdown;charset=utf-8' });
+    // written client-side. Sources are kept as a reference list, since a saved file is more
+    // likely to be read later by someone who wants to check where a claim came from.
+    const blob = new Blob([messageToPlainText(message, { includeSources: true })], {
+        type: 'text/markdown;charset=utf-8',
+    });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
@@ -277,19 +281,33 @@ function OverflowMenu({
                     )}
                 >
                     {isUser && onEdit && item('Edit', <Pencil size={14} />, onEdit)}
+                    {item('Copy with sources', <Copy size={14} />, () => {
+                        // The plain Copy button drops citations entirely. This keeps the
+                        // attribution, as a reference list under the answer rather than
+                        // interleaved with it.
+                        void navigator.clipboard
+                            .writeText(messageToPlainText(message, { includeSources: true }))
+                            .then(() => toast.success('Copied with sources'))
+                            .catch(() => {
+                                /* Clipboard access can be denied. */
+                            });
+                    })}
                     {item('Use as prompt', <Clipboard size={14} />, () => {
                         const composer = document.getElementById(
                             'composer-input',
                         ) as HTMLTextAreaElement | null;
                         if (composer) {
-                            composer.value = message.content;
+                            // Citation markers are noise to the model as well as to a
+                            // reader, so the cleaned text is what gets reused.
+                            const text = messageToPlainText(message);
+                            composer.value = text;
                             // React controlled inputs ignore direct value writes, so the
                             // change is dispatched through the native setter.
                             const setter = Object.getOwnPropertyDescriptor(
                                 window.HTMLTextAreaElement.prototype,
                                 'value',
                             )?.set;
-                            setter?.call(composer, message.content);
+                            setter?.call(composer, text);
                             composer.dispatchEvent(new Event('input', { bubbles: true }));
                             composer.focus();
                         }
@@ -349,7 +367,9 @@ export function MessageActions({
 
     const copy = async () => {
         try {
-            await navigator.clipboard.writeText(message.content);
+            // Not `message.content`: that still carries the citation markers, which are
+            // unreadable when pasted, and none of the redactions the reader can see.
+            await navigator.clipboard.writeText(messageToPlainText(message));
             setCopied(true);
             window.setTimeout(() => setCopied(false), 1500);
         } catch {

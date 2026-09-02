@@ -260,6 +260,17 @@ source rather than inferred:
   replaced, dropping that whitespace merges the following bullet list, heading or paragraph
   into the citation's own line. `chat-citations.js` captures and re-appends it; V2 does the
   same, at both exits from the replacer.
+- **Text leaving the app is not `message.content`.** Two transformations sit between the
+  stored content and what a reader sees, and both matter on the clipboard. Masked spans are
+  redactions, so copying raw content would hand back text someone deliberately hid; and
+  citation markers are shown as chips, so raw content still carries
+  `(Source: file.pdf, Page: 3) [#guid_3]` mid-sentence, which is unreadable when pasted.
+  `lib/messageText.ts` holds the single conversion used by copy, the Markdown download and
+  reuse as a prompt: it applies masks, replaces them with `[masked]`, removes citation
+  markers together with the space in front of them, and leaves markdown untouched. A
+  wholly masked message is withheld rather than partially cut. Attribution is not lost —
+  **Copy with sources** and the saved file append the citations as a numbered reference
+  list instead of interleaving them.
 - **Image messages carry the image in `content`**, as a data URI, an `/api/image/<id>` path,
   or an external URL. There is no `image_url` field.
 - **The three message exports are not alike.** Word and PowerPoint stream a document; the
