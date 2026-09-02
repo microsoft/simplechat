@@ -24,10 +24,13 @@ vendored copy of Mermaid served from SimpleChat's own static files.
 
 JSON is a data format rather than a document, so it keeps the original markdown.
 
-This feature is limited to exports. The classic chat interface does not render Mermaid or
-TeX on screen, so a diagram that appears there as a code block appears as a picture in the
-exported file. The V2 interface renders both in chat as of 0.261.024, and this makes its
-Word and PowerPoint exports carry the formulas it already displays.
+This feature is limited to exports. When it shipped, the classic chat interface rendered
+neither Mermaid nor TeX on screen, so a diagram that appeared there as a code block
+appeared as a picture in the exported file. The V2 interface renders both in chat as of
+0.261.024, and this makes its Word and PowerPoint exports carry the formulas it already
+displays. As of 0.261.031 the classic interface renders Mermaid diagrams in chat too; see
+[Mermaid Diagram Rendering](MERMAID_DIAGRAM_RENDERING.md). TeX in the classic interface is
+still export-only.
 
 ## Recognised syntax
 
