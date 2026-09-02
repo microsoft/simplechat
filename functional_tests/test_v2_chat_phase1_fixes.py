@@ -265,8 +265,15 @@ def test_agent_selection_is_sent_as_agent_info():
             assert field in agents, f"agent_info should carry {field}"
 
         store = read(V2_SRC, "stores", "chatStore.ts")
-        assert "requestBody.agent_info" in store, (
+        # agent_info now reaches the request through the shared selection rule, which is
+        # also what stops a model identity travelling with it. Following the indirection
+        # keeps this about the guarantee rather than about a particular call site.
+        assert "buildSelectionFields" in store, (
             "The chat request must send agent_info"
+        )
+        selection = read(V2_SRC, "lib", "chatRequestSelection.ts")
+        assert "agent_info" in selection, (
+            "The selection rule must emit agent_info, which is the key the server reads"
         )
         # The original defect.
         assert "agent_selection =" not in store, (
