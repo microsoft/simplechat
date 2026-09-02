@@ -1,11 +1,18 @@
 // uiStore.ts
-// Shell-level UI state: colour theme and left-rail collapse.
+// Shell-level UI state: colour theme, left-rail collapse and chat width.
 //
-// Both are persisted because they are preferences rather than session state, and both are
-// read during the first render, so they hydrate synchronously from localStorage rather
-// than through an effect.
+// These are preferences rather than session state, so they are stored per user on the server
+// and follow someone to another machine. localStorage is still written and is still what the
+// first render reads: the settings request has not resolved at that point, and hydrating
+// only from the server would flash the wrong theme on every load.
+//
+// The theme deliberately shares the classic interface's `darkModeEnabled` key, so choosing
+// dark in either place applies to both. Rail and width use V2-namespaced keys instead,
+// because the classic equivalents describe its own surfaces and writing them from here would
+// rearrange that interface as a side effect.
 
 import { create } from 'zustand';
+import { useUserSettingsStore } from './userSettingsStore';
 
 export type ThemeMode = 'light' | 'dark';
 export type ChatWidth = 'comfortable' | 'wide';
@@ -82,6 +89,7 @@ export const useUiStore = create<UiState>((set, get) => ({
         } catch {
             /* Preference is not persisted in private mode; the session still works. */
         }
+        useUserSettingsStore.getState().update({ darkModeEnabled: theme === 'dark' });
         set({ theme });
     },
 
@@ -96,6 +104,7 @@ export const useUiStore = create<UiState>((set, get) => ({
         } catch {
             /* Non-fatal. */
         }
+        useUserSettingsStore.getState().update({ v2RailCollapsed: railCollapsed });
         set({ railCollapsed });
     },
 
@@ -106,6 +115,7 @@ export const useUiStore = create<UiState>((set, get) => ({
         } catch {
             /* Non-fatal. */
         }
+        useUserSettingsStore.getState().update({ v2ChatWidth: chatWidth });
         set({ chatWidth });
     },
 
@@ -115,4 +125,45 @@ export const useUiStore = create<UiState>((set, get) => ({
 /** Re-apply the stored theme on load, in case the inline bootstrap script was skipped. */
 export function initializeTheme() {
     applyThemeToDocument(useUiStore.getState().theme);
+}
+
+/**
+ * Adopt the preferences the server holds, once they have loaded.
+ *
+ * Called after the settings request resolves. Anything the server has not recorded is left
+ * as the local value rather than being reset to a default, so a first-time user does not
+ * have their current session rearranged by an empty settings document. Applied without
+ * writing back, since this is the server's own value arriving rather than a user choice.
+ */
+export function hydrateUiPreferences(settings: {
+    darkModeEnabled?: unknown;
+    v2RailCollapsed?: unknown;
+    v2ChatWidth?: unknown;
+}) {
+    const next: Partial<Pick<UiState, 'theme' | 'railCollapsed' | 'chatWidth'>> = {};
+
+    if (typeof settings.darkModeEnabled === 'boolean') {
+        const theme: ThemeMode = settings.darkModeEnabled ? 'dark' : 'light';
+        if (theme !== useUiStore.getState().theme) {
+            applyThemeToDocument(theme);
+            try {
+                localStorage.setItem(THEME_STORAGE_KEY, theme);
+            } catch {
+                /* Non-fatal. */
+            }
+            next.theme = theme;
+        }
+    }
+
+    if (typeof settings.v2RailCollapsed === 'boolean') {
+        next.railCollapsed = settings.v2RailCollapsed;
+    }
+
+    if (settings.v2ChatWidth === 'wide' || settings.v2ChatWidth === 'comfortable') {
+        next.chatWidth = settings.v2ChatWidth;
+    }
+
+    if (Object.keys(next).length > 0) {
+        useUiStore.setState(next);
+    }
 }

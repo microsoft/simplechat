@@ -144,8 +144,17 @@ Three deliberate constraints shape the implementation:
 
 Theme is a `.dark` class on `<html>`, not a media query, so an explicit choice overrides
 the OS preference. It is applied by a small inline script in the document head before first
-paint, which avoids a light flash for dark-mode users, and is persisted to `localStorage`.
-The toggle lives at the bottom of the left rail.
+paint, which avoids a light flash for dark-mode users. The toggle lives at the bottom of the
+left rail.
+
+It is stored twice, on purpose. `localStorage` is what the first render reads, because the
+settings request has not resolved at that point and hydrating only from the server would
+flash the wrong theme on every load. The durable copy goes to `/api/user/settings` under
+`darkModeEnabled` — the key the classic interface already uses — so the choice follows the
+user to another machine and the two interfaces agree. Rail collapse and chat width persist
+the same way, but under `v2RailCollapsed` and `v2ChatWidth`: the classic `dockedSidebarHidden`
+and `chatLayout` describe its own surfaces, and writing them from here would rearrange that
+interface as a side effect of a choice made in this one.
 
 ### Layout
 

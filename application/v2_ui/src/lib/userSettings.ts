@@ -40,6 +40,15 @@ export interface UserSettings {
      * behaviour.
      */
     showConversationWorkspaceTags?: boolean;
+    /**
+     * Shell preferences owned by this interface.
+     *
+     * Namespaced rather than reusing the classic interface's `dockedSidebarHidden` and
+     * `chatLayout`: those describe its own sidebar and chat layout, and writing them from
+     * here would rearrange that interface as a side effect of a choice made in this one.
+     */
+    v2RailCollapsed?: boolean;
+    v2ChatWidth?: string;
 
     chatCompletionAudioEnabled?: boolean;
     chatCompletionAudioMuted?: boolean;
@@ -73,6 +82,8 @@ export const WRITABLE_USER_SETTING_KEYS = [
     'desktopNotificationsEnabled',
     'conversationContentsDrawerEnabled',
     'showConversationWorkspaceTags',
+    'v2RailCollapsed',
+    'v2ChatWidth',
     'chatCompletionAudioEnabled',
     'chatCompletionAudioMuted',
     'chatCompletionAudioSound',

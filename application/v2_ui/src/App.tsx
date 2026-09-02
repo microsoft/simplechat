@@ -9,7 +9,7 @@ import { GlassPanel, Skeleton } from './components/ui/primitives';
 import { ErrorBoundary } from './components/ui/ErrorBoundary';
 import { useBootstrapStore } from './stores/bootstrapStore';
 import { useUserSettingsStore } from './stores/userSettingsStore';
-import { initializeTheme } from './stores/uiStore';
+import { initializeTheme, hydrateUiPreferences } from './stores/uiStore';
 import { ChatPage } from './pages/ChatPage';
 import { AdminSettingsPage } from './pages/AdminSettingsPage';
 import { SettingsPage } from './pages/SettingsPage';
@@ -75,7 +75,9 @@ export function App() {
         // Loaded at startup rather than when the settings page opens, because preferences
         // shape the chat interface itself — the conversation list reads one of them.
         // Advisory: a failure leaves defaults in place rather than blocking the app.
-        void loadUserSettings();
+        void loadUserSettings().then(() => {
+            hydrateUiPreferences(useUserSettingsStore.getState().settings);
+        });
     }, [load, loadUserSettings]);
 
     useEffect(() => {

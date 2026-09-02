@@ -515,6 +515,10 @@ def register_route_backend_users(bp):
                     'conversationContentsDrawerEnabled',
                     # Conversation list display, used by the V2 interface
                     'showConversationWorkspaceTags',
+                    # V2 shell preferences. Deliberately namespaced rather than reusing
+                    # dockedSidebarHidden / chatLayout, which describe the classic
+                    # interface's own surfaces and would change its layout too.
+                    'v2RailCollapsed', 'v2ChatWidth',
                     LATEST_FEATURES_HIDDEN_VERSION_SETTING,
                     # Microphone permission settings
                     'microphonePermissionPreference', 'microphonePermissionState',

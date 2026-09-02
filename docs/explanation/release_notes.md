@@ -2,6 +2,16 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.023)**
+
+#### User Interface Enhancements
+
+*   **V2 Appearance Preferences Now Follow You**
+    *   Light and dark mode, the collapsed state of the left navigation, and the chat width were previously remembered only by the browser you set them in, so they reset on a different machine.
+    *   They are now saved to your account. Light and dark mode in particular is shared with the classic interface, so choosing dark in either place applies to both.
+    *   Your browser still remembers them as well, which is what stops the wrong theme appearing for a moment while your preferences load.
+    *   (Ref: V2 theme, navigation and chat width preferences)
+
 ### **(v0.261.022)**
 
 #### New Features

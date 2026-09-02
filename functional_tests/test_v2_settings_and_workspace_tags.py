@@ -2,7 +2,7 @@
 """
 Functional test for the V2 personal settings page and conversation workspace tags.
 
-Version: 0.261.021
+Version: 0.261.023
 Implemented in: 0.261.020
 
 Two things are pinned here.
@@ -252,6 +252,47 @@ def test_the_text_scale_matches_the_classic_interface():
     return True
 
 
+def test_shell_preferences_persist_per_user():
+    """Theme, rail and chat width follow the user rather than the browser."""
+    print("Testing shell preference persistence...")
+
+    ui = _read(V2_SRC / "stores" / "uiStore.ts")
+
+    # Theme deliberately shares the classic key so the two interfaces agree.
+    assert "darkModeEnabled: theme === 'dark'" in ui, (
+        "The theme should be stored under the key the classic interface already uses, so "
+        "choosing dark in one place applies to both"
+    )
+    assert "darkModeEnabled" in _allowed_keys(), "darkModeEnabled must be whitelisted"
+
+    # Rail and width are namespaced, because the classic equivalents mean something else.
+    for key in ("v2RailCollapsed", "v2ChatWidth"):
+        assert key in ui, f"{key} should be written when its control changes"
+        assert key in _allowed_keys(), f"{key} must be whitelisted or it is silently dropped"
+        assert key in _writable_keys(), f"{key} must be declared by the client"
+
+    for classic_key in ("dockedSidebarHidden", "chatLayout"):
+        assert classic_key not in ui, (
+            f"{classic_key} describes the classic interface's own layout; writing it from "
+            "here would rearrange that interface as a side effect"
+        )
+
+    # localStorage stays as the first-paint cache, or the theme flashes on every load.
+    assert "localStorage.setItem" in ui, (
+        "The local cache must be kept: the settings request has not resolved during the "
+        "first render, so hydrating only from the server flashes the wrong theme"
+    )
+    assert "export function hydrateUiPreferences" in ui, (
+        "The server's values need to be adopted once they arrive"
+    )
+
+    app = _read(V2_SRC / "App.tsx")
+    assert "hydrateUiPreferences" in app, "Hydration must run after the settings load"
+
+    print("Shell preference persistence test passed!")
+    return True
+
+
 def test_version_is_at_least_implementation_version():
     """The application version is at or beyond the version that added this."""
     print("Testing application version...")
@@ -269,6 +310,7 @@ if __name__ == "__main__":
         test_gated_tabs_are_hidden_rather_than_empty,
         test_only_settings_this_interface_honours_are_offered,
         test_the_text_scale_matches_the_classic_interface,
+        test_shell_preferences_persist_per_user,
         test_version_is_at_least_implementation_version,
     ]
 
