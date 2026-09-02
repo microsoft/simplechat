@@ -2,6 +2,19 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.032)**
+
+#### New Features
+
+*   **Links To A Conversation Now Work In The V2 Interface**
+    *   The V2 chat page never put the open conversation in the address bar, so copying the URL shared nothing and reloading the page dropped you into an empty chat. It now names the conversation you are reading, exactly as the classic interface has since v0.237.001.
+    *   A link such as `/v2/chat?conversationId=<id>` opens that conversation. Both spellings the application produces are accepted — `conversationId` from notifications and workflow runs, `conversation_id` from chat responses and workspace document rows — so an existing link opens either way.
+    *   The address bar keeps up on its own: it follows conversations you open from the list, the one created when you send your first message, and forks. Starting a new chat or deleting the open conversation clears it. Opening several conversations does not fill the back button with an entry for each.
+    *   A linked conversation that is older than the loaded list, or hidden, now appears in the rail with its real title instead of leaving the header reading "New chat".
+    *   A link to a conversation that was deleted, or that belongs to somebody else, says so and returns you to an empty chat, rather than leaving an error that reappeared on every refresh.
+    *   **Back to classic UI** in the account menu carries the conversation across, so switching interfaces keeps your place.
+    *   (Ref: V2 chat, conversation deep linking, conversation list)
+
 ### **(v0.261.031)**
 
 #### New Features
