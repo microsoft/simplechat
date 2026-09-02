@@ -28,6 +28,7 @@ import { getCurrentReasoningEffort, isReasoningEffortEnabled } from './chat-reas
 import { areAgentsEnabled } from './chat-agents.js';
 import { createThoughtsToggleHtml, attachThoughtsToggleListener } from './chat-thoughts.js';
 import { destroyInlineCharts, extractInlineChartBlocks, hydrateInlineCharts, injectInlineChartHtml, restoreInlineChartTokens } from './chat-inline-charts.js';
+import { destroyInlineDiagrams, extractInlineDiagramBlocks, hydrateInlineDiagrams, injectInlineDiagramHtml, restoreInlineDiagramTokens } from './chat-inline-diagrams.js';
 import { attachGeneratedImageProposalResults, extractInlineImageProposalBlocks, hydrateInlineImageProposals, injectInlineImageProposalHtml, restoreInlineImageProposalTokens } from './chat-inline-image-proposals.js';
 import { renderInlineVideoGalleries } from './chat-inline-videos.js';
 import { renderInlineImageGalleries } from './chat-inline-images.js';
@@ -2754,7 +2755,8 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     cleaned = cleaned.replace(/(\bhttps?:\/\/\S+)(%5D|\])+/gi, (_, url) => url);
 
     const chartExtraction = extractInlineChartBlocks(cleaned);
-    const imageProposalExtraction = extractInlineImageProposalBlocks(chartExtraction.markdown);
+    const diagramExtraction = extractInlineDiagramBlocks(chartExtraction.markdown);
+    const imageProposalExtraction = extractInlineImageProposalBlocks(diagramExtraction.markdown);
     const withInlineCitations = parseCitations(imageProposalExtraction.markdown);
     const withUnwrappedTables = unwrapTablesFromCodeBlocks(withInlineCitations);
     const withMarkdownTables = convertUnicodeTableToMarkdown(withUnwrappedTables);
@@ -2762,18 +2764,37 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     const withASCIITables = convertASCIIDashTableToMarkdown(withPSVTables);
     const sanitizedHtml = DOMPurify.sanitize(marked.parse(withASCIITables));
     const htmlWithCharts = injectInlineChartHtml(sanitizedHtml, chartExtraction.blocks);
-    const htmlWithImageProposals = injectInlineImageProposalHtml(htmlWithCharts, imageProposalExtraction.blocks);
+    const htmlWithDiagrams = injectInlineDiagramHtml(htmlWithCharts, diagramExtraction.blocks);
+    const htmlWithImageProposals = injectInlineImageProposalHtml(htmlWithDiagrams, imageProposalExtraction.blocks);
     const copyMarkdown = restoreInlineChartTokens(
-      restoreInlineImageProposalTokens(withInlineCitations, imageProposalExtraction.blocks),
+      restoreInlineDiagramTokens(
+        restoreInlineImageProposalTokens(withInlineCitations, imageProposalExtraction.blocks),
+        diagramExtraction.blocks,
+      ),
       chartExtraction.blocks,
     );
 
     return {
       htmlContent: addTargetBlankToExternalLinks(htmlWithImageProposals),
       copyMarkdown,
-      previewMarkdown: imageProposalExtraction.markdown,
+      previewMarkdown: stripInlineRenderTokens(imageProposalExtraction.markdown),
       followUpSuggestions: followUpRenderModel.suggestions,
     };
+  }
+
+  /**
+   * Drop the placeholder tokens inline visuals leave behind.
+   *
+   * Preview text and text-to-speech read this string, and a raw token is neither readable
+   * nor speakable. Both token shapes in use are matched: the SIMPLECHAT_INLINE_*_TOKEN_n__
+   * form from charts and diagrams, and the @@SC_INLINE_IMAGE_PROPOSAL_n@@ form from image
+   * proposal cards.
+   */
+  function stripInlineRenderTokens(markdownText) {
+    return String(markdownText ?? '')
+      .replace(/SIMPLECHAT_INLINE_[A-Z_]*TOKEN_\d+__|@@SC_INLINE_IMAGE_PROPOSAL_\d+@@/g, '')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
   }
 
   function buildFollowUpRenderModel(markdownText) {
@@ -6056,6 +6077,7 @@ export function appendMessage(
       applyMaskedState(messageDiv, fullMessageObject.metadata);
     } else {
       hydrateInlineCharts(messageDiv);
+      hydrateInlineDiagrams(messageDiv);
       hydrateInlineImageProposals(messageDiv);
     }
 
@@ -9165,6 +9187,7 @@ function captureMessageMaskingOriginalContent(messageDiv) {
 function restoreMessageMaskingOriginalContent(messageDiv, messageText) {
   captureMessageMaskingOriginalContent(messageDiv);
   destroyInlineCharts(messageText);
+  destroyInlineDiagrams(messageText);
   const originalNodes = Array.isArray(messageDiv._maskingOriginalNodes)
     ? messageDiv._maskingOriginalNodes.map(node => node.cloneNode(true))
     : [];
@@ -9332,6 +9355,7 @@ function applyMaskedState(messageDiv, metadata = {}) {
   }
 
   hydrateInlineCharts(messageDiv);
+  hydrateInlineDiagrams(messageDiv);
   hydrateInlineImageProposals(messageDiv);
   updateMaskControls(messageDiv, nextMetadata);
 }

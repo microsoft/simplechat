@@ -15,6 +15,7 @@ import { showToast } from './chat-toast.js';
 import { applyScopeLock } from './chat-documents.js';
 import { beginStreamingThoughtSession, clearStreamingThoughtSession, handleStreamingThought, markStreamingThoughtContentStarted, stopThoughtPolling } from './chat-thoughts.js';
 import { destroyInlineCharts, hydrateInlineCharts } from './chat-inline-charts.js';
+import { destroyInlineDiagrams, hydrateInlineDiagrams } from './chat-inline-diagrams.js';
 import { hydrateInlineImageProposals } from './chat-inline-image-proposals.js';
 import { escapeHtml } from './chat-utils.js';
 import { requestDesktopNotificationPermissionIfNeeded, showDesktopConversationNotification } from './chat-desktop-notifications.js';
@@ -1188,6 +1189,7 @@ export function updateStreamingMessage(messageId, content) {
             contentElement.innerHTML = renderedContent.htmlContent;
             restoreStableStreamingChartNodes(contentElement, stableChartNodes);
             hydrateInlineCharts(messageElement);
+            hydrateInlineDiagrams(messageElement);
             hydrateInlineImageProposals(messageElement);
         } else {
             contentElement.textContent = content;
@@ -1258,6 +1260,7 @@ function restoreStableStreamingChartNodes(contentElement, stableChartNodes) {
         chartNodes.forEach(chartNode => {
             if (!reusedChartNodes.has(chartNode)) {
                 destroyInlineCharts(chartNode);
+                destroyInlineDiagrams(chartNode);
             }
         });
     });
@@ -1305,6 +1308,7 @@ function renderStoppedContent(messageElement, partialContent) {
             const renderedContent = renderAiMessageContent(normalizedContent);
             contentElement.innerHTML = renderedContent.htmlContent;
             hydrateInlineCharts(messageElement);
+            hydrateInlineDiagrams(messageElement);
         } else {
             contentElement.textContent = normalizedContent;
         }
@@ -1436,6 +1440,7 @@ function handleStreamError(messageId, partialContent, errorMessage, errorDetails
         
         contentElement.innerHTML = finalContent;
         hydrateInlineCharts(messageElement);
+        hydrateInlineDiagrams(messageElement);
 
         appendStreamErrorBanner(contentElement, displayMessage, errorPayload);
     }

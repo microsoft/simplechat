@@ -30,6 +30,7 @@ APP_DIR = os.path.join(ROOT_DIR, 'application', 'single_app')
 STATIC_DIR = os.path.join(APP_DIR, 'static')
 MERMAID_BUNDLE_PATH = os.path.join(STATIC_DIR, 'js', 'mermaid', 'mermaid-11.17.2.min.js')
 RASTERIZER_PATH = os.path.join(STATIC_DIR, 'js', 'chat', 'chat-visual-rasterizer.js')
+MERMAID_RUNTIME_PATH = os.path.join(STATIC_DIR, 'js', 'chat', 'chat-mermaid-runtime.js')
 
 EXTERNAL_ASSET_MARKERS = (
     'cdn.jsdelivr.net',
@@ -170,16 +171,26 @@ def test_vendored_mermaid_bundle_has_no_external_assets():
 
 
 def test_rasterizer_references_only_local_assets():
-    """The rasterizer must load Mermaid from a SimpleChat static path."""
+    """Mermaid must be loaded from a SimpleChat static path with labels drawn as SVG text.
+
+    The bundle path and the htmlLabels setting live in the shared runtime rather than the
+    rasterizer, because inline chat rendering and export rendering configure the same global
+    Mermaid instance and have to agree on where the library comes from.
+    """
     print("Testing rasterizer asset references...")
 
     with open(RASTERIZER_PATH, 'r', encoding='utf-8') as handle:
         rasterizer_text = handle.read()
 
-    assert "'/static/js/mermaid/mermaid-11.17.2.min.js'" in rasterizer_text
-    assert 'htmlLabels: false' in rasterizer_text
+    with open(MERMAID_RUNTIME_PATH, 'r', encoding='utf-8') as handle:
+        runtime_text = handle.read()
+
+    assert "'/static/js/mermaid/mermaid-11.17.2.min.js'" in runtime_text
+    assert 'htmlLabels: false' in runtime_text
+    assert "MERMAID_PRESET_EXPORT" in rasterizer_text
     for marker in EXTERNAL_ASSET_MARKERS:
         assert marker not in rasterizer_text, marker
+        assert marker not in runtime_text, marker
 
     print("Rasterizer asset references passed!")
 
