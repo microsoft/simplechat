@@ -44,6 +44,7 @@ IMPLEMENTED_IN = "0.261.029"
 SPEC_MODULE = V2_SRC / "lib" / "imageProposalSpec.ts"
 QUEUE_MODULE = V2_SRC / "lib" / "imageProposalQueue.ts"
 RICH_BLOCKS_MODULE = V2_SRC / "lib" / "richBlocks.ts"
+BLOCK_INDEX_MODULE = V2_SRC / "lib" / "rehypeRichBlockIndex.ts"
 ENDPOINTS_MODULE = V2_SRC / "lib" / "endpoints.ts"
 CARD_COMPONENT = V2_SRC / "components" / "chat" / "InlineImageProposal.tsx"
 SCOPE_COMPONENT = V2_SRC / "components" / "chat" / "ImageProposalContext.tsx"
@@ -366,11 +367,13 @@ def test_fence_is_wired_into_the_renderer_with_a_streaming_guard():
 
     if "IMAGE_PROPOSAL_LANGUAGE" not in markdown_source:
         raise AssertionError("AssistantMarkdown does not know the proposal fence.")
-    if "<InlineImageProposal source={fenceText(children)} />" not in markdown_source:
+    if "<InlineImageProposal source={source} />" not in markdown_source:
         raise AssertionError("The fence does not render the proposal card.")
+    # The rich-fence list moved to rehypeRichBlockIndex.ts, which both decides that a fence
+    # loses its <pre> wrapper and numbers the fences a saved colour choice is filed under.
     if not re.search(
-        r"RICH_FENCE_LANGUAGES = new Set<string>\(\[[^\]]*IMAGE_PROPOSAL_LANGUAGE",
-        markdown_source,
+        r"RICH_LANGUAGES = new Set<string>\(\[[^\]]*IMAGE_PROPOSAL_LANGUAGE",
+        _read(BLOCK_INDEX_MODULE),
         re.S,
     ):
         raise AssertionError(

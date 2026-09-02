@@ -7,12 +7,20 @@
 // types that render as something other than code, which is a distinct concern from the
 // scrolling list around it.
 
-import { Children, isValidElement, useMemo } from 'react';
+import { Children, useMemo } from 'react';
 import { clsx } from 'clsx';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
+import { toText } from 'hast-util-to-text';
+import type { Element } from 'hast';
 import { rehypeHighlightSubset } from '../../lib/rehypeHighlightSubset';
+import {
+    readFenceLanguage,
+    readRichBlockIndex,
+    rehypeRichBlockIndex,
+    richFenceKind,
+} from '../../lib/rehypeRichBlockIndex';
 import {
     CITATION_PLACEHOLDER_PATTERN,
     parseCitations,
@@ -34,62 +42,16 @@ import {
 } from '../../lib/richBlocks';
 import { MATH_PLACEHOLDER_PATTERN, parseMath, type MathSegment } from '../../lib/mathSegments';
 
-/** Fence info strings that render as something other than a code block. */
-const RICH_FENCE_LANGUAGES = new Set<string>([
-    MERMAID_LANGUAGE,
-    INLINE_CHART_LANGUAGE,
-    IMAGE_PROPOSAL_LANGUAGE,
-]);
-
-/** Read the `language-xxx` class a fenced code block carries. */
-function readFenceLanguage(className: unknown): string {
-    const classes = Array.isArray(className) ? className.join(' ') : String(className ?? '');
-    for (const entry of classes.split(/\s+/)) {
-        if (entry.startsWith('language-')) {
-            return entry.slice('language-'.length).toLowerCase();
-        }
+/** The `<code>` element a `<pre>` wraps, which is where the fence's language lives. */
+function fenceCodeElement(node: unknown): Element | undefined {
+    const children = (node as Element | undefined)?.children;
+    if (!Array.isArray(children)) {
+        return undefined;
     }
-    return '';
-}
-
-/**
- * The literal text inside a fence.
- *
- * Walked rather than read straight off `children`, because a fence may already have been
- * turned into highlighted spans, and a chart's JSON payload has to come back intact.
- */
-function fenceText(children: React.ReactNode): string {
-    if (typeof children === 'string') {
-        return children;
-    }
-    if (typeof children === 'number') {
-        return String(children);
-    }
-    if (Array.isArray(children)) {
-        return children.map(fenceText).join('');
-    }
-    if (isValidElement(children)) {
-        return fenceText((children.props as { children?: React.ReactNode }).children);
-    }
-    return '';
-}
-
-interface HastLike {
-    tagName?: string;
-    properties?: { className?: unknown };
-    children?: HastLike[];
-}
-
-/** True when a `<pre>` wraps a fence this renderer replaces outright. */
-function isRichFence(node: unknown): boolean {
-    const code = (node as HastLike | undefined)?.children?.find(
-        (candidate) => candidate?.tagName === 'code',
+    return children.find(
+        (candidate): candidate is Element =>
+            candidate.type === 'element' && candidate.tagName === 'code',
     );
-    if (!code) {
-        return false;
-    }
-    const language = readFenceLanguage(code.properties?.className);
-    return RICH_FENCE_LANGUAGES.has(language) || readPendingKind(language) !== null;
 }
 
 /**
@@ -135,11 +97,13 @@ function Markdown({
     citations,
     masks,
     math,
+    messageId,
 }: {
     content: string;
     citations?: CitationGroup[];
     masks?: MaskedRange[];
     math?: MathSegment[];
+    messageId?: string;
 }) {
     const groups = citations ?? [];
     const maskRanges = masks ?? [];
@@ -252,7 +216,7 @@ function Markdown({
         >
             <ReactMarkdown
                 remarkPlugins={[remarkGfm, remarkBreaks]}
-                rehypePlugins={[rehypeHighlightSubset]}
+                rehypePlugins={[rehypeRichBlockIndex, rehypeHighlightSubset]}
                 components={{
                     // Every block a citation or mask placeholder can land in. A block left
                     // out here would render the raw ⟦cite:N⟧ token as visible text.
@@ -270,26 +234,66 @@ function Markdown({
                     em: ({ children }) => <em>{renderTokens(children)}</em>,
                     strong: ({ children }) => <strong>{renderTokens(children)}</strong>,
 
-                    // A diagram, chart or image proposal replaces the whole code block, so
-                    // the <pre> wrapper markdown puts around it is dropped: leaving it would
-                    // box the rendered output in the code block's background and padding.
-                    pre: ({ children, node }) =>
-                        isRichFence(node) ? <>{children}</> : <pre>{children}</pre>,
+                    // A diagram, chart or image proposal replaces the whole code block, so the
+                    // <pre> wrapper markdown puts around it is dropped: leaving it would box
+                    // the rendered output in the code block's background and padding.
+                    //
+                    // Handled here rather than in `code` because the <pre> is the element the
+                    // renderer replaces; the index a diagram or chart is matched to any saved
+                    // colours by comes from `rehypeRichBlockIndex`, stamped on the <code>
+                    // inside it.
+                    pre: ({ children, node }) => {
+                        const code = fenceCodeElement(node);
+                        if (richFenceKind(code) === null) {
+                            return <pre>{children}</pre>;
+                        }
 
-                    code: ({ className, children, ...props }) => {
-                        const language = readFenceLanguage(className);
+                        const language = readFenceLanguage(code?.properties?.className);
+                        const pendingKind = readPendingKind(language);
+                        if (pendingKind) {
+                            return <PendingRichBlock kind={pendingKind} />;
+                        }
+
+                        // Read off the hast node rather than the rendered children, which may
+                        // already have been split into highlighted spans; a chart's JSON
+                        // payload has to come back intact.
+                        const source = code ? toText(code, { whitespace: 'pre' }) : '';
+
+                        if (language === IMAGE_PROPOSAL_LANGUAGE) {
+                            return <InlineImageProposal source={source} />;
+                        }
+
+                        // Null only if the plugin did not run. Left undefined rather than
+                        // defaulted to zero, because an unnumbered block sharing block zero's
+                        // slot would overwrite that block's saved colours.
+                        const index = readRichBlockIndex(code);
 
                         if (language === MERMAID_LANGUAGE) {
-                            return <MermaidDiagram source={fenceText(children)} />;
+                            return (
+                                <MermaidDiagram
+                                    source={source}
+                                    messageId={messageId}
+                                    blockIndex={index ?? undefined}
+                                />
+                            );
                         }
-                        if (language === INLINE_CHART_LANGUAGE) {
-                            return <InlineChart source={fenceText(children)} />;
-                        }
-                        if (language === IMAGE_PROPOSAL_LANGUAGE) {
-                            return <InlineImageProposal source={fenceText(children)} />;
-                        }
+                        return (
+                            <InlineChart
+                                source={source}
+                                messageId={messageId}
+                                blockIndex={index ?? undefined}
+                            />
+                        );
+                    },
 
-                        const pendingKind = readPendingKind(language);
+                    // `node` is pulled out and discarded rather than left in `props`: it is the
+                    // hast node, and spreading it onto a DOM <code> element makes React warn
+                    // about an unrecognised attribute on every code block in the thread.
+                    code: ({ className, children, node: _node, ...props }) => {
+                        // Rich fences are rendered from `pre` above and never reach this, but
+                        // a placeholder is still handled here in case one is ever produced
+                        // without its wrapper.
+                        const pendingKind = readPendingKind(readFenceLanguage(className));
                         if (pendingKind) {
                             return <PendingRichBlock kind={pendingKind} />;
                         }
@@ -323,15 +327,21 @@ function Markdown({
  *
  * Parsing is memoised because it runs on every render of a long thread, and the streaming
  * bubble re-renders on each token.
+ *
+ * `messageId` is passed to the diagrams and charts inside the text, which use it to save the
+ * colours someone chooses for them. A reply that is still streaming has no message yet, so it
+ * is absent there and those blocks render with the reader's defaults.
  */
 export function AssistantMarkdown({
     content,
     masks,
     streaming = false,
+    messageId,
 }: {
     content: string;
     masks?: MaskedRange[];
     streaming?: boolean;
+    messageId?: string;
 }) {
     const { text, groups, ranges, segments } = useMemo(() => {
         const masked = applyMasks(content, masks ?? []);
@@ -346,5 +356,13 @@ export function AssistantMarkdown({
         };
     }, [content, masks, streaming]);
 
-    return <Markdown content={text} citations={groups} masks={ranges} math={segments} />;
+    return (
+        <Markdown
+            content={text}
+            citations={groups}
+            masks={ranges}
+            math={segments}
+            messageId={messageId}
+        />
+    );
 }

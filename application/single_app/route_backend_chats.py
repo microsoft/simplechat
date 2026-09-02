@@ -234,6 +234,10 @@ from functions_message_masking import (
     remove_masked_content,
     resolve_mask_display_name,
 )
+from functions_message_visual_styles import (
+    VisualStyleError,
+    apply_visual_style,
+)
 from functions_document_actions import (
     DOCUMENT_ACTION_CONTEXT_CHAT,
     DOCUMENT_ACTION_TYPE_COMPARISON,
@@ -24888,6 +24892,97 @@ def register_route_backend_chats(bp):
                     'user_id': user_id if 'user_id' in locals() else None,
                     'traceback': error_traceback,
                 },
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return build_json_error_response()
+
+    @bp.route('/api/message/<message_id>/visual-style', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def set_message_visual_style_api(message_id):
+        """Save or clear the colours chosen for one diagram or chart inside a message.
+
+        A reply can contain several styleable blocks, so the request identifies one of them by
+        its position among blocks of the same kind. Recolouring one block therefore leaves the
+        others untouched, which is the whole point of storing this per block rather than per
+        message.
+
+        Unlike the classic client's chart colour editor, nothing here rewrites the message
+        content: the payload the model produced stays exactly as it was written, and the
+        colours live beside it in metadata.
+        """
+        user_id = None
+        try:
+            data = request.get_json(silent=True) or {}
+            user_id = get_current_user_id()
+
+            if not user_id:
+                return jsonify({'error': 'User not authenticated'}), 401
+
+            conversation_id = str(data.get('conversation_id') or '').strip()
+            if not conversation_id:
+                return jsonify({'error': 'conversation_id is required'}), 400
+
+            # Authorize the conversation rather than the message. A diagram lives in an
+            # assistant message, which carries no author of its own, and this also admits a
+            # participant acting inside a shared conversation.
+            try:
+                _authorize_personal_conversation_access(user_id, conversation_id)
+            except PermissionError:
+                return jsonify({'error': 'You can only restyle your own conversations'}), 403
+            except LookupError:
+                return jsonify({'error': 'Conversation not found'}), 404
+
+            try:
+                message_doc = cosmos_messages_container.read_item(
+                    item=message_id,
+                    partition_key=conversation_id,
+                )
+            except CosmosResourceNotFoundError:
+                return jsonify({'error': 'Message not found'}), 404
+
+            # The partition key is the conversation, so a message read through it already
+            # belongs to the authorized conversation. Checked anyway, because a mismatch would
+            # mean the stored document disagrees with where it was found.
+            if str(message_doc.get('conversation_id') or '') != conversation_id:
+                return jsonify({'error': 'Message not found'}), 404
+
+            try:
+                visual_styles = apply_visual_style(
+                    message_doc,
+                    data.get('block_kind'),
+                    data.get('block_index'),
+                    data.get('style'),
+                    data.get('source_hash') or '',
+                )
+            except VisualStyleError as ex:
+                debug_print(f'[VISUAL_STYLE] Invalid request: {ex}')
+                return jsonify({'error': str(ex)}), 400
+
+            try:
+                cosmos_messages_container.upsert_item(message_doc)
+            except Exception as e:
+                debug_print(f'Error updating message {message_id}: {e}')
+                log_event(
+                    f'[VISUAL_STYLE] Failed to update message: {e}',
+                    extra={'message_id': message_id, 'user_id': user_id},
+                    level=logging.ERROR,
+                    exceptionTraceback=True,
+                )
+                return build_json_error_response('Failed to update message')
+
+            return jsonify({
+                'success': True,
+                'message_id': message_id,
+                'visual_styles': visual_styles,
+            }), 200
+
+        except Exception as e:
+            log_event(
+                f'[VISUAL_STYLE] Unhandled exception: {e}',
+                extra={'message_id': message_id, 'user_id': user_id},
                 level=logging.ERROR,
                 exceptionTraceback=True,
             )

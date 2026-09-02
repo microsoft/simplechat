@@ -43,6 +43,15 @@ export interface MermaidConfig {
      */
     securityLevel?: 'strict' | 'loose' | 'antiscript' | 'sandbox';
     theme?: 'default' | 'dark' | 'forest' | 'neutral' | 'base' | 'null';
+    /**
+     * Theme colour overrides, applied on top of the selected theme.
+     *
+     * Only meaningful with `theme: 'base'`, which exists to be overridden. Every value written
+     * here is normalised to `#rrggbb` first (visualPalettes.ts): mermaid's own directive
+     * sanitizer rejects values containing markup, and matching one accepted form removes the
+     * question of what else could be passed.
+     */
+    themeVariables?: Record<string, string>;
     /** Suppresses mermaid writing its own error diagram into the page on failure. */
     suppressErrorRendering?: boolean;
     fontFamily?: string;

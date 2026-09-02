@@ -15,6 +15,7 @@ import {
     maskMessage as maskMessageApi,
     renameConversation as renameConversationApi,
     retryMessage as retryMessageApi,
+    setMessageVisualStyle as setMessageVisualStyleApi,
     submitFeedback as submitFeedbackApi,
     switchAttempt as switchAttemptApi,
     toggleConversationHidden,
@@ -36,6 +37,7 @@ import { toast } from './toastStore';
 import { ApiError } from '../lib/apiClient';
 import { useBootstrapStore } from './bootstrapStore';
 import type { MaskAction, MaskSelection } from '../lib/masking';
+import type { VisualStyle } from '../lib/visualPalettes';
 import type {
     ChatMessage,
     ChatStreamRequest,
@@ -162,6 +164,20 @@ interface ChatState {
         action: MaskAction,
         selection?: MaskSelection,
     ) => Promise<void>;
+    /**
+     * Save or clear the colours of one diagram or chart inside a message.
+     *
+     * Resolves to true when the change was stored, so the block can surface a failure next to
+     * the control the reader just used rather than only as a toast.
+     */
+    applyVisualStyle: (
+        messageId: string,
+        conversationId: string,
+        blockKind: string,
+        blockIndex: number,
+        sourceHash: string,
+        style: VisualStyle | null,
+    ) => Promise<boolean>;
     sendFeedback: (
         messageId: string,
         feedbackType: 'positive' | 'negative',
@@ -1150,6 +1166,72 @@ export const useChatStore = create<ChatState>((set, get) => ({
         }
     },
 
+    /**
+     * Save or clear the colours of one block, then reflect the result on the message.
+     *
+     * The conversation is passed in rather than read from `activeConversationId`. A pending
+     * change is flushed when the block unmounts, and switching conversations is one of the ways
+     * a block unmounts — by which point the active conversation is already the new one, and the
+     * write would be addressed to a conversation the message is not in.
+     *
+     * The server returns the whole stored map rather than just the entry that changed, so the
+     * local copy is replaced by it: a block whose entry the server dropped as stale should stop
+     * showing its old colours here too.
+     */
+    applyVisualStyle: async (
+        messageId,
+        conversationId,
+        blockKind,
+        blockIndex,
+        sourceHash,
+        style,
+    ) => {
+        if (!conversationId) {
+            return false;
+        }
+
+        try {
+            const result = await setMessageVisualStyleApi(messageId, {
+                conversation_id: conversationId,
+                block_kind: blockKind,
+                block_index: blockIndex,
+                source_hash: sourceHash,
+                style: style
+                    ? {
+                          palette: style.palette,
+                          background: style.background,
+                          colors: style.colors,
+                      }
+                    : null,
+            });
+
+            set((state) => ({
+                messages: state.messages.map((message) =>
+                    message.id === messageId
+                        ? {
+                              ...message,
+                              metadata: {
+                                  ...(message.metadata as Record<string, unknown>),
+                                  visual_styles: result.visual_styles ?? {},
+                              },
+                          }
+                        : message,
+                ),
+            }));
+
+            return true;
+        } catch (error) {
+            toast.error(
+                error instanceof ApiError && error.status === 403
+                    ? 'You can only restyle blocks in your own conversations.'
+                    : error instanceof Error
+                      ? error.message
+                      : 'Those colours could not be saved.',
+            );
+            return false;
+        }
+    },
+
     forkFromMessage: async (messageId) => {
         const conversationId = get().activeConversationId;
         if (!conversationId) {
@@ -1157,7 +1239,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         }
 
         try {
-            const result = await forkConversationApi(conversationId, messageId);            const forkedId = result?.conversation_id;
+            const result = await forkConversationApi(conversationId, messageId);
+            const forkedId = result?.conversation_id;
             if (!forkedId) {
                 throw new Error('The server did not return the forked conversation.');
             }

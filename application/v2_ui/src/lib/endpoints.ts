@@ -237,6 +237,53 @@ export const maskMessage = (
 ) => api.post<MaskResponse>(`/api/message/${encodeURIComponent(messageId)}/mask`, body);
 
 /* -------------------------------------------------------------------------- */
+/* Message visual styles                                                       */
+/* -------------------------------------------------------------------------- */
+
+/** Colours saved against one diagram or chart inside a message. */
+export interface VisualStyleEntry {
+    palette?: string;
+    background?: string;
+    colors?: Record<string, string>;
+    source_hash?: string;
+}
+
+/** Every saved entry for a message, keyed by fence language then by block index. */
+export type MessageVisualStyles = Record<string, Record<string, VisualStyleEntry>>;
+
+/** Response of POST /api/message/<id>/visual-style. */
+export interface VisualStyleResponse {
+    success: boolean;
+    message_id: string;
+    visual_styles: MessageVisualStyles;
+}
+
+/**
+ * Save, or clear, the colours for one block of one message.
+ *
+ * A null `style` removes the entry so the block follows the reader's own default again, which
+ * is a different outcome from saving a style that happens to equal that default: the default
+ * can change later.
+ *
+ * `conversation_id` lets the server read the message by partition key rather than running a
+ * cross-partition query, exactly as the mask endpoint does.
+ */
+export const setMessageVisualStyle = (
+    messageId: string,
+    body: {
+        conversation_id: string;
+        block_kind: string;
+        block_index: number;
+        source_hash: string;
+        style: { palette: string; background: string; colors: Record<string, string> } | null;
+    },
+) =>
+    api.post<VisualStyleResponse>(
+        `/api/message/${encodeURIComponent(messageId)}/visual-style`,
+        body,
+    );
+
+/* -------------------------------------------------------------------------- */
 /* Message inspection                                                          */
 /* -------------------------------------------------------------------------- */
 

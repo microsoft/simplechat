@@ -6,6 +6,10 @@
 //
 // Chart.js is loaded from the vendored copy on first use rather than bundled: most
 // conversations contain no chart, and there is no reason to make every user pay for it.
+//
+// Series colours and the canvas background can be changed per chart; see blockVisualStyle.ts
+// for where a change is stored. Unlike the classic client's colour editor, nothing here
+// rewrites the message markdown — the payload the model produced stays as it was written.
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { clsx } from 'clsx';
@@ -13,12 +17,21 @@ import { ChevronDown, Download, Table2, TriangleAlert } from 'lucide-react';
 import { useUiStore } from '../../stores/uiStore';
 import {
     buildChartConfig,
+    chartColorTargets,
     parseInlineChart,
     resolveChartTable,
     type ChartSpec,
 } from '../../lib/inlineChartSpec';
 import type { ChartJsConstructor, ChartJsInstance } from '../../lib/vendor';
 import { VENDOR_PATHS, loadVendorScript } from '../../lib/vendorAssets';
+import { useBlockVisualStyle } from '../../lib/blockVisualStyle';
+import {
+    THEME_BACKGROUND,
+    resolveBackgroundColor,
+    visualStyleSignature,
+} from '../../lib/visualPalettes';
+import { fileNameStem } from '../../lib/svgRaster';
+import { VisualStyleMenu } from './VisualStyleMenu';
 
 let chartRuntime: ChartJsConstructor | null = null;
 let chartRuntimeLoad: Promise<ChartJsConstructor> | null = null;
@@ -69,12 +82,7 @@ function readThemeColors(): { text: string; grid: string; surface: string } {
 
 /** A file name for the downloaded image, derived from the chart's own title. */
 function downloadName(spec: ChartSpec): string {
-    const slug = spec.title
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, '-')
-        .replace(/^-+|-+$/g, '')
-        .slice(0, 60);
-    return `${slug || 'chart'}.png`;
+    return `${fileNameStem(spec.title, 'chart')}.png`;
 }
 
 function ChartToolbar({
@@ -84,6 +92,7 @@ function ChartToolbar({
     onDownload,
     tableId,
     hasTable,
+    children,
 }: {
     spec: ChartSpec;
     tableOpen: boolean;
@@ -91,9 +100,10 @@ function ChartToolbar({
     onDownload: () => void;
     tableId: string;
     hasTable: boolean;
+    children?: React.ReactNode;
 }) {
     return (
-        <div className="flex items-center justify-end gap-1 px-3 pb-2">
+        <div className="flex flex-wrap items-center justify-end gap-1 px-3 pb-2">
             {hasTable && (
                 <button
                     type="button"
@@ -124,6 +134,7 @@ function ChartToolbar({
                 <Download size={13} />
                 PNG
             </button>
+            {children}
         </div>
     );
 }
@@ -134,8 +145,20 @@ function ChartToolbar({
  * The data table is collapsed by default: the chart is the answer, and a 500-row table opened
  * automatically would bury the rest of the reply. It stays one click away because a chart
  * without its numbers cannot be checked.
+ *
+ * `messageId` and `blockIndex` are what a saved colour choice is filed under. A chart in a
+ * reply that is still streaming has neither, so it draws with the reader's default and its
+ * colour control says the choice will be kept once the reply finishes.
  */
-export function InlineChart({ source }: { source: string }) {
+export function InlineChart({
+    source,
+    messageId,
+    blockIndex,
+}: {
+    source: string;
+    messageId?: string;
+    blockIndex?: number;
+}) {
     const theme = useUiStore((state) => state.theme);
     const spec = useMemo(() => parseInlineChart(source), [source]);
     const table = useMemo(() => (spec ? resolveChartTable(spec) : null), [spec]);
@@ -143,10 +166,38 @@ export function InlineChart({ source }: { source: string }) {
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const instanceRef = useRef<ChartJsInstance | null>(null);
     const [tableOpen, setTableOpen] = useState(false);
+    const [menuOpen, setMenuOpen] = useState(false);
     const [failed, setFailed] = useState(false);
     const tableId = useMemo(
         () => `chart-data-${Math.random().toString(36).slice(2, 9)}`,
         [],
+    );
+
+    const { style, setStyle, reset, canPersist, error } = useBlockVisualStyle(
+        'simplechart',
+        source,
+        messageId,
+        blockIndex,
+    );
+
+    /**
+     * The colour to paint behind the chart, or null to leave the canvas transparent.
+     *
+     * Null while the background is left on "match theme", because the canvas has always been
+     * transparent over the surrounding panel and filling it would visibly change every chart
+     * nobody has touched.
+     */
+    const background = useMemo(
+        () => (style.background === THEME_BACKGROUND ? null : resolveBackgroundColor(style)),
+        [style],
+    );
+    const signature = useMemo(
+        () => visualStyleSignature(style, background ?? THEME_BACKGROUND),
+        [style, background],
+    );
+    const targets = useMemo(
+        () => (spec ? chartColorTargets(spec, style) : []),
+        [spec, style],
     );
 
     useEffect(() => {
@@ -164,7 +215,7 @@ export function InlineChart({ source }: { source: string }) {
                 instanceRef.current?.destroy();
                 instanceRef.current = new Chart(
                     canvasRef.current,
-                    buildChartConfig(spec, readThemeColors()),
+                    buildChartConfig(spec, readThemeColors(), style, background),
                 );
             })
             .catch(() => {
@@ -179,8 +230,9 @@ export function InlineChart({ source }: { source: string }) {
             instanceRef.current = null;
         };
         // `theme` is a dependency because the axis, tick and legend colours are baked into
-        // the configuration when the chart is built.
-    }, [spec, theme]);
+        // the configuration when the chart is built, and `signature` because the series and
+        // background colours are too.
+    }, [spec, theme, style, background, signature]);
 
     // Not a chart this client can draw: show the block as written rather than an error, so
     // the content is still there to read.
@@ -204,9 +256,10 @@ export function InlineChart({ source }: { source: string }) {
             return;
         }
 
-        // The chart canvas is transparent, which produces an unreadable PNG on a light
-        // background. Compositing onto the theme's solid surface first gives an image that
-        // works wherever it is pasted.
+        // The chart canvas is transparent unless a background was chosen, which produces an
+        // unreadable PNG on a light background. Compositing onto an opaque colour first —
+        // the chosen one, or the theme's own surface — gives an image that works wherever it
+        // is pasted.
         const target = document.createElement('canvas');
         target.width = canvas.width;
         target.height = canvas.height;
@@ -214,7 +267,7 @@ export function InlineChart({ source }: { source: string }) {
         if (!context) {
             return;
         }
-        context.fillStyle = readThemeColors().surface;
+        context.fillStyle = background ?? readThemeColors().surface;
         context.fillRect(0, 0, target.width, target.height);
         context.drawImage(canvas, 0, 0);
 
@@ -258,7 +311,19 @@ export function InlineChart({ source }: { source: string }) {
                 onDownload={downloadPng}
                 tableId={tableId}
                 hasTable={Boolean(table)}
-            />
+            >
+                <VisualStyleMenu
+                    style={style}
+                    onChange={setStyle}
+                    onReset={reset}
+                    targets={targets}
+                    open={menuOpen}
+                    onToggle={() => setMenuOpen((open) => !open)}
+                    canPersist={canPersist}
+                    error={error}
+                    noun="chart"
+                />
+            </ChartToolbar>
 
             {table && (
                 <div id={tableId} hidden={!tableOpen} className="border-t border-edge-strong">

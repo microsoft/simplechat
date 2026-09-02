@@ -275,7 +275,11 @@ function MessageBubble({
                             assistantMessageId={message.id}
                             results={proposalImages}
                         >
-                            <AssistantMarkdown content={message.content} masks={masks.ranges} />
+                            <AssistantMarkdown
+                                content={message.content}
+                                masks={masks.ranges}
+                                messageId={message.id}
+                            />
                         </ImageProposalScope>
                         {(message.model_deployment_name || message.agent_display_name) && (
                             <p className="mt-2 flex items-center gap-1.5 text-[11px] text-text-3">
