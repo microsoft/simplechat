@@ -2,6 +2,18 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.022)**
+
+#### New Features
+
+*   **The V2 Settings Page Is Now Complete**
+    *   All six sections of the personal settings page are built in the V2 interface: Preferences, Stats, Groups, Public, Feedback and Violations. They no longer link out to the classic page.
+    *   **Groups** and **Public** list the workspaces you belong to with search and paging, show your role in each, and let you switch which one is active. If a switch is refused — because you are not a member, or the workspace no longer exists — the reason is shown rather than the change quietly failing.
+    *   **Feedback** shows the ratings you have given assistant replies, whether each has been reviewed, and any reply from a reviewer, with filters and a CSV export.
+    *   **Violations** shows anything flagged on your account with its status and the categories that triggered it. You can add your own notes to a record; status and reviewer notes remain an administrator's to set.
+    *   **Stats** charts your conversations, uploads, token use and sign-ins over 7, 30 or 90 days.
+    *   (Ref: V2 settings tabs, group and public workspace selection, feedback, safety violations, activity trends)
+
 ### **(v0.261.021)**
 
 #### New Features

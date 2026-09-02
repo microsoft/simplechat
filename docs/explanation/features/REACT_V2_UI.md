@@ -532,11 +532,25 @@ Text size is shared. `data-font-size` on `<html>` and its five percentages are t
 from `static/css/styles.css`, so a size chosen in either interface means the same in both,
 and the whole design system scales because it is expressed in rem.
 
+Two things are worth noting about the other tabs:
+
+- **Switching the active workspace does not go through `/api/user/settings`.** The dedicated
+  `PATCH /api/groups/setActive` and `PATCH /api/public_workspaces/setActive` routes take
+  `{ groupId }` and `{ workspaceId }` respectively and say why they refused — 404 for an
+  unknown workspace, 403 for one the caller is not a member of. Writing `activeGroupOid` to
+  the settings route also works, but it is popped and never returned, so the client would
+  have no way to confirm it took.
+- **Stats draws its own charts.** The classic page uses Chart.js; here the data is a flat
+  series of daily counts, which needs no axis machinery, interaction model or animation
+  loop, so it is drawn as plain SVG `<rect>` bars. Adding a charting dependency would grow
+  the bundle for every page to draw a shape the browser already has, and browser assets have
+  to be locally served in any case. The window is an enum — the route accepts only 7, 30 or
+  90 and silently falls back to its default for anything else — so only those are offered.
+
 ### Not rebuilt yet
 
 Agents, group workspaces and public workspaces appear in the rail and link through to their
-classic pages rather than dead-ending. Within settings, the Stats, Groups, Public, Feedback
-and Violations tabs link to the equivalent classic profile tab for the same reason.
+classic pages rather than dead-ending.
 
 ## Building
 

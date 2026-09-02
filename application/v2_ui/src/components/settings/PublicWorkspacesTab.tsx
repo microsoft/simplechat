@@ -1,15 +1,9 @@
 // PublicWorkspacesTab.tsx
 // The public workspaces available to this user, and which one is active.
 
-import { TabNotBuiltYet } from './TabScaffold';
+import { PUBLIC_WORKSPACES } from '../../lib/workspaces';
+import { WorkspaceListTab } from './WorkspaceListTab';
 
 export function PublicWorkspacesTab() {
-    return (
-        <TabNotBuiltYet
-            title="Public workspaces"
-            description="Browsing public workspaces and choosing an active one has not been rebuilt in this interface yet."
-            classicHref="/profile?tab=public-workspaces"
-            classicLabel="Open public workspaces in the classic interface"
-        />
-    );
+    return <WorkspaceListTab kind={PUBLIC_WORKSPACES} />;
 }
