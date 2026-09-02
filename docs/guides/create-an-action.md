@@ -32,8 +32,8 @@ Use an action when a model needs to do more than write an answer, such as query 
 3. Select **Add Action** or the workspace new action button.
 
 {% include media.html src="guides/create-an-action-step-3.png"
-                      alt="Screenshot showing create an action step 3."
-                      title="Create an action step 3"
+                      alt="The Add Action dialog on Select Type, showing a searchable grid of action type cards including Azure Maps, Blob Storage, Cosmos Query, Databricks, Document Search, Interactive Charts, Log Analytics, Microsoft Graph, and Model Context Protocol."
+                      title="Choosing an action type"
                       capture="Capture the create an action task at this step in SimpleChat with realistic sample data and redact secrets." %}
 
 4. On **Select Action Type**, search for the type you need, such as **OpenAPI**, **MCP**, **Log Analytics**, or another enabled card.
@@ -41,7 +41,7 @@ Use an action when a model needs to do more than write an answer, such as query 
 6. Complete the type-specific configuration, including **OpenAPI Specification File**, **Base URL**, **Authentication Type**, **Reusable Identity**, or MCP discovery fields when shown.
 
 {% include media.html src="guides/create-an-action-step-6.png"
-                      alt="Screenshot showing create an action step 6."
+                      alt="The Add Action wizard on the Configuration step for an Azure Maps action, showing the credentials section, the subscription key field, and a Test Connection button."
                       title="Create an action step 6"
                       capture="Capture the create an action task at this step in SimpleChat with realistic sample data and redact secrets." %}
 
