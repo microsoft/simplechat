@@ -6,7 +6,7 @@ PDF unreadable for the person it was sent to. SimpleChat already converted its o
 `simplechart` blocks into pictures for every export surface; this extends the same
 treatment to Mermaid and TeX.
 
-Implemented in version: **0.261.026**
+Implemented in version: **0.261.027**
 
 Dependencies: `matplotlib` (already required, used for the existing chart renderer) and a
 vendored copy of Mermaid served from SimpleChat's own static files.
@@ -70,20 +70,27 @@ which interface started it.
 
 ### Mermaid
 
-Mermaid is a browser rendering library, so the diagram image is produced by the browser
-and sent with the export request.
+Mermaid is a browser rendering library, so a faithful diagram needs a real browser
+somewhere. SimpleChat uses two, in this order:
 
-1. For a single message, the browser reads the Mermaid blocks out of the message markdown.
-   For a conversation export it calls `POST /api/conversations/export/visual-scan`, which
-   returns the diagram sources the server found in the selected conversations. Keeping
-   detection on the server means the fence-matching rules live in one place.
-2. Each diagram is rendered to SVG, painted onto a canvas and read back as a PNG.
-3. The PNGs are sent to the export endpoint as `visual_assets`.
-4. The server matches each asset to its fence by **normalized source text** and replaces
-   the fence with the image.
+1. **The user's browser**, when one is attached to the export. It reads the Mermaid blocks
+   out of the message, or calls `POST /api/conversations/export/visual-scan` for a
+   conversation export, renders each diagram to SVG, paints it onto a canvas and reads it
+   back as a PNG. The PNGs travel with the export request as `visual_assets`.
+2. **Headless Chromium on the server**, for anything the browser did not cover — an export
+   started from an interface that does not rasterize, or a server-initiated export. The
+   container already installs Playwright's Chromium for Source Review and Deep Research
+   (`INSTALL_PLAYWRIGHT_CHROMIUM`, on by default), so this costs no new dependency.
 
-A fence with no matching asset keeps its code block. That is what happens today in the V2
-interface, which does not yet rasterize diagrams, and whenever a diagram fails to render.
+Both load the same vendored bundle and use the same configuration, so a diagram renders
+identically whichever path produced it.
+
+The server matches each asset to its fence by **normalized source text**, and only renders
+diagrams that have no asset already. A client-supplied picture is never re-rendered.
+
+A fence still keeps its code block when neither path can produce an image — for example
+when a deployment sets `INSTALL_PLAYWRIGHT_CHROMIUM=false` and the export came from an
+interface that does not rasterize.
 
 ## Architecture
 
@@ -94,6 +101,7 @@ interface, which does not yet rasterize diagrams, and whenever a diagram fails t
 | `functions_export_visuals.py` | Shared wrapper markup, `visual_assets` validation, and the `replace_inline_visual_blocks_with_export_html()` entry point |
 | `functions_tex_export.py` | TeX detection and matplotlib `mathtext` rendering |
 | `functions_mermaid_export.py` | Mermaid fence detection, source extraction and asset substitution |
+| `functions_mermaid_server_render.py` | Headless Chromium rasterization for diagrams no browser covered |
 | `functions_chart_export.py` | Existing chart rendering, now using the shared wrapper markup |
 
 Every export surface consumes the same HTML shape, so a new visual kind only has to be
@@ -204,18 +212,17 @@ PNG is rejected if it exceeds the same byte cap that browser-supplied assets use
 
 - `mathtext` does not support `align`, `matrix`, `cases` or other multi-line environments.
   Those formulas keep their original code block.
-- The V2 React interface renders Mermaid in chat but does not yet send rasterized diagrams
-  with its export requests, so a diagram exported from V2 keeps its code block. TeX works
-  there already, because it is rendered on the server.
+- A deployment that builds with `INSTALL_PLAYWRIGHT_CHROMIUM=false` has no server-side
+  renderer, so a diagram is only rendered when the export came from an interface that
+  rasterizes. Otherwise it keeps its code block.
+- Server-side rendering launches a browser, which takes roughly a second before the first
+  diagram in a request. Exports whose diagrams the client already rasterized never pay it,
+  and neither do exports with no diagrams at all.
 - V2 vendors its own copy of the same Mermaid version under
   `application/v2_ui/public/vendor/mermaid-11.17.2/` for in-chat rendering. The two
   frontends have separate vendor trees, so the bundle is currently committed twice.
-- Diagram rasterization needs a browser, so a Mermaid diagram in a scheduled or
-  server-initiated export is not rendered. The `visual_assets` contract is deliberately
-  renderer-agnostic, so a server-side renderer can supply the same assets later without an
-  API change.
-- Conversation exports rasterize at most 60 diagrams per request; a single message export
-  rasterizes at most 20.
+- Conversation exports render at most 60 diagrams per request; a single message export
+  renders at most 20.
 
 ## Testing
 
@@ -223,6 +230,8 @@ PNG is rejected if it exceeds the same byte cap that browser-supplied assets use
 |---|---|
 | `functional_tests/test_conversation_export_mermaid_tex_images.py` | TeX rendering across Markdown, PDF, Word, PowerPoint and email; false-positive guards; Mermaid substitution and degradation; asset validation and caps |
 | `functional_tests/test_export_mermaid_browser_rasterizer.py` | The vendored bundle has no external assets, and a diagram rasterizes in Chromium to a PNG that still contains its label text |
+| `functional_tests/test_export_mermaid_server_render.py` | The capability probe, server rendering with visible labels, error isolation, configuration parity with the browser renderer, and that the route only renders what the client did not |
 | `functional_tests/test_conversation_export_inline_chart_images.py` | Existing chart output is unchanged by the shared wrapper builder |
 
-The browser test skips itself when Playwright or its Chromium build is unavailable.
+The browser and server rendering tests skip themselves when Playwright or its Chromium
+build is unavailable.

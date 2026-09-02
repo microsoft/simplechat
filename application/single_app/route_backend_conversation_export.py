@@ -35,6 +35,10 @@ from functions_export_visuals import (
     replace_inline_visual_blocks_with_export_html,
 )
 from functions_mermaid_export import extract_mermaid_sources
+from functions_mermaid_server_render import (
+    is_mermaid_server_rendering_available,
+    render_mermaid_visual_assets,
+)
 from functions_collaboration import (
     assert_user_can_view_collaboration_conversation,
     get_accessible_collaboration_message_thoughts,
@@ -218,6 +222,12 @@ def register_route_backend_conversation_export(bp):
             if not exported:
                 return jsonify({'error': 'No accessible conversations found'}), 404
 
+            if export_format != 'json':
+                visual_assets = _merge_server_rendered_visual_assets(
+                    _collect_export_entry_contents(exported),
+                    visual_assets,
+                )
+
             timestamp_str = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
 
             if packaging == 'zip':
@@ -344,6 +354,10 @@ def register_route_backend_conversation_export(bp):
                 data.get('visual_assets'),
                 max_count=MESSAGE_EXPORT_VISUAL_ASSET_MAX_COUNT,
             )
+            visual_assets = _merge_server_rendered_visual_assets(
+                [message.get('content', '')],
+                visual_assets,
+            )
 
             document_bytes = _message_to_docx_bytes(message, visual_assets=visual_assets)
             timestamp_str = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
@@ -420,6 +434,10 @@ def register_route_backend_conversation_export(bp):
                 data.get('visual_assets'),
                 max_count=MESSAGE_EXPORT_VISUAL_ASSET_MAX_COUNT,
             )
+            visual_assets = _merge_server_rendered_visual_assets(
+                [message.get('content', '')],
+                visual_assets,
+            )
             presentation_bytes = _message_to_pptx_bytes(
                 message,
                 settings,
@@ -489,6 +507,10 @@ def register_route_backend_conversation_export(bp):
                 data.get('visual_assets'),
                 max_count=MESSAGE_EXPORT_VISUAL_ASSET_MAX_COUNT,
             )
+            visual_assets = _merge_server_rendered_visual_assets(
+                [message.get('content', '')],
+                visual_assets,
+            )
             draft_payload = _message_to_email_draft_payload(
                 message=message,
                 settings=settings,
@@ -508,6 +530,62 @@ def register_route_backend_conversation_export(bp):
             debug_print(f"Message email draft export error: {str(exc)}")
             log_event(f"Message email draft export failed: {exc}", level="WARNING")
             return jsonify({'error': 'Email draft export failed due to a server error. Please try again later.'}), 500
+
+
+def _merge_server_rendered_visual_assets(
+    contents: List[Any],
+    visual_assets: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Render any diagram the client did not supply a picture for.
+
+    A browser attached to the export covers its own diagrams. This fills the gap for
+    everything else, such as an export started from an interface that does not rasterize,
+    using the Chromium already installed in the image. When that is unavailable the fence
+    is simply left as a code block.
+    """
+    merged_assets = list(visual_assets or [])
+    covered_sources = {
+        asset.get('normalized_source')
+        for asset in merged_assets
+        if asset.get('kind') == EXPORT_VISUAL_KIND_DIAGRAM
+    }
+
+    pending_sources: List[Dict[str, str]] = []
+    seen_sources = set(covered_sources)
+    for content in contents:
+        for source in extract_mermaid_sources(_normalize_content(content)):
+            if source['source'] in seen_sources:
+                continue
+            seen_sources.add(source['source'])
+            pending_sources.append(source)
+            if len(pending_sources) >= EXPORT_VISUAL_ASSET_MAX_COUNT:
+                break
+        if len(pending_sources) >= EXPORT_VISUAL_ASSET_MAX_COUNT:
+            break
+
+    if not pending_sources or not is_mermaid_server_rendering_available():
+        return merged_assets
+
+    try:
+        merged_assets.extend(render_mermaid_visual_assets(pending_sources))
+    except Exception as exc:
+        debug_print(f"Server-side diagram rendering failed: {exc}")
+        log_event(f"Server-side diagram rendering failed: {exc}", level="WARNING")
+
+    return merged_assets
+
+
+def _collect_export_entry_contents(exported: List[Dict[str, Any]]) -> List[str]:
+    """Return every message body an export will render."""
+    contents: List[str] = []
+    for entry in exported:
+        summary_intro = entry.get('summary_intro') or {}
+        if summary_intro.get('content'):
+            contents.append(summary_intro['content'])
+        for message in entry.get('messages', []):
+            if message.get('content_text'):
+                contents.append(message['content_text'])
+    return contents
 
 
 def _load_exportable_conversation_for_user(

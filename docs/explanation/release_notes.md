@@ -2,6 +2,17 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.027)**
+
+#### New Features
+
+*   **Diagrams In Exports No Longer Need The Browser You Exported From**
+    *   Diagrams are drawn by your browser when you export from one that can draw them. Anything else — an export started from an interface that does not, or one the server starts on its own — previously fell back to showing the diagram's code.
+    *   Those diagrams are now drawn on the server, using the Chromium the app already installs. No new dependency was added, nothing is fetched from the internet, and a diagram looks the same whichever way it was drawn.
+    *   A diagram your browser already drew is never drawn twice, and an export containing no diagrams does no extra work.
+    *   Deployments built without the optional Chromium component are unaffected and keep showing the diagram's code, as before.
+    *   (Ref: conversation and message exports, Mermaid diagrams, server-side rendering)
+
 ### **(v0.261.026)**
 
 #### New Features
