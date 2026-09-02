@@ -101,9 +101,10 @@ This page includes the latest release notes inline. Older release sections are s
     *   (Ref: `test_docs_link_integrity.py`, `test_docs_web_search_accuracy.py`, [#1371](https://github.com/microsoft/simplechat/issues/1371))
 
 *   **First Batch Of Documentation Screenshots**
-    *   Filled 29 empty screenshot slots, taking documentation screenshot coverage from 18 of 122 to 47 of 122. The Administration group is now fully illustrated.
-    *   Added the four admin settings overviews (Backup & Recovery, Data Lifecycle, Governance, Workflow), six chat control references (conversation list, conversation header, composer, selectors, grounded search, and advanced conversation search), and nineteen task guide steps covering web search, Deep Research, workspace scope lock, group workspaces, tags, file sync, public workspaces, image generation, URL review, profile preferences, feedback, workflow triggering, and agent and action creation.
+    *   Filled 40 empty screenshot slots, taking documentation screenshot coverage from 18 of 122 to 58 of 122. The Administration group is now fully illustrated.
+    *   Added the four admin settings overviews (Backup & Recovery, Data Lifecycle, Governance, Workflow), six chat control references (conversation list, conversation header, composer, selectors, grounded search, and advanced conversation search), nineteen task guide steps, and configuration panes for eleven action types (Azure Maps, Blob Storage, Chart, Cosmos Query, Databricks, Document Search, Log Analytics, MCP, Microsoft Graph, OpenAPI, RocksDB, and SimpleChat).
     *   The web search screenshot captures the live data notice, so the guide's claim that only the current message is sent is now visible rather than only asserted.
+    *   Action configuration panes were captured without saving any action, so every credential field shows only its placeholder text and no tenant values were recorded.
     *   Replaced the generated placeholder alt text on every filled slot with a description of what the reader actually learns from the image.
     *   (Ref: `docs/images/admin/`, `docs/images/reference/`, `docs/images/guides/`, [#1371](https://github.com/microsoft/simplechat/issues/1371))
 

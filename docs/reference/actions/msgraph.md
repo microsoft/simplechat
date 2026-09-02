@@ -8,7 +8,7 @@ audience: user
 
 <!-- action-slug: msgraph -->
 
-{% include media.html src="reference/actions-msgraph-configuration.png" alt="Microsoft Graph action configuration UI." title="Microsoft Graph configuration" capture="Capture Default Microsoft Graph Capabilities and mail/calendar delivery settings. Redact user identifiers." %}
+{% include media.html src="reference/actions-msgraph-configuration.png" alt="The Microsoft Graph configuration pane noting the action uses the signed-in user's delegated permissions, above capability toggles for reading profile, mailbox timezone, calendar events, and mail, and for creating calendar invites and sending mail with their delivery mode selectors." title="Microsoft Graph action configuration" capture="Capture Default Microsoft Graph Capabilities and mail/calendar delivery settings. Redact user identifiers." %}
 
 ## What this action does
 

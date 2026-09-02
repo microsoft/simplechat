@@ -8,7 +8,7 @@ audience: user
 
 <!-- action-slug: rocksdb -->
 
-{% include media.html src="reference/actions-rocksdb-configuration.png" alt="RocksDB action setup or assignment UI." title="RocksDB action" capture="Capture the RocksDB action setup or assignment UI with relevant fields visible. Redact secrets and user identifiers." %}
+{% include media.html src="reference/actions-rocksdb-configuration.png" alt="The RocksDB configuration pane showing the service base URL and authentication scheme, and data handling options for column family, read-only mode, key and value encoding, and key prefix hints." title="RocksDB action configuration" capture="Capture the RocksDB action setup or assignment UI with relevant fields visible. Redact secrets and user identifiers." %}
 
 ## What this action does
 
