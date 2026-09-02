@@ -2,7 +2,7 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
-### **(v0.261.028)**
+### **(v0.261.029)**
 
 #### New Features
 
@@ -29,6 +29,19 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 *   **Spoken And Preview Text No Longer Read Out Internal Placeholders**
     *   Reply previews and read-aloud could include internal placeholder text left behind where a chart, diagram or image card sits in a message. Those placeholders are now removed before the text is previewed or spoken.
     *   (Ref: reply preview, text-to-speech, inline visuals)
+
+### **(v0.261.028)**
+
+#### Bug Fixes
+
+*   **Your Configured Chat Notices Now Appear In The V2 Interface**
+    *   Two notices administrators can configure — the data-handling notice shown when web search is used, and the AI notice shown under the message box — appeared in the classic interface but never in V2. Anyone who switched interfaces stopped seeing them.
+    *   The web search notice now appears above the message box while web search is turned on, using your configured wording, and can be dismissed for the rest of the browser session. It requires the same three settings as before, including the consent acknowledgement.
+    *   The AI notice now appears below the message box and respects all four display behaviours: always visible, dismissible once per session, once per day, or once per message version. Editing the notice text still brings it back for everyone who had dismissed the previous wording.
+    *   A dismissal now carries across both interfaces in the same browser session, rather than reappearing when you switch.
+    *   Dismissing the notice waits for the change to save, so it no longer disappears and then return on the next page load. A failed save is now reported instead of looking like a dead button.
+    *   **Behaviour change**: V2 previously showed its own fixed line, "AI responses can be inaccurate. Verify important information.", regardless of your settings. That line has been removed. If you want a notice under the message box, enable the AI notice in Admin Settings → Notices & Agreements → Chat AI Notice and set your own wording; if the AI notice is turned off, V2 now shows nothing there, matching the classic interface.
+    *   (Ref: V2 chat composer, web search user notice, chat AI notice, `/api/v2/bootstrap`)
 
 ### **(v0.261.027)**
 

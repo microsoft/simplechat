@@ -28,7 +28,7 @@ This feature is limited to exports. When it shipped, the classic chat interface 
 neither Mermaid nor TeX on screen, so a diagram that appeared there as a code block
 appeared as a picture in the exported file. The V2 interface renders both in chat as of
 0.261.024, and this makes its Word and PowerPoint exports carry the formulas it already
-displays. As of 0.261.028 the classic interface renders Mermaid diagrams in chat too; see
+displays. As of 0.261.029 the classic interface renders Mermaid diagrams in chat too; see
 [Mermaid Diagram Rendering](MERMAID_DIAGRAM_RENDERING.md). TeX in the classic interface is
 still export-only.
 

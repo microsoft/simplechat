@@ -58,6 +58,13 @@ CHAT_COMPLETION_AUDIO_SOUND_IDS = (
 )
 DEFAULT_CHAT_COMPLETION_AUDIO_SOUND = CHAT_COMPLETION_AUDIO_SOUND_IDS[0]
 DEFAULT_CHAT_COMPLETION_AUDIO_VOLUME = 5
+# Shared so the classic chat page and the V2 bootstrap payload cannot fall back to
+# different wording when an administrator blanks web_search_user_notice_text.
+WEB_SEARCH_USER_NOTICE_DEFAULT_TEXT = (
+    "Your current message will be sent to Microsoft Bing for web search. Conversation "
+    "history is not sent for web search, but any sensitive content you paste into this "
+    "message may be sent."
+)
 USER_UI_SETTINGS_KEYS = (
     "profileImage",
     "navLayout",
@@ -1772,7 +1779,7 @@ def get_settings(use_cosmos=False, include_source=False):
         'enable_web_search': False,
         'web_search_consent_accepted': False,
         'enable_web_search_user_notice': False,  # Show popup to users explaining their message will be sent to Bing
-        'web_search_user_notice_text': 'Your current message will be sent to Microsoft Bing for web search. Conversation history is not sent for web search, but any sensitive content you paste into this message may be sent.',
+        'web_search_user_notice_text': WEB_SEARCH_USER_NOTICE_DEFAULT_TEXT,
         'web_search_agent': {
             'agent_type': 'aifoundry',
             'azure_openai_gpt_endpoint': '',

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Functional test for Mermaid diagram prompt guidance.
-Version: 0.261.028
-Implemented in: 0.261.028
+Version: 0.261.029
+Implemented in: 0.261.029
 
 SimpleChat renders ```mermaid fences as diagrams, but nothing told the model that, so a
 request like "turn this into a diagram" came back as ASCII box art in a ```text fence that
@@ -70,8 +70,8 @@ def test_app_version_covers_the_fix():
     print('Testing application version...')
 
     assert_app_version_at_least(
-        '0.261.028',
-        reason='Mermaid diagram guidance and classic-UI inline rendering landed in 0.261.028.',
+        '0.261.029',
+        reason='Mermaid diagram guidance and classic-UI inline rendering landed in 0.261.029.',
     )
 
     print('PASS: application version')
