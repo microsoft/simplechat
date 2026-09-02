@@ -4,10 +4,15 @@
 // Several actions in the chat page succeed or fail entirely server-side — exports, masking,
 // attempt switching. Without somewhere to say so, a failure looks identical to a dead
 // button, which is the exact complaint that motivated this work.
+//
+// Exports needed more than a result. A message export is rendered by the server and a
+// PowerPoint additionally asks a model to plan its slides, so it can run for a long time with
+// nothing on screen. A `pending` toast stays put until the work finishes and is then settled
+// in place, so the answer replaces the progress note rather than stacking underneath it.
 
 import { create } from 'zustand';
 
-export type ToastTone = 'success' | 'error' | 'info';
+export type ToastTone = 'success' | 'error' | 'info' | 'pending';
 
 export interface Toast {
     id: number;
@@ -17,12 +22,18 @@ export interface Toast {
 
 interface ToastState {
     toasts: Toast[];
-    push: (tone: ToastTone, message: string) => void;
+    push: (tone: ToastTone, message: string) => number;
+    settle: (id: number, tone: Exclude<ToastTone, 'pending'>, message: string) => void;
     dismiss: (id: number) => void;
 }
 
-/** How long a toast stays before dismissing itself. Errors linger, since they need reading. */
-const TOAST_TTL: Record<ToastTone, number> = {
+/**
+ * How long a toast stays before dismissing itself. Errors linger, since they need reading.
+ *
+ * `pending` has no entry: it is dismissed by whoever raised it, because only the caller knows
+ * when the work is done.
+ */
+const TOAST_TTL: Record<Exclude<ToastTone, 'pending'>, number> = {
     success: 3200,
     info: 3800,
     error: 6500,
@@ -39,6 +50,30 @@ export const useToastStore = create<ToastState>((set, get) => ({
 
         set((state) => ({ toasts: [...state.toasts, { id, tone, message }] }));
 
+        if (tone !== 'pending') {
+            window.setTimeout(() => {
+                get().dismiss(id);
+            }, TOAST_TTL[tone]);
+        }
+
+        return id;
+    },
+
+    /**
+     * Turn a pending toast into its result, keeping its place in the stack.
+     *
+     * A toast the user already dismissed is not resurrected — they have said they are not
+     * interested — so the result is dropped rather than pushed as a new notification.
+     */
+    settle: (id, tone, message) => {
+        if (!get().toasts.some((item) => item.id === id)) {
+            return;
+        }
+
+        set((state) => ({
+            toasts: state.toasts.map((item) => (item.id === id ? { ...item, tone, message } : item)),
+        }));
+
         window.setTimeout(() => {
             get().dismiss(id);
         }, TOAST_TTL[tone]);
@@ -54,4 +89,9 @@ export const toast = {
     success: (message: string) => useToastStore.getState().push('success', message),
     error: (message: string) => useToastStore.getState().push('error', message),
     info: (message: string) => useToastStore.getState().push('info', message),
+    /** Raise a notification that stays until `settle` or `dismiss` is called with its id. */
+    pending: (message: string) => useToastStore.getState().push('pending', message),
+    settle: (id: number, tone: Exclude<ToastTone, 'pending'>, message: string) =>
+        useToastStore.getState().settle(id, tone, message),
+    dismiss: (id: number) => useToastStore.getState().dismiss(id),
 };

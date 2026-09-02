@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
 Functional test for server-side Mermaid rendering in exports.
-Version: 0.261.027
+Version: 0.261.034
 Implemented in: 0.261.027
+Label-text regression coverage added in: 0.261.034
 
 This test ensures diagrams are rasterized on the server, using the Playwright Chromium
 already installed in the image, for exports that have no browser attached to them. It
@@ -34,6 +35,10 @@ sys.modules.setdefault(
 from functions_export_visuals import normalize_visual_assets  # noqa: E402
 from functions_mermaid_server_render import (  # noqa: E402
     MERMAID_RENDER_SCRIPT,
+    MERMAID_SERVER_RENDER_FONT_FAMILY,
+    build_render_page_style,
+    get_embedded_render_font_data_uri,
+    get_embedded_render_font_path,
     get_mermaid_bundle_path,
     get_mermaid_server_render_capabilities,
     is_mermaid_server_rendering_available,
@@ -42,6 +47,7 @@ from functions_mermaid_server_render import (  # noqa: E402
 
 RASTERIZER_PATH = os.path.join(APP_DIR, 'static', 'js', 'chat', 'chat-visual-rasterizer.js')
 MERMAID_RUNTIME_PATH = os.path.join(APP_DIR, 'static', 'js', 'chat', 'chat-mermaid-runtime.js')
+DOCKERFILE_PATH = os.path.join(APP_DIR, 'Dockerfile')
 
 FLOWCHART_SOURCE = (
     'graph TD\n'
@@ -52,6 +58,23 @@ FLOWCHART_SOURCE = (
 )
 SEQUENCE_SOURCE = 'sequenceDiagram\n    Alice->>Bob: Hello Bob\n    Bob-->>Alice: Hi Alice'
 INVALID_SOURCE = 'this is definitely not valid mermaid {{{'
+
+# The same graph with and without label text. Comparing the two is what distinguishes a
+# diagram that drew its labels from one that drew only boxes and arrows: a container with no
+# scalable font measures every label as zero-width, so the shapes still appear and the text
+# does not.
+LABELLED_SOURCE = (
+    'graph TD\n'
+    '    A[Microsoft Entra ID Tenant] --> B[Management Group]\n'
+    '    B --> C[Subscription Production Applications]\n'
+    '    B --> D[Resource Group prod-web-rg]'
+)
+UNLABELLED_SOURCE = (
+    'graph TD\n'
+    '    A[ ] --> B[ ]\n'
+    '    B --> C[ ]\n'
+    '    B --> D[ ]'
+)
 
 
 def _import_route_helpers():
@@ -109,6 +132,29 @@ def _painted_pixel_ratio(data_uri: str):
 
     painted = sum(count for count, color in colors if color != (255, 255, 255))
     return width, height, painted / float(width * height)
+
+
+def _dark_pixel_count(data_uri: str) -> int:
+    """Count near-black pixels, which is what label glyphs are made of.
+
+    Node fills and edges in the neutral theme are much lighter than text, so this separates
+    "the diagram has writing in it" from "the diagram has boxes in it".
+    """
+    from PIL import Image
+
+    image_bytes = base64.b64decode(data_uri.split(',', 1)[1])
+    with Image.open(io.BytesIO(image_bytes)) as image:
+        rgb_image = image.convert('RGB')
+        colors = rgb_image.getcolors(maxcolors=1_000_000) or []
+
+    return sum(count for count, color in colors if sum(color) < 300)
+
+
+def _asset_for_source(assets: List[Dict[str, Any]], source: str) -> Dict[str, Any]:
+    for asset in assets:
+        if asset.get('normalized_source') == source.strip():
+            return asset
+    raise AssertionError(f'no rendered asset for source: {source[:40]}')
 
 
 def _build_png_data_uri() -> str:
@@ -171,7 +217,13 @@ def test_server_and_browser_renderers_share_configuration():
 
 
 def test_server_renders_diagrams_with_visible_labels():
-    """A server-rendered diagram must contain its label text, not just shapes."""
+    """A server-rendered diagram must contain its label text, not just shapes.
+
+    Painted-pixel coverage alone cannot show this: boxes and arrows paint plenty of pixels
+    on their own, which is how a build that rendered every label invisibly still passed.
+    The labelled graph is therefore compared against the identical graph with its labels
+    removed, on two measures that only writing can move.
+    """
     print("Testing server diagram rendering...")
 
     if not _server_rendering_available():
@@ -190,7 +242,102 @@ def test_server_renders_diagrams_with_visible_labels():
         assert width >= 100 and height >= 50, (width, height)
         assert painted_ratio > 0.01, painted_ratio
 
+    label_comparison = render_mermaid_visual_assets([
+        {'source': LABELLED_SOURCE},
+        {'source': UNLABELLED_SOURCE},
+    ])
+    assert len(label_comparison) == 2, label_comparison
+    labelled = _asset_for_source(label_comparison, LABELLED_SOURCE)
+    unlabelled = _asset_for_source(label_comparison, UNLABELLED_SOURCE)
+
+    labelled_dark = _dark_pixel_count(labelled['data_uri'])
+    unlabelled_dark = _dark_pixel_count(unlabelled['data_uri'])
+    assert labelled_dark > unlabelled_dark + 500, (
+        'the labelled diagram drew no more dark pixels than the same diagram with empty '
+        f'labels, so its text is missing: {labelled_dark} vs {unlabelled_dark}'
+    )
+
+    # Node width follows the width of its label. Uniform, minimum-width boxes are the
+    # signature of a runtime that measured every label as zero-width.
+    labelled_width, _, _ = _painted_pixel_ratio(labelled['data_uri'])
+    unlabelled_width, _, _ = _painted_pixel_ratio(unlabelled['data_uri'])
+    assert labelled_width > unlabelled_width, (
+        'labelled and unlabelled diagrams came out the same width, so label text was never '
+        f'measured: {labelled_width} vs {unlabelled_width}'
+    )
+
     print("Server diagram rendering passed!")
+
+
+def test_render_font_is_embedded_rather_than_borrowed_from_the_host():
+    """The renderer must carry its own font.
+
+    The application image installs no scalable Latin typeface, so a diagram asking for
+    Arial or a generic sans-serif resolves to nothing there: Chromium measures every label
+    as zero-width, Mermaid falls back to its minimum node size, and the export is a set of
+    uniform empty boxes. Embedding the font removes the dependency on the host entirely.
+    """
+    print("Testing embedded render font...")
+
+    font_path = get_embedded_render_font_path()
+    assert font_path and os.path.exists(font_path), (
+        'no embeddable font was found; matplotlib supplies DejaVu Sans and is already a '
+        f'requirement, so this should not happen: {font_path}'
+    )
+
+    data_uri = get_embedded_render_font_data_uri()
+    assert data_uri and data_uri.startswith('data:font/ttf;base64,'), (data_uri or '')[:48]
+
+    page_style = build_render_page_style()
+    assert '@font-face' in page_style, page_style[:200]
+    assert MERMAID_SERVER_RENDER_FONT_FAMILY in page_style, page_style[:200]
+    assert data_uri in page_style, 'the font data URI must reach the render page'
+
+    # The render script has to ask for the family that was embedded, or the embedding is
+    # decorative and Mermaid still measures against whatever the host provides.
+    assert 'options.fontFamily' in MERMAID_RENDER_SCRIPT, MERMAID_RENDER_SCRIPT[:400]
+
+    capabilities = get_mermaid_server_render_capabilities()
+    assert capabilities.get('embedded_font_available') is True, capabilities
+
+    print("Embedded render font passed!")
+
+
+def test_container_image_installs_scalable_fonts():
+    """The image should still carry real fonts for everything else that renders in it.
+
+    Source Review and Deep Research screenshot pages in the same Chromium, and they have no
+    embedded font of their own. The legacy X11 Type1 and bitmap packages that used to be the
+    only font install provide no scalable Latin face.
+    """
+    print("Testing container font packages...")
+
+    with open(DOCKERFILE_PATH, 'r', encoding='utf-8') as handle:
+        dockerfile = handle.read()
+
+    assert 'dejavu' in dockerfile.lower(), 'no scalable font family is installed in the image'
+    assert 'fc-cache' in dockerfile, 'the font cache is never rebuilt after installing fonts'
+
+    print("Container font packages passed!")
+
+
+def test_server_renderer_captures_the_live_page():
+    """Diagrams must be screenshotted where they are drawn, not repainted onto a canvas.
+
+    Serializing an SVG and reloading it through an <img> silently drops whatever that
+    isolated context will not honour, fonts included, and it is not needed here: this
+    renderer already has a real browser page open.
+    """
+    print("Testing live-page capture...")
+
+    assert 'document.importNode' in MERMAID_RENDER_SCRIPT, MERMAID_RENDER_SCRIPT[:400]
+    assert 'document.fonts.ready' in MERMAID_RENDER_SCRIPT, MERMAID_RENDER_SCRIPT[:400]
+    for canvas_artifact in ("getContext('2d')", 'drawImage', 'toDataURL', 'new Image()'):
+        assert canvas_artifact not in MERMAID_RENDER_SCRIPT, (
+            f'the server renderer still rasterizes through a canvas: {canvas_artifact}'
+        )
+
+    print("Live-page capture passed!")
 
 
 def test_server_skips_a_diagram_it_cannot_render():
@@ -343,6 +490,9 @@ if __name__ == "__main__":
     tests: List[Callable[[], None]] = [
         test_capability_probe_reports_a_complete_shape,
         test_server_and_browser_renderers_share_configuration,
+        test_render_font_is_embedded_rather_than_borrowed_from_the_host,
+        test_container_image_installs_scalable_fonts,
+        test_server_renderer_captures_the_live_page,
         test_server_renders_diagrams_with_visible_labels,
         test_server_skips_a_diagram_it_cannot_render,
         test_server_render_deduplicates_and_caps_sources,

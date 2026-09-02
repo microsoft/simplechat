@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for Deep Research Chromium build opt-out.
-Version: 0.241.069
+Version: 0.261.034
 Implemented in: 0.241.068
 
 This test ensures azd container builds can skip Playwright Chromium browser
@@ -12,11 +12,20 @@ packaging by setting SIMPLECHAT_INSTALL_CHROMIUM=false before deployment.
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from test_support.versioning import assert_version_at_least  # noqa: E402
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DOCKERFILE = REPO_ROOT / "application" / "single_app" / "Dockerfile"
 AZURE_YAML = REPO_ROOT / "deployers" / "azure.yaml"
 DEPLOYER_VERSION = REPO_ROOT / "deployers" / "version.txt"
+
+# The deployer version this build contract first shipped in. Asserted as a floor rather than
+# an exact match, because every later deployer change bumps this file and an equality check
+# would fail on all of them.
+CHROMIUM_BUILD_CONTRACT_DEPLOYER_VERSION = "1.0.4"
 
 
 def read_text(path):
@@ -51,10 +60,13 @@ def test_azd_predeploy_passes_chromium_build_arg():
 
 
 def test_deployer_version_updated_for_build_contract():
-    """Validate deployer version was bumped for the ACR build contract change."""
-    deployer_version = read_text(DEPLOYER_VERSION).strip()
-    if deployer_version != "1.0.4":
-        raise AssertionError(f"Expected deployer version 1.0.4, found {deployer_version}")
+    """Validate the deployer version carries at least the ACR build contract change."""
+    assert_version_at_least(
+        read_text(DEPLOYER_VERSION).strip(),
+        CHROMIUM_BUILD_CONTRACT_DEPLOYER_VERSION,
+        label="deployers/version.txt",
+        reason="The ACR Chromium build contract shipped in this deployer version.",
+    )
 
 
 def main():

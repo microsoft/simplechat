@@ -5885,11 +5885,11 @@ export function appendMessage(
     const exportMenuItemsHtml = renderCompletedAssistantActions ? `
             <li><hr class="dropdown-divider"></li>
             <li><a class="dropdown-item dropdown-export-md-btn" href="#" data-message-id="${messageId}"><i class="bi bi-markdown me-2"></i>Export to Markdown</a></li>
-            <li><a class="dropdown-item dropdown-export-word-btn" href="#" data-message-id="${messageId}"><i class="bi bi-file-earmark-word me-2"></i>Export to Word</a></li>
-            <li><a class="dropdown-item dropdown-export-ppt-btn" href="#" data-message-id="${messageId}"><i class="bi bi-file-earmark-slides me-2"></i>Export to PowerPoint</a></li>
+            <li><a class="dropdown-item dropdown-export-word-btn" href="#" data-message-id="${messageId}" data-default-label="Export to Word" data-pending-label="Building Word Document..." data-icon-class="bi bi-file-earmark-word" data-default-title="Export to Word"><i class="bi bi-file-earmark-word me-2"></i>Export to Word</a></li>
+            <li><a class="dropdown-item dropdown-export-ppt-btn" href="#" data-message-id="${messageId}" data-default-label="Export to PowerPoint" data-pending-label="Building PowerPoint..." data-icon-class="bi bi-file-earmark-slides" data-default-title="Export to PowerPoint"><i class="bi bi-file-earmark-slides me-2"></i>Export to PowerPoint</a></li>
             ${audioExportMenuItemHtml}
             <li><a class="dropdown-item dropdown-copy-prompt-btn" href="#" data-message-id="${messageId}"><i class="bi bi-clipboard-plus me-2"></i>Use as Prompt</a></li>
-            <li><a class="dropdown-item dropdown-open-email-btn" href="#" data-message-id="${messageId}"><i class="bi bi-envelope me-2"></i>Open in Email</a></li>` : '';
+            <li><a class="dropdown-item dropdown-open-email-btn" href="#" data-message-id="${messageId}" data-default-label="Open in Email" data-pending-label="Preparing Email Draft..." data-icon-class="bi bi-envelope" data-default-title="Open in Email"><i class="bi bi-envelope me-2"></i>Open in Email</a></li>` : '';
     const forkConversationMenuItemHtml = shouldRenderConversationForkAction(messageId, fullMessageObject)
       ? '<li><button class="dropdown-item dropdown-fork-conversation-btn" type="button"><i class="bi bi-signpost-split me-2"></i>Fork conversation</button></li>'
       : '';
@@ -6413,11 +6413,11 @@ export function appendMessage(
                 <li><a class="dropdown-item dropdown-retry-btn" href="#" data-message-id="${messageId}"><i class="bi bi-arrow-clockwise me-2"></i>Retry</a></li>
                 <li><hr class="dropdown-divider"></li>
                 <li><a class="dropdown-item dropdown-export-md-btn" href="#" data-message-id="${messageId}"><i class="bi bi-markdown me-2"></i>Export to Markdown</a></li>
-                <li><a class="dropdown-item dropdown-export-word-btn" href="#" data-message-id="${messageId}"><i class="bi bi-file-earmark-word me-2"></i>Export to Word</a></li>
-                <li><a class="dropdown-item dropdown-export-ppt-btn" href="#" data-message-id="${messageId}"><i class="bi bi-file-earmark-slides me-2"></i>Export to PowerPoint</a></li>
+                <li><a class="dropdown-item dropdown-export-word-btn" href="#" data-message-id="${messageId}" data-default-label="Export to Word" data-pending-label="Building Word Document..." data-icon-class="bi bi-file-earmark-word" data-default-title="Export to Word"><i class="bi bi-file-earmark-word me-2"></i>Export to Word</a></li>
+                <li><a class="dropdown-item dropdown-export-ppt-btn" href="#" data-message-id="${messageId}" data-default-label="Export to PowerPoint" data-pending-label="Building PowerPoint..." data-icon-class="bi bi-file-earmark-slides" data-default-title="Export to PowerPoint"><i class="bi bi-file-earmark-slides me-2"></i>Export to PowerPoint</a></li>
                 ${audioExportMenuItemHtml}
                 <li><a class="dropdown-item dropdown-copy-prompt-btn" href="#" data-message-id="${messageId}"><i class="bi bi-clipboard-plus me-2"></i>Use as Prompt</a></li>
-                <li><a class="dropdown-item dropdown-open-email-btn" href="#" data-message-id="${messageId}"><i class="bi bi-envelope me-2"></i>Open in Email</a></li>
+                <li><a class="dropdown-item dropdown-open-email-btn" href="#" data-message-id="${messageId}" data-default-label="Open in Email" data-pending-label="Preparing Email Draft..." data-icon-class="bi bi-envelope" data-default-title="Open in Email"><i class="bi bi-envelope me-2"></i>Open in Email</a></li>
               </ul>
             </div>
             <button class="btn btn-sm btn-link text-muted copy-user-btn" data-message-id="${messageId}" title="Copy message">

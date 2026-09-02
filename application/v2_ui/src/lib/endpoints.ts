@@ -7,6 +7,7 @@
 
 import { api, apiUrl, uploadFile, ApiError, API_BASE } from './apiClient';
 import type { EnhancedCitationMetadata } from './enhancedCitations';
+import type { ExportVisualAsset } from './exportVisuals';
 import type { MaskAction, MaskedRange, MaskSelection } from './masking';
 import type {
     AiNoticeFrequency,
@@ -411,6 +412,14 @@ const EXPORT_EXTENSIONS: Record<'word' | 'powerpoint', string> = {
 interface MessageExportRequest {
     message_id: string;
     conversation_id: string;
+    /**
+     * Pictures of the diagrams already drawn on screen.
+     *
+     * The server renders any diagram this does not cover, so sending them is an optimisation
+     * and a fidelity choice rather than a requirement: it skips a headless browser launch and
+     * keeps whatever colours the reader picked.
+     */
+    visual_assets?: ExportVisualAsset[];
 }
 
 /** `YYYYMMDD_HHMMSS`, matching the server's own download naming. */
