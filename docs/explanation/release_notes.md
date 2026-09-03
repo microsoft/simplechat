@@ -2,36 +2,7 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
-### **(v0.261.046)**
-
-#### Bug Fixes
-
-*   **Typing In The Documents Search Box Dropped Characters**
-    *   The search box searched on every keystroke and lost letters if you typed at anything like normal speed, so a search term had to be entered slowly and checked.
-    *   The box was displaying the *searched* term rather than what you had typed, so each keystroke was undone until the search caught up. It now shows what you type, waits for you to stop before searching, and searches immediately if you press **Enter**. **Escape** clears it.
-    *   (Ref: V2 My Workspace, Documents, search)
-
-*   **Tagging Several Documents Appeared To Hang**
-    *   Applying tags to a multi-document selection showed a spinner labelled "Working…" that never went away and never refreshed the list. The tags had actually been applied — a page refresh showed them — but nothing on screen said so.
-    *   Tagging a document is expensive on the server: it rewrites the document and every one of its search index entries. Sending one request for the whole selection meant a single request that ran for a very long time behind a spinner that could not distinguish slow from stuck.
-    *   Tagging and deleting are now sent in small batches with **a real progress bar** showing how many documents of the total are done, and the list refreshes when it finishes. A batch that fails now reports itself instead of leaving the progress indicator up indefinitely.
-    *   (Ref: V2 My Workspace, Documents, bulk tagging, bulk delete, progress reporting)
-
-#### User Interface Enhancements
-
-*   **Re-Extraction Now Says Which Mode A Document Is Already On**
-    *   The details pane offered **Standard** and **Enhanced** as two identical buttons without indicating which one had been used, so the only way to change a document's extraction was to guess and then check.
-    *   It now states the current mode, marks that option as **(current)**, and presents the other as **Switch to Standard** or **Switch to Enhanced**. A selection spanning both reads **Mixed**; one where no mode was ever recorded reads **Not recorded**.
-    *   The choice is hidden for files it does not apply to — only PDFs and images are processed this way — and in a mixed selection those files are named and left alone rather than silently included.
-    *   **Enhanced** is disabled with an explanation when your administrator has not enabled enhanced extraction, instead of being offered and then refused.
-    *   (Ref: V2 My Workspace, Documents, details pane, `enable_enhanced_extraction`)
-
-*   **The My Workspace Section Menu Can Be Collapsed**
-    *   The list of workspace sections down the left can now be collapsed to icons, giving the documents explorer noticeably more room. The choice is remembered.
-    *   It collapses independently of the main application sidebar, so you can narrow either one without affecting the other. Collapsed entries keep their names as tooltips and for screen readers.
-    *   (Ref: V2 My Workspace, section navigation)
-
-### **(v0.261.045)**
+### **(v0.261.048)**
 
 #### New Features
 
@@ -62,6 +33,17 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 
 #### Bug Fixes
 
+*   **Typing In The Documents Search Box Dropped Characters**
+    *   The search box searched on every keystroke and lost letters if you typed at anything like normal speed, so a search term had to be entered slowly and checked.
+    *   The box was displaying the *searched* term rather than what you had typed, so each keystroke was undone until the search caught up. It now shows what you type, waits for you to stop before searching, and searches immediately if you press **Enter**. **Escape** clears it.
+    *   (Ref: V2 My Workspace, Documents, search)
+
+*   **Tagging Several Documents Appeared To Hang**
+    *   Applying tags to a multi-document selection showed a spinner labelled "Working…" that never went away and never refreshed the list. The tags had actually been applied — a page refresh showed them — but nothing on screen said so.
+    *   Tagging a document is expensive on the server: it rewrites the document and every one of its search index entries. Sending one request for the whole selection meant a single request that ran for a very long time behind a spinner that could not distinguish slow from stuck.
+    *   Tagging and deleting are now sent in small batches with **a real progress bar** showing how many documents of the total are done, and the list refreshes when it finishes. A batch that fails now reports itself instead of leaving the progress indicator up indefinitely.
+    *   (Ref: V2 My Workspace, Documents, bulk tagging, bulk delete, progress reporting)
+
 *   **Sorting Documents By Size Or Page Count Would Have Crashed The Listing**
     *   The document sort compared a missing value against a present one as different types, which raises an error in Python. It was harmless while documents could only be sorted by name, title and date, and would have failed the moment any numeric column became sortable.
     *   Sort fields are now declared as numeric or textual, so a document that has never had a size, a page count or a version still sorts correctly alongside ones that do.
@@ -70,6 +52,83 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 *   **The "Shared With Me" Filter Never Did Anything**
     *   The classic workspace sends a `shared_only` filter that the document listing has never read, so ticking it changed nothing. The listing now supports filtering by document state — recent, shared with you, processing, needs attention, or untagged — and the new interface's rail uses it.
     *   (Ref: `GET /api/documents`, `place` parameter)
+
+#### User Interface Enhancements
+
+*   **Re-Extraction Now Says Which Mode A Document Is Already On**
+    *   The details pane offered **Standard** and **Enhanced** as two identical buttons without indicating which one had been used, so the only way to change a document's extraction was to guess and then check.
+    *   It now states the current mode, marks that option as **(current)**, and presents the other as **Switch to Standard** or **Switch to Enhanced**. A selection spanning both reads **Mixed**; one where no mode was ever recorded reads **Not recorded**.
+    *   The choice is hidden for files it does not apply to — only PDFs and images are processed this way — and in a mixed selection those files are named and left alone rather than silently included.
+    *   **Enhanced** is disabled with an explanation when your administrator has not enabled enhanced extraction, instead of being offered and then refused.
+    *   (Ref: V2 My Workspace, Documents, details pane, `enable_enhanced_extraction`)
+
+*   **The My Workspace Section Menu Can Be Collapsed**
+    *   The list of workspace sections down the left can now be collapsed to icons, giving the documents explorer noticeably more room. The choice is remembered.
+    *   It collapses independently of the main application sidebar, so you can narrow either one without affecting the other. Collapsed entries keep their names as tooltips and for screen readers.
+    *   (Ref: V2 My Workspace, section navigation)
+### **(v0.261.047)**
+
+#### New Features
+
+*   **A Home Page In The V2 Interface**
+    *   The new interface opened straight into chat and had no landing page, which meant three Appearance settings — **Landing Page Text**, **Markdown Alignment** and **Main Page Logo Size** — configured a page that only existed in the classic interface. Editing them appeared to do nothing.
+    *   `/v2` now opens a home page carrying your logo, your landing copy and a **Start chatting** button, and **Home** has been added to the left-hand menu. The logo is sized by **Main Page Logo Size** exactly as the classic home page sizes it.
+    *   Clearing the landing copy leaves the home page without it, rather than restoring the default wording you deleted.
+    *   (Ref: V2 interface, home page, `landing_page_text`, `landing_page_alignment`, `landing_page_logo_scale_percent`)
+
+*   **Custom Pages And External Links In The V2 Left-Hand Menu**
+    *   Both are configured under **Appearance > Pages & Links** and neither appeared in the new interface at all, so a deployment that had set them up saw a menu with none of its own links in it.
+    *   They now appear, following the same rule as the classic navigation: one or two entries sit inline as ordinary menu items, and three or more — or any number when **Force Menu Display** is on — collapse into a group under the menu name you configured, with a count.
+    *   External links open in a new tab so they cannot take an in-progress conversation with them. Custom pages honour their own "open in new tab" setting, and are still filtered per page against your roles.
+    *   (Ref: V2 interface, left-hand menu, Custom Pages, External Links, `/api/v2/bootstrap`)
+
+#### Bug Fixes
+
+*   **Custom Favicon Was Never Shown In The V2 Interface**
+    *   An uploaded favicon replaced the browser tab icon in the classic interface but never in the new one, which also always showed "SimpleChat" as the tab title regardless of the configured application title.
+    *   The favicon file keeps the same name every time it is replaced, so the address it is served from has to change or the browser keeps showing the copy it already has. The classic interface has always done this; the new interface is compiled ahead of time and could not know your branding. The page it serves is now stamped with the current favicon and application title on the way out.
+    *   (Ref: V2 interface, favicon, application title)
+
+*   **Custom Logo Was Squashed In The V2 Left-Hand Menu**
+    *   The logo was drawn into a fixed square, so any logo that is not square — which is most of them — was compressed. It is now sized by height with its own proportions kept, as in the classic navigation.
+    *   (Ref: V2 interface, left-hand menu, custom logo)
+
+*   **Unsafe External Link URLs Are No Longer Rendered In The V2 Left-Hand Menu**
+    *   The new interface validates external link addresses when you save them, but the classic Admin Settings form does not, so a link saved through the classic form — or already stored from an earlier version — could carry an address that is not a web page.
+    *   Addresses that are neither a local path nor `http`/`https` are now removed before the menu is built, so a link that the save path would have rejected can no longer reach the menu by another route.
+    *   (Ref: V2 interface, left-hand menu, External Links, `EXTERNAL_LINK_ALLOWED_SCHEMES`)
+
+*   **Four Settings Appeared Under Appearance Instead Of Their Own Tab**
+    *   **Enable Personal Workspaces** appeared under **Appearance > Notices & Agreements > User Agreement**, and the two external health check endpoints and **Show Simple Chat Documentation Guide Links** appeared under **Appearance > Pages & Links > External Links**. A fifth, **Enable Text Action**, appeared under **Appearance > Branding**.
+    *   Settings that had not yet been described to the new admin page were placed by matching their name against the section names, and these five matched the wrong section — "external" matched External Links rather than Health Check, and "user" matched User Agreement rather than Personal Workspaces.
+    *   They are now described properly and appear where they belong: the health check endpoints under **Operations > Logging & Health > Health Check**, the documentation guide links under **Help > User-Facing Latest Features**, personal workspaces under **Workspaces > Workspace Types**, and the text action under **Agents & Actions > Actions**. Each also gained the explanatory text the classic page has always shown.
+    *   (Ref: V2 Admin Settings, `admin_settings_fields.py`, capability placement)
+
+### **(v0.261.046)**
+
+#### Bug Fixes
+
+*   **Admin Settings Changes Did Not Appear Until The Page Was Reloaded (New Interface)**
+    *   Enabling the classification banner in the new interface and saving appeared to do nothing. The banner was saved correctly, but it only showed up after reloading the browser.
+    *   The banner was not the only thing affected. The new interface reads the application title, the sidebar logo, the classification banner and the list of enabled capabilities once, when the page first loads, and had no way of being told that any of them had changed. Every one of those went stale the moment you saved.
+    *   Saving in **Admin Settings** now refreshes what the interface knows about itself, so the banner appears — or disappears — straight away, along with a changed title or a newly enabled capability. Uploading a logo or favicon updates the sidebar immediately too, rather than waiting for the next reload.
+    *   Your unsaved edits are unaffected: the refresh happens quietly in the background and never interrupts the page you are working on.
+    *   (Ref: V2 interface, Admin Settings, classification banner, branding, `/api/v2/bootstrap`)
+
+### **(v0.261.045)**
+
+#### Bug Fixes
+
+*   **Approving Several Images At Once Looked Like It Had Stopped**
+    *   In the new interface, when a reply proposed several images and you pressed **Approve all**, every card correctly greyed out its Approve button and showed **Generating image…**. The moment the first image appeared, the remaining cards lost their status, their Approve buttons came back, and the **Approve all** button reappeared — so it looked as though nothing was happening and you needed to approve again. The images were in fact still being generated and did arrive shortly after.
+    *   The cards are now told what is happening by the message they belong to rather than keeping it to themselves, so a card that is queued or generating keeps saying so until its image arrives, whatever else happens in the conversation. Editing a proposal's prompt, or dismissing a proposal, now survives a refresh of the reply too.
+    *   The underlying cause was that the whole message was being rebuilt from scratch every time anything about it changed. Diagrams and charts were being thrown away and redrawn for the same reason, and no longer are.
+    *   (Ref: V2 chat, inline image proposals, approve all, assistant markdown rendering)
+
+*   **Generated Image Cards Kept Repeating The Proposal's Description**
+    *   After an image had been generated, its card still showed the labels from the original proposal — the kind of visual, the slide it referred to, and the context it was drawn from. Those describe an image that does not exist yet, and say nothing once you can see it.
+    *   A generated card now shows the title, the image, and which model produced it. Cards still waiting for a decision are unchanged.
+    *   (Ref: V2 chat, inline image proposals, generated image card)
 
 ### **(v0.261.044)**
 

@@ -11,6 +11,7 @@ import { useBootstrapStore } from './stores/bootstrapStore';
 import { useUserSettingsStore } from './stores/userSettingsStore';
 import { initializeTheme, hydrateUiPreferences } from './stores/uiStore';
 import { ChatPage } from './pages/ChatPage';
+import { HomePage } from './pages/HomePage';
 import { AdminSettingsPage } from './pages/AdminSettingsPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { WorkspacePage } from './pages/workspace/WorkspacePage';
@@ -87,6 +88,25 @@ export function App() {
         }
     }, [data]);
 
+    /**
+     * Keep the tab icon in step with the stored favicon.
+     *
+     * The SPA shell is a build artefact, so the server rewrites its icon link on the way
+     * out. That covers a page load but not an upload made in this session: the static file
+     * keeps a stable name, so only the version in the URL tells the browser to fetch it
+     * again.
+     */
+    useEffect(() => {
+        const faviconUrl = data?.branding?.favicon_url;
+        if (!faviconUrl) {
+            return;
+        }
+        const link = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
+        if (link && link.getAttribute('href') !== faviconUrl) {
+            link.setAttribute('href', faviconUrl);
+        }
+    }, [data]);
+
     // Applied from the stored preference on every load. The attribute name and its scale
     // are shared with the classic interface, so a size chosen in either applies to both.
     useEffect(() => {
@@ -107,7 +127,7 @@ export function App() {
             and keyed on the route so navigating away clears the error. */}
             <ErrorBoundary resetKey={location.pathname}>
             <Routes>
-                <Route path="/" element={<Navigate to="/chat" replace />} />
+                <Route path="/" element={<HomePage />} />
                 <Route path="/chat" element={<ChatPage />} />
                 <Route path="/workspace" element={<WorkspacePage />} />
                 {/* Sections are real paths rather than a query parameter, so a link to one
@@ -148,7 +168,7 @@ export function App() {
                         />
                     }
                 />
-                <Route path="*" element={<Navigate to="/chat" replace />} />
+                <Route path="*" element={<Navigate to="/" replace />} />
                 </Routes>
             </ErrorBoundary>
         </AppShell>

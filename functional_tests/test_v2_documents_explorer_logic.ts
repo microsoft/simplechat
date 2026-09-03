@@ -1,8 +1,8 @@
 // test_v2_documents_explorer_logic.ts
 //
 // Runtime test for the V2 documents explorer rules.
-// Version: 0.261.045
-// Implemented in: 0.261.045
+// Version: 0.261.048
+// Implemented in: 0.261.048
 //
 // The companion test, test_v2_documents_explorer.py, asserts that the pieces are wired
 // together: routes carry their decorators, settings keys are whitelisted, the section is

@@ -184,6 +184,14 @@ Settings returned here are always sanitized. The logo is reported as a URL rathe
 stored base64 payload, because sanitization strips any key containing `base64` and the
 images are already served as static files.
 
+The payload is fetched at startup and re-read after an administrator saves. `bootstrapStore`
+exposes `refresh()` alongside `load()` for that second case: it replaces the payload in
+place, without touching `loading` or `error`. Those two drive the boot screen and the boot
+error, each of which replaces the entire interface, so a background refetch that used them
+would tear down the page being worked on and discard its unsaved edits. A failed refresh is
+therefore advisory rather than reported — the write it follows has already succeeded. A
+sequence guard stops a slower earlier refresh from landing after a newer one.
+
 ### `GET` and `PATCH /api/v2/admin/settings`
 
 Blueprint `backend_v2_admin` — `login_required`, `admin_required`.
@@ -802,6 +810,13 @@ on each keystroke would mint a version per character.
 Two things save immediately instead, because they are not part of the settings document:
 branding image uploads, which need server-side conversion before anything can be previewed,
 and custom page metadata, which lives in its own Cosmos container.
+
+A successful save re-reads `/api/v2/bootstrap`, and so does a branding image upload. Many of
+the settings edited here are what the shell draws itself from — the classification banner,
+the sidebar logo and application title, the feature flags the chat surface branches on —
+and that payload would otherwise be the one fetched when the page was opened. Without the
+re-read a saved change is invisible until the browser is reloaded, which reads as a save
+that did not work.
 
 #### Appearance group
 

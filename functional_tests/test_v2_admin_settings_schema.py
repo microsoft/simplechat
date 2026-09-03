@@ -9,8 +9,14 @@ The V2 admin surface renders whatever ``admin_settings_fields.py`` declares. A
 malformed entry does not raise anything server-side; it produces a control that
 silently fails to draw, or draws without the options it needs. These checks make
 a malformed entry a test failure instead.
+
+A declared default is also checked against the application's own default. The
+schema default is what the V2 surface shows for a key the settings document does
+not contain, so a mismatch means the toggle an administrator reads disagrees with
+the behaviour the application is actually applying.
 """
 
+import re
 import sys
 from pathlib import Path
 
@@ -19,6 +25,18 @@ sys.path.append(str(Path(__file__).resolve().parent))
 from test_support.app_stubs import import_app_module
 from test_support.versioning import assert_app_version_at_least
 
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+SETTINGS_MODULE = REPO_ROOT / "application" / "single_app" / "functions_settings.py"
+
+# The literal defaults in functions_settings.py. It is one of the modules
+# ``app_stubs`` replaces, because it reaches config.py and a live Cosmos client, so
+# the values are read from source the way scripts/build_docs_inventory.py reads them.
+APP_DEFAULT_RE = re.compile(
+    r"^\s*'(?P<key>[a-z0-9_]+)'\s*:\s*"
+    r"(?P<value>True|False|'[^']*'|\[\]|-?\d+)\s*,",
+    re.MULTILINE,
+)
 
 fields_module = import_app_module("admin_settings_fields")
 
@@ -227,6 +245,61 @@ def test_option_values_are_unique_within_a_field():
     return True
 
 
+def read_application_defaults():
+    """Return the literal defaults the settings document is seeded with."""
+    defaults = {}
+    for match in APP_DEFAULT_RE.finditer(SETTINGS_MODULE.read_text(encoding="utf-8")):
+        key, raw = match.group("key"), match.group("value")
+        if key in defaults:
+            # The first occurrence is the seeded default; later ones are migrations
+            # and per-branch overrides.
+            continue
+        if raw == "True":
+            defaults[key] = True
+        elif raw == "False":
+            defaults[key] = False
+        elif raw == "[]":
+            defaults[key] = []
+        elif raw.lstrip("-").isdigit():
+            defaults[key] = int(raw)
+        else:
+            defaults[key] = raw[1:-1]
+    assert defaults, "No settings defaults were found; the extraction likely broke."
+    return defaults
+
+
+def test_declared_defaults_match_the_application():
+    """A drifted default shows a toggle that disagrees with what the app does."""
+    print("\nTesting declared defaults against functions_settings.py...")
+
+    assert_app_version_at_least("0.261.047")
+
+    app_defaults = read_application_defaults()
+
+    mismatches = []
+    compared = 0
+    for section_id, field in fields_module.iter_fields():
+        key = field.get("key")
+        if not key or "default" not in field or key not in app_defaults:
+            continue
+        compared += 1
+        if field["default"] != app_defaults[key]:
+            mismatches.append(
+                f"{section_id}.{key}: schema {field['default']!r} != "
+                f"application {app_defaults[key]!r}"
+            )
+
+    assert not mismatches, (
+        "These schema defaults disagree with the defaults the application seeds into "
+        "the settings document, so the V2 admin surface would show the wrong state "
+        "for a key the document does not contain yet:\n  " + "\n  ".join(mismatches)
+    )
+
+    assert compared, "No declared defaults were compared; the extraction likely broke."
+    print(f"  All {compared} declared default(s) match the application.")
+    return True
+
+
 if __name__ == "__main__":
     tests = [
         test_field_types_are_known,
@@ -236,6 +309,7 @@ if __name__ == "__main__":
         test_setting_keys_are_unique,
         test_dependencies_reference_real_fields,
         test_option_values_are_unique_within_a_field,
+        test_declared_defaults_match_the_application,
     ]
 
     results = []

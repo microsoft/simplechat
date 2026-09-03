@@ -10,7 +10,7 @@ A companion **Tags** section owns the tag vocabulary itself — renaming, recolo
 and deleting — so that browsing by tag and administering tags are no longer competing for the
 same toolbar.
 
-**Implemented in version:** `0.261.045`
+**Implemented in version:** `0.261.048`
 **Dependencies**
 
 | Requirement | Why |
