@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for azd Windows hook environment hydration.
-Version: 0.241.101
+Version: 0.261.028
 Implemented in: 0.241.101
 
 This test ensures Windows azd hooks import missing var_* values from the
@@ -85,7 +85,7 @@ def assert_windows_hook_imports_environment(hook_name: str, section: str) -> Non
     assert section.count("function Import-AzdHookEnvironment") == 1, (
         f"Expected {hook_name} to define the azd environment import helper once."
     )
-    assert "azd env get-value $name 2>$null" in section, (
+    assert "azd env get-value $lookupName --environment $env:AZURE_ENV_NAME 2>$null" in section, (
         f"Expected {hook_name} to read missing values from azd env get-value."
     )
     assert "[Environment]::SetEnvironmentVariable($name, $resolvedText, 'Process')" in section, (

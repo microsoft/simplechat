@@ -8,13 +8,13 @@ category: Version History
 
 ## Tutorial Features
 
-- [Guided Tutorials](GUIDED_TUTORIALS.md)
-- [User Tutorial Visibility Preference](USER_TUTORIAL_VISIBILITY_PREFERENCE.md)
+- [Guided Tutorials](v0.241.001/GUIDED_TUTORIALS.md)
+- [User Tutorial Visibility Preference](v0.241.001/USER_TUTORIAL_VISIBILITY_PREFERENCE.md)
 
 ## Admin Experience Features
 
 - [Azure OpenAI Identity Setup Guide](v0.250.001/AZURE_OPENAI_IDENTITY_SETUP_GUIDE.md)
-- [AI Voice Conversations Setup Guide](AI_VOICE_CONVERSATIONS_SETUP_GUIDE.md)
+- [AI Voice Conversations Setup Guide](v0.241.006/AI_VOICE_CONVERSATIONS_SETUP_GUIDE.md)
 - [Activity Log Auto-Refresh](CONTROL_CENTER_ACTIVITY_LOG_AUTO_REFRESH.md)
 - [Activity Log Layout Presets](ACTIVITY_LOG_LAYOUT_PRESETS.md)
 - [Content Safety Violation Messages](CONTENT_SAFETY_VIOLATION_MESSAGES.md)

@@ -46,6 +46,44 @@ main {
     --bs-body-color: #e9ecef;
 }
 
+.account-switch-button,
+.account-switch-button:visited {
+    color: #495057;
+    border-color: #495057;
+}
+
+.account-switch-button:hover,
+.account-switch-button:focus-visible {
+    color: #ffffff;
+    background-color: #495057;
+    border-color: #495057;
+}
+
+.account-switch-button:active {
+    color: #ffffff;
+    background-color: #343a40;
+    border-color: #343a40;
+}
+
+[data-bs-theme="dark"] .account-switch-button,
+[data-bs-theme="dark"] .account-switch-button:visited {
+    color: #f8f9fa;
+    border-color: #f8f9fa;
+}
+
+[data-bs-theme="dark"] .account-switch-button:hover,
+[data-bs-theme="dark"] .account-switch-button:focus-visible {
+    color: #212529;
+    background-color: #f8f9fa;
+    border-color: #f8f9fa;
+}
+
+[data-bs-theme="dark"] .account-switch-button:active {
+    color: #212529;
+    background-color: #e9ecef;
+    border-color: #e9ecef;
+}
+
 /* Theme-based logo visibility */
 [data-bs-theme="light"] .d-dark-mode-only {
     display: none !important;

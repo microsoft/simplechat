@@ -6,6 +6,7 @@ import jwt
 import requests
 
 from config import *
+from config import DISABLE_APP_SERVICE_EASY_AUTH_LOGOUT
 from functions_activity_logging import log_user_login, record_user_login_session_activity
 from functions_terms_of_use import (
     apply_pending_pre_auth_terms_of_use,
@@ -16,6 +17,7 @@ from functions_appinsights import log_event
 from functions_authentication import _build_msal_app, _load_cache, _save_cache, clear_requested_oauth_scopes, create_ci_bearer_session, get_graph_authority, get_graph_endpoint, get_requested_oauth_scopes
 from functions_debug import debug_print
 from functions_settings import get_settings, sanitize_settings_for_user
+from functions_m365_connections import CHAT_AUTH_STATE_PREFIX
 from swagger_wrapper import swagger_route, get_auth_security
 
 def build_front_door_urls(front_door_url):
@@ -42,16 +44,36 @@ def build_front_door_urls(front_door_url):
 
 
 def _use_app_service_easy_auth_logout():
-    """Return True when the current request is running behind App Service Easy Auth."""
+    """
+    Determine whether logout should route through the App Service Easy Auth endpoint.
+
+    Args:
+        None.
+
+    Returns:
+        bool: True when the current request is being served behind App Service Easy Auth.
+    Raises:
+        None.
+    """
+    if DISABLE_APP_SERVICE_EASY_AUTH_LOGOUT:
+        debug_print("Easy Auth logout disabled by DISABLE_APP_SERVICE_EASY_AUTH_LOGOUT; using local logout.")
+        return False
+
     if not os.getenv('WEBSITE_HOSTNAME'):
         return False
 
+    # Easy Auth injects these headers only on requests it actually intercepts, so they are
+    # the reliable per-request signal that /.auth/logout is being served for this host.
     easy_auth_headers = (
         request.headers.get('X-MS-CLIENT-PRINCIPAL'),
         request.headers.get('X-MS-CLIENT-PRINCIPAL-ID'),
         request.headers.get('X-MS-CLIENT-PRINCIPAL-NAME'),
     )
-    return any(easy_auth_headers) or bool(os.getenv('WEBSITE_AUTH_AAD_ALLOWED_TENANTS'))
+    if not any(easy_auth_headers):
+        debug_print("No App Service Easy Auth principal headers on this request; using local logout.")
+        return False
+
+    return True
 
 
 def _build_app_service_easy_auth_logout_url():
@@ -151,6 +173,7 @@ def register_route_frontend_authentication(bp):
         session.pop("last_activity_epoch", None)
         clear_requested_oauth_scopes()
 
+        select_account = request.args.get('select_account') == '1'
         is_teams_login = request.args.get('teams', 'false').lower() == 'true'
         if is_teams_login and ENABLE_TEAMS_SSO:
             settings = get_settings() or {}
@@ -192,10 +215,14 @@ def register_route_frontend_authentication(bp):
         debug_print(f"Front Door enabled: {settings.get('enable_front_door', False)}")
         debug_print(f"Using redirect_uri for Azure AD: {redirect_uri}")
 
-        auth_url = msal_app.get_authorization_request_url(
-            scopes=SCOPE, # Use SCOPE from config (includes offline_access)
-            redirect_uri=redirect_uri
-        )
+        authorization_request = {
+            "scopes": SCOPE,
+            "redirect_uri": redirect_uri,
+        }
+        if select_account:
+            authorization_request["prompt"] = "select_account"
+
+        auth_url = msal_app.get_authorization_request_url(**authorization_request)
         print("Redirecting to Azure AD for authentication.")
         #auth_url= auth_url.replace('https://', 'http://')  # Ensure HTTPS for security
         return redirect(auth_url)
@@ -208,6 +235,10 @@ def register_route_frontend_authentication(bp):
     @bp.route('/getAToken') # This is your redirect URI path
     @swagger_route(security=get_auth_security())
     def authorized():
+        if (request.args.get('state') or '').startswith(CHAT_AUTH_STATE_PREFIX):
+            # The M365 flow owns state/nonce validation and preserves the current app session.
+            from route_backend_m365 import complete_m365_chat_connection_callback
+            return complete_m365_chat_connection_callback()
         # Check for errors passed back from Azure AD
         if request.args.get('error'):
             error = request.args.get('error')
@@ -226,7 +257,7 @@ def register_route_frontend_authentication(bp):
             return redirect(url_for('public_app.index'))
 
         # Build MSAL app WITH session cache (will be loaded by _build_msal_app via _load_cache)
-        msal_app = _build_msal_app(cache=_load_cache()) # Load existing cache
+        msal_app = _build_msal_app(cache=_load_cache(), authority_override=get_graph_authority())
 
         # Get settings from database, with environment variable fallback
         settings = get_settings() or {}
@@ -336,7 +367,7 @@ def register_route_frontend_authentication(bp):
             return "Authorization code not found", 400
 
         # Build MSAL app WITH session cache (will be loaded by _build_msal_app via _load_cache)
-        msal_app = _build_msal_app(cache=_load_cache()) # Load existing cache
+        msal_app = _build_msal_app(cache=_load_cache(), authority_override=get_graph_authority())
 
         # Get settings for redirect URI (same logic as other routes)
         settings = get_settings() or {}

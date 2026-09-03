@@ -5,6 +5,7 @@ description: "AI Models configures chat, embedding, image generation, APIM, mult
 section: "Administration"
 audience: admin
 admin_tab: ai-models
+version: "0.261.035"
 ---
 
 
@@ -33,6 +34,51 @@ Model endpoints are production dependencies for every generated answer, embeddin
 ### Model Endpoints {#multi-endpoint-configuration}
 
 The Model Endpoints section belongs to the Model Endpoints tab. Use it with the adjacent settings in this group so related rollout, access, and operational choices stay aligned.
+
+### Verified model capacity
+
+Capacity overrides implemented in version: **0.261.035** (application version in
+`application/single_app/config.py`).
+
+Use **Advanced endpoint capacity** for verified defaults shared by the models on
+an endpoint. Use **Advanced model capacity** in an individual model row when a
+deployment has different limits or an arbitrary deployment name needs an exact
+catalog identity. These controls are also available in authorized personal and
+group workspace endpoint editors.
+
+| Field | Meaning | Scope |
+| --- | --- | --- |
+| Context Window (tokens) | Shared total that input and generation consume together. | Endpoint and model; `contextWindow` |
+| Input Token Limit (tokens) | Independently documented maximum input, not a synonym for context window. | Endpoint and model; `inputTokenLimit` |
+| Output Token Limit (tokens) | Hard provider generation ceiling, not the amount requested on each call. | Endpoint and model; `outputTokenLimit` |
+| Catalog Model ID | Actual published model ID behind an arbitrary deployment alias; a display name is not authoritative. | Model; `catalogModelId` |
+| Model Version | Exact deployed model version or snapshot, separate from the endpoint's API version. | Model; `modelVersion` |
+| Token Limit Provider | Hosting profile for the verified limits: Auto / inherit, Azure, OpenAI, Anthropic, Google, Vertex AI, xAI, Publisher, or Custom. This does not reroute requests. | Endpoint and model; `tokenLimitProvider` |
+| Output Token Accounting | Whether the allowance covers total generation including reasoning, visible output only, or an unknown accounting contract. Inherit uses the next applicable source. | Endpoint and model; `outputTokenAccounting` |
+| Response Length | Per-request generation allowance for standard chat, kept separate from model capacity. | Model; `responseLength` |
+
+Each capacity inherits independently: **model override -> endpoint override ->
+exact catalog model**. Leave a field blank to inherit; clearing an existing
+override saves `null`. A missing or unknown maximum does not mean unlimited
+capacity. Only enter positive whole numbers up to `9007199254740991`; fractions,
+scientific notation, negative values, and zero are rejected.
+
+Server-side validation also rejects invalid overrides before saving the submitted
+endpoint configuration or credentials. Personal/group saves return HTTP 400 with
+`error_code: model_context_invalid` and a safe field message. The admin settings
+form returns to the settings page with the same message instead of saving the bad value.
+
+Independent input and output maxima need not fit simultaneously inside the
+context window. The actual request must still fit its shared context and any
+independent ceilings. Verify deployment/provider/version specifications before
+overriding limits, especially for custom gateways, on-premises deployments, or a
+different hosting cloud. Select **Total generation** only when the provider/API
+actually includes reasoning and other generated tokens in its allowance.
+
+In Admin Settings, **Save Endpoint** updates the form; save the main settings
+form to persist it. Workspace editors persist through their existing scoped
+save routes. See [declaring verified model capacity]({{ '/guides/model-endpoint-identity-setup/#declare-verified-model-capacity' | relative_url }})
+for the workflow and validation checks.
 
 ### Chat Model {#gpt-config}
 

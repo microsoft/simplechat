@@ -2130,6 +2130,7 @@ export function groupGeneratedImageProposalMessages(messages = []) {
 }
 
 export function loadMessages(conversationId) {
+    window.SimpleChatM365PendingActions?.setConversation(conversationId);
   // Clear search highlights when loading a different conversation
   clearSearchHighlight();
 
@@ -2154,6 +2155,7 @@ export function loadMessages(conversationId) {
       const chatbox = document.getElementById("chatbox");
       if (!chatbox) return;
 
+        window.SimpleChatM365PendingActions?.prepareHistory(conversationId);
       chatbox.innerHTML = "";
       console.log(`--- Loading messages for ${conversationId} ---`);
       updateConversationTaskDocumentsFromMessages(Array.isArray(data.messages) ? data.messages : [], conversationId);
@@ -2250,6 +2252,7 @@ export function loadMessages(conversationId) {
       }
     })
     .finally(() => {
+        void window.SimpleChatM365PendingActions?.refreshConversation(conversationId);
       // Check if there's a search highlight to apply
       if (window.searchHighlight && window.searchHighlight.term) {
         const elapsed = Date.now() - window.searchHighlight.timestamp;
@@ -6030,6 +6033,7 @@ export function appendMessage(
       messageDiv.dataset.messageComplete = 'false';
     }
     chatbox.appendChild(messageDiv); // Append AI message
+    window.SimpleChatM365PendingActions?.trackMessage(messageDiv, fullMessageObject, { history: !isNewMessage });
     renderSuggestedFollowUpButtons(messageDiv, renderedAiContent.followUpSuggestions);
     hydrateGeneratedAnalysisArtifacts(messageDiv, fullMessageObject);
     attachGeneratedImageProposalResults(messageDiv, fullMessageObject?.generated_image_proposals || []);
@@ -6540,6 +6544,7 @@ export function appendMessage(
 
     // Append and scroll (common actions for non-AI)
     chatbox.appendChild(messageDiv);
+    window.SimpleChatM365PendingActions?.trackMessage(messageDiv, fullMessageObject, { history: !isNewMessage });
     hydrateChatWorkspaceAttachmentProgress(messageDiv);
 
     // Attach safe image element and error handler for generated/uploaded images
@@ -6785,7 +6790,10 @@ function getCurrentModelSelection() {
     modelId = selectedOption?.dataset?.modelId || selectedOption?.value || null;
     modelEndpointId = selectedOption?.dataset?.endpointId || null;
     modelProvider = selectedOption?.dataset?.provider || null;
-    modelDeployment = selectedOption?.dataset?.deploymentName || null;
+    modelDeployment = selectedOption?.dataset?.requestModel
+      || selectedOption?.value
+      || selectedOption?.dataset?.deploymentName
+      || null;
     modelIcon = parseSafeJsonObject(selectedOption?.dataset?.modelIcon || '');
   }
 
@@ -6946,7 +6954,14 @@ function buildCollaborativeModelTarget(option = {}) {
     return null;
   }
 
-  const modelDeployment = String(dataset.deploymentName || option.deployment_name || option.value || '').trim() || null;
+  const modelDeployment = String(
+    dataset.requestModel
+    || option.request_model
+    || dataset.deploymentName
+    || option.deployment_name
+    || option.value
+    || ''
+  ).trim() || null;
   const modelId = String(dataset.modelId || option.model_id || option.value || '').trim() || null;
   const modelEndpointId = String(dataset.endpointId || option.endpoint_id || '').trim() || null;
   const modelProvider = String(dataset.provider || option.provider || '').trim() || null;
@@ -7698,6 +7713,7 @@ export function updateUserMessageId(tempId, realId, options = {}) {
   if (messageDiv) {
     // Update the data-message-id attribute
     messageDiv.setAttribute('data-message-id', realId);
+    window.SimpleChatM365PendingActions?.trackMessage(messageDiv, { id: realId });
     console.log(`✅ Updated messageDiv data-message-id to: ${realId}`);
 
     // Update ALL elements with the temporary ID to ensure consistency

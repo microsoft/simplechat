@@ -255,8 +255,8 @@ If the Azure OpenAI API doesn't return token usage (older API versions or differ
 
 ## Related Documentation
 
-- [Tabular Data CSV Storage Fix](../fixes/TABULAR_DATA_CSV_STORAGE_FIX.md)
-- [Agent Model Display Fixes](../fixes/AGENT_MODEL_DISPLAY_FIXES.md)
+- [Tabular Data CSV Storage Fix](../../fixes/v0.229.001/TABULAR_DATA_CSV_STORAGE_FIX.md)
+- [Agent Model Display Fixes](../../fixes/v0.229.001/AGENT_MODEL_DISPLAY_FIXES.md)
 - Main codebase: `application/single_app/`
 
 ## Implementation Notes

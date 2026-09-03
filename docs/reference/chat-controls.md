@@ -4,6 +4,7 @@ title: "Chat interface controls"
 description: "Reference for every documented control in the SimpleChat chat interface."
 section: "Reference"
 audience: user
+version: "0.261.038"
 ---
 
 ## How to use this reference
@@ -24,6 +25,11 @@ Use this page when you can see a control in Chat but are not sure what it does o
 
 ## Conversation header and status
 
+The conversation details dialog includes a paginated **Microsoft 365 sharing
+and analysis acknowledgements** section. It shows the recorded source, decision,
+effective duration, and approval reference without exposing credentials or
+private profile preferences.
+
 {% include media.html src="reference/chat-controls-conversation-header.png" alt="Conversation header with title actions, scope lock, workflow activity, contents, and document buttons visible." title="Conversation header" capture="Capture the conversation header with title actions, scope lock, workflow activity, contents, and document buttons visible. Redact conversation title." %}
 
 | Control | What it does | Why you would use it | Enabled by |
@@ -37,6 +43,18 @@ Use this page when you can see a control in Chat but are not sure what it does o
 
 ## Chat tools and composer
 
+Microsoft 365 agents can pause for a source-sharing or deeper-analysis decision.
+The local approval dialog offers only the durations permitted by the action.
+The same request is available in **Approvals** and notifications; declining a
+source keeps unrelated tools available. See [Microsoft 365 data and approvals]({{ '/guides/microsoft-365-conversation-data/' | relative_url }}).
+
+**Connect Microsoft 365** appears on a paused request when the selected source
+needs delegated sign-in or consent. It opens Microsoft's authorization flow
+for that request's sources and returns to the same conversation to resume it.
+It does not send you to Profile, approve data sharing, or create a workflow
+Run as binding. Connection failures stay visible in the request instead of
+being presented as a model answer that no documents exist.
+
 {% include media.html src="reference/chat-controls-composer-tools.png" alt="Message composer with quick tools, upload controls, URL review, web search, and send button visible." title="Chat tools and composer" capture="Capture the message composer with quick tools, upload controls, URL review, web search, and send button visible." %}
 
 | Control | What it does | Why you would use it | Enabled by |
@@ -45,13 +63,39 @@ Use this page when you can see a control in Chat but are not sure what it does o
 | `search-documents-btn` | Opens the grounded search panel for searching workspace documents from chat. | Use it when the answer should come from personal or group workspace content instead of general model knowledge. | [`enable_group_workspaces`]({{ '/admin/workspaces/' | relative_url }})<br>[`enable_user_workspace`]({{ '/admin/workspaces/' | relative_url }}) |
 | `choose-file-btn` | Lets you select a supported local file and starts chat upload processing for the conversation. | Use it when the file is the immediate subject of the conversation and you do not want to visit Workspace first. | [`enable_chat_file_uploads`]({{ '/admin/workspaces/' | relative_url }}) |
 | `upload-btn` | Adds the selected upload to the chat after file selection. | Use it to confirm an upload before asking questions about that file. | [`enable_web_search`]({{ '/admin/knowledge/' | relative_url }}) |
-| `search-web-btn` | Allows the chat to search the web using the configured Bing/Foundry web-search path. | Use it for current events, public facts, or external pages that are not in your workspaces. | [`enable_web_search`]({{ '/admin/knowledge/' | relative_url }}) |
+| `search-web-btn` | Sends the current message to an admin-configured Azure AI Foundry agent, which searches the public web through Grounding with Bing Search and returns results with citations. | Use it for current events, public facts, or external pages that are not in your workspaces. Only the message you type is sent externally, never conversation history or workspace content. | [`enable_web_search`]({{ '/admin/knowledge/' | relative_url }}) |
 | `url-access-btn` | Opens review for URLs pasted into the message so they can be inspected by the chat flow. | Use it when pasted links should be fetched or reasoned over instead of treated as plain text. | [`enable_url_access`]({{ '/admin/knowledge/' | relative_url }}) |
 | `source-review-btn` | Starts Deep Research so SimpleChat can inspect search results and linked source pages within configured crawl limits. | Use it for research tasks where source review and evidence collection matter more than a quick answer. | [`enable_source_review`]({{ '/admin/knowledge/' | relative_url }}) |
 | `send-btn` | Sends the current composer message to the selected model or agent. | Use it once the prompt, files, scope, and optional tools are ready. | Always available |
 | `scroll-to-bottom-btn` | Jumps the message pane to the newest message when you are scrolled upward. | Use it to return to an in-progress response or the latest turn. | Always available |
 | `chat-mobile-tools-toggle` | Opens the mobile tools panel containing quick actions, voice controls, and selectors. | Use it on smaller screens when desktop toolbar controls move into the offcanvas panel. | Always available |
 | `chat-tutorial-btn` | Launches the guided chat walkthrough. | Use it when onboarding users or when you want a reminder of the main chat workflow. | Always available |
+
+## Microsoft 365 outgoing action cards
+
+Implemented in version: **0.261.038** (`application/single_app/config.py`).
+Manual and delayed email/invitation tools display a saved review card separately
+from the agent's text and citations. Cards remain available after reload and
+through **Approvals** and workflow activity.
+
+| Control | Purpose and limits |
+| --- | --- |
+| Send | Sends a manually prepared message or invitation after checking the current owner, permissions, and reviewed revision. |
+| Send now | Claims an eligible delayed action before its scheduled delivery. It is not a retry for an uncertain remote outcome. |
+| Cancel | Stops an unclaimed delivery without mailbox authentication. It leaves Outlook drafts and does not recall sent messages. |
+| Full review | Loads the complete owner-only body when the initial preview is truncated. Send stays unavailable until that detail is loaded. |
+| Reconnect | Renews sign-in and returns to the same saved card. It does not resend the agent request or automatically confirm the action. |
+| Refresh | Retrieves current server state after an interrupted request or a change in another tab. It never sends merely by refreshing. |
+
+Only the data owner receives send/cancel controls and private body/recipient
+details. Shared viewers get a read-only summary. The countdown is informational;
+loading an overdue card never submits a send. Check Outlook before preparing a
+replacement when delivery has an unknown outcome. Immediate operations keep
+their existing tool-result receipts without a second Send button.
+
+For email, Send submits the reviewed content and leaves the original Outlook
+draft. **Do not send the retained draft again.** See
+[Microsoft 365 Email]({{ '/reference/actions/m365-email/' | relative_url }}).
 
 ## Prompt, model, agent, and reasoning selectors
 

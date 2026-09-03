@@ -1,10 +1,11 @@
 // plugin_modal_stepper.js
 // Multi-step modal functionality for action/plugin creation
 import { showToast } from "./chat/chat-toast.js";
-import { getTypeIcon } from "./workspace/view-utils.js";
+import { getTypeIcon, getMcpRetirementStatus, isMcpActionType } from "./workspace/view-utils.js";
 
 // Action types hidden from the creation UI (backend plugins remain intact)
 const HIDDEN_ACTION_TYPES = ['sql_schema', 'ui_test', 'queue_storage', 'embedding_model', 'databricks_table'];
+const M365_ACTION_TYPES = ['m365_calendar', 'm365_email', 'm365_onedrive', 'm365_sharepoint'];
 const ACTION_IDENTITY_AUTH_TYPES = ['api_key', 'bearer_token', 'client_secret', 'connection_string', 'managed_identity', 'username_password'];
 const SQL_ACTION_IDENTITY_AUTH_TYPES = ['connection_string', 'managed_identity', 'username_password'];
 const OPENAPI_ACTION_IDENTITY_AUTH_TYPES = ['api_key', 'bearer_token', 'username_password'];
@@ -13,6 +14,7 @@ const DATABRICKS_ACTION_IDENTITY_AUTH_TYPES = ['api_key', 'bearer_token', 'manag
 const SNOWFLAKE_ACTION_IDENTITY_AUTH_TYPES = ['api_key', 'bearer_token', 'username_password'];
 const TABLEAU_ACTION_IDENTITY_AUTH_TYPES = ['api_key', 'username_password'];
 const YAMCS_ACTION_IDENTITY_AUTH_TYPES = ['api_key', 'bearer_token', 'username_password'];
+const YAMCS_BASIC_AUTH_IDENTITY_AUTH_TYPES = ['username_password'];
 const LOG_ANALYTICS_ACTION_IDENTITY_AUTH_TYPES = ['client_secret', 'managed_identity'];
 const BLOB_STORAGE_PLUGIN_TYPE = 'blob_storage';
 const AZURE_STORAGE_ENDPOINT_SUFFIXES = [
@@ -37,6 +39,19 @@ const YAMCS_AUTH_METHOD_USERNAME_PASSWORD = 'username_password';
 const YAMCS_AUTH_METHOD_API_KEY = 'api_key';
 const YAMCS_AUTH_METHOD_BEARER_TOKEN = 'bearer_token';
 const YAMCS_AUTH_METHOD_NONE = 'none';
+const YAMCS_BASIC_AUTH_COMPATIBLE_AUTH_METHODS = [YAMCS_AUTH_METHOD_NONE, YAMCS_AUTH_METHOD_API_KEY];
+const ACTION_IDENTITY_SELECT_IDS = {
+  openapi: 'plugin-auth-identity-select',
+  mcp: 'mcp-identity-select',
+  databricks: 'databricks-identity-select',
+  snowflake: 'snowflake-identity-select',
+  tableau: 'tableau-identity-select',
+  yamcs: 'yamcs-identity-select',
+  yamcsBasicAuth: 'yamcs-basic-auth-identity-select',
+  logAnalytics: 'log-analytics-identity-select',
+  generic: 'plugin-auth-identity-select-generic',
+  sql: 'sql-identity-select'
+};
 const publicWorkspacePlural = window.getPublicWorkspaceLabel ? window.getPublicWorkspaceLabel('plural') : 'Public Workspaces';
 const MCP_PLUGIN_TYPE = 'mcp';
 const KEY_VAULT_SECRET_REMINDERS_METADATA_FIELD = 'key_vault_secret_reminders';
@@ -84,7 +99,6 @@ const ACTION_CONNECTION_TEST_CONFIG = {
 };
 const CHART_DEFAULT_ENDPOINT = 'chart://internal';
 const INTERNAL_DOCUMENT_SEARCH_ENDPOINT = 'internal://document-search';
-const MSGRAPH_DEFAULT_ENDPOINT = 'https://graph.microsoft.com';
 const MSGRAPH_MAIL_SEND_MODE_DRAFT_MANUAL = 'draft_manual';
 const MSGRAPH_MAIL_SEND_MODE_DRAFT_DELAYED = 'draft_delayed';
 const MSGRAPH_MAIL_SEND_MODE_AUTO_SEND = 'auto_send';
@@ -97,7 +111,7 @@ const MSGRAPH_DEFAULT_CALENDAR_DELAY_SECONDS = 60;
 const MSGRAPH_MIN_CALENDAR_DELAY_SECONDS = 5;
 const MSGRAPH_MAX_CALENDAR_DELAY_SECONDS = 600;
 const MCP_DEFAULT_SERVER_PROFILE = 'generic';
-const MCP_STDIO_ENDPOINT = 'stdio://local';
+const MCP_REMOTE_TRANSPORTS = new Set(['streamable_http', 'sse', 'websocket']);
 const MCP_FALLBACK_SERVER_PRESETS = [
   {
     id: MCP_DEFAULT_SERVER_PROFILE,
@@ -124,10 +138,9 @@ const MCP_FALLBACK_SERVER_PRESETS = [
       websocketEndpointPlaceholder: 'wss://example.com/mcp'
     },
     constraints: {
-      allowedTransports: ['streamable_http', 'sse', 'websocket', 'stdio'],
+      allowedTransports: ['streamable_http', 'sse', 'websocket'],
       allowedAuthMethods: ['none', 'bearer', 'api_key', 'basic', 'identity'],
-      customHeadersAllowed: true,
-      stdioAllowed: true
+      customHeadersAllowed: true
     },
     warnings: []
   }
@@ -373,6 +386,7 @@ export class PluginModalStepper {
     this.mcpServerPreconfigurations = MCP_FALLBACK_SERVER_PRECONFIGURATIONS;
     this.mcpServerPreconfigurationMap = {};
     this.mcpServerPreconfigurationsLoaded = false;
+    this.mcpConfigurationInitialized = false;
 
     this._loadPluginSchema().then(() => { // Load schema on initialization
       this._populateGenericAuthTypeDropdown(); // Dynamically populate generic auth type dropdown after schema loads (will be called again after schema loads)
@@ -544,6 +558,9 @@ export class PluginModalStepper {
     if (kind === 'yamcs') {
       return this.actionIdentities.filter(identity => YAMCS_ACTION_IDENTITY_AUTH_TYPES.includes(this.getIdentityAuthType(identity)));
     }
+    if (kind === 'yamcsBasicAuth') {
+      return this.actionIdentities.filter(identity => YAMCS_BASIC_AUTH_IDENTITY_AUTH_TYPES.includes(this.getIdentityAuthType(identity)));
+    }
     if (kind === 'logAnalytics') {
       return this.actionIdentities.filter(identity => LOG_ANALYTICS_ACTION_IDENTITY_AUTH_TYPES.includes(this.getIdentityAuthType(identity)));
     }
@@ -557,9 +574,18 @@ export class PluginModalStepper {
     this.populateActionIdentitySelector('snowflake', 'snowflake-identity-select', 'snowflake-action-identity-group', 'snowflake-identity-status');
     this.populateActionIdentitySelector('tableau', 'tableau-identity-select', 'tableau-action-identity-group', 'tableau-identity-status');
     this.populateActionIdentitySelector('yamcs', 'yamcs-identity-select', 'yamcs-action-identity-group', 'yamcs-identity-status');
+    this.populateActionIdentitySelector('yamcsBasicAuth', 'yamcs-basic-auth-identity-select', 'yamcs-basic-auth-identity-group', 'yamcs-basic-auth-identity-status');
     this.populateActionIdentitySelector('logAnalytics', 'log-analytics-identity-select', 'log-analytics-action-identity-group', 'log-analytics-identity-status');
     this.populateActionIdentitySelector('generic', 'plugin-auth-identity-select-generic', 'generic-action-identity-group', 'plugin-auth-identity-status-generic');
     this.populateActionIdentitySelector('sql', 'sql-identity-select', 'sql-action-identity-group', 'sql-identity-status');
+  }
+
+  getStoredActionIdentityId(kind) {
+    if (kind === 'yamcsBasicAuth') {
+      const additionalFields = this.originalPlugin?.additionalFields || this.originalPlugin?.additional_fields || {};
+      return additionalFields.basic_auth_identity_id || '';
+    }
+    return this.originalPlugin?.identity_id || '';
   }
 
   populateActionIdentitySelector(kind, selectId, groupId, statusId) {
@@ -568,7 +594,7 @@ export class PluginModalStepper {
     const status = document.getElementById(statusId);
     if (!select || !group) return;
 
-    const previousValue = select.value || this.originalPlugin?.identity_id || '';
+    const previousValue = select.value || this.getStoredActionIdentityId(kind);
     const identities = this.getActionIdentitiesForKind(kind);
     select.replaceChildren();
 
@@ -614,18 +640,7 @@ export class PluginModalStepper {
   }
 
   getSelectedActionIdentity(kind) {
-    const selectIds = {
-      openapi: 'plugin-auth-identity-select',
-      mcp: 'mcp-identity-select',
-      databricks: 'databricks-identity-select',
-      snowflake: 'snowflake-identity-select',
-      tableau: 'tableau-identity-select',
-      yamcs: 'yamcs-identity-select',
-      logAnalytics: 'log-analytics-identity-select',
-      generic: 'plugin-auth-identity-select-generic',
-      sql: 'sql-identity-select'
-    };
-    const selectedId = document.getElementById(selectIds[kind])?.value || '';
+    const selectedId = document.getElementById(ACTION_IDENTITY_SELECT_IDS[kind])?.value || '';
     if (!selectedId) {
       return null;
     }
@@ -633,18 +648,7 @@ export class PluginModalStepper {
   }
 
   setSelectedActionIdentity(kind, identityId) {
-    const selectIds = {
-      openapi: 'plugin-auth-identity-select',
-      mcp: 'mcp-identity-select',
-      databricks: 'databricks-identity-select',
-      snowflake: 'snowflake-identity-select',
-      tableau: 'tableau-identity-select',
-      yamcs: 'yamcs-identity-select',
-      logAnalytics: 'log-analytics-identity-select',
-      generic: 'plugin-auth-identity-select-generic',
-      sql: 'sql-identity-select'
-    };
-    const select = document.getElementById(selectIds[kind]);
+    const select = document.getElementById(ACTION_IDENTITY_SELECT_IDS[kind]);
     if (!select) return;
     select.value = identityId || '';
   }
@@ -658,6 +662,11 @@ export class PluginModalStepper {
   }
 
   handleActionIdentityChange(kind) {
+    if (kind === 'yamcsBasicAuth') {
+      this.toggleYamcsBasicAuthFields();
+      return;
+    }
+
     const selectedIdentity = this.getSelectedActionIdentity(kind);
     if (kind === 'sql') {
       const authSelect = document.getElementById('sql-auth-type');
@@ -734,6 +743,8 @@ export class PluginModalStepper {
     document.getElementById('tableau-identity-select').addEventListener('change', () => this.handleActionIdentityChange('tableau'));
     document.getElementById('yamcs-auth-method').addEventListener('change', () => this.toggleYamcsAuthFields());
     document.getElementById('yamcs-identity-select').addEventListener('change', () => this.handleActionIdentityChange('yamcs'));
+    document.getElementById('yamcs-enable-basic-auth').addEventListener('change', () => this.toggleYamcsBasicAuthFields());
+    document.getElementById('yamcs-basic-auth-identity-select').addEventListener('change', () => this.handleActionIdentityChange('yamcsBasicAuth'));
     const logAnalyticsCloud = document.getElementById('log-analytics-cloud');
     if (logAnalyticsCloud) {
       logAnalyticsCloud.addEventListener('change', () => this.handleLogAnalyticsCloudChange());
@@ -974,10 +985,24 @@ export class PluginModalStepper {
 
   async showModal(plugin = null) {
     this.isEditMode = !!plugin;
-    this.selectedType = plugin?.type || null;
+    const declaredType = plugin?.type;
+    const effectiveType = declaredType == null || (typeof declaredType === 'string' && !declaredType.trim())
+        ? plugin?.metadata?.type
+        : declaredType;
+    this.selectedType = isMcpActionType(effectiveType) ? MCP_PLUGIN_TYPE : (effectiveType || null);
+    this.mcpConfigurationInitialized = false;
 
     // Store original plugin state for change tracking
     this.originalPlugin = plugin ? JSON.parse(JSON.stringify(plugin)) : null;
+    const retirementStatus = getMcpRetirementStatus(plugin);
+    const retirementNotice = document.getElementById('mcp-retirement-notice');
+    if (retirementNotice) {
+        retirementNotice.textContent = retirementStatus?.message || '';
+        retirementNotice.classList.toggle('d-none', !retirementStatus);
+    }
+    this.setMcpDiscoveryStatus('');
+    this.setMcpDiscoveryWarnings([]);
+    document.getElementById('mcp-test-connection-result')?.classList.add('d-none');
 
     // Reset modal state
     this.currentStep = 1;
@@ -986,7 +1011,7 @@ export class PluginModalStepper {
     this.updateNavigationButtons();
 
     // Set modal title
-    const title = this.isEditMode ? 'Edit Action' : 'Add Action';
+    const title = retirementStatus ? 'Reconfigure Action' : (this.isEditMode ? 'Edit Action' : 'Add Action');
     document.getElementById('plugin-modal-title').textContent = title;
 
     // Clear error messages
@@ -1002,6 +1027,9 @@ export class PluginModalStepper {
 
     if (this.isEditMode) {
       this.populateFormFromPlugin(plugin);
+      if (this.isMcpType()) {
+          this.showConfigSectionForType();
+      }
       // Skip to step 2 for editing
       this.goToStep(2);
     } else {
@@ -1026,7 +1054,7 @@ export class PluginModalStepper {
 
       this.availableTypes = await res.json();
       // Hide deprecated/internal action types from the creation UI
-      this.availableTypes = this.availableTypes.filter(t => !HIDDEN_ACTION_TYPES.includes(t.type));
+      this.availableTypes = this.availableTypes.filter(t => !HIDDEN_ACTION_TYPES.includes(t.type) && !this.isLegacyMsGraphType(t.type));
       // Sort action types alphabetically by display name
       this.availableTypes.sort((a, b) => {
         const nameA = (a.display || a.displayName || a.type || a.name || '').toLowerCase();
@@ -1159,6 +1187,10 @@ export class PluginModalStepper {
   }
 
   selectActionType(typeName) {
+    if (this.isLegacyMsGraphType(typeName) && !(this.isEditMode && this.originalPlugin?.id && this.isLegacyMsGraphType(this.originalPlugin.type))) {
+        this.showError('New combined Microsoft Graph actions are no longer supported. Choose a Microsoft 365 source.');
+        return;
+    }
     // Remove previous selection
     document.querySelectorAll('.action-type-card').forEach(card => {
       card.classList.remove('selected');
@@ -1168,7 +1200,11 @@ export class PluginModalStepper {
     const selectedCard = document.querySelector(`[data-type="${typeName}"]`);
     if (selectedCard) {
       selectedCard.classList.add('selected');
+      const typeChanged = this.selectedType !== typeName;
       this.selectedType = typeName;
+      if (typeChanged && this.isMsGraphType()) {
+          this.msGraphCapabilityState = this.getDefaultMsGraphCapabilities();
+      }
 
       // Update hidden field
       document.getElementById('plugin-type').value = typeName;
@@ -1184,6 +1220,15 @@ export class PluginModalStepper {
 
       // Pre-configure for step 3 if needed
       this.showConfigSectionForType();
+      if (typeChanged && this.isM365Type()) {
+          const defaults = typeData?.defaults || {};
+          this.setMsGraphMailSendConfiguration(defaults);
+          this.setMsGraphCalendarSendConfiguration({
+              msgraph_calendar_send_mode: 'draft_manual',
+              ...defaults
+          });
+          document.getElementById('m365-maximum-sharing-acknowledgement').value = 'always';
+      }
     }
   }
 
@@ -1370,7 +1415,7 @@ export class PluginModalStepper {
   }
 
   isMcpType(type = this.selectedType) {
-    return !!(type && type.toLowerCase() === MCP_PLUGIN_TYPE);
+    return isMcpActionType(type);
   }
 
   isSimpleChatType(type = this.selectedType) {
@@ -1378,7 +1423,37 @@ export class PluginModalStepper {
   }
 
   isMsGraphType(type = this.selectedType) {
-    return !!(type && type.toLowerCase() === 'msgraph');
+    return this.isLegacyMsGraphType(type) || this.isM365Type(type);
+  }
+
+  isLegacyMsGraphType(type = this.selectedType) {
+    return ['msgraph', 'microsoftgraph', 'msgraphplugin', 'microsoftgraphplugin'].includes(String(type || '').toLowerCase().replace(/[^a-z0-9]/g, ''));
+  }
+
+  isM365Type(type = this.selectedType) {
+    return M365_ACTION_TYPES.includes(type);
+  }
+
+  getMsGraphCapabilityDefinitions() {
+    if (!this.isM365Type()) {
+        return MSGRAPH_CAPABILITY_DEFINITIONS;
+    }
+    const definition = this.availableTypes.find(item => item.type === this.selectedType);
+    return Array.isArray(definition?.capabilities) ? definition.capabilities : [];
+  }
+
+  getMsGraphAdditionalFields() {
+    const fields = {
+        [this.isM365Type() ? 'm365_capabilities' : 'msgraph_capabilities']: this.getSelectedMsGraphCapabilities(),
+        maximum_sharing_acknowledgement: document.getElementById('m365-maximum-sharing-acknowledgement').value
+    };
+    if (this.isLegacyMsGraphType() || this.selectedType === 'm365_email') {
+        Object.assign(fields, this.getMsGraphMailSendConfiguration());
+    }
+    if (this.isLegacyMsGraphType() || this.selectedType === 'm365_calendar') {
+        Object.assign(fields, this.getMsGraphCalendarSendConfiguration());
+    }
+    return fields;
   }
 
   isAzureMapsType(type = this.selectedType) {
@@ -1470,8 +1545,8 @@ export class PluginModalStepper {
 
   getDefaultMsGraphCapabilities() {
     const defaults = {};
-    MSGRAPH_CAPABILITY_DEFINITIONS.forEach(definition => {
-      defaults[definition.key] = true;
+    this.getMsGraphCapabilityDefinitions().forEach(definition => {
+      defaults[definition.key] = definition.default !== false;
     });
     return defaults;
   }
@@ -1482,7 +1557,7 @@ export class PluginModalStepper {
       return defaults;
     }
 
-    MSGRAPH_CAPABILITY_DEFINITIONS.forEach(definition => {
+    this.getMsGraphCapabilityDefinitions().forEach(definition => {
       if (Object.prototype.hasOwnProperty.call(rawCapabilities, definition.key)) {
         defaults[definition.key] = Boolean(rawCapabilities[definition.key]);
       }
@@ -1492,13 +1567,27 @@ export class PluginModalStepper {
   }
 
   renderMsGraphConfiguration() {
-    const list = document.getElementById('msgraph-capabilities-list');
+    const listId = this.isM365Type() ? `${this.selectedType}-capabilities-list` : 'msgraph-capabilities-list';
+    const list = document.getElementById(listId);
     if (!list) {
       return;
     }
 
-    list.innerHTML = '';
-    MSGRAPH_CAPABILITY_DEFINITIONS.forEach(definition => {
+    const savedMail = this.getMsGraphMailSendConfiguration();
+    const savedCalendar = this.getMsGraphCalendarSendConfiguration();
+    ['msgraph', ...M365_ACTION_TYPES].forEach(type => {
+        document.getElementById(`${type}-capabilities-list`)?.replaceChildren();
+    });
+    document.getElementById('msgraph-legacy-notice')?.classList.toggle('d-none', !this.isLegacyMsGraphType());
+    document.getElementById('msgraph-legacy-capabilities')?.classList.toggle('d-none', this.isM365Type());
+    M365_ACTION_TYPES.forEach(type => {
+        document.getElementById(`${type}-config-section`)?.classList.toggle('d-none', type !== this.selectedType);
+    });
+    const definitions = this.getMsGraphCapabilityDefinitions();
+    if (this.isM365Type() && !definitions.length) {
+        this.showError('Microsoft 365 capability definitions are unavailable. Reload before saving this action.');
+    }
+    definitions.forEach(definition => {
       const wrapper = document.createElement('div');
       wrapper.className = 'form-check mb-3';
 
@@ -1511,7 +1600,13 @@ export class PluginModalStepper {
       const label = document.createElement('label');
       label.className = 'form-check-label';
       label.setAttribute('for', checkbox.id);
-      label.innerHTML = `<span class="fw-medium">${this.escapeHtml(definition.label)}</span><br><span class="text-muted small">${this.escapeHtml(definition.description)}</span>`;
+      const title = document.createElement('span');
+      title.className = 'fw-medium';
+      title.textContent = definition.label;
+      const detail = document.createElement('span');
+      detail.className = 'd-block text-muted small';
+      detail.textContent = definition.description;
+      label.append(title, detail);
 
       let deliveryOptions = null;
       if (definition.key === 'send_mail') {
@@ -1540,6 +1635,8 @@ export class PluginModalStepper {
       list.appendChild(wrapper);
     });
 
+    this.setMsGraphMailSendConfiguration(savedMail);
+    this.setMsGraphCalendarSendConfiguration(savedCalendar);
     this.updateMsGraphMailDelayVisibility();
     this.updateMsGraphCalendarDelayVisibility();
   }
@@ -2572,6 +2669,8 @@ export class PluginModalStepper {
       }
     });
 
+    this.toggleYamcsBasicAuthFields();
+
     if (selectedIdentity) {
       return;
     }
@@ -2583,6 +2682,49 @@ export class PluginModalStepper {
       apiKeyGroup?.classList.remove('d-none');
     } else if (authMethod === YAMCS_AUTH_METHOD_BEARER_TOKEN) {
       bearerTokenGroup?.classList.remove('d-none');
+    }
+  }
+
+  getYamcsAuthMethodForConflictCheck() {
+    const selectedIdentity = this.getSelectedActionIdentity('yamcs');
+    if (selectedIdentity) {
+      return this.getYamcsIdentityAuthMethod(selectedIdentity);
+    }
+    return document.getElementById('yamcs-auth-method')?.value || YAMCS_AUTH_METHOD_USERNAME_PASSWORD;
+  }
+
+  yamcsBasicAuthConflicts() {
+    return !YAMCS_BASIC_AUTH_COMPATIBLE_AUTH_METHODS.includes(this.getYamcsAuthMethodForConflictCheck());
+  }
+
+  isYamcsBasicAuthEnabled() {
+    return document.getElementById('yamcs-enable-basic-auth')?.checked === true;
+  }
+
+  toggleYamcsBasicAuthFields() {
+    const fields = document.getElementById('yamcs-basic-auth-fields');
+    const conflictAlert = document.getElementById('yamcs-basic-auth-conflict');
+    const usernameInput = document.getElementById('yamcs-basic-auth-username');
+    const passwordInput = document.getElementById('yamcs-basic-auth-password');
+    const enabled = this.isYamcsBasicAuthEnabled();
+
+    fields?.classList.toggle('d-none', !enabled);
+    conflictAlert?.classList.toggle('d-none', !(enabled && this.yamcsBasicAuthConflicts()));
+
+    // A reusable identity supplies both values, so the inline inputs become read-only
+    // mirrors of the stored credential rather than a second place to edit it.
+    const selectedIdentity = this.getSelectedActionIdentity('yamcsBasicAuth');
+    if (usernameInput) {
+      usernameInput.disabled = Boolean(selectedIdentity);
+      if (selectedIdentity) {
+        usernameInput.value = selectedIdentity.credentials?.username || '';
+      }
+    }
+    if (passwordInput) {
+      passwordInput.disabled = Boolean(selectedIdentity);
+      if (selectedIdentity) {
+        passwordInput.value = '';
+      }
     }
   }
 
@@ -2598,6 +2740,9 @@ export class PluginModalStepper {
     document.getElementById('yamcs-timeout').value = additionalFields.timeout || 30;
     document.getElementById('yamcs-tls-verify').checked = additionalFields.tls_verify !== false;
     document.getElementById('yamcs-enable-archive-sql').checked = additionalFields.enable_archive_sql === true;
+    document.getElementById('yamcs-enable-basic-auth').checked = additionalFields.enable_basic_auth === true;
+    document.getElementById('yamcs-basic-auth-username').value = additionalFields.basic_auth_username || '';
+    document.getElementById('yamcs-basic-auth-password').value = additionalFields.basic_auth_password || '';
 
     let authMethod = additionalFields.auth_method || YAMCS_AUTH_METHOD_USERNAME_PASSWORD;
     if (auth.type === 'NoAuth') {
@@ -2617,12 +2762,16 @@ export class PluginModalStepper {
 
     document.getElementById('yamcs-auth-method').value = authMethod;
     this.setSelectedActionIdentity('yamcs', plugin.identity_id || '');
+    this.setSelectedActionIdentity('yamcsBasicAuth', additionalFields.basic_auth_identity_id || '');
     this.handleActionIdentityChange('yamcs');
+    this.handleActionIdentityChange('yamcsBasicAuth');
   }
 
   getYamcsConfiguration() {
     const serverUrl = this.normalizeYamcsServerUrl(document.getElementById('yamcs-server-url')?.value || '');
     const selectedIdentity = this.getSelectedActionIdentity('yamcs');
+    const basicAuthIdentity = this.getSelectedActionIdentity('yamcsBasicAuth');
+    const enableBasicAuth = this.isYamcsBasicAuthEnabled();
     const authMethod = selectedIdentity
       ? this.getYamcsIdentityAuthMethod(selectedIdentity)
       : (document.getElementById('yamcs-auth-method')?.value || YAMCS_AUTH_METHOD_USERNAME_PASSWORD);
@@ -2634,6 +2783,21 @@ export class PluginModalStepper {
       tls_verify: document.getElementById('yamcs-tls-verify')?.checked !== false,
       read_only: true,
       enable_archive_sql: document.getElementById('yamcs-enable-archive-sql')?.checked === true,
+      enable_basic_auth: enableBasicAuth,
+      // Only an identity selection blanks the inline credential. Turning the toggle off
+      // must keep the stored values, otherwise saving would drop the Key Vault reference
+      // and leave its secret orphaned. Runtime and validation already ignore these fields
+      // while the toggle is off. An untouched password field still holds the Key Vault
+      // placeholder, which the save helper resolves back to the existing reference.
+      basic_auth_identity_id: basicAuthIdentity
+        ? (basicAuthIdentity.id || basicAuthIdentity.identity_id || '')
+        : '',
+      basic_auth_username: basicAuthIdentity
+        ? ''
+        : (document.getElementById('yamcs-basic-auth-username')?.value.trim() || ''),
+      basic_auth_password: basicAuthIdentity
+        ? ''
+        : (document.getElementById('yamcs-basic-auth-password')?.value || ''),
       max_rows: parseInt(document.getElementById('yamcs-max-rows')?.value, 10) || 500,
       timeout: parseInt(document.getElementById('yamcs-timeout')?.value, 10) || 30
     };
@@ -2790,10 +2954,31 @@ export class PluginModalStepper {
     const labels = {
       streamable_http: 'Streamable HTTP',
       sse: 'Server-Sent Events',
-      websocket: 'WebSocket',
-      stdio: 'Stdio'
+      websocket: 'WebSocket'
     };
-    return labels[transport] || transport || '-';
+    return labels[transport] || 'Select a remote transport';
+  }
+
+  normalizeMcpTransportForForm(value) {
+    if (value == null || (typeof value === 'string' && !value.trim())) {
+        return 'streamable_http';
+    }
+    if (typeof value !== 'string') {
+        return '';
+    }
+    const normalized = value.trim().toLowerCase().replace(/-/g, '_');
+    const aliases = {
+        http: 'streamable_http',
+        streamablehttp: 'streamable_http',
+        streamable_http: 'streamable_http',
+        sse: 'sse',
+        server_sent_events: 'sse',
+        eventsource: 'sse',
+        ws: 'websocket',
+        wss: 'websocket',
+        websocket: 'websocket'
+    };
+    return Object.prototype.hasOwnProperty.call(aliases, normalized) ? aliases[normalized] : '';
   }
 
   async loadMcpServerPresets() {
@@ -3018,7 +3203,9 @@ export class PluginModalStepper {
     setIfBlank('plugin-description', preconfiguration.description);
     setFieldValue('mcp-server-profile', preconfiguration.presetId || MCP_DEFAULT_SERVER_PROFILE);
     this.applyMcpServerProfile({ applyDefaults: true });
-    setFieldValue('mcp-transport', preconfiguration.transport);
+    if (!getMcpRetirementStatus(this.originalPlugin)) {
+        setFieldValue('mcp-transport', preconfiguration.transport);
+    }
     setFieldValue('mcp-endpoint', preconfiguration.endpoint);
     setFieldValue('mcp-auth-method', defaults.auth_method);
     setFieldValue('mcp-api-key-header-name', defaults.api_key_header_name);
@@ -3060,7 +3247,9 @@ export class PluginModalStepper {
       }
     };
 
-    setValue('mcp-transport', 'transport', 'streamable_http');
+    if (!getMcpRetirementStatus(this.originalPlugin)) {
+        setValue('mcp-transport', 'transport', 'streamable_http');
+    }
     if (!this.getSelectedActionIdentity('mcp')) {
       setValue('mcp-auth-method', 'auth_method', 'none');
     }
@@ -3183,10 +3372,15 @@ export class PluginModalStepper {
   }
 
   initializeMcpConfiguration() {
+    if (this.mcpConfigurationInitialized) {
+        this.toggleMcpTransportFields();
+        this.toggleMcpAuthFields();
+        return;
+    }
     const defaults = {
       'mcp-preconfiguration': '',
       'mcp-server-profile': this.mcpDefaultServerPreset || MCP_DEFAULT_SERVER_PROFILE,
-      'mcp-transport': 'streamable_http',
+      'mcp-transport': this.isEditMode ? '' : 'streamable_http',
       'mcp-auth-method': 'none',
       'mcp-api-key-header-name': 'X-API-Key',
       'mcp-custom-headers': '{}',
@@ -3196,8 +3390,7 @@ export class PluginModalStepper {
       'mcp-retry-count': '0',
       'mcp-retry-backoff-seconds': '1',
       'mcp-tool-result-policy': 'truncate',
-      'mcp-tool-metadata': '[]',
-      'mcp-env': '{}'
+      'mcp-tool-metadata': '[]'
     };
 
     Object.entries(defaults).forEach(([id, value]) => {
@@ -3207,13 +3400,10 @@ export class PluginModalStepper {
       }
     });
 
+    this.mcpConfigurationInitialized = true;
     this.updateMcpTransportOptions();
-    this.applyMcpServerProfile();
+    this.applyMcpServerProfile({ applyDefaults: !this.isEditMode });
     this.toggleMcpAuthFields();
-  }
-
-  isAdminActionScope() {
-    return window.location.pathname.includes('/admin') || this.actionIdentityScope?.scope === 'global';
   }
 
   updateMcpTransportOptions() {
@@ -3225,49 +3415,29 @@ export class PluginModalStepper {
     const preset = this.getSelectedMcpServerPreset();
     const constraints = preset?.constraints || {};
     const allowedTransports = new Set(constraints.allowedTransports || []);
-    const allowStdio = this.isAdminActionScope();
 
     Array.from(transportSelect.options).forEach(option => {
-      let allowed = allowedTransports.size === 0 || allowedTransports.has(option.value);
-      if (option.value === 'stdio') {
-        allowed = allowed && allowStdio && constraints.stdioAllowed !== false;
-      }
+      const allowed = MCP_REMOTE_TRANSPORTS.has(option.value)
+          && (allowedTransports.size === 0 || allowedTransports.has(option.value));
       option.disabled = !allowed;
     });
 
-    if (transportSelect.selectedOptions.length && transportSelect.selectedOptions[0].disabled) {
-      const fallbackTransport = this.getMcpPresetDefault(preset, 'transport', 'streamable_http');
-      const fallbackOption = Array.from(transportSelect.options).find(option => option.value === fallbackTransport && !option.disabled)
-        || Array.from(transportSelect.options).find(option => !option.disabled);
-      if (fallbackOption) {
-        transportSelect.value = fallbackOption.value;
-      }
-    }
-
-    if (!allowStdio && transportSelect.value === 'stdio') {
-      const firstRemoteOption = Array.from(transportSelect.options).find(option => option.value !== 'stdio' && !option.disabled);
-      if (firstRemoteOption) {
-        transportSelect.value = firstRemoteOption.value;
-      }
-      this.setMcpDiscoveryStatus('Stdio transport is only available for admin-managed global actions.', 'warning');
+    if (!MCP_REMOTE_TRANSPORTS.has(transportSelect.value)
+        || transportSelect.selectedOptions[0]?.disabled) {
+        transportSelect.value = '';
     }
   }
 
   toggleMcpTransportFields() {
     this.updateMcpTransportOptions();
-    const transport = document.getElementById('mcp-transport')?.value || 'streamable_http';
+    const transport = document.getElementById('mcp-transport')?.value || '';
     const endpointGroup = document.getElementById('mcp-endpoint-group');
-    const stdioGroup = document.getElementById('mcp-stdio-group');
     const endpointInput = document.getElementById('mcp-endpoint');
 
-    const isStdio = transport === 'stdio';
     if (endpointGroup) {
-      endpointGroup.classList.toggle('d-none', isStdio);
+      endpointGroup.classList.remove('d-none');
     }
-    if (stdioGroup) {
-      stdioGroup.classList.toggle('d-none', !isStdio);
-    }
-    if (!isStdio && endpointInput && !endpointInput.value.trim()) {
+    if (endpointInput && !endpointInput.value.trim()) {
       const profile = document.getElementById('mcp-server-profile')?.value || this.mcpDefaultServerPreset || MCP_DEFAULT_SERVER_PROFILE;
       endpointInput.placeholder = this.getMcpEndpointPlaceholder(transport, profile);
     }
@@ -3304,7 +3474,9 @@ export class PluginModalStepper {
   populateMcpForm(plugin) {
     const additionalFields = plugin.additionalFields || plugin.additional_fields || {};
     const auth = plugin.auth || {};
-    const transport = additionalFields.transport || 'streamable_http';
+    const retirementStatus = getMcpRetirementStatus(plugin);
+    const transport = retirementStatus ? '' : this.normalizeMcpTransportForForm(additionalFields.transport);
+    this.mcpConfigurationInitialized = true;
 
     const storedProfile = additionalFields.server_profile || this.mcpDefaultServerPreset || MCP_DEFAULT_SERVER_PROFILE;
     const storedPreconfiguration = additionalFields.preconfiguration_id || '';
@@ -3317,10 +3489,7 @@ export class PluginModalStepper {
       ? storedProfile
       : (this.mcpDefaultServerPreset || MCP_DEFAULT_SERVER_PROFILE);
     document.getElementById('mcp-transport').value = transport;
-    document.getElementById('mcp-endpoint').value = transport === 'stdio' ? '' : (plugin.endpoint || '');
-    document.getElementById('mcp-command').value = additionalFields.command || '';
-    document.getElementById('mcp-args').value = Array.isArray(additionalFields.args) ? additionalFields.args.join('\n') : '';
-    document.getElementById('mcp-env').value = JSON.stringify(additionalFields.env || {}, null, 2);
+    document.getElementById('mcp-endpoint').value = retirementStatus ? '' : (plugin.endpoint || '');
     document.getElementById('mcp-load-tools').checked = additionalFields.load_tools !== false;
     document.getElementById('mcp-load-prompts').checked = Boolean(additionalFields.load_prompts);
     document.getElementById('mcp-validate-tool-arguments').checked = Boolean(additionalFields.validate_tool_arguments);
@@ -3341,11 +3510,14 @@ export class PluginModalStepper {
       authMethod = 'bearer';
     }
     document.getElementById('mcp-auth-method').value = authMethod;
+    ['mcp-bearer-token', 'mcp-api-key-value', 'mcp-basic-username', 'mcp-basic-password'].forEach(id => {
+        document.getElementById(id).value = '';
+    });
+    document.getElementById('mcp-api-key-header-name').value = additionalFields.api_key_header_name || 'X-API-Key';
 
     if (authMethod === 'bearer') {
       document.getElementById('mcp-bearer-token').value = auth.key || '';
     } else if (authMethod === 'api_key') {
-      document.getElementById('mcp-api-key-header-name').value = additionalFields.api_key_header_name || 'X-API-Key';
       document.getElementById('mcp-api-key-value').value = auth.key || '';
     } else if (authMethod === 'basic') {
       document.getElementById('mcp-basic-username').value = auth.identity || '';
@@ -3359,8 +3531,36 @@ export class PluginModalStepper {
     this.toggleMcpAuthFields();
   }
 
+  validateMcpRemoteConfiguration() {
+    const transport = document.getElementById('mcp-transport')?.value || '';
+    const allowedTransports = this.getSelectedMcpServerPreset()?.constraints?.allowedTransports || [];
+    if (!MCP_REMOTE_TRANSPORTS.has(transport)
+        || (allowedTransports.length && !allowedTransports.includes(transport))) {
+        throw new Error('Select a supported remote MCP transport before saving, testing, or discovering tools.');
+    }
+    const endpoint = document.getElementById('mcp-endpoint')?.value.trim() || '';
+    if (!endpoint) {
+        throw new Error('Endpoint is required for MCP remote transports.');
+    }
+    let parsedEndpoint;
+    try {
+        parsedEndpoint = new URL(endpoint);
+    } catch (error) {
+        throw new Error('MCP endpoint must be a valid absolute URL.');
+    }
+    const allowedSchemes = transport === 'websocket' ? ['ws:', 'wss:'] : ['http:', 'https:'];
+    if (!allowedSchemes.includes(parsedEndpoint.protocol) || !parsedEndpoint.host) {
+        const schemeLabel = allowedSchemes.map(scheme => scheme.replace(':', '')).join('/');
+        throw new Error(`MCP ${transport} transport requires a valid ${schemeLabel} endpoint.`);
+    }
+    if (parsedEndpoint.username || parsedEndpoint.password) {
+        throw new Error('MCP endpoint must not include embedded credentials.');
+    }
+    return { transport, endpoint };
+  }
+
   getMcpConfiguration() {
-    const transport = document.getElementById('mcp-transport')?.value || 'streamable_http';
+    const { transport, endpoint } = this.validateMcpRemoteConfiguration();
     const selectedPreconfigurationId = document.getElementById('mcp-preconfiguration')?.value || '';
     const selectedPreconfiguration = this.getMcpServerPreconfiguration(selectedPreconfigurationId);
     const selectedIdentity = this.getSelectedActionIdentity('mcp');
@@ -3388,14 +3588,6 @@ export class PluginModalStepper {
     }
     if (selectedPreconfiguration?.additionalSettings && typeof selectedPreconfiguration.additionalSettings === 'object') {
       additionalFields.additionalSettings = JSON.parse(JSON.stringify(selectedPreconfiguration.additionalSettings));
-    }
-
-    let endpoint = document.getElementById('mcp-endpoint')?.value.trim() || '';
-    if (transport === 'stdio') {
-      endpoint = MCP_STDIO_ENDPOINT;
-      additionalFields.command = document.getElementById('mcp-command')?.value.trim() || '';
-      additionalFields.args = this.parseTextareaLines('mcp-args');
-      additionalFields.env = this.parseJsonObjectField('mcp-env', 'Environment', {});
     }
 
     const auth = {};
@@ -3821,6 +4013,10 @@ export class PluginModalStepper {
 
     switch (this.currentStep) {
       case 1:
+        if (this.isLegacyMsGraphType() && !(this.isEditMode && this.originalPlugin?.id && this.isLegacyMsGraphType(this.originalPlugin.type))) {
+            this.showError('Choose a source-specific Microsoft 365 action. Legacy actions cannot be recreated.');
+            return false;
+        }
         if (!this.selectedType) {
           this.showError('Please select an action type.');
           return false;
@@ -4249,6 +4445,19 @@ export class PluginModalStepper {
             this.showError('Yamcs bearer token is required for bearer token authentication.');
             return false;
           }
+          if (this.isYamcsBasicAuthEnabled()) {
+            const basicAuthIdentity = this.getSelectedActionIdentity('yamcsBasicAuth');
+            const basicAuthUsername = document.getElementById('yamcs-basic-auth-username').value.trim();
+            const basicAuthPassword = document.getElementById('yamcs-basic-auth-password').value;
+            if (this.yamcsBasicAuthConflicts()) {
+              this.showError('HTTP Basic authentication cannot be combined with username/password or access token authentication. Choose "No Authentication" or "API Key".');
+              return false;
+            }
+            if (!basicAuthIdentity && (!basicAuthUsername || !basicAuthPassword)) {
+              this.showError('A proxy username and password are required for HTTP Basic authentication.');
+              return false;
+            }
+          }
           if (Number.isNaN(maxRows) || maxRows < 1 || maxRows > 5000) {
             this.showError('Yamcs max rows must be between 1 and 5000.');
             return false;
@@ -4259,8 +4468,6 @@ export class PluginModalStepper {
           }
         } else if (isMcpVisible) {
           const transport = document.getElementById('mcp-transport').value;
-          const endpoint = document.getElementById('mcp-endpoint').value.trim();
-          const command = document.getElementById('mcp-command').value.trim();
           const authMethod = document.getElementById('mcp-auth-method').value;
           const selectedIdentity = this.getSelectedActionIdentity('mcp');
           const requestTimeout = parseInt(document.getElementById('mcp-request-timeout').value, 10);
@@ -4270,42 +4477,11 @@ export class PluginModalStepper {
           const retryBackoffSeconds = parseInt(document.getElementById('mcp-retry-backoff-seconds').value, 10);
           let customHeaders = {};
 
-          if (!['streamable_http', 'sse', 'websocket', 'stdio'].includes(transport)) {
-            this.showError('Select a supported MCP transport.');
-            return false;
-          }
-          if (transport === 'stdio') {
-            if (!command) {
-              this.showError('Command is required for MCP stdio transport.');
-              return false;
-            }
-            try {
-              this.parseJsonObjectField('mcp-env', 'Environment', {});
-            } catch (error) {
+          try {
+              this.validateMcpRemoteConfiguration();
+          } catch (error) {
               this.showError(error.message);
               return false;
-            }
-          } else {
-            if (!endpoint) {
-              this.showError('Endpoint is required for MCP remote transports.');
-              return false;
-            }
-            try {
-              const parsedEndpoint = new URL(endpoint);
-              const allowedSchemes = transport === 'websocket' ? ['ws:', 'wss:'] : ['http:', 'https:'];
-              if (!allowedSchemes.includes(parsedEndpoint.protocol) || !parsedEndpoint.host) {
-                const schemeLabel = allowedSchemes.map(scheme => scheme.replace(':', '')).join('/');
-                this.showError(`MCP ${transport} transport requires a valid ${schemeLabel} endpoint.`);
-                return false;
-              }
-              if (parsedEndpoint.username || parsedEndpoint.password) {
-                this.showError('MCP endpoint must not include embedded credentials.');
-                return false;
-              }
-            } catch (error) {
-              this.showError('MCP endpoint must be a valid absolute URL.');
-              return false;
-            }
           }
 
           if (!document.getElementById('mcp-load-tools').checked && !document.getElementById('mcp-load-prompts').checked) {
@@ -5188,6 +5364,32 @@ export class PluginModalStepper {
       return;
     }
 
+    const enableBasicAuth = this.isYamcsBasicAuthEnabled();
+    const basicAuthIdentity = this.getSelectedActionIdentity('yamcsBasicAuth');
+    const basicAuthUsername = document.getElementById('yamcs-basic-auth-username')?.value?.trim() || '';
+    const basicAuthPassword = document.getElementById('yamcs-basic-auth-password')?.value || '';
+
+    if (enableBasicAuth) {
+      if (this.yamcsBasicAuthConflicts()) {
+        resultDiv.classList.remove('d-none');
+        alertDiv.className = 'alert alert-warning mb-0 py-2 px-3 small';
+        alertDiv.textContent = 'HTTP Basic authentication cannot be combined with username/password or access token authentication. Choose "No Authentication" or "API Key".';
+        return;
+      }
+      if (basicAuthIdentity) {
+        resultDiv.classList.remove('d-none');
+        alertDiv.className = 'alert alert-warning mb-0 py-2 px-3 small';
+        alertDiv.textContent = 'Save the action first to test a connection that uses a reusable identity.';
+        return;
+      }
+      if ((!basicAuthUsername || !basicAuthPassword) && !existingPluginContext) {
+        resultDiv.classList.remove('d-none');
+        alertDiv.className = 'alert alert-warning mb-0 py-2 px-3 small';
+        alertDiv.textContent = 'A proxy username and password are required before testing an HTTP Basic authenticated connection.';
+        return;
+      }
+    }
+
     const originalText = btn.innerHTML;
     btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>Testing...';
     btn.disabled = true;
@@ -5207,6 +5409,11 @@ export class PluginModalStepper {
       }
       if (authMethod !== YAMCS_AUTH_METHOD_NONE) {
         payload.auth_key = authKey;
+      }
+      if (enableBasicAuth) {
+        payload.enable_basic_auth = true;
+        payload.basic_auth_username = basicAuthUsername;
+        payload.basic_auth_password = basicAuthPassword;
       }
       if (existingPluginContext) {
         payload.existing_plugin = existingPluginContext;
@@ -5658,12 +5865,7 @@ export class PluginModalStepper {
     }
 
     if (testKey === 'mcp') {
-      const mcpConfig = this.getMcpConfiguration();
-      const transport = mcpConfig.additionalFields?.transport;
-      if (transport !== 'stdio' && !mcpConfig.endpoint) {
-        throw new Error('Enter the MCP server endpoint before testing the connection.');
-      }
-      return mcpConfig;
+      return this.getMcpConfiguration();
     }
 
     if (testKey === 'snowflake') {
@@ -6157,9 +6359,9 @@ export class PluginModalStepper {
   populateFormFromPlugin(plugin) {
     // Step 2 fields
     document.getElementById('plugin-name').value = plugin.name || '';
-    document.getElementById('plugin-display-name').value = plugin.displayName || '';
+    document.getElementById('plugin-display-name').value = plugin.displayName || plugin.display_name || '';
     document.getElementById('plugin-description').value = plugin.description || '';
-    document.getElementById('plugin-type').value = plugin.type || '';
+    document.getElementById('plugin-type').value = this.selectedType || '';
 
     // Step 3 fields - populate based on plugin type
     const isOpenApiType = plugin.type && plugin.type.toLowerCase().includes('openapi');
@@ -6377,16 +6579,17 @@ export class PluginModalStepper {
       this.populateTableauForm(plugin);
     } else if (this.isYamcsType(plugin.type)) {
       this.populateYamcsForm(plugin);
-    } else if (this.isMcpType(plugin.type)) {
+    } else if (this.isMcpType()) {
       this.populateMcpForm(plugin);
     } else if (this.isSimpleChatType(plugin.type)) {
       const additionalFields = plugin.additionalFields || plugin.additional_fields || {};
       this.setSimpleChatCapabilities(additionalFields.simplechat_capabilities || plugin.simplechat_capabilities || null);
     } else if (this.isMsGraphType(plugin.type)) {
       const additionalFields = plugin.additionalFields || plugin.additional_fields || {};
-      this.setMsGraphCapabilities(additionalFields.msgraph_capabilities || plugin.msgraph_capabilities || null);
+      this.setMsGraphCapabilities(additionalFields.m365_capabilities || additionalFields.msgraph_capabilities || plugin.msgraph_capabilities || null);
       this.setMsGraphMailSendConfiguration(additionalFields);
       this.setMsGraphCalendarSendConfiguration(additionalFields);
+      document.getElementById('m365-maximum-sharing-acknowledgement').value = additionalFields.maximum_sharing_acknowledgement || 'always';
     } else if (this.isAzureMapsType(plugin.type)) {
       const auth = plugin.auth || {};
       document.getElementById('azure-maps-key').value = auth.key || '';
@@ -6414,7 +6617,7 @@ export class PluginModalStepper {
     // Step 4 fields
     const metadata = plugin.metadata && Object.keys(plugin.metadata).length > 0 ?
       JSON.stringify(plugin.metadata, null, 2) : '{}';
-    const additionalFields = plugin.additionalFields && Object.keys(plugin.additionalFields).length > 0 ?
+    const additionalFields = !this.isMcpType() && plugin.additionalFields && Object.keys(plugin.additionalFields).length > 0 ?
       JSON.stringify(plugin.additionalFields, null, 2) : '{}';
 
     document.getElementById('plugin-metadata').value = metadata;
@@ -6427,6 +6630,15 @@ export class PluginModalStepper {
   }
 
   getFormData() {
+    if (this.isLegacyMsGraphType() && !(this.isEditMode && this.originalPlugin?.id && this.isLegacyMsGraphType(this.originalPlugin.type))) {
+        throw new Error('A live existing Microsoft Graph action ID is required for editing.');
+    }
+    if (this.isM365Type() && !this.getMsGraphCapabilityDefinitions().length) {
+        throw new Error('Microsoft 365 capability definitions are unavailable. Reload before saving.');
+    }
+    if (this.isMcpType()) {
+        this.validateMcpRemoteConfiguration();
+    }
     // Determine which configuration section is active
     const openApiSection = document.getElementById('openapi-config-section');
     const sqlSection = document.getElementById('sql-config-section');
@@ -6696,11 +6908,9 @@ export class PluginModalStepper {
       auth.type = 'user';
       additionalFields.simplechat_capabilities = this.getSelectedSimpleChatCapabilities();
     } else if (this.isMsGraphType()) {
-      endpoint = MSGRAPH_DEFAULT_ENDPOINT;
+      endpoint = this.isM365Type() ? '' : (this.originalPlugin?.endpoint || '');
       auth.type = 'user';
-      additionalFields.msgraph_capabilities = this.getSelectedMsGraphCapabilities();
-      Object.assign(additionalFields, this.getMsGraphMailSendConfiguration());
-      Object.assign(additionalFields, this.getMsGraphCalendarSendConfiguration());
+      additionalFields = this.getMsGraphAdditionalFields();
     } else if (isAzureMapsVisible) {
       const azureMapsConfig = this.getAzureMapsConfiguration();
       endpoint = azureMapsConfig.endpoint;
@@ -6778,6 +6988,9 @@ export class PluginModalStepper {
 
     if (identityId) {
       formData.identity_id = identityId;
+    }
+    if (this.isEditMode && this.originalPlugin?.id) {
+        formData.id = this.originalPlugin.id;
     }
 
     return formData;
@@ -6881,7 +7094,9 @@ export class PluginModalStepper {
       databaseTypeRow.style.display = '';
     } else if (isMsGraphType) {
       endpointRow.style.display = 'none';
-      document.getElementById('summary-plugin-database-type').textContent = 'Built-in Microsoft Graph action';
+      document.getElementById('summary-plugin-database-type').textContent = this.isM365Type()
+          ? (this.availableTypes.find(item => item.type === this.selectedType)?.display || this.selectedType)
+          : 'Built-in Microsoft Graph action (legacy)';
       databaseTypeRow.style.display = '';
     } else if (isAzureMapsType) {
       endpointRow.style.display = 'none';
@@ -6987,14 +7202,13 @@ export class PluginModalStepper {
     } else if (this.isYamcsType()) {
       return this.normalizeYamcsServerUrl(document.getElementById('yamcs-server-url')?.value || '');
     } else if (isMcpType) {
-      const transport = document.getElementById('mcp-transport')?.value || 'streamable_http';
-      return transport === 'stdio' ? MCP_STDIO_ENDPOINT : document.getElementById('mcp-endpoint').value.trim();
+      return document.getElementById('mcp-endpoint').value.trim();
     } else if (isAzureMapsType) {
       return AZURE_MAPS_DEFAULT_ENDPOINT;
     } else if (isLogAnalyticsType) {
       return this.getLogAnalyticsConfiguration().endpoint;
     } else if (isMsGraphType) {
-      return MSGRAPH_DEFAULT_ENDPOINT;
+      return this.isM365Type() ? '' : (this.originalPlugin?.endpoint || '');
     } else if (isChartType) {
       return CHART_DEFAULT_ENDPOINT;
     } else {
@@ -7377,10 +7591,23 @@ export class PluginModalStepper {
       ? `Reusable Identity (${this.formatYamcsAuthMethod(authMethod)})`
       : this.formatYamcsAuthMethod(authMethod);
     document.getElementById('summary-yamcs-tls-verify').textContent = document.getElementById('yamcs-tls-verify')?.checked === false ? 'Disabled' : 'Enabled';
+    document.getElementById('summary-yamcs-basic-auth').textContent = this.formatYamcsBasicAuthSummary();
     document.getElementById('summary-yamcs-max-rows').textContent = document.getElementById('yamcs-max-rows')?.value.trim() || '500';
     document.getElementById('summary-yamcs-timeout').textContent = `${document.getElementById('yamcs-timeout')?.value || '30'} seconds`;
     document.getElementById('summary-yamcs-archive-sql').textContent = document.getElementById('yamcs-enable-archive-sql')?.checked === true ? 'Enabled (read-only)' : 'Disabled';
     yamcsSection.classList.remove('d-none');
+  }
+
+  formatYamcsBasicAuthSummary() {
+    if (!this.isYamcsBasicAuthEnabled()) {
+      return 'Disabled';
+    }
+    const basicAuthIdentity = this.getSelectedActionIdentity('yamcsBasicAuth');
+    if (basicAuthIdentity) {
+      return `Enabled (reusable identity: ${basicAuthIdentity.name || 'Workspace identity'})`;
+    }
+    const username = document.getElementById('yamcs-basic-auth-username')?.value.trim() || '';
+    return username ? `Enabled (${username})` : 'Enabled';
   }
 
   populateMcpSummary() {
@@ -7394,7 +7621,7 @@ export class PluginModalStepper {
       return;
     }
 
-    const transport = document.getElementById('mcp-transport')?.value || 'streamable_http';
+    const transport = document.getElementById('mcp-transport')?.value || '';
     const serverProfile = document.getElementById('mcp-server-profile')?.value || this.mcpDefaultServerPreset || MCP_DEFAULT_SERVER_PROFILE;
     const preconfigurationId = document.getElementById('mcp-preconfiguration')?.value || '';
     const loadTools = Boolean(document.getElementById('mcp-load-tools')?.checked);
@@ -7485,7 +7712,7 @@ export class PluginModalStepper {
     }
 
     if (!this.isMsGraphType()) {
-      msGraphSection.style.display = 'none';
+      msGraphSection.classList.add('d-none');
       return;
     }
 
@@ -7493,7 +7720,7 @@ export class PluginModalStepper {
     const enabledLabels = [];
     const disabledLabels = [];
 
-    MSGRAPH_CAPABILITY_DEFINITIONS.forEach(definition => {
+    this.getMsGraphCapabilityDefinitions().forEach(definition => {
       if (capabilities[definition.key]) {
         enabledLabels.push(definition.label);
       } else {
@@ -7503,6 +7730,8 @@ export class PluginModalStepper {
 
     enabledList.textContent = enabledLabels.length ? enabledLabels.join(', ') : 'None';
     disabledList.textContent = disabledLabels.length ? disabledLabels.join(', ') : 'None';
+    const policy = document.getElementById('m365-maximum-sharing-acknowledgement');
+    document.getElementById('summary-m365-sharing-policy').textContent = policy.selectedOptions[0]?.textContent || '';
 
     const mailConfig = this.getMsGraphMailSendConfiguration();
     const mailModeRow = document.getElementById('summary-msgraph-mail-mode-row');
@@ -7541,7 +7770,7 @@ export class PluginModalStepper {
     if (calendarDelayRow) {
       calendarDelayRow.classList.toggle('d-none', !calendarEnabled || calendarConfig.msgraph_calendar_send_mode !== MSGRAPH_MAIL_SEND_MODE_DRAFT_DELAYED);
     }
-    msGraphSection.style.display = '';
+    msGraphSection.classList.remove('d-none');
   }
 
   populateChartSummary() {
@@ -7652,7 +7881,7 @@ export class PluginModalStepper {
       } else if (isSimpleChatType) {
         currentEndpoint = '';
       } else if (isMsGraphType) {
-        currentEndpoint = MSGRAPH_DEFAULT_ENDPOINT;
+        currentEndpoint = this.getEndpointValue();
       } else if (isAzureMapsType) {
         currentEndpoint = AZURE_MAPS_DEFAULT_ENDPOINT;
       } else if (isLogAnalyticsType) {
@@ -7764,17 +7993,17 @@ export class PluginModalStepper {
       } else if (isYamcsType) {
         currentAdditionalFields = JSON.stringify(this.getYamcsConfiguration().additionalFields, null, 2);
       } else if (isMcpType) {
-        currentAdditionalFields = JSON.stringify(this.getMcpConfiguration().additionalFields, null, 2);
+        try {
+            currentAdditionalFields = JSON.stringify(this.getMcpConfiguration().additionalFields, null, 2);
+        } catch (error) {
+            return null;
+        }
       } else if (isSimpleChatType) {
         currentAdditionalFields = JSON.stringify({
           simplechat_capabilities: this.getSelectedSimpleChatCapabilities()
         }, null, 2);
       } else if (isMsGraphType) {
-        currentAdditionalFields = JSON.stringify({
-          msgraph_capabilities: this.getSelectedMsGraphCapabilities(),
-          ...this.getMsGraphMailSendConfiguration(),
-          ...this.getMsGraphCalendarSendConfiguration()
-        }, null, 2);
+        currentAdditionalFields = JSON.stringify(this.getMsGraphAdditionalFields(), null, 2);
       } else if (isAzureMapsType) {
         currentAdditionalFields = '{}';
       } else if (isLogAnalyticsType) {
@@ -7847,8 +8076,13 @@ export class PluginModalStepper {
 
       // Compare additional fields
       try {
-        const originalAdditionalFieldsStr = this.originalPlugin.additionalFields && Object.keys(this.originalPlugin.additionalFields).length > 0 ?
-          JSON.stringify(this.originalPlugin.additionalFields, null, 2) : '{}';
+        const originalFields = this.originalPlugin.additionalFields || this.originalPlugin.additional_fields || {};
+        const displayFields = isMcpType
+            ? Object.fromEntries(Object.entries(originalFields).filter(([key]) =>
+                !['command', 'args', 'env', 'cwd', 'env_file', 'encoding', 'encoding_error_handler'].includes(key)))
+            : originalFields;
+        const originalAdditionalFieldsStr = Object.keys(displayFields).length > 0
+            ? JSON.stringify(displayFields, null, 2) : '{}';
         if (currentAdditionalFields !== originalAdditionalFieldsStr) {
           changes.additionalFields = {
             before: originalAdditionalFieldsStr,
@@ -7999,6 +8233,7 @@ export class PluginModalStepper {
   }
 
   clearForm() {
+    this.mcpConfigurationInitialized = false;
     // Clear all form fields for new action creation
     // Use safe setting to avoid errors with missing elements
 
@@ -8078,9 +8313,6 @@ export class PluginModalStepper {
     safeSetValue('mcp-server-profile', this.mcpDefaultServerPreset || MCP_DEFAULT_SERVER_PROFILE);
     safeSetValue('mcp-transport', 'streamable_http');
     safeSetValue('mcp-endpoint');
-    safeSetValue('mcp-command');
-    safeSetValue('mcp-args');
-    safeSetValue('mcp-env', '{}');
     safeSetValue('mcp-auth-method', 'none');
     safeSetValue('mcp-identity-select');
     safeSetValue('mcp-bearer-token');
@@ -8187,6 +8419,7 @@ export class PluginModalStepper {
     this.renderSimpleChatConfiguration();
     this.msGraphCapabilityState = this.getDefaultMsGraphCapabilities();
     this.renderMsGraphConfiguration();
+    document.getElementById('m365-maximum-sharing-acknowledgement').value = 'always';
     this.setMsGraphMailSendConfiguration({});
     this.setMsGraphCalendarSendConfiguration({});
     this.chartCapabilityState = this.getDefaultChartCapabilities();

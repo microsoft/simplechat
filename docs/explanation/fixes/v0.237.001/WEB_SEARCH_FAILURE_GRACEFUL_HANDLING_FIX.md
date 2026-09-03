@@ -175,7 +175,7 @@ DEBUG_LOG_ENABLED = True
 
 ## Related
 
-- [Azure AI Foundry Agent Support](../features/v0.236.011/AZURE_AI_FOUNDRY_AGENT_SUPPORT.md)
+- Azure AI Foundry Agent Support
 - Bing Grounding Tool Configuration
 - Error Handling Best Practices
 

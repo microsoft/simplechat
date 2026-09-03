@@ -902,8 +902,8 @@ try {
         @{ Name = "Group.Read.All"; Id = "5f8c59db-677d-491f-a6b8-5f174b11ec1d" },
         @{ Name = "offline_access"; Id = "7427e0e9-2fba-42fe-b0c0-848c9e6a8182" },
         @{ Name = "openid"; Id = "37f7f235-527c-4136-accd-4a02d197296e" },
-        @{ Name = "People.Read.All"; Id = "b340eb25-3456-403f-be2f-af7a0d370277" },
-        @{ Name = "User.ReadBasic.All"; Id = "b4e74841-8e56-480b-be8b-910348b18b4c" }
+        @{ Name = "People.Read.All"; Id = "b89f9189-71a5-4e70-b041-9887f0bc7e4a" },
+        @{ Name = "User.ReadBasic.All"; Id = "b340eb25-3456-403f-be2f-af7a0d370277" }
     )
     
     $permissionErrors = @()

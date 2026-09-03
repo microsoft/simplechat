@@ -8,7 +8,7 @@ audience: user
 
 <!-- action-slug: document-search -->
 
-{% include media.html src="reference/actions-document-search-configuration.png" alt="Document Search action setup or assignment UI." title="Document Search action" capture="Capture the Document Search action setup or assignment UI with relevant fields visible. Redact secrets and user identifiers." %}
+{% include media.html src="reference/actions-document-search-configuration.png" alt="The Document Search configuration pane noting that the action uses internal search and the current user's access, with default scope, result limit, windowing, and summary settings." title="Document Search action configuration" capture="Capture the Document Search action setup or assignment UI with relevant fields visible. Redact secrets and user identifiers." %}
 
 ## What this action does
 

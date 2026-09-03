@@ -7,6 +7,19 @@ from functions_authentication import *
 from functions_governance import ensure_governance_access
 from functions_group import assert_group_role, get_group_model_endpoints, require_active_group, update_group_model_endpoints
 from functions_keyvault import SecretReturnType, keyvault_model_endpoint_cleanup_helper, keyvault_model_endpoint_delete_helper, keyvault_model_endpoint_get_helper, keyvault_model_endpoint_save_helper
+from functions_model_capabilities import ModelTokenBudgetError
+from functions_model_endpoint_runtime import build_model_endpoint_sync_chat_client
+from functions_model_endpoint_types import (
+    DEFAULT_ANTHROPIC_VERSION,
+    MODEL_ENDPOINT_PROVIDER_CUSTOM,
+    get_model_endpoint_api_type,
+    resolve_model_endpoint_request_model,
+)
+from functions_model_endpoint_validation import (
+    ModelEndpointValidationError,
+    validate_custom_model_endpoint,
+    validate_custom_model_endpoints,
+)
 from functions_settings import *
 from foundry_agent_runtime import FoundryAgentUserAuthenticationRequired, list_foundry_agents_from_endpoint, list_foundry_workflows_from_endpoint, list_new_foundry_agents_from_endpoint, resolve_foundry_project_base, resolve_foundry_project_api_version, build_project_credential, resolve_authority
 from functions_appinsights import log_event
@@ -17,6 +30,9 @@ from model_endpoint_clients import (
     build_anthropic_chat_client,
     build_openai_style_chat_client,
     infer_model_endpoint_protocol,
+    normalize_anthropic_messages_url,
+    normalize_openai_style_base_url,
+    resolve_custom_openai_base_url,
 )
 from swagger_wrapper import swagger_route, get_auth_security
 from azure.identity import DefaultAzureCredential, ClientSecretCredential, get_bearer_token_provider
@@ -170,7 +186,39 @@ def register_route_backend_models(bp):
             # Persisted non-admin endpoints must resolve from stored configuration only.
             merged_payload = merge_model_endpoint_payload(persisted_endpoint, {})
             if "model" in payload:
-                merged_payload["model"] = payload.get("model")
+                requested_model = payload.get("model")
+                if not isinstance(requested_model, dict):
+                    raise LookupError("Model endpoint model not found.")
+                requested_model_id = str(requested_model.get("id") or "").strip()
+                requested_model_name = resolve_model_endpoint_request_model(
+                    persisted_endpoint,
+                    requested_model,
+                )
+                persisted_model = next(
+                    (
+                        model
+                        for model in (persisted_endpoint.get("models") or [])
+                        if isinstance(model, dict)
+                        and model.get("enabled", True)
+                        and (
+                            (
+                                requested_model_id
+                                and str(model.get("id") or "").strip() == requested_model_id
+                            )
+                            or (
+                                requested_model_name
+                                and resolve_model_endpoint_request_model(
+                                    persisted_endpoint,
+                                    model,
+                                ) == requested_model_name
+                            )
+                        )
+                    ),
+                    None,
+                )
+                if not persisted_model:
+                    raise LookupError("Model endpoint model not found.")
+                merged_payload["model"] = persisted_model
         else:
             merged_payload = merge_model_endpoint_payload(persisted_endpoint or {}, payload)
 
@@ -269,54 +317,49 @@ def register_route_backend_models(bp):
             "client_secret": MICROSOFT_PROVIDER_AUTHENTICATION_SECRET,
         }
 
-    def build_inference_client(endpoint, api_version, auth_settings, provider="aoai", deployment_name=""):
-        auth_type = (auth_settings.get("type") or "managed_identity").lower()
-        runtime_protocol = infer_model_endpoint_protocol(provider, endpoint, deployment_name)
-        if auth_type == "api_key":
-            api_key = auth_settings.get("api_key")
-            if not api_key:
-                raise ValueError("API key is required for API key authentication.")
-            if runtime_protocol == MODEL_ENDPOINT_PROTOCOL_ANTHROPIC:
-                return build_anthropic_chat_client(endpoint=endpoint, api_key=api_key)
-            if runtime_protocol == MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE:
-                return build_openai_style_chat_client(api_key, endpoint, api_version)
-            return AzureOpenAI(
-                api_version=api_version,
-                azure_endpoint=endpoint,
-                api_key=api_key
-            )
-
-        if auth_type == "service_principal":
-            authority_override = resolve_authority(auth_settings)
-            credential = ClientSecretCredential(
-                tenant_id=auth_settings.get("tenant_id"),
-                client_id=auth_settings.get("client_id"),
-                client_secret=auth_settings.get("client_secret"),
-                authority=authority_override
-            )
-        else:
-            managed_identity_client_id = auth_settings.get("managed_identity_client_id") or None
-            credential = DefaultAzureCredential(managed_identity_client_id=managed_identity_client_id)
-
-        scope = cognitive_services_scope
-        if provider in ("aifoundry", "new_foundry") or runtime_protocol != MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI:
-            scope = resolve_foundry_scope(auth_settings)
-        log_models_debug(f"Inference token scope={scope} provider={provider} protocol={runtime_protocol}")
-
-        if runtime_protocol == MODEL_ENDPOINT_PROTOCOL_ANTHROPIC:
-            token = credential.get_token(scope).token
-            return build_anthropic_chat_client(endpoint=endpoint, bearer_token=token)
-
-        if runtime_protocol == MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE:
-            token = credential.get_token(scope).token
-            return build_openai_style_chat_client(token, endpoint, api_version)
-
-        token_provider = get_bearer_token_provider(credential, scope)
-        return AzureOpenAI(
-            api_version=api_version,
-            azure_endpoint=endpoint,
-            azure_ad_token_provider=token_provider
+    def build_inference_client(
+        endpoint,
+        api_version,
+        auth_settings,
+        provider="aoai",
+        deployment_name="",
+        api_type="",
+        anthropic_version=DEFAULT_ANTHROPIC_VERSION,
+        url_mode="",
+    ):
+        client, runtime_protocol = build_model_endpoint_sync_chat_client(
+            auth_settings,
+            provider,
+            endpoint,
+            api_version,
+            deployment_name=deployment_name,
+            api_type=api_type,
+            url_mode=url_mode,
+            anthropic_version=anthropic_version,
+            allow_private_custom_endpoints=bool(
+                get_settings().get("allow_private_custom_model_endpoints", False)
+            ),
         )
+        log_models_debug(
+            f"Inference client provider={provider} protocol={runtime_protocol}"
+        )
+        return client
+
+    def describe_resolved_request_url(provider, endpoint, api_type, url_mode, runtime_protocol):
+        """Return the URL SimpleChat actually calls, for display after a test."""
+        try:
+            if runtime_protocol == MODEL_ENDPOINT_PROTOCOL_ANTHROPIC:
+                return normalize_anthropic_messages_url(
+                    endpoint,
+                    direct_custom=provider == MODEL_ENDPOINT_PROVIDER_CUSTOM,
+                )
+            if runtime_protocol == MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE:
+                if provider == MODEL_ENDPOINT_PROVIDER_CUSTOM:
+                    return resolve_custom_openai_base_url(endpoint, api_type, url_mode)
+                return normalize_openai_style_base_url(endpoint)
+            return str(endpoint or "")
+        except Exception:
+            return str(endpoint or "")
 
     def fetch_foundry_project_deployments(endpoint, api_version, auth_settings, project_name=None):
         if not endpoint:
@@ -373,6 +416,12 @@ def register_route_backend_models(bp):
                 f" subscription_id_present={bool(management.get('subscription_id'))}"
                 f" resource_group_present={bool(management.get('resource_group'))}"
             )
+
+            if provider == MODEL_ENDPOINT_PROVIDER_CUSTOM:
+                return build_safe_error_response(
+                    "Model discovery is not available for Custom endpoints. Add models manually.",
+                    400,
+                )
 
             if provider in ("aifoundry", "new_foundry"):
                 endpoint = connection.get("endpoint")
@@ -465,23 +514,48 @@ def register_route_backend_models(bp):
 
             endpoint = connection.get("endpoint") or ""
             api_version = connection.get("openai_api_version") or connection.get("api_version") or ""
-            deployment_name = model.get("deploymentName") or ""
-            runtime_protocol = infer_model_endpoint_protocol(provider, endpoint, deployment_name)
+            api_type = get_model_endpoint_api_type(data)
+            anthropic_version = (
+                connection.get("anthropic_version")
+                or DEFAULT_ANTHROPIC_VERSION
+            )
+            request_model = resolve_model_endpoint_request_model(data, model)
+            runtime_protocol = infer_model_endpoint_protocol(
+                provider,
+                endpoint,
+                request_model,
+                api_type,
+            )
 
             auth_type = (auth_settings.get("type") or "managed_identity").lower()
             log_models_debug(
                 "Test model request"
                 f" provider={provider} auth_type={auth_type}"
-                f" endpoint={endpoint} deployment={deployment_name}"
+                f" endpoint={endpoint} model={request_model}"
             )
 
-            if not endpoint or not deployment_name:
-                return jsonify({"error": "Endpoint and deployment name are required."}), 400
+            if provider == MODEL_ENDPOINT_PROVIDER_CUSTOM:
+                validation_endpoint = dict(data)
+                validation_endpoint["models"] = [model]
+                validate_custom_model_endpoint(
+                    validation_endpoint,
+                    get_settings(),
+                )
+
+            if not endpoint or not request_model:
+                return jsonify({"error": "Endpoint and model identifier are required."}), 400
 
             if runtime_protocol == MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI and not api_version:
-                return jsonify({"error": "Endpoint, API version, and deployment name are required."}), 400
+                return jsonify({"error": "Endpoint, API version, and model identifier are required."}), 400
 
-            if provider not in ("aoai", "aifoundry", "new_foundry", "anthropic", "claude"):
+            if provider not in (
+                "aoai",
+                "aifoundry",
+                "new_foundry",
+                "anthropic",
+                "claude",
+                MODEL_ENDPOINT_PROVIDER_CUSTOM,
+            ):
                 return jsonify({"error": "Model provider not found."}), 400
 
             gpt_client = build_inference_client(
@@ -489,15 +563,35 @@ def register_route_backend_models(bp):
                 api_version,
                 auth_settings,
                 provider=provider,
-                deployment_name=deployment_name,
+                deployment_name=request_model,
+                api_type=api_type,
+                anthropic_version=anthropic_version,
+                url_mode=connection.get("url_mode") or "",
             )
             response = gpt_client.chat.completions.create(
-                model=deployment_name,
+                model=request_model,
                 messages=[{"role": "user", "content": "Testing access."}]
             )
 
             if response:
-                return jsonify({"success": True}), 200
+                # Report what was actually called. URL normalization can rewrite
+                # the configured endpoint, and that rewrite was previously
+                # invisible, so a working test could still hide a surprise.
+                return jsonify({
+                    "success": True,
+                    "resolved": {
+                        "request_url": describe_resolved_request_url(
+                            provider,
+                            endpoint,
+                            api_type,
+                            connection.get("url_mode") or "",
+                            runtime_protocol,
+                        ),
+                        "protocol": runtime_protocol,
+                        "api_type": api_type,
+                        "request_model": request_model,
+                    },
+                }), 200
 
             return jsonify({"error": "No response returned from model."}), 400
 
@@ -812,6 +906,34 @@ def register_route_backend_models(bp):
                 return endpoint
         return None
 
+    def _normalize_personal_endpoints(incoming, existing=None):
+        """Apply shared budget and outbound-policy validation to every write path."""
+        try:
+            merged = (
+                merge_model_endpoints_with_existing(incoming, existing)
+                if existing is not None else incoming
+            )
+            normalized, _ = normalize_model_endpoints(merged)
+        except ModelTokenBudgetError as exc:
+            log_models_exception(
+                "Personal model token-budget validation failed",
+                exc,
+                extra={"scope": "user", "code": exc.code},
+                level=logging.WARNING,
+            )
+            return None, (jsonify({"error": exc.public_message, "error_code": exc.code}), 400)
+        try:
+            validate_custom_model_endpoints(normalized, get_settings())
+        except ModelEndpointValidationError as exc:
+            log_models_exception(
+                "Personal model endpoint validation failed",
+                exc,
+                extra={"scope": "user"},
+                level=logging.WARNING,
+            )
+            return None, build_safe_error_response("Invalid Custom model endpoint configuration.", 400)
+        return normalized, None
+
     def _persist_personal_endpoints(user_id, normalized, existing):
         """Save a full endpoint list, moving Key Vault secrets to match.
 
@@ -882,7 +1004,9 @@ def register_route_backend_models(bp):
             return jsonify({"error": "A model endpoint with that id already exists."}), 409
         candidate["id"] = endpoint_id
 
-        normalized, _ = normalize_model_endpoints(list(existing) + [candidate])
+        normalized, error = _normalize_personal_endpoints(list(existing) + [candidate], existing)
+        if error:
+            return error
         saved_endpoints = _persist_personal_endpoints(user_id, normalized, existing)
         return _single_endpoint_response(saved_endpoints, endpoint_id, 201)
 
@@ -915,11 +1039,14 @@ def register_route_backend_models(bp):
 
         existing = _load_personal_endpoints(user_id)
 
-        merged = merge_model_endpoints_with_existing(incoming, existing)
-
-        normalized, _ = normalize_model_endpoints(merged)
-        _persist_personal_endpoints(user_id, normalized, existing)
-        return jsonify({"success": True})
+        normalized, error = _normalize_personal_endpoints(incoming, existing)
+        if error:
+            return error
+        saved_endpoints = _persist_personal_endpoints(user_id, normalized, existing)
+        return jsonify({
+            "success": True,
+            "endpoints": sanitize_model_endpoints_for_frontend(saved_endpoints),
+        })
 
 
     @bp.route('/api/user/model-endpoints/<endpoint_id>', methods=['GET'])
@@ -970,15 +1097,16 @@ def register_route_backend_models(bp):
         if not current:
             return jsonify({"error": "Model endpoint not found."}), 404
 
-        merged_endpoint = merge_model_endpoint_payload(current, {**updates, "id": current.get("id")})
         replaced = [
-            merged_endpoint
+            {**updates, "id": current.get("id")}
             if isinstance(endpoint, dict) and str(endpoint.get("id") or "") == str(endpoint_id)
             else endpoint
             for endpoint in existing
         ]
 
-        normalized, _ = normalize_model_endpoints(replaced)
+        normalized, error = _normalize_personal_endpoints(replaced, existing)
+        if error:
+            return error
         saved_endpoints = _persist_personal_endpoints(user_id, normalized, existing)
         return _single_endpoint_response(saved_endpoints, current.get("id"), 200)
 
@@ -1012,7 +1140,9 @@ def register_route_backend_models(bp):
             if not (isinstance(endpoint, dict) and str(endpoint.get("id") or "") == str(endpoint_id))
         ]
 
-        normalized, _ = normalize_model_endpoints(remaining)
+        normalized, error = _normalize_personal_endpoints(remaining)
+        if error:
+            return error
         _persist_personal_endpoints(user_id, normalized, existing)
         log_event(
             "User model endpoint deleted",
@@ -1078,9 +1208,27 @@ def register_route_backend_models(bp):
 
         existing = get_group_model_endpoints(group_id)
 
-        merged = merge_model_endpoints_with_existing(incoming, existing)
-
-        normalized, _ = normalize_model_endpoints(merged)
+        try:
+            merged = merge_model_endpoints_with_existing(incoming, existing)
+            normalized, _ = normalize_model_endpoints(merged)
+        except ModelTokenBudgetError as exc:
+            log_models_exception(
+                "Group model token-budget validation failed",
+                exc,
+                extra={"scope": "group", "code": exc.code},
+                level=logging.WARNING,
+            )
+            return jsonify({"error": exc.public_message, "error_code": exc.code}), 400
+        try:
+            validate_custom_model_endpoints(normalized, get_settings())
+        except ModelEndpointValidationError as exc:
+            log_models_exception(
+                "Group model endpoint validation failed",
+                exc,
+                extra={"scope": "group"},
+                level=logging.WARNING,
+            )
+            return build_safe_error_response(str(exc), 400)
         existing_by_id = {
             endpoint.get("id"): endpoint
             for endpoint in existing
@@ -1122,7 +1270,10 @@ def register_route_backend_models(bp):
                 keyvault_model_endpoint_delete_helper(endpoint, endpoint_id, scope="group")
 
         update_group_model_endpoints(group_id, saved_endpoints)
-        return jsonify({"success": True})
+        return jsonify({
+            "success": True,
+            "endpoints": sanitize_model_endpoints_for_frontend(saved_endpoints),
+        })
 
 
     @bp.route('/api/models/foundry/agents', methods=['POST'])

@@ -5,11 +5,11 @@ counts:
   admin_groups: 14
   admin_tabs: 46
   admin_sections: 96
-  actions: 27
+  actions: 31
   chat_controls: 47
   sub_elements: 3
   app_pages: 28
-  feature_surfaces: 21
+  feature_surfaces: 22
 capabilities:
 - key: enable_agent_template_gallery
   default: true
@@ -883,6 +883,18 @@ actions:
 - slug: log-analytics
   module: log_analytics_plugin.py
   class_name: LogAnalyticsPlugin
+- slug: m365-calendar
+  module: m365_calendar_plugin.py
+  class_name: M365CalendarPlugin
+- slug: m365-email
+  module: m365_email_plugin.py
+  class_name: M365EmailPlugin
+- slug: m365-onedrive
+  module: m365_onedrive_plugin.py
+  class_name: M365OneDrivePlugin
+- slug: m365-sharepoint
+  module: m365_sharepoint_plugin.py
+  class_name: M365SharePointPlugin
 - slug: math
   module: math_plugin.py
   class_name: MathPlugin
@@ -957,7 +969,7 @@ chat_controls:
   label: Let us walk you through getting the most out of chat
 - id: choose-file-btn
   label: Select and automatically upload a file to this conversation (txt, pdf, doc, docm, docx, msg, xlsx, pptx, html, images,
-    md, json, csv, xml, yaml, yml, log)
+    md, json, csv, xml, yaml, yml, log , xsd )
   enabled_by:
   - enable_chat_file_uploads
 - id: clearFiltersBtn
@@ -1179,6 +1191,8 @@ feature_surfaces:
   slug: health-check-info
 - template: _key_vault_info.html
   slug: key-vault-info
+- template: _m365_approvals_modal.html
+  slug: m365-approvals-modal
 - template: _multiendpoint_modal.html
   slug: multiendpoint-modal
 - template: _plugin_modal.html

@@ -4,7 +4,7 @@
 import { showToast } from "./chat/chat-toast.js"
 import {
     humanizeName, truncateDescription,
-    openViewModal, createActionCard
+    openViewModal, createActionCard, getMcpRetirementStatus
 } from './workspace/view-utils.js';
 
 // Fetch merged plugin settings from backend given type and current settings
@@ -64,7 +64,7 @@ export function escapeHtml(str) {
 }
 
 // Render plugins table (parameterized for tbody selector and button handlers)
-export function renderPluginsTable({plugins, tbodySelector, onEdit, onDelete, onView, onToggleEnabled, onGovern, onDuplicate, ensureTable = true, isAdmin = false}) {
+export function renderPluginsTable({plugins, tbodySelector, onEdit, onDelete, onView, onToggleEnabled, onGovern, onDuplicate, ensureTable = true, isAdmin = false, getPluginKey = plugin => plugin.name || ''}) {
   // Optionally ensure the table is present before rendering
   if (ensureTable) {
     ensurePluginsTableInRoot();
@@ -95,10 +95,11 @@ export function renderPluginsTable({plugins, tbodySelector, onEdit, onDelete, on
 
   plugins.forEach(plugin => {
     const tr = document.createElement('tr');
-    const pluginName = plugin.name || '';
+    const pluginName = getPluginKey(plugin);
     const displayName = humanizeName(plugin.display_name || plugin.name);
     const description = plugin.description || 'No description available';
     const isEnabled = plugin.is_enabled !== false;
+    const retirementStatus = getMcpRetirementStatus(plugin);
     const truncatedDesc = truncateDescription(description, 90);
 
     const nameCell = document.createElement('td');
@@ -115,16 +116,22 @@ export function renderPluginsTable({plugins, tbodySelector, onEdit, onDelete, on
     }
     nameCell.appendChild(document.createTextNode(' '));
     const statusBadge = document.createElement('span');
-    statusBadge.className = isEnabled
-      ? 'badge bg-success-subtle text-success-emphasis border border-success-subtle'
-      : 'badge bg-secondary';
-    statusBadge.textContent = isEnabled ? 'Enabled' : 'Disabled';
+    statusBadge.className = retirementStatus
+        ? 'badge bg-warning text-dark'
+        : (isEnabled ? 'badge bg-success-subtle text-success-emphasis border border-success-subtle' : 'badge bg-secondary');
+    statusBadge.textContent = retirementStatus ? 'Unsupported' : (isEnabled ? 'Enabled' : 'Disabled');
     nameCell.appendChild(statusBadge);
 
     const descriptionCell = document.createElement('td');
     descriptionCell.className = 'text-muted small';
     descriptionCell.title = description;
     descriptionCell.textContent = truncatedDesc;
+    if (retirementStatus) {
+        const notice = document.createElement('div');
+        notice.className = 'mt-1 text-warning-emphasis mcp-retirement-notice';
+        notice.textContent = retirementStatus.message;
+        descriptionCell.appendChild(notice);
+    }
 
     const actionsCell = document.createElement('td');
     const actionButtons = document.createElement('div');
@@ -133,11 +140,13 @@ export function renderPluginsTable({plugins, tbodySelector, onEdit, onDelete, on
 
     let editDeleteButtons = '';
     if (isAdmin || !plugin.is_global) {
-      actionButtons.appendChild(createActionButton('btn btn-sm btn-outline-secondary edit-plugin-btn', 'Edit action', 'bi bi-pencil', onEdit, pluginName));
+      actionButtons.appendChild(createActionButton('btn btn-sm btn-outline-secondary edit-plugin-btn', retirementStatus ? 'Reconfigure action' : 'Edit action', 'bi bi-pencil', onEdit, pluginName));
       if (isAdmin) {
         actionButtons.appendChild(createActionButton('btn btn-sm btn-outline-info govern-plugin-btn', 'Govern action', 'bi bi-shield-check', onGovern, pluginName));
-        actionButtons.appendChild(createActionButton('btn btn-sm btn-outline-secondary duplicate-plugin-btn', 'Duplicate action', 'bi bi-files', onDuplicate, pluginName));
-        if (onToggleEnabled) {
+        if (!retirementStatus) {
+            actionButtons.appendChild(createActionButton('btn btn-sm btn-outline-secondary duplicate-plugin-btn', 'Duplicate action', 'bi bi-files', onDuplicate, pluginName));
+        }
+        if (onToggleEnabled && !retirementStatus) {
           actionButtons.appendChild(createActionButton(
             `btn btn-sm ${isEnabled ? 'btn-outline-warning' : 'btn-outline-success'} toggle-plugin-btn`,
             isEnabled ? 'Disable action' : 'Enable action',
@@ -159,7 +168,7 @@ export function renderPluginsTable({plugins, tbodySelector, onEdit, onDelete, on
 }
 
 // Render plugins grid (card-based view)
-export function renderPluginsGrid({plugins, containerSelector, onEdit, onDelete, onView, isAdmin = false}) {
+export function renderPluginsGrid({plugins, containerSelector, onEdit, onDelete, onView, isAdmin = false, getPluginKey = plugin => plugin.name || ''}) {
   const container = document.querySelector(containerSelector);
   if (!container) return;
   container.innerHTML = '';
@@ -169,9 +178,9 @@ export function renderPluginsGrid({plugins, containerSelector, onEdit, onDelete,
   }
   plugins.forEach(plugin => {
     const card = createActionCard(plugin, {
-      onView: (p) => { if (onView) onView(p.name); },
-      onEdit: (p) => onEdit(p.name),
-      onDelete: (p) => onDelete(p.name),
+      onView: (p) => { if (onView) onView(getPluginKey(p)); },
+      onEdit: (p) => onEdit(getPluginKey(p)),
+      onDelete: (p) => onDelete(getPluginKey(p)),
       canManage: isAdmin || !plugin.is_global,
       isAdmin
     });

@@ -8,7 +8,7 @@ audience: user
 
 <!-- action-slug: blob-storage -->
 
-{% include media.html src="reference/actions-blob-storage-configuration.png" alt="Blob Storage action setup or assignment UI." title="Blob Storage action" capture="Capture the Blob Storage action setup or assignment UI with relevant fields visible. Redact secrets and user identifiers." %}
+{% include media.html src="reference/actions-blob-storage-configuration.png" alt="The Blob Storage configuration pane showing the container-scoped notice, authentication type, connection string, container name and blob prefix fields, and the default capability toggles for listing and reading blobs." title="Blob Storage action configuration" capture="Capture the Blob Storage action setup or assignment UI with relevant fields visible. Redact secrets and user identifiers." %}
 
 ## What this action does
 

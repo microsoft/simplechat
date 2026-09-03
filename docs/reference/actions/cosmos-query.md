@@ -8,7 +8,7 @@ audience: user
 
 <!-- action-slug: cosmos-query -->
 
-{% include media.html src="reference/actions-cosmos-query-configuration.png" alt="Cosmos Query action setup or assignment UI." title="Cosmos Query action" capture="Capture the Cosmos Query action setup or assignment UI with relevant fields visible. Redact secrets and user identifiers." %}
+{% include media.html src="reference/actions-cosmos-query-configuration.png" alt="The Cosmos configuration pane showing account endpoint, database, container and partition key path fields, with Managed Identity selected as the authentication method." title="Cosmos Query action configuration" capture="Capture the Cosmos Query action setup or assignment UI with relevant fields visible. Redact secrets and user identifiers." %}
 
 ## What this action does
 

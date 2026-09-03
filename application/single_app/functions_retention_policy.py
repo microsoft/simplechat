@@ -6,12 +6,13 @@ Retention Policy Management
 This module handles automated deletion of aged conversations and documents
 based on configurable retention policies for personal, group, and public workspaces.
 
-Version: 0.250.103
+Version: 0.261.038
 Implemented in: 0.234.067
 Updated in: 0.236.012 - Fixed race condition handling for NotFound errors during deletion
 Updated in: 0.237.004 - Fixed critical bug where conversations with null/undefined last_activity_at were deleted regardless of age
 Updated in: 0.237.005 - Fixed field name: use last_updated (actual field) instead of last_activity_at (non-existent)
 Updated in: 0.250.103 - Applied retention by conversation ownership across current, legacy, and collaboration stores
+Updated in: 0.261.038 - Stop pending Microsoft 365 delivery before deleting its destination
 """
 
 from config import *
@@ -22,6 +23,7 @@ from functions_documents import delete_document, delete_document_chunks
 from functions_simplechat_operations import delete_blob_backed_chat_message_files
 from functions_activity_logging import log_conversation_deletion, log_conversation_archival
 from functions_collaboration import delete_collaboration_conversation_for_retention
+from functions_m365_pending_delivery import cancel_m365_conversation_deliveries
 from functions_conversation_cache import invalidate_conversation_cache_for_item
 from functions_notifications import create_notification, create_group_notification, create_public_workspace_notification
 from functions_thoughts import archive_thoughts_for_conversation, delete_thoughts_for_conversation
@@ -382,6 +384,7 @@ def _delete_standard_conversation_for_retention(
         return None
 
     conversation_item = live_conversation_item
+    cancel_m365_conversation_deliveries(conversation_id)
 
     if archiving_enabled:
         archived_item = dict(conversation_item)
@@ -409,7 +412,7 @@ def _delete_standard_conversation_for_retention(
     ))
 
     if not archiving_enabled:
-        delete_blob_backed_chat_message_files(messages, raise_on_error=True)
+        delete_blob_backed_chat_message_files(messages, raise_on_error=True, conversation=conversation_item)
 
     for message_item in messages:
         if archiving_enabled:
@@ -544,16 +547,21 @@ def execute_retention_policy(workspace_scopes=None, manual_execution=False):
             results['public'] = public_results
         
         # Update last run time in settings
-        settings['retention_policy_last_run'] = datetime.now(timezone.utc).isoformat()
+        settings_updates = {
+            'retention_policy_last_run': datetime.now(timezone.utc).isoformat(),
+        }
         
         # Calculate next run time (scheduled for configured hour next day)
         execution_hour = settings.get('retention_policy_execution_hour', 2)
         next_run = datetime.now(timezone.utc).replace(hour=execution_hour, minute=0, second=0, microsecond=0)
         if next_run <= datetime.now(timezone.utc):
             next_run += timedelta(days=1)
-        settings['retention_policy_next_run'] = next_run.isoformat()
+        settings_updates['retention_policy_next_run'] = next_run.isoformat()
         
-        update_settings(settings)
+        if not update_settings(settings_updates):
+            results['success'] = False
+            results['errors'].append('Unable to save retention policy execution settings.')
+            return results
         
         debug_print(f"Retention policy execution completed: {results}")
         return results

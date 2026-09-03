@@ -293,6 +293,6 @@ This enhancement is backward compatible:
 
 ## Related Documentation
 
-- [Smart HTTP Plugin PDF Support](SMART_HTTP_PLUGIN_PDF_SUPPORT.md)
-- [Enhanced Citations Implementation](ENHANCED_CITATIONS_IMPLEMENTATION.md)
-- [Plugin Documentation and Testing Standards](DOCUMENTATION_AND_TESTING_STANDARDS.md)
+- Smart HTTP Plugin PDF Support
+- Enhanced Citations Implementation
+- Plugin Documentation and Testing Standards

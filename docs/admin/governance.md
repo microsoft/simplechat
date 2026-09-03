@@ -67,29 +67,42 @@ The Delegated Item Policies section belongs to the Policies tab. Use it with the
 
 ### MCP Action Destination Governance {#governance-mcp-destination-section}
 
-The MCP Action Destination Governance section belongs to the MCP Governance tab. Use it with the adjacent settings in this group so related rollout, access, and operational choices stay aligned.
-
-### Inbound MCP Source Governance {#governance-inbound-mcp-section}
-
-The Inbound MCP Source Governance section belongs to the MCP Governance tab. Use it with the adjacent settings in this group so related rollout, access, and operational choices stay aligned.
+Use destination governance to limit which remote MCP servers personal, group, and global actions may contact. Policies apply to saves, discovery, connection tests, and tool execution, not just to the server choices shown in the modal.
 
 #### Settings
 
 | Setting | What it does | Default | Notes |
 | --- | --- | --- | --- |
-| Enforce MCP Destination Allowlist | Exposes the capability after required services, permissions, and rollout policy are ready. | Off | `enable_mcp_destination_governance`; capability toggle |
-| Block Private/Local Literal IP Destinations | Defines behavior for the related admin workflow; verify the affected feature after saving. | Off | `mcp_block_unsafe_destinations` |
+| Enforce MCP Destination Allowlist | Requires MCP destinations to satisfy the allowlist for the action's scope and the current caller. | Off | `enable_mcp_destination_governance`; environment enforcement cannot be disabled here. |
+| Block Private/Local Literal IP Destinations | Rejects unsafe literal-IP targets, including loopback, private, and link-local addresses, before allowlist matching. | Off | `mcp_block_unsafe_destinations`; environment-required blocking cannot be disabled here. |
+
+Starting in **0.261.029**, environment-enforced destination restrictions are a non-overridable minimum. Admin Settings may tighten them, but cannot widen an environment allowlist or turn off environment-required enforcement or unsafe-address blocking. The defaults above describe the settings, not an exemption from deployment environment restrictions.
+
+Remote authorization uses a consistent MCP action type, the action's server-established collection/partition origin, the current user or established workflow identity, and current settings. Cached tools are checked again when used. A global action referenced by a personal or group agent still uses its global destination policy.
+
+### Retired stdio action cleanup
+
+Stdio and local process command, argument, and environment configuration are removed in **0.261.029** for all roles and scopes, including Admin/global. No governance toggle or Admin exemption restores them.
+
+Existing stdio actions remain visible but cannot execute. Owners can inspect and explicitly delete their retired records even when MCP-usage governance denies execution; personal ownership, group-management permissions, and Admin boundaries remain in force. Explicit reconfiguration to a supported remote transport and valid endpoint must pass normal current governance.
+
+Legacy records remain available for management without automatic conversion or deletion. Omitting a retired record from a bulk save does not delete it, and migration retains unsupported or failed records. See the [MCP action guide]({{ '/reference/actions/mcp/' | relative_url }}#retired-stdio-actions) for the owner workflow.
+
+### Inbound MCP Source Governance {#governance-inbound-mcp-section}
+
+The Inbound MCP Source Governance section belongs to the MCP Governance tab. Use it with the adjacent settings in this group so related rollout, access, and operational choices stay aligned.
 
 ## Common tasks
 
 1. **Require review for a surface.** Enable the relevant governance toggle and create or edit a test item. Outcome to verify: The item requires administrative review.
-2. **Enforce MCP destinations.** Enable destination governance and test one allowed and one blocked target. Outcome to verify: MCP actions reach only approved destinations.
+2. **Enforce MCP destinations.** Review deployment environment restrictions, enable destination governance as needed, and test one allowed and one blocked remote target. Outcome to verify: MCP actions satisfy both the environment restrictions and current settings.
 
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
-| An MCP call is blocked | Destination governance or private-address blocking rejected the target. | Approve the destination or keep it blocked by policy. |
+| An MCP call is blocked | Destination governance or private-address blocking rejected the target. | Review the action's scope, caller eligibility, environment restrictions, and current settings. Admin Settings cannot relax environment restrictions. |
+| An old MCP action is unsupported even for an Admin | The action uses retired stdio configuration. | Explicitly configure a supported remote transport and endpoint, or delete it. Do not weaken destination governance to try to restore stdio. |
 
 ## Related
 

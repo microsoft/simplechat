@@ -128,6 +128,6 @@ After the fix, retention policy execution should:
 
 ## Related Documentation
 
-- [Retention Policy Feature Documentation](../../features/RETENTION_POLICY.md)
+- Retention Policy Feature Documentation
 - [v0.236.012 NotFound Error Fix](../v0.236.012/RETENTION_POLICY_NOTFOUND_FIX.md)
 - [v0.235.022 Document Deletion Fix](../v0.235.022/RETENTION_POLICY_DOCUMENT_DELETION_FIX.md)

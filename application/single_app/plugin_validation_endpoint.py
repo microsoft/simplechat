@@ -4,11 +4,15 @@ Additional validation endpoints for plugin health checking and manifest validati
 """
 
 import logging
+from copy import deepcopy
 
 from flask import Blueprint, current_app, jsonify, request
 
 from functions_appinsights import log_event
+from functions_action_manifest import resolve_action_type
 from functions_authentication import admin_required, admin_required_blueprint, login_required, user_required, user_required_blueprint
+from functions_global_actions import save_global_action
+from functions_settings import get_settings, update_settings
 from json_schema_validation import apply_plugin_validation_defaults
 from semantic_kernel_plugins.plugin_health_checker import PluginErrorRecovery, PluginHealthChecker
 from semantic_kernel_plugins.plugin_loader import discover_plugins
@@ -19,6 +23,25 @@ plugin_validation_bp = Blueprint('plugin_validation', __name__)
 plugin_validation_admin_bp = Blueprint('plugin_validation_admin', __name__)
 plugin_validation_bp.before_request(user_required_blueprint())
 plugin_validation_admin_bp.before_request(admin_required_blueprint())
+
+
+def _find_plugin_class(plugin_type, discovered_plugins):
+    """Keep MCP class selection consistent with manifest validation."""
+    def normalize(value):
+        return value.replace('_', '').replace('-', '').replace('plugin', '').lower()
+
+    if not plugin_type:
+        return None
+    normalized_type = normalize(plugin_type)
+    for class_name, plugin_class in discovered_plugins.items():
+        if resolve_action_type({'type': class_name}) == 'mcp':
+            if plugin_type == 'mcp':
+                return plugin_class
+            continue
+        normalized_class = normalize(class_name)
+        if normalized_type == normalized_class or normalized_type in normalized_class:
+            return plugin_class
+    return None
 
 
 def _validate_plugin_manifest_request():
@@ -68,9 +91,11 @@ def validate_plugin_manifest():
     """
     try:
         return _validate_plugin_manifest_request()
+    except ValueError:
+        return jsonify({'error': 'Invalid action configuration.'}), 400
     except Exception as e:
         log_event(f"[PLUGIN_VALIDATION] Error validating manifest: {str(e)}", level=logging.ERROR)
-        return jsonify({'error': f'Validation failed: {str(e)}'}), 500
+        return jsonify({'error': 'Unable to validate the action.'}), 500
 
 
 @plugin_validation_admin_bp.route('/api/admin/plugins/validate', methods=['POST'])
@@ -85,9 +110,11 @@ def validate_plugin_manifest_admin():
     """
     try:
         return _validate_plugin_manifest_request()
+    except ValueError:
+        return jsonify({'error': 'Invalid action configuration.'}), 400
     except Exception as e:
         log_event(f"[PLUGIN_VALIDATION] Error validating manifest: {str(e)}", level=logging.ERROR)
-        return jsonify({'error': f'Validation failed: {str(e)}'}), 500
+        return jsonify({'error': 'Unable to validate the action.'}), 500
 
 
 @plugin_validation_admin_bp.route('/api/admin/plugins/test-instantiation', methods=['POST'])
@@ -106,24 +133,13 @@ def test_plugin_instantiation():
         if not manifest:
             return jsonify({'error': 'No manifest provided'}), 400
         
-        plugin_type = manifest.get('type', '')
+        plugin_type = resolve_action_type(manifest)
         plugin_name = manifest.get('name', 'unnamed')
         
         # Discover available plugins
         discovered_plugins = discover_plugins()
         
-        # Find matching plugin class
-        def normalize(s):
-            return s.replace('_', '').replace('-', '').replace('plugin', '').lower() if s else ''
-        
-        normalized_type = normalize(plugin_type)
-        matched_class = None
-        
-        for class_name, cls in discovered_plugins.items():
-            normalized_class = normalize(class_name)
-            if normalized_type == normalized_class or normalized_type in normalized_class:
-                matched_class = cls
-                break
+        matched_class = _find_plugin_class(plugin_type, discovered_plugins)
         
         if not matched_class:
             return jsonify({
@@ -190,20 +206,10 @@ def check_plugin_health(plugin_name):
             return jsonify({'error': f'Plugin {plugin_name} not found'}), 404
         
         # Try to instantiate and check health
-        plugin_type = plugin_manifest.get('type', '')
+        plugin_type = resolve_action_type(plugin_manifest)
         discovered_plugins = discover_plugins()
         
-        def normalize(s):
-            return s.replace('_', '').replace('-', '').replace('plugin', '').lower() if s else ''
-        
-        normalized_type = normalize(plugin_type)
-        matched_class = None
-        
-        for class_name, cls in discovered_plugins.items():
-            normalized_class = normalize(class_name)
-            if normalized_type == normalized_class or normalized_type in normalized_class:
-                matched_class = cls
-                break
+        matched_class = _find_plugin_class(plugin_type, discovered_plugins)
         
         if not matched_class:
             return jsonify({
@@ -252,10 +258,8 @@ def repair_plugin(plugin_name):
     Attempt to repair a plugin that has issues.
     """
     try:
-        from functions_settings import get_settings, update_settings
-        
         settings = get_settings()
-        plugins = settings.get('semantic_kernel_plugins', [])
+        plugins = deepcopy(settings.get('semantic_kernel_plugins', []))
         
         # Find the plugin
         plugin_index = None
@@ -270,20 +274,13 @@ def repair_plugin(plugin_name):
             return jsonify({'error': f'Plugin {plugin_name} not found'}), 404
         
         # Try to instantiate the plugin
-        plugin_type = plugin_manifest.get('type', '')
+        plugin_type = resolve_action_type(plugin_manifest)
         discovered_plugins = discover_plugins()
-        
-        def normalize(s):
-            return s.replace('_', '').replace('-', '').replace('plugin', '').lower() if s else ''
-        
-        normalized_type = normalize(plugin_type)
-        matched_class = None
-        
-        for class_name, cls in discovered_plugins.items():
-            normalized_class = normalize(class_name)
-            if normalized_type == normalized_class or normalized_type in normalized_class:
-                matched_class = cls
-                break
+        if plugin_type == 'mcp':
+            valid, errors = PluginHealthChecker.validate_plugin_manifest(plugin_manifest, plugin_type)
+            if not valid:
+                return jsonify({'success': False, 'error': 'MCP configuration requires reconfiguration.', 'errors': errors}), 400
+        matched_class = _find_plugin_class(plugin_type, discovered_plugins)
         
         if not matched_class:
             return jsonify({
@@ -312,20 +309,18 @@ def repair_plugin(plugin_name):
             plugin_manifest['metadata']['original_errors'] = instantiation_errors
             
             plugins[plugin_index] = plugin_manifest
-            # NOTE: Update container-based storage instead of legacy settings
-            from functions_global_actions import save_global_action
             try:
-                # Save to container instead of settings
-                save_global_action(plugin_manifest)
-                # Remove from legacy settings if present
-                if 'semantic_kernel_plugins' in settings:
-                    del settings['semantic_kernel_plugins']
-                    update_settings(settings)
+                saved_to_container = bool(save_global_action(plugin_manifest))
             except Exception as e:
-                print(f"Error updating plugin in container storage: {e}")
-                # Fallback to settings update if container fails
-                settings['semantic_kernel_plugins'] = plugins
-                update_settings(settings)
+                log_event("[PLUGIN_REPAIR] Container save failed; using legacy settings.",
+                          extra={'error_type': type(e).__name__}, level=logging.WARNING)
+                saved_to_container = False
+            remaining_plugins = plugins[:plugin_index] + plugins[plugin_index + 1:] if saved_to_container else plugins
+            if not update_settings(
+                {'semantic_kernel_plugins': remaining_plugins},
+                expected_etag=settings.get('_etag'),
+            ):
+                return jsonify({'success': False, 'error': 'Unable to save the plugin repair.'}), 500
             
             return jsonify({
                 'success': True,
@@ -349,20 +344,18 @@ def repair_plugin(plugin_name):
                 plugin_manifest['metadata']['repair_timestamp'] = health_report.get('timestamp')
                 
                 plugins[plugin_index] = plugin_manifest
-                # NOTE: Update container-based storage instead of legacy settings
-                from functions_global_actions import save_global_action
                 try:
-                    # Save to container instead of settings
-                    save_global_action(plugin_manifest)
-                    # Remove from legacy settings if present
-                    if 'semantic_kernel_plugins' in settings:
-                        del settings['semantic_kernel_plugins']
-                        update_settings(settings)
+                    saved_to_container = bool(save_global_action(plugin_manifest))
                 except Exception as e:
-                    print(f"Error updating plugin in container storage: {e}")
-                    # Fallback to settings update if container fails
-                    settings['semantic_kernel_plugins'] = plugins
-                    update_settings(settings)
+                    log_event("[PLUGIN_REPAIR] Container save failed; using legacy settings.",
+                              extra={'error_type': type(e).__name__}, level=logging.WARNING)
+                    saved_to_container = False
+                remaining_plugins = plugins[:plugin_index] + plugins[plugin_index + 1:] if saved_to_container else plugins
+                if not update_settings(
+                    {'semantic_kernel_plugins': remaining_plugins},
+                    expected_etag=settings.get('_etag'),
+                ):
+                    return jsonify({'success': False, 'error': 'Unable to save the plugin repair.'}), 500
                 
                 return jsonify({
                     'success': True,
@@ -380,5 +373,5 @@ def repair_plugin(plugin_name):
         log_event(f"[PLUGIN_REPAIR] Error repairing {plugin_name}: {str(e)}", level=logging.ERROR)
         return jsonify({
             'success': False,
-            'error': f'Repair failed: {str(e)}'
+            'error': 'Unable to repair the plugin.'
         }), 500

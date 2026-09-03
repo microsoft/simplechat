@@ -419,6 +419,8 @@ window.addEventListener('DOMContentLoaded', async () => {
       // console.log("Attempting to initialize prompts despite data load error...");
       // initializePromptInteractions();
   } finally {
+      // Wait for deep-link selection and chat modules before resuming the saved request.
+      await window.SimpleChatM365Connect?.handleCallback();
       initChatTutorial();
   }
 });

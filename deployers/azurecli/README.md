@@ -1,6 +1,6 @@
 # Simple Chat - Deployment using Azure CLI + PowerShell
 
-[Return to Main](../README.md)
+[Return to Main](../../README.md)
 
 ## Overview
 

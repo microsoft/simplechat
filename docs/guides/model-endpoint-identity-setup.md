@@ -6,7 +6,7 @@ menubar: docs_menu
 accent: teal
 eyebrow: "Admin How-To"
 description: "Assign managed identity or service principal access for Azure OpenAI, Foundry (classic), and New Foundry model endpoints in the multi-endpoint modal."
-version: "0.250.006"
+version: "0.261.035"
 keywords:
   - model endpoints
   - multi endpoint
@@ -38,7 +38,8 @@ redirect_from:
 
 Use this guide when admins need to configure the shared **Model Endpoint** modal for Azure OpenAI, Foundry (classic), or New Foundry without depending on legacy single-endpoint settings.
 
-Documented for version **0.250.006**.
+Documented for version **0.261.035**. Model capacity overrides implemented in
+version: **0.261.035**, tracked by `application/single_app/config.py`.
 
 The multi-endpoint UI also includes a **Setup Guide** button beside endpoint actions and inside the Model Endpoint modal. Use that in-product guidance for quick RBAC reminders, and use this page when you need the full setup sequence.
 
@@ -98,7 +99,8 @@ For APIM, choose the provider that matches the backend service and select API ke
 
 ## Choose API Versions
 
-The modal has two version fields, and they are intentionally separate.
+The endpoint API version fields below are intentionally separate. They also
+differ from the exact **Model Version** in **Advanced model capacity**.
 
 | Field | What it controls | Recommended starting point |
 |-------|------------------|----------------------------|
@@ -112,6 +114,73 @@ Claude deployments are detected from the deployment name or Anthropic endpoint p
 Live validation against Foundry-hosted model families showed that basic chat-completions calls work for DeepSeek, Grok, and Llama, but reasoning-effort support and memory context tolerance are model-specific. Simple Chat only sends reasoning effort to known OpenAI reasoning families such as GPT-5 and o-series models. For Foundry-hosted non-OpenAI chat-completions models, Simple Chat folds saved memory values into the latest user message as plain background notes instead of injecting memory system messages. This preserves memory context while avoiding provider-side content-filter blocks observed with system-style memory prompts.
 
 The same endpoint runtime helpers are used for chat streaming, workflow execution, metadata extraction, endpoint test calls, and Semantic Kernel-backed tabular or agent services. This keeps provider selection, authentication, OpenAI-compatible `/openai/v1` normalization, and Anthropic routing consistent across Simple Chat features.
+
+## Declare Verified Model Capacity
+
+Use this workflow for a custom/on-premises deployment with documented limits, or
+when a deployment alias does not identify the actual published model. The same
+controls appear in Admin Settings and authorized personal/group workspace
+endpoint editors; group endpoint changes still require the existing Owner or
+Admin permission.
+
+1. Obtain the deployed model's actual ID, exact version, hosting provider/cloud,
+   and supported limits from its operator or first-party deployment
+   documentation. A similarly named model, example generation length, or a
+   commercial-cloud listing alone does not verify a different deployment.
+2. Open the endpoint. Use **Advanced endpoint capacity** only for defaults that
+   apply to its models. Otherwise, put the verified values in the relevant
+   model's **Advanced model capacity** section.
+3. If the deployment has an arbitrary name, enter its actual published ID in
+   **Catalog Model ID**, and its exact version in **Model Version** where the
+   serving limits depend on a snapshot. For example, map `team-chat` to
+   `gpt-5.6-terra` only if that is the model actually deployed. Leave the request
+   deployment/model name unchanged. Display names are not proof of capacity.
+4. Enter **Context Window** for a shared input-plus-generation total, **Input
+   Token Limit** only for an independently documented input ceiling, and
+   **Output Token Limit** for a hard provider output maximum. All counts must be
+   positive whole tokens, at most `9007199254740991`. Do not use zero, commas,
+   fractions, or scientific notation. Leave undocumented values blank.
+5. Choose **Token Limit Provider** when a specific hosting profile is required.
+   **Auto / inherit** follows the selected endpoint/provider rather than
+   changing the request destination. Set **Output Token Accounting** to **Total
+   generation** only when the API's allowance includes reasoning and other
+   generated tokens. **Visible output only** and **Unknown** describe
+   incomplete accounting honestly; they do not manufacture a bounded reasoning
+   allowance.
+6. Configure **Response Length** separately as the per-request generation
+   allowance. It is not a capacity declaration. Save the endpoint, and also
+   save the main settings form for global endpoints. Personal/group editors
+   save through their existing scope-specific routes.
+
+Every field inherits independently from the model override, then the endpoint
+override, then the exact catalog entry. Clearing an override restores
+inheritance, stored as `null`. Unknown capacity is not unlimited capacity.
+Independent input and output maxima may add up to more than the context window:
+they are alternative ceilings, not a promise that both can be used at once.
+
+Reopen the saved endpoint to confirm the exact identity, version, and overrides.
+Fetch Models, Add Model, and other model-row refreshes retain configured version,
+capacity, and capability metadata. A small successful Test Connection verifies
+connectivity, not a model's maximum context or output allowance.
+
+Editor API responses and page bootstrap data retain capacity, catalog identity,
+output accounting, and explicit `null` inheritance at both endpoint and model
+levels. Stored API keys, client secrets, and bearer/access/refresh credentials
+are not returned with that metadata.
+
+If server validation rejects a submitted budget, the workspace editor remains
+open with a field-specific error; Admin Settings returns to the settings form
+with an error message. Correct that field or clear it to inherit. Invalid values
+are not silently discarded or saved as provider capacity.
+
+Regression coverage is in
+`functional_tests/test_model_endpoint_normalization_backend.py`,
+`functional_tests/test_model_endpoint_capacity_save_validation.py`,
+`functional_tests/test_model_capacity_editor_values.js`, and
+`ui_tests/test_model_endpoint_capacity_editor.py`. The browser suite exercises
+admin, personal, and group saves, clearing/inheritance, invalid inputs,
+metadata/version preservation, inert text rendering, and mobile layout using
+the real local editor assets.
 
 ## Understand Discovery Versus Inference
 

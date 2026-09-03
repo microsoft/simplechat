@@ -62,7 +62,11 @@ def register_route_frontend_public_workspaces(bp):
         enable_audio_uploads = enable_audio_file_support in [True, 'True', 'true']
         allowed_extension_categories = get_allowed_extension_categories(
             enable_video=enable_video_uploads,
-            enable_audio=enable_audio_uploads
+            enable_audio=enable_audio_uploads,
+            enable_xsd=bool(
+                settings.get('enable_enhanced_citations', False)
+                and CLIENTS.get("storage_account_office_docs_client")
+            ),
         )
         
         return render_template(

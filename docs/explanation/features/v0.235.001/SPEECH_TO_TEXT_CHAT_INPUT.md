@@ -359,8 +359,8 @@ Potential improvements for future versions:
 
 ## Related Documentation
 
-- [Audio File Support Feature](AUDIO_FILE_SUPPORT.md) (uses same Speech Service)
-- [Admin Configuration Guide](../admin_configuration.md)
+- Audio File Support Feature (uses same Speech Service)
+- [Admin Configuration Guide](../../../admin_configuration.md)
 - [Azure Speech Service Documentation](https://learn.microsoft.com/azure/ai-services/speech-service/)
 
 ## Version History

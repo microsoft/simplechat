@@ -32,7 +32,7 @@ Binding an action to an agent turns a broad tool into a safer task assistant. Us
 3. Complete **Basic Information** and **Model & Connection**.
 
 {% include media.html src="guides/create-an-agent-with-actions-step-3.png"
-                      alt="Screenshot showing create an agent with actions step 3."
+                      alt="The Actions step of the Add Agent wizard showing searchable action cards for document search, Microsoft Graph, and a Yamcs simulation, above an empty Selected Actions panel."
                       title="Create an agent with actions step 3"
                       capture="Capture the create an agent with actions task at this step in SimpleChat with realistic sample data and redact secrets." %}
 
@@ -41,7 +41,7 @@ Binding an action to an agent turns a broad tool into a safer task assistant. Us
 6. In **Instructions**, explain when to use the action and when to answer without it.
 
 {% include media.html src="guides/create-an-agent-with-actions-step-6.png"
-                      alt="Screenshot showing create an agent with actions step 6."
+                      alt="The Instructions step of the Add Agent wizard, showing the Selected Actions and Knowledge summary bar with its counts, the Instruction Brief box, a Draft Instructions button, and the agent instructions editor."
                       title="Create an agent with actions step 6"
                       capture="Capture the create an agent with actions task at this step in SimpleChat with realistic sample data and redact secrets." %}
 

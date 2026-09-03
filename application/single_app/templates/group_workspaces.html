@@ -3404,6 +3404,20 @@ app_settings.app_title }} {% endblock %} {% block head %}
     let completed = 0;
     let failed = 0;
 
+    function updateGroupUploadRequestSummary() {
+      groupUploadStatusSpan.textContent = `Queued ${completed}/${files.length}${failed ? `, Upload requests not confirmed: ${failed}` : ''}`;
+    }
+
+    function finishGroupUploadRequests() {
+      groupFileInput.value = '';
+      groupDocsCurrentPage = 1;
+      fetchGroupDocuments();
+      groupUploadStatusSpan.textContent = failed
+        ? `Upload requests complete. Queued ${completed}/${files.length}; ${failed} request(s) did not confirm. Check the document list below for final processing status.`
+        : `Queued ${completed}/${files.length} file(s). Check the document list below for processing status.`;
+      if (progressContainer) progressContainer.innerHTML = '';
+    }
+
     // Helper to create a unique ID for each file
     function makeId(file) {
       return 'group-progress-' + Math.random().toString(36).slice(2, 10) + '-' + encodeURIComponent(file.name.replace(/\W+/g, ''));
@@ -3458,7 +3472,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
             progressBar.classList.remove('progress-bar-animated');
           }
           if (statusText) {
-            statusText.textContent = `Uploaded ${file.name} (100%)`;
+            statusText.textContent = `Queued ${file.name} (100%)`;
           }
           completed++;
         } else {
@@ -3468,18 +3482,13 @@ app_settings.app_title }} {% endblock %} {% block head %}
             progressBar.classList.remove('progress-bar-animated');
           }
           if (statusText) {
-            statusText.textContent = `Failed to upload ${file.name}`;
+            statusText.textContent = `Upload request did not confirm for ${file.name}`;
           }
           failed++;
         }
-        // Update summary status
-        groupUploadStatusSpan.textContent = `Uploaded ${completed}/${files.length}${failed ? `, Failed: ${failed}` : ''}`;
+        updateGroupUploadRequestSummary();
         if (completed + failed === files.length) {
-          groupFileInput.value = '';
-          groupDocsCurrentPage = 1;
-          fetchGroupDocuments();
-          // Clear upload progress bars after all uploads and table refresh
-          if (progressContainer) progressContainer.innerHTML = '';
+          finishGroupUploadRequests();
         }
       };
 
@@ -3490,15 +3499,12 @@ app_settings.app_title }} {% endblock %} {% block head %}
           progressBar.classList.remove('progress-bar-animated');
         }
         if (statusText) {
-          statusText.textContent = `Failed to upload ${file.name}`;
+          statusText.textContent = `Upload request did not confirm for ${file.name}`;
         }
         failed++;
-        groupUploadStatusSpan.textContent = `Uploaded ${completed}/${files.length}${failed ? `, Failed: ${failed}` : ''}`;
+        updateGroupUploadRequestSummary();
         if (completed + failed === files.length) {
-          groupFileInput.value = '';
-          groupDocsCurrentPage = 1;
-          fetchGroupDocuments();
-          if (progressContainer) progressContainer.innerHTML = '';
+          finishGroupUploadRequests();
         }
       };
 
@@ -4134,7 +4140,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
       if (canShare) {
         const shareCount = Array.isArray(doc.shared_group_ids) ? doc.shared_group_ids.length : 0;
         dropdownItems += `
-          <li><a class="dropdown-item" href="#" onclick="shareGroupDocument('${docId}', '${escapeGroupHtml(doc.file_name || '')}'); return false;">
+          <li><a class="dropdown-item group-document-share-btn" href="#">
             <i class="bi bi-share-fill me-2"></i>Share
             <span class="badge bg-secondary ms-1">${shareCount}</span>
           </a></li>`;
@@ -4193,8 +4199,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
             <div class="item-card-icon"><i class="bi ${getGroupDocumentIcon(doc.file_name || '')}" style="font-size: 1.75rem;"></i></div>
             <div class="document-item-card__title-wrap">
               <div class="document-item-card__eyebrow">Group document</div>
-              <h6 class="card-title mb-1" title="${escapeGroupHtml(displayTitle)}">${escapeGroupHtml(truncateGroupDocumentText(displayTitle, 60))}</h6>
-              ${subtitle ? `<div class="document-item-card__subtitle" title="${escapeGroupHtml(subtitle)}">${escapeGroupHtml(subtitle)}</div>` : ''}
+              <h6 class="card-title mb-1"></h6>
             </div>
             <div class="document-item-card__status">${statusBadge}</div>
           </div>
@@ -4213,6 +4218,18 @@ app_settings.app_title }} {% endblock %} {% block head %}
           </div>
         </div>
       </div>`;
+
+    const titleElement = column.querySelector('.card-title');
+    titleElement.title = displayTitle;
+    titleElement.textContent = truncateGroupDocumentText(displayTitle, 60);
+    if (subtitle) {
+      const subtitleElement = document.createElement('div');
+      subtitleElement.className = 'document-item-card__subtitle';
+      subtitleElement.title = subtitle;
+      subtitleElement.textContent = subtitle;
+      titleElement.after(subtitleElement);
+    }
+    window.bindGroupDocumentShareButton(column, doc);
 
     return column;
   }
@@ -6198,7 +6215,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
             if (canShare) {
                 actionsDropdown += `
                     <li><hr class="dropdown-divider"></li>
-                    <li><a class="dropdown-item" href="#" onclick="shareGroupDocument('${docId}', '${escapeHtml(doc.file_name || '')}'); return false;">
+                    <li><a class="dropdown-item group-document-share-btn" href="#">
                         <i class="bi bi-share-fill me-2"></i>Share
                         <span class="badge bg-secondary ms-1">${doc.shared_group_ids ? doc.shared_group_ids.length : 0}</span>
                     </a></li>
@@ -6278,6 +6295,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
         </td>
     `;
 
+    window.bindGroupDocumentShareButton(docRow, doc);
     const actionsCell = docRow.querySelector("td:last-child");
     prependGroupGeneratedArtifactActionButtons(actionsCell, doc, userRole);
 
@@ -6846,6 +6864,22 @@ app_settings.app_title }} {% endblock %} {% block head %}
     let completed = 0;
     let failed = 0;
 
+    function updateGroupUploadRequestSummary() {
+      groupUploadStatusSpan.textContent = `Queued ${completed}/${files.length}${failed ? `, Upload requests not confirmed: ${failed}` : ''}`;
+    }
+
+    function finishGroupUploadRequests() {
+      groupFileInput.value = '';
+      groupDocsCurrentPage = 1;
+      fetchGroupDocuments();
+      groupUploadBtn.disabled = false;
+      groupUploadBtn.innerHTML = "Upload Document(s)";
+      groupUploadStatusSpan.textContent = failed
+        ? `Upload requests complete. Queued ${completed}/${files.length}; ${failed} request(s) did not confirm. Check the document list below for final processing status.`
+        : `Queued ${completed}/${files.length} file(s). Check the document list below for processing status.`;
+      if (progressContainer) progressContainer.innerHTML = '';
+    }
+
     // Helper to create a unique ID for each file
     function makeId(file) {
       return 'group-progress-' + Math.random().toString(36).slice(2, 10) + '-' + encodeURIComponent(file.name.replace(/\W+/g, ''));
@@ -6900,7 +6934,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
             progressBar.classList.remove('progress-bar-animated');
           }
           if (statusText) {
-            statusText.textContent = `Uploaded ${file.name} (100%)`;
+            statusText.textContent = `Queued ${file.name} (100%)`;
           }
           completed++;
         } else {
@@ -6910,20 +6944,13 @@ app_settings.app_title }} {% endblock %} {% block head %}
             progressBar.classList.remove('progress-bar-animated');
           }
           if (statusText) {
-            statusText.textContent = `Failed to upload ${file.name}`;
+            statusText.textContent = `Upload request did not confirm for ${file.name}`;
           }
           failed++;
         }
-        // Update summary status
-        groupUploadStatusSpan.textContent = `Uploaded ${completed}/${files.length}${failed ? `, Failed: ${failed}` : ''}`;
+        updateGroupUploadRequestSummary();
         if (completed + failed === files.length) {
-          groupFileInput.value = '';
-          groupDocsCurrentPage = 1;
-          fetchGroupDocuments();
-          groupUploadBtn.disabled = false;
-          groupUploadBtn.innerHTML = "Upload Document(s)";
-          // Clear upload progress bars after all uploads and table refresh
-          if (progressContainer) progressContainer.innerHTML = '';
+          finishGroupUploadRequests();
         }
       };
 
@@ -6934,17 +6961,12 @@ app_settings.app_title }} {% endblock %} {% block head %}
           progressBar.classList.remove('progress-bar-animated');
         }
         if (statusText) {
-          statusText.textContent = `Failed to upload ${file.name}`;
+          statusText.textContent = `Upload request did not confirm for ${file.name}`;
         }
         failed++;
-        groupUploadStatusSpan.textContent = `Uploaded ${completed}/${files.length}${failed ? `, Failed: ${failed}` : ''}`;
+        updateGroupUploadRequestSummary();
         if (completed + failed === files.length) {
-          groupFileInput.value = '';
-          groupDocsCurrentPage = 1;
-          fetchGroupDocuments();
-          groupUploadBtn.disabled = false;
-          groupUploadBtn.innerHTML = "Upload Document(s)";
-          if (progressContainer) progressContainer.innerHTML = '';
+          finishGroupUploadRequests();
         }
       };
 
@@ -8141,7 +8163,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
         if (canManage && access.isOwnerGroup) {
           const canShare = (groupStatus === 'active' || groupStatus === 'upload_disabled');
           if (canShare) {
-            actionsDropdown += `<li><hr class="dropdown-divider"></li><li><a class="dropdown-item" href="#" onclick="shareGroupDocument('${docId}', '${escapeHtml(doc.file_name || '')}'); return false;"><i class="bi bi-share-fill me-2"></i>Share<span class="badge bg-secondary ms-1">${doc.shared_group_ids ? doc.shared_group_ids.length : 0}</span></a></li>`;
+            actionsDropdown += `<li><hr class="dropdown-divider"></li><li><a class="dropdown-item group-document-share-btn" href="#"><i class="bi bi-share-fill me-2"></i>Share<span class="badge bg-secondary ms-1">${doc.shared_group_ids ? doc.shared_group_ids.length : 0}</span></a></li>`;
           }
           const canDelete = (groupStatus === 'active' || groupStatus === 'upload_disabled');
           if (canDelete) {
@@ -8283,6 +8305,9 @@ app_settings.app_title }} {% endblock %} {% block head %}
 
       // xss-check: ignore reviewed folder view shell assembled from local escaped table/card builders.
       container.innerHTML = html;
+      container.querySelectorAll('#group-folder-docs-table tbody tr').forEach((row, index) => {
+        window.bindGroupDocumentShareButton(row, docs[index]);
+      });
       wireGroupBackButton(container);
         if (groupCurrentView === 'folders-cards' && docs.length > 0) {
           renderGroupFolderDocumentCards(docs);

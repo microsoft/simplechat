@@ -35,6 +35,7 @@
       </div>
 
       <div class="modal-body pt-0">
+        <div id="mcp-retirement-notice" class="alert alert-warning d-none" role="status"></div>
         <!-- Step 1: Select Action Type -->
         <div class="plugin-step" id="plugin-step-1">
           <h6 class="mb-3">Select Action Type</h6>
@@ -600,6 +601,45 @@
               </div>
             </div>
 
+            <div class="simplechat-config-card mb-3">
+              <div class="config-section-label">
+                <i class="bi bi-door-closed me-2"></i>Reverse Proxy Authentication
+              </div>
+              <div class="form-check mb-3">
+                <input class="form-check-input" type="checkbox" id="yamcs-enable-basic-auth" />
+                <label class="form-check-label" for="yamcs-enable-basic-auth">Server is behind a proxy that requires HTTP Basic authentication</label>
+                <div class="form-text">
+                  Enable this when a reverse proxy such as Apache challenges every request before it reaches Yamcs.
+                  Leave it off for a Yamcs server you reach directly, such as a local simulator.
+                </div>
+              </div>
+              <div id="yamcs-basic-auth-fields" class="d-none">
+                <div class="alert alert-warning py-2 px-3 small mb-3 d-none" id="yamcs-basic-auth-conflict" role="alert">
+                  <i class="bi bi-exclamation-triangle me-2"></i>
+                  HTTP Basic authentication cannot be combined with username/password or access token
+                  authentication, because both use the HTTP Authorization header. Choose
+                  &quot;No Authentication&quot; or &quot;API Key&quot; above.
+                </div>
+                <div class="mb-3 d-none" id="yamcs-basic-auth-identity-group">
+                  <label for="yamcs-basic-auth-identity-select" class="form-label">Reusable Identity</label>
+                  <select class="form-select" id="yamcs-basic-auth-identity-select"></select>
+                  <div class="form-text" id="yamcs-basic-auth-identity-status">
+                    Select a saved username and password identity so the credential can be rotated without editing this action.
+                  </div>
+                </div>
+                <div class="row g-3">
+                  <div class="col-md-6">
+                    <label for="yamcs-basic-auth-username" class="form-label">Proxy Username <span class="text-danger">*</span></label>
+                    <input type="text" class="form-control" id="yamcs-basic-auth-username" placeholder="Directory username" autocomplete="username" />
+                  </div>
+                  <div class="col-md-6">
+                    <label for="yamcs-basic-auth-password" class="form-label">Proxy Password <span class="text-danger">*</span></label>
+                    <input type="password" class="form-control" id="yamcs-basic-auth-password" placeholder="Password" autocomplete="new-password" data-bwignore="true" data-1p-ignore="true" data-lpignore="true" />
+                  </div>
+                </div>
+              </div>
+            </div>
+
             <div class="simplechat-config-card mb-0">
               <div class="config-section-label">
                 <i class="bi bi-sliders me-2"></i>Retrieval Limits
@@ -660,15 +700,41 @@
 
           <div id="msgraph-config-section" class="d-none">
             <div class="alert alert-info mb-0">
-              <strong>Built-in action:</strong> Microsoft Graph uses the signed-in user's delegated permissions and the standard Graph endpoint.
+              <strong>Delegated Microsoft 365 action:</strong> Uses the invoking user's account, or an explicitly approved workflow Run as account, and the deployment's configured cloud endpoint.
               The capabilities below become the default operations exposed by this action. Agents can narrow them further per assignment.
             </div>
 
-            <div class="simplechat-config-card">
+            <div class="alert alert-warning mt-3 d-none" id="msgraph-legacy-notice">
+                This combined Microsoft Graph action is retained for editing and execution only. After deletion, it cannot be recreated, cloned, or imported. Create separate Microsoft 365 source actions instead.
+            </div>
+            <div class="simplechat-config-card" id="msgraph-legacy-capabilities">
               <div class="config-section-label">
-                <i class="bi bi-calendar3 me-2"></i>Default Microsoft Graph Capabilities
+                <i class="bi bi-calendar3 me-2"></i>Legacy Microsoft Graph Capabilities
               </div>
               <div id="msgraph-capabilities-list" class="d-grid gap-2"></div>
+            </div>
+            {% for m365_type, m365_label in [
+                ("m365_calendar", "Microsoft 365 Calendar"),
+                ("m365_email", "Microsoft 365 Email"),
+                ("m365_onedrive", "Microsoft 365 OneDrive"),
+                ("m365_sharepoint", "Microsoft 365 SharePoint Online")
+            ] %}
+            <div class="simplechat-config-card d-none" id="{{ m365_type }}-config-section">
+                <h6>{{ m365_label }} capabilities</h6>
+                {% if m365_type in ["m365_onedrive", "m365_sharepoint"] %}
+                <p class="text-muted small">Search all document-library files this user can access. Instructions can narrow an individual search; actions do not restrict sites or folders. Larger analysis asks for approval rather than silently omitting evidence.</p>
+                {% endif %}
+                <div id="{{ m365_type }}-capabilities-list" class="d-grid gap-2"></div>
+            </div>
+            {% endfor %}
+            <div class="mt-3">
+                <label for="m365-maximum-sharing-acknowledgement" class="form-label">Maximum sharing acknowledgement</label>
+                <select class="form-select" id="m365-maximum-sharing-acknowledgement" aria-describedby="m365-sharing-policy-help">
+                    <option value="request">This request only</option>
+                    <option value="today">Until the user's local midnight</option>
+                    <option value="always" selected>Always, until revoked</option>
+                </select>
+                <div id="m365-sharing-policy-help" class="form-text">This is a ceiling, not permission to share. Users choose No or a duration up to this limit before publishing Microsoft 365 answers and retained evidence to a shared conversation. Private and single-user group-context chats do not need this warning.</div>
             </div>
           </div>
 
@@ -698,11 +764,11 @@
                 </div>
                 <div class="col-md-4">
                   <label for="mcp-transport" class="form-label">Transport <span class="text-danger">*</span></label>
-                  <select class="form-select" id="mcp-transport">
+                  <select class="form-select" id="mcp-transport" aria-describedby="mcp-retirement-notice">
+                    <option value="" disabled>Select a remote transport...</option>
                     <option value="streamable_http">Streamable HTTP</option>
                     <option value="sse">Server-Sent Events</option>
                     <option value="websocket">WebSocket</option>
-                    <option value="stdio">Stdio</option>
                   </select>
                 </div>
                 <div class="col-md-4" id="mcp-endpoint-group">
@@ -711,21 +777,6 @@
                 </div>
               </div>
 
-              <div id="mcp-stdio-group" class="d-none mt-3">
-                <div class="mb-3">
-                  <label for="mcp-command" class="form-label">Command <span class="text-danger">*</span></label>
-                  <input type="text" class="form-control" id="mcp-command" placeholder="python" />
-                </div>
-                <div class="mb-3">
-                  <label for="mcp-args" class="form-label">Arguments</label>
-                  <textarea class="form-control" id="mcp-args" rows="3" placeholder="-m&#10;my_mcp_server"></textarea>
-                  <div class="form-text">One argument per line.</div>
-                </div>
-                <div>
-                  <label for="mcp-env" class="form-label">Environment (JSON)</label>
-                  <textarea class="form-control" id="mcp-env" rows="3" placeholder="{}"></textarea>
-                </div>
-              </div>
             </div>
 
             <div class="simplechat-config-card mb-3">
@@ -2304,6 +2355,12 @@
                 </div>
                 <div class="col-md-6">
                   <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Proxy Basic Auth</label>
+                    <span class="fw-medium" id="summary-yamcs-basic-auth">-</span>
+                  </div>
+                </div>
+                <div class="col-md-6">
+                  <div class="d-flex flex-column">
                     <label class="text-muted small mb-1">TLS Verification</label>
                     <span class="fw-medium" id="summary-yamcs-tls-verify">-</span>
                   </div>
@@ -2354,7 +2411,7 @@
             </div>
           </div>
 
-          <div class="card mb-3 border-0 shadow-sm" id="summary-msgraph-section" style="display: none;">
+          <div class="card mb-3 border-0 shadow-sm d-none" id="summary-msgraph-section">
             <div class="card-header text-white p-3" style="background: linear-gradient(135deg, #198754 0%, #146c43 100%);">
               <h6 class="mb-0 fw-bold">
                 <i class="bi bi-calendar3 me-2"></i>Microsoft Graph Capabilities
@@ -2373,6 +2430,10 @@
                     <label class="text-muted small mb-1">Disabled By Default</label>
                     <span class="fw-medium" id="summary-msgraph-disabled-list">-</span>
                   </div>
+                </div>
+                <div class="col-12">
+                    <span class="text-muted small">Maximum sharing acknowledgement: </span>
+                    <span id="summary-m365-sharing-policy"></span>
                 </div>
                 <div class="col-md-6" id="summary-msgraph-mail-mode-row">
                   <div class="d-flex flex-column">
