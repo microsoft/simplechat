@@ -18,7 +18,6 @@ import {
     ChevronRight,
     FolderOpen,
     Globe2,
-    Home,
     LogOut,
     MessageSquarePlus,
     MessagesSquare,
@@ -43,18 +42,12 @@ interface NavItem {
     /** Hover text. Two entries are easily confused without it, so both say what they are. */
     hint?: string;
     adminOnly?: boolean;
-    /** Matches the route exactly. Needed for "/", which otherwise prefixes every path. */
-    end?: boolean;
 }
 
+// Home is deliberately absent. The brand mark above this list is the link to it, which is
+// where a reader looks for it anyway; a nav row saying the same thing spent a slot on a
+// destination the logo already implies.
 const NAV_ITEMS: NavItem[] = [
-    {
-        to: '/',
-        label: 'Home',
-        icon: Home,
-        hint: 'The landing page and its announcements',
-        end: true,
-    },
     { to: '/chat', label: 'Chats', icon: MessagesSquare },
     {
         to: '/agents',
@@ -79,24 +72,51 @@ function BrandMark({ collapsed }: { collapsed: boolean }) {
     const branding = useBootstrapStore((state) => state.data?.branding);
     const theme = useUiStore((state) => state.theme);
 
-    const logoUrl = theme === 'dark' ? branding?.logo_dark_url : branding?.logo_url;
+    const themedLogoUrl = theme === 'dark' ? branding?.logo_dark_url : branding?.logo_url;
     const title = branding?.app_title || 'SimpleChat';
 
+    // A logo counts only when one is stored *and* switched on.
+    const logoUrl = branding?.show_logo ? themedLogoUrl : null;
+    const showTitle = !collapsed && !branding?.hide_app_title;
+    // The letter square stands in for a mark there is either no configuration or no room
+    // for, so it is drawn only where the title itself is not: in the collapsed rail, or
+    // when the title is hidden. Beside the title it was the same word twice.
+    const showInitial = !logoUrl && !showTitle;
+
     return (
-        <div className="flex min-w-0 items-center gap-2.5">
-            {branding?.show_logo && logoUrl ? (
+        // The brand is the way back to the landing page -- there is no separate Home nav
+        // item, because this is where a reader looks for one. `end` matters: without it
+        // "/" prefixes every route and this would claim aria-current on all of them.
+        //
+        // The accessible name carries the title rather than reading only "Home", so the
+        // visible label stays inside the accessible name (WCAG 2.5.3) and the link is
+        // still named when the rail is collapsed to the logo or the letter alone.
+        <NavLink
+            to="/"
+            end
+            aria-label={`${title} home`}
+            className={clsx(
+                '-mx-1.5 flex min-w-0 items-center gap-2.5 rounded-xl px-1.5 py-1.5',
+                'transition-colors hover:bg-surface-2',
+                collapsed && 'justify-center',
+            )}
+        >
+            {logoUrl && (
                 // Height-constrained with a free width, matching the classic navigation.
                 // Forcing a square would letterbox or crop the wordmark most deployments
                 // upload. The collapsed rail is only 68px wide, so the cap tightens there.
+                //
+                // Decorative: the link names itself, so alt text would announce twice.
                 <img
                     src={logoUrl}
-                    alt={branding.hide_app_title ? title : ''}
+                    alt=""
                     className={clsx(
                         'h-8 w-auto shrink-0 object-contain',
                         collapsed ? 'max-w-[44px]' : 'max-w-[150px]',
                     )}
                 />
-            ) : (
+            )}
+            {showInitial && (
                 <span
                     aria-hidden="true"
                     className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-accent text-sm font-bold text-on-accent"
@@ -104,12 +124,12 @@ function BrandMark({ collapsed }: { collapsed: boolean }) {
                     {title.slice(0, 1).toUpperCase()}
                 </span>
             )}
-            {!collapsed && !branding?.hide_app_title && (
+            {showTitle && (
                 <span className="truncate text-[15px] font-semibold text-text-1" title={title}>
                     {title}
                 </span>
             )}
-        </div>
+        </NavLink>
     );
 }
 
@@ -286,7 +306,6 @@ export function Sidebar() {
                     <li key={item.to}>
                         <NavLink
                             to={item.to}
-                            end={item.end}
                             onClick={item.to === '/chat' ? startNewChatOnArrival : undefined}
                             title={collapsed ? item.label : item.hint}
                             className={({ isActive }) =>
