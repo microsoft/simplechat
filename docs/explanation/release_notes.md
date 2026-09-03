@@ -2,6 +2,26 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.041)**
+
+#### New Features
+
+*   **Full Activity Stats In The V2 Interface**
+    *   The **Stats** tab under Settings in the new interface now reports everything the classic profile page's stats tab reports, instead of the four small sparklines it showed before.
+    *   **Your lifetime totals** — conversations, messages, documents and sign-ins — are shown as cards, together with when they were last worked out and when you last signed in. These are cached figures rather than live ones, and the tab now says so, so they are not mistaken for the totals for the period you are looking at.
+    *   **Pick a period.** The last 7, 30 or 90 days, or a start and end date of your own. A range with the dates the wrong way round, or with one date missing, is now explained before the request is sent rather than failing silently.
+    *   **Four activity charts and a storage breakdown.** Sign-ins and token usage as lines, conversations and documents as paired bars showing created against deleted and uploaded against deleted, and storage split between AI Search and blob storage. These are the same charts, shapes and colours as the classic page.
+    *   **Export to CSV.** Choose which of summary totals, sign-ins, conversations, documents and token usage to include, and the period to cover — which can differ from the one on screen. The file matches the classic export column for column.
+    *   **Your account** — name, email address and user id — is shown at the foot of the tab.
+    *   (Ref: V2 settings, Stats tab, `/api/user/activity-trends`, `/api/user/settings`, vendored Chart.js)
+
+#### User Interface Enhancements
+
+*   **One Destination For Personal Settings In The V2 Interface**
+    *   The account menu in the left rail offered both **Settings** and **Profile**, the second of which left the new interface for the classic profile page. With the activity stats now rebuilt under Settings, the Profile entry led nowhere the new interface does not already cover, so it has been removed. **Settings** is the single destination.
+    *   The "open in the classic interface" links inside the Groups and Public tabs are unchanged — those capabilities have not been rebuilt yet, and the links remain the way to reach them.
+    *   (Ref: V2 sidebar, account menu, settings navigation)
+
 ### **(v0.261.040)**
 
 #### New Features
@@ -21,6 +41,7 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   A diagram saved as a PNG, or embedded in an exported file, came out compressed into a narrow strip roughly 100 pixels wide regardless of its real size — a 1094×541 flowchart was rasterized at 100×541.
     *   The cause was the diagram's width being read as the number `100` from the value `100%`. The real dimensions were sitting in the diagram alongside it and are now used instead.
     *   (Ref: diagram PNG download, conversation export, SVG rasterizing)
+
 ### **(v0.261.039)**
 
 #### New Features
