@@ -588,8 +588,18 @@ function buildStreamHandlers(
                     ...state.thoughts,
                     {
                         id: `${state.thoughts.length}`,
-                        title: String(event.title ?? 'Thinking'),
+                        // The frame names the step in `step_type`; there is no `title` field.
+                        // Falling straight to "Thinking" made every live step look alike and
+                        // is what stopped a tabular run being recognisable while it ran.
+                        title: String(event.title ?? event.step_type ?? 'Thinking'),
                         content,
+                        stepType:
+                            typeof event.step_type === 'string' ? event.step_type : undefined,
+                        detail: typeof event.detail === 'string' ? event.detail : undefined,
+                        activity: event.activity as ThoughtEntry['activity'],
+                        progress: event.progress as ThoughtEntry['progress'],
+                        stepIndex:
+                            typeof event.step_index === 'number' ? event.step_index : undefined,
                     },
                 ],
             }));

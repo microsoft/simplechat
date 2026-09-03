@@ -763,6 +763,28 @@ Three details are worth recording:
   seconds. Doing it the other way round makes `parseFloat` return `0` and every cited
   moment plays from the start.
 
+### Generated files and tabular analysis
+
+Tabular analysis runs server-side on the same `/api/chat` stream V2 already uses, so asking a
+question about a spreadsheet always worked here. What did not was everything the analysis
+produced: an export was created, described in the reply, and then had nothing in the interface
+leading to it.
+
+Files a turn produces are advertised on the assistant message under
+`metadata.generated_analysis_artifacts` and `metadata.generated_tabular_outputs`, and are now
+rendered as cards beneath the reply. The card is generic across the `capability` field rather
+than tabular-only, so Analyze summaries, comparison workbooks and Deep Research ledgers arrive
+through the same path.
+
+A long export runs in the background; its card polls the run endpoint, shows progress and
+offers Continue and Cancel where the server permits them, then replaces itself with the
+finished files. Reasoning steps that describe staged work get a progress card above the list,
+driven by a lane table rather than a hardcoded branch so other kinds of staged work can adopt
+it. A prompt that would start an expensive row-level run is confirmed before it is sent.
+
+See [V2 Tabular Analysis](V2_TABULAR_ANALYSIS.md) for the metadata contract, the download
+target rules, the lane table and the confirmation heuristic.
+
 ### Admin settings
 
 The server-rendered admin page nests 14 groups → 46 tabs → 96 sections, so finding a single
@@ -1044,6 +1066,8 @@ this entirely and is the recommended layout.
 | `functional_tests/test_v2_conversation_export.py` | The wizard reuses the existing export endpoints and sends only fields the route reads, the summary model carries all four identity fields, JSON exports skip rasterizing, diagrams render through the shared hardened runtime, a percentage width is not mistaken for a size, the rail's selection survives rows being removed, and all three entry points open the wizard |
 | `functional_tests/test_v2_stats_parity.py` | Every trend field, window parameter and cached-metrics key the Stats tab reads exists on the server side, each classic stats surface has a counterpart, the account menu offers one destination, and both chart consumers share the vendored runtime |
 | `functional_tests/test_v2_stats_logic.mjs` | Executes the stats logic: preset versus custom window parameters, custom-range validation, series aligned by date rather than index, formatting, and the CSV export's sections, columns and quoting |
+| `functional_tests/test_v2_tabular_parity.py` | The client reads the generated-artifact metadata keys the server writes and de-duplicates on the same identifiers, every tabular route the SPA requests is registered, the run-control routes carry their decorators, the confirmation thresholds survive settings sanitization, the thought frame's `activity` and `progress` are carried, every component is mounted, and the large-run confirmation precedes the send |
+| `functional_tests/test_v2_tabular_parity_logic.ts` | Executes the tabular logic: artifact normalising and de-duplication, download-target selection, the compact-layout rule, preview table construction, durable run progress and polling, artifact set completion, lane detection and activity counting, the progress ratchet, the confirmation heuristic, tool-result row banding, and CSV parsing |
 | `functional_tests/test_v2_new_chat_scoping.py` | **New chat** offered only where it can act and the nav list's spacing following it, **Chats** starting a fresh conversation on arrival from elsewhere, that reset guarded on both the current route and an in-flight stream with the guard preceding it, the streaming flag read rather than subscribed, the drawer and details panel closed with the conversation they describe, and enabled buttons carrying a pointer cursor |
 | `functional_tests/test_csrf_state_changing_route_guard.py` | Cross-site mutations require an explicitly trusted origin; CORS preflights answered before authentication and never wildcarded |
 | `functional_tests/route_tests/` | Blueprint policy classification for `frontend_v2`, `backend_v2`, `backend_v2_admin` |
@@ -1073,8 +1097,11 @@ imported in a test environment.
   microphone and speech output needs Azure Speech configured in the tenant. Both were
   verified structurally — correct controls, correct gating, correct requests and payloads —
   but neither actual capture nor actual playback has been exercised.
-- Collaboration, tabular runs, workflow activity, scope lock and the chat tutorial are not
-  wired.
+- Collaboration, workflow activity, scope lock and the chat tutorial are not wired. Tabular
+  runs are: generated exports, durable run progress, the staged-work progress lane and the
+  large-run confirmation all work, and are described in
+  [V2 Tabular Analysis](V2_TABULAR_ANALYSIS.md). "Add to Workspace" and "Create PowerPoint"
+  on a generated artifact are the remaining gaps there.
 - Stream reattachment (`/api/chat/stream/reattach/{id}`) is not used; a dropped connection
   surfaces an error rather than silently resuming.
 - Admin settings edits boolean capabilities only.

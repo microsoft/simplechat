@@ -31,6 +31,12 @@ import { hasResolvableAgent } from '../../lib/chatRequestSelection';
 import { modelSelectionKey, findModel, type ModelCatalogEntry } from '../../lib/models';
 import { resolveGating } from '../../lib/composerGating';
 import {
+    estimateLargeTabularRun,
+    type TabularRunEstimate,
+    type TabularRunSettings,
+} from '../../lib/tabularRunEstimate';
+import { LargeRunDialog } from './LargeRunDialog';
+import {
     findMentionAtCaret,
     replaceMention,
     type MentionMatch,
@@ -92,6 +98,9 @@ export function Composer() {
     const { streaming, sendMessage, stopStreaming, activeConversationId } = useChatStore();
     const bootstrap = useBootstrapStore((state) => state.data);
     const features = bootstrap?.features ?? {};
+    // Thresholds for the large-run confirmation. These are administrator settings rather
+    // than capability flags, so they come from the settings payload rather than `features`.
+    const tabularRunSettings = (bootstrap?.settings ?? {}) as TabularRunSettings;
     // The level chosen per model, shared with the classic interface. Read from the store
     // rather than held here so a change made anywhere is reflected without a reload.
     const reasoningEffortSettings = useUserSettingsStore(
@@ -146,6 +155,9 @@ export function Composer() {
     const [mention, setMention] = useState<MentionMatch | null>(null);
     const [mentionIndex, setMentionIndex] = useState(0);
     const suggestions = useMentionSuggestions(shared && canPost ? (mention?.query ?? null) : null);
+
+    /** Set while a prompt is waiting on its large-run confirmation. */
+    const [largeRun, setLargeRun] = useState<TabularRunEstimate | null>(null);
 
     const [options, setOptions] = useState<ComposerOptions>({
         documentSearch: false,
@@ -481,11 +493,28 @@ export function Composer() {
         });
     };
 
+    /**
+     * Send, unless the prompt is about to start a long row-level export.
+     *
+     * The confirmation is raised before anything is sent and before the composer is cleared,
+     * so declining leaves the typed prompt exactly where it was to be edited.
+     */
     const submit = () => {
         if (!text.trim() || streaming || !canPost) {
             return;
         }
-        void sendMessage(text, options);
+
+        const estimate = estimateLargeTabularRun(text, tabularRunSettings);
+        if (estimate.shouldConfirm) {
+            setLargeRun(estimate);
+            return;
+        }
+
+        dispatch(text);
+    };
+
+    const dispatch = (message: string) => {
+        void sendMessage(message, options);
         setText('');
         setMention(null);
         // Sent, so the indicator other people can see must stop now rather than when the
@@ -630,6 +659,16 @@ export function Composer() {
 
     return (
         <div className="shrink-0 px-4 pb-4">
+            {largeRun && (
+                <LargeRunDialog
+                    estimate={largeRun}
+                    onContinue={() => {
+                        setLargeRun(null);
+                        dispatch(text);
+                    }}
+                    onCancel={() => setLargeRun(null)}
+                />
+            )}
             <div className={clsx('mx-auto w-full', chatWidthClass(chatWidth))}>
                 {uploadNotice && (
                     <p className="mb-2 rounded-xl border border-edge bg-surface-1 px-3 py-2 text-xs text-text-2">
