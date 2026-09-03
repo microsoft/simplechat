@@ -12,6 +12,7 @@
 // come back from a later GET, so treating them as settings would make the store believe a
 // save had been lost. They get their own call when the workspace tabs are built.
 
+import type { SidebarMenuState } from './sidebarMenuState';
 import type { DocumentExplorerPrefs, DocumentSavedView } from './types';
 
 /** Text scale, matching the values the route normalises to. */
@@ -51,6 +52,16 @@ export interface UserSettings {
      */
     v2RailCollapsed?: boolean;
     v2ChatWidth?: string;
+
+    /**
+     * Which of the rail's named menus are expanded.
+     *
+     * Deliberately NOT namespaced, unlike the two above: both interfaces mean the same thing
+     * by "the External Links menu is collapsed", and a group put away in one should stay put
+     * away in the other. See lib/sidebarMenuState.ts for the key names and the whole-object
+     * write this sharing requires.
+     */
+    sidebarMenuState?: SidebarMenuState;
 
     /**
      * Whether the personal workspace's section rail shows icons only.
@@ -107,6 +118,14 @@ export interface UserSettings {
     latestFeaturesHiddenVersion?: string | null;
 
     /**
+     * The user's Microsoft Graph profile photo, as a data URI.
+     *
+     * Read-only here. The server fetches it once and caches it on the settings document
+     * when the user is first seen; nothing in either interface writes it back.
+     */
+    profileImage?: string | null;
+
+    /**
      * The AI notice dismissal.
      *
      * Written through `dismissAiNotice()` rather than this store, and read back in a
@@ -137,6 +156,9 @@ export const WRITABLE_USER_SETTING_KEYS = [
     'v2ChatWidth',
     'v2MermaidStyle',
     'v2ChartStyle',
+    // Shared with the classic interface rather than namespaced: a nav group collapsed in
+    // one interface should stay collapsed in the other.
+    'sidebarMenuState',
     // Whether the section rail inside the personal workspace is showing icons only.
     // Separate from v2RailCollapsed, which is the rail of the application shell:
     // collapsing one should not collapse the other.

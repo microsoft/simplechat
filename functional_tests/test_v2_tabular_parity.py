@@ -2,8 +2,8 @@
 """
 Functional test for V2 tabular parity.
 
-Version: 0.261.054
-Implemented in: 0.261.054
+Version: 0.261.056
+Implemented in: 0.261.056
 
 The behavioural half lives in ``test_v2_tabular_parity_logic.ts``, run from here. This file
 covers what is only observable across the two languages: that the client reads the keys the
@@ -71,7 +71,7 @@ TYPES_TS = V2_SRC / "lib" / "types.ts"
 
 LOGIC_CHECK_TS = Path(__file__).with_name("test_v2_tabular_parity_logic.ts")
 
-IMPLEMENTED_IN = "0.261.054"
+IMPLEMENTED_IN = "0.261.056"
 
 # Every tabular-related path the V2 client requests, and the route file that must register it.
 REQUIRED_ROUTES = {

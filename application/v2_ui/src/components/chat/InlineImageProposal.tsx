@@ -14,7 +14,9 @@
 // Nor is the card's own approval state held here. React rebuilds the markdown subtree a card
 // lives in whenever the message re-renders, so state kept in the card would be discarded by
 // the very thing the user is waiting for: the arrival of the first approved image. It lives in
-// the proposal scope, which the message bubble owns and which survives that rebuild.
+// `imageProposalStore`, which outlives the card, the message bubble and the conversation view
+// alike — an approval keeps running after the user opens another conversation or reloads the
+// page, so the only place its progress can honestly be kept is somewhere that also does.
 
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { clsx } from 'clsx';
@@ -29,6 +31,8 @@ import {
     PROMPT_MAX_LENGTH,
 } from '../../lib/imageProposalSpec';
 import { describeQueuePosition, enqueueImageApproval } from '../../lib/imageProposalQueue';
+import { approvalRecordId } from '../../lib/imageProposalTracking';
+import { useImageProposalStore } from '../../stores/imageProposalStore';
 import { resolveImageSource } from '../../lib/images';
 import { GlassButton } from '../ui/primitives';
 import { ImageLightbox } from './ImageLightbox';
@@ -135,6 +139,7 @@ export function InlineImageProposal({
 }) {
     const parsed = useMemo(() => parseImageProposal(source), [source]);
     const {
+        conversationId,
         assistantMessageId,
         results,
         approveAllToken,
@@ -143,6 +148,8 @@ export function InlineImageProposal({
         updateCardState,
     } = useImageProposalScope();
     const approveImageProposal = useChatStore((state) => state.approveImageProposal);
+    const beginApproval = useImageProposalStore((state) => state.beginApproval);
+    const endApproval = useImageProposalStore((state) => state.endApproval);
 
     const spec = parsed.ok ? parsed.spec : null;
 
@@ -155,12 +162,17 @@ export function InlineImageProposal({
     const promptFieldId = `${cardId}-prompt`;
 
     const cardState = cardStates[cardKey] ?? IDLE_CARD_STATE;
-    const { status, queuePosition, failure, editing } = cardState;
+    const { status, queuePosition, failure, editing, resumed } = cardState;
     const prompt = cardState.prompt ?? (spec ? spec.prompt : '');
 
     const result = useMemo(
         () => (spec ? findResultForSpec(spec, results) : null),
         [spec, results],
+    );
+
+    const recordId = useMemo(
+        () => approvalRecordId(conversationId, assistantMessageId, cardKey),
+        [conversationId, assistantMessageId, cardKey],
     );
 
     // Only an untouched card is something "Approve all" should act on, and only such a card
@@ -172,6 +184,17 @@ export function InlineImageProposal({
     }, [cardKey, isPending, setPending]);
 
     useEffect(() => () => setPending(cardKey, false), [cardKey, setPending]);
+
+    // The image arriving is what ends the wait, whichever route it came by: this approval's own
+    // response, a poll that noticed it after a reload, or simply opening a conversation where it
+    // had already been stored. Stopping the tracking here rather than in each of those places
+    // means none of them can leave a record behind to be resumed forever.
+    useEffect(() => {
+        if (!result) {
+            return;
+        }
+        endApproval(recordId, 'generated');
+    }, [result, recordId, endApproval]);
 
     const approve = useCallback(async () => {
         if (!spec || !assistantMessageId) {
@@ -190,8 +213,8 @@ export function InlineImageProposal({
         // Read now, not when the queue gets to this approval. A bulk approval can still be
         // draining after the user has opened another conversation, and generating this image
         // into whichever thread is open by then would be both wrong and billable.
-        const conversationId = useChatStore.getState().activeConversationId;
-        if (!conversationId) {
+        const activeConversationId = useChatStore.getState().activeConversationId;
+        if (!activeConversationId) {
             updateCardState(cardKey, {
                 status: 'error',
                 failure: 'Open a conversation before generating the image.',
@@ -199,18 +222,37 @@ export function InlineImageProposal({
             return;
         }
 
+        // Tracked before anything is sent, so the record exists for the whole life of the
+        // request — including the part of it that happens after this page is gone. A refusal
+        // means an approval for this card is already running and this one would be a second
+        // request for an image that is already being paid for.
+        const tracked = beginApproval({
+            conversationId: activeConversationId,
+            assistantMessageId,
+            cardKey,
+            visualId: spec.visualId,
+            title: spec.title,
+            prompt: finalPrompt,
+            startedAt: Date.now(),
+        });
+        if (!tracked) {
+            return;
+        }
+        const activeRecordId = approvalRecordId(activeConversationId, assistantMessageId, cardKey);
+
         updateCardState(cardKey, {
             editing: false,
             failure: '',
             queuePosition: 0,
             status: 'queued',
+            resumed: false,
         });
 
         try {
             await enqueueImageApproval(
                 async () => {
                     updateCardState(cardKey, { status: 'generating' });
-                    await approveImageProposal(conversationId, assistantMessageId, {
+                    await approveImageProposal(activeConversationId, assistantMessageId, {
                         ...spec,
                         prompt: finalPrompt,
                     });
@@ -221,6 +263,7 @@ export function InlineImageProposal({
             // The image itself arrives through the scope. This only covers the case where it
             // cannot be matched back to this card, so the outcome is still reported.
             updateCardState(cardKey, { status: 'generated' });
+            endApproval(activeRecordId, 'generated');
         } catch (error) {
             updateCardState(cardKey, {
                 status: 'error',
@@ -229,8 +272,18 @@ export function InlineImageProposal({
                         ? error.message
                         : 'The image could not be generated.',
             });
+            endApproval(activeRecordId, 'failed');
         }
-    }, [spec, assistantMessageId, prompt, approveImageProposal, cardKey, updateCardState]);
+    }, [
+        spec,
+        assistantMessageId,
+        prompt,
+        approveImageProposal,
+        cardKey,
+        updateCardState,
+        beginApproval,
+        endApproval,
+    ]);
 
     // "Approve all" is delivered as a token rather than a call, because the scope has no
     // handle on individual cards. Read through a ref so the effect can depend on the token
@@ -345,7 +398,9 @@ export function InlineImageProposal({
                             <Loader2 size={12} className="animate-spin" />
                             {status === 'queued'
                                 ? describeQueuePosition(queuePosition)
-                                : 'Generating image…'}
+                                : resumed
+                                  ? 'Still generating from before the page reloaded…'
+                                  : 'Generating image…'}
                         </p>
                     )}
 

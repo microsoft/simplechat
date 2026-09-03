@@ -1,26 +1,25 @@
 // test_v2_navigation_groups_logic.mjs
 //
 // Runtime test for the V2 rail's administrator-configured navigation groups.
-// Version: 0.261.047
+// Version: 0.261.055
 // Implemented in: 0.261.047
 //
 // Custom Pages and External Links are configured in Admin Settings and had no
 // representation in the V2 rail at all, so a deployment that had set them up saw none of
-// its own links. Bringing them across means reproducing the rule the classic navigation
-// applies, and that rule is easy to get subtly wrong in ways review does not catch: an
-// off-by-one in the menu threshold, or a group that renders as an empty heading.
+// its own links. Bringing them across means getting the visibility rules right, and those
+// are easy to get subtly wrong in ways review does not catch: a group that renders as an
+// empty heading, or entries that collide into one row.
 //
 // The companion test, test_v2_bootstrap_branding_and_navigation.py, proves the server
-// sends the groups. This file executes the client's decisions about them.
+// sends the groups. This file executes the client's decisions about them, and
+// test_v2_sidebar_menu_state_logic.mjs covers whether a group is drawn open or closed.
 //
 // Run directly with `node functional_tests/test_v2_navigation_groups_logic.mjs`. Requires
 // Node 22.6 or newer, which strips the TypeScript types so the real module is imported.
 
 import assert from 'node:assert/strict';
 import {
-    INLINE_ITEM_LIMIT,
     isGroupVisible,
-    shouldRenderAsMenu,
     toCustomPageLinks,
     toExternalLinks,
 } from '../application/v2_ui/src/lib/navigationGroups.ts';
@@ -51,25 +50,6 @@ function page(slug, overrides = {}) {
         ...overrides,
     };
 }
-
-/* ------------------------------ menu threshold ------------------------------ */
-
-check('one or two entries stay inline', () => {
-    assert.equal(shouldRenderAsMenu(1, false), false);
-    assert.equal(shouldRenderAsMenu(INLINE_ITEM_LIMIT, false), false);
-});
-
-check('three entries become a menu', () => {
-    // The boundary the classic navigation draws. Off by one here either crowds the rail
-    // or hides a pair of links behind a heading for no reason.
-    assert.equal(shouldRenderAsMenu(INLINE_ITEM_LIMIT + 1, false), true);
-    assert.equal(shouldRenderAsMenu(9, false), true);
-});
-
-check('force menu wins at any count', () => {
-    assert.equal(shouldRenderAsMenu(1, true), true);
-    assert.equal(shouldRenderAsMenu(0, true), true);
-});
 
 /* -------------------------------- visibility -------------------------------- */
 

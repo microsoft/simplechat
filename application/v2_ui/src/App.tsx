@@ -10,6 +10,7 @@ import { ErrorBoundary } from './components/ui/ErrorBoundary';
 import { useBootstrapStore } from './stores/bootstrapStore';
 import { useUserSettingsStore } from './stores/userSettingsStore';
 import { initializeTheme, hydrateUiPreferences } from './stores/uiStore';
+import { startImageApprovalTracking } from './lib/imageProposalResume';
 import { ChatPage } from './pages/ChatPage';
 import { HomePage } from './pages/HomePage';
 import { AdminSettingsPage } from './pages/AdminSettingsPage';
@@ -79,6 +80,10 @@ export function App() {
         void loadUserSettings().then(() => {
             hydrateUiPreferences(useUserSettingsStore.getState().settings);
         });
+        // An image approval survives the page that started it, so this runs in the shell
+        // rather than in the chat page: a reload can land anywhere, and the approval still
+        // has to be picked back up and reported.
+        startImageApprovalTracking();
     }, [load, loadUserSettings]);
 
     useEffect(() => {

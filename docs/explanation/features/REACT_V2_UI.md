@@ -317,6 +317,52 @@ subscription would re-render the rail and its conversation list throughout a res
 Deep links are unaffected: the reset is on the navigation item's click, which a direct load
 of `/v2/chat?conversationId=<id>` never passes through.
 
+### Navigation groups in the rail
+
+Custom Pages and External Links, both configured in Admin Settings, are drawn beneath the
+primary navigation. Each group is a named menu that collapses, whatever its entry count.
+This is where the two interfaces deliberately differ: the classic rail draws one or two
+entries as plain items and only becomes a menu at three or more, or when **Force Menu
+Display** is ticked. That threshold means the same heading is a control for one deployment
+and dead text for another, one link apart, so V2 makes every group a menu and **Force Menu
+Display** has no effect here.
+
+Collapsing a group is remembered per user in the `sidebarMenuState` setting, which the
+classic interface already owns, so a group put away in either interface stays away in the
+other. A group nobody has touched is open, matching the classic templates' default.
+
+Sharing that setting imposes a constraint worth knowing before changing this code.
+`update_user_settings()` merges only the top level of the settings document, so a payload
+carrying one key inside `sidebarMenuState` replaces the whole object. Both interfaces
+therefore post the complete state on every toggle; `lib/sidebarMenuState.ts` is what builds
+it, and it recognises exactly the key names `static/js/sidebar.js` does, because each
+interface drops keys it does not know the next time it writes.
+
+The collapsed 68px rail has no room for a heading, so the entries are drawn flat as icons
+there. A menu with an unreadable label would hide a deployment's own links behind a control
+nobody can see.
+
+### The account menu
+
+The avatar pinned to the bottom of the rail opens everything about your account rather than
+about your work: **User Settings**, **Admin Settings** for administrators, **Back to classic
+UI** and **Sign out**. Admin Settings is here rather than in the primary list above, which
+is the list of places you work; the classic interface draws the same line, keeping App
+Settings under an Admin heading in its own account dropdown. The administration entry is
+still gated on the caller's role, and `/admin` refuses a non-administrator on its own.
+
+The menu opens whether the rail is expanded or collapsed. Collapsed it appears beside the
+icon strip rather than above the avatar, where there is no room for it, and it repeats the
+account name that the strip cannot show. It closes on Escape or a click outside, like every
+other menu in the interface.
+
+The avatar itself is the Microsoft Graph profile photo the server fetches once and caches on
+the user's settings document, which the classic rail has always drawn. V2 already loads that
+document for its preferences, so the photo costs no extra request; it is deliberately not
+carried on `/api/v2/bootstrap`, which is refetched whenever an administrator changes a
+setting. Initials stand in when there is no photo, and also when a cached one fails to
+decode — it is never re-validated, so a broken copy would otherwise leave an empty circle.
+
 ### Chat
 
 Wired to the live APIs:
@@ -913,11 +959,14 @@ Personal documents: list, search, tag filter, upload, processing status and dele
 
 ### Personal settings
 
-`/settings`, reached from the account menu, is the V2 home for per-user preferences. It
-keeps the classic profile page's six sections — Preferences, Stats, Groups, Public, Feedback
-and Violations — but leads with Preferences, since that is why a V2 user opens the page, and
-renders the sections as a vertical rail rather than Bootstrap tabs. The active section is in
-the query string, so a section can be linked to and survives a reload.
+`/settings`, reached from the account menu as **User Settings**, is the V2 home for per-user
+preferences. It keeps the classic profile page's six sections — Preferences, Stats, Groups,
+Public, Feedback and Violations — but leads with Preferences, since that is why a V2 user
+opens the page, and renders the sections as a vertical rail rather than Bootstrap tabs. The
+active section is in the query string, so a section can be linked to and survives a reload.
+The page header carries the user's profile photo, so it is visible whose preferences are on
+screen; the title reads "User Settings" rather than "Settings" because the account menu
+offers Admin Settings a line beneath it.
 
 Each tab is registered once in `components/settings/tabs.tsx` and owns its own component,
 which is what lets the remaining tabs be built without touching the page shell, the router
@@ -980,7 +1029,6 @@ information to make, since the classic profile page held the settings *and* the 
 stats. With Stats rebuilt, the Profile entry has nothing left to lead to and is gone. The
 `/profile?tab=groups` and `/profile?tab=public-workspaces` links inside the Groups and Public
 tabs remain: those are the fallback for tabs V2 has not rebuilt, not profile navigation.
-
 ### Not rebuilt yet
 
 Agents, group workspaces and public workspaces appear in the rail and link through to their
@@ -1090,6 +1138,8 @@ this entirely and is the recommended layout.
 | `functional_tests/test_v2_tabular_parity.py` | The client reads the generated-artifact metadata keys the server writes and de-duplicates on the same identifiers, every tabular route the SPA requests is registered, the run-control routes carry their decorators, the confirmation thresholds survive settings sanitization, the thought frame's `activity` and `progress` are carried, every component is mounted, and the large-run confirmation precedes the send |
 | `functional_tests/test_v2_tabular_parity_logic.ts` | Executes the tabular logic: artifact normalising and de-duplication, download-target selection, the compact-layout rule, preview table construction, durable run progress and polling, artifact set completion, lane detection and activity counting, the progress ratchet, the confirmation heuristic, tool-result row banding, and CSV parsing |
 | `functional_tests/test_v2_new_chat_scoping.py` | **New chat** offered only where it can act and the nav list's spacing following it, **Chats** starting a fresh conversation on arrival from elsewhere, that reset guarded on both the current route and an in-flight stream with the guard preceding it, the streaming flag read rather than subscribed, the drawer and details panel closed with the conversation they describe, and enabled buttons carrying a pointer cursor |
+| `functional_tests/test_v2_sidebar_account_menu.py` | Admin Settings has left the primary navigation for the account menu and is gated on the admin flag, the menu is not gated on the rail being expanded and dismisses on Escape and an outside click, the nav groups collapse with no entry-count threshold, `sidebarMenuState` is writable in both the client key list and the route whitelist and uses the same key names as the classic interface, and the profile photo reaches both the rail and the settings page header |
+| `functional_tests/test_v2_sidebar_menu_state_logic.mjs` | Executes the shared menu-state helpers: the whitelist matching the classic interface, boolean and legacy string forms, unknown keys and unusable values dropped, an untouched group defaulting to open, and a write carrying the whole object so a V2 toggle cannot reset the classic interface's own menus |
 | `functional_tests/test_v2_brand_mark_home_link.py` | The **Home** nav item, its icon import and the exact-match field it needed all removed; the brand mark carrying the home destination with the exact matching that keeps it off every other route; the link naming itself for the collapsed rail; and the letter square gated on the title being absent rather than on the logo being absent |
 | `functional_tests/test_csrf_state_changing_route_guard.py` | Cross-site mutations require an explicitly trusted origin; CORS preflights answered before authentication and never wildcarded |
 | `functional_tests/route_tests/` | Blueprint policy classification for `frontend_v2`, `backend_v2`, `backend_v2_admin` |

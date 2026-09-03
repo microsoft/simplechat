@@ -9,6 +9,7 @@ import { useChatStore } from '../stores/chatStore';
 import { useCollaborationStore } from '../stores/collaborationStore';
 import { useBootstrapStore } from '../stores/bootstrapStore';
 import { useUiStore } from '../stores/uiStore';
+import { useImageProposalStore } from '../stores/imageProposalStore';
 import { readConversationParam, syncedConversationParams } from '../lib/conversationUrl';
 import { MessageList } from '../components/chat/MessageList';
 import { Composer } from '../components/chat/Composer';
@@ -249,8 +250,20 @@ function ChatHeader({ onOpenDetails }: { onOpenDetails: () => void }) {
 export function ChatPage() {
     const [detailsOpen, setDetailsOpen] = useState(false);
     const activeConversationId = useChatStore((state) => state.activeConversationId);
+    const setVisibleConversation = useImageProposalStore(
+        (state) => state.setVisibleConversation,
+    );
 
     useConversationUrlSync();
+
+    // Image approvals keep running after the reader goes elsewhere, and are reported by a
+    // notice when they do. Only this page knows whether their cards are actually on screen:
+    // the open conversation stays open while the reader is in My Workspace, where the cards
+    // are as invisible as they are in another conversation.
+    useEffect(() => {
+        setVisibleConversation(activeConversationId);
+        return () => setVisibleConversation(null);
+    }, [activeConversationId, setVisibleConversation]);
 
     return (
         <div className="flex min-h-0 flex-1">
