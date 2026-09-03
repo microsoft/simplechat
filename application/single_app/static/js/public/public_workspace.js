@@ -1980,6 +1980,29 @@ async function onPublicUploadClick() {
   let completed = 0;
   let failed = 0;
 
+  function updatePublicUploadRequestSummary() {
+    if (uploadStatus) uploadStatus.textContent = `Queued ${completed}/${files.length}${failed ? `, Upload requests not confirmed: ${failed}` : ''}`;
+  }
+
+  function finishPublicUploadRequests() {
+    fileInput.value = '';
+    publicDocsCurrentPage = 1;
+    fetchPublicDocs();
+
+    if (uploadBtn) {
+      uploadBtn.disabled = false;
+      uploadBtn.textContent = 'Upload Document(s)';
+    }
+
+    if (uploadStatus) {
+      uploadStatus.textContent = failed
+        ? `Upload requests complete. Queued ${completed}/${files.length}; ${failed} request(s) did not confirm. Check the document list below for final processing status.`
+        : `Queued ${completed}/${files.length} file(s). Check the document list below for processing status.`;
+    }
+
+    if (progressContainer) progressContainer.innerHTML = '';
+  }
+
   // Helper to create a unique ID for each file
   function makeId(file) {
     return 'progress-' + Math.random().toString(36).slice(2, 10) + '-' + encodeURIComponent(file.name.replace(/\W+/g, ''));
@@ -2034,7 +2057,7 @@ async function onPublicUploadClick() {
           progressBar.classList.remove('progress-bar-animated');
         }
         if (statusText) {
-          statusText.textContent = `Uploaded ${file.name} (100%)`;
+          statusText.textContent = `Queued ${file.name} (100%)`;
         }
         completed++;
       } else {
@@ -2044,26 +2067,13 @@ async function onPublicUploadClick() {
           progressBar.classList.remove('progress-bar-animated');
         }
         if (statusText) {
-          statusText.textContent = `Failed to upload ${file.name}`;
+          statusText.textContent = `Upload request did not confirm for ${file.name}`;
         }
         failed++;
       }
-      // Update summary status
-      if (uploadStatus) uploadStatus.textContent = `Uploaded ${completed}/${files.length}${failed ? `, Failed: ${failed}` : ''}`;
+      updatePublicUploadRequestSummary();
       if (completed + failed === files.length) {
-        fileInput.value = '';
-        publicDocsCurrentPage = 1;
-        fetchPublicDocs();
-        
-        // Re-enable upload button if it exists
-        if (uploadBtn) {
-          uploadBtn.disabled = false;
-          uploadBtn.textContent = 'Upload Document(s)';
-        }
-        
-        // Clear upload progress bars after all uploads and table refresh
-        const progressContainer = document.getElementById('public-upload-progress-container');
-        if (progressContainer) progressContainer.innerHTML = '';
+        finishPublicUploadRequests();
       }
     };
 
@@ -2074,24 +2084,12 @@ async function onPublicUploadClick() {
         progressBar.classList.remove('progress-bar-animated');
       }
       if (statusText) {
-        statusText.textContent = `Failed to upload ${file.name}`;
+        statusText.textContent = `Upload request did not confirm for ${file.name}`;
       }
       failed++;
-      if (uploadStatus) uploadStatus.textContent = `Uploaded ${completed}/${files.length}${failed ? `, Failed: ${failed}` : ''}`;
+      updatePublicUploadRequestSummary();
       if (completed + failed === files.length) {
-        fileInput.value = '';
-        publicDocsCurrentPage = 1;
-        fetchPublicDocs();
-        
-        // Re-enable upload button if it exists
-        if (uploadBtn) {
-          uploadBtn.disabled = false;
-          uploadBtn.textContent = 'Upload Document(s)';
-        }
-        
-        // Clear upload progress bars after all uploads and table refresh
-        const progressContainer = document.getElementById('public-upload-progress-container');
-        if (progressContainer) progressContainer.innerHTML = '';
+        finishPublicUploadRequests();
       }
     };
 

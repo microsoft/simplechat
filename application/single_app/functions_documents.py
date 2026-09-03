@@ -3,6 +3,7 @@
 import re
 import shutil
 import subprocess
+import time
 import traceback
 import zipfile
 from io import BytesIO
@@ -43,6 +44,11 @@ _AUDIO_RUNTIME_CAPABILITIES_CACHE = None
 
 class DocumentSearchAclProjectionDeferredError(RuntimeError):
     """Raised when an authorization-reducing Search ACL update must be retried safely."""
+
+
+MARKDOWN_ORDERED_DICT_MUTATION_MESSAGE = "OrderedDict mutated during iteration"
+MARKDOWN_ORDERED_DICT_RETRY_ATTEMPTS = 2
+MARKDOWN_ORDERED_DICT_RETRY_DELAY_SECONDS = 0.5
 
 
 def _search_indexing_results_succeeded(results):
@@ -6598,7 +6604,7 @@ def process_md(document_id, user_id, temp_file_path, original_filename, enable_e
             if current_word_count >= min_chunk_words or i == len(initial_chunks_content) - 1:
                  # If the combined chunk meets min size OR it's the last chunk, save it
                 if current_chunk_text.strip():
-                     final_chunks.append(current_chunk_text)
+                    final_chunks.append(current_chunk_text)
                 buffer_chunk = "" # Reset buffer
             else:
                 # Accumulate in buffer if below min size and not the last chunk
@@ -6612,32 +6618,36 @@ def process_md(document_id, user_id, temp_file_path, original_filename, enable_e
         num_chunks_final = len(final_chunks)
         update_callback(number_of_pages=num_chunks_final)
 
-        for idx, chunk_content in enumerate(final_chunks, start=1):
-            update_callback(
-                current_file_chunk=idx,
-                status=f"Saving chunk {idx}/{num_chunks_final}..."
-            )
-            args = {
+        all_chunks = []
+        for chunk_content in final_chunks:
+            if not chunk_content or not chunk_content.strip():
+                continue
+            all_chunks.append({
                 "page_text_content": chunk_content,
-                "page_number": idx,
+                "page_number": len(all_chunks) + 1,
                 "file_name": original_filename,
-                "user_id": user_id,
-                "document_id": document_id
-            }
+            })
 
-            if is_public_workspace:
-                args["public_workspace_id"] = public_workspace_id
-            elif is_group:
-                args["group_id"] = group_id
+        if all_chunks:
+            if len(all_chunks) != num_chunks_final:
+                num_chunks_final = len(all_chunks)
+                update_callback(number_of_pages=num_chunks_final)
+            update_callback(
+                current_file_chunk=1,
+                status=f"Batch saving {num_chunks_final} Markdown chunk(s)..."
+            )
+            token_usage = save_chunks_batch(
+                all_chunks,
+                user_id,
+                document_id,
+                group_id=group_id,
+                public_workspace_id=public_workspace_id
+            )
+            total_chunks_saved = len(all_chunks)
 
-            token_usage = save_chunks(**args)
-            total_chunks_saved += 1
-
-            # Accumulate embedding tokens
             if token_usage:
-                total_embedding_tokens += token_usage.get('total_tokens', 0)
-                if not embedding_model_name:
-                    embedding_model_name = token_usage.get('model_deployment_name')
+                total_embedding_tokens = token_usage.get('total_tokens', 0)
+                embedding_model_name = token_usage.get('model_deployment_name')
 
     except Exception as e:
         raise Exception(f"Failed processing Markdown file {original_filename}: {e}")
@@ -9042,6 +9052,50 @@ def _resolve_processing_complete_status(total_chunks_saved, file_ext, image_exte
 
     return "Processing complete"
 
+
+def _is_markdown_ordered_dict_mutation_error(exc):
+    """Return whether Markdown processing hit the transient OrderedDict mutation failure."""
+    return MARKDOWN_ORDERED_DICT_MUTATION_MESSAGE in str(exc or "")
+
+
+def _process_markdown_with_ordered_dict_retry(processor_args, update_callback):
+    """Retry Markdown processing when the parser hits a transient OrderedDict mutation."""
+    for attempt in range(MARKDOWN_ORDERED_DICT_RETRY_ATTEMPTS + 1):
+        try:
+            return process_md(**{k: v for k, v in processor_args.items() if k != "file_ext"})
+        except Exception as exc:
+            if (
+                not _is_markdown_ordered_dict_mutation_error(exc) or
+                attempt >= MARKDOWN_ORDERED_DICT_RETRY_ATTEMPTS
+            ):
+                raise
+
+            retry_number = attempt + 1
+            original_filename = processor_args.get("original_filename")
+            document_id = processor_args.get("document_id")
+            log_event(
+                "[DOCUMENTS] Retrying Markdown processing after transient OrderedDict mutation.",
+                extra={
+                    "document_id": document_id,
+                    "file_name": original_filename,
+                    "retry_number": retry_number,
+                    "max_retries": MARKDOWN_ORDERED_DICT_RETRY_ATTEMPTS,
+                    "error_type": type(exc).__name__,
+                },
+                level=logging.WARNING,
+                exceptionTraceback=True,
+            )
+            update_callback(
+                status=(
+                    "Retrying Markdown processing after a transient parser concurrency error "
+                    f"({retry_number}/{MARKDOWN_ORDERED_DICT_RETRY_ATTEMPTS})..."
+                )
+            )
+            time.sleep(MARKDOWN_ORDERED_DICT_RETRY_DELAY_SECONDS * retry_number)
+
+    raise RuntimeError("Markdown processing retry loop exited unexpectedly.")
+
+
 def process_document_upload_background(document_id, user_id, temp_file_path, original_filename, group_id=None, public_workspace_id=None, extraction_mode_override=None):
     """
     Main background task dispatcher for document processing.
@@ -9167,7 +9221,10 @@ def process_document_upload_background(document_id, user_id, temp_file_path, ori
             else:
                 total_chunks_saved = result
         elif file_ext == '.md':
-            result = process_md(**{k: v for k, v in processor_args_without_auto_metadata.items() if k != "file_ext"})
+            result = _process_markdown_with_ordered_dict_retry(
+                processor_args_without_auto_metadata,
+                update_doc_callback,
+            )
             if isinstance(result, tuple) and len(result) == 3:
                 total_chunks_saved, total_embedding_tokens, embedding_model_name = result
             else:

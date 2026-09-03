@@ -2,6 +2,45 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.007)**
+
+#### Bug Fixes
+
+*   **Markdown Retry Helper Return Contract Clarified**
+    *   Added an explicit defensive exception at the end of the Markdown `OrderedDict` retry helper so static analysis no longer sees a possible implicit `None` return.
+    *   Runtime behavior is unchanged for normal success and retry-exhaustion paths.
+    *   (Ref: `functions_documents.py`, [Markdown Retry Return Contract Fix](fixes/MARKDOWN_RETRY_RETURN_CONTRACT_FIX.md))
+
+### **(v0.261.006)**
+
+#### Bug Fixes
+
+*   **Markdown Uploads Retry Transient OrderedDict Parser Failures**
+    *   Markdown document processing now retries the known transient `OrderedDict mutated during iteration` parser failure before marking a document failed.
+    *   The retry is limited to this specific Markdown failure signature, so unrelated parsing, validation, or service errors still fail normally with their original error.
+    *   (Ref: Markdown upload processing, `functions_documents.py`, `test_markdown_processing_batches_search_writes.py`, [Search Write Gate Upload Contention Fix](fixes/SEARCH_WRITE_GATE_UPLOAD_CONTENTION_FIX.md))
+
+### **(v0.261.005)**
+
+#### User Interface Enhancements
+
+*   **Workspace Upload Progress Now Separates Request Status From Document Processing Status**
+    *   The temporary upload summary no longer labels unconfirmed browser upload requests as final document failures. This avoids misleading summaries such as `Uploaded 77/204, Failed: 127` when the document list later shows that most documents were queued and processed successfully.
+    *   Personal, group, and public workspace uploads now use `Queued` for confirmed upload requests and direct users to the refreshed document list for final processing status.
+    *   (Ref: workspace upload progress summary, `workspace-documents.js`, `public_workspace.js`, `group_workspaces.html`, [Workspace Upload Status Counter Fix](fixes/WORKSPACE_UPLOAD_STATUS_COUNTER_FIX.md))
+
+### **(v0.261.004)**
+
+#### Bug Fixes
+
+*   **Large Workspace Uploads No Longer Fail On Search Write Gate Contention**
+    *   Fixed partial failures when uploading many small Markdown, JSON, or YAML files to personal, group, or public workspaces at once. Document processing could fail with a message that the Data Management Search write gate changed too often to reserve a write slot.
+    *   The shared write gate now waits within the existing request timeout budget, briefly backs off after transient Cosmos ETag conflicts, and serializes Search writes inside each worker process. This prevents local upload threads from stampeding the same gate document while preserving the migration freeze protection for Azure AI Search writes.
+    *   Markdown processing now batches its chunk embeddings and Search upload instead of reserving the gate once per chunk, which reduces contention and avoids the intermittent `OrderedDict mutated during iteration` failures seen during concurrent Markdown ingestion.
+    *   Added regression coverage for repeated transient gate conflicts, local worker serialization, and Markdown use of the batch chunk writer.
+    *   (Ref: `functions_data_management_search_write_fence.py`, `functions_documents.py`, `test_data_management_search_write_fence.py`, `test_markdown_processing_batches_search_writes.py`, [Search Write Gate Upload Contention Fix](fixes/SEARCH_WRITE_GATE_UPLOAD_CONTENTION_FIX.md))
+
+
 ### **(v0.261.003)**
 
 #### Bug Fixes
@@ -69,6 +108,20 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   No shipping default changed. Only custom overrides that could never have been indexed are affected.
     *   (Ref: `get_chunk_size_cap`, `get_chunk_size_config`, Document Extraction settings, `admin_settings.js`)
 
+*   **Logout No Longer Redirects To A Missing Easy Auth Endpoint**
+    *   Logout could redirect to `/.auth/logout?post_logout_redirect_uri=%2Flogin` and return a 404 on Azure App Service deployments that were not actually serving App Service Easy Auth. This affected production deployments as well as development ones.
+    *   The root cause was Easy Auth detection treating the manually configured `WEBSITE_AUTH_AAD_ALLOWED_TENANTS` application setting as proof that Easy Auth was intercepting requests. SimpleChat's own advanced environment variable guidance instructs operators to set that value by hand, so it was never a reliable signal.
+    *   Detection now relies only on the `X-MS-CLIENT-PRINCIPAL` request headers that App Service Easy Auth injects on requests it actually intercepts, so deployments genuinely behind Easy Auth still clear the upstream platform session, and everyone else gets a clean local logout.
+    *   Idle-timeout logout uses the same local logout path, so automatic session expiration follows the corrected behavior as well.
+    *   (Ref: `route_frontend_authentication.py`, `_use_app_service_easy_auth_logout`, `test_app_service_easy_auth_logout.py`, [Easy Auth Logout Detection Fix](fixes/EASY_AUTH_LOGOUT_DETECTION_FIX.md))
+
+#### New Features
+
+*   **Opt-Out For App Service Easy Auth Logout**
+    *   Added the `DISABLE_APP_SERVICE_EASY_AUTH_LOGOUT` environment variable for deployments where Easy Auth is genuinely active but the platform `/.auth/logout` endpoint is not reachable on the public host, such as when a custom domain or gateway does not route `/.auth/*` to the App Service origin.
+    *   Setting it to `true` keeps logout on the local path instead of redirecting to the platform endpoint. Logout routing decisions are now also traced through debug logging, so `FLASK_DEBUG=1` shows which path was taken and why.
+    *   (Ref: `DISABLE_APP_SERVICE_EASY_AUTH_LOGOUT`, `config.py`, `example.env`, [Running SimpleChat Locally](running_simplechat_locally.md))
+    
 ### **(v0.261.001)**
 
 #### New Features
