@@ -32,8 +32,8 @@ Use workflows for repeatable work where sequence matters: weekly document checks
 3. Select **New Personal Workflow** or **New Group Workflow**.
 
 {% include media.html src="guides/create-a-workflow-step-3.png"
-                      alt="Screenshot showing create a workflow step 3."
-                      title="Create a workflow step 3"
+                      alt="The Create Group Workflow dialog on the General step, showing the workflow name, default runner, description, and model source fields, with Trigger, Tasks, Reliability, and Review still ahead."
+                      title="Creating a group workflow"
                       capture="Capture the create a workflow task at this step in SimpleChat with realistic sample data and redact secrets." %}
 
 4. In **General**, enter a name, description, and default runner.

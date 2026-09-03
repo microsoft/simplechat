@@ -8,7 +8,7 @@ audience: user
 
 <!-- action-slug: mcp -->
 
-{% include media.html src="reference/actions-mcp-configuration.png" alt="MCP action configuration UI." title="MCP configuration" capture="Capture MCP Server, Authentication, Tool Exposure, Timeouts and Retries, Discover Tools, and Test Connection. Redact secrets." %}
+{% include media.html src="reference/actions-mcp-configuration.png" alt="The MCP Server configuration pane showing the preconfigured server template selector, server preset, transport and endpoint fields, the authentication method, and a custom headers JSON box noting header values are treated as secrets." title="MCP action configuration" capture="Capture MCP Server, Authentication, Tool Exposure, Timeouts and Retries, Discover Tools, and Test Connection. Redact secrets." %}
 
 ## What this action does
 

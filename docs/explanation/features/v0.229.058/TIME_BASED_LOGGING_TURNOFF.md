@@ -270,8 +270,8 @@ The timer framework can be extended to support:
 
 ## Related Documentation
 
-- [Admin Configuration Guide](../admin_configuration.md)
-- [Application Workflows](../application_workflows.md)
+- [Admin Configuration Guide](../../../admin_configuration.md)
+- Application Workflows
 - [Fix Documentation](../fixes/)
 - [Functional Tests](../../functional_tests/)
 

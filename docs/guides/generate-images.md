@@ -32,7 +32,7 @@ Use image generation for visual concepts, drafts, illustrations, and creative ex
 3. Type a clear visual request with subject, style, setting, and constraints.
 
 {% include media.html src="guides/generate-images-step-3.png"
-                      alt="Screenshot showing generate images step 3."
+                      alt="The chat composer with Image mode active and its tooltip showing, an image prompt typed in the message box, and the other source controls greyed out."
                       title="Generate images step 3"
                       capture="Capture the generate images task at this step in SimpleChat with realistic sample data and redact secrets." %}
 

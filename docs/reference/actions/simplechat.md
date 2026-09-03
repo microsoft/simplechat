@@ -8,7 +8,7 @@ audience: user
 
 <!-- action-slug: simplechat -->
 
-{% include media.html src="reference/actions-simplechat-configuration.png" alt="SimpleChat action setup or assignment UI." title="SimpleChat action" capture="Capture the SimpleChat action setup or assignment UI with relevant fields visible. Redact secrets and user identifiers." %}
+{% include media.html src="reference/actions-simplechat-configuration.png" alt="The SimpleChat configuration pane noting the action needs no URL or external credentials, above capability toggles for creating groups, adding users, creating conversations and workflows, and uploading Markdown documents." title="SimpleChat action configuration" capture="Capture the SimpleChat action setup or assignment UI with relevant fields visible. Redact secrets and user identifiers." %}
 
 ## What this action does
 
