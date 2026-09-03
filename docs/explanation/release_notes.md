@@ -2,6 +2,30 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.035)**
+
+#### Bug Fixes
+
+*   **Exported Diagrams Are No Longer Empty Boxes**
+    *   Exporting a message with a diagram to Word or PowerPoint produced the right shapes, arrows and layout, but **no text inside any of the boxes**, even though the same diagram read correctly on screen.
+    *   The application image ships no scalable font, so when the server drew a diagram itself the browser it uses had nothing to write with: it measured every label as zero-width, fell back to the smallest box that would fit nothing, and painted no lettering. The tell-tale sign was every box coming out the same width, while on screen they varied with their labels.
+    *   The renderer now carries its own font instead of relying on whatever the host happens to have, so a diagram exports the same way on every deployment. Real fonts were also added to the image for everything else that draws in it.
+    *   Diagrams are now captured directly from the page they are drawn on, rather than being redrawn from a copy — a step that quietly discarded anything it could not reproduce.
+    *   (Ref: message export, Mermaid diagrams, server-side rendering, container fonts)
+
+*   **Exports Say When They Are Working**
+    *   Exporting to Word, PowerPoint or email closed the menu and then appeared to do nothing, sometimes for a long time. A PowerPoint export in particular waits on the model planning your slides, and long enough that it was reasonably read as having hung or failed when it was still going.
+    *   All three now put up a notice as soon as you click, which stays until the file arrives and is then replaced by the result. The menu entry spins and greys out while it runs, so an impatient second click cannot start a duplicate export.
+    *   Both the classic and new interfaces behave the same way.
+    *   (Ref: message export, notifications, chat message menu)
+
+#### User Interface Enhancements
+
+*   **Faster Exports That Keep Your Diagram Colours**
+    *   The new interface now sends the diagram it has already drawn along with the export, so the server no longer starts a browser to draw it again. Exports containing diagrams finish noticeably sooner.
+    *   Because the exported picture is the one on your screen, any colours you picked for that diagram now come with it.
+    *   (Ref: V2 chat, message export, Mermaid diagrams)
+
 ### **(v0.261.034)**
 
 #### Bug Fixes

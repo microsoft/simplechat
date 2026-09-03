@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Functional test for the V2 chat Phase 1 parity fixes.
-Version: 0.261.012
+Version: 0.261.035
 Implemented in: 0.261.012
 
 Six reported problems in the V2 chat page, each traced to a specific mismatch between what
@@ -370,11 +370,28 @@ def test_failures_are_reported_to_the_user():
     print("Testing failure reporting...")
     try:
         actions = read(V2_SRC, "components", "chat", "MessageActions.tsx")
-        assert "toast.error" in actions, (
+
+        # An export now raises a pending notification and settles it with the outcome, so
+        # the failure path reads `toast.settle(id, 'error', ...)` rather than `toast.error`.
+        # Either mechanism satisfies the contract; a failure path with neither does not.
+        export_failure_reported = "toast.error" in actions or re.search(
+            r"toast\.settle\(\s*\w+,\s*'error'", actions
+        )
+        assert export_failure_reported, (
             "An export failure must be surfaced; a silent failure is what made these "
             "buttons look broken in the first place"
         )
-        assert "toast.success" in actions
+        assert "toast.success" in actions or re.search(
+            r"toast\.settle\(\s*\w+,\s*'success'", actions
+        ), "A completed export must confirm itself"
+
+        # A settled failure must survive its pending notification having gone away, or the
+        # silent failure this test guards against comes straight back.
+        toast_store = read(V2_SRC, "stores", "toastStore.ts")
+        if "settle:" in toast_store:
+            assert re.search(r"if \(tone === 'error'\)", toast_store), (
+                "settle() must still report an error whose pending toast is already gone"
+            )
 
         toaster = read(V2_SRC, "components", "ui", "Toaster.tsx")
         assert "aria-live" in toaster, (

@@ -79,14 +79,28 @@ somewhere. SimpleChat uses two, in this order:
 1. **The user's browser**, when one is attached to the export. It reads the Mermaid blocks
    out of the message, or calls `POST /api/conversations/export/visual-scan` for a
    conversation export, renders each diagram to SVG, paints it onto a canvas and reads it
-   back as a PNG. The PNGs travel with the export request as `visual_assets`.
+   back as a PNG. The PNGs travel with the export request as `visual_assets`. Both the
+   classic chat and V2 do this, so a diagram the reader can see is normally exported exactly
+   as it appears on screen, including any colours they chose for it.
 2. **Headless Chromium on the server**, for anything the browser did not cover — an export
    started from an interface that does not rasterize, or a server-initiated export. The
    container already installs Playwright's Chromium for Source Review and Deep Research
    (`INSTALL_PLAYWRIGHT_CHROMIUM`, on by default), so this costs no new dependency.
 
-Both load the same vendored bundle and use the same configuration, so a diagram renders
-identically whichever path produced it.
+The server renderer draws each diagram into its live page and captures it with a Playwright
+element screenshot. It deliberately does not repeat the browser's serialize-and-repaint
+route: an SVG reloaded through an `<img>` renders in an isolated context that drops
+`<foreignObject>` content and never loads a font that is not already available.
+
+It also **carries its own font** rather than using the host's. The application image installs
+no scalable Latin typeface, so a diagram asking for `Arial, Helvetica, sans-serif` used to
+resolve to nothing: Chromium measured every label as zero-width, Mermaid fell back to its
+minimum node size, and the export came out as a set of uniform empty boxes. DejaVu Sans is
+read from matplotlib, already a requirement for TeX export, and injected as an `@font-face`,
+so a server-rendered diagram looks the same on every deployment.
+
+Both paths load the same vendored bundle and use the same configuration, so a diagram renders
+comparably whichever produced it.
 
 The server matches each asset to its fence by **normalized source text**, and only renders
 diagrams that have no asset already. A client-supplied picture is never re-rendered.
@@ -221,6 +235,11 @@ PNG is rejected if it exceeds the same byte cap that browser-supplied assets use
 - Server-side rendering launches a browser, which takes roughly a second before the first
   diagram in a request. Exports whose diagrams the client already rasterized never pay it,
   and neither do exports with no diagrams at all.
+- Server-side rendering is serialised by a process-wide lock, so concurrent exports that both
+  need it queue behind each other. Exports whose diagrams the client supplied never take
+  the lock.
+- Server-rendered diagrams always use the embedded DejaVu Sans, so their lettering can differ
+  slightly from a browser-rendered one, which uses the reader's own font stack.
 - V2 vendors its own copy of the same Mermaid version under
   `application/v2_ui/public/vendor/mermaid-11.17.2/` for in-chat rendering. The two
   frontends have separate vendor trees, so the bundle is currently committed twice.

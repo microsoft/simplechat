@@ -103,17 +103,28 @@
         }
     }
 
+    /**
+     * Show a notification.
+     *
+     * Pass `autohide: false` for work that is still running: the toast then stays until the
+     * caller dismisses it through the returned handle. A message export is rendered entirely
+     * on the server and changes nothing on the page while it runs, so without one there is
+     * no sign the click did anything.
+     *
+     * Returns a handle with `dismiss()`, or null when no toast could be shown.
+     */
     function showToast(message, variant = 'info', options = {}) {
         const container = getToastContainer();
         if (!container) {
             console.error('[Toast] Toast container is unavailable.');
-            return;
+            return null;
         }
 
         const requestedVariant = variantAliases.get(variant) || variant;
         const normalizedVariant = supportedVariants.has(requestedVariant) ? requestedVariant : 'info';
         const normalizedMessage = normalizeToastMessage(message);
         const isUrgent = normalizedVariant === 'danger' || normalizedVariant === 'warning';
+        const autohide = options.autohide !== false;
         if (options.persist === true) {
             persistToast(normalizedMessage, normalizedVariant);
         }
@@ -134,26 +145,40 @@
         bodyEl.className = 'toast-body';
         bodyEl.textContent = normalizedMessage;
 
-        const closeButtonEl = document.createElement('button');
-        closeButtonEl.type = 'button';
-        closeButtonEl.className = 'btn-close btn-close-white me-2 m-auto';
-        closeButtonEl.setAttribute('data-bs-dismiss', 'toast');
-        closeButtonEl.setAttribute('aria-label', 'Close');
+        // Work in progress cannot be cancelled, so a spinner stands in for the close button
+        // that a dismissible toast gets.
+        if (!autohide) {
+            const spinnerEl = document.createElement('span');
+            spinnerEl.className = 'spinner-border spinner-border-sm ms-3 my-auto';
+            spinnerEl.setAttribute('aria-hidden', 'true');
+            contentEl.appendChild(bodyEl);
+            contentEl.appendChild(spinnerEl);
+            toastEl.appendChild(contentEl);
+            container.appendChild(toastEl);
+        } else {
+            const closeButtonEl = document.createElement('button');
+            closeButtonEl.type = 'button';
+            closeButtonEl.className = 'btn-close btn-close-white me-2 m-auto';
+            closeButtonEl.setAttribute('data-bs-dismiss', 'toast');
+            closeButtonEl.setAttribute('aria-label', 'Close');
 
-        contentEl.appendChild(bodyEl);
-        contentEl.appendChild(closeButtonEl);
-        toastEl.appendChild(contentEl);
-        container.appendChild(toastEl);
+            contentEl.appendChild(bodyEl);
+            contentEl.appendChild(closeButtonEl);
+            toastEl.appendChild(contentEl);
+            container.appendChild(toastEl);
+        }
 
         if (!window.bootstrap?.Toast) {
             console.error('[Toast] Bootstrap Toast is unavailable.');
             toastEl.classList.add('show');
-            return;
+            return { dismiss: () => toastEl.remove() };
         }
 
         toastEl.addEventListener('hidden.bs.toast', () => toastEl.remove(), { once: true });
-        const bootstrapToast = new window.bootstrap.Toast(toastEl, { delay: 5000 });
+        const bootstrapToast = new window.bootstrap.Toast(toastEl, { delay: 5000, autohide });
         bootstrapToast.show();
+
+        return { dismiss: () => bootstrapToast.hide() };
     }
 
     window.showToast = showToast;
