@@ -1,8 +1,8 @@
 // test_v2_workspace_sections_logic.mjs
 //
 // Runtime test for the V2 personal workspace section resolution.
-// Version: 0.261.041
-// Implemented in: 0.261.041
+// Version: 0.261.042
+// Implemented in: 0.261.042
 //
 // The companion test, test_v2_workspace_sections.py, asserts that the client reads the field
 // names the routes actually return. That is a source assertion: it proves the wiring, not the
