@@ -2,8 +2,8 @@
 """
 Functional test for saving diagram and chart colours in shared conversations.
 
-Version: 0.261.039
-Implemented in: 0.261.039
+Version: 0.261.043
+Implemented in: 0.261.043
 
 Recolouring or resizing a mermaid diagram or a SimpleChart chart worked in a personal
 conversation and failed in a shared one. The block changed on screen and then reported "That
@@ -57,7 +57,7 @@ from functions_message_visual_styles import (  # noqa: E402
     read_visual_styles,
 )
 
-IMPLEMENTED_IN = "0.261.039"
+IMPLEMENTED_IN = "0.261.043"
 
 COLLABORATION_ROUTE = (
     "'/api/collaboration/conversations/<conversation_id>/messages/<message_id>/visual-style'"

@@ -17,7 +17,7 @@ This feature adds:
 
 **Implemented in version: 0.261.033**
 
-**Shared conversation support added in version: 0.261.039**
+**Shared conversation support added in version: 0.261.043**
 
 ### Dependencies
 

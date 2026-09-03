@@ -958,14 +958,227 @@ def get_user_plugins():
     else:
         return jsonify(plugins)
 
+def _prepare_personal_action_payload(user_id, plugin):
+    """Clean, default and validate a single personal action.
+
+    This is the per-action half of the bulk save, factored out so the per-item create and
+    update routes apply exactly the same identity checks, manifest validation and MCP
+    destination policy. Returns ``(plugin_to_save, error_response)`` with exactly one set.
+    """
+    plugin_to_save = dict(plugin)
+    # Remove is_global if present
+    if 'is_global' in plugin_to_save:
+        del plugin_to_save['is_global']
+
+    # Ensure required fields have default values
+    plugin_to_save.setdefault('name', '')
+    plugin_to_save.setdefault('displayName', plugin_to_save.get('name', ''))
+    plugin_to_save.setdefault('description', '')
+    plugin_to_save.setdefault('metadata', {})
+    plugin_to_save.setdefault('additionalFields', {})
+
+    # Remove storage-managed fields that are not part of the plugin manifest schema,
+    # but preserve the action ID so existing records can be updated in place.
+    for field in PLUGIN_STORAGE_MANAGED_FIELDS:
+        if field == 'id':
+            continue
+        plugin_to_save.pop(field, None)
+
+    # Handle endpoint based on plugin type. Read before the defaults below fill it in, so
+    # the manifest check still sees the type the caller actually declared.
+    plugin_type = plugin_to_save.get('type', '')
+    plugin_to_save.setdefault('endpoint', '')
+    _apply_plugin_runtime_defaults(plugin_to_save)
+    mcp_stdio_error = _reject_non_admin_mcp_stdio(plugin_to_save, scope_label='personal')
+    if mcp_stdio_error:
+        return None, (jsonify({'error': mcp_stdio_error}), 400)
+    try:
+        _validate_action_identity_for_scope(
+            plugin_to_save,
+            WORKSPACE_IDENTITY_SCOPE_PERSONAL,
+            user_id,
+        )
+    except (ValueError, LookupError, PermissionError):
+        return None, (jsonify({'error': 'Action identity configuration is invalid.'}), 400)
+
+    # Ensure auth has default structure
+    if 'auth' not in plugin_to_save:
+        plugin_to_save['auth'] = {'type': 'identity'}
+    elif not isinstance(plugin_to_save['auth'], dict):
+        plugin_to_save['auth'] = {'type': 'identity'}
+    elif 'type' not in plugin_to_save['auth']:
+        plugin_to_save['auth']['type'] = 'identity'
+
+    # Auto-fill type from metadata if missing or empty
+    if not plugin_to_save.get('type'):
+        if plugin_to_save.get('metadata', {}).get('type'):
+            plugin_to_save['type'] = plugin_to_save['metadata']['type']
+        else:
+            plugin_to_save['type'] = 'unknown'  # Default type
+
+    debug_print(f"Plugin build: {_redact_plugin_for_logging(plugin_to_save)}")
+    validation_error = validate_plugin(plugin_to_save)
+    if validation_error:
+        return None, (jsonify({'error': f'Plugin validation failed: {validation_error}'}), 400)
+    is_valid, validation_errors = PluginHealthChecker.validate_plugin_manifest(plugin_to_save, plugin_type)
+    if not is_valid:
+        return None, (jsonify({'error': f'Plugin validation failed: {"; ".join(validation_errors)}'}), 400)
+
+    try:
+        _enforce_mcp_destination_policy(
+            plugin_to_save,
+            WORKSPACE_IDENTITY_SCOPE_PERSONAL,
+            user_id,
+            operation='personal_action_save',
+            user_id=user_id,
+        )
+    except McpDestinationPolicyError:
+        return None, (jsonify({'error': 'MCP destination is not allowed by governance policy.'}), 403)
+    except ValueError:
+        return None, (jsonify({'error': 'MCP destination configuration is invalid.'}), 400)
+
+    return plugin_to_save, None
+
+
+def _save_personal_action_or_error(user_id, plugin_to_save):
+    """Persist one personal action, mapping the storage failures onto HTTP responses."""
+    try:
+        return save_personal_action(user_id, plugin_to_save), None
+    except ValueError as exc:
+        debug_print(f"Validation error saving personal action for user {user_id}: {exc}")
+        return None, (jsonify({'error': ACTION_VALIDATION_ERROR_MESSAGE}), 400)
+    except PermissionError as exc:
+        debug_print(f"Governance denied saving personal action for user {user_id}: {exc}")
+        return None, (jsonify({'error': ACTION_PERMISSION_ERROR_MESSAGE}), 403)
+    except RuntimeError as exc:
+        debug_print(f"Key Vault error saving personal action for user {user_id}: {exc}")
+        return None, (jsonify({'error': ACTION_KEY_VAULT_ERROR_MESSAGE}), 500)
+    except Exception as exc:
+        debug_print(f"Error saving personal action for user {user_id}: {exc}")
+        return None, (jsonify({'error': 'Failed to save plugin'}), 500)
+
+
+def _create_personal_action(user_id, payload):
+    """Create one personal action from an object body."""
+    name = str(payload.get('name') or '').strip()
+    if not name:
+        return jsonify({'error': 'Action name is required.'}), 400
+
+    global_plugin_names = set(
+        p['name'].lower() for p in get_global_actions() if 'name' in p
+    )
+    if name.lower() in global_plugin_names:
+        return jsonify({'error': f"'{name}' is the name of a global action."}), 409
+
+    if get_personal_action(user_id, name, return_type=SecretReturnType.NAME):
+        return jsonify({'error': f"An action named '{name}' already exists."}), 409
+
+    plugin_to_save, error = _prepare_personal_action_payload(user_id, payload)
+    if error:
+        return error
+
+    saved, error = _save_personal_action_or_error(user_id, plugin_to_save)
+    if error:
+        return error
+
+    saved = saved or plugin_to_save
+    log_action_creation(
+        user_id=user_id,
+        action_id=saved.get('id', ''),
+        action_name=saved.get('name', ''),
+        action_type=saved.get('type', ''),
+        scope='personal',
+    )
+    log_event("User plugin created", extra={"user_id": user_id, "plugin_name": saved.get('name', '')})
+    return jsonify(saved), 201
+
+
+@bpap.route('/api/user/plugins/<action_id>', methods=['GET'])
+@swagger_route(security=get_auth_security())
+@login_required
+@user_required
+def get_user_plugin(action_id):
+    """Return one personal action, addressed by id or by name."""
+    user_id = get_current_user_id()
+    try:
+        action = get_personal_action(user_id, action_id, return_type=SecretReturnType.NAME)
+    except PermissionError:
+        return jsonify({'error': ACTION_PERMISSION_ERROR_MESSAGE}), 403
+    if not action:
+        return jsonify({'error': 'Plugin not found.'}), 404
+    action['is_global'] = False
+    return jsonify(action), 200
+
+
+@bpap.route('/api/user/plugins/<action_id>', methods=['PATCH'])
+@swagger_route(security=get_auth_security())
+@login_required
+@user_required
+@enabled_required("allow_user_plugins")
+def update_user_plugin(action_id):
+    """Apply a partial update to one personal action.
+
+    Only the supplied keys change. The whole-collection POST cannot express this: a client
+    that does not know about a field has to send it back verbatim or lose it.
+    """
+    user_id = get_current_user_id()
+    updates = request.get_json(silent=True)
+    if not isinstance(updates, dict):
+        return jsonify({'error': 'Action payload must be an object.'}), 400
+
+    try:
+        existing = get_personal_action(user_id, action_id, return_type=SecretReturnType.NAME)
+    except PermissionError:
+        return jsonify({'error': ACTION_PERMISSION_ERROR_MESSAGE}), 403
+    if not existing:
+        return jsonify({'error': 'Plugin not found.'}), 404
+
+    merged = dict(existing)
+    merged.update(updates)
+    # The stored document is keyed on id, so it is carried over rather than taken from the
+    # body; that keeps a rename from orphaning the existing record.
+    merged['id'] = existing.get('id')
+
+    plugin_to_save, error = _prepare_personal_action_payload(user_id, merged)
+    if error:
+        return error
+
+    saved, error = _save_personal_action_or_error(user_id, plugin_to_save)
+    if error:
+        return error
+
+    saved = saved or plugin_to_save
+    log_action_update(
+        user_id=user_id,
+        action_id=saved.get('id', ''),
+        action_name=saved.get('name', ''),
+        action_type=saved.get('type', ''),
+        scope='personal',
+    )
+    log_event("User plugin updated", extra={"user_id": user_id, "plugin_name": saved.get('name', '')})
+    return jsonify(saved), 200
+
+
 @bpap.route('/api/user/plugins', methods=['POST'])
 @swagger_route(security=get_auth_security())
 @login_required
 @user_required
 @enabled_required("allow_user_plugins")
 def set_user_plugins():
+    """Create one action, or replace the whole collection.
+
+    An object body creates a single action and is the supported form. An array body
+    replaces every personal action at once; it is retained because the classic interface
+    still saves that way, but it is deprecated -- concurrent editors overwrite each other,
+    and an omitted element is an unintended delete.
+    """
     user_id = get_current_user_id()
-    plugins = request.json if isinstance(request.json, list) else []
+    payload = request.get_json(silent=True)
+
+    if isinstance(payload, dict):
+        return _create_personal_action(user_id, payload)
+
+    plugins = payload if isinstance(payload, list) else []
     
     # Get global plugin names (case-insensitive)
     global_plugins = get_global_actions()
@@ -984,77 +1197,9 @@ def set_user_plugins():
     for plugin in plugins:
         if plugin.get('name', '').lower() in global_plugin_names:
             continue  # Skip global plugins
-        plugin_to_save = dict(plugin)
-        # Remove is_global if present
-        if 'is_global' in plugin_to_save:
-            del plugin_to_save['is_global']
-        
-        # Ensure required fields have default values
-        plugin_to_save.setdefault('name', '')
-        plugin_to_save.setdefault('displayName', plugin_to_save.get('name', ''))
-        plugin_to_save.setdefault('description', '')
-        plugin_to_save.setdefault('metadata', {})
-        plugin_to_save.setdefault('additionalFields', {})
-        
-        # Remove storage-managed fields that are not part of the plugin manifest schema,
-        # but preserve the action ID so existing records can be updated in place.
-        for field in PLUGIN_STORAGE_MANAGED_FIELDS:
-            if field == 'id':
-                continue
-            plugin_to_save.pop(field, None)
-        
-        # Handle endpoint based on plugin type
-        plugin_type = plugin_to_save.get('type', '')
-        plugin_to_save.setdefault('endpoint', '')
-        _apply_plugin_runtime_defaults(plugin_to_save)
-        mcp_stdio_error = _reject_non_admin_mcp_stdio(plugin_to_save, scope_label='personal')
-        if mcp_stdio_error:
-            return jsonify({'error': mcp_stdio_error}), 400
-        try:
-            _validate_action_identity_for_scope(
-                plugin_to_save,
-                WORKSPACE_IDENTITY_SCOPE_PERSONAL,
-                user_id,
-            )
-        except (ValueError, LookupError, PermissionError):
-            return jsonify({'error': 'Action identity configuration is invalid.'}), 400
-        
-        # Ensure auth has default structure
-        if 'auth' not in plugin_to_save:
-            plugin_to_save['auth'] = {'type': 'identity'}
-        elif not isinstance(plugin_to_save['auth'], dict):
-            plugin_to_save['auth'] = {'type': 'identity'}
-        elif 'type' not in plugin_to_save['auth']:
-            plugin_to_save['auth']['type'] = 'identity'
-        
-        # Auto-fill type from metadata if missing or empty
-        if not plugin_to_save.get('type'):
-            if plugin_to_save.get('metadata', {}).get('type'):
-                plugin_to_save['type'] = plugin_to_save['metadata']['type']
-            else:
-                plugin_to_save['type'] = 'unknown'  # Default type
-        
-        debug_print(f"Plugin build: {_redact_plugin_for_logging(plugin_to_save)}")
-        validation_error = validate_plugin(plugin_to_save)
-        if validation_error:
-            return jsonify({'error': f'Plugin validation failed: {validation_error}'}), 400
-        is_valid, validation_errors = PluginHealthChecker.validate_plugin_manifest(plugin_to_save, plugin_type)
-        if not is_valid:
-            return jsonify({'error': f'Plugin validation failed: {"; ".join(validation_errors)}'}), 400
-
-        try:
-            _enforce_mcp_destination_policy(
-                plugin_to_save,
-                WORKSPACE_IDENTITY_SCOPE_PERSONAL,
-                user_id,
-                operation='personal_action_save',
-                user_id=user_id,
-            )
-        except McpDestinationPolicyError:
-            return jsonify({'error': 'MCP destination is not allowed by governance policy.'}), 403
-        except ValueError:
-            return jsonify({'error': 'MCP destination configuration is invalid.'}), 400
-        
+        plugin_to_save, error = _prepare_personal_action_payload(user_id, plugin)
+        if error:
+            return error
         filtered_plugins.append(plugin_to_save)
         new_plugin_names.add(plugin_to_save['name'])
         if plugin_to_save.get('id'):
@@ -1109,24 +1254,31 @@ def set_user_plugins():
     log_event("User plugins updated", extra={"user_id": user_id, "plugins_count": len(filtered_plugins)})
     return jsonify({'success': True})
 
-@bpap.route('/api/user/plugins/<plugin_name>', methods=['DELETE'])
+@bpap.route('/api/user/plugins/<action_id>', methods=['DELETE'])
 @swagger_route(security=get_auth_security())
 @login_required
 @user_required
-def delete_user_plugin(plugin_name):
+def delete_user_plugin(action_id):
+    """Delete one personal action, addressed by id or by name.
+
+    Deliberately not gated on ``allow_user_plugins``. Creating and editing are, but removing
+    an action only reduces what a user has configured, and gating it would strand existing
+    actions with no way to clean them up after an administrator turns the capability off.
+    Governance is still enforced, inside ``delete_personal_action``.
+    """
     user_id = get_current_user_id()
 
     # Try to delete from personal_actions container
     try:
-        deleted = delete_personal_action(user_id, plugin_name)
+        deleted = delete_personal_action(user_id, action_id)
     except PermissionError:
         return jsonify({'error': 'You are not authorized to delete this action.'}), 403
     
     if not deleted:
         return jsonify({'error': 'Plugin not found.'}), 404
     
-    log_action_deletion(user_id=user_id, action_id=plugin_name, action_name=plugin_name, scope='personal')
-    log_event("User plugin deleted", extra={"user_id": user_id, "plugin_name": plugin_name})
+    log_action_deletion(user_id=user_id, action_id=action_id, action_name=action_id, scope='personal')
+    log_event("User plugin deleted", extra={"user_id": user_id, "plugin_name": action_id})
     return jsonify({'success': True})
 
 

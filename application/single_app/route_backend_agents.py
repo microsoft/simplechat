@@ -1049,6 +1049,93 @@ def get_assigned_knowledge_catalog_route():
     )
     return jsonify(catalog), 200
 
+def _find_personal_agent(user_id, agent_ref):
+    """Resolve a personal agent by id first, then by name.
+
+    Personal agents were addressed by name historically, but ``GET /api/user/agents`` can
+    merge personal and global agents and a name is editable, so an id is the only stable
+    handle. Both are accepted: the id keeps new clients correct, the name keeps the classic
+    interface working.
+    """
+    reference = str(agent_ref or '')
+    if not reference:
+        return None
+    agents = get_personal_agents(user_id)
+    for agent in agents:
+        if str(agent.get('id') or '') == reference:
+            return agent
+    for agent in agents:
+        if agent.get('name') == reference:
+            return agent
+    return None
+
+
+def _prepare_personal_agent_payload(user_id, agent, settings):
+    """Clean, enrich and validate a single personal agent.
+
+    This is the per-agent half of the bulk save, factored out so the per-item create and
+    update routes cannot drift from it. Returns ``(cleaned_agent, error_response)`` where
+    exactly one of the two is None.
+    """
+    if not settings.get('allow_user_custom_endpoints', False):
+        _strip_disallowed_local_custom_connection_fields(agent)
+
+    try:
+        cleaned_agent = sanitize_agent_payload(agent)
+    except AgentPayloadError as exc:
+        return None, (jsonify({'error': str(exc)}), 400)
+
+    cleaned_agent['is_global'] = False
+    cleaned_agent['is_group'] = False
+
+    try:
+        cleaned_agent = apply_assigned_knowledge_to_agent_payload(
+            cleaned_agent,
+            user_id=user_id,
+            agent_scope='personal',
+            is_admin=False,
+        )
+    except AssignedKnowledgeError as exc:
+        return None, (jsonify({'error': str(exc)}), 400)
+
+    validation_error = validate_agent(cleaned_agent)
+    if validation_error:
+        return None, (jsonify({'error': f'Agent validation failed: {validation_error}'}), 400)
+
+    return cleaned_agent, None
+
+
+def _create_personal_agent(user_id, payload):
+    """Create one personal agent from an object body."""
+    try:
+        ensure_governance_access('governance_user_agents', user_id)
+    except PermissionError as exc:
+        return jsonify({'error': str(exc)}), 403
+
+    if payload.get('is_global'):
+        return jsonify({'error': 'Global agents cannot be created here.'}), 400
+
+    settings = get_settings()
+    cleaned_agent, error = _prepare_personal_agent_payload(user_id, dict(payload), settings)
+    if error:
+        return error
+
+    existing = _find_personal_agent(user_id, cleaned_agent.get('name'))
+    if existing:
+        return jsonify({'error': f"An agent named '{cleaned_agent.get('name')}' already exists."}), 409
+
+    saved = save_personal_agent(user_id, cleaned_agent) or cleaned_agent
+    log_agent_creation(
+        user_id=user_id,
+        agent_id=saved.get('id', ''),
+        agent_name=saved.get('name', ''),
+        agent_display_name=saved.get('display_name', saved.get('name', '')),
+        scope='personal',
+    )
+    log_event("User agent created", extra={"user_id": user_id, "agent_name": saved.get('name', '')})
+    return jsonify(saved), 201
+
+
 @bpa.route('/api/user/agents', methods=['POST'])
 @swagger_route(
     security=get_auth_security()
@@ -1057,37 +1144,31 @@ def get_assigned_knowledge_catalog_route():
 @user_required
 @enabled_required("allow_user_agents")
 def set_user_agents():
+    """Create one agent, or replace the whole collection.
+
+    An object body creates a single agent and is the supported form. An array body replaces
+    every personal agent at once; it is retained because the classic interface still saves
+    that way, but it is deprecated -- concurrent editors overwrite each other's work, and a
+    dropped element is an unintended delete. New callers should use POST with an object,
+    PATCH for edits and DELETE for removals.
+    """
     user_id = get_current_user_id()
-    agents = request.json if isinstance(request.json, list) else []
+    payload = request.get_json(silent=True)
+
+    if isinstance(payload, dict):
+        return _create_personal_agent(user_id, payload)
+
+    agents = payload if isinstance(payload, list) else []
     settings = get_settings()
-    # If custom endpoints are not allowed, strip deployment settings for endpoint, key, and api-revision
-    if not settings.get('allow_user_custom_endpoints', False):
-        for agent in agents:
-            _strip_disallowed_local_custom_connection_fields(agent)
 
     # Remove any global agents before saving
     filtered_agents = []
     for agent in agents:
         if agent.get('is_global', False):
             continue  # Skip global agents
-        try:
-            cleaned_agent = sanitize_agent_payload(agent)
-        except AgentPayloadError as exc:
-            return jsonify({'error': str(exc)}), 400
-        cleaned_agent['is_global'] = False
-        cleaned_agent['is_group'] = False
-        try:
-            cleaned_agent = apply_assigned_knowledge_to_agent_payload(
-                cleaned_agent,
-                user_id=user_id,
-                agent_scope='personal',
-                is_admin=False,
-            )
-        except AssignedKnowledgeError as exc:
-            return jsonify({'error': str(exc)}), 400
-        validation_error = validate_agent(cleaned_agent)
-        if validation_error:
-            return jsonify({'error': f'Agent validation failed: {validation_error}'}), 400
+        cleaned_agent, error = _prepare_personal_agent_payload(user_id, agent, settings)
+        if error:
+            return error
         filtered_agents.append(cleaned_agent)
 
     # Enforce global agent only if per_user_semantic_kernel is False
@@ -1134,42 +1215,126 @@ def set_user_agents():
     log_event("User agents updated", extra={"user_id": user_id, "agents_count": len(filtered_agents)})
     return jsonify({'success': True})
 
-# Add a DELETE endpoint for user agents (if not present)
-@bpa.route('/api/user/agents/<agent_name>', methods=['DELETE'])
+@bpa.route('/api/user/agents/<agent_id>', methods=['GET'])
 @swagger_route(
     security=get_auth_security()
 )
 @login_required
 @user_required
 @enabled_required("allow_user_agents")
-def delete_user_agent(agent_name):
+def get_user_agent(agent_id):
+    """Return one personal agent, addressed by id or by name."""
     user_id = get_current_user_id()
-    # Get current agents from personal_agents container
-    agents = get_personal_agents(user_id)
-    agent_to_delete = next((a for a in agents if a['name'] == agent_name), None)
+    try:
+        ensure_governance_access('governance_user_agents', user_id)
+    except PermissionError as exc:
+        return jsonify({'error': str(exc)}), 403
+
+    agent = _find_personal_agent(user_id, agent_id)
+    if not agent or not _is_agent_allowed_for_user_selection(user_id, agent):
+        return jsonify({'error': 'Agent not found.'}), 404
+
+    agent['is_global'] = False
+    agent['is_group'] = False
+    agent.setdefault('agent_type', 'local')
+    return jsonify(agent), 200
+
+
+@bpa.route('/api/user/agents/<agent_id>', methods=['PATCH'])
+@swagger_route(
+    security=get_auth_security()
+)
+@login_required
+@user_required
+@enabled_required("allow_user_agents")
+def update_user_agent(agent_id):
+    """Apply a partial update to one personal agent.
+
+    Only the supplied keys change, so an editor that knows about a subset of the agent's
+    fields cannot blank the rest -- which is what the whole-collection POST does whenever a
+    client round-trips a stale copy.
+    """
+    user_id = get_current_user_id()
+    try:
+        ensure_governance_access('governance_user_agents', user_id)
+    except PermissionError as exc:
+        return jsonify({'error': str(exc)}), 403
+
+    updates = request.get_json(silent=True)
+    if not isinstance(updates, dict):
+        return jsonify({'error': 'Agent payload must be an object.'}), 400
+
+    existing = _find_personal_agent(user_id, agent_id)
+    if not existing:
+        return jsonify({'error': 'Agent not found.'}), 404
+
+    merged = dict(existing)
+    merged.update(updates)
+    # The stored document is keyed on id, so it is carried over rather than taken from the
+    # body. That is also what makes a rename safe: the name changes, the document does not
+    # move, and no orphan is left behind.
+    merged['id'] = existing.get('id')
+
+    settings = get_settings()
+    cleaned_agent, error = _prepare_personal_agent_payload(user_id, merged, settings)
+    if error:
+        return error
+
+    saved = save_personal_agent(user_id, cleaned_agent) or cleaned_agent
+    log_agent_update(
+        user_id=user_id,
+        agent_id=saved.get('id', ''),
+        agent_name=saved.get('name', ''),
+        agent_display_name=saved.get('display_name', saved.get('name', '')),
+        scope='personal',
+    )
+    log_event("User agent updated", extra={"user_id": user_id, "agent_name": saved.get('name', '')})
+    return jsonify(saved), 200
+
+
+@bpa.route('/api/user/agents/<agent_id>', methods=['DELETE'])
+@swagger_route(
+    security=get_auth_security()
+)
+@login_required
+@user_required
+@enabled_required("allow_user_agents")
+def delete_user_agent(agent_id):
+    """Delete one personal agent, addressed by id or by name."""
+    user_id = get_current_user_id()
+    # The collection save enforces governance; deleting is just as destructive, so it is
+    # enforced here too rather than left to the container helper, which does not check.
+    try:
+        ensure_governance_access('governance_user_agents', user_id)
+    except PermissionError as exc:
+        return jsonify({'error': str(exc)}), 403
+
+    agent_to_delete = _find_personal_agent(user_id, agent_id)
     if not agent_to_delete:
         return jsonify({'error': 'Agent not found.'}), 404
-    
-    # Prevent deleting the agent that matches global_selected_agent
-    settings = get_settings()
-    global_selected_agent = settings.get('global_selected_agent', {})
-    global_selected_name = global_selected_agent.get('name')
-    if agent_to_delete.get('name') == global_selected_name:
-        return jsonify({'error': 'Cannot delete the agent set as global_selected_agent. Please set another agent as global first.'}), 400
-    
-    # Delete from personal_agents container
-    delete_personal_agent(user_id, agent_name)
-    
-    # Log agent deletion activity
-    log_agent_deletion(user_id=user_id, agent_id=agent_to_delete.get('id', agent_name), agent_name=agent_name, scope='personal')
 
-    # Check if there are any agents left and if they match global_selected_agent
-    remaining_agents = get_personal_agents(user_id)
-    if len(remaining_agents) > 0:
-        found = any(a.get('name') == global_selected_name for a in remaining_agents)
-        if not found:
-            return jsonify({'error': 'There must be at least one agent matching the global_selected_agent.'}), 400
-  
+    agent_name = agent_to_delete.get('name', agent_id)
+
+    # Checked before the delete, not after. The previous implementation deleted the agent
+    # and then returned 400 if the remaining agents did not match global_selected_agent,
+    # which reported failure for work that had already succeeded -- and did so on every
+    # delete whenever no global agent was configured, because the comparison was against
+    # None. The classic interface avoided this route entirely as a result.
+    settings = get_settings()
+    global_selected_agent = settings.get('global_selected_agent', {}) or {}
+    global_selected_name = global_selected_agent.get('name')
+    if global_selected_name and agent_name == global_selected_name:
+        return jsonify({'error': 'Cannot delete the agent set as global_selected_agent. Please set another agent as global first.'}), 400
+
+    if not delete_personal_agent(user_id, agent_to_delete.get('id') or agent_name):
+        return jsonify({'error': 'Agent not found.'}), 404
+
+    log_agent_deletion(
+        user_id=user_id,
+        agent_id=agent_to_delete.get('id', agent_name),
+        agent_name=agent_name,
+        scope='personal',
+    )
     log_event("User agent deleted", extra={"user_id": user_id, "agent_name": agent_name})
     return jsonify({'success': True})
 

@@ -2,9 +2,9 @@
 """
 Functional test for conversation deep linking in the V2 interface.
 
-Version: 0.261.039
+Version: 0.261.043
 Implemented in: 0.261.032
-Kind resolution moved to a single endpoint in: 0.261.039
+Kind resolution moved to a single endpoint in: 0.261.043
 
 The classic interface has supported linking straight to a conversation since v0.237.001:
 chat-onload.js reads ?conversationId= (or the older ?conversation_id=) on load, and
@@ -224,7 +224,7 @@ def test_a_dead_link_is_reported_and_does_not_strand_itself():
     assert resolver, "resolveConversationKind should be implemented"
     resolver_body = resolver.group(0)
 
-    # Since v0.261.039 one endpoint answers for both families. It used to call the personal
+    # Since v0.261.043 one endpoint answers for both families. It used to call the personal
     # metadata endpoint and read its 404 as "then it is a shared one", which worked but made
     # the browser log a failed request for every link to a shared conversation.
     assert "await fetchConversationKind(conversationId)" in resolver_body, (

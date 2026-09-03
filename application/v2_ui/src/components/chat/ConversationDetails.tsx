@@ -16,6 +16,7 @@ import {
     ChevronLeft,
     ChevronRight,
     Cpu,
+    Download,
     ExternalLink,
     Eye,
     EyeOff,
@@ -34,6 +35,7 @@ import { useChatStore } from '../../stores/chatStore';
 import { useBootstrapStore } from '../../stores/bootstrapStore';
 import { toast } from '../../stores/toastStore';
 import { generateConversationSummary } from '../../lib/endpoints';
+import { ConversationExportDialog } from './ConversationExportDialog';
 import {
     formatChatType,
     labelsOfCategory,
@@ -365,6 +367,8 @@ export function ConversationDetails({ onClose }: { onClose: () => void }) {
         Boolean(state.data?.features?.enable_document_classification),
     );
 
+    const [exporting, setExporting] = useState(false);
+
     useEffect(() => {
         if (activeConversationId && !metadata && !metadataLoading && !metadataError) {
             void loadMetadata(activeConversationId);
@@ -373,13 +377,16 @@ export function ConversationDetails({ onClose }: { onClose: () => void }) {
 
     useEffect(() => {
         const onKeyDown = (event: KeyboardEvent) => {
-            if (event.key === 'Escape') {
+            // The export wizard is rendered inside this dialog and closes itself on Escape.
+            // Without this guard one keypress would dismiss both, losing the details view
+            // the user was reading as a side effect of cancelling an export.
+            if (event.key === 'Escape' && !exporting) {
                 onClose();
             }
         };
         document.addEventListener('keydown', onKeyDown);
         return () => document.removeEventListener('keydown', onKeyDown);
-    }, [onClose]);
+    }, [onClose, exporting]);
 
     const classifications = metadata ? classificationList(metadata.classification) : [];
     const models = labelsOfCategory(metadata, 'model');
@@ -413,11 +420,24 @@ export function ConversationDetails({ onClose }: { onClose: () => void }) {
                     <h2 className="text-[15px] font-semibold text-text-1">
                         Conversation details
                     </h2>
+                    {activeConversationId && (
+                        <button
+                            type="button"
+                            onClick={() => setExporting(true)}
+                            title="Export this conversation"
+                            className="ml-auto inline-flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-xs font-medium text-text-2 transition-colors hover:bg-surface-2 hover:text-text-1"
+                        >
+                            <Download size={14} /> Export
+                        </button>
+                    )}
                     <button
                         type="button"
                         onClick={onClose}
                         aria-label="Close details"
-                        className="ml-auto rounded-lg p-1.5 text-text-3 transition-colors hover:bg-surface-2 hover:text-text-1"
+                        className={clsx(
+                            'rounded-lg p-1.5 text-text-3 transition-colors hover:bg-surface-2 hover:text-text-1',
+                            activeConversationId ? 'ml-1' : 'ml-auto',
+                        )}
                     >
                         <X size={17} />
                     </button>
@@ -644,6 +664,14 @@ export function ConversationDetails({ onClose }: { onClose: () => void }) {
                     )}
                 </div>
             </GlassPanel>
+
+            {exporting && activeConversationId && (
+                <ConversationExportDialog
+                    conversationIds={[activeConversationId]}
+                    skipSelection
+                    onClose={() => setExporting(false)}
+                />
+            )}
         </div>
     );
 }

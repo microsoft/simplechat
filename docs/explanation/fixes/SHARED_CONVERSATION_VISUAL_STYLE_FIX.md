@@ -22,7 +22,7 @@ GET /api/conversations/<conversation_id>/metadata        404 (Not Found)
 Both appeared only for shared conversations. In a personal conversation, recolouring and
 resizing worked as documented.
 
-**Fixed in version: 0.261.039**
+**Fixed in version: 0.261.043**
 
 ## Root cause
 
@@ -75,7 +75,7 @@ it, so every link to a shared conversation produced a console error.
 | `application/v2_ui/src/lib/collaborationEvents.ts` | `collaboration.message.visual_style_updated` handler |
 | `application/v2_ui/src/lib/blockVisualStyle.ts` | Captures the conversation kind with the queued change |
 | `application/v2_ui/src/stores/chatStore.ts` | Branches `applyVisualStyle` on kind, single-request kind resolution, live style updates |
-| `application/single_app/config.py` | Version bump to `0.261.039` |
+| `application/single_app/config.py` | Version bump to `0.261.043` |
 
 ### The shared endpoint
 

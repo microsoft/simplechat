@@ -2,7 +2,7 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
-### **(v0.261.039)**
+### **(v0.261.043)**
 
 #### Bug Fixes
 
@@ -16,6 +16,110 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Following a link to a shared conversation worked, but always left a 404 in the browser console. The interface was working out whether the link pointed at a personal or a shared conversation by asking about it as a personal one first and reading the failure as its answer.
     *   It now asks once and gets a straight answer, so opening a shared conversation from a link is a single successful request and the console stays clean.
     *   (Ref: V2 chat, shared conversations, conversation deep links)
+
+### **(v0.261.042)**
+
+#### New Features
+
+*   **My Workspace In The V2 Interface**
+    *   The personal workspace in the new interface previously listed documents and nothing else. It now covers all eight areas the classic workspace does — documents, file sources, prompts, agents, actions, workflows, identities and endpoints.
+    *   **The sections are grouped by what they are for**, rather than presented as eight equal tabs. **Knowledge** is what your assistant can draw on, **Automation** is what it can do, and **Connections** is the shared setup the other two reuse. Identities and endpoints are plumbing that other sections consume, and no longer sit alongside documents as though they were the same kind of thing.
+    *   **An overview page explains how the pieces fit together.** It lists each group with a count of what is in it, one line on what each section is for, and states the relationships plainly: identities are used by file sources and actions, file sources feed documents, documents and actions and endpoints are used by agents, and agents are used by workflows.
+    *   **Sections your administrator has not enabled are named, with the reason.** They appear on the overview greyed out rather than silently vanishing, so a capability that is switched off can no longer be mistaken for one that is broken or missing.
+    *   **Sync is now called File sources**, which is what people go there to set up, and identities are described as saved sign-ins for other systems rather than as your own account.
+    *   Each section is its own address — `/workspace/agents`, `/workspace/prompts` — so a link to one can be bookmarked or shared.
+    *   Prompts support full create, edit and delete. Agents can be created, edited and deleted. Workflows can be run, cancelled and inspected. File sources can be synced on demand with their run history. Connector configuration, the workflow designer and endpoint connection details are still done in the classic workspace, and each section links to it.
+    *   (Ref: V2 interface, My Workspace, `/api/v2/bootstrap`, `functions_workspace_sections.py`)
+
+*   **Per-Item Editing For Personal Agents, Actions And Endpoints**
+    *   Saving or deleting one of these used to rewrite the entire collection. Two browser tabs open on the workspace could overwrite each other's work, and any item a client did not know about was deleted along the way.
+    *   Each now supports editing and removing a single item. The old whole-collection save still works and the classic interface is unaffected.
+    *   Editing a model endpoint no longer risks blanking its stored credentials: only the fields that changed are sent, and the secrets — which are never given to the browser in the first place — are merged in on the server.
+    *   (Ref: `/api/user/agents`, `/api/user/plugins`, `/api/user/model-endpoints`)
+
+#### Bug Fixes
+
+*   **Deleting A Personal Agent Reported An Error After It Had Worked**
+    *   The delete endpoint removed the agent and then answered with an error, so the caller was told the operation failed when it had already succeeded. This happened on any delete that left at least one agent behind, in any deployment without a global agent configured.
+    *   The check that caused it now runs before the delete, so a refusal means nothing was removed.
+    *   (Ref: personal agents, `/api/user/agents`)
+
+*   **Deleting A Personal Agent Skipped Its Governance Check**
+    *   Saving agents checked whether governance policy allowed it; deleting them did not, so a user who had been denied access to personal agents could still delete them. The check is now applied before the agent is removed.
+    *   (Ref: personal agents, governance policy)
+
+### **(v0.261.041)**
+
+#### New Features
+
+*   **Full Activity Stats In The V2 Interface**
+    *   The **Stats** tab under Settings in the new interface now reports everything the classic profile page's stats tab reports, instead of the four small sparklines it showed before.
+    *   **Your lifetime totals** — conversations, messages, documents and sign-ins — are shown as cards, together with when they were last worked out and when you last signed in. These are cached figures rather than live ones, and the tab now says so, so they are not mistaken for the totals for the period you are looking at.
+    *   **Pick a period.** The last 7, 30 or 90 days, or a start and end date of your own. A range with the dates the wrong way round, or with one date missing, is now explained before the request is sent rather than failing silently.
+    *   **Four activity charts and a storage breakdown.** Sign-ins and token usage as lines, conversations and documents as paired bars showing created against deleted and uploaded against deleted, and storage split between AI Search and blob storage. These are the same charts, shapes and colours as the classic page.
+    *   **Export to CSV.** Choose which of summary totals, sign-ins, conversations, documents and token usage to include, and the period to cover — which can differ from the one on screen. The file matches the classic export column for column.
+    *   **Your account** — name, email address and user id — is shown at the foot of the tab.
+    *   (Ref: V2 settings, Stats tab, `/api/user/activity-trends`, `/api/user/settings`, vendored Chart.js)
+
+#### User Interface Enhancements
+
+*   **One Destination For Personal Settings In The V2 Interface**
+    *   The account menu in the left rail offered both **Settings** and **Profile**, the second of which left the new interface for the classic profile page. With the activity stats now rebuilt under Settings, the Profile entry led nowhere the new interface does not already cover, so it has been removed. **Settings** is the single destination.
+    *   The "open in the classic interface" links inside the Groups and Public tabs are unchanged — those capabilities have not been rebuilt yet, and the links remain the way to reach them.
+    *   (Ref: V2 sidebar, account menu, settings navigation)
+
+### **(v0.261.040)**
+
+#### New Features
+
+*   **Export Conversations From The New Interface**
+    *   The new interface could save a single reply as Word, PowerPoint or an email, but there was no way to export a whole conversation — you had to switch back to the classic interface for that. You can now export one conversation, or several at once, as **JSON**, **Markdown** or **PDF**.
+    *   Export is offered in three places: the **⋯** menu on any conversation in the sidebar, the **Export** button in **Conversation details**, and a new **Select** mode above the conversation list for picking several at once.
+    *   Several conversations can be combined into one file or bundled as a ZIP with one file per conversation. Picking more than one defaults to the ZIP, which is almost always what is wanted.
+    *   Optionally, a short AI-written intro summary can be placed above each transcript, using whichever chat model you choose.
+    *   Diagrams are included as pictures in Markdown and PDF exports, drawn in your browser so they match what you were looking at. A diagram that will not draw is left to the server rather than breaking the export. JSON exports keep the original text, diagrams included as source.
+    *   Exported files are identical to the ones the classic interface produces, down to the filename.
+    *   (Ref: V2 chat, conversation export, export wizard, conversation multi-select)
+
+#### Bug Fixes
+
+*   **Exported And Downloaded Diagrams Were Squashed**
+    *   A diagram saved as a PNG, or embedded in an exported file, came out compressed into a narrow strip roughly 100 pixels wide regardless of its real size — a 1094×541 flowchart was rasterized at 100×541.
+    *   The cause was the diagram's width being read as the number `100` from the value `100%`. The real dimensions were sitting in the diagram alongside it and are now used instead.
+    *   (Ref: diagram PNG download, conversation export, SVG rasterizing)
+
+### **(v0.261.039)**
+
+#### New Features
+
+*   **The New Admin Settings Page Now Has The Rest Of The Appearance Settings**
+    *   The new interface's admin page could only ever show on/off switches, because it worked out what to display by looking for settings that happened to be true or false. Everything else was invisible — so the whole Appearance group amounted to a handful of switches and a note telling you to go back to the classic page.
+    *   Appearance is now complete. **Branding** has the application title, the home page logo size slider, and uploads for the light logo, dark logo and favicon, each showing the image you currently have. **Home Page Text** has the alignment control and the landing page editor, with a live preview that follows the alignment you pick. **Notices & Agreements** has the classification banner with both colour pickers and a preview strip, the AI notice, the full Terms of Use configuration, and the user agreement with its four apply-to options, a word counter and a **Test preview** button. **Pages & Links** has the custom pages settings, the full static page designer, the developer guide, and an external links editor you can add to, remove from and reorder.
+    *   (Ref: V2 admin settings, Appearance group, `admin_settings_fields.py`)
+
+*   **Changes Are Saved Together, When You Say So**
+    *   Switches used to save the instant you clicked them, which does not translate to typing into a text box. Edits now collect in a bar at the bottom of the page that tells you how many changes are waiting, with **Save changes** and **Discard**. `Ctrl`/`Cmd`+`S` saves, and closing the tab with unsaved edits asks first.
+    *   This also fixes something subtler: the Terms of Use and AI notice re-prompt every user whenever their wording changes. Saving on every keystroke would have re-prompted everyone once per character typed.
+    *   (Ref: V2 admin settings, save bar)
+
+*   **Rejected Settings Now Explain Themselves**
+    *   Values are checked before anything is written, and a rejected save comes back with the reason attached to the control that caused it — a colour that is not valid hex, a link that is not an http or https address, a cancel redirect that would leave the site unsafely. Nothing is saved unless everything in the batch is valid, so a save can no longer land half-applied.
+    *   The checks reuse the same code the classic page uses, so the two interfaces agree about what a valid value is.
+    *   (Ref: V2 admin settings, settings validation)
+
+#### Bug Fixes
+
+*   **Navigation Links Can No Longer Be Given An Unsafe Address**
+    *   External navigation links saved through the new admin page are now restricted to local paths and http or https addresses. Previously any text was accepted and placed directly into the link, which allowed a `javascript:` address into the navigation bar on every page.
+    *   (Ref: external links, navigation)
+
+*   **Logo And Favicon Handling Now Lives In One Place**
+    *   Image conversion was written into the classic settings page. Both admin pages now share one implementation, so a logo is stored identically no matter where it was uploaded from, and the PNG/JPEG-only restriction that keeps unexpected image formats away from the image library applies to every upload path.
+    *   (Ref: `functions_branding_images.py`, logo and favicon uploads)
+
+*   **Three Tests That Could Not Fail Correctly**
+    *   The Pillow security test pinned an exact dependency version and the custom logo test looked for help text in a file it had moved out of, so both reported problems that were not real while no longer checking the thing they were written for. They now assert a minimum version and read the composed template.
+    *   (Ref: functional tests, version assertions)
 
 ### **(v0.261.038)**
 

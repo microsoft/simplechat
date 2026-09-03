@@ -1,10 +1,25 @@
 // ConversationRail.tsx
 // The conversation list inside the left rail: search, infinite paging, and per-row
-// pin / rename / hide / delete actions.
+// pin / rename / hide / delete / export actions.
+//
+// It has two modes. Normally a row opens its conversation; in selection mode a row instead
+// ticks a checkbox, so several conversations can be exported together. Selection mode is
+// entered from the toolbar and leaves on its own once an export is started.
 
 import { useEffect, useRef, useState } from 'react';
 import { clsx } from 'clsx';
-import { MoreHorizontal, Pin, Search, Trash2, EyeOff, LogOut, Pencil, Users } from 'lucide-react';
+import {
+    Download,
+    MoreHorizontal,
+    Pin,
+    Search,
+    Trash2,
+    EyeOff,
+    LogOut,
+    Pencil,
+    Users,
+    X,
+} from 'lucide-react';
 import { useChatStore } from '../../stores/chatStore';
 import { useCollaborationStore } from '../../stores/collaborationStore';
 import { useBootstrapStore } from '../../stores/bootstrapStore';
@@ -13,6 +28,7 @@ import { workspaceBadge, type WorkspaceBadgeTone } from '../../lib/conversationB
 import { canShareConversation, panelTargetForConversation } from '../../lib/sharing';
 import { isCollaborative } from '../../lib/types';
 import { Skeleton } from '../ui/primitives';
+import { ConversationExportDialog } from './ConversationExportDialog';
 import type { Conversation } from '../../lib/types';
 
 /**
@@ -59,7 +75,13 @@ function WorkspaceTag({ conversation }: { conversation: Conversation }) {
     );
 }
 
-function ConversationRow({ conversation }: { conversation: Conversation }) {
+function ConversationRow({
+    conversation,
+    onExport,
+}: {
+    conversation: Conversation;
+    onExport: (conversationId: string) => void;
+}) {
     const {
         activeConversationId,
         selectConversation,
@@ -67,6 +89,9 @@ function ConversationRow({ conversation }: { conversation: Conversation }) {
         renameConversation,
         togglePinned,
         toggleHidden,
+        selectionMode,
+        selectedConversationIds,
+        toggleConversationSelected,
     } = useChatStore();
 
     const [menuOpen, setMenuOpen] = useState(false);
@@ -78,6 +103,7 @@ function ConversationRow({ conversation }: { conversation: Conversation }) {
     );
 
     const isActive = conversation.id === activeConversationId;
+    const isSelected = selectedConversationIds.includes(conversation.id);
     const shareable = collaborationEnabled && canShareConversation(conversation);
     const shared = isCollaborative(conversation);
 
@@ -111,6 +137,37 @@ function ConversationRow({ conversation }: { conversation: Conversation }) {
                     className="w-full rounded-lg border border-accent bg-surface-solid px-2.5 py-2 text-sm text-text-1 outline-none"
                     aria-label="Conversation title"
                 />
+            </li>
+        );
+    }
+
+    if (selectionMode) {
+        return (
+            <li>
+                <label
+                    className={clsx(
+                        'flex w-full cursor-pointer items-center gap-2.5 rounded-lg py-2 pr-2 pl-2.5 transition-colors',
+                        isSelected
+                            ? 'bg-accent-soft text-accent'
+                            : 'text-text-2 hover:bg-surface-2 hover:text-text-1',
+                    )}
+                >
+                    <input
+                        type="checkbox"
+                        checked={isSelected}
+                        onChange={() => toggleConversationSelected(conversation.id)}
+                        className="h-4 w-4 shrink-0 accent-[var(--accent)]"
+                    />
+                    {conversation.is_pinned && (
+                        <Pin size={12} className="shrink-0 fill-current opacity-70" />
+                    )}
+                    <span className="min-w-0 flex-1">
+                        <span className="block truncate text-sm">
+                            {conversation.title || 'Untitled conversation'}
+                        </span>
+                        <WorkspaceTag conversation={conversation} />
+                    </span>
+                </label>
             </li>
         );
     }
@@ -218,6 +275,16 @@ function ConversationRow({ conversation }: { conversation: Conversation }) {
                             type="button"
                             onClick={() => {
                                 setMenuOpen(false);
+                                onExport(conversation.id);
+                            }}
+                            className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-sm text-text-1 hover:bg-surface-2"
+                        >
+                            <Download size={14} /> Export
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => {
+                                setMenuOpen(false);
                                 void removeConversation(conversation.id);
                             }}
                             className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-sm text-danger hover:bg-danger-soft"
@@ -252,9 +319,28 @@ export function ConversationRail() {
         setSearchTerm,
         loadConversations,
         loadMore,
+        selectionMode,
+        selectedConversationIds,
+        setSelectionMode,
+        selectAllConversations,
+        clearConversationSelection,
     } = useChatStore();
 
     const sentinelRef = useRef<HTMLDivElement>(null);
+
+    /**
+     * The export in flight, or null.
+     *
+     * `skipSelection` records how it was started: from one conversation's own menu there is
+     * nothing to review, so the wizard opens on the format choice instead.
+     */
+    const [exportRequest, setExportRequest] = useState<{
+        ids: string[];
+        skipSelection: boolean;
+    } | null>(null);
+
+    const allSelected =
+        conversations.length > 0 && selectedConversationIds.length === conversations.length;
 
     useEffect(() => {
         void loadConversations({ reset: true });
@@ -303,6 +389,56 @@ export function ConversationRail() {
                         )}
                     />
                 </div>
+
+                {selectionMode ? (
+                    <div className="mt-2 flex items-center gap-1.5">
+                        <span className="text-xs font-medium text-text-2">
+                            {selectedConversationIds.length} selected
+                        </span>
+                        <button
+                            type="button"
+                            onClick={() =>
+                                allSelected ? clearConversationSelection() : selectAllConversations()
+                            }
+                            className="rounded-md px-1.5 py-0.5 text-xs text-accent hover:bg-surface-2"
+                        >
+                            {allSelected ? 'Clear' : 'All'}
+                        </button>
+                        <button
+                            type="button"
+                            disabled={selectedConversationIds.length === 0}
+                            onClick={() =>
+                                setExportRequest({
+                                    ids: [...selectedConversationIds],
+                                    skipSelection: false,
+                                })
+                            }
+                            className="ml-auto inline-flex items-center gap-1 rounded-md bg-accent px-2 py-1 text-xs font-medium text-on-accent transition-colors hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                            <Download size={12} /> Export
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setSelectionMode(false)}
+                            aria-label="Leave selection mode"
+                            className="rounded-md p-1 text-text-3 transition-colors hover:bg-surface-2 hover:text-text-1"
+                        >
+                            <X size={13} />
+                        </button>
+                    </div>
+                ) : (
+                    conversations.length > 0 && (
+                        <div className="mt-2 flex justify-end">
+                            <button
+                                type="button"
+                                onClick={() => setSelectionMode(true)}
+                                className="rounded-md px-1.5 py-0.5 text-xs text-text-3 transition-colors hover:bg-surface-2 hover:text-text-1"
+                            >
+                                Select
+                            </button>
+                        </div>
+                    )
+                )}
             </div>
 
             <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-2">
@@ -326,7 +462,13 @@ export function ConversationRail() {
 
                 <ul className="space-y-0.5">
                     {conversations.map((conversation) => (
-                        <ConversationRow key={conversation.id} conversation={conversation} />
+                        <ConversationRow
+                            key={conversation.id}
+                            conversation={conversation}
+                            onExport={(id) =>
+                                setExportRequest({ ids: [id], skipSelection: true })
+                            }
+                        />
                     ))}
                 </ul>
 
@@ -336,6 +478,19 @@ export function ConversationRail() {
                     <p className="py-2 text-center text-xs text-text-3">Loading…</p>
                 )}
             </div>
+
+            {exportRequest && (
+                <ConversationExportDialog
+                    conversationIds={exportRequest.ids}
+                    skipSelection={exportRequest.skipSelection}
+                    onClose={() => {
+                        setExportRequest(null);
+                        // Selection has served its purpose; leaving it ticked would make the
+                        // next click ambiguous about whether it opens or adds to a selection.
+                        setSelectionMode(false);
+                    }}
+                />
+            )}
         </div>
     );
 }

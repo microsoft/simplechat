@@ -21,10 +21,25 @@ Two blueprints are registered from here:
 
 import logging
 
-from flask import jsonify, request, session
+from flask import current_app, jsonify, request, session
 
+from admin_settings_fields import (
+    get_admin_settings_fields,
+    normalize_admin_settings_updates,
+)
 from admin_settings_nav import ADMIN_NAV
+from config import (
+    ensure_custom_favicon_file_exists,
+    ensure_custom_logo_file_exists,
+)
 from functions_appinsights import log_event
+from functions_branding_images import (
+    ALLOWED_FAVICON_EXTENSIONS,
+    ALLOWED_LOGO_EXTENSIONS,
+    is_allowed_branding_image_filename,
+    prepare_favicon_image_for_storage,
+    prepare_logo_image_for_storage,
+)
 from functions_authentication import (
     admin_required,
     get_current_user_id,
@@ -51,6 +66,7 @@ from functions_source_review import (
     is_source_review_enabled_for_user,
     is_url_access_enabled_for_user,
 )
+from functions_workspace_sections import build_workspace_section_availability
 from route_frontend_chats import (
     _build_chat_model_catalog,
     _build_chat_prompt_catalog,
@@ -63,6 +79,77 @@ from config import VERSION
 from swagger_wrapper import get_auth_security, swagger_route
 
 logger = logging.getLogger(__name__)
+
+
+# Describes each branding asset an administrator can replace: how to convert the
+# upload, which settings keys hold it, and the static path it is written to.
+# ``_build_branding` returns URLs derived from these same keys, so a change here
+# cannot leave the SPA pointing at a stale path.
+BRANDING_IMAGE_TARGETS = {
+    "logo": {
+        "settings_key": "custom_logo_base64",
+        "version_key": "logo_version",
+        "static_url": "/static/images/custom_logo.png",
+        "extensions": ALLOWED_LOGO_EXTENSIONS,
+        "prepare": prepare_logo_image_for_storage,
+    },
+    "logo_dark": {
+        "settings_key": "custom_logo_dark_base64",
+        "version_key": "logo_dark_version",
+        "static_url": "/static/images/custom_logo_dark.png",
+        "extensions": ALLOWED_LOGO_EXTENSIONS,
+        "prepare": prepare_logo_image_for_storage,
+    },
+    "favicon": {
+        "settings_key": "custom_favicon_base64",
+        "version_key": "favicon_version",
+        "static_url": "/static/images/favicon.ico",
+        "extensions": ALLOWED_FAVICON_EXTENSIONS,
+        "prepare": prepare_favicon_image_for_storage,
+    },
+}
+
+
+def _build_branding_assets(settings):
+    """Describe the stored branding images without returning the encoded blobs.
+
+    The admin surface needs to show which assets exist and render a preview of
+    each. The base64 payloads are large and already served as static files, so
+    only presence, version and URL are returned.
+    """
+    assets = {}
+    for target, spec in BRANDING_IMAGE_TARGETS.items():
+        version = settings.get(spec["version_key"]) or 1
+        has_asset = bool(settings.get(spec["settings_key"]))
+        assets[target] = {
+            "present": has_asset,
+            "version": version,
+            "url": f"{spec['static_url']}?v={version}" if has_asset else None,
+        }
+    return assets
+
+
+def _refresh_branding_static_files():
+    """Rewrite the logo and favicon static files from the stored settings.
+
+    The files are generated from the settings document rather than uploaded to
+    disk directly, so any save that could have changed them has to regenerate
+    them or the browser keeps being served the previous image.
+    """
+    try:
+        refreshed_settings = get_settings()
+        if not refreshed_settings:
+            return
+        ensure_custom_logo_file_exists(current_app, refreshed_settings)
+        ensure_custom_favicon_file_exists(current_app, refreshed_settings)
+    except Exception as exc:
+        # A stale static file is a cosmetic problem; it must not turn a saved
+        # settings change into a failed request.
+        log_event(
+            f"[V2_ADMIN_SETTINGS] Could not refresh branding static files: {exc}",
+            level=logging.WARNING,
+            exceptionTraceback=True,
+        )
 
 
 def _build_branding(raw_settings, public_settings):
@@ -309,6 +396,22 @@ def register_route_backend_v2(bp):
                 stored_workspace_id if stored_workspace_id in visible_workspace_ids else None
             )
 
+            # Which workspace sections this user may see. Computed server-side because the
+            # answer combines settings, app-role checks and governance policy, and only
+            # `enable_*` keys reach `features` above -- `allow_user_agents`,
+            # `allow_user_plugins`, `per_user_semantic_kernel` and the file sync and
+            # governance checks would all be invisible to the SPA otherwise.
+            workspace = {"enabled": False, "sections": {}}
+            try:
+                workspace = build_workspace_section_availability(
+                    settings,
+                    user_id,
+                    user_info=current_user_info,
+                    user_roles=current_user_roles,
+                )
+            except Exception as exc:
+                logger.warning(f"[V2_BOOTSTRAP] Failed to resolve workspace sections: {exc}")
+
             payload = {
                 "version": VERSION,
                 "user": {
@@ -339,6 +442,7 @@ def register_route_backend_v2(bp):
                 },
                 "admin_nav": ADMIN_NAV if "Admin" in current_user_roles else [],
                 "notices": _build_notices(public_settings, user_settings_dict),
+                "workspace": workspace,
                 "settings": public_settings,
             }
 
@@ -358,18 +462,25 @@ def register_route_backend_v2_admin(bp):
     @login_required
     @admin_required
     def v2_admin_get_settings():
-        """Return the raw settings document plus the admin navigation structure.
+        """Return the raw settings document, the admin navigation and the field schema.
 
         Admin settings are not sanitized. Sanitization removes keys, secrets and endpoint
         configuration, which are exactly the values an administrator is here to manage.
         Access is restricted to the Admin role by the blueprint guard and the decorator.
+
+        ``field_schema`` describes the concrete controls each section owns. Sections with
+        no entry are rendered by the SPA's ``enable_*`` fallback scan, so groups that have
+        not been described yet keep working.
         """
         try:
+            settings = get_settings()
             return (
                 jsonify(
                     {
-                        "settings": get_settings(),
+                        "settings": settings,
                         "admin_nav": ADMIN_NAV,
+                        "field_schema": get_admin_settings_fields(),
+                        "branding_assets": _build_branding_assets(settings),
                         "version": VERSION,
                     }
                 ),
@@ -390,8 +501,12 @@ def register_route_backend_v2_admin(bp):
     def v2_admin_patch_settings():
         """Apply a partial settings update.
 
-        The V2 admin surface edits individual capabilities rather than posting the whole
+        The V2 admin surface edits a section at a time rather than posting the whole
         settings form, so only the supplied keys are forwarded to ``update_settings``.
+
+        Values are normalized against the field schema first, which is what keeps the two
+        admin interfaces agreeing on what a valid value is. The update is applied only if
+        every supplied key validates, so a save never lands half-applied.
         """
         payload = request.get_json(silent=True) or {}
         updates = payload.get("settings")
@@ -400,13 +515,53 @@ def register_route_backend_v2_admin(bp):
             return jsonify({"error": "No settings supplied"}), 400
 
         try:
-            update_settings(updates)
+            current_settings = get_settings()
+            normalized, errors, warnings = normalize_admin_settings_updates(
+                updates, current_settings
+            )
+
+            if errors:
+                log_event(
+                    f"[V2_ADMIN_SETTINGS] Rejected update for "
+                    f"{', '.join(sorted(errors.keys()))}",
+                    level=logging.WARNING,
+                )
+                return (
+                    jsonify(
+                        {
+                            "error": "Some settings could not be saved.",
+                            "field_errors": errors,
+                        }
+                    ),
+                    400,
+                )
+
+            if not normalized:
+                return jsonify({"error": "No settings supplied"}), 400
+
+            update_settings(normalized)
             log_event(
-                f"[V2_ADMIN_SETTINGS] Updated {len(updates)} setting(s): "
-                f"{', '.join(sorted(updates.keys()))}",
+                f"[V2_ADMIN_SETTINGS] Updated {len(normalized)} setting(s): "
+                f"{', '.join(sorted(normalized.keys()))}",
                 level=logging.INFO,
             )
-            return jsonify({"success": True, "updated_keys": sorted(updates.keys())}), 200
+
+            # Logo scale and title changes are read from the settings document on the
+            # next request, but the favicon and logo static files are written from it, so
+            # a branding change has to refresh them.
+            _refresh_branding_static_files()
+
+            return (
+                jsonify(
+                    {
+                        "success": True,
+                        "updated_keys": sorted(normalized.keys()),
+                        "settings": normalized,
+                        "warnings": warnings,
+                    }
+                ),
+                200,
+            )
         except Exception as exc:
             log_event(
                 f"[V2_ADMIN_SETTINGS] Failed to update settings: {exc}",
@@ -414,3 +569,101 @@ def register_route_backend_v2_admin(bp):
                 exceptionTraceback=True,
             )
             return jsonify({"error": "Failed to update settings"}), 500
+
+    @bp.route("/api/v2/admin/settings/branding-image", methods=["POST"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def v2_admin_upload_branding_image():
+        """Store an uploaded logo or favicon and return its new static URL.
+
+        Branding images cannot travel through the JSON settings PATCH, so they get their
+        own multipart endpoint. The conversion is the shared one in
+        ``functions_branding_images``, so an asset uploaded here is byte-for-byte what the
+        server-rendered form would have stored.
+
+        The version counter is bumped on every successful upload because the static file
+        keeps a stable name; without the counter, browsers would keep serving the previous
+        image from cache.
+        """
+        target = str(request.form.get("target") or "").strip().lower()
+        spec = BRANDING_IMAGE_TARGETS.get(target)
+        if not spec:
+            return (
+                jsonify(
+                    {
+                        "error": "Unsupported branding image target. Expected one of: "
+                        f"{', '.join(sorted(BRANDING_IMAGE_TARGETS))}."
+                    }
+                ),
+                400,
+            )
+
+        upload = request.files.get("file")
+        if not upload or not upload.filename:
+            return jsonify({"error": "No file was supplied."}), 400
+
+        if not is_allowed_branding_image_filename(upload.filename, spec["extensions"]):
+            return (
+                jsonify(
+                    {
+                        "error": "Unsupported file type. Allowed extensions: "
+                        f"{', '.join(sorted(spec['extensions']))}."
+                    }
+                ),
+                400,
+            )
+
+        try:
+            file_bytes = upload.read()
+            processed = spec["prepare"](file_bytes, upload.filename)
+        except Exception as exc:
+            # A decode failure is administrator error, not a server fault, and the
+            # existing asset must survive it.
+            log_event(
+                f"[V2_ADMIN_SETTINGS] Rejected {target} upload: {exc}",
+                level=logging.WARNING,
+            )
+            return (
+                jsonify({"error": f"That image could not be processed: {exc}"}),
+                400,
+            )
+
+        try:
+            settings = get_settings()
+            next_version = int(settings.get(spec["version_key"], 1) or 1) + 1
+
+            update_settings(
+                {
+                    spec["settings_key"]: processed["base64_str"],
+                    spec["version_key"]: next_version,
+                }
+            )
+            _refresh_branding_static_files()
+
+            log_event(
+                f"[V2_ADMIN_SETTINGS] Stored {target} image "
+                f"({processed['detected_format']}, {processed['original_size']} -> "
+                f"{processed['stored_size']}, version {next_version})",
+                level=logging.INFO,
+            )
+
+            return (
+                jsonify(
+                    {
+                        "success": True,
+                        "target": target,
+                        "url": f"{spec['static_url']}?v={next_version}",
+                        "version": next_version,
+                        "stored_size": list(processed["stored_size"]),
+                    }
+                ),
+                200,
+            )
+        except Exception as exc:
+            log_event(
+                f"[V2_ADMIN_SETTINGS] Failed to store {target} image: {exc}",
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({"error": "Failed to store the uploaded image"}), 500
