@@ -1919,6 +1919,94 @@ def register_route_backend_conversations(bp):
             print(f"Error retrieving conversation metadata: {e}")
             return jsonify({'error': 'Failed to retrieve conversation metadata'}), 500
 
+    @bp.route('/api/conversations/<conversation_id>/kind', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def get_conversation_kind_api(conversation_id):
+        """Report whether a conversation is a personal or a shared one, and prove it exists.
+
+        A conversation reached from a link is not in the loaded rail, so the client has nothing
+        to tell it which family of endpoints the conversation belongs to. It used to work this
+        out by calling the personal metadata endpoint and reading a 404 as "then it must be a
+        shared one", which was correct but made the browser log a failed request every time
+        somebody opened a link to a shared conversation.
+
+        Existence is part of the answer rather than a separate question. Neither message endpoint
+        can be used as an existence check — both answer 200 with an empty list for a conversation
+        that is not there — so without this a deleted conversation would open as an empty chat
+        and keep its id in the address bar.
+
+        A conversation the caller may not see is reported as absent rather than forbidden. The
+        two are indistinguishable to someone who should not know it exists, and the client treats
+        them identically.
+        """
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+
+        try:
+            conversation_item = cosmos_conversations_container.read_item(
+                item=conversation_id,
+                partition_key=conversation_id,
+            )
+            if conversation_item.get('user_id') == user_id:
+                return jsonify({
+                    'conversation_id': conversation_id,
+                    'kind': 'personal',
+                }), 200
+        except CosmosResourceNotFoundError:
+            pass
+        except Exception as e:
+            log_event(
+                f"[CONVERSATION_KIND] Failed to read personal conversation {conversation_id}: {e}",
+                level=logging.WARNING,
+                exceptionTraceback=True,
+            )
+            return jsonify({'error': 'Failed to resolve conversation'}), 500
+
+        # Checked before answering "collaborative": with the feature off, the collaboration
+        # endpoints refuse everything, so naming a conversation as shared would only send the
+        # client somewhere it cannot go.
+        settings = get_settings() or {}
+        if not settings.get('enable_collaborative_conversations', False):
+            return jsonify({'error': 'Conversation not found'}), 404
+
+        try:
+            collaboration_item = get_collaboration_conversation(conversation_id)
+            access_context = assert_user_can_view_collaboration_conversation(
+                user_id,
+                collaboration_item,
+                allow_pending=True,
+            )
+        except CosmosResourceNotFoundError:
+            return jsonify({'error': 'Conversation not found'}), 404
+        except LookupError:
+            # Raised when the stored document is not a collaboration conversation, which for a
+            # question about kind is the same answer as it not being there.
+            return jsonify({'error': 'Conversation not found'}), 404
+        except PermissionError:
+            return jsonify({'error': 'Conversation not found'}), 404
+        except Exception as e:
+            log_event(
+                f"[CONVERSATION_KIND] Failed to resolve shared conversation {conversation_id}: {e}",
+                level=logging.WARNING,
+                exceptionTraceback=True,
+            )
+            return jsonify({'error': 'Failed to resolve conversation'}), 500
+
+        # Returned alongside the kind because the caller needs this exact document next, and
+        # asking for it twice is the cost the old probe was paying to avoid.
+        return jsonify({
+            'conversation_id': conversation_id,
+            'kind': 'collaborative',
+            'conversation': serialize_collaboration_conversation(
+                collaboration_item,
+                current_user_id=user_id,
+                user_state=access_context.get('user_state'),
+            ),
+        }), 200
+
     @bp.route('/api/conversations/<conversation_id>/mark-read', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required

@@ -80,6 +80,11 @@ from functions_block_revision_assist import (
     normalize_instruction,
     request_block_edit,
 )
+from functions_message_visual_styles import (
+    UNSET as VISUAL_STYLE_HEIGHT_UNSET,
+    VisualStyleError,
+    apply_visual_style,
+)
 from functions_notifications import mark_collaboration_message_notifications_read_for_conversation
 from functions_message_artifacts import make_json_serializable
 from functions_simplechat_operations import (
@@ -1782,6 +1787,103 @@ def register_route_backend_collaboration(bp):
                 exceptionTraceback=True,
             )
             return jsonify({'error': 'Failed to update the shared diagram'}), 500
+
+
+    @bp.route(
+        '/api/collaboration/conversations/<conversation_id>/messages/<message_id>/visual-style',
+        methods=['POST'],
+    )
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def set_collaboration_message_visual_style_api(conversation_id, message_id):
+        """Save or clear the colours and height of one diagram or chart in a shared message.
+
+        The shared counterpart of ``/api/message/<message_id>/visual-style``. That route resolves
+        the conversation through the personal container, which a shared conversation is not in, so
+        recolouring a chart in a shared thread had no endpoint that could answer it.
+
+        The choice is stored on the shared message and therefore applies for everyone reading the
+        conversation, exactly as a mask does. That is why it takes participate-level access rather
+        than mere visibility: a read-only viewer recolouring a chart would be changing what the
+        other participants see.
+
+        Unlike a mask, this is not copied back to the hidden source message. A mask changes what
+        is exported and what the model is later shown; colours change neither, and the owner reads
+        the thread through the shared conversation anyway.
+        """
+        try:
+            _require_collaboration_feature_enabled()
+            current_user = _get_current_collaboration_user()
+            if not current_user:
+                return jsonify({'error': 'User not authenticated'}), 401
+
+            data = request.get_json(silent=True) or {}
+
+            conversation_doc = get_collaboration_conversation(conversation_id)
+            assert_user_can_participate_in_collaboration_conversation(
+                current_user['user_id'],
+                conversation_doc,
+            )
+
+            message_doc = get_collaboration_message(message_id)
+            if str(message_doc.get('conversation_id') or '').strip() != str(conversation_id or '').strip():
+                return jsonify({'error': 'Collaborative message not found'}), 404
+
+            try:
+                visual_styles = apply_visual_style(
+                    message_doc,
+                    data.get('block_kind'),
+                    data.get('block_index'),
+                    data.get('style'),
+                    data.get('source_hash') or '',
+                    # A body that never mentions the height leaves the stored one alone; one that
+                    # sends null is asking for it to be cleared.
+                    data.get('height') if 'height' in data else VISUAL_STYLE_HEIGHT_UNSET,
+                )
+            except VisualStyleError as exc:
+                return jsonify({'error': str(exc)}), 400
+
+            cosmos_collaboration_messages_container.upsert_item(message_doc)
+
+            serialized_message = serialize_collaboration_message(message_doc)
+            COLLABORATION_EVENT_REGISTRY.publish(
+                conversation_id,
+                _build_collaboration_event(
+                    conversation_id,
+                    'collaboration.message.visual_style_updated',
+                    {
+                        'message_id': message_id,
+                        'message': serialized_message,
+                        'visual_styles': visual_styles,
+                        'updated_by_user_id': current_user['user_id'],
+                    },
+                ),
+            )
+
+            return jsonify({
+                'success': True,
+                'message_id': message_id,
+                'conversation_id': conversation_id,
+                'visual_styles': visual_styles,
+                'message': serialized_message,
+            }), 200
+        except CosmosResourceNotFoundError:
+            return jsonify({'error': 'Collaborative message not found'}), 404
+        except LookupError:
+            # Raised when the stored conversation document is not a collaborative one, which is
+            # indistinguishable from it not being there as far as this request is concerned.
+            return jsonify({'error': 'Collaborative message not found'}), 404
+        except PermissionError as exc:
+            return jsonify({'error': str(exc)}), 403
+        except Exception as exc:
+            log_event(
+                f'[COLLABORATION_VISUAL_STYLE] Failed to update block style for {message_id}: {exc}',
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({'error': 'Failed to update shared message visual style'}), 500
+
 
     @bp.route('/api/collaboration/conversations/<conversation_id>/images/<message_id>', methods=['GET'])
     @swagger_route(security=get_auth_security())

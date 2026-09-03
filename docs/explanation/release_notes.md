@@ -2,19 +2,7 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
-### **(v0.261.044)**
-
-#### Bug Fixes
-
-*   **Editing A Diagram In A Shared Conversation Reported "Conversation Not Found"**
-    *   The diagram editor opened correctly in a shared conversation, but changing the direction or spacing, editing the source, or asking the AI to change it failed with a "Conversation not found" error. Personal conversations were unaffected.
-    *   Shared conversations keep their messages in different storage and are served by their own set of endpoints. The editor was sending every change to the personal endpoints, which looked in the wrong place and reported the conversation as missing.
-    *   Shared conversations now have their own diagram editing endpoints, which check that you are a participant rather than the owner — so anyone in a shared thread can edit a diagram, as intended.
-    *   **An edit made in a shared conversation is now also written through to the underlying message**, so the AI, exports, and the conversation's owner all see the version you edited rather than the original.
-    *   **Other participants see the change as it happens**, without reloading, and are told a diagram was edited.
-    *   (Ref: `route_backend_collaboration.py`, `/api/collaboration/conversations/<id>/messages/<id>/block-revision`, shared conversations, diagram editing)
-
-### **(v0.261.043)**
+### **(v0.261.049)**
 
 #### New Features
 
@@ -25,9 +13,164 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   **Only the version on your screen is used as context.** The revision history and the editing conversation behind it are stored with the diagram and are never sent to the model, so refining a diagram ten times costs the same context as generating it once.
     *   **Nothing is ever deleted.** History records who changed what and why, restoring an older version moves a pointer rather than discarding newer ones, and the version the model originally produced is always kept.
     *   **Boxes still cannot be dragged**, and the interface says so rather than pretending otherwise. Mermaid computes node positions and has no syntax for placing one, so what the Layout tab offers instead is direction, spacing, and — through the source editor — grouping and reordering.
-    *   Editing is available in the new interface. The classic interface shows whichever version is current, so a conversation read in either place shows the same diagram, and exports carry the current version too.
-    *   Any participant of a shared conversation can edit a diagram, matching who can already recolour one, and each change is attributed.
-    *   (Ref: `functions_message_block_revisions.py`, `functions_block_revision_assist.py`, `DiagramEditor.tsx`, `/api/message/<id>/block-revision`, [V2 Inline Diagram Editing](features/V2_INLINE_DIAGRAM_EDITING.md))
+    *   Works in shared conversations as well as personal ones. Any participant can edit a diagram, matching who can already recolour one, and each change is attributed. An edit is written through to the underlying message, so the AI, exports and the conversation's owner all see the version you edited; the other participants see it change as it happens.
+    *   The classic interface shows whichever version is current, so a conversation read in either place shows the same diagram, and exports carry the current version too.
+    *   (Ref: `functions_message_block_revisions.py`, `functions_block_revision_assist.py`, `DiagramEditor.tsx`, `/api/message/<id>/block-revision`, `/api/collaboration/conversations/<id>/messages/<id>/block-revision`, [V2 Inline Diagram Editing](features/V2_INLINE_DIAGRAM_EDITING.md))
+
+### **(v0.261.048)**
+
+#### New Features
+
+*   **Documents In My Workspace Is Now A File Explorer**
+    *   The documents page in the new interface was one flat list that could upload a file, delete a file, and filter by one tag. It is now laid out like a file manager: a command bar across the top, a navigation rail down the left, the list in the middle, a details pane on the right and a status bar along the bottom.
+    *   **Everything the server could already do is now reachable.** The page previously asked for a thousand documents at once and sorted and searched them in the browser, ignoring the paging, searching, sorting, filtering, downloading, metadata editing, re-extraction and sharing the API has supported all along. All of it is now used.
+    *   **Tags live in the left rail instead of behind a view mode.** The classic workspace shows tags as folder cards you switch into a separate mode to see; here they are always visible, with their colour and a live count, and clicking one filters the list. Ctrl-clicking a second tag narrows to documents carrying both.
+    *   **Drag documents onto a tag to file them.** The confirmation offers an **Undo**, so tagging a batch never needs a dialog first.
+    *   **Saved views** pin a combination of search, tags, classification and status to the rail under your own name for it — the closest thing to a folder that a workspace organised by tags can honestly offer.
+    *   **Multi-select works the way it does everywhere else.** There is no longer a mode to switch on before checkboxes appear: click, Ctrl-click, Shift-click, Ctrl+A, Escape, and the arrow keys all behave as expected, and the toolbar's Download, Tag, Chat, Extract and Delete act on whatever is selected.
+    *   **Titles lead, file names follow.** A file called `MSA_v2_FINAL(3).docx` now shows its extracted title on the first line with the file name beneath it, and its tags as coloured chips in their own column rather than run together into one line of text.
+    *   **The details pane** shows a document's tags, classification, size, pages, version, dates, authors, keywords, abstract and sharing, and lets you edit them. With several documents selected it reports how many, their combined size and the tags they have in common, so a bulk action states what it is about to touch.
+    *   **Two views instead of four.** Details (a sortable table) and Tiles (cards). The two folder-shaped modes are gone, replaced by the rail.
+    *   **Active filters are visible.** Whatever is narrowing the list appears as removable chips above it, with a Clear all — previously there was no way to tell why documents seemed to be missing.
+    *   (Ref: V2 My Workspace, Documents, `GET /api/documents`, `GET /api/documents/facets`, `POST /api/documents/bulk-delete`, `POST /api/documents/bulk-tag`)
+
+*   **A Tags Section In My Workspace**
+    *   Tags now have a home of their own under Knowledge, where they can be created, renamed, recoloured, merged and deleted, with a count of how many documents use each one.
+    *   **Renaming a tag onto one that already exists merges the two**, and the page says so before you commit to it.
+    *   Deleting a tag says how many documents it will be removed from, and never deletes the documents themselves.
+    *   Applying tags stays on the Documents page. Choosing what the tags *are* and browsing *by* them are different jobs, and the classic workspace does both from the same toolbar.
+    *   (Ref: V2 My Workspace, Tags, `PATCH /api/documents/tags/<name>`, tag colours)
+
+*   **Deleting Several Documents At Once**
+    *   Removing a selection was previously one request per document. It is now a single request that reports on each document individually.
+    *   **A document the server refuses to delete is named, with the reason.** Files uploaded through chat and files managed by file sync are protected because deleting them silently damages something else; those are now listed by name with an option to go ahead anyway, instead of one protected file blocking everything selected with it.
+    *   (Ref: `POST /api/documents/bulk-delete`, conversation-linked documents, file sync)
+
+#### Bug Fixes
+
+*   **Typing In The Documents Search Box Dropped Characters**
+    *   The search box searched on every keystroke and lost letters if you typed at anything like normal speed, so a search term had to be entered slowly and checked.
+    *   The box was displaying the *searched* term rather than what you had typed, so each keystroke was undone until the search caught up. It now shows what you type, waits for you to stop before searching, and searches immediately if you press **Enter**. **Escape** clears it.
+    *   (Ref: V2 My Workspace, Documents, search)
+
+*   **Tagging Several Documents Appeared To Hang**
+    *   Applying tags to a multi-document selection showed a spinner labelled "Working…" that never went away and never refreshed the list. The tags had actually been applied — a page refresh showed them — but nothing on screen said so.
+    *   Tagging a document is expensive on the server: it rewrites the document and every one of its search index entries. Sending one request for the whole selection meant a single request that ran for a very long time behind a spinner that could not distinguish slow from stuck.
+    *   Tagging and deleting are now sent in small batches with **a real progress bar** showing how many documents of the total are done, and the list refreshes when it finishes. A batch that fails now reports itself instead of leaving the progress indicator up indefinitely.
+    *   (Ref: V2 My Workspace, Documents, bulk tagging, bulk delete, progress reporting)
+
+*   **Sorting Documents By Size Or Page Count Would Have Crashed The Listing**
+    *   The document sort compared a missing value against a present one as different types, which raises an error in Python. It was harmless while documents could only be sorted by name, title and date, and would have failed the moment any numeric column became sortable.
+    *   Sort fields are now declared as numeric or textual, so a document that has never had a size, a page count or a version still sorts correctly alongside ones that do.
+    *   (Ref: `sort_documents`, `ALLOWED_DOCUMENT_SORT_FIELDS`, personal, group and public document lists)
+
+*   **The "Shared With Me" Filter Never Did Anything**
+    *   The classic workspace sends a `shared_only` filter that the document listing has never read, so ticking it changed nothing. The listing now supports filtering by document state — recent, shared with you, processing, needs attention, or untagged — and the new interface's rail uses it.
+    *   (Ref: `GET /api/documents`, `place` parameter)
+
+#### User Interface Enhancements
+
+*   **Re-Extraction Now Says Which Mode A Document Is Already On**
+    *   The details pane offered **Standard** and **Enhanced** as two identical buttons without indicating which one had been used, so the only way to change a document's extraction was to guess and then check.
+    *   It now states the current mode, marks that option as **(current)**, and presents the other as **Switch to Standard** or **Switch to Enhanced**. A selection spanning both reads **Mixed**; one where no mode was ever recorded reads **Not recorded**.
+    *   The choice is hidden for files it does not apply to — only PDFs and images are processed this way — and in a mixed selection those files are named and left alone rather than silently included.
+    *   **Enhanced** is disabled with an explanation when your administrator has not enabled enhanced extraction, instead of being offered and then refused.
+    *   (Ref: V2 My Workspace, Documents, details pane, `enable_enhanced_extraction`)
+
+*   **The My Workspace Section Menu Can Be Collapsed**
+    *   The list of workspace sections down the left can now be collapsed to icons, giving the documents explorer noticeably more room. The choice is remembered.
+    *   It collapses independently of the main application sidebar, so you can narrow either one without affecting the other. Collapsed entries keep their names as tooltips and for screen readers.
+    *   (Ref: V2 My Workspace, section navigation)
+### **(v0.261.047)**
+
+#### New Features
+
+*   **A Home Page In The V2 Interface**
+    *   The new interface opened straight into chat and had no landing page, which meant three Appearance settings — **Landing Page Text**, **Markdown Alignment** and **Main Page Logo Size** — configured a page that only existed in the classic interface. Editing them appeared to do nothing.
+    *   `/v2` now opens a home page carrying your logo, your landing copy and a **Start chatting** button, and **Home** has been added to the left-hand menu. The logo is sized by **Main Page Logo Size** exactly as the classic home page sizes it.
+    *   Clearing the landing copy leaves the home page without it, rather than restoring the default wording you deleted.
+    *   (Ref: V2 interface, home page, `landing_page_text`, `landing_page_alignment`, `landing_page_logo_scale_percent`)
+
+*   **Custom Pages And External Links In The V2 Left-Hand Menu**
+    *   Both are configured under **Appearance > Pages & Links** and neither appeared in the new interface at all, so a deployment that had set them up saw a menu with none of its own links in it.
+    *   They now appear, following the same rule as the classic navigation: one or two entries sit inline as ordinary menu items, and three or more — or any number when **Force Menu Display** is on — collapse into a group under the menu name you configured, with a count.
+    *   External links open in a new tab so they cannot take an in-progress conversation with them. Custom pages honour their own "open in new tab" setting, and are still filtered per page against your roles.
+    *   (Ref: V2 interface, left-hand menu, Custom Pages, External Links, `/api/v2/bootstrap`)
+
+#### Bug Fixes
+
+*   **Custom Favicon Was Never Shown In The V2 Interface**
+    *   An uploaded favicon replaced the browser tab icon in the classic interface but never in the new one, which also always showed "SimpleChat" as the tab title regardless of the configured application title.
+    *   The favicon file keeps the same name every time it is replaced, so the address it is served from has to change or the browser keeps showing the copy it already has. The classic interface has always done this; the new interface is compiled ahead of time and could not know your branding. The page it serves is now stamped with the current favicon and application title on the way out.
+    *   (Ref: V2 interface, favicon, application title)
+
+*   **Custom Logo Was Squashed In The V2 Left-Hand Menu**
+    *   The logo was drawn into a fixed square, so any logo that is not square — which is most of them — was compressed. It is now sized by height with its own proportions kept, as in the classic navigation.
+    *   (Ref: V2 interface, left-hand menu, custom logo)
+
+*   **Unsafe External Link URLs Are No Longer Rendered In The V2 Left-Hand Menu**
+    *   The new interface validates external link addresses when you save them, but the classic Admin Settings form does not, so a link saved through the classic form — or already stored from an earlier version — could carry an address that is not a web page.
+    *   Addresses that are neither a local path nor `http`/`https` are now removed before the menu is built, so a link that the save path would have rejected can no longer reach the menu by another route.
+    *   (Ref: V2 interface, left-hand menu, External Links, `EXTERNAL_LINK_ALLOWED_SCHEMES`)
+
+*   **Four Settings Appeared Under Appearance Instead Of Their Own Tab**
+    *   **Enable Personal Workspaces** appeared under **Appearance > Notices & Agreements > User Agreement**, and the two external health check endpoints and **Show Simple Chat Documentation Guide Links** appeared under **Appearance > Pages & Links > External Links**. A fifth, **Enable Text Action**, appeared under **Appearance > Branding**.
+    *   Settings that had not yet been described to the new admin page were placed by matching their name against the section names, and these five matched the wrong section — "external" matched External Links rather than Health Check, and "user" matched User Agreement rather than Personal Workspaces.
+    *   They are now described properly and appear where they belong: the health check endpoints under **Operations > Logging & Health > Health Check**, the documentation guide links under **Help > User-Facing Latest Features**, personal workspaces under **Workspaces > Workspace Types**, and the text action under **Agents & Actions > Actions**. Each also gained the explanatory text the classic page has always shown.
+    *   (Ref: V2 Admin Settings, `admin_settings_fields.py`, capability placement)
+
+### **(v0.261.046)**
+
+#### Bug Fixes
+
+*   **Admin Settings Changes Did Not Appear Until The Page Was Reloaded (New Interface)**
+    *   Enabling the classification banner in the new interface and saving appeared to do nothing. The banner was saved correctly, but it only showed up after reloading the browser.
+    *   The banner was not the only thing affected. The new interface reads the application title, the sidebar logo, the classification banner and the list of enabled capabilities once, when the page first loads, and had no way of being told that any of them had changed. Every one of those went stale the moment you saved.
+    *   Saving in **Admin Settings** now refreshes what the interface knows about itself, so the banner appears — or disappears — straight away, along with a changed title or a newly enabled capability. Uploading a logo or favicon updates the sidebar immediately too, rather than waiting for the next reload.
+    *   Your unsaved edits are unaffected: the refresh happens quietly in the background and never interrupts the page you are working on.
+    *   (Ref: V2 interface, Admin Settings, classification banner, branding, `/api/v2/bootstrap`)
+
+### **(v0.261.045)**
+
+#### Bug Fixes
+
+*   **Approving Several Images At Once Looked Like It Had Stopped**
+    *   In the new interface, when a reply proposed several images and you pressed **Approve all**, every card correctly greyed out its Approve button and showed **Generating image…**. The moment the first image appeared, the remaining cards lost their status, their Approve buttons came back, and the **Approve all** button reappeared — so it looked as though nothing was happening and you needed to approve again. The images were in fact still being generated and did arrive shortly after.
+    *   The cards are now told what is happening by the message they belong to rather than keeping it to themselves, so a card that is queued or generating keeps saying so until its image arrives, whatever else happens in the conversation. Editing a proposal's prompt, or dismissing a proposal, now survives a refresh of the reply too.
+    *   The underlying cause was that the whole message was being rebuilt from scratch every time anything about it changed. Diagrams and charts were being thrown away and redrawn for the same reason, and no longer are.
+    *   (Ref: V2 chat, inline image proposals, approve all, assistant markdown rendering)
+
+*   **Generated Image Cards Kept Repeating The Proposal's Description**
+    *   After an image had been generated, its card still showed the labels from the original proposal — the kind of visual, the slide it referred to, and the context it was drawn from. Those describe an image that does not exist yet, and say nothing once you can see it.
+    *   A generated card now shows the title, the image, and which model produced it. Cards still waiting for a decision are unchanged.
+    *   (Ref: V2 chat, inline image proposals, generated image card)
+
+### **(v0.261.044)**
+
+#### Bug Fixes
+
+*   **The New Interface's New Chat Button Now Works, And Buttons Look Clickable**
+    *   **New chat** appeared in the sidebar on every page but only ever did anything on the chat page. Clicking it from **My Workspace**, **Admin Settings** or **Settings** produced no visible response at all — it reset chat state that was not on screen and left you where you were. It is now shown only on the chat page, where it has something to act on.
+    *   **Chats** in the sidebar covers what that leaves behind. Clicking it from anywhere else now starts a fresh chat, which is what makes a new chat reachable from the rest of the application. Two exceptions: clicking **Chats** while already on the chat page still does nothing, so a stray click cannot discard what you are reading, and a conversation still streaming a reply is returned to rather than reset, so a response in progress is never thrown away.
+    *   Previously, leaving the chat page and coming back silently reopened whatever conversation you last had. That conversation is still one click away in the conversation list.
+    *   No button in the new interface showed a hand cursor — not **New chat**, not the chat header icons, the conversation list, the composer or the admin controls. Everything rendered with the arrow cursor browsers use for text you cannot click. The whole interface now indicates what is clickable.
+    *   Starting a new chat no longer leaves the conversation drawer stranded open and empty after its **Contents** and **Documents** buttons have disappeared, and the conversation details panel no longer outlives the conversation it was describing.
+    *   (Ref: V2 navigation rail, New chat, conversation drawer, button cursor)
+
+### **(v0.261.043)**
+
+#### Bug Fixes
+
+*   **Chart And Diagram Colours Could Not Be Saved In A Shared Conversation**
+    *   Picking a colour for a chart or a diagram in a shared conversation changed it on screen and then reported "That change could not be saved", with a 404 in the browser console. Only shared conversations were affected; personal ones saved as normal.
+    *   Shared conversations are stored separately from personal ones, and the endpoint that saves a block's colours could only find personal conversations, so it refused the write before it ever reached the message. Colours and sizes now save in shared conversations too.
+    *   Because a shared conversation is shared, the colours you choose are stored on the message and are what everybody in the conversation sees — the same way masking already works — and they change on the other participants' screens as you make them rather than on their next visit. Changing them needs the same access as posting a message, so a read-only viewer sees the colours others chose without being able to alter them for everybody.
+    *   (Ref: V2 chat, shared conversations, diagram and chart colours, `/api/collaboration/conversations/.../visual-style`)
+
+*   **Opening A Link To A Shared Conversation Logged A Console Error**
+    *   Following a link to a shared conversation worked, but always left a 404 in the browser console. The interface was working out whether the link pointed at a personal or a shared conversation by asking about it as a personal one first and reading the failure as its answer.
+    *   It now asks once and gets a straight answer, so opening a shared conversation from a link is a single successful request and the console stays clean.
+    *   (Ref: V2 chat, shared conversations, conversation deep links)
 
 ### **(v0.261.042)**
 

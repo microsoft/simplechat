@@ -120,6 +120,10 @@ export interface CollaborationEventHandlers {
         blockRevisions: Record<string, unknown>,
         updatedByUserId: string | undefined,
     ) => void;
+    onMessageVisualStyleUpdated?: (
+        message: CollaborationMessage,
+        updatedByUserId: string | undefined,
+    ) => void;
     onConversationUpdated?: (conversation: CollaborationConversation) => void;
     onConversationDeleted?: (conversationId: string) => void;
     onMembersInvited?: (
@@ -241,6 +245,15 @@ export function dispatchCollaborationEvent(
                 handlers.onMessageBlockRevised?.(
                     String(payload.message_id),
                     (payload.block_revisions ?? {}) as Record<string, unknown>,
+                    payload.updated_by_user_id,
+                );
+            }
+            return;
+
+        case 'collaboration.message.visual_style_updated':
+            if (payload.message) {
+                handlers.onMessageVisualStyleUpdated?.(
+                    payload.message,
                     payload.updated_by_user_id,
                 );
             }

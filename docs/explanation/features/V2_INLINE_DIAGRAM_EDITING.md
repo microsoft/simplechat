@@ -19,9 +19,10 @@ Two properties matter more than the features themselves. The message's stored co
 rewritten, and **only the version currently on screen is ever sent to the model** — the
 revisions behind it, and the sub-conversation that produced them, are not.
 
-**Implemented in version: 0.261.043**
+**Implemented in version: 0.261.049**
 
-<!-- Shared conversation support landed in 0.261.044. -->
+<!-- Developed as 0.261.043 (feature) and 0.261.044 (shared conversation support), renumbered
+     to 0.261.049 when merged, since the base branch had reached 0.261.048 in the meantime. -->
 
 ### What this deliberately does not do
 

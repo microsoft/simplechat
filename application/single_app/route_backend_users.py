@@ -523,6 +523,13 @@ def register_route_backend_users(bp):
                     # dockedSidebarHidden / chatLayout, which describe the classic
                     # interface's own surfaces and would change its layout too.
                     'v2RailCollapsed', 'v2ChatWidth',
+                    # Whether the personal workspace's own section rail is collapsed to
+                    # icons. Separate from v2RailCollapsed, which is the shell's rail.
+                    'v2WorkspaceRailCollapsed',
+                    # V2 document explorer: how the workspace documents list is presented
+                    # (view mode, visible columns, page size, details pane) and the saved
+                    # filter combinations pinned in its navigation rail.
+                    'v2DocumentsPrefs', 'v2DocumentSavedViews',
                     # Default colours for diagrams and charts rendered in the V2 chat. A block
                     # someone recolours individually stores its own style on the message.
                     'v2MermaidStyle', 'v2ChartStyle',

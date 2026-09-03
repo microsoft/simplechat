@@ -14,15 +14,34 @@ import remarkBreaks from 'remark-breaks';
 import remarkGfm from 'remark-gfm';
 import { clsx } from 'clsx';
 
+/**
+ * Type scale. `sm` suits a preview card inside the settings form; `md` is for the same
+ * content rendered as the page itself, where settings-preview sizing would look shrunken.
+ */
+type MarkdownSize = 'sm' | 'md';
+
+const sizeClass: Record<MarkdownSize, string> = {
+    sm: clsx(
+        'space-y-2 text-sm',
+        '[&_h1]:text-base [&_h2]:text-sm [&_h3]:text-sm',
+    ),
+    md: clsx(
+        'space-y-3 text-base',
+        '[&_h1]:text-2xl [&_h2]:text-xl [&_h3]:text-lg',
+    ),
+};
+
 export function AdminMarkdown({
     content,
     className,
     align = 'left',
+    size = 'sm',
 }: {
     content: string;
     className?: string;
     /** Mirrors `landing_page_alignment` so the preview matches the real page. */
     align?: 'left' | 'center' | 'right';
+    size?: MarkdownSize;
 }) {
     const trimmed = content.trim();
 
@@ -33,12 +52,13 @@ export function AdminMarkdown({
     return (
         <div
             className={clsx(
-                'space-y-2 text-sm leading-relaxed text-text-2',
+                'leading-relaxed text-text-2',
+                sizeClass[size],
                 '[&_a]:text-accent [&_a]:underline',
                 '[&_code]:rounded [&_code]:bg-surface-sunken [&_code]:px-1 [&_code]:py-0.5',
-                '[&_h1]:text-base [&_h1]:font-semibold [&_h1]:text-text-1',
-                '[&_h2]:text-sm [&_h2]:font-semibold [&_h2]:text-text-1',
-                '[&_h3]:text-sm [&_h3]:font-medium [&_h3]:text-text-1',
+                '[&_h1]:font-semibold [&_h1]:text-text-1',
+                '[&_h2]:font-semibold [&_h2]:text-text-1',
+                '[&_h3]:font-medium [&_h3]:text-text-1',
                 '[&_li]:ml-4 [&_li]:list-disc',
                 '[&_ol_li]:list-decimal',
                 '[&_pre]:overflow-x-auto [&_pre]:rounded-lg [&_pre]:bg-surface-sunken [&_pre]:p-3',

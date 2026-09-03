@@ -10,6 +10,11 @@
 // thread, and it comes back through the proposal scope, so a card shows its image for exactly
 // the same reason after a page reload as it does the moment it is approved — there is only
 // one path, and no local copy to fall out of step.
+//
+// Nor is the card's own approval state held here. React rebuilds the markdown subtree a card
+// lives in whenever the message re-renders, so state kept in the card would be discarded by
+// the very thing the user is waiting for: the arrival of the first approved image. It lives in
+// the proposal scope, which the message bubble owns and which survives that rebuild.
 
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { clsx } from 'clsx';
@@ -20,23 +25,16 @@ import {
     normalizePrompt,
     parseImageProposal,
     proposalBadges,
+    proposalCardKey,
     PROMPT_MAX_LENGTH,
 } from '../../lib/imageProposalSpec';
 import { describeQueuePosition, enqueueImageApproval } from '../../lib/imageProposalQueue';
 import { resolveImageSource } from '../../lib/images';
 import { GlassButton } from '../ui/primitives';
 import { ImageLightbox } from './ImageLightbox';
+import { IDLE_CARD_STATE } from '../../lib/imageProposalCardState';
 import { useImageProposalScope } from './ImageProposalContext';
 import type { ChatMessage } from '../../lib/types';
-
-/**
- * Where an approval has got to.
- *
- * `generated` means the server reported success but the stored image could not be matched
- * back to this card. The image exists either way, so the card says so rather than sitting on
- * a spinner that will never resolve.
- */
-type ApprovalStatus = 'idle' | 'queued' | 'generating' | 'generated' | 'error' | 'cancelled';
 
 /** Card shell, so every state has the same footprint in the reply. */
 function ProposalCard({
@@ -123,21 +121,43 @@ function ApprovedImage({ result, alt }: { result: ChatMessage; alt: string }) {
     );
 }
 
-export function InlineImageProposal({ source }: { source: string }) {
+export function InlineImageProposal({
+    source,
+    blockIndex,
+}: {
+    source: string;
+    /**
+     * This proposal's position among the message's proposal fences, from
+     * `rehypeRichBlockIndex`. It is what files the card's approval state under the right
+     * entry, so two cards in one message cannot share one.
+     */
+    blockIndex?: number;
+}) {
     const parsed = useMemo(() => parseImageProposal(source), [source]);
-    const { assistantMessageId, results, approveAllToken, setPending } = useImageProposalScope();
+    const {
+        assistantMessageId,
+        results,
+        approveAllToken,
+        setPending,
+        cardStates,
+        updateCardState,
+    } = useImageProposalScope();
     const approveImageProposal = useChatStore((state) => state.approveImageProposal);
 
+    const spec = parsed.ok ? parsed.spec : null;
+
+    // Two identities, deliberately. `cardKey` names this card within its message and is what
+    // the scope files its approval state under, so it has to survive the card being rebuilt.
+    // The prompt field's `id` has to be unique across the whole document instead, and every
+    // message's first proposal shares a card key, so that one comes from `useId`.
+    const cardKey = useMemo(() => proposalCardKey(spec, blockIndex), [spec, blockIndex]);
     const cardId = useId();
     const promptFieldId = `${cardId}-prompt`;
 
-    const [status, setStatus] = useState<ApprovalStatus>('idle');
-    const [queuePosition, setQueuePosition] = useState(0);
-    const [failure, setFailure] = useState('');
-    const [editing, setEditing] = useState(false);
-    const [prompt, setPrompt] = useState(parsed.ok ? parsed.spec.prompt : '');
+    const cardState = cardStates[cardKey] ?? IDLE_CARD_STATE;
+    const { status, queuePosition, failure, editing } = cardState;
+    const prompt = cardState.prompt ?? (spec ? spec.prompt : '');
 
-    const spec = parsed.ok ? parsed.spec : null;
     const result = useMemo(
         () => (spec ? findResultForSpec(spec, results) : null),
         [spec, results],
@@ -148,10 +168,10 @@ export function InlineImageProposal({ source }: { source: string }) {
     const isPending = Boolean(spec) && !result && status === 'idle';
 
     useEffect(() => {
-        setPending(cardId, isPending);
-    }, [cardId, isPending, setPending]);
+        setPending(cardKey, isPending);
+    }, [cardKey, isPending, setPending]);
 
-    useEffect(() => () => setPending(cardId, false), [cardId, setPending]);
+    useEffect(() => () => setPending(cardKey, false), [cardKey, setPending]);
 
     const approve = useCallback(async () => {
         if (!spec || !assistantMessageId) {
@@ -160,8 +180,10 @@ export function InlineImageProposal({ source }: { source: string }) {
 
         const finalPrompt = normalizePrompt(prompt);
         if (!finalPrompt) {
-            setStatus('error');
-            setFailure('Add a prompt before generating the image.');
+            updateCardState(cardKey, {
+                status: 'error',
+                failure: 'Add a prompt before generating the image.',
+            });
             return;
         }
 
@@ -170,35 +192,45 @@ export function InlineImageProposal({ source }: { source: string }) {
         // into whichever thread is open by then would be both wrong and billable.
         const conversationId = useChatStore.getState().activeConversationId;
         if (!conversationId) {
-            setStatus('error');
-            setFailure('Open a conversation before generating the image.');
+            updateCardState(cardKey, {
+                status: 'error',
+                failure: 'Open a conversation before generating the image.',
+            });
             return;
         }
 
-        setEditing(false);
-        setFailure('');
-        setQueuePosition(0);
-        setStatus('queued');
+        updateCardState(cardKey, {
+            editing: false,
+            failure: '',
+            queuePosition: 0,
+            status: 'queued',
+        });
 
         try {
-            await enqueueImageApproval(async () => {
-                setStatus('generating');
-                await approveImageProposal(conversationId, assistantMessageId, {
-                    ...spec,
-                    prompt: finalPrompt,
-                });
-            }, setQueuePosition);
+            await enqueueImageApproval(
+                async () => {
+                    updateCardState(cardKey, { status: 'generating' });
+                    await approveImageProposal(conversationId, assistantMessageId, {
+                        ...spec,
+                        prompt: finalPrompt,
+                    });
+                },
+                (ahead) => updateCardState(cardKey, { queuePosition: ahead }),
+            );
 
             // The image itself arrives through the scope. This only covers the case where it
             // cannot be matched back to this card, so the outcome is still reported.
-            setStatus('generated');
+            updateCardState(cardKey, { status: 'generated' });
         } catch (error) {
-            setStatus('error');
-            setFailure(
-                error instanceof Error ? error.message : 'The image could not be generated.',
-            );
+            updateCardState(cardKey, {
+                status: 'error',
+                failure:
+                    error instanceof Error
+                        ? error.message
+                        : 'The image could not be generated.',
+            });
         }
-    }, [spec, assistantMessageId, prompt, approveImageProposal]);
+    }, [spec, assistantMessageId, prompt, approveImageProposal, cardKey, updateCardState]);
 
     // "Approve all" is delivered as a token rather than a call, because the scope has no
     // handle on individual cards. Read through a ref so the effect can depend on the token
@@ -235,13 +267,15 @@ export function InlineImageProposal({ source }: { source: string }) {
     const busy = status === 'queued' || status === 'generating';
 
     if (result) {
+        // The badges describe an image that does not exist yet: what kind of visual it would
+        // be, which slide it would illustrate, what it would be drawn from. Once the image is
+        // here they describe nothing the reader cannot see, so only the title stays.
         return (
             <ProposalCard>
                 <div className="flex items-start gap-2">
                     <ImageIcon size={15} className="mt-0.5 shrink-0 text-accent" />
                     <div className="min-w-0 flex-1">
                         <p className="text-sm font-medium text-text-1">{displayTitle}</p>
-                        {badges.length > 0 && <ProposalBadges badges={badges} />}
                         <ApprovedImage result={result} alt={alt} />
                         {result.model_deployment_name ? (
                             <p className="mt-1.5 text-[11px] text-text-3">
@@ -298,7 +332,9 @@ export function InlineImageProposal({ source }: { source: string }) {
                                 maxLength={PROMPT_MAX_LENGTH}
                                 value={prompt}
                                 disabled={busy}
-                                onChange={(event) => setPrompt(event.target.value)}
+                                onChange={(event) =>
+                                    updateCardState(cardKey, { prompt: event.target.value })
+                                }
                                 className="w-full resize-y rounded-xl border border-edge-strong bg-surface-solid px-3 py-2 text-sm text-text-1 outline-none focus:border-accent"
                             />
                         </div>
@@ -344,7 +380,7 @@ export function InlineImageProposal({ source }: { source: string }) {
                         <GlassButton
                             size="sm"
                             variant="subtle"
-                            onClick={() => setEditing((open) => !open)}
+                            onClick={() => updateCardState(cardKey, { editing: !editing })}
                             disabled={busy}
                             aria-expanded={editing}
                             title="Edit the image prompt before generating"
@@ -355,7 +391,7 @@ export function InlineImageProposal({ source }: { source: string }) {
                         <GlassButton
                             size="sm"
                             variant="ghost"
-                            onClick={() => setStatus('cancelled')}
+                            onClick={() => updateCardState(cardKey, { status: 'cancelled' })}
                             disabled={busy}
                             title="Dismiss this image proposal"
                         >

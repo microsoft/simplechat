@@ -31,7 +31,7 @@ sys.path.insert(0, str(APP_DIR))
 
 from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
-IMPLEMENTED_IN = "0.261.044"
+IMPLEMENTED_IN = "0.261.049"
 
 EDITOR_TSX = V2_SRC / "components" / "chat" / "DiagramEditor.tsx"
 MERMAID_TSX = V2_SRC / "components" / "chat" / "MermaidDiagram.tsx"
@@ -473,12 +473,23 @@ def test_the_client_picks_the_right_endpoint_family():
     for action, start in starts.items():
         end = next(boundary for boundary in boundaries if boundary > start)
         body = store[start:end]
-        assert "isCollaborativeConversation(get(), conversationId)" in body, (
-            f"{action} must choose its endpoint from the conversation's kind"
+        assert "isSharedBlockRevision(get(), conversationId, conversationKind)" in body, (
+            f"{action} must choose its endpoint from the kind captured when the edit was made"
         )
         assert "conversation_id: conversationId" in body, (
             f"{action} must still send the conversation id on the personal route"
         )
+
+    # The kind is captured with the id rather than resolved at write time, because the rail row
+    # a late lookup would consult may no longer describe the conversation the edit belongs to.
+    # `blockVisualStyle.ts` carries it for the same reason; this keeps the two consistent.
+    assert "conversationKind === null" in store, (
+        "a captured kind must win over a lookup, with the lookup only as a fallback"
+    )
+    revisions = _read(REVISIONS_TS)
+    assert "activeConversationKind" in revisions, (
+        "the hook must capture the conversation's kind when the edit is made"
+    )
 
     collaboration = _read(COLLABORATION_TS)
     for name in (

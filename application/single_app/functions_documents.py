@@ -1123,19 +1123,63 @@ def select_current_documents(documents):
     return current_documents
 
 
-def sort_documents(documents, sort_by="_ts", sort_order="DESC"):
+def _safe_float(value):
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+# Fields the document lists may be ordered by, split by the type of value they hold.
+#
+# The split is what makes the sort safe. A document that has never been given a value for
+# the sort field still has to compare against one that has, and deriving the fallback from
+# the *field* rather than from the value is the only way to guarantee a single comparable
+# type: a missing numeric field yielding "" while a present one yields an int raises
+# TypeError in Python 3. That hazard is why this was limited to string fields.
+#
+# `upload_date` is text on purpose. It is stored as ISO 8601, which sorts correctly
+# lexicographically, so it needs no parsing to order properly.
+NUMERIC_DOCUMENT_SORT_FIELDS = frozenset({
+    "_ts",
+    "file_size",
+    "number_of_pages",
+    "version",
+})
+
+TEXT_DOCUMENT_SORT_FIELDS = frozenset({
+    "file_name",
+    "title",
+    "upload_date",
+    "document_classification",
+})
+
+ALLOWED_DOCUMENT_SORT_FIELDS = NUMERIC_DOCUMENT_SORT_FIELDS | TEXT_DOCUMENT_SORT_FIELDS
+
+DEFAULT_DOCUMENT_SORT_FIELD = "_ts"
+
+
+def sort_documents(documents, sort_by=DEFAULT_DOCUMENT_SORT_FIELD, sort_order="DESC"):
+    """Order documents by one field, keeping every sort key a single comparable type.
+
+    An unrecognised field falls back to the default rather than raising, which matches what
+    each calling route already does with its own allow-list and hardens the callers that
+    pass a field straight through.
+    """
+    if sort_by not in ALLOWED_DOCUMENT_SORT_FIELDS:
+        sort_by = DEFAULT_DOCUMENT_SORT_FIELD
+
     reverse = str(sort_order).lower() != "asc"
+    numeric = sort_by in NUMERIC_DOCUMENT_SORT_FIELDS
 
     def sort_key(document_item):
         value = document_item.get(sort_by)
-        if sort_by == "_ts":
-            return _safe_int(value)
+        if numeric:
+            return _safe_float(value)
         if value is None:
             return ""
         if isinstance(value, str):
             return value.lower()
-        if isinstance(value, (int, float)):
-            return value
         return str(value).lower()
 
     return sorted(documents or [], key=sort_key, reverse=reverse)

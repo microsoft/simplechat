@@ -12,6 +12,8 @@
 // come back from a later GET, so treating them as settings would make the store believe a
 // save had been lost. They get their own call when the workspace tabs are built.
 
+import type { DocumentExplorerPrefs, DocumentSavedView } from './types';
+
 /** Text scale, matching the values the route normalises to. */
 export type FontSizePreference = 'xs' | 's' | 'm' | 'l' | 'xl';
 
@@ -49,6 +51,26 @@ export interface UserSettings {
      */
     v2RailCollapsed?: boolean;
     v2ChatWidth?: string;
+
+    /**
+     * Whether the personal workspace's section rail shows icons only.
+     *
+     * Deliberately separate from `v2RailCollapsed`, which is the application shell's rail.
+     * They are two different navigation surfaces stacked side by side, and collapsing one to
+     * make room should not also collapse the other.
+     */
+    v2WorkspaceRailCollapsed?: boolean;
+
+    /**
+     * How the workspace documents explorer is presented, and the views pinned in its rail.
+     *
+     * Namespaced like the shell preferences above. The classic interface stores its own
+     * documents view mode in `localStorage` under `personalWorkspaceViewPreference` and
+     * offers four modes to this interface's two, so the two settings describe genuinely
+     * different things and must not be shared.
+     */
+    v2DocumentsPrefs?: Partial<DocumentExplorerPrefs>;
+    v2DocumentSavedViews?: DocumentSavedView[];
 
     /**
      * The chat model last chosen in the picker, as a catalog `selection_key`.
@@ -115,6 +137,14 @@ export const WRITABLE_USER_SETTING_KEYS = [
     'v2ChatWidth',
     'v2MermaidStyle',
     'v2ChartStyle',
+    // Whether the section rail inside the personal workspace is showing icons only.
+    // Separate from v2RailCollapsed, which is the rail of the application shell:
+    // collapsing one should not collapse the other.
+    'v2WorkspaceRailCollapsed',
+    // Workspace documents explorer: how the list is presented, and the saved filter
+    // combinations pinned in its navigation rail.
+    'v2DocumentsPrefs',
+    'v2DocumentSavedViews',
     // Shared with the classic interface rather than namespaced: the chosen model and its
     // reasoning level mean the same thing in both, and the bootstrap resolves the initial
     // model selection from these keys.

@@ -11,8 +11,11 @@ saving an edited source, or asking the AI to change the diagram — returned:
 Personal conversations were unaffected, so the failure only appeared once a conversation had
 been shared.
 
-**Fixed in version: 0.261.044**
-(Inline diagram editing was introduced in 0.261.043.)
+**Fixed in version: 0.261.049**
+
+<!-- Developed as 0.261.044, on top of the feature developed as 0.261.043. Both were
+     renumbered to 0.261.049 when merged, since the base branch had reached 0.261.048. They
+     ship as one version, so the fix has no release of its own in which the bug was reachable. -->
 
 ## Root cause
 
@@ -25,7 +28,7 @@ different set of Cosmos containers and served by a different family of routes:
 | Messages | `cosmos_messages_container` | `cosmos_collaboration_messages_container` |
 | Routes | `/api/...` | `/api/collaboration/...` |
 
-The three block-revision routes added in 0.261.043 lived only in `route_backend_chats.py` and
+The three block-revision routes added with the feature lived only in `route_backend_chats.py` and
 authorized through `_authorize_personal_conversation_access`, which reads the *personal*
 conversation container. Given a shared conversation's id, that read finds nothing, raises
 `LookupError`, and the route answers `404 Conversation not found`.
@@ -57,6 +60,23 @@ thread, while the model, the export and the owner all continued to see the origi
 This is the same problem masking already had, and it is solved the same way — see
 `_sync_collaboration_mask_metadata_to_source`, which the new
 `_sync_collaboration_block_revisions_to_source` sits directly beside.
+
+### The same class of bug, found twice
+
+While this was in review, the same gap was found and fixed independently for **visual styles**:
+recolouring a chart in a shared conversation failed with a 404 for exactly the same reason. See
+`SHARED_CONVERSATION_VISUAL_STYLE_FIX.md`.
+
+The two fixes are deliberately shaped alike — a collaboration route beside the personal one,
+participate-level access, and the same broadcast pattern — with one deliberate difference:
+
+| | Synced to the source message? |
+|---|---|
+| Masks | Yes — they change what is exported and what the model is shown |
+| Block revisions | **Yes** — they change the diagram's content, so the model and exports must follow |
+| Visual styles | No — colours change neither, and the owner reads the thread through the shared conversation |
+
+The rule is *does this change what leaves the conversation*. Block revisions do, so they sync.
 
 ## Files modified
 

@@ -17,6 +17,7 @@
 
 import { useCallback, useMemo, useState } from 'react';
 import { useChatStore } from '../stores/chatStore';
+import type { ConversationKind } from '../stores/chatStore';
 import { fingerprintSource } from './visualPalettes';
 import type {
     BlockRevision,
@@ -210,13 +211,24 @@ export function useBlockRevisions(
      * The conversation is captured when the call is made rather than read inside it: a reader
      * can switch threads while a model edit is in flight, and the edit belongs to the
      * conversation it was started in.
+     *
+     * Its *kind* is captured at the same moment and for the same reason. A shared conversation
+     * is written through a different endpoint, and deciding which one later would consult a
+     * rail row that may no longer describe the conversation this edit belongs to. Matches how
+     * `blockVisualStyle.ts` carries the kind alongside the id.
      */
     const run = useCallback(
-        async (operation: (conversationId: string) => Promise<string | null>) => {
+        async (
+            operation: (
+                conversationId: string,
+                conversationKind: ConversationKind | null,
+            ) => Promise<string | null>,
+        ) => {
             if (!canPersist) {
                 return false;
             }
-            const conversationId = useChatStore.getState().activeConversationId ?? '';
+            const { activeConversationId, activeConversationKind } = useChatStore.getState();
+            const conversationId = activeConversationId ?? '';
             if (!conversationId) {
                 return false;
             }
@@ -224,7 +236,7 @@ export function useBlockRevisions(
             setBusy(true);
             setError(null);
             try {
-                const failure = await operation(conversationId);
+                const failure = await operation(conversationId, activeConversationKind);
                 if (failure) {
                     setError(failure);
                     return false;
@@ -244,10 +256,11 @@ export function useBlockRevisions(
                 setError(problem);
                 return Promise.resolve(false);
             }
-            return run((conversationId) =>
+            return run((conversationId, conversationKind) =>
                 saveBlockRevision({
                     messageId: messageId as string,
                     conversationId,
+                    conversationKind,
                     blockKind: kind,
                     blockIndex: blockIndex as number,
                     sourceHash,
@@ -264,10 +277,11 @@ export function useBlockRevisions(
 
     const restore = useCallback(
         (revisionId: string) =>
-            run((conversationId) =>
+            run((conversationId, conversationKind) =>
                 restoreBlockRevision({
                     messageId: messageId as string,
                     conversationId,
+                    conversationKind,
                     blockKind: kind,
                     blockIndex: blockIndex as number,
                     sourceHash,
@@ -284,10 +298,11 @@ export function useBlockRevisions(
                 setError('Describe the change you want.');
                 return Promise.resolve(false);
             }
-            return run((conversationId) =>
+            return run((conversationId, conversationKind) =>
                 askBlockRevision({
                     messageId: messageId as string,
                     conversationId,
+                    conversationKind,
                     blockKind: kind,
                     blockIndex: blockIndex as number,
                     sourceHash,

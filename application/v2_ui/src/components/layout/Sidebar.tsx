@@ -18,6 +18,7 @@ import {
     ChevronRight,
     FolderOpen,
     Globe2,
+    Home,
     LogOut,
     MessageSquarePlus,
     MessagesSquare,
@@ -33,6 +34,7 @@ import { useBootstrapStore } from '../../stores/bootstrapStore';
 import { useChatStore } from '../../stores/chatStore';
 import { classicChatHref } from '../../lib/conversationUrl';
 import { ConversationRail } from '../chat/ConversationRail';
+import { NavExtras } from './NavExtras';
 
 interface NavItem {
     to: string;
@@ -41,9 +43,18 @@ interface NavItem {
     /** Hover text. Two entries are easily confused without it, so both say what they are. */
     hint?: string;
     adminOnly?: boolean;
+    /** Matches the route exactly. Needed for "/", which otherwise prefixes every path. */
+    end?: boolean;
 }
 
 const NAV_ITEMS: NavItem[] = [
+    {
+        to: '/',
+        label: 'Home',
+        icon: Home,
+        hint: 'The landing page and its announcements',
+        end: true,
+    },
     { to: '/chat', label: 'Chats', icon: MessagesSquare },
     {
         to: '/agents',
@@ -74,10 +85,16 @@ function BrandMark({ collapsed }: { collapsed: boolean }) {
     return (
         <div className="flex min-w-0 items-center gap-2.5">
             {branding?.show_logo && logoUrl ? (
+                // Height-constrained with a free width, matching the classic navigation.
+                // Forcing a square would letterbox or crop the wordmark most deployments
+                // upload. The collapsed rail is only 68px wide, so the cap tightens there.
                 <img
                     src={logoUrl}
-                    alt=""
-                    className="h-8 w-8 shrink-0 rounded-lg object-contain"
+                    alt={branding.hide_app_title ? title : ''}
+                    className={clsx(
+                        'h-8 w-auto shrink-0 object-contain',
+                        collapsed ? 'max-w-[44px]' : 'max-w-[150px]',
+                    )}
                 />
             ) : (
                 <span
@@ -181,6 +198,30 @@ export function Sidebar() {
     const onChatPage = location.pathname.startsWith('/chat');
     const collapsed = railCollapsed;
 
+    /**
+     * Arriving at the chat page from elsewhere starts a fresh chat.
+     *
+     * The store is not reset by navigation — it is plain in-memory state that outlives a
+     * route change — so without this, returning to the chat page silently re-opens the
+     * conversation last read and puts it back in the address bar. Since `New chat` is only
+     * offered on the chat page, this is what makes a new chat reachable from anywhere else.
+     *
+     * Two things are deliberately left alone. Clicking `Chats` while already on the chat
+     * page does nothing, so a stray click on the highlighted nav item cannot throw away
+     * whatever is being read. And a conversation still streaming a reply is returned to
+     * rather than reset, because the reset stops the stream and the reply would be lost.
+     *
+     * `streaming` is read from the store rather than subscribed to: it changes with every
+     * token, and subscribing would re-render this rail — conversation list included —
+     * throughout a response.
+     */
+    const startNewChatOnArrival = () => {
+        if (onChatPage || useChatStore.getState().streaming) {
+            return;
+        }
+        startNewConversation();
+    };
+
     return (
         <nav
             aria-label="Primary"
@@ -219,27 +260,34 @@ export function Sidebar() {
                 </button>
             )}
 
-            <div className="px-3">
-                <button
-                    type="button"
-                    onClick={startNewConversation}
-                    title="Start a new chat"
-                    className={clsx(
-                        'flex w-full items-center gap-2 rounded-xl bg-accent px-3 py-2.5',
-                        'text-sm font-medium text-on-accent transition-colors hover:bg-accent-hover',
-                        collapsed && 'justify-center px-0',
-                    )}
-                >
-                    <MessageSquarePlus size={17} className="shrink-0" />
-                    {!collapsed && <span>New chat</span>}
-                </button>
-            </div>
+            {/* Only offered where it has somewhere to act. On any other page it reset chat
+                state that was not on screen and left the reader where they were, which
+                looked like a button that did nothing. `Chats` covers that case instead. */}
+            {onChatPage && (
+                <div className="px-3">
+                    <button
+                        type="button"
+                        onClick={startNewConversation}
+                        title="Start a new chat"
+                        className={clsx(
+                            'flex w-full items-center gap-2 rounded-xl bg-accent px-3 py-2.5',
+                            'text-sm font-medium text-on-accent transition-colors hover:bg-accent-hover',
+                            collapsed && 'justify-center px-0',
+                        )}
+                    >
+                        <MessageSquarePlus size={17} className="shrink-0" />
+                        {!collapsed && <span>New chat</span>}
+                    </button>
+                </div>
+            )}
 
-            <ul className="mt-3 space-y-0.5 px-3">
+            <ul className={clsx('space-y-0.5 px-3', onChatPage && 'mt-3')}>
                 {NAV_ITEMS.filter((item) => !item.adminOnly || isAdmin).map((item) => (
                     <li key={item.to}>
                         <NavLink
                             to={item.to}
+                            end={item.end}
+                            onClick={item.to === '/chat' ? startNewChatOnArrival : undefined}
                             title={collapsed ? item.label : item.hint}
                             className={({ isActive }) =>
                                 clsx(
@@ -257,6 +305,10 @@ export function Sidebar() {
                     </li>
                 ))}
             </ul>
+
+            {/* Custom pages and external links an administrator configured. Renders
+                nothing when neither is enabled, which is the default. */}
+            <NavExtras collapsed={collapsed} />
 
             {/* The conversation list only belongs in the rail while the chat page is open,
                 so other pages get the full rail height for their own navigation. */}
