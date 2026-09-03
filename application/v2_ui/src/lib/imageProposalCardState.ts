@@ -9,9 +9,11 @@
 // the first image arrived: no progress shown, Approve enabled again, and an invitation to pay
 // for an image that was already being generated.
 //
-// Keeping the state here, in a plain record the message's proposal scope owns, makes that
-// class of bug unreachable rather than merely unlikely: whatever causes a card to be rebuilt,
-// it reads the same entry back and carries on reporting the approval that is still running.
+// Keeping the state here, in a plain record, makes that class of bug unreachable rather than
+// merely unlikely: whatever causes a card to be rebuilt, it reads the same entry back and
+// carries on reporting the approval that is still running. The record is owned by
+// `imageProposalStore`, which outlives the conversation view as well as the card, because
+// leaving the conversation and coming back was the same bug wearing a different hat.
 
 /**
  * Where an approval has got to.
@@ -38,6 +40,15 @@ export interface ProposalCardState {
     prompt?: string;
     /** Whether the prompt editor is open. */
     editing: boolean;
+    /**
+     * Whether this card is reporting an approval it did not start.
+     *
+     * Set when the page was reloaded mid-approval and the card's status was restored from a
+     * persisted record. The work is the same and the wait is the same, but the request behind
+     * it is gone, so the only thing that can end the wait is the image appearing. The card says
+     * so rather than implying it is still holding a connection.
+     */
+    resumed: boolean;
 }
 
 /** What an untouched card reads. Frozen and shared, so it is one stable object. */
@@ -46,6 +57,7 @@ export const IDLE_CARD_STATE: ProposalCardState = Object.freeze({
     queuePosition: 0,
     failure: '',
     editing: false,
+    resumed: false,
 });
 
 /** Every card in one message, keyed by `proposalCardKey`. */

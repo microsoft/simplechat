@@ -10,6 +10,7 @@ import { useEffect, useRef, useState } from 'react';
 import { clsx } from 'clsx';
 import {
     Download,
+    Loader2,
     MoreHorizontal,
     Pin,
     Search,
@@ -24,6 +25,7 @@ import { useChatStore } from '../../stores/chatStore';
 import { useCollaborationStore } from '../../stores/collaborationStore';
 import { useBootstrapStore } from '../../stores/bootstrapStore';
 import { useUserSettingsStore } from '../../stores/userSettingsStore';
+import { selectInFlightCount, useImageProposalStore } from '../../stores/imageProposalStore';
 import { workspaceBadge, type WorkspaceBadgeTone } from '../../lib/conversationBadges';
 import { canShareConversation, panelTargetForConversation } from '../../lib/sharing';
 import { isCollaborative } from '../../lib/types';
@@ -71,6 +73,30 @@ function WorkspaceTag({ conversation }: { conversation: Conversation }) {
             className={clsx('block truncate text-[11px] leading-tight', TAG_TONE[badge.tone])}
         >
             {badge.label}
+        </span>
+    );
+}
+
+/**
+ * How many images this conversation is still generating.
+ *
+ * Approving an image proposal is a background job in every sense that matters to the reader:
+ * it keeps running after they leave the conversation, and it keeps running after they reload
+ * the page. Without this the only report of it is on the cards themselves, which is no report
+ * at all from anywhere else in the app — the complaint that motivated the whole change.
+ */
+function GeneratingImagesTag({ conversation }: { conversation: Conversation }) {
+    const count = useImageProposalStore((state) => selectInFlightCount(state, conversation.id));
+
+    if (count === 0) {
+        return null;
+    }
+
+    const label = `Generating ${count} image${count === 1 ? '' : 's'}`;
+    return (
+        <span title={label} aria-label={label} className="flex shrink-0 items-center gap-1 text-accent">
+            <Loader2 size={11} className="animate-spin" />
+            {count > 1 && <span className="text-[11px] leading-none">{count}</span>}
         </span>
     );
 }
@@ -199,6 +225,7 @@ function ConversationRow({
                         className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent"
                     />
                 )}
+                <GeneratingImagesTag conversation={conversation} />
             </button>
 
             <button

@@ -2,6 +2,19 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.050)**
+
+#### Bug Fixes
+
+*   **Image Generation No Longer Goes Quiet When You Look Away**
+    *   Approving inline image proposals and then opening another conversation used to leave the cards looking untouched when you came back — no progress, **Approve** enabled again, **Approve all** back — even though those images were still being generated and did arrive a moment later. Pressing **Approve** again would have paid for the same image twice.
+    *   **Approvals now keep reporting themselves wherever you go.** Leave the conversation, visit My Workspace, come back an hour later: the cards still show their queue position and "Generating image…", because that state no longer belongs to the view you left.
+    *   **Reloading the page no longer loses track of them either.** Generation runs on the server and finishes whether or not your browser is still connected, so the only thing a reload ever really lost was the knowledge that it was coming. Restored cards say "Still generating from before the page reloaded…" and fill in as each image lands.
+    *   **You can tell from anywhere in the app.** A conversation still generating images shows a spinner and a count on its row in the conversation list, and a single notice reports images being generated whose cards are not on screen — whether you have moved to another conversation or left chat entirely. The notice is deliberately absent while you are looking at those cards, where it would only repeat what they already say.
+    *   **An approval that never finishes is written off rather than left spinning.** After ten minutes the card explains that the page reloaded while it was generating and offers to approve it again.
+    *   This is per browser tab. An image approved in one tab is not tracked in another, though the image itself is stored and appears there as soon as the conversation is read.
+    *   (Ref: `imageProposalStore.ts`, `imageProposalTracking.ts`, `imageProposalResume.ts`, `GET /api/chat/image-proposals/status/<conversation_id>`, [V2 Inline Image Proposal Resume](fixes/V2_INLINE_IMAGE_PROPOSAL_RESUME_FIX.md))
+
 ### **(v0.261.049)**
 
 #### New Features
