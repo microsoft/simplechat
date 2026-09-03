@@ -49,7 +49,14 @@ Models and agents can emit proposals with fenced Markdown:
 - `route_backend_chats.py`
   - Adds image proposal guidance when image generation is enabled and the user asks for visual/slide/image-friendly content.
   - Adds `POST /api/chat/image-proposals/generate` for user-approved generation.
-  - Authorizes personal chat access before generation.
+  - Adds `GET /api/chat/image-proposals/status/<conversation_id>` so a client that reloaded the
+    page mid-approval can find out whether the image arrived. It returns the identity of each
+    proposal result — message id, source assistant message id, visual id, title, prompt and
+    creation time — and no image bytes, because a small generated image is inlined into its
+    message's `content` as a base64 data URI and this route is polled. An optional `since`
+    parameter narrows it to images written after the caller started waiting.
+  - Authorizes personal chat access before generation, and the status route reuses the same
+    helper so there is only one access rule.
 
 ### Frontend Components
 
@@ -92,11 +99,23 @@ no extract/inject/hydrate step and no HTML sink to sanitize.
     the image and the model that produced it; the proposal's description and badges describe an
     image that does not yet exist, so they are not repeated afterwards.
 - `application/v2_ui/src/components/chat/ImageProposalContext.tsx`
-  - Supplies each card with the assistant message it belongs to and the images already
-    generated for that message, renders the approve-all control, and owns each card's state.
-    That last point matters: a card is rendered from inside the markdown output, which React
-    can rebuild at any time, so a card that held its own approval status would lose it — see
-    `docs/explanation/fixes/V2_INLINE_IMAGE_PROPOSAL_STATUS_PERSISTENCE_FIX.md`.
+  - Supplies each card with the conversation and assistant message it belongs to and the images
+    already generated for that message, and renders the approve-all control. It does not own
+    card state: that lives in `imageProposalStore`, because the scope is unmounted whenever the
+    message list is cleared and an approval outlives that — see
+    `docs/explanation/fixes/V2_INLINE_IMAGE_PROPOSAL_STATUS_PERSISTENCE_FIX.md` and
+    `docs/explanation/fixes/V2_INLINE_IMAGE_PROPOSAL_RESUME_FIX.md`.
+- `application/v2_ui/src/stores/imageProposalStore.ts`
+  - Owns every card's approval state, keyed by conversation and assistant message, and the set
+    of approvals still running. Refuses a second approval for a card that already has one.
+- `application/v2_ui/src/lib/imageProposalTracking.ts`
+  - What is known about a running approval, how to recognise its image among a conversation's
+    proposal results, and how records are persisted to `sessionStorage` so a reload can pick
+    them back up.
+- `application/v2_ui/src/lib/imageProposalResume.ts`
+  - Restores those records on load, polls the status route until each image lands, writes off
+    an approval that never arrives, and raises the notice shown while images are being
+    generated in a conversation the user is not looking at.
 - `application/v2_ui/src/components/chat/AssistantMarkdown.tsx`
   - Renders the fence as a card and, while a reply is streaming, shows a placeholder for a
     fence that has not finished arriving. Its react-markdown component map is memoised, because
@@ -117,6 +136,11 @@ no extract/inject/hydrate step and no HTML sink to sanitize.
    - **Edit** lets the user revise the image prompt before approval.
    - **Cancel** dismisses the proposal.
    - **Approve all image proposals** appears when a message has more than two pending proposal cards.
+4. Approvals run one at a time and keep running if you go elsewhere. In the V2 interface the
+   conversation's row in the rail shows how many images it is still generating, and a notice
+   reports any whose cards are not on screen — whether you are reading another conversation or
+   have left chat altogether. Reloading the page does not cancel an approval either: the cards
+   say they are still generating and the image appears when it is ready.
 
 ## Testing and Validation
 
@@ -124,8 +148,10 @@ no extract/inject/hydrate step and no HTML sink to sanitize.
 - `ui_tests/test_chat_inline_image_proposal_cards.py` validates card rendering, approve-all, edit, and cancel workflows with the approval endpoint mocked by Playwright.
 - `functional_tests/test_v2_inline_image_proposals.py` validates that the V2 card agrees with both the classic client and the server: the same fence language, the same sanitization caps, the registered endpoint path, the same approve-all threshold, and that generation is opt-in, serialized, and rendered without any HTML sink.
 - `functional_tests/test_v2_inline_image_proposal_logic.mjs` executes the V2 parsing, result matching, card identity, card state and approval queue against the real modules, covering the cases where a mistake would render perfectly and still be wrong: a proposal approved after its prompt was edited, a prompt whose newlines the server flattened, several approvals started at once, and one card's progress disturbing another's.
-- `functional_tests/test_v2_inline_image_proposal_status_persistence.py` validates that the markdown component map is memoised and that a card's approval state is owned by its message, so an approval still in flight keeps reporting itself when the card is rebuilt.
-- Version was updated in `application/single_app/config.py` to `0.241.135` for traceability, to `0.261.029` when V2 support was added, and to `0.261.045` when V2 approval state was made to survive a re-render.
+- `functional_tests/test_v2_inline_image_proposal_status_persistence.py` validates that the markdown component map is memoised and that a card's approval state is owned by the store rather than by the card or its message, so an approval still in flight keeps reporting itself when the card is rebuilt.
+- `functional_tests/test_v2_inline_image_proposal_resume.py`, `functional_tests/test_v2_inline_image_proposal_resume_logic.mjs` and `functional_tests/test_v2_inline_image_proposal_store.mjs` validate that an approval survives leaving the conversation and reloading the page: the record is written before the request is sent, restored per tab, polled with a backoff and a deadline, matched only against an image proposed by the same message and written after the approval started, refused a duplicate for a card that already has one running, and reported on the conversation row and in a single notice while its cards are off screen.
+- `functional_tests/test_image_proposal_status_endpoint.py` validates that the status route is a GET on the chat blueprint with the required decorators, authorizes with the same helper as the approval route before reading anything, queries within the conversation's partition with bound parameters, caps its results, and returns identities rather than image bytes.
+- Version was updated in `application/single_app/config.py` to `0.241.135` for traceability, to `0.261.029` when V2 support was added, to `0.261.045` when V2 approval state was made to survive a re-render, and to `0.261.054` when it was made to survive leaving the conversation and reloading the page.
 
 ## Known Limitations
 
@@ -133,3 +159,4 @@ no extract/inject/hydrate step and no HTML sink to sanitize.
 - Image generation remains opt-in in chat. Future agent setup workflows can add agent-level auto-allow controls without changing the card renderer or storage helper.
 - In the V2 interface, a proposal cannot be approved until the response has finished streaming, because the assistant message the image would be filed under does not exist until then.
 - Cancelling a proposal dismisses the card for the current view only. Nothing is written to the message, so the card returns when the conversation is reopened.
+- Recovering an approval after a page reload is per browser tab. The record is kept in `sessionStorage`, so a second tab, another browser or another device shows no progress for an approval it did not start — although the image itself is stored server-side and appears there as soon as the conversation is read. An approval that has not produced an image within ten minutes of being started is written off, and the card offers to approve it again.
