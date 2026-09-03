@@ -305,19 +305,24 @@ def test_the_user_default_keys_are_allowlisted_and_validated():
 
 def test_the_client_keeps_its_sanitiser_boundaries():
     """Rendering untrusted output still passes through the guarantees it always had."""
-    mermaid = _read(V2_SRC / "components" / "chat" / "MermaidDiagram.tsx")
+    # These guarantees live with the shared Mermaid runtime rather than the viewer, so that
+    # conversation export, which renders diagrams off screen, crosses the same boundary.
+    runtime = _read(V2_SRC / "lib" / "mermaidRuntime.ts")
 
-    assert "securityLevel: 'strict'" in mermaid
-    assert "purify.sanitize(svg)" in mermaid
-    assert "bindFunctions" not in mermaid.split("export function MermaidDiagram")[1]
+    assert "securityLevel: 'strict'" in runtime
+    assert "purify.sanitize(svg)" in runtime
+    # The only mention allowed is the comment explaining why it is never called.
+    assert "bindFunctions" not in runtime.replace(
+        "`bindFunctions` from the render result is deliberately never", ""
+    )
 
     # htmlLabels must stay off. It is a security property, and it is also the only reason the
     # PNG has any text in it: a <foreignObject> label disappears when an SVG is painted onto a
     # canvas.
-    assert "htmlLabels: false" in mermaid
+    assert "htmlLabels: false" in runtime
 
     # Theme variables are only ever the sanitised palette output.
-    assert "mermaidThemeVariables(style, background)" in mermaid
+    assert "mermaidThemeVariables(style, background)" in runtime
 
     print("  ok  the diagram renderer keeps its sanitiser boundaries")
 

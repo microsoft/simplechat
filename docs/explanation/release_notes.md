@@ -2,6 +2,26 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.038)**
+
+#### New Features
+
+*   **Export Conversations From The New Interface**
+    *   The new interface could save a single reply as Word, PowerPoint or an email, but there was no way to export a whole conversation — you had to switch back to the classic interface for that. You can now export one conversation, or several at once, as **JSON**, **Markdown** or **PDF**.
+    *   Export is offered in three places: the **⋯** menu on any conversation in the sidebar, the **Export** button in **Conversation details**, and a new **Select** mode above the conversation list for picking several at once.
+    *   Several conversations can be combined into one file or bundled as a ZIP with one file per conversation. Picking more than one defaults to the ZIP, which is almost always what is wanted.
+    *   Optionally, a short AI-written intro summary can be placed above each transcript, using whichever chat model you choose.
+    *   Diagrams are included as pictures in Markdown and PDF exports, drawn in your browser so they match what you were looking at. A diagram that will not draw is left to the server rather than breaking the export. JSON exports keep the original text, diagrams included as source.
+    *   Exported files are identical to the ones the classic interface produces, down to the filename.
+    *   (Ref: V2 chat, conversation export, export wizard, conversation multi-select)
+
+#### Bug Fixes
+
+*   **Exported And Downloaded Diagrams Were Squashed**
+    *   A diagram saved as a PNG, or embedded in an exported file, came out compressed into a narrow strip roughly 100 pixels wide regardless of its real size — a 1094×541 flowchart was rasterized at 100×541.
+    *   The cause was the diagram's width being read as the number `100` from the value `100%`. The real dimensions were sitting in the diagram alongside it and are now used instead.
+    *   (Ref: diagram PNG download, conversation export, SVG rasterizing)
+
 ### **(v0.261.037)**
 
 #### Bug Fixes

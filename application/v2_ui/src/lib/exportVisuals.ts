@@ -15,9 +15,22 @@
 // to rasterize is omitted rather than sent broken.
 
 import { svgElementToPngDataUri } from './svgRaster';
+import { api } from './apiClient';
+import { MERMAID_EXPORT_PRESET, renderMermaidSvgForExport } from './mermaidRuntime';
 
 /** Matches `MESSAGE_EXPORT_VISUAL_ASSET_MAX_COUNT` in route_backend_conversation_export.py. */
 const MAX_ASSETS_PER_MESSAGE = 20;
+
+/**
+ * Matches `EXPORT_VISUAL_ASSET_MAX_COUNT` in functions_export_visuals.py.
+ *
+ * Deliberately not the per-message figure above. The conversation routes take the default
+ * budget rather than passing the message one, so the scan endpoint returns up to 60 sources
+ * and the export accepts up to 60 assets. Capping the client at 20 would fetch diagrams
+ * 21-60 and then throw them away, leaving the server to render them in headless Chromium —
+ * or, where that is unavailable, to emit them as raw code blocks.
+ */
+const MAX_ASSETS_PER_CONVERSATION_EXPORT = 60;
 
 /** The only visual kind the browser rasterizes; charts and formulas are drawn server-side. */
 const VISUAL_KIND_DIAGRAM = 'diagram';
@@ -129,6 +142,120 @@ export async function buildMessageVisualAssets(messageId: string): Promise<Expor
             const dataUri = await svgElementToPngDataUri(svg, entry.background);
             seenSources.add(source);
             assets.push({ kind: VISUAL_KIND_DIAGRAM, source, data_uri: dataUri });
+        } catch {
+            /* Left for the server to render. */
+        }
+    }
+
+    return assets;
+}
+
+/** One diagram the server found while scanning conversations for an export. */
+interface ConversationVisualSource {
+    kind?: string;
+    source: string;
+}
+
+interface VisualScanResponse {
+    visual_sources?: ConversationVisualSource[];
+}
+
+/**
+ * Ask the server which diagrams the given conversations contain.
+ *
+ * A conversation export covers messages that were never rendered — an old conversation, or
+ * one that is not even open — so the registry above has nothing to offer. The server reads
+ * the stored messages and returns the fence bodies instead, which the browser can then draw.
+ */
+export async function fetchConversationVisualSources(
+    conversationIds: string[],
+): Promise<ConversationVisualSource[]> {
+    if (!Array.isArray(conversationIds) || conversationIds.length === 0) {
+        return [];
+    }
+
+    const response = await api.post<VisualScanResponse>('/api/conversations/export/visual-scan', {
+        conversation_ids: conversationIds,
+    });
+
+    return Array.isArray(response?.visual_sources) ? response.visual_sources : [];
+}
+
+/**
+ * Turn one already-rendered SVG string into a PNG data URI.
+ *
+ * The markup is measured and painted through the same path an on-screen diagram takes, which
+ * needs an element rather than a string. It is parsed and briefly attached off-screen so the
+ * browser lays it out: a detached element reports a zero-sized bounding box, which is the
+ * fallback `normalizeSvg` reaches for when a diagram carries no usable dimensions.
+ *
+ * `d-none` is deliberately not used here. A hidden element has no layout at all, so it would
+ * defeat the point of attaching it; the host is instead positioned far outside the viewport.
+ */
+async function rasterizeSvgMarkup(markup: string): Promise<string> {
+    const parsed = new DOMParser().parseFromString(markup, 'image/svg+xml');
+    const svg = parsed.documentElement;
+    if (!svg || svg.nodeName === 'parsererror' || svg.nodeName.toLowerCase() !== 'svg') {
+        throw new Error('The rendered diagram was not valid SVG.');
+    }
+
+    const host = document.createElement('div');
+    host.setAttribute('aria-hidden', 'true');
+    host.style.cssText =
+        'position:absolute;left:-10000px;top:0;width:2000px;height:auto;pointer-events:none;';
+    const adopted = document.importNode(svg, true) as unknown as SVGElement;
+    host.appendChild(adopted);
+    document.body.appendChild(host);
+
+    try {
+        return await svgElementToPngDataUri(adopted, MERMAID_EXPORT_PRESET.background);
+    } finally {
+        host.remove();
+    }
+}
+
+/**
+ * Rasterize every diagram in the given conversations into export assets.
+ *
+ * Never rejects, for the same reason the per-message version does not: a diagram that cannot
+ * be drawn is left out and the server falls back to rendering it, so a broken diagram costs
+ * fidelity rather than the whole export.
+ *
+ * Diagrams are drawn with the export preset rather than the reader's theme, because the file
+ * is read outside the application where a dark diagram on white paper is unreadable.
+ */
+export async function buildConversationVisualAssets(
+    conversationIds: string[],
+): Promise<ExportVisualAsset[]> {
+    let visualSources: ConversationVisualSource[];
+    try {
+        visualSources = await fetchConversationVisualSources(conversationIds);
+    } catch {
+        /* The export itself is still worth attempting; the server will draw them. */
+        return [];
+    }
+
+    const assets: ExportVisualAsset[] = [];
+    const seenSources = new Set<string>();
+
+    for (const entry of visualSources) {
+        if (assets.length >= MAX_ASSETS_PER_CONVERSATION_EXPORT) {
+            break;
+        }
+
+        const source = normalizeVisualSource(entry?.source ?? '');
+        if (!source || seenSources.has(source)) {
+            continue;
+        }
+        seenSources.add(source);
+
+        try {
+            const markup = await renderMermaidSvgForExport(source);
+            assets.push({
+                kind: VISUAL_KIND_DIAGRAM,
+                source,
+                data_uri: await rasterizeSvgMarkup(markup),
+            });
         } catch {
             /* Left for the server to render. */
         }

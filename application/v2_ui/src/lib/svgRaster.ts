@@ -29,6 +29,14 @@ function parseLength(value: string | null): number {
     if (!value) {
         return 0;
     }
+    // A percentage is a share of a parent that a detached, about-to-be-rasterized SVG does
+    // not have. Mermaid emits `width="100%"` with no height attribute when `useMaxWidth` is
+    // on, and parseFloat would read that as the number 100 — rasterizing a 1094x541 diagram
+    // into a 100x541 sliver. Reporting no size instead falls through to the viewBox below,
+    // which carries the real dimensions.
+    if (value.trim().endsWith('%')) {
+        return 0;
+    }
     const parsed = parseFloat(value);
     return Number.isFinite(parsed) ? parsed : 0;
 }
