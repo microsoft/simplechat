@@ -129,6 +129,16 @@ interface ChatState {
     nextCursor: string | null;
     searchTerm: string;
 
+    /**
+     * Whether the rail is picking conversations rather than opening them.
+     *
+     * Selection lives here rather than in the rail because deleting or hiding a conversation
+     * is a store action, and a selection kept beside the list would go stale the moment one
+     * of those removed a row — exporting an id the user can no longer see.
+     */
+    selectionMode: boolean;
+    selectedConversationIds: string[];
+
     activeConversationId: string | null;
     /**
      * Which API family the open conversation belongs to.
@@ -204,6 +214,11 @@ interface ChatState {
     removeConversation: (conversationId: string) => Promise<void>;
     togglePinned: (conversationId: string) => Promise<void>;
     toggleHidden: (conversationId: string) => Promise<void>;
+
+    setSelectionMode: (enabled: boolean) => void;
+    toggleConversationSelected: (conversationId: string) => void;
+    selectAllConversations: () => void;
+    clearConversationSelection: () => void;
 
     sendMessage: (text: string, options: ComposerOptions) => Promise<void>;
     stopStreaming: () => void;
@@ -967,6 +982,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
     nextCursor: null,
     searchTerm: '',
 
+    selectionMode: false,
+    selectedConversationIds: [],
+
     activeConversationId: null,
     activeConversationKind: null,
     messages: [],
@@ -1258,6 +1276,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
         set({
             conversations: previous.filter((conversation) => conversation.id !== conversationId),
+            selectedConversationIds: get().selectedConversationIds.filter(
+                (id) => id !== conversationId,
+            ),
         });
 
         if (get().activeConversationId === conversationId) {
@@ -1327,6 +1348,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
         // than re-rendered with a new flag.
         set({
             conversations: get().conversations.filter((item) => item.id !== conversationId),
+            selectedConversationIds: get().selectedConversationIds.filter(
+                (id) => id !== conversationId,
+            ),
         });
         try {
             if (isCollaborative(conversation)) {
@@ -1337,6 +1361,30 @@ export const useChatStore = create<ChatState>((set, get) => ({
         } catch {
             await get().loadConversations({ reset: true });
         }
+    },
+
+    setSelectionMode: (enabled) => {
+        // Leaving selection mode discards the selection: the checkboxes are gone, so a
+        // selection that survived would act on rows the user can no longer see or change.
+        set({ selectionMode: enabled, selectedConversationIds: enabled ? get().selectedConversationIds : [] });
+    },
+
+    toggleConversationSelected: (conversationId) => {
+        const selected = get().selectedConversationIds;
+        set({
+            selectedConversationIds: selected.includes(conversationId)
+                ? selected.filter((id) => id !== conversationId)
+                : [...selected, conversationId],
+        });
+    },
+
+    /** Selects the rows currently loaded, which is what the user can actually see. */
+    selectAllConversations: () => {
+        set({ selectedConversationIds: get().conversations.map((item) => item.id) });
+    },
+
+    clearConversationSelection: () => {
+        set({ selectedConversationIds: [] });
     },
 
     sendMessage: async (text, options) => {

@@ -16,7 +16,7 @@ calls `ensure_governance_access('governance_user_agents', ...)`, and so does
 `save_personal_agent`, but neither the delete route nor `delete_personal_agent` did. A user
 governance had denied could still delete their agents.
 
-**Fixed in version:** 0.261.039
+**Fixed in version:** 0.261.041
 
 ## Root cause
 

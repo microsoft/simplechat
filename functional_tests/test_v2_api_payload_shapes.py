@@ -42,11 +42,13 @@ def test_workspace_tags_are_treated_as_objects():
         "if the contract changed, update the V2 client to match"
     )
 
-    workspace_page = _read(V2_SRC / "pages" / "WorkspacePage.tsx")
+    # The tag handling moved with the documents list when the workspace page became a
+    # grouped set of sections; the guarantee it encodes is unchanged.
+    workspace_page = _read(V2_SRC / "pages" / "workspace" / "DocumentsSection.tsx")
 
     assert "function tagName(" in workspace_page, (
-        "WorkspacePage must funnel tags through tagName() so an object tag is never "
-        "rendered directly (this caused React error #31)"
+        "The documents section must funnel tags through tagName() so an object tag is "
+        "never rendered directly (this caused React error #31)"
     )
     assert "'name' in tag" in workspace_page, (
         "tagName() must handle the object tag shape returned by /api/documents/tags"
@@ -54,7 +56,8 @@ def test_workspace_tags_are_treated_as_objects():
 
     # The crash was rendering the raw tag as a JSX child. Guard against its return.
     assert re.search(r"\{tag\}", workspace_page) is None, (
-        "WorkspacePage renders a raw tag value as a JSX child; render tagName(tag) instead"
+        "The documents section renders a raw tag value as a JSX child; render "
+        "tagName(tag) instead"
     )
 
     endpoints = _read(V2_SRC / "lib" / "endpoints.ts")

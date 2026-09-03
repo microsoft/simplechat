@@ -13,7 +13,7 @@ user sees somewhere between two and eight tabs with nothing to say why, and noth
 to say that agents use actions, that workflows use agents, or that identities exist only to
 serve file sources and actions.
 
-**Implemented in version:** 0.261.039
+**Implemented in version:** 0.261.041
 
 ### Dependencies
 

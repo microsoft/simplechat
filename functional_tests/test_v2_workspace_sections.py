@@ -2,8 +2,8 @@
 """
 Functional test for the V2 personal workspace sections and the routes behind them.
 
-Version: 0.261.039
-Implemented in: 0.261.039
+Version: 0.261.041
+Implemented in: 0.261.041
 
 The V2 workspace is assembled from eight independent capabilities, and two kinds of mistake
 here are invisible at runtime.
@@ -261,7 +261,7 @@ def test_every_registered_section_has_a_component():
 def test_version_is_at_least_implementation_version():
     """The application version is at or beyond the version that added this."""
     print("Testing application version...")
-    assert_app_version_at_least("0.261.039")
+    assert_app_version_at_least("0.261.041")
     print("Application version test passed!")
     return True
 

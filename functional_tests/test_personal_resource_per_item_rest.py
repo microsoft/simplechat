@@ -2,8 +2,8 @@
 """
 Functional test for per-item REST on personal agents, actions and model endpoints.
 
-Version: 0.261.039
-Implemented in: 0.261.039
+Version: 0.261.041
+Implemented in: 0.261.041
 
 Before this, saving or removing one of these meant POSTing the entire collection. That is
 lossy in two ways that never surface as an error: a client which omits a row deletes it, and
@@ -249,7 +249,7 @@ def test_action_delete_is_not_gated_on_the_creation_flag():
 def test_version_is_at_least_implementation_version():
     """The application version is at or beyond the version that added this."""
     print("Testing application version...")
-    assert_app_version_at_least("0.261.039")
+    assert_app_version_at_least("0.261.041")
     print("Application version test passed!")
     return True
 
