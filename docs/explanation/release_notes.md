@@ -2,6 +2,37 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.038)**
+
+#### Bug Fixes
+
+*   **Shared Conversations Opened Empty In The V2 Interface**
+    *   Clicking a shared conversation in the new interface showed a thread with no messages in it. The interface loaded every conversation's messages from the personal chat API, which does not hold shared conversations and answers with an empty list rather than an error, so the conversation opened successfully with nothing in it — and remained the target of the next message sent.
+    *   Shared conversations are now read from the collaboration API they actually live in, in both the personal and the group case.
+    *   (Ref: V2 chat, `/api/get_messages`, `/api/collaboration/conversations`)
+
+#### New Features
+
+*   **Shared Conversations In The V2 Interface**
+    *   The new interface now supports shared conversations in full, matching the classic one. Both shared personal and shared group conversations can be read, replied to and managed there.
+    *   **Messages say who wrote them.** Another participant's message appears on the left with their name above it, and your own on the right as before. Uploads shared into the conversation are shown as named attachments, and a message that asked the assistant is labelled as such.
+    *   **The assistant only answers when asked.** As in the classic interface, a message in a shared conversation goes to the other people in it and not to the model — unless it `@`-mentions a model or an agent, or you have turned on an assistant tool such as document search, web search, image generation, deep research, reading URLs, an agent or a saved prompt. Tagging a model or agent uses that one for the message, whatever the pickers hold.
+    *   **Type `@` to mention somebody.** The menu offers the people already in the conversation, the models and agents you can address, and — if you can manage members — people you could add. Choosing one of the last group invites them.
+    *   **The conversation stays live.** Messages other people write appear as they are sent, along with a "typing" indicator, and deletions and masks applied by others are reflected straight away. You are told when somebody mentions you.
+    *   **Reply to a specific message** with the reply button on any message; the reply shows what it is answering.
+    *   **Share an existing conversation** from the new **people** button in the chat header, or **Share** in the conversation's menu in the left rail. The same panel manages who is in the conversation, promotes members to admin, removes people, and lets you leave it or delete it for everyone. What you are offered follows what you are actually allowed to do.
+    *   **Invitations** are shown above the conversation with **Join** and **Decline**. You can read an invited conversation before joining, so you can see what you are being invited to.
+    *   **Files the assistant generates** in a shared conversation are held back until approved, and anything waiting on your decision is listed above the thread with Approve and Deny.
+    *   Retry, edit, attempt navigation and fork are not offered in a shared conversation, matching the classic interface — those actions have no equivalent there.
+    *   Requires **Collaborative conversations** to be enabled in admin settings. With it off, none of these controls appear.
+    *   (Ref: V2 chat, collaboration API, participants panel, mentions, live updates)
+
+#### User Interface Enhancements
+
+*   **Mentioning Somebody No Longer Notifies The Wrong Person**
+    *   Where one person's display name is the start of another's — "Ada" and "Ada Lovelace" — writing "@Ada Lovelace" also counted as mentioning "Ada", and notified them. The longer name now claims its own text, so only the person actually named is notified. Naming both people in one message still notifies both.
+    *   (Ref: shared conversations, mentions)
+
 ### **(v0.261.037)**
 
 #### Bug Fixes

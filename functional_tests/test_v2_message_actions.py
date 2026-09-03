@@ -145,7 +145,11 @@ def test_delete_sends_its_option_in_the_body():
     )
 
     store = _read(V2_SRC / "stores" / "chatStore.ts")
-    remove_block = store[store.index("removeMessage: async") :][:900]
+    # Sliced to the end of the action rather than a fixed character budget, so the assertion
+    # survives the body growing -- it gained a branch in v0.261.038 for shared
+    # conversations, whose messages are deleted through their own endpoint.
+    remove_start = store.index("removeMessage: async")
+    remove_block = store[remove_start : store.index("retryMessage: async", remove_start)]
     assert "reloadMessages()" in remove_block, (
         "Deletion is soft when archiving is enabled, so the list must be re-read rather "
         "than trusting the optimistic removal"
@@ -181,11 +185,18 @@ def test_action_row_differs_by_role():
 
     actions = _read(V2_SRC / "components" / "chat" / "MessageActions.tsx")
 
-    assert "isUser && onEdit" in actions, "Edit must be offered only on user messages"
+    # Edit resends the message as a new thread attempt, which only the personal conversation
+    # API can do, so since v0.261.038 it additionally requires not being in a shared
+    # conversation. The role condition is what this test is about and is unchanged.
+    assert "isUser && !shared && onEdit" in actions, (
+        "Edit must be offered only on user messages"
+    )
     assert "!isUser && feedbackEnabled" in actions, (
         "Feedback must be offered only on assistant messages"
     )
-    assert "!isUser && (" in actions, "Fork must be offered only on assistant messages"
+    assert "!isUser && !shared && (" in actions, (
+        "Fork must be offered only on assistant messages"
+    )
 
     # The overflow menu opens upward by default and would render off-screen for messages
     # near the top of the scroll area, so it flips when there is no room.

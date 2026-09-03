@@ -40,7 +40,14 @@ export interface ConversationFeedPage {
     include_hidden?: boolean;
 }
 
-export type MessageRole = 'user' | 'assistant' | 'system' | 'safety' | 'image';
+/**
+ * `file` only ever arrives from a shared conversation.
+ *
+ * `serialize_collaboration_message` (functions_collaboration.py) overrides the stored role
+ * with a *display* role of `file` or `image` when the message carries an upload, so a
+ * shared thread can contain a role the personal endpoints never emit.
+ */
+export type MessageRole = 'user' | 'assistant' | 'system' | 'safety' | 'image' | 'file';
 
 export interface ChatMessage {
     id: string;
@@ -201,6 +208,182 @@ export interface ConversationMetadata {
     linked_workspace_documents?: UsedDocument[];
     [key: string]: unknown;
 }
+
+/* -------------------------------------------------------------------------- */
+/* Shared (collaborative) conversations                                        */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The value `conversation_kind` takes for a shared conversation.
+ *
+ * Shared conversations are stored in their own Cosmos containers and served by
+ * `/api/collaboration/*`. Every personal conversation route either 404s on them or, worse,
+ * answers 200 with nothing: `/api/get_messages` turns its `LookupError` into
+ * `{'messages': []}`, which is why a shared thread used to open as an empty chat rather
+ * than as an error. Routing is therefore decided by this field, never inferred from a
+ * failed request.
+ */
+export const COLLABORATION_KIND = 'collaborative';
+
+/** Chat types a shared conversation can have. Mirrors `collaboration_models.py`. */
+export const PERSONAL_MULTI_USER_CHAT_TYPE = 'personal_multi_user';
+export const GROUP_MULTI_USER_CHAT_TYPE = 'group_multi_user';
+
+/** Membership lifecycle, from `collaboration_models.py`. */
+export type MembershipStatus =
+    | 'accepted'
+    | 'pending'
+    | 'declined'
+    | 'removed'
+    /**
+     * Not a stored status. `serialize_collaboration_conversation` synthesises it for a
+     * group-visibility conversation the caller can see purely by being in the group, so
+     * there is no per-user membership record to read a status from.
+     */
+    | 'group_member';
+
+export type MembershipRole = 'owner' | 'admin' | 'member';
+
+/** One person in a shared conversation, as `normalize_collaboration_user` returns them. */
+export interface CollaborationParticipant {
+    user_id: string;
+    display_name?: string;
+    email?: string;
+    role?: MembershipRole | string;
+    membership_status?: MembershipStatus | string;
+    [key: string]: unknown;
+}
+
+/**
+ * A shared conversation, from `serialize_collaboration_conversation`.
+ *
+ * Extends `Conversation` because the feed returns exactly this shape for its collaboration
+ * rows, so the rail renders shared and personal conversations from one list.
+ *
+ * The `can_*` flags are the authority on what the current user may do. They are not
+ * derivable in the browser: they fold together membership status, role, visibility mode
+ * and whether membership is explicit, and a group-visibility conversation grants posting
+ * without any membership record at all. Deriving them client-side would offer controls the
+ * server then rejects.
+ */
+export interface CollaborationConversation extends Conversation {
+    chat_type?: string;
+    status?: string;
+    created_at?: string;
+    updated_at?: string;
+    last_message_at?: string;
+    last_message_preview?: string;
+    message_count?: number;
+    participant_count?: number;
+    pending_invite_count?: number;
+    participants?: CollaborationParticipant[];
+    accepted_participant_ids?: string[];
+    pending_participant_ids?: string[];
+    owner_user_ids?: string[];
+    admin_user_ids?: string[];
+    current_user_role?: MembershipRole | string | null;
+    membership_status?: MembershipStatus | string | null;
+    can_manage_members?: boolean;
+    can_manage_roles?: boolean;
+    can_accept_invite?: boolean;
+    can_post_messages?: boolean;
+    can_delete_conversation?: boolean;
+    can_leave_conversation?: boolean;
+    visibility_mode?: string;
+    group_id?: string | null;
+    group_name?: string | null;
+    /** The hidden personal conversation the AI actually runs in. */
+    source_conversation_id?: string | null;
+}
+
+/**
+ * Who wrote a message in a shared conversation.
+ *
+ * Personal conversations have exactly one human, so the classic and V2 interfaces both
+ * label user messages "You" without asking. In a shared thread the author matters, and it
+ * arrives on the message as `sender` (also copied into `metadata.sender`).
+ */
+export interface CollaborationMessageSender {
+    user_id?: string;
+    display_name?: string;
+    email?: string;
+    [key: string]: unknown;
+}
+
+/** What a message is replying to, resolved for display by the client. */
+export interface CollaborationReplyContext {
+    message_id?: string;
+    display_name?: string;
+    preview?: string;
+    [key: string]: unknown;
+}
+
+/**
+ * A message in a shared conversation, from `serialize_collaboration_message`.
+ *
+ * `message_kind` distinguishes a message merely posted to the other participants
+ * (`human_message`) from one that asked the AI to answer (`ai_request`) and from the
+ * answer itself (`assistant_response`). The `role` field cannot carry that distinction,
+ * because a human message and an AI request are both `user`.
+ */
+export interface CollaborationMessage extends ChatMessage {
+    message_kind?: 'human_message' | 'ai_request' | 'assistant_response' | string;
+    sender?: CollaborationMessageSender;
+    reply_to_message_id?: string | null;
+    explicit_ai_invocation?: boolean;
+    filename?: string;
+    /** Attached by the client, not the server: the replied-to message resolved for display. */
+    reply_context?: CollaborationReplyContext | null;
+}
+
+/**
+ * One frame from `GET /api/collaboration/conversations/<id>/events`.
+ *
+ * Built by `_build_collaboration_event`. Unlike the chat stream, this one is a real SSE
+ * `message` event carrying a JSON envelope, and the discriminator is `event_type`.
+ */
+export interface CollaborationEvent {
+    conversation_id?: string;
+    event_type?: string;
+    occurred_at?: string;
+    payload?: {
+        conversation?: CollaborationConversation;
+        message?: CollaborationMessage;
+        message_id?: string;
+        participant?: CollaborationParticipant;
+        participants?: CollaborationParticipant[];
+        user?: CollaborationParticipant;
+        is_typing?: boolean;
+        expires_at?: string;
+        deleted_by_user_id?: string;
+        updated_by_user_id?: string;
+        [key: string]: unknown;
+    };
+    [key: string]: unknown;
+}
+
+/** A person who could be invited, from `/api/user/collaboration-suggestions`. */
+export interface CollaboratorSuggestion {
+    user_id: string;
+    display_name?: string;
+    email?: string;
+    /** Where the suggestion came from: 'recent', 'group', 'local', and so on. */
+    source?: string;
+    [key: string]: unknown;
+}
+
+/**
+ * True when a conversation must be driven through the `/api/collaboration/*` endpoints.
+ *
+ * Accepts anything carrying `conversation_kind` so the same check works on a feed row, a
+ * loaded conversation and a metadata response without the caller narrowing first.
+ */
+export function isCollaborative(
+    conversation: Record<string, unknown> | null | undefined,
+): boolean {
+    return String(conversation?.conversation_kind ?? '').trim() === COLLABORATION_KIND;
+}
+
 
 export interface AdminNavSection {
     id: string;

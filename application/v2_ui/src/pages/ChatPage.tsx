@@ -4,8 +4,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { clsx } from 'clsx';
-import { Files, Info, ListOrdered, Maximize2, Minimize2 } from 'lucide-react';
+import { Files, Info, ListOrdered, Maximize2, Minimize2, Users } from 'lucide-react';
 import { useChatStore } from '../stores/chatStore';
+import { useCollaborationStore } from '../stores/collaborationStore';
 import { useBootstrapStore } from '../stores/bootstrapStore';
 import { useUiStore } from '../stores/uiStore';
 import { readConversationParam, syncedConversationParams } from '../lib/conversationUrl';
@@ -14,6 +15,10 @@ import { Composer } from '../components/chat/Composer';
 import { ConversationDrawer } from '../components/chat/ConversationDrawer';
 import { ConversationDetails } from '../components/chat/ConversationDetails';
 import { ConversationBadges } from '../components/chat/ConversationBadges';
+import { ParticipantsPanel } from '../components/chat/ParticipantsPanel';
+import { InviteBanner } from '../components/chat/InviteBanner';
+import { FileApprovals } from '../components/chat/FileApprovals';
+import { panelTargetForConversation, canShareConversation } from '../lib/sharing';
 
 /**
  * Keep the address bar and the open conversation describing each other.
@@ -87,12 +92,28 @@ function ChatHeader({ onOpenDetails }: { onOpenDetails: () => void }) {
     const contentsEnabled = useBootstrapStore((state) =>
         Boolean(state.data?.features?.enable_conversation_contents_drawer),
     );
+    const collaborationEnabled = useBootstrapStore((state) =>
+        Boolean(state.data?.features?.enable_collaborative_conversations),
+    );
+    const openPanel = useCollaborationStore((state) => state.openPanel);
+    // Guarded on the id: the participants panel keeps its own slot, but this badge describes
+    // the conversation on screen and must not count another one's people.
+    const participantCount = useCollaborationStore((state) =>
+        state.conversation?.id === activeConversationId
+            ? (state.conversation?.participants?.length ?? 0)
+            : 0,
+    );
     const chatWidth = useUiStore((state) => state.chatWidth);
     const toggleChatWidth = useUiStore((state) => state.toggleChatWidth);
 
     const active = conversations.find(
         (conversation) => conversation.id === activeConversationId,
     );
+
+    // Metadata is preferred over the rail row because a conversation opened from a link may
+    // have no row yet, and the metadata response is what actually describes what it is.
+    const shareSource = metadata ?? active;
+    const shareable = collaborationEnabled && canShareConversation(shareSource);
 
     // Counted from loaded metadata so the badge stays honest: it shows nothing rather
     // than a guess until the real document list has arrived.
@@ -122,6 +143,31 @@ function ChatHeader({ onOpenDetails }: { onOpenDetails: () => void }) {
 
             {activeConversationId && (
                 <div className="ml-auto flex items-center gap-1">
+                    {shareable && (
+                        <button
+                            type="button"
+                            onClick={() =>
+                                openPanel(
+                                    panelTargetForConversation(activeConversationId, shareSource),
+                                )
+                            }
+                            title={
+                                participantCount > 0
+                                    ? 'View and manage the people in this conversation'
+                                    : 'Share this conversation with other people'
+                            }
+                            aria-label="People in this conversation"
+                            className="relative rounded-lg p-2 text-text-3 transition-colors hover:bg-surface-2 hover:text-text-1"
+                        >
+                            <Users size={17} />
+                            {participantCount > 0 && (
+                                <span className="absolute -top-0.5 -right-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-accent px-1 text-[10px] font-semibold text-on-accent">
+                                    {participantCount}
+                                </span>
+                            )}
+                        </button>
+                    )}
+
                     <button
                         type="button"
                         onClick={toggleChatWidth}
@@ -209,11 +255,14 @@ export function ChatPage() {
         <div className="flex min-h-0 flex-1">
             <div className="flex min-w-0 flex-1 flex-col">
                 <ChatHeader onOpenDetails={() => setDetailsOpen(true)} />
+                <FileApprovals />
+                <InviteBanner />
                 <MessageList />
                 <Composer />
             </div>
             <ConversationDrawer />
             {detailsOpen && <ConversationDetails onClose={() => setDetailsOpen(false)} />}
+            <ParticipantsPanel />
         </div>
     );
 }
