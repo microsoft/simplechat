@@ -62,6 +62,7 @@ from functions_authentication import (
 from functions_conversation_contents import is_conversation_contents_drawer_enabled
 from functions_custom_pages import get_custom_pages_nav
 from functions_group import find_group_by_id, get_user_groups
+from functions_image_edit import resolve_image_edit_capability
 from functions_public_workspaces import (
     find_public_workspace_by_id,
     get_user_visible_public_workspace_ids_from_settings,
@@ -334,6 +335,31 @@ def _build_feature_flags(public_settings, per_user_overrides):
     return features
 
 
+def _build_capabilities(settings):
+    """Describe what the deployment can do, where the answer is not a settings flag.
+
+    ``features`` above forwards every ``enable_*`` boolean, which is the right shape for a
+    capability an administrator switches on. Some capabilities are not switches: whether an
+    image can have part of it changed depends on which model the selected deployment runs and
+    which API version is configured, and neither is a boolean anyone set.
+
+    Naming one of these ``enable_something`` to smuggle it into ``features`` would make it look
+    like a settings key to everything that reads the application's surface, including the
+    documentation inventory. It is reported separately instead.
+
+    Computed from the raw settings and reduced to an enum, so no deployment detail beyond the
+    model's name reaches the browser.
+    """
+    capability = resolve_image_edit_capability(settings)
+    return {
+        "image_edit": {
+            "mode": capability["mode"],
+            "model_name": capability["model_name"],
+            "reason": capability["reason"],
+        },
+    }
+
+
 def _build_notices(public_settings, user_settings_dict):
     """Describe the administrator-configured notices the chat surface must render.
 
@@ -550,6 +576,7 @@ def register_route_backend_v2(bp):
                 "branding": _build_branding(settings, public_settings),
                 "navigation": _build_navigation(settings, current_user_roles),
                 "features": _build_feature_flags(public_settings, per_user_overrides),
+                "capabilities": _build_capabilities(settings),
                 "catalogs": {
                     "models": models,
                     "agents": agents,

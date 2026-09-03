@@ -202,7 +202,7 @@ from functions_citation_tracking import (
 from functions_collaboration import build_conversation_participation_context
 from functions_conversation_metadata import collect_conversation_metadata, update_conversation_with_metadata
 from functions_conversation_unread import mark_conversation_unread
-from functions_image_messages import build_image_message_documents, decode_image_content
+from functions_image_messages import build_image_message_documents, decode_image_content, get_complete_image_content
 from functions_icon_utils import normalize_icon_payload
 from functions_image_generation import (
     build_image_proposal_guidance_message,
@@ -262,6 +262,19 @@ from functions_block_revision_assist import (
     normalize_instruction,
     request_block_edit,
 )
+# Aliased where the names collide with the block revision vocabulary above. The two are
+# deliberately separate: a diagram revision stores text, an image revision stores a blob.
+from functions_message_image_revisions import (
+    ORIGIN_AI as IMAGE_ORIGIN_AI,
+    ImageRevisionConflictError,
+    ImageRevisionError,
+    append_image_chat_turn,
+    read_image_revisions,
+    resolve_image_message_content,
+    serialize_image_revisions,
+    set_current_image_revision,
+)
+from functions_image_edit import ImageEditError, revise_image_message
 from functions_document_actions import (
     DOCUMENT_ACTION_CONTEXT_CHAT,
     DOCUMENT_ACTION_TYPE_COMPARISON,
@@ -25484,6 +25497,236 @@ def register_route_backend_chats(bp):
         except Exception as e:
             log_event(
                 f'[BLOCK_REVISION] Unhandled assist exception: {e}',
+                extra={'message_id': message_id, 'user_id': user_id},
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return build_json_error_response()
+
+    def _load_image_revision_message(user_id, conversation_id, message_id):
+        """Return the image message a revision request targets, or an error response for it.
+
+        Authorizes the conversation rather than the message, matching the diagram routes above.
+        The reassembled content comes back alongside the document because a legacy image is
+        stored as a chain of chunks, and the edit needs the whole thing.
+        """
+        if not conversation_id:
+            return None, (jsonify({'error': 'conversation_id is required'}), 400)
+
+        try:
+            conversation_item = _authorize_personal_conversation_access(user_id, conversation_id)
+        except PermissionError:
+            return None, (jsonify({'error': 'You can only edit your own conversations'}), 403)
+        except LookupError:
+            return None, (jsonify({'error': 'Conversation not found'}), 404)
+
+        try:
+            message_doc, complete_content = get_complete_image_content(
+                cosmos_messages_container,
+                conversation_id,
+                message_id,
+            )
+        except CosmosResourceNotFoundError:
+            return None, (jsonify({'error': 'Image not found'}), 404)
+
+        if str(message_doc.get('conversation_id') or '') != conversation_id:
+            return None, (jsonify({'error': 'Image not found'}), 404)
+        if str(message_doc.get('role') or '').strip().lower() != 'image':
+            return None, (jsonify({'error': 'That message is not an image'}), 400)
+
+        return {
+            'conversation': conversation_item,
+            'message': message_doc,
+            'content': complete_content,
+        }, None
+
+    def _image_revision_owner_id(conversation_item, fallback_user_id):
+        """Return the user whose storage an image revision belongs beside.
+
+        A revision is written next to the image it revises, so it uses the conversation owner's
+        path rather than the caller's. In a personal conversation those are the same person;
+        stating it explicitly is what keeps the shared case, where they are not, correct.
+        """
+        owner = str((conversation_item or {}).get('user_id') or '').strip()
+        return owner or str(fallback_user_id or '').strip()
+
+    @bp.route('/api/message/<message_id>/image-revision', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def add_message_image_revision_api(message_id):
+        """Produce a new version of a generated image and make it the current one.
+
+        There is no counterpart to the diagram editor's "save an edited source" route, because
+        an image is pixels rather than text and a browser cannot author one. Every version comes
+        from the model, so creating one and asking for one are the same operation.
+
+        The message's own content is never rewritten. The new image is stored in blob storage
+        and the revision recorded in metadata, which is what lets the original stay recoverable
+        and keeps a restore meaningful.
+        """
+        user_id = None
+        try:
+            data = request.get_json(silent=True) or {}
+            user_id = get_current_user_id()
+            if not user_id:
+                return jsonify({'error': 'User not authenticated'}), 401
+
+            settings = get_settings()
+            if not settings.get('enable_image_generation'):
+                return jsonify({'error': 'Image generation is not enabled'}), 403
+
+            conversation_id = str(data.get('conversation_id') or '').strip()
+            loaded, error = _load_image_revision_message(user_id, conversation_id, message_id)
+            if error:
+                return error
+
+            message_doc = loaded['message']
+            current_user = get_current_user_info() or {}
+
+            try:
+                expected_revision_count = _read_expected_revision_count(data)
+            except BlockRevisionError as ex:
+                return jsonify({'error': str(ex)}), 400
+
+            try:
+                result = revise_image_message(
+                    settings,
+                    message_doc,
+                    owner_user_id=_image_revision_owner_id(loaded['conversation'], user_id),
+                    conversation_id=conversation_id,
+                    complete_content=loaded['content'],
+                    origin=data.get('origin') or IMAGE_ORIGIN_AI,
+                    instruction=data.get('instruction') or '',
+                    prompt=data.get('prompt') or '',
+                    mask_data_url=data.get('mask') or '',
+                    mask_regions=data.get('mask_regions') or 0,
+                    size=data.get('size') or '',
+                    quality=data.get('quality') or '',
+                    background=data.get('background') or '',
+                    author_id=user_id,
+                    author_name=resolve_mask_display_name(current_user),
+                    expected_revision_count=expected_revision_count,
+                    expected_current_revision_id=data.get('expected_current_revision_id') or '',
+                    # Re-read after the model call, which takes seconds. Writing to the copy
+                    # loaded before it would overwrite anything that landed in the meantime.
+                    reload_message=lambda: cosmos_messages_container.read_item(
+                        item=message_id,
+                        partition_key=conversation_id,
+                    ),
+                )
+            except ImageRevisionConflictError as ex:
+                return jsonify({
+                    'error': str(ex),
+                    'image_revisions': serialize_image_revisions(read_image_revisions(message_doc)),
+                }), 409
+            except ImageRevisionError as ex:
+                return jsonify({'error': str(ex)}), 400
+            except ImageEditError as ex:
+                log_event(
+                    f'[IMAGE_REVISION] Edit failed: {ex}',
+                    extra={'message_id': message_id, 'user_id': user_id},
+                    level=logging.WARNING,
+                )
+                return jsonify({'error': str(ex)}), 502
+
+            # From here on the freshly re-read document is the one being written, so the
+            # transcript and the upsert must both use it rather than the stale copy.
+            message_doc = result['message']
+
+            # The transcript keeps the image's own sub-conversation, so a follow-up like "now
+            # make it warmer" has something to refer to. None of it is ever sent as conversation
+            # history -- image messages are excluded from that entirely.
+            if result['instruction']:
+                try:
+                    append_image_chat_turn(message_doc, 'user', result['instruction'])
+                    append_image_chat_turn(message_doc, 'assistant', result['prompt'])
+                except ImageRevisionError:
+                    pass
+
+            try:
+                cosmos_messages_container.upsert_item(message_doc)
+            except Exception as e:
+                log_event(
+                    f'[IMAGE_REVISION] Failed to update message: {e}',
+                    extra={'message_id': message_id, 'user_id': user_id},
+                    level=logging.ERROR,
+                    exceptionTraceback=True,
+                )
+                return build_json_error_response('Failed to update image')
+
+            return jsonify({
+                'success': True,
+                'message_id': message_id,
+                'method': result['method'],
+                'model_deployment_name': result['model'],
+                'image_url': resolve_image_message_content(
+                    message_doc, f'/api/image/{message_id}'
+                ),
+                'image_revisions': serialize_image_revisions(read_image_revisions(message_doc)),
+            }), 200
+
+        except Exception as e:
+            log_event(
+                f'[IMAGE_REVISION] Unhandled exception: {e}',
+                extra={'message_id': message_id, 'user_id': user_id},
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return build_json_error_response()
+
+    @bp.route('/api/message/<message_id>/image-revision/current', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def set_message_image_revision_api(message_id):
+        """Show one of an image's stored versions.
+
+        Nothing is discarded. Restoring an older version moves a pointer, so editing afterwards
+        appends rather than truncating and the history stays a record of everything that
+        happened.
+        """
+        user_id = None
+        try:
+            data = request.get_json(silent=True) or {}
+            user_id = get_current_user_id()
+            if not user_id:
+                return jsonify({'error': 'User not authenticated'}), 401
+
+            conversation_id = str(data.get('conversation_id') or '').strip()
+            loaded, error = _load_image_revision_message(user_id, conversation_id, message_id)
+            if error:
+                return error
+
+            message_doc = loaded['message']
+            try:
+                set_current_image_revision(message_doc, data.get('revision_id'))
+            except ImageRevisionError as ex:
+                return jsonify({'error': str(ex)}), 400
+
+            try:
+                cosmos_messages_container.upsert_item(message_doc)
+            except Exception as e:
+                log_event(
+                    f'[IMAGE_REVISION] Failed to restore version: {e}',
+                    extra={'message_id': message_id, 'user_id': user_id},
+                    level=logging.ERROR,
+                    exceptionTraceback=True,
+                )
+                return build_json_error_response('Failed to update image')
+
+            return jsonify({
+                'success': True,
+                'message_id': message_id,
+                'image_url': resolve_image_message_content(
+                    message_doc, f'/api/image/{message_id}'
+                ),
+                'image_revisions': serialize_image_revisions(read_image_revisions(message_doc)),
+            }), 200
+
+        except Exception as e:
+            log_event(
+                f'[IMAGE_REVISION] Unhandled restore exception: {e}',
                 extra={'message_id': message_id, 'user_id': user_id},
                 level=logging.ERROR,
                 exceptionTraceback=True,

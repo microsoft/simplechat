@@ -259,8 +259,10 @@ ships.
 
 - Node positioning is not supported, as described above.
 - Editing is not offered in the classic interface.
-- Charts and images are not editable yet. The storage and the resolver are kind-agnostic, so
-  adding them is wiring rather than a rewrite; only `mermaid` is admitted today.
+- Charts are not editable yet. The storage and the resolver are kind-agnostic, so adding them is
+  wiring rather than a rewrite; only `mermaid` is admitted today. Generated **images** are now
+  editable, through a parallel mechanism rather than this one — an image is its own message, so
+  it needs none of the fence addressing here. See `V2_INLINE_IMAGE_EDITING.md`.
 - A fence nested inside a blockquote or indented into a list item is not recognised by the
   server's scanner. Such a block fails the fingerprint check and simply keeps showing its
   original source rather than resolving incorrectly.

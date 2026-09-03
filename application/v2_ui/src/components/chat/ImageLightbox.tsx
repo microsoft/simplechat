@@ -13,7 +13,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { clsx } from 'clsx';
-import { Download, ExternalLink, Maximize2, Minimize2, X } from 'lucide-react';
+import { Download, ExternalLink, Maximize2, Minimize2, PenLine, X } from 'lucide-react';
 import { GlassPanel } from '../ui/primitives';
 import { toast } from '../../stores/toastStore';
 import {
@@ -29,6 +29,7 @@ export function ImageLightbox({
     source,
     title,
     naming,
+    onEdit,
     onClose,
 }: {
     source: ResolvedImageSource;
@@ -36,6 +37,8 @@ export function ImageLightbox({
     title: string;
     /** Fields the download name is derived from. */
     naming: { filename?: unknown; prompt?: unknown; id?: unknown };
+    /** Offered only for a generated image the deployment can rework. */
+    onEdit?: () => void;
     onClose: () => void;
 }) {
     const [zoom, setZoom] = useState<ZoomMode>('fit');
@@ -103,6 +106,23 @@ export function ImageLightbox({
                         {title}
                     </h2>
 
+                    {onEdit && (
+                        <button
+                            type="button"
+                            onClick={() => {
+                                // Closed first: the editor is its own dialog, and leaving two
+                                // stacked modals open would trap focus behind the one on top.
+                                onClose();
+                                onEdit();
+                            }}
+                            title="Change this image"
+                            aria-label="Change this image"
+                            aria-haspopup="dialog"
+                            className="shrink-0 rounded-lg p-1.5 text-text-3 transition-colors hover:bg-surface-2 hover:text-text-1"
+                        >
+                            <PenLine size={16} />
+                        </button>
+                    )}
                     <button
                         type="button"
                         onClick={() => setZoom(fit ? 'actual' : 'fit')}

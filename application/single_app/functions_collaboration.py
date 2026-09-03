@@ -55,6 +55,11 @@ from functions_group import (
     get_user_groups,
 )
 from functions_message_artifacts import filter_assistant_artifact_items
+from functions_message_image_revisions import (
+    IMAGE_REVISIONS_METADATA_KEY,
+    resolve_image_message_content,
+    serialize_image_revisions,
+)
 from functions_notifications import create_collaboration_message_notification
 from functions_thoughts import (
     archive_thoughts_for_conversation,
@@ -356,13 +361,45 @@ def _bootstrap_collaboration_user_state_from_participant(conversation_doc, parti
     return state_doc
 
 
-def build_collaboration_image_url(conversation_id, message_id):
+def build_collaboration_image_url(conversation_id, message_id, message_doc=None):
+    """Return the shared-thread URL for an image message.
+
+    When the image has been edited the current revision id is appended, for the same reason the
+    personal endpoint does it: this URL is otherwise identical before and after an edit, and the
+    collaboration route serves it with an hour-long public cache, so without a changing URL a
+    participant would keep seeing the version somebody had already replaced.
+    """
     normalized_conversation_id = str(conversation_id or '').strip()
     normalized_message_id = str(message_id or '').strip()
     if not normalized_conversation_id or not normalized_message_id:
         return ''
 
-    return f'/api/collaboration/conversations/{normalized_conversation_id}/images/{normalized_message_id}'
+    base = f'/api/collaboration/conversations/{normalized_conversation_id}/images/{normalized_message_id}'
+    if message_doc is None:
+        return base
+    return resolve_image_message_content(message_doc, base) if _has_image_revision(message_doc) else base
+
+
+def _has_image_revision(message_doc):
+    """Whether a message carries stored image revisions worth resolving."""
+    metadata = (message_doc or {}).get('metadata')
+    return bool(isinstance(metadata, dict) and metadata.get(IMAGE_REVISIONS_METADATA_KEY))
+
+
+def _publicize_image_revisions(metadata):
+    """Return metadata with any stored image revisions reduced to their public shape.
+
+    The stored entry carries blob containers and paths. Those are storage detail and must not
+    reach a browser, and this serializer hands its ``metadata`` straight to the client.
+    """
+    if not isinstance(metadata, dict) or not metadata.get(IMAGE_REVISIONS_METADATA_KEY):
+        return metadata
+
+    publicized = dict(metadata)
+    publicized[IMAGE_REVISIONS_METADATA_KEY] = serialize_image_revisions(
+        metadata[IMAGE_REVISIONS_METADATA_KEY]
+    )
+    return publicized
 
 
 def serialize_collaboration_message(message_doc):
@@ -374,7 +411,9 @@ def serialize_collaboration_message(message_doc):
         serialized_content = build_collaboration_image_url(
             message_doc.get('conversation_id'),
             message_doc.get('id'),
+            message_doc,
         ) or serialized_content
+        metadata = _publicize_image_revisions(metadata)
 
     payload = {
         'id': message_doc.get('id'),
@@ -655,10 +694,10 @@ def build_collaboration_message_metadata_payload(message_doc, conversation_doc):
     source_message_doc = _get_collaboration_source_message(message_doc)
     message_metadata = deepcopy(message_doc.get('metadata', {}) if isinstance(message_doc.get('metadata'), dict) else {})
     source_metadata = deepcopy(source_message_doc.get('metadata', {}) if isinstance((source_message_doc or {}).get('metadata'), dict) else {})
-    merged_metadata = {
+    merged_metadata = _publicize_image_revisions({
         **source_metadata,
         **message_metadata,
-    }
+    })
 
     chat_context = _build_collaboration_chat_context(conversation_doc, message_doc)
     mentions = _build_collaboration_mentions(message_doc)
@@ -723,6 +762,7 @@ def build_collaboration_message_metadata_payload(message_doc, conversation_doc):
         collaboration_image_url = build_collaboration_image_url(
             message_doc.get('conversation_id'),
             message_doc.get('id'),
+            message_doc,
         )
         merged_metadata['image_details'] = {
             'filename': message_doc.get('filename') or (source_message_doc or {}).get('filename') or merged_metadata.get('legacy_filename'),
@@ -741,7 +781,7 @@ def build_collaboration_message_metadata_payload(message_doc, conversation_doc):
         'conversation_id': message_doc.get('conversation_id'),
         'role': display_role,
         'message_kind': message_doc.get('message_kind'),
-        'content': build_collaboration_image_url(message_doc.get('conversation_id'), message_doc.get('id')) if display_role == 'image' else message_doc.get('content'),
+        'content': build_collaboration_image_url(message_doc.get('conversation_id'), message_doc.get('id'), message_doc) if display_role == 'image' else message_doc.get('content'),
         'timestamp': message_doc.get('timestamp'),
         'model_deployment_name': message_doc.get('model_deployment_name') or payload.get('model_deployment_name'),
         'augmented': message_doc.get('augmented') if 'augmented' in message_doc else payload.get('augmented'),

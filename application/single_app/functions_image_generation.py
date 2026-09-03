@@ -47,6 +47,7 @@ IMAGE_PROPOSAL_REQUEST_MARKERS = (
 )
 
 
+
 def image_generation_is_enabled(settings):
     """Return whether chat image generation is enabled in app settings."""
     return bool(isinstance(settings, dict) and settings.get('enable_image_generation'))
