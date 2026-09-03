@@ -73,6 +73,12 @@ ACTION_IDENTITY_TABLEAU_TYPES = {"tableau"}
 ACTION_IDENTITY_TABLEAU_AUTH_TYPES = {"api_key", "username_password"}
 ACTION_IDENTITY_YAMCS_TYPES = {"yamcs"}
 ACTION_IDENTITY_YAMCS_AUTH_TYPES = {"api_key", "bearer_token", "username_password"}
+# Yamcs actions may sit behind a reverse proxy that enforces HTTP Basic authentication.
+# That credential is separate from the Yamcs credential, so it gets its own identity
+# reference and is always a username/password pair.
+ACTION_PROXY_IDENTITY_FIELD = "basic_auth_identity_id"
+ACTION_PROXY_IDENTITY_AUTH_TYPES = {"username_password"}
+ACTION_PROXY_IDENTITY_TYPES = {"yamcs"}
 
 
 def _now_iso() -> str:
@@ -438,7 +444,13 @@ def validate_action_identity_reference(
     scope_type: str,
     scope_id: str,
 ) -> Optional[Dict[str, Any]]:
-    """Validate that an action references an action-capable identity in its own scope."""
+    """Validate that an action references action-capable identities in its own scope.
+
+    Both the primary credential reference and the optional reverse-proxy credential
+    reference are checked so callers do not need to know which ones an action uses.
+    """
+    validate_action_proxy_identity_reference(action_data, scope_type, scope_id)
+
     identity_id = get_action_identity_reference_id(action_data)
     if not identity_id:
         return None
@@ -456,6 +468,50 @@ def validate_action_identity_reference(
         auth_types=allowed_auth_types,
     ):
         raise ValueError("Selected workspace identity is not configured for action use")
+
+    return identity
+
+
+def get_action_proxy_identity_reference_id(action_data: Dict[str, Any]) -> str:
+    """Return the reverse-proxy credential identity reference on an action, if present."""
+    if not isinstance(action_data, dict):
+        return ""
+
+    additional_fields = action_data.get("additionalFields")
+    if not isinstance(additional_fields, dict):
+        return ""
+
+    return _normalize_text(additional_fields.get(ACTION_PROXY_IDENTITY_FIELD), 255)
+
+
+def validate_action_proxy_identity_reference(
+    action_data: Dict[str, Any],
+    scope_type: str,
+    scope_id: str,
+) -> Optional[Dict[str, Any]]:
+    """Validate an action's reverse-proxy credential identity reference."""
+    identity_id = get_action_proxy_identity_reference_id(action_data)
+    if not identity_id:
+        return None
+
+    plugin_type = _normalize_text((action_data or {}).get("type"), 80).lower()
+    if plugin_type not in ACTION_PROXY_IDENTITY_TYPES:
+        raise ValueError("This action type does not support a proxy credential identity")
+
+    scope_type = _validate_scope(scope_type)
+    if scope_type == WORKSPACE_IDENTITY_SCOPE_PUBLIC:
+        raise ValueError("Public workspace identities cannot be used by actions")
+
+    identity = get_workspace_identity(scope_type, scope_id, identity_id)
+    if not identity_supports_usage(
+        identity,
+        "action",
+        source_type="action",
+        auth_types=ACTION_PROXY_IDENTITY_AUTH_TYPES,
+    ):
+        raise ValueError(
+            "Selected workspace identity is not a username/password identity configured for action use"
+        )
 
     return identity
 
@@ -483,10 +539,35 @@ def hydrate_action_identity_reference(
     scope_id: str,
     return_type: SecretReturnType = SecretReturnType.TRIGGER,
 ) -> Dict[str, Any]:
-    """Apply a referenced workspace identity to an action manifest for UI or runtime use."""
+    """Apply referenced workspace identities to an action manifest for UI or runtime use.
+
+    Handles the primary credential reference and the optional reverse-proxy credential
+    reference independently, so an action may use either, both, or neither.
+    """
     if not isinstance(action_data, dict):
         return action_data
 
+    hydrated_action = _hydrate_primary_action_identity(
+        action_data,
+        scope_type,
+        scope_id,
+        return_type,
+    )
+    return _hydrate_proxy_action_identity(
+        hydrated_action,
+        scope_type,
+        scope_id,
+        return_type,
+    )
+
+
+def _hydrate_primary_action_identity(
+    action_data: Dict[str, Any],
+    scope_type: str,
+    scope_id: str,
+    return_type: SecretReturnType,
+) -> Dict[str, Any]:
+    """Apply the primary referenced workspace identity to an action manifest."""
     identity_id = get_action_identity_reference_id(action_data)
     if not identity_id:
         return action_data
@@ -510,6 +591,42 @@ def hydrate_action_identity_reference(
 
     resolved_auth = get_workspace_identity_auth(scope_type, scope_id, identity_id)
     return _apply_action_identity_auth(hydrated_action, resolved_auth)
+
+
+def _hydrate_proxy_action_identity(
+    action_data: Dict[str, Any],
+    scope_type: str,
+    scope_id: str,
+    return_type: SecretReturnType,
+) -> Dict[str, Any]:
+    """Apply a referenced reverse-proxy credential identity to an action manifest."""
+    identity_id = get_action_proxy_identity_reference_id(action_data)
+    if not identity_id:
+        return action_data
+
+    identity = validate_action_proxy_identity_reference(action_data, scope_type, scope_id)
+    hydrated_action = dict(action_data)
+    additional_fields = dict(hydrated_action.get("additionalFields") or {})
+    additional_fields[ACTION_PROXY_IDENTITY_FIELD] = identity_id
+    additional_fields["basic_auth_identity_auth_type"] = _normalize_text(
+        (identity.get("auth") or {}).get("auth_type"), 50
+    ).lower()
+
+    if return_type == SecretReturnType.TRIGGER:
+        # The username is safe to echo back so the modal can show which account is used;
+        # the password stays out of any UI-bound payload.
+        additional_fields["basic_auth_username"] = _normalize_text(
+            (identity.get("auth") or {}).get("username"), 255
+        )
+        additional_fields["basic_auth_password"] = ""
+        hydrated_action["additionalFields"] = additional_fields
+        return hydrated_action
+
+    resolved_auth = get_workspace_identity_auth(scope_type, scope_id, identity_id)
+    additional_fields["basic_auth_username"] = str(resolved_auth.get("username") or "")
+    additional_fields["basic_auth_password"] = str(resolved_auth.get("password") or "")
+    hydrated_action["additionalFields"] = additional_fields
+    return hydrated_action
 
 
 def _apply_action_identity_auth(action_data: Dict[str, Any], identity_auth: Dict[str, Any]) -> Dict[str, Any]:

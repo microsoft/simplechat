@@ -8,7 +8,7 @@ audience: user
 
 <!-- action-slug: log-analytics -->
 
-{% include media.html src="reference/actions-log-analytics-configuration.png" alt="Log Analytics action setup or assignment UI." title="Log Analytics action" capture="Capture the Log Analytics action setup or assignment UI with relevant fields visible. Redact secrets and user identifiers." %}
+{% include media.html src="reference/actions-log-analytics-configuration.png" alt="The Log Analytics configuration pane showing workspace ID, cloud and API endpoint fields, Managed Identity authentication with a note about the Log Analytics Reader role, and a Test Connection button." title="Log Analytics action configuration" capture="Capture the Log Analytics action setup or assignment UI with relevant fields visible. Redact secrets and user identifiers." %}
 
 ## What this action does
 

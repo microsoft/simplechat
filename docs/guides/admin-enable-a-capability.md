@@ -31,7 +31,7 @@ A capability toggle is usually the last step, not the first one. Many SimpleChat
 Read the capability's tab page and list every dependency it names. Examples include Azure AI Content Safety for Content Safety, Storage for Enhanced Citations, Azure Cache for Redis for Redis-backed cache, Key Vault for agent and action secrets, Foundry agent details for Web Search, Speech service for audio and voice features, or Entra app roles for gated workspace actions.
 
 {% include media.html src="guides/admin-enable-a-capability-dependencies.png"
-                      alt="Admin checklist showing the backing Azure resource, role, policy, quota, and limit required before enabling a capability."
+                      alt="The Web Search configuration guide explaining Grounding with Bing Search, warning that customer data is transferred outside the Azure compliance boundary, and listing the numbered prerequisites for creating the agent and choosing a compatible model."
                       title="Confirm capability dependencies"
                       capture="Capture a dependency checklist for one capability with resource names redacted and readiness marked before the toggle is enabled." %}
 
@@ -44,7 +44,7 @@ Choose the authentication mode shown on the tab: key, managed identity, APIM sub
 Configure limits, domains, scopes, thresholds, retention windows, source counts, concurrency, or guardrails before making the capability visible. This is especially important for URL Access, Deep Research, File Sync, tabular runs, Cosmos throughput automation, MCP destinations, and workspace downloads because those controls define how far the feature can reach.
 
 {% include media.html src="guides/admin-enable-a-capability-guardrails.png"
-                      alt="Admin Settings page showing limits, roles, allowlists, and thresholds configured before enabling the user-facing switch."
+                      alt="The Web Search settings pane with the capability enabled, the user data notice switched on with its notice text, and the Foundry project endpoint, API version, agent ID and authentication fields populated above a Test Web Search button."
                       title="Set guardrails before enabling"
                       capture="Capture the relevant Admin Settings tab with limits and policy fields populated before the final capability switch is turned on." %}
 

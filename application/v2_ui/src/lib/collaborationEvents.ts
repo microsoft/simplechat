@@ -120,6 +120,19 @@ export interface CollaborationEventHandlers {
         blockRevisions: Record<string, unknown>,
         updatedByUserId: string | undefined,
     ) => void;
+    /**
+     * A participant produced a new version of an image.
+     *
+     * Carries the image's URL as well as its history, because unlike a diagram revision this
+     * changes what the message points at: an edited image is served from a different URL, and
+     * without replacing it the other participants would keep showing the copy they cached.
+     */
+    onMessageImageRevised?: (
+        messageId: string,
+        imageRevisions: Record<string, unknown>,
+        imageUrl: string,
+        updatedByUserId: string | undefined,
+    ) => void;
     onMessageVisualStyleUpdated?: (
         message: CollaborationMessage,
         updatedByUserId: string | undefined,
@@ -245,6 +258,17 @@ export function dispatchCollaborationEvent(
                 handlers.onMessageBlockRevised?.(
                     String(payload.message_id),
                     (payload.block_revisions ?? {}) as Record<string, unknown>,
+                    payload.updated_by_user_id,
+                );
+            }
+            return;
+
+        case 'collaboration.message.image_revised':
+            if (payload.message_id) {
+                handlers.onMessageImageRevised?.(
+                    String(payload.message_id),
+                    (payload.image_revisions ?? {}) as Record<string, unknown>,
+                    String(payload.image_url ?? ''),
                     payload.updated_by_user_id,
                 );
             }

@@ -1,7 +1,7 @@
 # test_workflow_task_sequence.py
 """
 Functional test for ordered workflow task sequences.
-Version: 0.250.225
+Version: 0.261.029
 Implemented in: 0.250.064
 Enhanced in: 0.250.065
 Enhanced in: 0.250.129
@@ -24,6 +24,13 @@ from test_support.versioning import assert_app_version_at_least
 
 ROOT = Path(__file__).resolve().parents[1]
 APP_ROOT = ROOT / "application" / "single_app"
+sys.path.insert(0, str(APP_ROOT))
+# Real no-context checkpoint behavior is exercised while cloud I/O is not needed.
+from functions_m365_workflow_checkpoints import (
+    m365_workflow_task_context, read_m365_task_checkpoint, save_m365_task_checkpoint,
+)
+from functions_m365_approvals import M365ApprovalRequired
+from m365_interaction import M365SignInRequired
 STORE_FILE = APP_ROOT / "functions_personal_workflows.py"
 GROUP_STORE_FILE = APP_ROOT / "functions_group_workflows.py"
 RUNNER_FILE = APP_ROOT / "functions_workflow_runner.py"
@@ -73,6 +80,11 @@ def load_runner_helpers(dispatch, personal_runner_normalizer=None, group_runner_
     saved_items = []
     timestamps = iter(f"2026-07-27T00:00:{index:02d}+00:00" for index in range(60))
     namespace = {
+        "read_m365_task_checkpoint": read_m365_task_checkpoint,
+        "m365_workflow_task_context": m365_workflow_task_context,
+        "save_m365_task_checkpoint": save_m365_task_checkpoint,
+        "M365ApprovalRequired": M365ApprovalRequired,
+        "M365SignInRequired": M365SignInRequired,
         "DOCUMENT_ACTION_TYPE_NONE": "none",
         "WORKFLOW_TASK_CONTEXT_MAX_CHARS": 12000,
         "_add_workflow_activity_thought": lambda *args, **kwargs: None,

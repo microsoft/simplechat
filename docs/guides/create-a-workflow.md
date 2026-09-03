@@ -32,8 +32,8 @@ Use workflows for repeatable work where sequence matters: weekly document checks
 3. Select **New Personal Workflow** or **New Group Workflow**.
 
 {% include media.html src="guides/create-a-workflow-step-3.png"
-                      alt="Screenshot showing create a workflow step 3."
-                      title="Create a workflow step 3"
+                      alt="The Create Group Workflow dialog on the General step, showing the workflow name, default runner, description, and model source fields, with Trigger, Tasks, Reliability, and Review still ahead."
+                      title="Creating a group workflow"
                       capture="Capture the create a workflow task at this step in SimpleChat with realistic sample data and redact secrets." %}
 
 4. In **General**, enter a name, description, and default runner.
@@ -48,6 +48,25 @@ Use workflows for repeatable work where sequence matters: weekly document checks
                       capture="Capture the create a workflow task at this step in SimpleChat with realistic sample data and redact secrets." %}
 
 9. In **Reliability**, choose retry and failure behavior, then review and save.
+
+## Microsoft 365 Run as
+
+When a workflow uses Calendar, Email, OneDrive, or SharePoint actions, select an
+explicit **Microsoft 365 Run as** account. Manual and scheduled runs use that
+account, not the person pressing Run or an application identity.
+
+The selected person must connect Microsoft 365 from Profile and approve the
+workflow's sources, instructions, and destinations. Material changes require
+renewed approval. Missing approval or sign-in pauses the operation and creates
+a notification; the person can respond from Approvals without reopening the
+conversation.
+
+When a mail or calendar action uses manual delivery, its separate review is sent
+to the Run as user and shown in workflow activity. Other group members can see
+the run without gaining permission to send from that person's account.
+
+See [Microsoft 365 data and approvals]({{ '/guides/microsoft-365-conversation-data/' | relative_url }})
+for the controls introduced in **0.261.029**.
 
 ## Verify it worked
 

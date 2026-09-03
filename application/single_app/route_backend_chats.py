@@ -32,6 +32,7 @@ from model_endpoint_clients import (
     normalize_chat_completion_text,
 )
 from functions_model_endpoint_identity_header import build_model_endpoint_identity_headers
+from functions_model_capabilities import ModelTokenBudgetError
 from functions_fact_memory_autosave import (
     run_fact_memory_autosave,
     should_run_fact_memory_autosave,
@@ -43,12 +44,17 @@ from functions_model_endpoint_runtime import (
     build_model_endpoint_sync_chat_client,
     build_semantic_kernel_chat_service_for_model,
 )
+from functions_model_endpoint_types import (
+    get_model_endpoint_api_type,
+    resolve_model_endpoint_request_model,
+)
 from functions_mixed_source_orchestration import (
     MixedSourceCancellationError,
     MixedSourceFinalizationError,
     build_failed_narrative_evidence_envelopes,
     build_mixed_source_evidence_handoff,
     build_narrative_evidence_envelopes,
+    build_schema_summary_evidence_envelopes,
     build_tabular_file_contexts_from_manifest,
     compare_reauthorized_source_manifests,
     emit_mixed_source_telemetry,
@@ -84,6 +90,7 @@ import builtins
 import asyncio, types
 import ast
 import csv
+from functools import wraps
 import io
 import inspect
 import json
@@ -123,6 +130,7 @@ from functions_global_agents import get_global_agents
 from functions_group_agents import get_group_agents
 from functions_personal_agents import get_personal_agents
 from functions_chat_stream_events import build_user_message_persisted_stream_event
+from functions_async_stream import SyncAsyncStream
 from functions_source_review import (
     build_deep_research_ledger,
     build_deep_research_ledger_markdown,
@@ -144,6 +152,12 @@ from functions_agents import get_agent_id_by_name
 from functions_group import find_group_by_id, get_group_model_endpoints, get_user_role_in_group
 from functions_chat import *
 from functions_content import generate_embedding, generate_embeddings_batch
+from functions_documents import (
+    load_xsd_generation_contract,
+    refresh_xsd_generation_contract,
+    validate_xsd_generated_output,
+)
+from functions_xsd_schema import XsdSchemaError
 from functions_assistant_table_exports import (
     TABLE_EXPORT_REQUEST_MARKERS,
     assistant_table_export_requested,
@@ -162,6 +176,7 @@ from functions_generated_file_exports import (
     get_requested_generated_file_format,
     get_requested_structured_artifact_format,
     has_generated_file_output,
+    normalize_complete_xml_artifact_payload,
     normalize_json_artifact_payload,
     normalize_generated_output_format,
     normalize_xml_artifact_payload,
@@ -200,9 +215,26 @@ from functions_citation_tracking import (
     resolve_citation_location,
 )
 from functions_collaboration import build_conversation_participation_context
+from functions_m365_action_cards import (
+    get_request_pending_action_references,
+    m365_action_card_events,
+)
+from functions_m365_approvals import M365ApprovalRequired, M365PolicyError
+from functions_m365_execution import get_m365_execution_context
+from functions_m365_runtime import (
+    attach_m365_message_provenance,
+    complete_m365_request,
+    initialize_m365_chat_context,
+    record_m365_pending,
+    preflight_m365_manifests,
+    workflow_m365_manifests,
+    record_m365_auth_wait,
+)
+import functions_msgraph_pending_actions
+from m365_interaction import M365SignInRequired
 from functions_conversation_metadata import collect_conversation_metadata, update_conversation_with_metadata
 from functions_conversation_unread import mark_conversation_unread
-from functions_image_messages import build_image_message_documents, decode_image_content
+from functions_image_messages import build_image_message_documents, decode_image_content, get_complete_image_content
 from functions_icon_utils import normalize_icon_payload
 from functions_image_generation import (
     build_image_proposal_guidance_message,
@@ -262,6 +294,19 @@ from functions_block_revision_assist import (
     normalize_instruction,
     request_block_edit,
 )
+# Aliased where the names collide with the block revision vocabulary above. The two are
+# deliberately separate: a diagram revision stores text, an image revision stores a blob.
+from functions_message_image_revisions import (
+    ORIGIN_AI as IMAGE_ORIGIN_AI,
+    ImageRevisionConflictError,
+    ImageRevisionError,
+    append_image_chat_turn,
+    read_image_revisions,
+    resolve_image_message_content,
+    serialize_image_revisions,
+    set_current_image_revision,
+)
+from functions_image_edit import ImageEditError, revise_image_message
 from functions_document_actions import (
     DOCUMENT_ACTION_CONTEXT_CHAT,
     DOCUMENT_ACTION_TYPE_COMPARISON,
@@ -733,7 +778,49 @@ def _resolve_chat_mixed_source_partition(
             'narrative_sources',
         ),
         'tabular_sources': list(partitions.get('tabular_sources') or []),
+        'schema_sources': list(partitions.get('schema_sources') or []),
     }
+
+
+def _load_explicit_xsd_contract_without_mixed_source_search(
+    settings,
+    requested_format,
+    document_ids,
+    *,
+    user_id,
+    conversation_id,
+    active_group_ids=None,
+    active_public_workspace_ids=None,
+    doc_scope=None,
+    cancel_requested=None,
+):
+    """Load an explicitly selected XSD contract independently of search rollout."""
+    if (
+        is_mixed_source_chat_search_enabled(settings)
+        or requested_format != 'xml'
+        or not document_ids
+    ):
+        return None
+
+    manifest_kwargs = {
+        'user_id': user_id,
+        'selection_mode': 'selected',
+        'conversation_id': conversation_id,
+        'active_group_ids': active_group_ids,
+        'active_public_workspace_ids': active_public_workspace_ids,
+        'doc_scope': doc_scope,
+    }
+    if cancel_requested is not None:
+        manifest_kwargs['cancel_requested'] = cancel_requested
+
+    manifest = resolve_authorized_source_manifest(
+        document_ids,
+        **manifest_kwargs,
+    )
+    schema_sources = list(
+        partition_source_manifest(manifest).get('schema_sources') or []
+    )
+    return load_xsd_generation_contract(schema_sources, user_id)
 
 
 def _build_mixed_source_continuity_refs(manifest, evidence_envelopes, selection_origin):
@@ -1082,14 +1169,20 @@ def _resolve_chat_mixed_source_relevance_context(
         cancel_requested=cancel_requested,
         request_correlation_id=request_correlation_id,
     )
-    narrative_document_id_set = set(
+    searchable_document_id_set = set(
         resolved_context.get('narrative_document_ids') or []
+    )
+    searchable_document_id_set.update(
+        _get_manifest_partition_document_ids(
+            resolved_context.get('partitions') or {},
+            'schema_sources',
+        )
     )
     resolved_context['search_results'] = [
         result
         for result in list(search_results or [])
         if str((result or {}).get('document_id') or '').strip()
-        in narrative_document_id_set
+        in searchable_document_id_set
     ]
     resolved_context['tabular_candidate_count'] = int(
         candidate_result.get('candidate_count') or 0
@@ -2690,6 +2783,34 @@ def _build_streaming_assistant_file_status(output_format):
     return f'Generating the {normalized_output_format} file. It will appear here when ready.'
 
 
+class XsdGeneratedOutputValidationError(ValueError):
+    """Raised when schema-bound XML cannot be safely published."""
+
+
+def _find_existing_validated_xsd_output(existing_outputs, contract):
+    """Return an already-published artifact matching this in-process contract."""
+    if not isinstance(contract, dict):
+        return None
+    expected_document_id = str(contract.get('document_id') or '')
+    expected_profile = str(contract.get('profile_id') or '')
+    expected_validator = str(contract.get('validator_id') or '')
+    for output in existing_outputs or []:
+        if not isinstance(output, dict):
+            continue
+        if str(output.get('output_format') or '').lower() != 'xml':
+            continue
+        if str(output.get('xsd_document_id') or '') != expected_document_id:
+            continue
+        if str(output.get('xsd_profile') or '') != expected_profile:
+            continue
+        if str(output.get('xsd_validator_id') or '') != expected_validator:
+            continue
+        if not str(output.get('xsd_validation_sha256') or '').strip():
+            continue
+        return output
+    return None
+
+
 def _build_structured_artifact_rows_payload(user_question, output_format, conversation_id, function_results):
     """Fall back to authorized action rows when a JSON/XML reply carried no payload."""
     return build_structured_artifact_rows_payload(
@@ -2710,12 +2831,24 @@ def maybe_create_assistant_file_generated_output(
     conversation_id,
     existing_outputs=None,
     function_results=None,
+    xsd_generation_contract=None,
+    user_id=None,
 ):
     """Save assistant-generated JSON/XML content as a downloadable chat artifact."""
     output_format = get_tabular_generated_output_format(user_question)
     if output_format not in {'json', 'xml'}:
         return None
+    existing_xsd_output = _find_existing_validated_xsd_output(
+        existing_outputs,
+        xsd_generation_contract,
+    )
+    if existing_xsd_output:
+        return existing_xsd_output
     if _has_generated_file_output(existing_outputs, output_format):
+        if xsd_generation_contract and output_format == 'xml':
+            raise XsdGeneratedOutputValidationError(
+                "An unvalidated XML artifact was produced before XSD validation."
+            )
         return None
     if _assistant_content_disclaims_complete_file(assistant_content):
         return None
@@ -2743,8 +2876,16 @@ def maybe_create_assistant_file_generated_output(
             elif isinstance(json_payload, dict):
                 preview_items = [json_payload]
     else:
-        xml_payload = normalize_xml_artifact_payload(assistant_content)
+        xml_payload = (
+            normalize_complete_xml_artifact_payload(assistant_content)
+            if xsd_generation_contract
+            else normalize_xml_artifact_payload(assistant_content)
+        )
         if not xml_payload:
+            if xsd_generation_contract:
+                raise XsdGeneratedOutputValidationError(
+                    "The model did not return a complete XML document for the selected XSD."
+                )
             row_payload = _build_structured_artifact_rows_payload(
                 user_question,
                 output_format,
@@ -2755,7 +2896,32 @@ def maybe_create_assistant_file_generated_output(
                 return None
             file_content = row_payload['file_content']
         else:
-            file_content = xml_payload
+            file_content = (
+                serialize_generated_xml(
+                    xml_payload,
+                    require_xml_document=True,
+                )
+                if xsd_generation_contract
+                else xml_payload
+            )
+        validation = None
+        if xsd_generation_contract:
+            try:
+                normalized_user_id = str(user_id or '').strip()
+                if not normalized_user_id:
+                    raise ValueError(
+                        "Schema-bound XML publication requires an authorized user."
+                    )
+                xsd_generation_contract = refresh_xsd_generation_contract(
+                    xsd_generation_contract,
+                    normalized_user_id,
+                )
+                validation = validate_xsd_generated_output(
+                    file_content.encode("utf-8"),
+                    xsd_generation_contract,
+                )
+            except (ValueError, OSError, RuntimeError, XsdSchemaError) as exc:
+                raise XsdGeneratedOutputValidationError(str(exc)) from exc
         preview_lines = _build_assistant_file_preview_lines(file_content)
 
     generated_file_name = _build_assistant_file_export_name(output_format)
@@ -2782,10 +2948,18 @@ def maybe_create_assistant_file_generated_output(
             },
             debug_only=True,
         )
+        if xsd_generation_contract:
+            raise XsdGeneratedOutputValidationError(
+                "The schema-valid XML artifact could not be published."
+            ) from exc
         return None
 
     artifact_message_id = upload_result.get('message', {}).get('id')
     if not artifact_message_id:
+        if xsd_generation_contract:
+            raise XsdGeneratedOutputValidationError(
+                "The schema-valid XML artifact could not be published."
+            )
         return None
 
     uploaded_file_name = upload_result.get('message', {}).get('file_name') or generated_file_name
@@ -2815,6 +2989,15 @@ def maybe_create_assistant_file_generated_output(
         output_metadata['row_count'] = len(json_payload) if isinstance(json_payload, list) else 1
     if preview_lines:
         output_metadata['preview_lines'] = preview_lines
+    if xsd_generation_contract:
+        output_metadata.update({
+            'xsd_document_id': xsd_generation_contract.get('document_id'),
+            'xsd_logical_path': xsd_generation_contract.get('logical_path'),
+            'xsd_target_namespace': xsd_generation_contract.get('target_namespace'),
+            'xsd_profile': xsd_generation_contract.get('profile_id'),
+            'xsd_validator_id': xsd_generation_contract.get('validator_id'),
+            'xsd_validation_sha256': validation.get('sha256') if validation else None,
+        })
     return output_metadata
 
 
@@ -3555,6 +3738,30 @@ def _set_authorized_chat_request_context(user_id, conversation_id, scope_context
 
     g.conversation_id = conversation_id
     g.authorized_chat_context = authorized_context
+    if get_m365_execution_context() is None:
+        initialize_m365_chat_context(
+            user_id, conversation_id,
+            allow_new=bool(getattr(g, 'm365_new_conversation', False)),
+        )
+    agent_selection = (request.get_json(silent=True) or {}).get('agent_info')
+    if agent_selection and not getattr(g, 'm365_chat_preflight_complete', False):
+        agent = _resolve_canonical_chat_agent(user_id, get_settings(), agent_selection)
+        if agent:
+            g.m365_selected_agent_ref = {
+                key: agent[key] for key in ('id', 'name', 'is_global', 'is_group', 'group_id')
+                if key in agent
+            }
+            manifests, _fingerprint = workflow_m365_manifests({
+                'user_id': user_id,
+                'group_id': agent.get('group_id') if agent.get('is_group') else None,
+                'selected_agent': agent,
+                'tasks': [],
+            })
+            if manifests and getattr(g, 'm365_new_conversation', False):
+                g.m365_initial_conversation = _create_personal_conversation(user_id, conversation_id)
+                g.m365_new_conversation = False
+            preflight_m365_manifests(manifests)
+        g.m365_chat_preflight_complete = True
     return authorized_context
 
 
@@ -8251,6 +8458,75 @@ class BackgroundStreamBridge:
                 break
 
 
+def _attach_request_m365_pending_action_cards(payload, viewer_user_id):
+    """Resolve creation references through the viewer-authorized record service."""
+    references = get_request_pending_action_references()
+    if not references:
+        return payload
+    conversation_id = references[0]["conversation_id"]
+    request_id = references[0]["request_id"]
+    cards = []
+    for offset in range(0, len(references), 100):
+        cards.extend(functions_msgraph_pending_actions.get_chat_pending_action_cards(
+            viewer_user_id,
+            conversation_id,
+            request_id=request_id,
+            action_ids=[reference["id"] for reference in references[offset:offset + 100]],
+        ))
+    return {
+        **payload,
+        "conversation_id": payload.get("conversation_id") or conversation_id,
+        "request_id": request_id,
+        "m365_pending_actions": cards,
+    }
+
+
+def _m365_pending_action_cards_error(error):
+    """A projection failure must not look like an empty pending-action inbox."""
+    log_event(
+        "[STREAMING] Saved Microsoft 365 action cards could not be loaded.",
+        extra={"exception_type": type(error).__name__},
+        level=logging.ERROR,
+    )
+    return {
+        "error": "m365_pending_actions_unavailable",
+        "message": (
+            "Microsoft 365 actions were saved, but their cards could not be loaded. "
+            "Reload the conversation to recover them. Do not repeat the request."
+        ),
+    }
+
+
+def _with_m365_pending_action_cards(view):
+    """Keep JSON successes, errors, and consent waits on the same card contract."""
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        result = view(*args, **kwargs)
+        references = get_request_pending_action_references()
+        if not references:
+            return result
+        response = current_app.make_response(result)
+        payload = response.get_json(silent=True)
+        if not isinstance(payload, dict):
+            return result
+        try:
+            payload = _attach_request_m365_pending_action_cards(payload, get_current_user_id())
+        except Exception as error:
+            failure = _m365_pending_action_cards_error(error)
+            payload.pop("m365_pending_actions", None)
+            payload["m365_pending_actions_error"] = failure
+            if not payload.get("error"):
+                payload["error"] = failure["message"]
+            payload["conversation_id"] = payload.get("conversation_id") or references[0]["conversation_id"]
+            payload["request_id"] = payload.get("request_id") or references[0]["request_id"]
+            if response.status_code < 400:
+                response.status_code = 403 if isinstance(error, (M365PolicyError, PermissionError)) else 503
+        response.set_data(current_app.json.dumps(payload))
+        return response
+
+    return wrapped
+
+
 def _extract_sse_event_payload(event_text):
     """Parse JSON data lines from a raw SSE event string."""
     if not isinstance(event_text, str):
@@ -8268,6 +8544,40 @@ def _extract_sse_event_payload(event_text):
         return json.loads('\n'.join(data_lines))
     except (TypeError, ValueError):
         return None
+
+
+def _refresh_m365_pending_action_event(event_text, viewer_user_id, conversation_id):
+    """Replay IDs through current authorization/state, not cached card snapshots."""
+    payload = _extract_sse_event_payload(event_text)
+    if not isinstance(payload, dict):
+        return event_text
+    is_creation = payload.get("type") == "m365_pending_action"
+    if is_creation:
+        snapshots = [payload.get("pending_action")]
+    elif "m365_pending_actions" in payload:
+        snapshots = payload.get("m365_pending_actions")
+    else:
+        return event_text
+    if not isinstance(snapshots, list):
+        raise ValueError("Invalid cached Microsoft 365 action-card event.")
+    action_ids = [card.get("id") if isinstance(card, dict) else None for card in snapshots]
+    cards = {}
+    for offset in range(0, len(action_ids), 100):
+        resolved = functions_msgraph_pending_actions.get_chat_pending_action_cards(
+            viewer_user_id, conversation_id,
+            request_id=payload.get("request_id") or None,
+            action_ids=action_ids[offset:offset + 100],
+        )
+        cards.update((card["id"], card) for card in resolved)
+    if is_creation:
+        if not cards:
+            return None
+        payload["pending_action"] = next(iter(cards.values()))
+        payload.pop("m365_pending_actions", None)
+    else:
+        payload["m365_pending_actions"] = list(cards.values())
+    payload["conversation_id"] = conversation_id
+    return f"data: {json.dumps(payload)}\n\n"
 
 
 class ActiveConversationStreamSession:
@@ -9439,6 +9749,50 @@ def summarize_tabular_invocation_errors(invocations):
         unique_errors.append(normalized_error_message)
 
     return unique_errors
+
+
+def build_tabular_invocation_failure_signature(invocation):
+    """Build a stable signature for detecting repeated equivalent tool failures."""
+    error_message = get_tabular_invocation_error_message(invocation)
+    if not error_message:
+        return None
+
+    parameters = getattr(invocation, 'parameters', {}) or {}
+    comparable_parameters = {
+        str(parameter_name): parameter_value
+        for parameter_name, parameter_value in parameters.items()
+        if parameter_name not in {'user_id', 'conversation_id'}
+    }
+    normalized_error = re.sub(r'\s+', ' ', str(error_message).strip()).casefold()
+    return (
+        str(getattr(invocation, 'function_name', '') or '').strip(),
+        json.dumps(comparable_parameters, sort_keys=True, default=str),
+        normalized_error,
+    )
+
+
+def get_repeated_tabular_invocation_failures(invocations, minimum_repeats=2):
+    """Return repeated equivalent failures with their function and safe error text."""
+    failures_by_signature = {}
+    for invocation in invocations or []:
+        signature = build_tabular_invocation_failure_signature(invocation)
+        if signature is None:
+            continue
+        failures_by_signature.setdefault(signature, []).append(invocation)
+
+    repeated_failures = []
+    for (function_name, _parameters, normalized_error), matching_invocations in failures_by_signature.items():
+        if len(matching_invocations) < minimum_repeats:
+            continue
+        error_message = get_tabular_invocation_error_message(matching_invocations[0])
+        repeated_failures.append({
+            'function_name': function_name,
+            'count': len(matching_invocations),
+            'error_message': error_message,
+            'normalized_error': normalized_error,
+        })
+
+    return repeated_failures
 
 
 def summarize_tabular_discovery_invocations(invocations, max_sheet_names=6):
@@ -12637,6 +12991,42 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                 else:
                     successful_schema_summary_invocations.append(invocation)
 
+            repeated_failures = get_repeated_tabular_invocation_failures(
+                failed_analytical_invocations + failed_schema_summary_invocations,
+            )
+            repeated_failure_feedback_messages = []
+            if repeated_failures:
+                repeated_failure = repeated_failures[0]
+                safe_repeated_failure_error = sanitize_plugin_invocation_value(
+                    repeated_failure['error_message']
+                )
+                repeated_failure_feedback_messages.append(
+                    f"The tool call {repeated_failure['function_name']} produced the same error repeatedly. Do not repeat that exact call. Change the filename, sheet, column, arguments, or use a different analytical function that addresses the user's question."
+                )
+                log_event(
+                    '[TABULAR_SK_ANALYSIS] Repeated equivalent tool failure detected; routing away from the failed call',
+                    extra={
+                        'function_name': repeated_failure['function_name'],
+                        'repeat_count': repeated_failure['count'],
+                        'error_message': repeated_failure['error_message'],
+                        'attempt_number': attempt_number,
+                    },
+                    level=logging.ERROR,
+                )
+                await emit_tabular_analysis_lifecycle_thought(
+                    thought_callback,
+                    f"Tabular tool {repeated_failure['function_name']} failed repeatedly",
+                    detail=(
+                        f"Failed {repeated_failure['count']} times with the same error: "
+                        f"{safe_repeated_failure_error}"
+                    ),
+                    title='Tabular analysis needs a different query path',
+                    state='running',
+                    phase='retry',
+                    attempt_number=attempt_number,
+                    attempt_count=3,
+                )
+
             if synthesis_exception is not None:
                 raw_tool_fallback = None
                 if not schema_summary_mode:
@@ -12692,6 +13082,7 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
 
                     if failed_schema_summary_invocations:
                         previous_tool_error_messages = summarize_tabular_invocation_errors(failed_schema_summary_invocations)
+                        previous_execution_gap_messages = repeated_failure_feedback_messages
                         log_event(
                             f"[TABULAR_SK_ANALYSIS] Attempt {attempt_number} used workbook schema tool(s) but all returned errors; retrying",
                             extra={
@@ -12797,7 +13188,7 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
 
                     if failed_analytical_invocations:
                         previous_tool_error_messages = summarize_tabular_invocation_errors(failed_analytical_invocations)
-                        previous_execution_gap_messages = []
+                        previous_execution_gap_messages = repeated_failure_feedback_messages
                         retry_sheet_overrides = get_tabular_retry_sheet_overrides(failed_analytical_invocations)
                         for workbook_name, override_payload in retry_sheet_overrides.items():
                             blob_location = workbook_blob_locations.get(workbook_name)
@@ -13041,6 +13432,7 @@ def _execute_mixed_source_tabular_evidence(
     model_context=None,
     cancel_requested=None,
     request_correlation_id=None,
+    suppress_generated_output=False,
 ):
     """Run the existing tabular engine once per manifest source with terminal coverage."""
     source_contexts = build_tabular_file_contexts_from_manifest(tabular_sources)
@@ -13129,18 +13521,20 @@ def _execute_mixed_source_tabular_evidence(
         if not file_context:
             raise ValueError('Authorized tabular source context is unavailable')
 
-        direct_generated_output = maybe_queue_search_tabular_generated_output(
-            user_question=user_question,
-            file_contexts=[file_context],
-            user_id=user_id,
-            conversation_id=conversation_id,
-            gpt_model=gpt_model,
-            settings=settings,
-            thought_callback=publish_post_processing_thought,
-            model_context=model_context,
-            cancel_requested=cancel_requested,
-            request_correlation_id=request_correlation_id,
-        )
+        direct_generated_output = None
+        if not suppress_generated_output:
+            direct_generated_output = maybe_queue_search_tabular_generated_output(
+                user_question=user_question,
+                file_contexts=[file_context],
+                user_id=user_id,
+                conversation_id=conversation_id,
+                gpt_model=gpt_model,
+                settings=settings,
+                thought_callback=publish_post_processing_thought,
+                model_context=model_context,
+                cancel_requested=cancel_requested,
+                request_correlation_id=request_correlation_id,
+            )
         if direct_generated_output:
             generated_outputs.append(direct_generated_output)
             system_messages.append({
@@ -13247,19 +13641,21 @@ def _execute_mixed_source_tabular_evidence(
                     thought_detail,
                 )
 
-        generated_output = asyncio.run(maybe_create_tabular_generated_output(
-            user_question=user_question,
-            invocations=source_invocations,
-            gpt_model=gpt_model,
-            settings=settings,
-            conversation_id=conversation_id,
-            thought_callback=publish_post_processing_thought,
-            user_id=user_id,
-            model_context=model_context,
-            cancel_requested=cancel_requested,
-            request_correlation_id=request_correlation_id,
-            token_usage_callback=record_token_usage,
-        ))
+        generated_output = None
+        if not suppress_generated_output:
+            generated_output = asyncio.run(maybe_create_tabular_generated_output(
+                user_question=user_question,
+                invocations=source_invocations,
+                gpt_model=gpt_model,
+                settings=settings,
+                conversation_id=conversation_id,
+                thought_callback=publish_post_processing_thought,
+                user_id=user_id,
+                model_context=model_context,
+                cancel_requested=cancel_requested,
+                request_correlation_id=request_correlation_id,
+                token_usage_callback=record_token_usage,
+            ))
         if generated_output:
             generated_outputs.append(generated_output)
 
@@ -13317,6 +13713,37 @@ def _execute_mixed_source_tabular_evidence(
         'executed': execute_tabular,
         'token_usage': token_usage if token_usage['request_count'] else None,
     }
+
+
+def _exclude_xsd_contract_sources_from_evidence(manifest, xsd_generation_contract):
+    """Keep an authoritative schema out of the ordinary source-evidence ledger."""
+    if not xsd_generation_contract:
+        return list(manifest or [])
+    return [
+        source
+        for source in list(manifest or [])
+        if not (
+            isinstance(source, dict)
+            and source.get('source_kind') == 'xml_schema'
+        )
+    ]
+
+
+def _exclude_xsd_contract_document_ids_from_search(
+    document_ids,
+    xsd_generation_contract,
+):
+    """Keep the authoritative root XSD out of legacy chunk search."""
+    contract_document_id = str(
+        (xsd_generation_contract or {}).get('document_id') or ''
+    ).strip()
+    if not contract_document_id:
+        return list(document_ids or [])
+    return [
+        document_id
+        for document_id in list(document_ids or [])
+        if str(document_id) != contract_document_id
+    ]
 
 
 def is_tabular_filename(filename):
@@ -13985,6 +14412,9 @@ def build_streaming_multi_endpoint_client(
     api_version,
     deployment_name='',
     *,
+    api_type='',
+    anthropic_version='',
+    allow_private_custom_endpoints=False,
     settings=None,
     endpoint_config=None,
     identity_context=None,
@@ -13996,6 +14426,9 @@ def build_streaming_multi_endpoint_client(
         endpoint,
         api_version,
         deployment_name=deployment_name,
+        api_type=api_type,
+        anthropic_version=anthropic_version,
+        allow_private_custom_endpoints=allow_private_custom_endpoints,
         settings=settings,
         endpoint_config=endpoint_config,
         identity_context=identity_context,
@@ -14147,7 +14580,7 @@ def resolve_streaming_multi_endpoint_gpt_config(settings, data, user_id, active_
         model_cfg = next(
             (
                 model for model in models
-                if str(model.get('deploymentName') or model.get('deployment') or '').strip() == requested_deployment
+                if resolve_model_endpoint_request_model(resolved_endpoint_cfg, model) == requested_deployment
             ),
             None,
         )
@@ -14179,10 +14612,12 @@ def resolve_streaming_multi_endpoint_gpt_config(settings, data, user_id, active_
 
     connection = resolved_endpoint_cfg.get('connection', {}) or {}
     auth_settings = resolved_endpoint_cfg.get('auth', {}) or {}
-    deployment = str(model_cfg.get('deploymentName') or model_cfg.get('deployment') or '').strip()
+    deployment = resolve_model_endpoint_request_model(resolved_endpoint_cfg, model_cfg)
     endpoint = str(connection.get('endpoint') or '').strip()
     api_version = str(connection.get('openai_api_version') or connection.get('api_version') or '').strip()
-    runtime_protocol = infer_model_endpoint_protocol(provider, endpoint, deployment)
+    api_type = get_model_endpoint_api_type(resolved_endpoint_cfg)
+    anthropic_version = str(connection.get('anthropic_version') or '').strip()
+    runtime_protocol = infer_model_endpoint_protocol(provider, endpoint, deployment, api_type)
     model_icon = _normalize_model_icon_payload(model_cfg.get('icon'))
     model_response_length = normalize_model_response_length_from_model(model_cfg)
     model_behavior_name = _build_model_endpoint_behavior_name(model_cfg, deployment)
@@ -14216,6 +14651,11 @@ def resolve_streaming_multi_endpoint_gpt_config(settings, data, user_id, active_
         endpoint,
         api_version,
         deployment_name=deployment,
+        api_type=api_type,
+        anthropic_version=anthropic_version,
+        allow_private_custom_endpoints=bool(
+            settings.get('allow_private_custom_model_endpoints', False)
+        ),
         settings=settings,
         endpoint_config=resolved_endpoint_cfg,
         identity_context={'user_id': user_id},
@@ -14223,7 +14663,7 @@ def resolve_streaming_multi_endpoint_gpt_config(settings, data, user_id, active_
     debug_print(
         f"[STREAMING][Model Resolution] Resolved {selection_source} multi-endpoint model | "
         f"provider={provider} | endpoint_id={requested_endpoint_id} | model_id={model_cfg.get('id')} | "
-        f"deployment={deployment} | api_version={api_version} | protocol={runtime_protocol} | "
+        f"request_model={deployment} | api_version={api_version} | api_type={api_type} | protocol={runtime_protocol} | "
         f"response_length={model_response_length or ''} | "
         f"response_length_parameter={model_response_length_parameter or ''}"
     )
@@ -14234,6 +14674,8 @@ def resolve_streaming_multi_endpoint_gpt_config(settings, data, user_id, active_
         endpoint,
         auth_settings,
         api_version,
+        api_type,
+        anthropic_version,
         requested_endpoint_id,
         str(model_cfg.get('id') or '').strip(),
         model_icon,
@@ -14380,50 +14822,108 @@ def register_route_backend_chats(bp):
     def build_background_stream_response(event_generator_factory, stream_session=None):
         """Run SSE generation in background execution so it survives disconnects."""
         stream_bridge = BackgroundStreamBridge(stream_session=stream_session)
+        viewer_user_id = get_current_user_id()
+        stream_user_message_id = None
 
         def publish_background_event(event_text):
+            nonlocal stream_user_message_id
             if event_text is None:
                 return False
+
+            payload = _extract_sse_event_payload(event_text)
+            if isinstance(payload, dict):
+                if payload.get('user_message_id'):
+                    stream_user_message_id = payload['user_message_id']
+                if payload.get('done') or payload.get('error') or payload.get('cancelled') or payload.get('canceled'):
+                    try:
+                        enriched = _attach_request_m365_pending_action_cards(payload, viewer_user_id)
+                    except Exception as error:
+                        failure = _m365_pending_action_cards_error(error)
+                        enriched = {**payload, 'm365_pending_actions_error': failure}
+                        enriched.pop('m365_pending_actions', None)
+                        if not enriched.get('error'):
+                            enriched['error'] = failure['message']
+                        references = get_request_pending_action_references()
+                        if references:
+                            enriched['conversation_id'] = enriched.get('conversation_id') or references[0]['conversation_id']
+                            enriched['request_id'] = enriched.get('request_id') or references[0]['request_id']
+                    if enriched is not payload:
+                        event_text = f"data: {json.dumps(enriched)}\n\n"
 
             if stream_session:
                 stream_session.publish(event_text)
 
             return stream_bridge.push(event_text)
 
+        def publish_pending_action(reference):
+            cards = functions_msgraph_pending_actions.get_chat_pending_action_cards(
+                viewer_user_id,
+                reference['conversation_id'],
+                request_id=reference['request_id'],
+                action_ids=[reference['id']],
+            )
+            for card in cards:
+                payload = {
+                    'type': 'm365_pending_action',
+                    'pending_action': card,
+                    'conversation_id': reference['conversation_id'],
+                    'request_id': reference['request_id'],
+                }
+                if stream_user_message_id:
+                    payload['user_message_id'] = stream_user_message_id
+                publish_background_event(f"data: {json.dumps(payload)}\n\n")
+
         @copy_current_request_context
         def stream_worker():
-            try:
-                generator_signature = inspect.signature(event_generator_factory)
-                if 'publish_background_event' in generator_signature.parameters:
-                    event_iterator = event_generator_factory(
-                        publish_background_event=publish_background_event
-                    )
-                else:
-                    event_iterator = event_generator_factory()
+            with m365_action_card_events(publish_pending_action):
+                event_iterator = None
+                try:
+                    generator_signature = inspect.signature(event_generator_factory)
+                    if 'publish_background_event' in generator_signature.parameters:
+                        event_iterator = event_generator_factory(
+                            publish_background_event=publish_background_event
+                        )
+                    else:
+                        event_iterator = event_generator_factory()
 
-                for event in event_iterator:
-                    publish_background_event(event)
-            except Exception as e:
-                debug_print(f"[STREAM_BACKGROUND] Worker error: {e}")
-                stream_status = stream_session.get_status_snapshot() if stream_session else {}
-                log_event(
-                    f"[STREAMING] Background worker error: {e}",
-                    extra={
-                        'conversation_id': stream_status.get('conversation_id'),
-                        'user_id': stream_status.get('user_id'),
-                        'status': stream_status.get('status'),
-                        'event_count': stream_status.get('event_count'),
-                        'content_event_count': stream_status.get('content_event_count'),
-                    },
-                    level=logging.ERROR,
-                    exceptionTraceback=True,
-                )
-                error_event = build_stream_error_event()
-                publish_background_event(error_event)
-            finally:
-                if stream_session:
-                    stream_session.close()
-                stream_bridge.finish()
+                    terminal_success = False
+                    for event in event_iterator:
+                        publish_background_event(event)
+                        payload = _extract_sse_event_payload(event)
+                        if isinstance(payload, dict) and payload.get("done"):
+                            terminal_success = not (
+                                payload.get("error") or payload.get("cancelled") or payload.get("canceled")
+                            )
+                    complete_m365_request(success=terminal_success)
+                except M365ApprovalRequired as error:
+                    publish_background_event(
+                        f"data: {json.dumps(record_m365_pending(error))}\n\n"
+                    )
+                except Exception as e:
+                    debug_print(f"[STREAM_BACKGROUND] Worker error: {e}")
+                    stream_status = stream_session.get_status_snapshot() if stream_session else {}
+                    log_event(
+                        f"[STREAMING] Background worker error: {e}",
+                        extra={
+                            'conversation_id': stream_status.get('conversation_id'),
+                            'user_id': stream_status.get('user_id'),
+                            'status': stream_status.get('status'),
+                            'event_count': stream_status.get('event_count'),
+                            'content_event_count': stream_status.get('content_event_count'),
+                        },
+                        level=logging.ERROR,
+                        exceptionTraceback=True,
+                    )
+                    error_event = build_stream_error_event()
+                    publish_background_event(error_event)
+                finally:
+                    try:
+                        if event_iterator is not None and callable(getattr(event_iterator, 'close', None)):
+                            event_iterator.close()
+                    finally:
+                        if stream_session:
+                            stream_session.close()
+                        stream_bridge.finish()
 
         executor = current_app.extensions.get('executor')
         if executor:
@@ -15134,6 +15634,8 @@ def register_route_backend_chats(bp):
         conversation_id = getattr(g, 'conversation_id', None) or data.get('conversation_id')
         if conversation_id is not None:
             conversation_id = str(conversation_id).strip() or None
+        if conversation_id:
+            initialize_m365_chat_context(user_id, conversation_id)
 
         selected_document_id = data.get('selected_document_id')
         selected_document_ids = data.get('selected_document_ids', [])
@@ -15383,7 +15885,7 @@ def register_route_backend_chats(bp):
         title_updated = _set_initial_conversation_title(conversation_item, user_message)
         if title_updated:
             conversation_item['last_updated'] = datetime.utcnow().isoformat()
-            cosmos_conversations_container.upsert_item(conversation_item)
+            cosmos_conversations_container.replace_item(item=conversation_item['id'], body=conversation_item)
             invalidate_conversation_cache_for_item(conversation_item, reason="conversation_title_initialized")
             if callable(publish_background_event):
                 publish_background_event(_build_conversation_metadata_stream_event(conversation_item))
@@ -15450,11 +15952,62 @@ def register_route_backend_chats(bp):
                 elif thought_tracker.enabled:
                     thought_tracker.add_thought('search', assigned_context_thought)
 
+        document_action_xsd_contract = None
+        if (
+            get_tabular_generated_output_format(user_message) == 'xml'
+            and selected_document_ids
+        ):
+            try:
+                action_manifest = resolve_authorized_source_manifest(
+                    selected_document_ids,
+                    user_id=user_id,
+                    selection_mode='selected',
+                    conversation_id=conversation_id,
+                    active_group_ids=active_group_ids,
+                    active_public_workspace_ids=active_public_workspace_ids,
+                    doc_scope=document_scope,
+                    request_correlation_id=request_correlation_id,
+                )
+                action_partitions = partition_source_manifest(action_manifest)
+                action_schema_sources = list(
+                    action_partitions.get('schema_sources') or []
+                )
+                if action_schema_sources:
+                    document_action_xsd_contract = load_xsd_generation_contract(
+                        action_schema_sources,
+                        user_id,
+                    )
+            except (PermissionError, ValueError, XsdSchemaError) as exc:
+                log_event(
+                    '[XSD_GENERATION] Document action schema contract could not be loaded.',
+                    extra={
+                        'conversation_id': conversation_id,
+                        'error_type': type(exc).__name__,
+                    },
+                    level=logging.WARNING,
+                    exceptionTraceback=True,
+                )
+                return {
+                    'error': (
+                        'The selected XSD cannot be used for XML generation. '
+                        'Review its readiness, roots, and dependencies, then try again.'
+                    )
+                }, 400
+
         workflow_task_prompt = _build_document_action_prompt_with_assigned_knowledge_context(
             user_message,
             assigned_knowledge_action_context.get('context_block'),
             normalized_action.get('type'),
         )
+        if document_action_xsd_contract:
+            workflow_task_prompt = (
+                f'{workflow_task_prompt}\n\n'
+                f'{build_generated_file_output_guidance(
+                    user_message,
+                    requested_format="xml",
+                    xml_schema_guidance=document_action_xsd_contract["guidance"],
+                )}'
+            )
         document_action_agent_fields = _get_conversation_context_agent_fields(request_agent_info)
         document_action_context_snapshot = build_conversation_context_snapshot(
             user_metadata,
@@ -15492,6 +16045,9 @@ def register_route_backend_chats(bp):
                 document_action_context_json
             ),
             'conversation_context_snapshot': document_action_context_snapshot,
+            'suppress_generic_generated_output': bool(document_action_xsd_contract),
+            '_xsd_generation_contract': document_action_xsd_contract,
+            '_xsd_generation_guidance_applied': bool(document_action_xsd_contract),
             'document_action': normalized_action,
             'analyze': {
                 'enabled': normalized_action.get('type') == DOCUMENT_ACTION_TYPE_ANALYZE,
@@ -15574,6 +16130,12 @@ def register_route_backend_chats(bp):
                 settings=settings,
             )
         except MixedSourceCancellationError as exc:
+            _rollback_mixed_source_chat_publication(
+                user_id,
+                conversation_id,
+                list(execution_result.get('generated_analysis_artifacts') or [])
+                + list(execution_result.get('generated_tabular_outputs') or []),
+            )
             if thought_tracker.enabled:
                 thought_tracker.add_thought(
                     'cancellation',
@@ -15587,6 +16149,12 @@ def register_route_backend_chats(bp):
                 'request_correlation_id': request_correlation_id,
             }, 409
         except PermissionError as exc:
+            _rollback_mixed_source_chat_publication(
+                user_id,
+                conversation_id,
+                list(execution_result.get('generated_analysis_artifacts') or [])
+                + list(execution_result.get('generated_tabular_outputs') or []),
+            )
             debug_print(f'[CHAT_DOCUMENT_ACTION] Finalization authorization failed: {exc}')
             return {
                 'error': 'One or more selected sources are no longer available.',
@@ -15594,6 +16162,12 @@ def register_route_backend_chats(bp):
                 'user_message_id': user_message_id,
             }, 403
         except RuntimeError as exc:
+            _rollback_mixed_source_chat_publication(
+                user_id,
+                conversation_id,
+                list(execution_result.get('generated_analysis_artifacts') or [])
+                + list(execution_result.get('generated_tabular_outputs') or []),
+            )
             debug_print(f'[CHAT_DOCUMENT_ACTION] Finalization state changed: {exc}')
             return {
                 'error': 'Document action finalization could not complete. Please try again.',
@@ -15645,15 +16219,17 @@ def register_route_backend_chats(bp):
                 'artifact_publication',
                 request_correlation_id=request_correlation_id,
             )
-            generated_file_output = maybe_create_generated_file_output(
-                user_question=user_message,
-                assistant_content=document_action_reply_content,
-                conversation_id=conversation_id,
-                function_results=execution_result.get('agent_citations') or [],
-                existing_outputs=document_generated_analysis_artifacts + document_generated_tabular_outputs,
-                cancel_requested=cancel_requested,
-                request_correlation_id=request_correlation_id,
-            )
+            generated_file_output = None
+            if not document_action_xsd_contract:
+                generated_file_output = maybe_create_generated_file_output(
+                    user_question=user_message,
+                    assistant_content=document_action_reply_content,
+                    conversation_id=conversation_id,
+                    function_results=execution_result.get('agent_citations') or [],
+                    existing_outputs=document_generated_analysis_artifacts + document_generated_tabular_outputs,
+                    cancel_requested=cancel_requested,
+                    request_correlation_id=request_correlation_id,
+                )
             if generated_file_output:
                 document_generated_analysis_artifacts.append(generated_file_output)
                 if generated_file_output.get('output_format') == 'csv':
@@ -15664,9 +16240,22 @@ def register_route_backend_chats(bp):
                 conversation_id=conversation_id,
                 existing_outputs=document_generated_analysis_artifacts + document_generated_tabular_outputs,
                 function_results=execution_result.get('agent_citations') or [],
+                xsd_generation_contract=document_action_xsd_contract,
+                user_id=user_id,
             )
             if assistant_file_generated_output:
-                document_generated_analysis_artifacts.append(assistant_file_generated_output)
+                artifact_message_id = assistant_file_generated_output.get(
+                    'artifact_message_id'
+                )
+                if not any(
+                    artifact_message_id
+                    and artifact_message_id == artifact.get('artifact_message_id')
+                    for artifact in document_generated_analysis_artifacts
+                    if isinstance(artifact, dict)
+                ):
+                    document_generated_analysis_artifacts.append(
+                        assistant_file_generated_output
+                    )
                 document_action_reply_content = _build_assistant_file_output_handoff(assistant_file_generated_output)
             _reauthorize_document_action_finalization(
                 normalized_action,
@@ -15676,6 +16265,26 @@ def register_route_backend_chats(bp):
                 cancel_requested=cancel_requested,
                 request_correlation_id=request_correlation_id,
                 settings=settings,
+            )
+        except XsdGeneratedOutputValidationError:
+            _rollback_mixed_source_chat_publication(
+                user_id,
+                conversation_id,
+                document_generated_analysis_artifacts + document_generated_tabular_outputs,
+                compact_citations=prepared_agent_citations,
+            )
+            document_generated_analysis_artifacts = []
+            document_generated_tabular_outputs = []
+            prepared_agent_citations = []
+            document_action_reply_content = (
+                'I could not create a downloadable XML file because the generated document '
+                'could not be validated and published against the selected XSD. '
+                'No XML artifact was published.'
+            )
+            log_event(
+                '[XSD_GENERATION] Document action XML failed final schema validation.',
+                extra={'conversation_id': conversation_id},
+                level=logging.WARNING,
             )
         except MixedSourceCancellationError as exc:
             _rollback_mixed_source_chat_publication(
@@ -15765,7 +16374,7 @@ def register_route_backend_chats(bp):
                 'document_action': normalized_action,
             },
         })
-        cosmos_messages_container.upsert_item(assistant_doc)
+        cosmos_messages_container.upsert_item(attach_m365_message_provenance(assistant_doc))
         try:
             raise_if_mixed_source_cancelled(
                 cancel_requested,
@@ -15871,7 +16480,7 @@ def register_route_backend_chats(bp):
             conversation_item,
             document_action_citation_tracking['cited_hybrid_citations'],
         )
-        cosmos_conversations_container.upsert_item(conversation_item)
+        cosmos_conversations_container.replace_item(item=conversation_item['id'], body=conversation_item)
         invalidate_conversation_cache_for_item(conversation_item, reason="document_action_chat_completed")
         debug_print(
             '[CHAT_DOCUMENT_ACTION] Execution completed | '
@@ -15932,6 +16541,7 @@ def register_route_backend_chats(bp):
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
+    @_with_m365_pending_action_cards
     def chat_document_action_api():
         payload, status_code = execute_document_action_chat_request()
         return jsonify(payload), status_code
@@ -16020,6 +16630,7 @@ def register_route_backend_chats(bp):
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
+    @_with_m365_pending_action_cards
     def chat_analyze_api():
         payload, status_code = execute_analyze_chat_request()
         return jsonify(payload), status_code
@@ -16162,7 +16773,7 @@ def register_route_backend_chats(bp):
             )
 
             conversation_item['last_updated'] = datetime.utcnow().isoformat()
-            cosmos_conversations_container.upsert_item(conversation_item)
+            cosmos_conversations_container.replace_item(item=conversation_item['id'], body=conversation_item)
             invalidate_conversation_cache_for_item(conversation_item, reason="chat_image_proposal_generated")
 
             image_doc = image_result.pop('image_message', {}) or {}
@@ -16334,6 +16945,7 @@ def register_route_backend_chats(bp):
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
+    @_with_m365_pending_action_cards
     def chat_api():
         publish_background_event = getattr(
             g,
@@ -16479,6 +17091,7 @@ def register_route_backend_chats(bp):
             deep_research_web_search_runs = []
             generated_tabular_outputs_list = []
             generated_analysis_artifacts_list = []
+            xsd_generation_contract = None
             system_messages_for_augmentation = [] # Collect system messages from search
             generated_file_output_guidance = build_generated_file_output_guidance(
                 user_message,
@@ -16692,6 +17305,45 @@ def register_route_backend_chats(bp):
                     or assigned_knowledge_user_context_active
                 )
             )
+            if request_has_explicit_document_selection:
+                try:
+                    xsd_generation_contract = (
+                        _load_explicit_xsd_contract_without_mixed_source_search(
+                            settings,
+                            get_tabular_generated_output_format(user_message),
+                            effective_selected_document_ids,
+                            user_id=user_id,
+                            conversation_id=conversation_id,
+                            active_group_ids=effective_active_group_ids,
+                            active_public_workspace_ids=effective_active_public_workspace_ids,
+                            doc_scope=effective_document_scope,
+                        )
+                    )
+                    if xsd_generation_contract:
+                        system_messages_for_augmentation.append({
+                            'role': 'system',
+                            'content': build_generated_file_output_guidance(
+                                user_message,
+                                requested_format='xml',
+                                xml_schema_guidance=xsd_generation_contract['guidance'],
+                            ),
+                        })
+                except (PermissionError, ValueError, XsdSchemaError) as exc:
+                    log_event(
+                        '[XSD_GENERATION] Selected schema contract could not be loaded.',
+                        extra={
+                            'conversation_id': conversation_id,
+                            'error_type': type(exc).__name__,
+                        },
+                        level=logging.WARNING,
+                        exceptionTraceback=True,
+                    )
+                    return jsonify({
+                        'error': (
+                            'The selected XSD cannot be used for XML generation. '
+                            'Review its readiness, roots, and dependencies, then try again.'
+                        )
+                    }), 400
 
             explicit_external_retrieval_requested = _is_explicit_external_retrieval_requested(
                 web_search_enabled=web_search_enabled,
@@ -16709,6 +17361,8 @@ def register_route_backend_chats(bp):
             gpt_endpoint = None
             gpt_auth = None
             gpt_api_version = None
+            gpt_api_type = None
+            gpt_anthropic_version = None
             gpt_endpoint_id = None
             gpt_model_id = None
             gpt_model_icon = None
@@ -16747,6 +17401,8 @@ def register_route_backend_chats(bp):
                         gpt_endpoint,
                         gpt_auth,
                         gpt_api_version,
+                        gpt_api_type,
+                        gpt_anthropic_version,
                         gpt_endpoint_id,
                         gpt_model_id,
                         gpt_model_icon,
@@ -16843,9 +17499,12 @@ def register_route_backend_chats(bp):
                     endpoint=gpt_endpoint,
                     auth=gpt_auth,
                     api_version=gpt_api_version,
+                    api_type=gpt_api_type,
+                    anthropic_version=gpt_anthropic_version,
                     endpoint_id=gpt_endpoint_id or data.get('model_endpoint_id'),
                     model_id=gpt_model_id or data.get('model_id'),
                     model_deployment=gpt_model,
+                    request_model=gpt_model,
                     user_id=user_id,
                     active_group_ids=active_group_ids,
                 )
@@ -17016,6 +17675,7 @@ def register_route_backend_chats(bp):
             mixed_source_partitions = {}
             mixed_source_narrative_document_ids = []
             mixed_source_tabular_sources = []
+            mixed_source_schema_sources = []
             mixed_source_evidence_envelopes = []
             mixed_source_native_token_usage = None
             mixed_source_request_correlation_id = normalize_mixed_source_correlation_id()
@@ -17044,11 +17704,15 @@ def register_route_backend_chats(bp):
                 mixed_source_tabular_sources = list(
                     mixed_source_partitions.get('tabular_sources') or []
                 )
+                mixed_source_schema_sources = list(
+                    mixed_source_partitions.get('schema_sources') or []
+                )
                 authorized_selected_document_ids = [
                     str(source.get('document_id') or '').strip()
                     for source in (
                         list(mixed_source_partitions.get('narrative_sources') or [])
                         + mixed_source_tabular_sources
+                        + mixed_source_schema_sources
                     )
                     if str(source.get('document_id') or '').strip()
                 ]
@@ -17066,12 +17730,46 @@ def register_route_backend_chats(bp):
                         'authorized_source_count': len(authorized_selected_document_ids),
                         'narrative_source_count': len(mixed_source_narrative_document_ids),
                         'tabular_source_count': len(mixed_source_tabular_sources),
+                        'schema_source_count': len(mixed_source_schema_sources),
                         'omitted_source_count': len(
                             mixed_source_partitions.get('unresolved_sources') or []
                         ),
                     },
                     level=logging.INFO,
                 )
+                if (
+                    get_tabular_generated_output_format(user_message) == 'xml'
+                    and mixed_source_schema_sources
+                ):
+                    try:
+                        xsd_generation_contract = load_xsd_generation_contract(
+                            mixed_source_schema_sources,
+                            user_id,
+                        )
+                    except (PermissionError, ValueError, XsdSchemaError) as exc:
+                        log_event(
+                            '[XSD_GENERATION] Selected schema contract could not be loaded.',
+                            extra={
+                                'conversation_id': conversation_id,
+                                'error_type': type(exc).__name__,
+                            },
+                            level=logging.WARNING,
+                            exceptionTraceback=True,
+                        )
+                        return jsonify({
+                            'error': (
+                                'The selected XSD cannot be used for XML generation. '
+                                'Review its readiness, roots, and dependencies, then try again.'
+                            )
+                        }), 400
+                    system_messages_for_augmentation.append({
+                        'role': 'system',
+                        'content': build_generated_file_output_guidance(
+                            user_message,
+                            requested_format='xml',
+                            xml_schema_guidance=xsd_generation_contract['guidance'],
+                        ),
+                    })
             else:
                 _maybe_resolve_chat_source_manifest(
                     settings,
@@ -17434,7 +18132,7 @@ def register_route_backend_chats(bp):
                 _set_initial_conversation_title(conversation_item, user_message)
 
                 conversation_item['last_updated'] = datetime.utcnow().isoformat()
-                cosmos_conversations_container.upsert_item(conversation_item) # Update timestamp and potentially title
+                cosmos_conversations_container.replace_item(item=conversation_item['id'], body=conversation_item)
                 invalidate_conversation_cache_for_item(conversation_item, reason="conversation_title_initialized")
 
             assistant_message_id, thought_tracker, assistant_thread_attempt, response_message_context = _initialize_assistant_response_tracking(
@@ -17534,7 +18232,7 @@ def register_route_backend_chats(bp):
 
                         # Update conversation's last_updated
                         conversation_item['last_updated'] = datetime.utcnow().isoformat()
-                        cosmos_conversations_container.upsert_item(conversation_item)
+                        cosmos_conversations_container.replace_item(item=conversation_item['id'], body=conversation_item)
                         invalidate_conversation_cache_for_item(conversation_item, reason="chat_safety_blocked")
 
                         # Return a normal 200 with a special field: blocked=True
@@ -17704,6 +18402,9 @@ def register_route_backend_chats(bp):
                 mixed_source_tabular_sources = list(
                     history_context.get('tabular_sources') or []
                 )
+                mixed_source_schema_sources = list(
+                    history_context.get('schema_sources') or []
+                )
                 if is_mixed_source_conversation_continuity_enabled(settings):
                     continuity_decision = _build_reauthorized_continuity_decision(
                         prior_grounded_document_refs,
@@ -17715,6 +18416,10 @@ def register_route_backend_chats(bp):
                     + _get_manifest_partition_document_ids(
                         mixed_source_partitions,
                         'tabular_sources',
+                    )
+                    + _get_manifest_partition_document_ids(
+                        mixed_source_partitions,
+                        'schema_sources',
                     )
                 )
                 effective_selected_document_id = (
@@ -17737,13 +18442,34 @@ def register_route_backend_chats(bp):
                     or history_grounded_search_used
                 )
             )
+            legacy_search_document_ids = (
+                _exclude_xsd_contract_document_ids_from_search(
+                    effective_selected_document_ids,
+                    xsd_generation_contract,
+                )
+            )
             combined_documents = []
             mixed_source_narrative_search_active = bool(
                 mixed_source_document_context_active
                 and (
-                    not is_mixed_source_chat_search_enabled(settings)
-                    or not mixed_source_manifest
-                    or mixed_source_narrative_document_ids
+                    (
+                        not is_mixed_source_chat_search_enabled(settings)
+                        and (
+                            not xsd_generation_contract
+                            or legacy_search_document_ids
+                        )
+                    )
+                    or (
+                        is_mixed_source_chat_search_enabled(settings)
+                        and (
+                            not mixed_source_manifest
+                            or mixed_source_narrative_document_ids
+                            or (
+                                mixed_source_schema_sources
+                                and not xsd_generation_contract
+                            )
+                        )
+                    )
                 )
             )
             if mixed_source_narrative_search_active:
@@ -17862,14 +18588,27 @@ def register_route_backend_chats(bp):
                         search_args["active_public_workspace_id"] = effective_active_public_workspace_id
 
                     search_document_ids = (
-                        mixed_source_narrative_document_ids
+                        (
+                            mixed_source_narrative_document_ids
+                            + (
+                                _get_manifest_partition_document_ids(
+                                    mixed_source_partitions,
+                                    'schema_sources',
+                                )
+                                if not xsd_generation_contract
+                                else []
+                            )
+                        )
                         if is_mixed_source_chat_search_enabled(settings)
                         and mixed_source_manifest
-                        else effective_selected_document_ids
+                        else legacy_search_document_ids
                     )
                     if search_document_ids:
                         search_args["document_ids"] = search_document_ids
-                    elif effective_selected_document_id:
+                    elif (
+                        effective_selected_document_id
+                        and not xsd_generation_contract
+                    ):
                         search_args["document_id"] = effective_selected_document_id
                     if auto_linked_chat_upload_document_ids:
                         search_args["enable_file_sharing"] = False
@@ -17934,6 +18673,9 @@ def register_route_backend_chats(bp):
                         )
                         mixed_source_tabular_sources = list(
                             relevance_context.get('tabular_sources') or []
+                        )
+                        mixed_source_schema_sources = list(
+                            relevance_context.get('schema_sources') or []
                         )
                         search_results = list(
                             relevance_context.get('search_results') or []
@@ -18254,6 +18996,10 @@ def register_route_backend_chats(bp):
             mixed_source_has_authorized_evidence_sources = bool(
                 mixed_source_narrative_document_ids
                 or mixed_source_tabular_sources
+                or (
+                    mixed_source_schema_sources
+                    and not xsd_generation_contract
+                )
             )
             if mixed_source_document_context_active and (
                 search_results or mixed_source_has_authorized_evidence_sources
@@ -18488,7 +19234,7 @@ def register_route_backend_chats(bp):
                         response_image_url = generated_image_url
 
                     conversation_item['last_updated'] = datetime.utcnow().isoformat()
-                    cosmos_conversations_container.upsert_item(conversation_item)
+                    cosmos_conversations_container.replace_item(item=conversation_item['id'], body=conversation_item)
                     invalidate_conversation_cache_for_item(conversation_item, reason="chat_image_generated")
 
                     return jsonify({
@@ -18588,6 +19334,14 @@ def register_route_backend_chats(bp):
                         effective_mixed_source_selection_mode,
                     )
                 )
+                if mixed_source_schema_sources and not xsd_generation_contract:
+                    mixed_source_evidence_envelopes.extend(
+                        build_schema_summary_evidence_envelopes(
+                            mixed_source_schema_sources,
+                            search_results,
+                            effective_mixed_source_selection_mode,
+                        )
+                    )
                 mixed_source_tabular_result = _execute_mixed_source_tabular_evidence(
                     tabular_sources=mixed_source_tabular_sources,
                     selection_mode=effective_mixed_source_selection_mode,
@@ -18600,6 +19354,7 @@ def register_route_backend_chats(bp):
                     thought_tracker=thought_tracker,
                     model_context=tabular_model_context,
                     request_correlation_id=mixed_source_request_correlation_id,
+                    suppress_generated_output=bool(xsd_generation_contract),
                 )
                 mixed_source_evidence_envelopes.extend(
                     mixed_source_tabular_result.get('evidence_envelopes') or []
@@ -18615,7 +19370,10 @@ def register_route_backend_chats(bp):
                     mixed_source_tabular_result.get('generated_outputs') or []
                 )
                 mixed_source_handoff = build_mixed_source_evidence_handoff(
-                    mixed_source_manifest,
+                    _exclude_xsd_contract_sources_from_evidence(
+                        mixed_source_manifest,
+                        xsd_generation_contract,
+                    ),
                     mixed_source_evidence_envelopes,
                     effective_mixed_source_selection_mode,
                     mode='chat',
@@ -18718,16 +19476,18 @@ def register_route_backend_chats(bp):
                 streamed_tabular_tool_thoughts = []
                 tabular_invocations = []
                 tabular_related_document_summary = ''
-                tabular_generated_output = maybe_queue_search_tabular_generated_output(
-                    user_question=user_message,
-                    file_contexts=workspace_tabular_file_contexts,
-                    user_id=user_id,
-                    conversation_id=conversation_id,
-                    gpt_model=gpt_model,
-                    settings=settings,
-                    thought_callback=record_tabular_post_processing_thought,
-                    model_context=tabular_model_context,
-                )
+                tabular_generated_output = None
+                if not xsd_generation_contract:
+                    tabular_generated_output = maybe_queue_search_tabular_generated_output(
+                        user_question=user_message,
+                        file_contexts=workspace_tabular_file_contexts,
+                        user_id=user_id,
+                        conversation_id=conversation_id,
+                        gpt_model=gpt_model,
+                        settings=settings,
+                        thought_callback=record_tabular_post_processing_thought,
+                        model_context=tabular_model_context,
+                    )
                 if not tabular_generated_output:
                     tabular_analysis, streamed_tabular_tool_thoughts = asyncio.run(run_tabular_analysis_with_thought_tracking(
                         user_question=user_message,
@@ -18769,16 +19529,17 @@ def register_route_backend_chats(bp):
                     for thought_content, thought_detail in tabular_status_thought_payloads:
                         thought_tracker.add_thought('tabular_analysis', thought_content, thought_detail)
 
-                    tabular_generated_output = asyncio.run(maybe_create_tabular_generated_output(
-                        user_question=user_message,
-                        invocations=tabular_invocations,
-                        gpt_model=gpt_model,
-                        settings=settings,
-                        conversation_id=conversation_id,
-                        thought_callback=record_tabular_post_processing_thought,
-                        user_id=user_id,
-                        model_context=tabular_model_context,
-                    ))
+                    if not xsd_generation_contract:
+                        tabular_generated_output = asyncio.run(maybe_create_tabular_generated_output(
+                            user_question=user_message,
+                            invocations=tabular_invocations,
+                            gpt_model=gpt_model,
+                            settings=settings,
+                            conversation_id=conversation_id,
+                            thought_callback=record_tabular_post_processing_thought,
+                            user_id=user_id,
+                            model_context=tabular_model_context,
+                        ))
                 if tabular_generated_output:
                     generated_tabular_outputs_list.append(tabular_generated_output)
                     generated_analysis_artifacts_list.append(tabular_generated_output)
@@ -19085,16 +19846,18 @@ def register_route_backend_chats(bp):
                         build_tabular_file_context(file_name, source_hint='chat')
                         for file_name in chat_tabular_files
                     ]
-                    chat_tabular_generated_output = maybe_queue_search_tabular_generated_output(
-                        user_question=user_message,
-                        file_contexts=chat_tabular_file_contexts,
-                        user_id=user_id,
-                        conversation_id=conversation_id,
-                        gpt_model=gpt_model,
-                        settings=settings,
-                        thought_callback=record_tabular_post_processing_thought,
-                        model_context=tabular_model_context,
-                    )
+                    chat_tabular_generated_output = None
+                    if not xsd_generation_contract:
+                        chat_tabular_generated_output = maybe_queue_search_tabular_generated_output(
+                            user_question=user_message,
+                            file_contexts=chat_tabular_file_contexts,
+                            user_id=user_id,
+                            conversation_id=conversation_id,
+                            gpt_model=gpt_model,
+                            settings=settings,
+                            thought_callback=record_tabular_post_processing_thought,
+                            model_context=tabular_model_context,
+                        )
                     if not chat_tabular_generated_output:
                         chat_tabular_analysis, streamed_chat_tabular_tool_thoughts = asyncio.run(run_tabular_analysis_with_thought_tracking(
                             user_question=user_message,
@@ -19133,16 +19896,17 @@ def register_route_backend_chats(bp):
                         for thought_content, thought_detail in chat_tabular_status_thought_payloads:
                             thought_tracker.add_thought('tabular_analysis', thought_content, thought_detail)
 
-                        chat_tabular_generated_output = asyncio.run(maybe_create_tabular_generated_output(
-                            user_question=user_message,
-                            invocations=chat_tabular_invocations,
-                            gpt_model=gpt_model,
-                            settings=settings,
-                            conversation_id=conversation_id,
-                            thought_callback=record_tabular_post_processing_thought,
-                            user_id=user_id,
-                            model_context=tabular_model_context,
-                        ))
+                        if not xsd_generation_contract:
+                            chat_tabular_generated_output = asyncio.run(maybe_create_tabular_generated_output(
+                                user_question=user_message,
+                                invocations=chat_tabular_invocations,
+                                gpt_model=gpt_model,
+                                settings=settings,
+                                conversation_id=conversation_id,
+                                thought_callback=record_tabular_post_processing_thought,
+                                user_id=user_id,
+                                model_context=tabular_model_context,
+                            ))
                     if chat_tabular_generated_output:
                         generated_tabular_outputs_list.append(chat_tabular_generated_output)
                         generated_analysis_artifacts_list.append(chat_tabular_generated_output)
@@ -19297,6 +20061,8 @@ def register_route_backend_chats(bp):
                     try:
                         result = step['func']()
                         return step['on_success'](result)
+                    except (M365ApprovalRequired, M365SignInRequired):
+                        raise
                     except Exception as e:
                         log_event(
                             f"[FALLBACK_FAILURE] Fallback step {step['name']} failed: {e}",
@@ -20233,24 +20999,41 @@ def register_route_backend_chats(bp):
                 created_timestamp=assistant_timestamp,
                 user_info=user_info_for_assistant,
             )
-            generated_file_output = maybe_create_generated_file_output(
-                user_question=user_message,
-                assistant_content=ai_message,
-                conversation_id=conversation_id,
-                function_results=agent_citations_list,
-                existing_outputs=generated_analysis_artifacts_list + generated_tabular_outputs_list,
-            )
+            generated_file_output = None
+            if not xsd_generation_contract:
+                generated_file_output = maybe_create_generated_file_output(
+                    user_question=user_message,
+                    assistant_content=ai_message,
+                    conversation_id=conversation_id,
+                    function_results=agent_citations_list,
+                    existing_outputs=generated_analysis_artifacts_list + generated_tabular_outputs_list,
+                )
             if generated_file_output:
                 generated_analysis_artifacts_list.append(generated_file_output)
                 if generated_file_output.get('output_format') == 'csv':
                     generated_tabular_outputs_list.append(generated_file_output)
-            assistant_file_generated_output = maybe_create_assistant_file_generated_output(
-                user_question=user_message,
-                assistant_content=ai_message,
-                conversation_id=conversation_id,
-                existing_outputs=generated_analysis_artifacts_list + generated_tabular_outputs_list,
-                function_results=agent_citations_list,
-            )
+            try:
+                assistant_file_generated_output = maybe_create_assistant_file_generated_output(
+                    user_question=user_message,
+                    assistant_content=ai_message,
+                    conversation_id=conversation_id,
+                    existing_outputs=generated_analysis_artifacts_list + generated_tabular_outputs_list,
+                    function_results=agent_citations_list,
+                    xsd_generation_contract=xsd_generation_contract,
+                    user_id=user_id,
+                )
+            except XsdGeneratedOutputValidationError:
+                log_event(
+                    '[XSD_GENERATION] Generated XML failed final schema validation.',
+                    extra={'conversation_id': conversation_id},
+                    level=logging.WARNING,
+                )
+                assistant_file_generated_output = None
+                ai_message = (
+                    'I could not create a downloadable XML file because the generated document '
+                    'could not be validated and published against the selected XSD. '
+                    'No XML artifact was published.'
+                )
             if assistant_file_generated_output:
                 generated_analysis_artifacts_list.append(assistant_file_generated_output)
                 ai_message = _build_assistant_file_output_handoff(assistant_file_generated_output)
@@ -20348,7 +21131,7 @@ def register_route_backend_chats(bp):
             debug_print(f"    attempt: {assistant_thread_attempt}")
             debug_print(f"    is_retry: {is_retry}")
 
-            cosmos_messages_container.upsert_item(assistant_doc)
+            cosmos_messages_container.upsert_item(attach_m365_message_provenance(assistant_doc))
 
             if selected_agent and agent_name:
                 log_agent_run(
@@ -20465,7 +21248,7 @@ def register_route_backend_chats(bp):
                 citation_tracking['cited_hybrid_citations'],
             )
             # Add any other final updates to conversation_item if needed (like classifications if not done earlier)
-            cosmos_conversations_container.upsert_item(conversation_item)
+            cosmos_conversations_container.replace_item(item=conversation_item['id'], body=conversation_item)
             invalidate_conversation_cache_for_item(conversation_item, reason="chat_completed")
 
             # ---------------------------------------------------------------------
@@ -20502,6 +21285,18 @@ def register_route_backend_chats(bp):
                 'thoughts_enabled': thought_tracker.enabled
             })), 200
 
+        except M365ApprovalRequired as error:
+            return jsonify(record_m365_pending(
+                error,
+                user_message_id=locals().get('user_message_id'),
+            )), 409
+        except M365SignInRequired as error:
+            return jsonify(record_m365_auth_wait(error, user_message_id=locals().get('user_message_id'))), 409
+        except ModelTokenBudgetError as error:
+            log_event("[CHAT_API_ERROR] Model budget configuration is invalid.", extra={"code": error.code}, level=logging.ERROR)
+            return jsonify(error.payload), 400
+        except M365PolicyError as error:
+            return jsonify(error.payload), 403
         except Exception as e:
             error_traceback = traceback.format_exc()
             debug_print(f"[CHAT_API_ERROR] Unhandled exception in chat_api: {str(e)}")
@@ -20632,6 +21427,9 @@ def register_route_backend_chats(bp):
                 'cited_hybrid_citations': payload.get('cited_hybrid_citations', []),
                 'cited_web_search_citations': payload.get('cited_web_search_citations', []),
                 'agent_citations': payload.get('agent_citations', []),
+                'm365_pending_actions': payload.get('m365_pending_actions', []),
+                'request_id': payload.get('request_id'),
+                'metadata': payload.get('metadata', {}),
                 'agent_display_name': payload.get('agent_display_name'),
                 'agent_name': payload.get('agent_name'),
                 'full_content': payload.get('reply', ''),
@@ -20726,6 +21524,11 @@ def register_route_backend_chats(bp):
                 # Extract request parameters (same as non-streaming endpoint)
                 user_message = data.get('message', '')
                 conversation_id = finalized_conversation_id
+                g.m365_new_conversation = is_new_stream_conversation
+                initialize_m365_chat_context(
+                    user_id, conversation_id,
+                    allow_new=is_new_stream_conversation,
+                )
                 hybrid_search_enabled = data.get('hybrid_search')
                 web_search_enabled = data.get('web_search_enabled')
                 url_access_enabled = data.get('url_access_enabled')
@@ -20802,7 +21605,9 @@ def register_route_backend_chats(bp):
                         g.request_agent_info = {'name': request_agent_info}
                         g.request_agent_name = request_agent_info
 
-                # Initialize Semantic Kernel if needed
+                _set_authorized_chat_request_context(user_id, conversation_id, scope_context)
+
+                # Initialize Semantic Kernel only after binding the selected agent's actions.
                 redis_client = None
                 if enable_semantic_kernel and per_user_semantic_kernel:
                     redis_client = current_app.config.get('SESSION_REDIS') if 'current_app' in globals() else None
@@ -20846,8 +21651,6 @@ def register_route_backend_chats(bp):
                     yield f"data: {json.dumps({'error': 'Image generation is not supported in streaming mode'})}\n\n"
                     return
 
-                _set_authorized_chat_request_context(user_id, conversation_id, scope_context)
-
                 # Clear plugin invocations
                 plugin_logger = get_plugin_logger()
                 plugin_logger.clear_invocations_for_conversation(user_id, conversation_id)
@@ -20873,6 +21676,7 @@ def register_route_backend_chats(bp):
                 deep_research_web_search_runs = []
                 generated_tabular_outputs_list = []
                 generated_analysis_artifacts_list = []
+                xsd_generation_contract = None
                 system_messages_for_augmentation = []
                 requested_streamed_file_format = _resolve_generated_file_guidance_format(
                     user_message,
@@ -21092,6 +21896,45 @@ def register_route_backend_chats(bp):
                         or assigned_knowledge_user_context_active
                     )
                 )
+                if request_has_explicit_document_selection:
+                    try:
+                        xsd_generation_contract = (
+                            _load_explicit_xsd_contract_without_mixed_source_search(
+                                settings,
+                                requested_streamed_file_format,
+                                effective_selected_document_ids,
+                                user_id=user_id,
+                                conversation_id=conversation_id,
+                                active_group_ids=effective_active_group_ids,
+                                active_public_workspace_ids=effective_active_public_workspace_ids,
+                                doc_scope=effective_document_scope,
+                                cancel_requested=stream_cancel_requested,
+                            )
+                        )
+                        if xsd_generation_contract:
+                            system_messages_for_augmentation.append({
+                                'role': 'system',
+                                'content': build_generated_file_output_guidance(
+                                    user_message,
+                                    requested_format='xml',
+                                    xml_schema_guidance=xsd_generation_contract['guidance'],
+                                ),
+                            })
+                    except (PermissionError, ValueError, XsdSchemaError) as exc:
+                        log_event(
+                            '[XSD_GENERATION] Streaming schema contract could not be loaded.',
+                            extra={
+                                'conversation_id': conversation_id,
+                                'error_type': type(exc).__name__,
+                            },
+                            level=logging.WARNING,
+                            exceptionTraceback=True,
+                        )
+                        yield build_stream_error_event(
+                            'The selected XSD cannot be used for XML generation. '
+                            'Review its readiness, roots, and dependencies, then try again.'
+                        )
+                        return
                 mixed_source_document_context_active = request_document_context_enabled
                 mixed_source_has_authorized_evidence_sources = False
                 explicit_external_retrieval_requested = _is_explicit_external_retrieval_requested(
@@ -21175,6 +22018,8 @@ def register_route_backend_chats(bp):
                 gpt_endpoint = None
                 gpt_auth = None
                 gpt_api_version = None
+                gpt_api_type = None
+                gpt_anthropic_version = None
                 gpt_endpoint_id = None
                 gpt_model_id = None
                 gpt_model_icon = None
@@ -21214,6 +22059,8 @@ def register_route_backend_chats(bp):
                             gpt_endpoint,
                             gpt_auth,
                             gpt_api_version,
+                            gpt_api_type,
+                            gpt_anthropic_version,
                             gpt_endpoint_id,
                             gpt_model_id,
                             gpt_model_icon,
@@ -21293,9 +22140,12 @@ def register_route_backend_chats(bp):
                         endpoint=gpt_endpoint,
                         auth=gpt_auth,
                         api_version=gpt_api_version,
+                        api_type=gpt_api_type,
+                        anthropic_version=gpt_anthropic_version,
                         endpoint_id=gpt_endpoint_id or frontend_model_endpoint_id,
                         model_id=gpt_model_id or frontend_model_id,
                         model_deployment=gpt_model,
+                        request_model=gpt_model,
                         user_id=user_id,
                         active_group_ids=active_group_ids,
                     )
@@ -21319,7 +22169,9 @@ def register_route_backend_chats(bp):
 
                 # Load or create conversation (simplified)
                 if is_new_stream_conversation:
-                    conversation_item = _create_personal_conversation(user_id, conversation_id=conversation_id)
+                    conversation_item = getattr(g, 'm365_initial_conversation', None) or _create_personal_conversation(
+                        user_id, conversation_id=conversation_id,
+                    )
                     debug_print(f"[STREAMING] Created new conversation {conversation_id}")
                 else:
                     try:
@@ -21466,6 +22318,7 @@ def register_route_backend_chats(bp):
                 mixed_source_partitions = {}
                 mixed_source_narrative_document_ids = []
                 mixed_source_tabular_sources = []
+                mixed_source_schema_sources = []
                 mixed_source_evidence_envelopes = []
                 mixed_source_native_token_usage = None
                 mixed_source_request_correlation_id = normalize_mixed_source_correlation_id()
@@ -21496,11 +22349,18 @@ def register_route_backend_chats(bp):
                     mixed_source_tabular_sources = list(
                         explicit_context.get('tabular_sources') or []
                     )
+                    mixed_source_schema_sources = list(
+                        explicit_context.get('schema_sources') or []
+                    )
                     effective_selected_document_ids = (
                         mixed_source_narrative_document_ids
                         + _get_manifest_partition_document_ids(
                             mixed_source_partitions,
                             'tabular_sources',
+                        )
+                        + _get_manifest_partition_document_ids(
+                            mixed_source_partitions,
+                            'schema_sources',
                         )
                     )
                     effective_selected_document_id = (
@@ -21516,12 +22376,45 @@ def register_route_backend_chats(bp):
                             'authorized_source_count': len(effective_selected_document_ids),
                             'narrative_source_count': len(mixed_source_narrative_document_ids),
                             'tabular_source_count': len(mixed_source_tabular_sources),
+                            'schema_source_count': len(mixed_source_schema_sources),
                             'omitted_source_count': len(
                                 mixed_source_partitions.get('unresolved_sources') or []
                             ),
                         },
                         level=logging.INFO,
                     )
+                    if (
+                        requested_streamed_file_format == 'xml'
+                        and mixed_source_schema_sources
+                    ):
+                        try:
+                            xsd_generation_contract = load_xsd_generation_contract(
+                                mixed_source_schema_sources,
+                                user_id,
+                            )
+                        except (PermissionError, ValueError, XsdSchemaError) as exc:
+                            log_event(
+                                '[XSD_GENERATION] Streaming schema contract could not be loaded.',
+                                extra={
+                                    'conversation_id': conversation_id,
+                                    'error_type': type(exc).__name__,
+                                },
+                                level=logging.WARNING,
+                                exceptionTraceback=True,
+                            )
+                            yield build_stream_error_event(
+                                'The selected XSD cannot be used for XML generation. '
+                                'Review its readiness, roots, and dependencies, then try again.'
+                            )
+                            return
+                        system_messages_for_augmentation.append({
+                            'role': 'system',
+                            'content': build_generated_file_output_guidance(
+                                user_message,
+                                requested_format='xml',
+                                xml_schema_guidance=xsd_generation_contract['guidance'],
+                            ),
+                        })
                 else:
                     _maybe_resolve_chat_source_manifest(
                         settings,
@@ -21821,7 +22714,7 @@ def register_route_backend_chats(bp):
                     title_updated = _set_initial_conversation_title(conversation_item, user_message)
 
                     conversation_item['last_updated'] = datetime.utcnow().isoformat()
-                    cosmos_conversations_container.upsert_item(conversation_item)
+                    cosmos_conversations_container.replace_item(item=conversation_item['id'], body=conversation_item)
                     invalidate_conversation_cache_for_item(conversation_item, reason="conversation_title_initialized")
                     if title_updated:
                         yield _build_conversation_metadata_stream_event(conversation_item)
@@ -21982,7 +22875,7 @@ def register_route_backend_chats(bp):
                             cosmos_messages_container.upsert_item(safety_doc)
 
                             conversation_item['last_updated'] = datetime.utcnow().isoformat()
-                            cosmos_conversations_container.upsert_item(conversation_item)
+                            cosmos_conversations_container.replace_item(item=conversation_item['id'], body=conversation_item)
                             invalidate_conversation_cache_for_item(conversation_item, reason="chat_safety_blocked")
 
                             final_data = make_json_serializable({
@@ -22163,6 +23056,9 @@ def register_route_backend_chats(bp):
                     mixed_source_tabular_sources = list(
                         history_context.get('tabular_sources') or []
                     )
+                    mixed_source_schema_sources = list(
+                        history_context.get('schema_sources') or []
+                    )
                     if is_mixed_source_conversation_continuity_enabled(settings):
                         continuity_decision = _build_reauthorized_continuity_decision(
                             prior_grounded_document_refs,
@@ -22174,6 +23070,10 @@ def register_route_backend_chats(bp):
                         + _get_manifest_partition_document_ids(
                             mixed_source_partitions,
                             'tabular_sources',
+                        )
+                        + _get_manifest_partition_document_ids(
+                            mixed_source_partitions,
+                            'schema_sources',
                         )
                     )
                     effective_selected_document_id = (
@@ -22193,12 +23093,33 @@ def register_route_backend_chats(bp):
                         or history_grounded_search_used
                     )
                 )
+                legacy_search_document_ids = (
+                    _exclude_xsd_contract_document_ids_from_search(
+                        effective_selected_document_ids,
+                        xsd_generation_contract,
+                    )
+                )
                 mixed_source_narrative_search_active = bool(
                     mixed_source_document_context_active
                     and (
-                        not is_mixed_source_chat_search_enabled(settings)
-                        or not mixed_source_manifest
-                        or mixed_source_narrative_document_ids
+                        (
+                            not is_mixed_source_chat_search_enabled(settings)
+                            and (
+                                not xsd_generation_contract
+                                or legacy_search_document_ids
+                            )
+                        )
+                        or (
+                            is_mixed_source_chat_search_enabled(settings)
+                            and (
+                                not mixed_source_manifest
+                                or mixed_source_narrative_document_ids
+                                or (
+                                    mixed_source_schema_sources
+                                    and not xsd_generation_contract
+                                )
+                            )
+                        )
                     )
                 )
                 if mixed_source_narrative_search_active:
@@ -22245,14 +23166,27 @@ def register_route_backend_chats(bp):
                             search_args['active_public_workspace_id'] = effective_active_public_workspace_id
 
                         search_document_ids = (
-                            mixed_source_narrative_document_ids
+                            (
+                                mixed_source_narrative_document_ids
+                                + (
+                                    _get_manifest_partition_document_ids(
+                                        mixed_source_partitions,
+                                        'schema_sources',
+                                    )
+                                    if not xsd_generation_contract
+                                    else []
+                                )
+                            )
                             if is_mixed_source_chat_search_enabled(settings)
                             and mixed_source_manifest
-                            else effective_selected_document_ids
+                            else legacy_search_document_ids
                         )
                         if search_document_ids:
                             search_args['document_ids'] = search_document_ids
-                        elif effective_selected_document_id:
+                        elif (
+                            effective_selected_document_id
+                            and not xsd_generation_contract
+                        ):
                             search_args['document_id'] = effective_selected_document_id
                         if auto_linked_chat_upload_document_ids:
                             search_args['enable_file_sharing'] = False
@@ -22313,6 +23247,9 @@ def register_route_backend_chats(bp):
                             )
                             mixed_source_tabular_sources = list(
                                 relevance_context.get('tabular_sources') or []
+                            )
+                            mixed_source_schema_sources = list(
+                                relevance_context.get('schema_sources') or []
                             )
                             search_results = list(
                                 relevance_context.get('search_results') or []
@@ -22622,6 +23559,14 @@ def register_route_backend_chats(bp):
                             effective_mixed_source_selection_mode,
                         )
                     )
+                    if mixed_source_schema_sources and not xsd_generation_contract:
+                        mixed_source_evidence_envelopes.extend(
+                            build_schema_summary_evidence_envelopes(
+                                mixed_source_schema_sources,
+                                search_results,
+                                effective_mixed_source_selection_mode,
+                            )
+                        )
                     mixed_source_tabular_result = _execute_mixed_source_tabular_evidence(
                         tabular_sources=mixed_source_tabular_sources,
                         selection_mode=effective_mixed_source_selection_mode,
@@ -22636,6 +23581,7 @@ def register_route_backend_chats(bp):
                         model_context=tabular_model_context,
                         cancel_requested=stream_cancel_requested,
                         request_correlation_id=mixed_source_request_correlation_id,
+                        suppress_generated_output=bool(xsd_generation_contract),
                     )
                     mixed_source_evidence_envelopes.extend(
                         mixed_source_tabular_result.get('evidence_envelopes') or []
@@ -22651,7 +23597,10 @@ def register_route_backend_chats(bp):
                         mixed_source_tabular_result.get('generated_outputs') or []
                     )
                     mixed_source_handoff = build_mixed_source_evidence_handoff(
-                        mixed_source_manifest,
+                        _exclude_xsd_contract_sources_from_evidence(
+                            mixed_source_manifest,
+                            xsd_generation_contract,
+                        ),
                         mixed_source_evidence_envelopes,
                         effective_mixed_source_selection_mode,
                         mode='chat',
@@ -22666,6 +23615,10 @@ def register_route_backend_chats(bp):
                     mixed_source_has_authorized_evidence_sources = bool(
                         mixed_source_narrative_document_ids
                         or mixed_source_tabular_sources
+                        or (
+                            mixed_source_schema_sources
+                            and not xsd_generation_contract
+                        )
                     )
                     user_metadata['mixed_source_coverage'] = mixed_source_coverage
                     if continuity_decision:
@@ -22764,16 +23717,18 @@ def register_route_backend_chats(bp):
                     streamed_tabular_tool_thoughts = []
                     tabular_invocations = []
                     tabular_related_document_summary = ''
-                    tabular_generated_output = maybe_queue_search_tabular_generated_output(
-                        user_question=user_message,
-                        file_contexts=workspace_tabular_file_contexts,
-                        user_id=user_id,
-                        conversation_id=conversation_id,
-                        gpt_model=gpt_model,
-                        settings=settings,
-                        thought_callback=record_and_publish_streaming_thought,
-                        model_context=tabular_model_context,
-                    )
+                    tabular_generated_output = None
+                    if not xsd_generation_contract:
+                        tabular_generated_output = maybe_queue_search_tabular_generated_output(
+                            user_question=user_message,
+                            file_contexts=workspace_tabular_file_contexts,
+                            user_id=user_id,
+                            conversation_id=conversation_id,
+                            gpt_model=gpt_model,
+                            settings=settings,
+                            thought_callback=record_and_publish_streaming_thought,
+                            model_context=tabular_model_context,
+                        )
                     if not tabular_generated_output:
                         tabular_analysis, streamed_tabular_tool_thoughts = asyncio.run(run_tabular_analysis_with_thought_tracking(
                             user_question=user_message,
@@ -22820,16 +23775,17 @@ def register_route_backend_chats(bp):
                         for thought_content, thought_detail in tabular_status_thought_payloads:
                             yield emit_thought('tabular_analysis', thought_content, thought_detail)
 
-                        tabular_generated_output = asyncio.run(maybe_create_tabular_generated_output(
-                            user_question=user_message,
-                            invocations=tabular_invocations,
-                            gpt_model=gpt_model,
-                            settings=settings,
-                            conversation_id=conversation_id,
-                            thought_callback=record_and_publish_streaming_thought,
-                            user_id=user_id,
-                            model_context=tabular_model_context,
-                        ))
+                        if not xsd_generation_contract:
+                            tabular_generated_output = asyncio.run(maybe_create_tabular_generated_output(
+                                user_question=user_message,
+                                invocations=tabular_invocations,
+                                gpt_model=gpt_model,
+                                settings=settings,
+                                conversation_id=conversation_id,
+                                thought_callback=record_and_publish_streaming_thought,
+                                user_id=user_id,
+                                model_context=tabular_model_context,
+                            ))
                     if tabular_generated_output:
                         generated_tabular_outputs_list.append(tabular_generated_output)
                         generated_analysis_artifacts_list.append(tabular_generated_output)
@@ -23148,16 +24104,18 @@ def register_route_backend_chats(bp):
                             build_tabular_file_context(file_name, source_hint='chat')
                             for file_name in chat_tabular_files
                         ]
-                        chat_tabular_generated_output = maybe_queue_search_tabular_generated_output(
-                            user_question=user_message,
-                            file_contexts=chat_tabular_file_contexts,
-                            user_id=user_id,
-                            conversation_id=conversation_id,
-                            gpt_model=gpt_model,
-                            settings=settings,
-                            thought_callback=record_and_publish_streaming_thought,
-                            model_context=tabular_model_context,
-                        )
+                        chat_tabular_generated_output = None
+                        if not xsd_generation_contract:
+                            chat_tabular_generated_output = maybe_queue_search_tabular_generated_output(
+                                user_question=user_message,
+                                file_contexts=chat_tabular_file_contexts,
+                                user_id=user_id,
+                                conversation_id=conversation_id,
+                                gpt_model=gpt_model,
+                                settings=settings,
+                                thought_callback=record_and_publish_streaming_thought,
+                                model_context=tabular_model_context,
+                            )
                         if not chat_tabular_generated_output:
                             chat_tabular_analysis, streamed_chat_tabular_tool_thoughts = asyncio.run(run_tabular_analysis_with_thought_tracking(
                                 user_question=user_message,
@@ -23201,16 +24159,17 @@ def register_route_backend_chats(bp):
                             for thought_content, thought_detail in chat_tabular_status_thought_payloads:
                                 yield emit_thought('tabular_analysis', thought_content, thought_detail)
 
-                            chat_tabular_generated_output = asyncio.run(maybe_create_tabular_generated_output(
-                                user_question=user_message,
-                                invocations=chat_tabular_invocations,
-                                gpt_model=gpt_model,
-                                settings=settings,
-                                conversation_id=conversation_id,
-                                thought_callback=record_and_publish_streaming_thought,
-                                user_id=user_id,
-                                model_context=tabular_model_context,
-                            ))
+                            if not xsd_generation_contract:
+                                chat_tabular_generated_output = asyncio.run(maybe_create_tabular_generated_output(
+                                    user_question=user_message,
+                                    invocations=chat_tabular_invocations,
+                                    gpt_model=gpt_model,
+                                    settings=settings,
+                                    conversation_id=conversation_id,
+                                    thought_callback=record_and_publish_streaming_thought,
+                                    user_id=user_id,
+                                    model_context=tabular_model_context,
+                                ))
                         if chat_tabular_generated_output:
                             generated_tabular_outputs_list.append(chat_tabular_generated_output)
                             generated_analysis_artifacts_list.append(chat_tabular_generated_output)
@@ -23474,7 +24433,11 @@ def register_route_backend_chats(bp):
 
                 def finalize_cancelled_stream_response():
                     cancel_reason = stream_session.get_cancel_reason() if stream_session else 'user_requested'
-                    partial_content = accumulated_content.strip()
+                    partial_content = (
+                        ''
+                        if suppress_streamed_file_payload
+                        else accumulated_content.strip()
+                    )
                     message_persisted = False
                     partial_citation_tracking = {}
                     cancel_metadata = {
@@ -23483,7 +24446,7 @@ def register_route_backend_chats(bp):
                         'cancel_reason': cancel_reason,
                     }
 
-                    if mixed_source_manifest:
+                    if mixed_source_manifest or suppress_streamed_file_payload:
                         _rollback_mixed_source_chat_publication(
                             user_id,
                             conversation_id,
@@ -23570,7 +24533,7 @@ def register_route_backend_chats(bp):
                                 },
                             },
                         })
-                        cosmos_messages_container.upsert_item(assistant_doc)
+                        cosmos_messages_container.upsert_item(attach_m365_message_provenance(assistant_doc))
                         conversation_item['last_updated'] = datetime.utcnow().isoformat()
                         initialize_conversation_used_document_tracking(conversation_item)
                         try:
@@ -23590,7 +24553,7 @@ def register_route_backend_chats(bp):
                             conversation_item,
                             partial_citation_tracking['cited_hybrid_citations'],
                         )
-                        cosmos_conversations_container.upsert_item(conversation_item)
+                        cosmos_conversations_container.replace_item(item=conversation_item['id'], body=conversation_item)
                         invalidate_conversation_cache_for_item(conversation_item, reason="chat_stream_stopped")
                         message_persisted = True
 
@@ -23747,38 +24710,39 @@ def register_route_backend_chats(bp):
                                         )
                                     else:
                                         agent_stream = selected_agent.invoke_stream(messages=agent_message_history)
-                                    while True:
-                                        if stream_cancel_requested():
-                                            yield finalize_cancelled_agent_stream_response()
-                                            return
-                                        try:
-                                            response = loop.run_until_complete(agent_stream.__anext__())
-                                        except StopAsyncIteration:
-                                            break
+                                    with SyncAsyncStream(agent_stream, loop) as stream_reader:
+                                        while True:
+                                            if stream_cancel_requested():
+                                                yield finalize_cancelled_agent_stream_response()
+                                                return
+                                            try:
+                                                response = next(stream_reader)
+                                            except StopIteration:
+                                                break
 
-                                        response_metadata = getattr(response, 'metadata', None)
-                                        if isinstance(response_metadata, dict):
-                                            usage = response_metadata.get('usage')
-                                            if usage:
-                                                stream_usage = usage
-                                            response_model = response_metadata.get('model')
-                                            if isinstance(response_model, str) and response_model.strip():
-                                                actual_model_used = response_model.strip()
+                                            response_metadata = getattr(response, 'metadata', None)
+                                            if isinstance(response_metadata, dict):
+                                                usage = response_metadata.get('usage')
+                                                if usage:
+                                                    stream_usage = usage
+                                                response_model = response_metadata.get('model')
+                                                if isinstance(response_model, str) and response_model.strip():
+                                                    actual_model_used = response_model.strip()
 
-                                        chunk_content = None
-                                        if hasattr(response, 'content') and response.content:
-                                            chunk_content = str(response.content)
-                                        elif isinstance(response, str) and response:
-                                            chunk_content = response
+                                            chunk_content = None
+                                            if hasattr(response, 'content') and response.content:
+                                                chunk_content = str(response.content)
+                                            elif isinstance(response, str) and response:
+                                                chunk_content = response
 
-                                        if chunk_content:
-                                            accumulated_content += chunk_content
-                                            if not suppress_streamed_file_payload:
-                                                yield f"data: {json.dumps({'content': chunk_content})}\n\n"
+                                            if chunk_content:
+                                                accumulated_content += chunk_content
+                                                if not suppress_streamed_file_payload:
+                                                    yield f"data: {json.dumps({'content': chunk_content})}\n\n"
 
-                                        if stream_cancel_requested():
-                                            yield finalize_cancelled_agent_stream_response()
-                                            return
+                                            if stream_cancel_requested():
+                                                yield finalize_cancelled_agent_stream_response()
+                                                return
 
                                     if agent_retry_plan:
                                         debug_print(
@@ -23806,6 +24770,9 @@ def register_route_backend_chats(bp):
                                             )
                                             continue
                                     raise
+                        except (M365ApprovalRequired, M365SignInRequired):
+                            plugin_logger_cb.deregister_callbacks(callback_key)
+                            raise
                         except Exception as stream_error:
                             plugin_logger_cb.deregister_callbacks(callback_key)
                             debug_print(
@@ -23816,9 +24783,22 @@ def register_route_backend_chats(bp):
                                 f"retried={agent_retry_plan is not None} | error={stream_error}"
                             )
                             debug_print(f"❌ Agent streaming error: {stream_error}")
-                            traceback.print_exc()
+                            log_event(
+                                "[STREAMING] Agent streaming failed.",
+                                extra={
+                                    "user_id": user_id,
+                                    "conversation_id": conversation_id,
+                                    "agent_name": agent_name_used,
+                                    "exception_type": type(stream_error).__name__,
+                                    "retried": agent_retry_plan is not None,
+                                },
+                                level=logging.ERROR,
+                                exceptionTraceback=True,
+                            )
                             error_payload = {'error': 'Agent streaming failed. Please try again.'}
-                            if isinstance(stream_error, FoundryAgentUserAuthenticationRequired):
+                            if isinstance(stream_error, ModelTokenBudgetError):
+                                error_payload = stream_error.payload
+                            elif isinstance(stream_error, FoundryAgentUserAuthenticationRequired):
                                 auth_response = getattr(stream_error, 'auth_response', {}) or {}
                                 error_payload = {
                                     'error': str(stream_error),
@@ -24207,26 +25187,44 @@ def register_route_backend_chats(bp):
                         'artifact_publication',
                         request_correlation_id=mixed_source_request_correlation_id,
                     )
-                    generated_file_output = maybe_create_generated_file_output(
-                        user_question=user_message,
-                        assistant_content=accumulated_content,
-                        conversation_id=conversation_id,
-                        function_results=agent_citations_list,
-                        existing_outputs=generated_analysis_artifacts_list + generated_tabular_outputs_list,
-                        cancel_requested=stream_cancel_requested,
-                        request_correlation_id=mixed_source_request_correlation_id,
-                    )
+                    generated_file_output = None
+                    if not xsd_generation_contract:
+                        generated_file_output = maybe_create_generated_file_output(
+                            user_question=user_message,
+                            assistant_content=accumulated_content,
+                            conversation_id=conversation_id,
+                            function_results=agent_citations_list,
+                            existing_outputs=generated_analysis_artifacts_list + generated_tabular_outputs_list,
+                            cancel_requested=stream_cancel_requested,
+                            request_correlation_id=mixed_source_request_correlation_id,
+                        )
                     if generated_file_output:
                         generated_analysis_artifacts_list.append(generated_file_output)
                         if generated_file_output.get('output_format') == 'csv':
                             generated_tabular_outputs_list.append(generated_file_output)
-                    assistant_file_generated_output = maybe_create_assistant_file_generated_output(
-                        user_question=user_message,
-                        assistant_content=accumulated_content,
-                        conversation_id=conversation_id,
-                        existing_outputs=generated_analysis_artifacts_list + generated_tabular_outputs_list,
-                        function_results=agent_citations_list,
-                    )
+                    try:
+                        assistant_file_generated_output = maybe_create_assistant_file_generated_output(
+                            user_question=user_message,
+                            assistant_content=accumulated_content,
+                            conversation_id=conversation_id,
+                            existing_outputs=generated_analysis_artifacts_list + generated_tabular_outputs_list,
+                            function_results=agent_citations_list,
+                            xsd_generation_contract=xsd_generation_contract,
+                            user_id=user_id,
+                        )
+                    except XsdGeneratedOutputValidationError:
+                        log_event(
+                            '[XSD_GENERATION] Streamed XML failed final schema validation.',
+                            extra={'conversation_id': conversation_id},
+                            level=logging.WARNING,
+                        )
+                        assistant_file_generated_output = None
+                        accumulated_content = (
+                            'I could not create a downloadable XML file because the generated document '
+                            'could not be validated and published against the selected XSD. '
+                            'No XML artifact was published.'
+                        )
+                        yield f"data: {json.dumps({'content': accumulated_content})}\n\n"
                     if assistant_file_generated_output:
                         generated_analysis_artifacts_list.append(assistant_file_generated_output)
                         accumulated_content = _build_assistant_file_output_handoff(assistant_file_generated_output)
@@ -24320,7 +25318,7 @@ def register_route_backend_chats(bp):
                             'token_usage': token_usage_data if token_usage_data else None  # Store token usage from stream
                         }
                     })
-                    cosmos_messages_container.upsert_item(assistant_doc)
+                    cosmos_messages_container.upsert_item(attach_m365_message_provenance(assistant_doc))
                     raise_if_mixed_source_cancelled(
                         stream_cancel_requested,
                         'finalization',
@@ -24436,7 +25434,7 @@ def register_route_backend_chats(bp):
                             f"Skipping personal chat completion notification for conversation {conversation_id} because chat_type={conversation_item.get('chat_type')}"
                         )
 
-                    cosmos_conversations_container.upsert_item(conversation_item)
+                    cosmos_conversations_container.replace_item(item=conversation_item['id'], body=conversation_item)
                     invalidate_conversation_cache_for_item(conversation_item, reason="chat_stream_completed")
 
                     # Send final message with metadata
@@ -24535,12 +25533,24 @@ def register_route_backend_chats(bp):
                         get_rate_limit_message() if stream_rate_limited
                         else CLIENT_SAFE_STREAM_ERROR_MESSAGE
                     )
+                    safe_partial_content = (
+                        ''
+                        if suppress_streamed_file_payload
+                        else accumulated_content
+                    )
+                    if suppress_streamed_file_payload:
+                        _rollback_mixed_source_chat_publication(
+                            user_id,
+                            conversation_id,
+                            generated_analysis_artifacts_list + generated_tabular_outputs_list,
+                            compact_citations=locals().get('prepared_agent_citations') or [],
+                        )
 
                     # Save partial response if we have content
                     interrupted_message_persisted = False
                     interrupted_citation_tracking = {}
                     interrupted_agent_citations = []
-                    if accumulated_content:
+                    if safe_partial_content:
                         current_assistant_thread_id = str(uuid.uuid4())
                         assistant_timestamp = datetime.utcnow().isoformat()
                         apply_agent_document_citations(
@@ -24551,7 +25561,7 @@ def register_route_backend_chats(bp):
                             plugin_invocations=_get_current_message_plugin_invocations(user_id, conversation_id),
                         )
                         interrupted_citation_tracking = build_cited_source_subsets(
-                            accumulated_content,
+                            safe_partial_content,
                             hybrid_citations=hybrid_citations_list,
                             web_search_citations=web_search_citations_list,
                         )
@@ -24571,7 +25581,7 @@ def register_route_backend_chats(bp):
                             'id': assistant_message_id,
                             'conversation_id': conversation_id,
                             'role': 'assistant',
-                            'content': accumulated_content,
+                            'content': safe_partial_content,
                             'timestamp': assistant_timestamp,
                             'augmented': bool(system_messages_for_augmentation),
                             'hybrid_citations': hybrid_citations_list,
@@ -24601,7 +25611,7 @@ def register_route_backend_chats(bp):
                             }
                         })
                         try:
-                            cosmos_messages_container.upsert_item(assistant_doc)
+                            cosmos_messages_container.upsert_item(attach_m365_message_provenance(assistant_doc))
                             interrupted_message_persisted = True
                             conversation_item['last_updated'] = assistant_timestamp
                             initialize_conversation_used_document_tracking(
@@ -24628,8 +25638,8 @@ def register_route_backend_chats(bp):
                                     'cited_hybrid_citations'
                                 ],
                             )
-                            cosmos_conversations_container.upsert_item(
-                                conversation_item
+                            cosmos_conversations_container.replace_item(
+                                item=conversation_item['id'], body=conversation_item,
                             )
                             invalidate_conversation_cache_for_item(
                                 conversation_item,
@@ -24653,7 +25663,7 @@ def register_route_backend_chats(bp):
                         stream_failure_message,
                         rate_limited=stream_rate_limited or None,
                         status_code=429 if stream_rate_limited else None,
-                        partial_content=accumulated_content,
+                        partial_content=safe_partial_content,
                         conversation_id=conversation_id,
                         user_message_id=user_message_id,
                         message_id=(
@@ -24668,6 +25678,15 @@ def register_route_backend_chats(bp):
                         **interrupted_citation_tracking,
                     )
 
+            except M365ApprovalRequired as error:
+                yield f"data: {json.dumps(record_m365_pending(error, user_message_id=locals().get('user_message_id')))}\n\n"
+            except M365SignInRequired as error:
+                yield f"data: {json.dumps(record_m365_auth_wait(error, user_message_id=locals().get('user_message_id')))}\n\n"
+            except ModelTokenBudgetError as error:
+                log_event("[STREAMING] Model budget configuration is invalid.", extra={"code": error.code}, level=logging.ERROR)
+                yield f"data: {json.dumps({**error.payload, 'done': True})}\n\n"
+            except M365PolicyError as error:
+                yield f"data: {json.dumps({**error.payload, 'done': True})}\n\n"
             except Exception as e:
                 error_traceback = traceback.format_exc()
                 debug_print(f"[STREAM_API_ERROR] Unhandled exception: {str(e)}")
@@ -24815,7 +25834,18 @@ def register_route_backend_chats(bp):
             detach_recorded = False
             try:
                 for event in stream_session.iter_events():
-                    yield event
+                    try:
+                        event = _refresh_m365_pending_action_event(event, user_id, conversation_id)
+                    except Exception as error:
+                        failure = _m365_pending_action_cards_error(error)
+                        yield build_stream_error_event(
+                            failure["message"],
+                            conversation_id=conversation_id,
+                            m365_pending_actions_error=failure,
+                        )
+                        return
+                    if event is not None:
+                        yield event
                 stream_consumed = True
             except GeneratorExit:
                 detach_status = stream_session.mark_consumer_detached(reason='reattach_disconnect') or {}
@@ -25484,6 +26514,236 @@ def register_route_backend_chats(bp):
         except Exception as e:
             log_event(
                 f'[BLOCK_REVISION] Unhandled assist exception: {e}',
+                extra={'message_id': message_id, 'user_id': user_id},
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return build_json_error_response()
+
+    def _load_image_revision_message(user_id, conversation_id, message_id):
+        """Return the image message a revision request targets, or an error response for it.
+
+        Authorizes the conversation rather than the message, matching the diagram routes above.
+        The reassembled content comes back alongside the document because a legacy image is
+        stored as a chain of chunks, and the edit needs the whole thing.
+        """
+        if not conversation_id:
+            return None, (jsonify({'error': 'conversation_id is required'}), 400)
+
+        try:
+            conversation_item = _authorize_personal_conversation_access(user_id, conversation_id)
+        except PermissionError:
+            return None, (jsonify({'error': 'You can only edit your own conversations'}), 403)
+        except LookupError:
+            return None, (jsonify({'error': 'Conversation not found'}), 404)
+
+        try:
+            message_doc, complete_content = get_complete_image_content(
+                cosmos_messages_container,
+                conversation_id,
+                message_id,
+            )
+        except CosmosResourceNotFoundError:
+            return None, (jsonify({'error': 'Image not found'}), 404)
+
+        if str(message_doc.get('conversation_id') or '') != conversation_id:
+            return None, (jsonify({'error': 'Image not found'}), 404)
+        if str(message_doc.get('role') or '').strip().lower() != 'image':
+            return None, (jsonify({'error': 'That message is not an image'}), 400)
+
+        return {
+            'conversation': conversation_item,
+            'message': message_doc,
+            'content': complete_content,
+        }, None
+
+    def _image_revision_owner_id(conversation_item, fallback_user_id):
+        """Return the user whose storage an image revision belongs beside.
+
+        A revision is written next to the image it revises, so it uses the conversation owner's
+        path rather than the caller's. In a personal conversation those are the same person;
+        stating it explicitly is what keeps the shared case, where they are not, correct.
+        """
+        owner = str((conversation_item or {}).get('user_id') or '').strip()
+        return owner or str(fallback_user_id or '').strip()
+
+    @bp.route('/api/message/<message_id>/image-revision', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def add_message_image_revision_api(message_id):
+        """Produce a new version of a generated image and make it the current one.
+
+        There is no counterpart to the diagram editor's "save an edited source" route, because
+        an image is pixels rather than text and a browser cannot author one. Every version comes
+        from the model, so creating one and asking for one are the same operation.
+
+        The message's own content is never rewritten. The new image is stored in blob storage
+        and the revision recorded in metadata, which is what lets the original stay recoverable
+        and keeps a restore meaningful.
+        """
+        user_id = None
+        try:
+            data = request.get_json(silent=True) or {}
+            user_id = get_current_user_id()
+            if not user_id:
+                return jsonify({'error': 'User not authenticated'}), 401
+
+            settings = get_settings()
+            if not settings.get('enable_image_generation'):
+                return jsonify({'error': 'Image generation is not enabled'}), 403
+
+            conversation_id = str(data.get('conversation_id') or '').strip()
+            loaded, error = _load_image_revision_message(user_id, conversation_id, message_id)
+            if error:
+                return error
+
+            message_doc = loaded['message']
+            current_user = get_current_user_info() or {}
+
+            try:
+                expected_revision_count = _read_expected_revision_count(data)
+            except BlockRevisionError as ex:
+                return jsonify({'error': str(ex)}), 400
+
+            try:
+                result = revise_image_message(
+                    settings,
+                    message_doc,
+                    owner_user_id=_image_revision_owner_id(loaded['conversation'], user_id),
+                    conversation_id=conversation_id,
+                    complete_content=loaded['content'],
+                    origin=data.get('origin') or IMAGE_ORIGIN_AI,
+                    instruction=data.get('instruction') or '',
+                    prompt=data.get('prompt') or '',
+                    mask_data_url=data.get('mask') or '',
+                    mask_regions=data.get('mask_regions') or 0,
+                    size=data.get('size') or '',
+                    quality=data.get('quality') or '',
+                    background=data.get('background') or '',
+                    author_id=user_id,
+                    author_name=resolve_mask_display_name(current_user),
+                    expected_revision_count=expected_revision_count,
+                    expected_current_revision_id=data.get('expected_current_revision_id') or '',
+                    # Re-read after the model call, which takes seconds. Writing to the copy
+                    # loaded before it would overwrite anything that landed in the meantime.
+                    reload_message=lambda: cosmos_messages_container.read_item(
+                        item=message_id,
+                        partition_key=conversation_id,
+                    ),
+                )
+            except ImageRevisionConflictError as ex:
+                return jsonify({
+                    'error': str(ex),
+                    'image_revisions': serialize_image_revisions(read_image_revisions(message_doc)),
+                }), 409
+            except ImageRevisionError as ex:
+                return jsonify({'error': str(ex)}), 400
+            except ImageEditError as ex:
+                log_event(
+                    f'[IMAGE_REVISION] Edit failed: {ex}',
+                    extra={'message_id': message_id, 'user_id': user_id},
+                    level=logging.WARNING,
+                )
+                return jsonify({'error': str(ex)}), 502
+
+            # From here on the freshly re-read document is the one being written, so the
+            # transcript and the upsert must both use it rather than the stale copy.
+            message_doc = result['message']
+
+            # The transcript keeps the image's own sub-conversation, so a follow-up like "now
+            # make it warmer" has something to refer to. None of it is ever sent as conversation
+            # history -- image messages are excluded from that entirely.
+            if result['instruction']:
+                try:
+                    append_image_chat_turn(message_doc, 'user', result['instruction'])
+                    append_image_chat_turn(message_doc, 'assistant', result['prompt'])
+                except ImageRevisionError:
+                    pass
+
+            try:
+                cosmos_messages_container.upsert_item(message_doc)
+            except Exception as e:
+                log_event(
+                    f'[IMAGE_REVISION] Failed to update message: {e}',
+                    extra={'message_id': message_id, 'user_id': user_id},
+                    level=logging.ERROR,
+                    exceptionTraceback=True,
+                )
+                return build_json_error_response('Failed to update image')
+
+            return jsonify({
+                'success': True,
+                'message_id': message_id,
+                'method': result['method'],
+                'model_deployment_name': result['model'],
+                'image_url': resolve_image_message_content(
+                    message_doc, f'/api/image/{message_id}'
+                ),
+                'image_revisions': serialize_image_revisions(read_image_revisions(message_doc)),
+            }), 200
+
+        except Exception as e:
+            log_event(
+                f'[IMAGE_REVISION] Unhandled exception: {e}',
+                extra={'message_id': message_id, 'user_id': user_id},
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return build_json_error_response()
+
+    @bp.route('/api/message/<message_id>/image-revision/current', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def set_message_image_revision_api(message_id):
+        """Show one of an image's stored versions.
+
+        Nothing is discarded. Restoring an older version moves a pointer, so editing afterwards
+        appends rather than truncating and the history stays a record of everything that
+        happened.
+        """
+        user_id = None
+        try:
+            data = request.get_json(silent=True) or {}
+            user_id = get_current_user_id()
+            if not user_id:
+                return jsonify({'error': 'User not authenticated'}), 401
+
+            conversation_id = str(data.get('conversation_id') or '').strip()
+            loaded, error = _load_image_revision_message(user_id, conversation_id, message_id)
+            if error:
+                return error
+
+            message_doc = loaded['message']
+            try:
+                set_current_image_revision(message_doc, data.get('revision_id'))
+            except ImageRevisionError as ex:
+                return jsonify({'error': str(ex)}), 400
+
+            try:
+                cosmos_messages_container.upsert_item(message_doc)
+            except Exception as e:
+                log_event(
+                    f'[IMAGE_REVISION] Failed to restore version: {e}',
+                    extra={'message_id': message_id, 'user_id': user_id},
+                    level=logging.ERROR,
+                    exceptionTraceback=True,
+                )
+                return build_json_error_response('Failed to update image')
+
+            return jsonify({
+                'success': True,
+                'message_id': message_id,
+                'image_url': resolve_image_message_content(
+                    message_doc, f'/api/image/{message_id}'
+                ),
+                'image_revisions': serialize_image_revisions(read_image_revisions(message_doc)),
+            }), 200
+
+        except Exception as e:
+            log_event(
+                f'[IMAGE_REVISION] Unhandled restore exception: {e}',
                 extra={'message_id': message_id, 'user_id': user_id},
                 level=logging.ERROR,
                 exceptionTraceback=True,

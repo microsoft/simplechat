@@ -6,7 +6,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.44.1.10279",
-      "templateHash": "3641086177265272264"
+      "templateHash": "2429500356568007401"
     }
   },
   "parameters": {
@@ -393,7 +393,48 @@
     "deployRedisCache": {
       "type": "bool",
       "metadata": {
-        "description": "Enable deployment of Azure Cache for Redis and related resources.\n- Default is false"
+        "description": "Enable deployment of a Redis cache and related resources.\n- Default is false"
+      }
+    },
+    "redisCacheKind": {
+      "type": "string",
+      "defaultValue": "managed",
+      "allowedValues": [
+        "managed",
+        "classic"
+      ],
+      "metadata": {
+        "description": "Which Azure Redis offering to provision.\n- managed deploys Azure Managed Redis, the replacement for the retiring Azure Cache for Redis tiers.\n- classic deploys Azure Cache for Redis, required in clouds where Azure Managed Redis is unavailable such as Azure Government and Azure operated by 21Vianet."
+      }
+    },
+    "redisManagedSkuName": {
+      "type": "string",
+      "defaultValue": "Balanced_B0",
+      "metadata": {
+        "description": "Azure Managed Redis SKU. Balanced_B0 (0.5 GB) is the documented replacement for Azure Cache for Redis Standard C0.\n- Only applies when redisCacheKind is managed."
+      }
+    },
+    "redisHighAvailability": {
+      "type": "string",
+      "defaultValue": "Enabled",
+      "allowedValues": [
+        "Enabled",
+        "Disabled"
+      ],
+      "metadata": {
+        "description": "High availability for Azure Managed Redis.\n- Enabled matches the replication of Azure Cache for Redis Standard and is required for the availability SLA.\n- Disabled halves the cost for dev/test and cannot be turned back off later."
+      }
+    },
+    "redisClusteringPolicy": {
+      "type": "string",
+      "defaultValue": "NoCluster",
+      "allowedValues": [
+        "NoCluster",
+        "EnterpriseCluster",
+        "OSSCluster"
+      ],
+      "metadata": {
+        "description": "Clustering policy for the Azure Managed Redis database.\n- NoCluster presents a single non-sharded endpoint, which SimpleChat's Redis client requires.\n- Do not use OSSCluster: it requires a cluster-aware client that SimpleChat does not use."
       }
     },
     "deploySpeechService": {
@@ -5249,6 +5290,18 @@
           "redisAuthenticationType": {
             "value": "[parameters('redisAuthenticationType')]"
           },
+          "redisCacheKind": {
+            "value": "[parameters('redisCacheKind')]"
+          },
+          "redisManagedSkuName": {
+            "value": "[parameters('redisManagedSkuName')]"
+          },
+          "redisHighAvailability": {
+            "value": "[parameters('redisHighAvailability')]"
+          },
+          "redisClusteringPolicy": {
+            "value": "[parameters('redisClusteringPolicy')]"
+          },
           "tags": {
             "value": "[variables('tags')]"
           },
@@ -5266,7 +5319,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.44.1.10279",
-              "templateHash": "10431786335109031812"
+              "templateHash": "8590656076085374678"
             }
           },
           "parameters": {
@@ -5287,7 +5340,48 @@
                 "managed_identity"
               ],
               "metadata": {
-                "description": "Authentication type for Azure Cache for Redis."
+                "description": "Authentication type for the Redis cache.\n- managed_identity uses Microsoft Entra authentication and disables access keys on Azure Managed Redis.\n- key provisions the cache with access key authentication enabled."
+              }
+            },
+            "redisCacheKind": {
+              "type": "string",
+              "defaultValue": "managed",
+              "allowedValues": [
+                "managed",
+                "classic"
+              ],
+              "metadata": {
+                "description": "Which Azure Redis offering to provision.\n- managed deploys Azure Managed Redis (Microsoft.Cache/redisEnterprise), the replacement for the retiring Azure Cache for Redis tiers.\n- classic deploys Azure Cache for Redis (Microsoft.Cache/Redis) for clouds where Azure Managed Redis is unavailable, such as Azure Government and Azure operated by 21Vianet."
+              }
+            },
+            "redisManagedSkuName": {
+              "type": "string",
+              "defaultValue": "Balanced_B0",
+              "metadata": {
+                "description": "Azure Managed Redis SKU. Balanced_B0 (0.5 GB) is the documented replacement for Azure Cache for Redis Standard C0.\nOnly applies when redisCacheKind is managed."
+              }
+            },
+            "redisHighAvailability": {
+              "type": "string",
+              "defaultValue": "Enabled",
+              "allowedValues": [
+                "Enabled",
+                "Disabled"
+              ],
+              "metadata": {
+                "description": "High availability for Azure Managed Redis.\nEnabled matches the replication of Azure Cache for Redis Standard and is required for the availability SLA.\nDisabled halves the cost for dev/test and cannot be turned back off once the instance exists."
+              }
+            },
+            "redisClusteringPolicy": {
+              "type": "string",
+              "defaultValue": "NoCluster",
+              "allowedValues": [
+                "NoCluster",
+                "EnterpriseCluster",
+                "OSSCluster"
+              ],
+              "metadata": {
+                "description": "Clustering policy for the Azure Managed Redis database.\n- NoCluster presents a single non-sharded endpoint, which is what SimpleChat's non-cluster-aware Redis client requires. Valid up to 25 GB and the only policy that can be changed later without recreating the database.\n- EnterpriseCluster proxies a sharded cluster behind one endpoint; multi-key commands can return CROSSSLOT errors.\n- OSSCluster requires a cluster-aware client and is not supported by SimpleChat."
               }
             },
             "tags": {
@@ -5301,13 +5395,50 @@
             }
           },
           "variables": {
+            "deployManagedRedis": "[equals(parameters('redisCacheKind'), 'managed')]",
+            "deployClassicRedis": "[not(variables('deployManagedRedis'))]",
+            "redisName": "[toLower(format('{0}-{1}-redis', parameters('appName'), parameters('environment')))]",
             "redisConfiguration": "[if(equals(parameters('redisAuthenticationType'), 'managed_identity'), createObject('aad-enabled', 'true'), createObject())]"
           },
           "resources": [
             {
+              "condition": "[variables('deployManagedRedis')]",
+              "type": "Microsoft.Cache/redisEnterprise",
+              "apiVersion": "2025-07-01",
+              "name": "[variables('redisName')]",
+              "location": "[parameters('location')]",
+              "sku": {
+                "name": "[parameters('redisManagedSkuName')]"
+              },
+              "properties": {
+                "highAvailability": "[parameters('redisHighAvailability')]",
+                "minimumTlsVersion": "1.2",
+                "publicNetworkAccess": "Enabled"
+              },
+              "tags": "[parameters('tags')]"
+            },
+            {
+              "condition": "[variables('deployManagedRedis')]",
+              "type": "Microsoft.Cache/redisEnterprise/databases",
+              "apiVersion": "2025-07-01",
+              "name": "[format('{0}/{1}', variables('redisName'), 'default')]",
+              "properties": {
+                "clientProtocol": "Encrypted",
+                "port": 10000,
+                "clusteringPolicy": "[parameters('redisClusteringPolicy')]",
+                "evictionPolicy": "VolatileLRU",
+                "accessKeysAuthentication": "[if(equals(parameters('redisAuthenticationType'), 'key'), 'Enabled', 'Disabled')]",
+                "modules": []
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Cache/redisEnterprise', variables('redisName'))]"
+              ]
+            },
+            {
+              "condition": "[variables('deployClassicRedis')]",
               "type": "Microsoft.Cache/redis",
               "apiVersion": "2024-11-01",
-              "name": "[toLower(format('{0}-{1}-redis', parameters('appName'), parameters('environment')))]",
+              "name": "[variables('redisName')]",
               "location": "[parameters('location')]",
               "properties": {
                 "sku": {
@@ -5322,19 +5453,49 @@
               "tags": "[parameters('tags')]"
             },
             {
-              "condition": "[parameters('enableDiagLogging')]",
+              "condition": "[and(parameters('enableDiagLogging'), variables('deployClassicRedis'))]",
               "type": "Microsoft.Insights/diagnosticSettings",
               "apiVersion": "2021-05-01-preview",
-              "scope": "[resourceId('Microsoft.Cache/redis', toLower(format('{0}-{1}-redis', parameters('appName'), parameters('environment'))))]",
-              "name": "[toLower(format('{0}-diagnostics', toLower(format('{0}-{1}-redis', parameters('appName'), parameters('environment')))))]",
+              "scope": "[resourceId('Microsoft.Cache/redis', variables('redisName'))]",
+              "name": "[toLower(format('{0}-diagnostics', variables('redisName')))]",
               "properties": {
                 "workspaceId": "[parameters('logAnalyticsId')]",
                 "logs": "[reference(resourceId('Microsoft.Resources/deployments', 'diagnosticConfigs'), '2025-04-01').outputs.standardLogCategories.value]",
                 "metrics": "[reference(resourceId('Microsoft.Resources/deployments', 'diagnosticConfigs'), '2025-04-01').outputs.standardMetricsCategories.value]"
               },
               "dependsOn": [
+                "[resourceId('Microsoft.Cache/redis', variables('redisName'))]",
+                "[resourceId('Microsoft.Resources/deployments', 'diagnosticConfigs')]"
+              ]
+            },
+            {
+              "condition": "[and(parameters('enableDiagLogging'), variables('deployManagedRedis'))]",
+              "type": "Microsoft.Insights/diagnosticSettings",
+              "apiVersion": "2021-05-01-preview",
+              "scope": "[resourceId('Microsoft.Cache/redisEnterprise', variables('redisName'))]",
+              "name": "[toLower(format('{0}-diagnostics', variables('redisName')))]",
+              "properties": {
+                "workspaceId": "[parameters('logAnalyticsId')]",
+                "metrics": "[reference(resourceId('Microsoft.Resources/deployments', 'diagnosticConfigs'), '2025-04-01').outputs.standardMetricsCategories.value]"
+              },
+              "dependsOn": [
                 "[resourceId('Microsoft.Resources/deployments', 'diagnosticConfigs')]",
-                "[resourceId('Microsoft.Cache/redis', toLower(format('{0}-{1}-redis', parameters('appName'), parameters('environment'))))]"
+                "[resourceId('Microsoft.Cache/redisEnterprise', variables('redisName'))]"
+              ]
+            },
+            {
+              "condition": "[and(parameters('enableDiagLogging'), variables('deployManagedRedis'))]",
+              "type": "Microsoft.Insights/diagnosticSettings",
+              "apiVersion": "2021-05-01-preview",
+              "scope": "[resourceId('Microsoft.Cache/redisEnterprise/databases', variables('redisName'), 'default')]",
+              "name": "[toLower(format('{0}-database-diagnostics', variables('redisName')))]",
+              "properties": {
+                "workspaceId": "[parameters('logAnalyticsId')]",
+                "logs": "[reference(resourceId('Microsoft.Resources/deployments', 'diagnosticConfigs'), '2025-04-01').outputs.standardLogCategories.value]"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Resources/deployments', 'diagnosticConfigs')]",
+                "[resourceId('Microsoft.Cache/redisEnterprise/databases', variables('redisName'), 'default')]"
               ]
             },
             {
@@ -5467,11 +5628,19 @@
           "outputs": {
             "redisCacheName": {
               "type": "string",
-              "value": "[toLower(format('{0}-{1}-redis', parameters('appName'), parameters('environment')))]"
+              "value": "[if(variables('deployManagedRedis'), variables('redisName'), variables('redisName'))]"
             },
             "redisCacheHostName": {
               "type": "string",
-              "value": "[reference(resourceId('Microsoft.Cache/redis', toLower(format('{0}-{1}-redis', parameters('appName'), parameters('environment')))), '2024-11-01').hostName]"
+              "value": "[if(variables('deployManagedRedis'), reference(resourceId('Microsoft.Cache/redisEnterprise', variables('redisName')), '2025-07-01').hostName, reference(resourceId('Microsoft.Cache/redis', variables('redisName')), '2024-11-01').hostName)]"
+            },
+            "redisCachePort": {
+              "type": "int",
+              "value": "[if(variables('deployManagedRedis'), 10000, 6380)]"
+            },
+            "redisCacheKind": {
+              "type": "string",
+              "value": "[parameters('redisCacheKind')]"
             }
           }
         }
@@ -6081,6 +6250,9 @@
           },
           "speechServiceName": "[if(parameters('deploySpeechService'), createObject('value', reference('speechService').outputs.speechServiceName.value), createObject('value', ''))]",
           "redisCacheName": "[if(parameters('deployRedisCache'), createObject('value', reference('redisCache').outputs.redisCacheName.value), createObject('value', ''))]",
+          "redisCacheKind": {
+            "value": "[parameters('redisCacheKind')]"
+          },
           "contentSafetyName": "[if(parameters('deployContentSafety'), createObject('value', reference('contentSafety').outputs.contentSafetyName.value), createObject('value', ''))]",
           "videoIndexerName": "[if(parameters('deployVideoIndexerService'), createObject('value', reference('videoIndexerService').outputs.videoIndexerServiceName.value), createObject('value', ''))]",
           "videoIndexerSupportsOpenAiIntegration": {
@@ -6094,7 +6266,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.44.1.10279",
-              "templateHash": "15188708588751108682"
+              "templateHash": "676585028990645242"
             }
           },
           "parameters": {
@@ -6148,6 +6320,17 @@
             "redisCacheName": {
               "type": "string"
             },
+            "redisCacheKind": {
+              "type": "string",
+              "defaultValue": "managed",
+              "allowedValues": [
+                "managed",
+                "classic"
+              ],
+              "metadata": {
+                "description": "Which Azure Redis offering was provisioned.\nmanaged grants data access through an Azure Managed Redis access policy assignment; classic uses the Azure Cache for Redis access policy assignment."
+              }
+            },
             "contentSafetyName": {
               "type": "string"
             },
@@ -6160,7 +6343,9 @@
             }
           },
           "variables": {
-            "useExternalOpenAIResource": "[and(and(not(equals(parameters('openAIName'), '')), not(empty(parameters('openAIResourceGroupName')))), not(empty(parameters('openAISubscriptionId'))))]"
+            "useExternalOpenAIResource": "[and(and(not(equals(parameters('openAIName'), '')), not(empty(parameters('openAIResourceGroupName')))), not(empty(parameters('openAISubscriptionId'))))]",
+            "deployManagedRedisAccess": "[and(and(not(equals(parameters('redisCacheName'), '')), equals(parameters('redisCacheKind'), 'managed')), equals(parameters('redisAuthenticationType'), 'managed_identity'))]",
+            "deployClassicRedisAccess": "[and(and(not(equals(parameters('redisCacheName'), '')), equals(parameters('redisCacheKind'), 'classic')), equals(parameters('redisAuthenticationType'), 'managed_identity'))]"
           },
           "resources": [
             {
@@ -6403,7 +6588,7 @@
               }
             },
             {
-              "condition": "[and(not(equals(parameters('redisCacheName'), '')), equals(parameters('redisAuthenticationType'), 'managed_identity'))]",
+              "condition": "[variables('deployClassicRedisAccess')]",
               "type": "Microsoft.Authorization/roleAssignments",
               "apiVersion": "2022-04-01",
               "scope": "[resourceId('Microsoft.Cache/redis', parameters('redisCacheName'))]",
@@ -6415,7 +6600,7 @@
               }
             },
             {
-              "condition": "[and(not(equals(parameters('redisCacheName'), '')), equals(parameters('redisAuthenticationType'), 'managed_identity'))]",
+              "condition": "[variables('deployClassicRedisAccess')]",
               "type": "Microsoft.Cache/redis/accessPolicyAssignments",
               "apiVersion": "2024-11-01",
               "name": "[format('{0}/{1}', parameters('redisCacheName'), 'webapp-mi-data-contributor')]",
@@ -6423,6 +6608,18 @@
                 "accessPolicyName": "Data Contributor",
                 "objectId": "[reference(resourceId('Microsoft.Web/sites', parameters('webAppName')), '2022-03-01', 'full').identity.principalId]",
                 "objectIdAlias": "[reference(resourceId('Microsoft.Web/sites', parameters('webAppName')), '2022-03-01', 'full').identity.principalId]"
+              }
+            },
+            {
+              "condition": "[variables('deployManagedRedisAccess')]",
+              "type": "Microsoft.Cache/redisEnterprise/databases/accessPolicyAssignments",
+              "apiVersion": "2025-07-01",
+              "name": "[format('{0}/{1}/{2}', split(format('{0}/default', parameters('redisCacheName')), '/')[0], split(format('{0}/default', parameters('redisCacheName')), '/')[1], 'webappmidefault')]",
+              "properties": {
+                "accessPolicyName": "default",
+                "user": {
+                  "objectId": "[reference(resourceId('Microsoft.Web/sites', parameters('webAppName')), '2022-03-01', 'full').identity.principalId]"
+                }
               }
             },
             {
@@ -6625,6 +6822,9 @@
           },
           "speechServiceName": "[if(parameters('deploySpeechService'), createObject('value', reference('speechService').outputs.speechServiceName.value), createObject('value', ''))]",
           "redisCacheName": "[if(parameters('deployRedisCache'), createObject('value', reference('redisCache').outputs.redisCacheName.value), createObject('value', ''))]",
+          "redisCacheKind": {
+            "value": "[parameters('redisCacheKind')]"
+          },
           "contentSafetyName": "[if(parameters('deployContentSafety'), createObject('value', reference('contentSafety').outputs.contentSafetyName.value), createObject('value', ''))]"
         },
         "template": {
@@ -6634,7 +6834,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.44.1.10279",
-              "templateHash": "12131344456998557101"
+              "templateHash": "10187555162638119704"
             }
           },
           "parameters": {
@@ -6682,12 +6882,25 @@
             "redisCacheName": {
               "type": "string"
             },
+            "redisCacheKind": {
+              "type": "string",
+              "defaultValue": "managed",
+              "allowedValues": [
+                "managed",
+                "classic"
+              ],
+              "metadata": {
+                "description": "Which Azure Redis offering was provisioned.\nmanaged grants data access through an Azure Managed Redis access policy assignment; classic uses the Azure Cache for Redis access policy assignment."
+              }
+            },
             "contentSafetyName": {
               "type": "string"
             }
           },
           "variables": {
-            "useExternalOpenAIResource": "[and(and(not(equals(parameters('openAIName'), '')), not(empty(parameters('openAIResourceGroupName')))), not(empty(parameters('openAISubscriptionId'))))]"
+            "useExternalOpenAIResource": "[and(and(not(equals(parameters('openAIName'), '')), not(empty(parameters('openAIResourceGroupName')))), not(empty(parameters('openAISubscriptionId'))))]",
+            "deployManagedRedisAccess": "[and(and(not(equals(parameters('redisCacheName'), '')), equals(parameters('redisCacheKind'), 'managed')), equals(parameters('redisAuthenticationType'), 'managed_identity'))]",
+            "deployClassicRedisAccess": "[and(and(not(equals(parameters('redisCacheName'), '')), equals(parameters('redisCacheKind'), 'classic')), equals(parameters('redisAuthenticationType'), 'managed_identity'))]"
           },
           "resources": [
             {
@@ -6820,7 +7033,7 @@
               }
             },
             {
-              "condition": "[and(not(equals(parameters('redisCacheName'), '')), equals(parameters('redisAuthenticationType'), 'managed_identity'))]",
+              "condition": "[variables('deployClassicRedisAccess')]",
               "type": "Microsoft.Authorization/roleAssignments",
               "apiVersion": "2022-04-01",
               "scope": "[resourceId('Microsoft.Cache/redis', parameters('redisCacheName'))]",
@@ -6832,7 +7045,7 @@
               }
             },
             {
-              "condition": "[and(not(equals(parameters('redisCacheName'), '')), equals(parameters('redisAuthenticationType'), 'managed_identity'))]",
+              "condition": "[variables('deployClassicRedisAccess')]",
               "type": "Microsoft.Cache/redis/accessPolicyAssignments",
               "apiVersion": "2024-11-01",
               "name": "[format('{0}/{1}', parameters('redisCacheName'), 'native-webapp-mi-data-contributor')]",
@@ -6840,6 +7053,18 @@
                 "accessPolicyName": "Data Contributor",
                 "objectId": "[reference(resourceId('Microsoft.Web/sites', parameters('nativeWebAppName')), '2022-03-01', 'full').identity.principalId]",
                 "objectIdAlias": "[reference(resourceId('Microsoft.Web/sites', parameters('nativeWebAppName')), '2022-03-01', 'full').identity.principalId]"
+              }
+            },
+            {
+              "condition": "[variables('deployManagedRedisAccess')]",
+              "type": "Microsoft.Cache/redisEnterprise/databases/accessPolicyAssignments",
+              "apiVersion": "2025-07-01",
+              "name": "[format('{0}/{1}/{2}', split(format('{0}/default', parameters('redisCacheName')), '/')[0], split(format('{0}/default', parameters('redisCacheName')), '/')[1], 'nativewebappmidefault')]",
+              "properties": {
+                "accessPolicyName": "default",
+                "user": {
+                  "objectId": "[reference(resourceId('Microsoft.Web/sites', parameters('nativeWebAppName')), '2022-03-01', 'full').identity.principalId]"
+                }
               }
             },
             {
@@ -10207,6 +10432,14 @@
     "var_redisCacheHostName": {
       "type": "string",
       "value": "[if(parameters('deployRedisCache'), reference('redisCache').outputs.redisCacheHostName.value, '')]"
+    },
+    "var_redisCacheKind": {
+      "type": "string",
+      "value": "[if(parameters('deployRedisCache'), parameters('redisCacheKind'), '')]"
+    },
+    "var_redisCachePort": {
+      "type": "string",
+      "value": "[if(parameters('deployRedisCache'), string(reference('redisCache').outputs.redisCachePort.value), '')]"
     },
     "var_rgName": {
       "type": "string",

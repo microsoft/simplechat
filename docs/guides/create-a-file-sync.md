@@ -32,7 +32,7 @@ Use File Sync when important documents already live in a share or storage contai
 3. Select **Add Sync Source**.
 
 {% include media.html src="guides/create-a-file-sync-step-3.png"
-                      alt="Screenshot showing create a file sync step 3."
+                      alt="The Add Sync Source dialog on the Source Type step, offering SMB Share, Azure Files, and Azure Blob Storage as available source types."
                       title="Create a file sync step 3"
                       capture="Capture the create a file sync task at this step in SimpleChat with realistic sample data and redact secrets." %}
 
@@ -44,7 +44,7 @@ Use File Sync when important documents already live in a share or storage contai
 9. In **Tags**, choose fixed tags; in **Sync Schedule**, enable **Scheduled sync** only when automatic refresh is wanted.
 
 {% include media.html src="guides/create-a-file-sync-step-9.png"
-                      alt="Screenshot showing create a file sync step 9."
+                      alt="The Configure step of the Add Sync Source dialog for an SMB share, showing source name and UNC path, the reusable identity and authentication choices, and the subfolder and filter selection controls."
                       title="Create a file sync step 9"
                       capture="Capture the create a file sync task at this step in SimpleChat with realistic sample data and redact secrets." %}
 

@@ -492,9 +492,9 @@ No dedicated functional test file created yet. Recommended test file:
 10. **Approval Comments**: Threaded comments/discussion on approval requests
 
 ## Related Documentation
-- [Control Center Overview](../admin_configuration.md)
-- [Notification System](../features/NOTIFICATION_SYSTEM.md) (if exists)
-- [Group Management](../features/GROUP_MANAGEMENT.md) (if exists)
+- [Control Center Overview](../../../admin_configuration.md)
+- Notification System
+- Group Management
 
 ## Support & Troubleshooting
 

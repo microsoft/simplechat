@@ -582,4 +582,4 @@ This prevents all modifications while maintaining full read access.
 
 **Related Documentation:**
 - [Group Status UI Visibility](GROUP_STATUS_UI_VISIBILITY.md) - Dynamic UI hiding feature
-- [Activity Logging](../explanation/activity_logging.md)
+- Activity Logging

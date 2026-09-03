@@ -8,7 +8,7 @@ audience: user
 
 <!-- action-slug: azure-maps-openlayers -->
 
-{% include media.html src="reference/actions-azure-maps-openlayers-configuration.png" alt="Azure Maps OpenLayers action setup or assignment UI." title="Azure Maps OpenLayers action" capture="Capture the Azure Maps OpenLayers action setup or assignment UI with relevant fields visible. Redact secrets and user identifiers." %}
+{% include media.html src="reference/actions-azure-maps-openlayers-configuration.png" alt="The Configuration step of the Add Action wizard for Azure Maps, showing the built-in action notice, the Azure Maps subscription key field, and a Test Connection button." title="Azure Maps OpenLayers action configuration" capture="Capture the Azure Maps OpenLayers action setup or assignment UI with relevant fields visible. Redact secrets and user identifiers." %}
 
 ## What this action does
 

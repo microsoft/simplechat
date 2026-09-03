@@ -198,4 +198,4 @@ This fix ensures compatibility with all three conversation schemas that exist in
 
 - [v0.237.004 Null Last Activity Fix](../v0.237.004/RETENTION_POLICY_NULL_LAST_ACTIVITY_FIX.md)
 - [v0.236.012 NotFound Error Fix](../v0.236.012/RETENTION_POLICY_NOTFOUND_FIX.md)
-- [Retention Policy Feature Documentation](../../features/RETENTION_POLICY.md)
+- Retention Policy Feature Documentation

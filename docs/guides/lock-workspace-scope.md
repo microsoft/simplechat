@@ -32,8 +32,8 @@ Use scope lock when a conversation should stay inside one team's documents or on
 3. Choose a **Scope**, then optionally choose **Tags** and **Document**.
 
 {% include media.html src="guides/lock-workspace-scope-step-3.png"
-                      alt="Screenshot showing lock workspace scope in chat step 3."
-                      title="Lock workspace scope in chat step 3"
+                      alt="The Grounded Search panel open above the composer, showing the Action, Scope, Document, and Tags selectors used to choose what a message searches."
+                      title="Choosing scope in Grounded Search"
                       capture="Capture the lock workspace scope in chat task at this step in SimpleChat with realistic sample data and redact secrets." %}
 
 4. Send a grounded message.

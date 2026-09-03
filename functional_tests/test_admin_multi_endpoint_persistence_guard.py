@@ -1,16 +1,15 @@
-#!/usr/bin/env python3
 # test_admin_multi_endpoint_persistence_guard.py
+#!/usr/bin/env python3
 """
 Functional test for admin multi-endpoint persistence guard.
-Version: 0.239.199
-Implemented in: 0.239.199
+Version: 0.250.172
+Implemented in: 0.239.199; updated in 0.250.172
 
 This test ensures that once multi-endpoint model management is enabled, admin
 settings saves preserve it even if the checkbox is omitted from later form
 posts, and that the backend save helper enforces the same one-way behavior.
 """
 
-import importlib
 import json
 import os
 import sys
@@ -27,6 +26,10 @@ CONFIG_FILE = os.path.join(SINGLE_APP_ROOT, 'config.py')
 sys.path.append(ROOT_DIR)
 sys.path.append(SINGLE_APP_ROOT)
 
+from test_model_endpoint_normalization_backend import (
+    _load_functions_settings_module as load_functions_settings_module,
+)
+
 
 def read_file(path):
     with open(path, 'r', encoding='utf-8') as file_handle:
@@ -42,34 +45,7 @@ def _restore_modules(original_modules):
 
 
 def _load_functions_settings_module():
-    config_stub = types.ModuleType('config')
-    config_stub.json = json
-    config_stub.re = __import__('re')
-    config_stub.WORD_CHUNK_SIZE = 400
-    config_stub.video_indexer_endpoint = ''
-    config_stub.cosmos_settings_container = types.SimpleNamespace(upsert_item=lambda item: item)
-
-    appinsights_stub = types.ModuleType('functions_appinsights')
-    appinsights_stub.log_event = lambda *args, **kwargs: None
-
-    cache_stub = types.ModuleType('app_settings_cache')
-    cache_stub.get_settings_cache = lambda: None
-    cache_stub.update_settings_cache = lambda settings: None
-
-    original_modules = {}
-    for module_name, module_stub in {
-        'config': config_stub,
-        'functions_appinsights': appinsights_stub,
-        'app_settings_cache': cache_stub,
-    }.items():
-        original_modules[module_name] = sys.modules.get(module_name)
-        sys.modules[module_name] = module_stub
-
-    module_name = 'application.single_app.functions_settings'
-    original_modules[module_name] = sys.modules.get(module_name)
-    sys.modules.pop(module_name, None)
-    module = importlib.import_module(module_name)
-    return module, original_modules
+    return load_functions_settings_module()
 
 
 def test_admin_settings_route_preserves_enabled_multi_endpoint_flag():

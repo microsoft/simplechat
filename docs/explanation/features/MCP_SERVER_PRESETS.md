@@ -1,8 +1,10 @@
 # MCP Server Presets
 
-Current documentation version: **0.250.098**
+Current documentation version: **0.261.029**
 
-Related configuration version: `application\single_app\config.py` currently sets `VERSION = "0.250.098"`.
+Remote-only preset compatibility implemented in version: **0.261.029**.
+
+Related configuration update: `application\single_app\config.py` advances `VERSION` from `0.261.028` to `0.261.029`.
 
 ## Overview
 
@@ -88,8 +90,7 @@ Preset IDs must match:
     "constraints": {
         "allowedTransports": ["sse"],
         "allowedAuthMethods": ["api_key"],
-        "customHeadersAllowed": true,
-        "stdioAllowed": false
+        "customHeadersAllowed": true
     },
     "implementation": {
         "id": "contoso",
@@ -110,15 +111,24 @@ Preset IDs must match:
 - Presets may define header names and descriptions through `suggestedHeaders`, but should not define secret header values.
 - Presets with `additionalSettings` must include an `implementation` block and a matching `implementation_schemas\{id}.preset.schema.json` file.
 - Runtime credentials must still be entered through the SimpleChat action modal or reusable workspace identities.
+- Presets cannot authorize a destination or restore stdio support. All roles and scopes use remote streamable HTTP, SSE, or WebSocket; local command, argument, and environment configuration is unsupported.
 - Invalid preset definitions are skipped and logged through the application logging pipeline.
 
 ## Runtime Behavior
 
 1. The modal calls `/api/plugins/mcp/presets`.
-2. The server returns enabled, validated presets.
+2. The server returns enabled, validated remote-only presets.
 3. The modal populates the Server Preset dropdown from the API response.
 4. Selecting a preset applies non-secret defaults such as transport, auth method, timeouts, retries, argument-validation preference, result policy, and help text.
 5. Existing saved actions keep their values when opened for editing; preset defaults are not reapplied unless the user changes the preset.
+
+### Compatibility With Older Custom Presets
+
+An otherwise valid remote custom preset can retain legacy `stdioAllowed` or process-only fields in its source file. The loader normalizes a copy, removes those inert fields and stdio entries from `allowedTransports`, and validates the remote-only result. A valid remote default, authentication, headers, timeouts, and other remote compatibility settings are preserved. This cleanup is limited to retired MCP fields, not similarly named provider settings or tool arguments.
+
+A preset whose default is stdio, or whose only allowed transport is stdio, becomes unavailable with a diagnostic. It is not converted to HTTP, and its failure does not prevent valid presets from loading. Authors should explicitly revise that preset for a supported remote server or remove it from their catalog.
+
+Retired saved actions are not migrated by preset loading. They remain unsupported until the owner explicitly selects a remote transport and supplies a valid endpoint, or explicitly deletes them. See [MCP stdio removal and migration](../fixes/MCP_STDIO_REMOVAL_AND_AUTHORIZATION_FIX.md).
 
 ## Bundled Presets
 
@@ -132,7 +142,7 @@ The generic preset keeps broad MCP defaults:
 - Prompts disabled.
 - Custom headers allowed.
 - Reusable identity auth is allowed for preconfigurations that require workspace identity.
-- Stdio allowed only when the action scope is admin-managed global.
+- Supported transports are streamable HTTP, SSE, and WebSocket in every scope.
 
 ### Splunk MCP Server
 
@@ -143,7 +153,7 @@ The Splunk preset is a compatibility preset, not a separate MCP implementation:
 - Tools enabled.
 - Prompts disabled.
 - Custom headers allowed.
-- Stdio disabled.
+- No local process transport.
 
 The MCP runtime remains generic. The preset only configures known-good defaults and UI guidance.
 
@@ -155,4 +165,4 @@ Related validation:
 - `ui_tests\test_workspace_mcp_action_modal.py`
 - Route policy tests under `functional_tests\route_tests\`
 
-Current coverage validates implementation-specific preset schemas, secret-like field rejection in `additionalSettings`, reusable identity defaults, opt-in MCP argument validation defaults, and large-result policy behavior.
+Coverage includes implementation-specific preset schemas, secret-like field rejection in `additionalSettings`, reusable identity defaults, opt-in MCP argument validation defaults, and large-result policy behavior. The 0.261.029 regressions also cover legacy remote preset normalization, unavailable stdio-default/stdio-only presets, failure isolation, and the absence of stdio/process controls in the modal. These descriptions do not assert test execution results.

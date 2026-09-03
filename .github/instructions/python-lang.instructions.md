@@ -12,7 +12,18 @@ applyTo: '**/*.py'
 
 ## Rule: Imports Must Be Organized and at the Top of the File !IMPORTANT
 
-- IMPORTANT: `from` and `import` statements MUST be grouped at the top of the document after the module docstring, unless otherwise indicated by the code writer or for performance reasons in which case the import should be as close as possible to the usage with a comment explaining why the import is not at the top of the file. CodeQL hammers us on this in the findings. If you find imports that are not at the top of the file, move them to the top and add a comment if there is a reason they cannot be moved. This also helps prevent multuple imports of the same module in different places which can lead to confusion and maintenance issues.
+- Group imports after the module docstring by default. Before moving or adding any import, trace the dependency chain and initialization timing. Do not mechanically hoist a local import: that can turn a deferred dependency into a startup failure. Local imports require a concrete lifecycle or performance justification.
+
+## Rule: Preserve Settings and Bootstrap Dependency Boundaries
+
+- A local import delays execution; it does **not** remove a cycle in the dependency graph. Never claim a cycle is fixed merely because the import moved inside a function, or hide it with `try/except ImportError`, `getattr`, or a success-shaped fallback.
+- `config.py` constructs Azure clients and imports logging. Treat `config`, `functions_settings`, logging, cache modules, and Redis/Key Vault helpers as a startup dependency chain, not interchangeable utility modules.
+- Configure cache/client behavior from the **settings object already supplied by the caller**. Do not import `config`, `cosmos_settings_container`, or another settings owner back into a lower-level cache helper to rediscover that configuration.
+- Pass storage handles, factories, and logging callbacks explicitly from the owning settings/bootstrap layer. Keep those runtime objects separate from the settings dictionary: never persist them, copy them into Redis settings payloads, or pass them to the browser.
+- Keep `app_settings_cache.py` and `app_settings_store.py` below their owners in the dependency graph. Neither may directly or transitively import `config`, `functions_settings`, `functions_appinsights`, or the configuration-dependent Redis factory. The web app and scheduler supply the factory; the settings owner supplies initialized storage dependencies.
+- Use `import app_settings_cache` and module-qualified access for dynamically configured accessors. Importing an accessor by value can retain the pre-initialization `None` or an obsolete implementation.
+- On bootstrap changes, inspect both normal web startup and the scheduler, Redis-enabled/disabled/error paths, and calls that occur before initialization. An uninitialized accessor must not silently import its owner or initialize cloud resources.
+- Validate with real-module cold imports in fresh processes and blocked network access, plus static dependency checks that include function-local imports. Stub external I/O, not the module boundary under test. Compilation and AST-extracted function tests alone do not prove import safety.
 
 ## Rule: Indentation, Logging, and Decorators
 - Use 4 spaces per indentation level. No tabs.

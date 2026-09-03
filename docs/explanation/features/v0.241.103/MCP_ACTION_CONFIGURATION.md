@@ -2,6 +2,8 @@
 
 Implemented in version: **0.241.103**
 
+> **Removal notice — 0.261.029:** This page describes historical behavior. Stdio and local command, argument, and environment configuration are now removed for all roles and scopes, including Admin/global. Existing stdio actions remain visible but non-executable and require explicit remote transport/endpoint configuration or deletion. See [migration guidance](../../fixes/MCP_STDIO_REMOVAL_AND_AUTHORIZATION_FIX.md).
+
 ## Overview
 
 SimpleChat now includes first-class action configuration for Model Context Protocol (MCP) servers. The shared action modal can create MCP action manifests with the fields Semantic Kernel needs for transport, authentication, timeout, tool discovery, and tool exposure setup.

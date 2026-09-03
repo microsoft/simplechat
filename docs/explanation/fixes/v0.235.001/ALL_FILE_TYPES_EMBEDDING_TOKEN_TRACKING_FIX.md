@@ -297,7 +297,7 @@ To validate the fix:
 
 ## Related Documentation
 
-- [EMBEDDING_TOKEN_TRACKING.md](EMBEDDING_TOKEN_TRACKING.md) - Original feature documentation (v0.233.298)
+- [EMBEDDING_TOKEN_TRACKING.md](../../features/v0.235.001/EMBEDDING_TOKEN_TRACKING.md) - Original feature documentation (v0.233.298)
 - [PDF_EMBEDDING_TOKEN_TRACKING_FIX.md](PDF_EMBEDDING_TOKEN_TRACKING_FIX.md) - PDF fix documentation (v0.233.299)
 - [Functional Test: test_embedding_token_tracking.py](../../functional_tests/test_embedding_token_tracking.py)
 

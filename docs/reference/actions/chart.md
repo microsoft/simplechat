@@ -8,7 +8,7 @@ audience: user
 
 <!-- action-slug: chart -->
 
-{% include media.html src="reference/actions-chart-configuration.png" alt="Chart action setup or assignment UI." title="Chart action" capture="Capture the Chart action setup or assignment UI with relevant fields visible. Redact secrets and user identifiers." %}
+{% include media.html src="reference/actions-chart-configuration.png" alt="The Chart configuration pane noting charts render with the internal Chart.js bundle, above toggles for the default chart types including line, bar, pie, doughnut, scatter, area, bubble, radar, and stacked bar." title="Chart action configuration" capture="Capture the Chart action setup or assignment UI with relevant fields visible. Redact secrets and user identifiers." %}
 
 ## What this action does
 

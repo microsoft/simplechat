@@ -60,7 +60,7 @@ Deploy the necessary Azure services. For a quick estimate of monthly costs based
 
 | **Storage Account**          | General Purpose V2, LRS, Hot Tier (Optional)                 | Required if Enhanced Citations feature is enabled. Stores processed files. Hierarchical Namespace (ADLS Gen2) recommended. - OR - Required if you want to use Azure Storage for temporaty file storage which is recommend for scalability and better performance |
 
-| **Azure Cache for Redis**    | Standard Tier, C0 cache size (Optional)                      | Required only if you need the performance, scalability, and distributed session support provided by Redis Cache. |
+| **Azure Managed Redis**      | Balanced B0, high availability enabled (Optional)            | Required only if you need the performance, scalability, and distributed session support provided by a Redis cache. Replaces Azure Cache for Redis, which retires September 30, 2028. Azure Government and 21Vianet must still use Azure Cache for Redis Standard C0. |
 
 
 
@@ -228,29 +228,33 @@ Deploy the necessary Azure services. For a quick estimate of monthly costs based
 
     *   Navigate to **Data Storage** > **Containers** > **+ Container**. Add two new containers - `user-documents` and `group-documents
 
-10. **Deploy Azure Cache for Redis (Optional)**:
+10. **Deploy Azure Managed Redis (Optional)**:
 
-    *   Create an **Azure Cache for Redis** service.
+    *   Azure Cache for Redis Basic, Standard, and Premium retire on **September 30, 2028**. Deploy **Azure Managed Redis** unless you are in Azure Government or Azure operated by 21Vianet, where Azure Managed Redis is not available; in those clouds create an **Azure Cache for Redis** Standard C0 instead.
+
+    *   Create an **Azure Managed Redis** resource.
 
     *   **Name**: Choose a unique name for your Redis instance (e.g., `simplechat-redis`).
 
     *   **Region**: Select the same region as your App Service for lowest latency.
 
-    *   **Cache SKU**: Standard.
+    *   **Cache SKU**: `Balanced B0` (0.5 GB). This is the documented replacement for Azure Cache for Redis Standard C0. Choose a larger Balanced size if your peak used memory exceeds roughly 0.4 GB.
 
-    *   **Cache Size**: C0 (or higher based on requirements).
+    *   **High availability**: Enabled. Disabling it removes the SLA, allows data loss during maintenance, and cannot be re-disabled after creation.
 
-    *   **Networking**: Set to **Public** for initial setup (can be made private later for enhanced security).
+    *   **Clustering policy**: **Non-clustered**. SimpleChat uses a non-cluster-aware Redis client, and the portal default (OSS cluster) will not work with it. Non-clustered is valid up to 25 GB and can be changed later without recreating the database.
 
-    *   **Advanced**:
+    *   **Networking**: Set to **Public** for initial setup. Azure Managed Redis does not support virtual network injection; use Azure Private Link if you need network isolation.
 
-        - Enable **Access Keys Authentication** (required for key-based access).
+    *   **Authentication**:
 
-        - All other advanced settings can remain at their defaults unless you have specific requirements.
+        - For managed identity, keep **Microsoft Entra Authentication** enabled and assign the App Service managed identity the built-in `default` access policy on the database.
 
-    *   After Redis is created, note the **Host Name** and **Access Keys** (if using key authentication).
+        - For key-based access, enable **Access Keys Authentication**, which is disabled by default on new instances.
 
-    *   If using managed identities, enable Entra Authentication and select the App Service managed identity.
+    *   After Redis is created, note the **Host Name** (`<name>.<region>.redis.azure.net`) and the access keys if you are using key authentication.
+
+    *   In Admin Settings, paste the host name into **Redis Server Host Name**. SimpleChat detects Azure Managed Redis from the host name suffix and connects on port 10000 automatically; Azure Cache for Redis host names resolve to port 6380.
 
     *   The Redis service can take 15-30 minutes to fully deploy.
 

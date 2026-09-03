@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for outbound MCP structured logging.
-Version: 0.250.098
+Version: 0.261.036
 Implemented in: 0.250.095
 
 This test ensures outbound MCP discovery telemetry uses correlation IDs,
@@ -58,9 +58,9 @@ def test_discovery_route_emits_correlated_lifecycle_events():
     source = read_source(Path("application") / "single_app" / "route_backend_plugins.py")
 
     assert "mcp_operation_id = str(uuid.uuid4())" in source
-    assert "[MCP Discovery] Started" in source
-    assert "[MCP Discovery] Completed" in source
-    assert "[MCP Discovery] Failed" in source
+    assert "[MCP_DISCOVERY] Started" in source
+    assert "[MCP_DISCOVERY] Completed" in source
+    assert "[MCP_DISCOVERY] Failed" in source
     assert "_build_mcp_discovery_log_context" in source
     assert "'mcp_operation_id': mcp_operation_id" in source
     assert "duration_ms" in source
@@ -73,8 +73,8 @@ def test_factory_logs_retries_without_raw_endpoint_debug_messages():
         Path("application") / "single_app" / "semantic_kernel_plugins" / "mcp_plugin_factory.py"
     )
 
-    assert "[MCPOutbound] Operation retry scheduled" in source
-    assert "[MCPOutbound] Operation failed" in source
+    assert "[MCP_OUTBOUND] Operation retry scheduled" in source
+    assert "[MCP_OUTBOUND] Operation failed" in source
     assert "build_mcp_destination_log_context" in source
     assert "endpoint={endpoint}" not in source
 

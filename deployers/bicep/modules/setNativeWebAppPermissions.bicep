@@ -19,6 +19,13 @@ param storageAccountName string
 param speechServiceName string
 param searchServiceName string
 param redisCacheName string
+@description('''Which Azure Redis offering was provisioned.
+managed grants data access through an Azure Managed Redis access policy assignment; classic uses the Azure Cache for Redis access policy assignment.''')
+@allowed([
+  'managed'
+  'classic'
+])
+param redisCacheKind string = 'managed'
 param contentSafetyName string
 
 var useExternalOpenAIResource = openAIName != '' && !empty(openAIResourceGroupName) && !empty(openAISubscriptionId)
@@ -55,8 +62,15 @@ resource searchService 'Microsoft.Search/searchServices@2025-05-01' existing = {
   name: searchServiceName
 }
 
-resource redisCache 'Microsoft.Cache/Redis@2024-11-01' existing = if (redisCacheName != '') {
+var deployManagedRedisAccess = redisCacheName != '' && redisCacheKind == 'managed' && redisAuthenticationType == 'managed_identity'
+var deployClassicRedisAccess = redisCacheName != '' && redisCacheKind == 'classic' && redisAuthenticationType == 'managed_identity'
+
+resource redisCache 'Microsoft.Cache/Redis@2024-11-01' existing = if (redisCacheName != '' && redisCacheKind == 'classic') {
   name: redisCacheName
+}
+
+resource managedRedisDatabase 'Microsoft.Cache/redisEnterprise/databases@2025-07-01' existing = if (redisCacheName != '' && redisCacheKind == 'managed') {
+  name: '${redisCacheName}/default'
 }
 
 resource contentSafety 'Microsoft.CognitiveServices/accounts@2025-06-01' existing = if (contentSafetyName != '') {
@@ -218,7 +232,9 @@ resource contentSafetyUserRole 'Microsoft.Authorization/roleAssignments@2022-04-
   }
 }
 
-resource redisCacheContributorRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (redisCacheName != '' && redisAuthenticationType == 'managed_identity') {
+// Azure Managed Redis does not need this control-plane role: data access comes solely from
+// the access policy assignment below.
+resource redisCacheContributorRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (deployClassicRedisAccess) {
   name: guid(redisCache.id, webApp.id, 'redis-cache-contributor')
   scope: redisCache
   properties: {
@@ -231,12 +247,26 @@ resource redisCacheContributorRole 'Microsoft.Authorization/roleAssignments@2022
   }
 }
 
-resource redisCacheDataContributorAccessPolicy 'Microsoft.Cache/Redis/accessPolicyAssignments@2024-11-01' = if (redisCacheName != '' && redisAuthenticationType == 'managed_identity') {
+resource redisCacheDataContributorAccessPolicy 'Microsoft.Cache/Redis/accessPolicyAssignments@2024-11-01' = if (deployClassicRedisAccess) {
   parent: redisCache
   name: 'native-webapp-mi-data-contributor'
   properties: {
     accessPolicyName: 'Data Contributor'
     objectId: webApp.identity.principalId
     objectIdAlias: webApp.identity.principalId
+  }
+}
+
+// Azure Managed Redis assigns access on the database and offers a single built-in policy.
+// The assignment name must match ^[A-Za-z0-9]{1,60}$, so it cannot contain hyphens.
+resource managedRedisAccessPolicy 'Microsoft.Cache/redisEnterprise/databases/accessPolicyAssignments@2025-07-01' = if (deployManagedRedisAccess) {
+  #disable-next-line BCP318 // guarded by the same deployManagedRedisAccess condition
+  parent: managedRedisDatabase
+  name: 'nativewebappmidefault'
+  properties: {
+    accessPolicyName: 'default'
+    user: {
+      objectId: webApp.identity.principalId
+    }
   }
 }

@@ -32,7 +32,7 @@ Use notifications to catch workflow activity, shared conversation events, approv
 3. Choose **10 per page**, **20 per page**, or **50 per page**.
 
 {% include media.html src="guides/manage-notifications-step-3.png"
-                      alt="Screenshot showing manage notifications step 3."
+                      alt="The Notifications page showing the All, Unread, and Read filter buttons, the per-page selector, and a search box narrowing the list to document-ready notifications, with paging beneath."
                       title="Manage notifications step 3"
                       capture="Capture the manage notifications task at this step in SimpleChat with realistic sample data and redact secrets." %}
 

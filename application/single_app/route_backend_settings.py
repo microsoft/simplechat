@@ -11,6 +11,10 @@ from functions_model_endpoint_runtime import (
     resolve_model_endpoint_from_context,
 )
 from functions_model_endpoint_identity_header import build_model_endpoint_identity_headers
+from functions_model_endpoint_types import (
+    get_model_endpoint_api_type,
+    resolve_model_endpoint_request_model,
+)
 from functions_activity_logging import (
     log_admin_feedback_email_submission,
     log_general_admin_action,
@@ -43,7 +47,6 @@ from azure.identity import DefaultAzureCredential
 from azure.keyvault.secrets import SecretClient
 from swagger_wrapper import swagger_route, get_auth_security
 import logging
-import redis 
 import time
 import uuid
 
@@ -1049,12 +1052,17 @@ def register_route_backend_settings(bp):
             scale_result['direction'] = direction
             scale_result['reason'] = f'manual_{direction}'
 
-            update_settings(build_runtime_update(
+            settings_updates = build_runtime_update(
                 status=status,
                 decision={'direction': direction, 'reason': f'manual_{direction}'},
                 scale_result=scale_result,
                 settings=settings,
-            ))
+            )
+            expected_etag = settings.get('_etag') if 'cosmos_throughput_container_policies' in settings_updates else None
+            if not update_settings(settings_updates, expected_etag=expected_etag):
+                return jsonify({
+                    'error': 'Throughput changed, but its runtime settings could not be saved. Reload and verify before retrying.'
+                }), 500
             log_general_admin_action(
                 admin_user_id=admin_user_id,
                 admin_email=admin_email,
@@ -1128,12 +1136,17 @@ def register_route_backend_settings(bp):
             scale_result['direction'] = 'convert_to_autoscale'
             scale_result['reason'] = 'manual_to_autoscale_conversion'
 
-            update_settings(build_runtime_update(
+            settings_updates = build_runtime_update(
                 status=status,
                 decision=decision,
                 scale_result=scale_result,
                 settings=settings,
-            ))
+            )
+            expected_etag = settings.get('_etag') if 'cosmos_throughput_container_policies' in settings_updates else None
+            if not update_settings(settings_updates, expected_etag=expected_etag):
+                return jsonify({
+                    'error': 'Throughput mode changed, but its runtime settings could not be saved. Reload and verify before retrying.'
+                }), 500
             log_general_admin_action(
                 admin_user_id=admin_user_id,
                 admin_email=admin_email,
@@ -1395,6 +1408,7 @@ def _test_multimodal_vision_connection(payload):
 
     # Create a simple test image (1x1 red pixel PNG)
     test_image_base64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg=="
+    is_custom_model_endpoint = False
 
     try:
         multi_endpoint_selection = payload.get('multi_endpoint') if isinstance(payload.get('multi_endpoint'), dict) else None
@@ -1414,6 +1428,9 @@ def _test_multimodal_vision_connection(payload):
             resolved_endpoint = resolve_model_endpoint_from_context(settings, model_context)
             if not resolved_endpoint:
                 return jsonify({'error': 'Selected vision model endpoint could not be resolved from saved settings'}), 400
+            is_custom_model_endpoint = (
+                str(resolved_endpoint.get('provider') or '').strip().lower() == 'custom'
+            )
 
             resolved_models = resolved_endpoint.get('models', []) or []
             matched_model = next(
@@ -1427,18 +1444,14 @@ def _test_multimodal_vision_connection(payload):
                 matched_model = next(
                     (
                         model for model in resolved_models
-                        if str(model.get('deploymentName') or model.get('deployment') or '').strip() == model_context['model_deployment']
+                        if resolve_model_endpoint_request_model(resolved_endpoint, model) == model_context['model_deployment']
                     ),
                     None,
                 )
             if not matched_model:
                 return jsonify({'error': 'Selected vision model could not be resolved from saved settings'}), 400
 
-            vision_model = str(
-                matched_model.get('deploymentName')
-                or matched_model.get('deployment')
-                or model_context['model_deployment']
-            ).strip()
+            vision_model = resolve_model_endpoint_request_model(resolved_endpoint, matched_model)
             vision_model_name = str(matched_model.get('modelName') or vision_model).strip()
             connection = resolved_endpoint.get('connection', {}) or {}
             gpt_client, _ = build_model_endpoint_sync_chat_client(
@@ -1447,6 +1460,11 @@ def _test_multimodal_vision_connection(payload):
                 connection.get('endpoint'),
                 connection.get('openai_api_version') or connection.get('api_version'),
                 deployment_name=vision_model,
+                api_type=get_model_endpoint_api_type(resolved_endpoint),
+                anthropic_version=connection.get('anthropic_version') or '',
+                allow_private_custom_endpoints=bool(
+                    settings.get('allow_private_custom_model_endpoints', False)
+                ),
                 settings=settings,
                 endpoint_config=resolved_endpoint,
                 identity_context=identity_context,
@@ -1548,6 +1566,15 @@ def _test_multimodal_vision_connection(payload):
         }), 200
 
     except Exception as e:
+        if is_custom_model_endpoint:
+            log_event(
+                "[MODEL_ENDPOINT] Custom vision model test failed",
+                extra={"exception_type": type(e).__name__},
+                level=logging.WARNING,
+            )
+            return jsonify({
+                'error': 'The Custom vision model test failed. Review the endpoint and model configuration.'
+            }), 500
         return jsonify({'error': f'Vision test failed: {str(e)}'}), 500
 
 def get_index_client() -> SearchIndexClient:
@@ -1642,47 +1669,71 @@ def _test_gpt_connection(payload):
 
 def _test_redis_connection(payload):
     """
-    Attempts to connect to Azure Redis using key or managed identity auth.
-    Performs a simple SET/GET round-trip test.
+    Attempts to connect to Azure Cache for Redis or Azure Managed Redis using the
+    credentials supplied by the admin form, then performs a SET/GET round trip.
     """
+    import functions_redis_client
+
     redis_host = payload.get('endpoint', '').strip()
     redis_key = payload.get('key', '').strip()
     redis_auth_type = payload.get('auth_type', 'key').strip()
+    redis_service_type = payload.get('service_type', '').strip()
+    redis_port = payload.get('port', '').strip()
 
     if not redis_host:
         return jsonify({'error': 'Redis host is required'}), 400
 
-    try:
-        if redis_auth_type == 'managed_identity':
-            # Acquire token from managed identity for Redis scope
-            from config import get_redis_cache_infrastructure_endpoint
-            credential = DefaultAzureCredential()
-            redis_hostname = redis_host.split('.')[0]
-            cache_endpoint = get_redis_cache_infrastructure_endpoint(redis_hostname)
-            token = credential.get_token(cache_endpoint)
-            redis_password = token.token
-        elif redis_auth_type == 'key_vault':
-            if not redis_key:
-                return jsonify({'error': 'Key Vault secret name is required for Key Vault authentication'}), 400
-            try:
-                from functions_keyvault import retrieve_secret_direct
-                redis_password = retrieve_secret_direct(redis_key)
-            except Exception as kv_err:
-                log_event(f"[REDIS_TEST] Key Vault retrieval failed for secret '{redis_key}': {str(kv_err)}", level="error")
-                return jsonify({'error': 'Failed to retrieve Redis key from Key Vault. Check Application Insights using "[REDIS_TEST]" for details.'}), 500
-        else:
-            if not redis_key:
-                return jsonify({'error': 'Redis key is required for key authentication'}), 400
-            redis_password = redis_key
+    if redis_auth_type == 'key_vault' and not redis_key:
+        return jsonify({'error': 'Key Vault secret name is required for Key Vault authentication'}), 400
+    if redis_auth_type == 'key' and not redis_key:
+        return jsonify({'error': 'Redis key is required for key authentication'}), 400
 
-        r = redis.Redis(
-            host=redis_host,
-            port=6380,
-            password=redis_password,
-            ssl=True,
+    settings = get_settings()
+    test_settings = dict(settings)
+    test_settings.update({
+        'redis_url': redis_host,
+        'redis_auth_type': redis_auth_type,
+        'redis_key': redis_key,
+        'redis_service_type': redis_service_type or 'auto',
+        'redis_port': redis_port,
+    })
+
+    try:
+        # streaming_credentials=False keeps this ad-hoc test from starting a background
+        # token refresh thread every time an admin clicks Test.
+        r = functions_redis_client.create_redis_client(
+            settings=test_settings,
+            streaming_credentials=False,
             socket_connect_timeout=5
         )
+    except ValueError as validation_error:
+        # The factory raises ValueError for missing host, key, or Key Vault secret name. The
+        # route already returns a specific 400 for each of those above, so anything reaching
+        # here is unexpected. Log the exception type and let the traceback carry the detail
+        # rather than interpolating a message that resolved credentials may have touched.
+        log_event(
+            f"[REDIS_TEST] Redis settings validation failed ({type(validation_error).__name__}).",
+            level=logging.ERROR,
+            exceptionTraceback=True,
+        )
+        return jsonify({
+            'error': 'Redis settings are incomplete. Check the host name, service, port, and credential fields.'
+        }), 400
+    except Exception as client_error:
+        # Client construction resolves credentials, so the message can carry Key Vault secret
+        # names, vault URIs, or token details. Record the type plus the traceback and keep
+        # both the log message and the response free of the resolved secret material.
+        log_event(
+            f"[REDIS_TEST] Redis client construction failed for auth type "
+            f"'{redis_auth_type}' ({type(client_error).__name__}).",
+            level=logging.ERROR,
+            exceptionTraceback=True,
+        )
+        return jsonify({
+            'error': 'Failed to build the Redis connection. Check Application Insights using "[REDIS_TEST]" for details.'
+        }), 500
 
+    try:
         test_key = "test_key_simplechat"
         test_value = "hello_redis"
         r.set(test_key, test_value, ex=10)

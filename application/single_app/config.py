@@ -22,6 +22,7 @@ mimetypes.add_type('font/woff2', '.woff2')
 mimetypes.add_type('font/ttf', '.ttf')
 mimetypes.add_type('font/otf', '.otf')
 mimetypes.add_type('application/vnd.ms-outlook', '.msg')
+mimetypes.add_type('application/xml', '.xsd')
 import openpyxl
 import xlrd
 import traceback
@@ -34,7 +35,7 @@ import jwt
 import pandas
 from functions_latest_features_nav import is_development_env_enabled
 from functions_appinsights import log_event
-from functions_azure_endpoint_validation import validate_azure_blob_endpoint
+from functions_azure_endpoint_validation import validate_configured_chat_blob_endpoint
 
 from functions_environment import load_simplechat_dotenv
 from flask import (
@@ -99,6 +100,14 @@ EXECUTOR_MAX_WORKERS = 30
 SESSION_TYPE = 'filesystem'
 VERSION = "0.261.057"
 IS_DEVELOPMENT = is_development_env_enabled()
+
+# Opt-out for deployments where App Service Easy Auth is active but the platform
+# /.auth/logout endpoint is not reachable on the public host (for example, when a
+# custom domain or gateway does not route /.auth/* to the App Service origin).
+DISABLE_APP_SERVICE_EASY_AUTH_LOGOUT = os.getenv(
+    'DISABLE_APP_SERVICE_EASY_AUTH_LOGOUT',
+    ''
+).strip().lower() == 'true'
 
 SESSION_COOKIE_SAMESITE = os.getenv('SESSION_COOKIE_SAMESITE', 'Lax')
 SESSION_COOKIE_HTTPONLY = os.getenv('SESSION_COOKIE_HTTPONLY', 'true').lower() != 'false'
@@ -185,6 +194,7 @@ ENHANCED_CITATIONS_STORAGE_STATUS = {}
 BASE_ALLOWED_EXTENSIONS = {'txt', 'doc', 'docm', 'html', 'md', 'json', 'xml', 'yaml', 'yml', 'log'}
 DOCUMENT_EXTENSIONS = {'pdf', 'docx', 'pptx', 'ppt'}
 TABULAR_EXTENSIONS = {'csv', 'xlsx', 'xls', 'xlsm'}
+SCHEMA_EXTENSIONS = {'xsd'}
 VISIO_EXTENSIONS = {'vsdx'}
 EMAIL_EXTENSIONS = {'msg'}
 
@@ -218,6 +228,7 @@ def get_allowed_extensions(enable_video=False, enable_audio=False):
     extensions.update(DOCUMENT_EXTENSIONS)
     extensions.update(IMAGE_EXTENSIONS)
     extensions.update(TABULAR_EXTENSIONS)
+    extensions.update(SCHEMA_EXTENSIONS)
     extensions.update(VISIO_EXTENSIONS)
     extensions.update(EMAIL_EXTENSIONS)
 
@@ -229,7 +240,7 @@ def get_allowed_extensions(enable_video=False, enable_audio=False):
 
     return extensions
 
-def get_allowed_extension_categories(enable_video=False, enable_audio=False):
+def get_allowed_extension_categories(enable_video=False, enable_audio=False, enable_xsd=False):
     """
     Get allowed file extensions grouped for display in workspace upload dialogs.
     """
@@ -262,6 +273,12 @@ def get_allowed_extension_categories(enable_video=False, enable_audio=False):
         categories.append({
             'name': 'Video',
             'extensions': VIDEO_EXTENSIONS,
+        })
+
+    if enable_xsd:
+        categories.append({
+            'name': 'XML schemas',
+            'extensions': SCHEMA_EXTENSIONS,
         })
 
     return [
@@ -540,7 +557,11 @@ def build_enhanced_citations_blob_service_client(settings):
         blob_endpoint = str(settings.get("office_docs_storage_account_blob_endpoint") or "").strip()
         if not blob_endpoint:
             raise ValueError("Enhanced Citations blob endpoint is required for managed identity authentication.")
-        safe_blob_endpoint = validate_azure_blob_endpoint(blob_endpoint)
+        # Endpoint ownership is deployment configuration, not a file/action argument.
+        safe_blob_endpoint = validate_configured_chat_blob_endpoint(
+            blob_endpoint,
+            CUSTOM_BLOB_STORAGE_URL_VALUE if AZURE_ENVIRONMENT == "custom" else "",
+        )
         # codeql[py/full-ssrf]
         return BlobServiceClient(account_url=safe_blob_endpoint, credential=DefaultAzureCredential())
 
@@ -1025,6 +1046,20 @@ cosmos_msgraph_pending_actions_container = cosmos_database.create_container_if_n
     id=cosmos_msgraph_pending_actions_container_name,
     partition_key=PartitionKey(path="/user_id"),
     default_ttl=-1
+)
+
+cosmos_m365_connections_container_name = "m365_connections"
+cosmos_m365_connections_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_m365_connections_container_name,
+    partition_key=PartitionKey(path="/user_id"),
+    default_ttl=-1,
+)
+
+cosmos_m365_execution_runs_container_name = "m365_execution_runs"
+cosmos_m365_execution_runs_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_m365_execution_runs_container_name,
+    partition_key=PartitionKey(path="/user_id"),
+    default_ttl=-1,
 )
 
 cosmos_thoughts_container_name = "thoughts"

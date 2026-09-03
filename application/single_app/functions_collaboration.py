@@ -55,6 +55,13 @@ from functions_group import (
     get_user_groups,
 )
 from functions_message_artifacts import filter_assistant_artifact_items
+from functions_message_image_revisions import (
+    IMAGE_REVISIONS_METADATA_KEY,
+    resolve_image_message_content,
+    serialize_image_revisions,
+)
+from functions_m365_action_cards import strip_pending_action_references
+from functions_m365_pending_delivery import cancel_m365_conversation_deliveries
 from functions_notifications import create_collaboration_message_notification
 from functions_thoughts import (
     archive_thoughts_for_conversation,
@@ -356,13 +363,45 @@ def _bootstrap_collaboration_user_state_from_participant(conversation_doc, parti
     return state_doc
 
 
-def build_collaboration_image_url(conversation_id, message_id):
+def build_collaboration_image_url(conversation_id, message_id, message_doc=None):
+    """Return the shared-thread URL for an image message.
+
+    When the image has been edited the current revision id is appended, for the same reason the
+    personal endpoint does it: this URL is otherwise identical before and after an edit, and the
+    collaboration route serves it with an hour-long public cache, so without a changing URL a
+    participant would keep seeing the version somebody had already replaced.
+    """
     normalized_conversation_id = str(conversation_id or '').strip()
     normalized_message_id = str(message_id or '').strip()
     if not normalized_conversation_id or not normalized_message_id:
         return ''
 
-    return f'/api/collaboration/conversations/{normalized_conversation_id}/images/{normalized_message_id}'
+    base = f'/api/collaboration/conversations/{normalized_conversation_id}/images/{normalized_message_id}'
+    if message_doc is None:
+        return base
+    return resolve_image_message_content(message_doc, base) if _has_image_revision(message_doc) else base
+
+
+def _has_image_revision(message_doc):
+    """Whether a message carries stored image revisions worth resolving."""
+    metadata = (message_doc or {}).get('metadata')
+    return bool(isinstance(metadata, dict) and metadata.get(IMAGE_REVISIONS_METADATA_KEY))
+
+
+def _publicize_image_revisions(metadata):
+    """Return metadata with any stored image revisions reduced to their public shape.
+
+    The stored entry carries blob containers and paths. Those are storage detail and must not
+    reach a browser, and this serializer hands its ``metadata`` straight to the client.
+    """
+    if not isinstance(metadata, dict) or not metadata.get(IMAGE_REVISIONS_METADATA_KEY):
+        return metadata
+
+    publicized = dict(metadata)
+    publicized[IMAGE_REVISIONS_METADATA_KEY] = serialize_image_revisions(
+        metadata[IMAGE_REVISIONS_METADATA_KEY]
+    )
+    return publicized
 
 
 def serialize_collaboration_message(message_doc):
@@ -374,7 +413,9 @@ def serialize_collaboration_message(message_doc):
         serialized_content = build_collaboration_image_url(
             message_doc.get('conversation_id'),
             message_doc.get('id'),
+            message_doc,
         ) or serialized_content
+        metadata = _publicize_image_revisions(metadata)
 
     payload = {
         'id': message_doc.get('id'),
@@ -655,10 +696,10 @@ def build_collaboration_message_metadata_payload(message_doc, conversation_doc):
     source_message_doc = _get_collaboration_source_message(message_doc)
     message_metadata = deepcopy(message_doc.get('metadata', {}) if isinstance(message_doc.get('metadata'), dict) else {})
     source_metadata = deepcopy(source_message_doc.get('metadata', {}) if isinstance((source_message_doc or {}).get('metadata'), dict) else {})
-    merged_metadata = {
+    merged_metadata = _publicize_image_revisions({
         **source_metadata,
         **message_metadata,
-    }
+    })
 
     chat_context = _build_collaboration_chat_context(conversation_doc, message_doc)
     mentions = _build_collaboration_mentions(message_doc)
@@ -723,6 +764,7 @@ def build_collaboration_message_metadata_payload(message_doc, conversation_doc):
         collaboration_image_url = build_collaboration_image_url(
             message_doc.get('conversation_id'),
             message_doc.get('id'),
+            message_doc,
         )
         merged_metadata['image_details'] = {
             'filename': message_doc.get('filename') or (source_message_doc or {}).get('filename') or merged_metadata.get('legacy_filename'),
@@ -741,7 +783,7 @@ def build_collaboration_message_metadata_payload(message_doc, conversation_doc):
         'conversation_id': message_doc.get('conversation_id'),
         'role': display_role,
         'message_kind': message_doc.get('message_kind'),
-        'content': build_collaboration_image_url(message_doc.get('conversation_id'), message_doc.get('id')) if display_role == 'image' else message_doc.get('content'),
+        'content': build_collaboration_image_url(message_doc.get('conversation_id'), message_doc.get('id'), message_doc) if display_role == 'image' else message_doc.get('content'),
         'timestamp': message_doc.get('timestamp'),
         'model_deployment_name': message_doc.get('model_deployment_name') or payload.get('model_deployment_name'),
         'augmented': message_doc.get('augmented') if 'augmented' in message_doc else payload.get('augmented'),
@@ -907,9 +949,9 @@ def _is_eligible_legacy_personal_conversation(source_conversation_doc):
     return True
 
 
-def _copy_legacy_personal_messages_to_collaboration(source_conversation_id, collaboration_conversation_id, owner_user):
+def _copy_legacy_personal_messages_to_collaboration(source_conversation_id, collaboration_conversation_id, owner_user, raw_messages=None):
     query = 'SELECT * FROM c WHERE c.conversation_id = @conversation_id ORDER BY c.timestamp ASC'
-    raw_messages = list(cosmos_messages_container.query_items(
+    raw_messages = list(raw_messages) if raw_messages is not None else list(cosmos_messages_container.query_items(
         query=query,
         parameters=[{'name': '@conversation_id', 'value': source_conversation_id}],
         partition_key=source_conversation_id,
@@ -927,6 +969,7 @@ def _copy_legacy_personal_messages_to_collaboration(source_conversation_id, coll
         if not collaboration_message:
             continue
 
+        collaboration_message = strip_pending_action_references(collaboration_message)
         metadata = collaboration_message.setdefault('metadata', {})
         metadata.setdefault('source_message_id', raw_message.get('id'))
         metadata.setdefault('source_conversation_id', source_conversation_id)
@@ -986,6 +1029,11 @@ def ensure_personal_collaboration_for_legacy_conversation(source_conversation_id
             )
         return collaboration_conversation_doc, invited_state_docs, False, source_conversation_doc
 
+    # The approval service is configured by the app owner after collaboration bootstrap.
+    from functions_m365_history import prepare_m365_history_publication
+    publication = prepare_m365_history_publication(
+        owner_user_id, source_conversation_id, "personal", invited_participants,
+    )
     collaboration_conversation_doc, user_state_docs = create_personal_collaboration_conversation_record(
         title=source_conversation_doc.get('title') or '',
         creator_user=owner_summary,
@@ -998,6 +1046,12 @@ def ensure_personal_collaboration_for_legacy_conversation(source_conversation_id
     ]
 
     collaboration_conversation_doc['source_conversation_id'] = source_conversation_id
+    if publication.request_id:
+        collaboration_conversation_doc['m365_publication'] = {
+            'request_id': publication.request_id,
+            'approval_ids': list(publication.approval_ids),
+            'includes_retained_evidence': True,
+        }
     collaboration_conversation_doc['classification'] = list(source_conversation_doc.get('classification', []) or [])
     collaboration_conversation_doc['tags'] = list(source_conversation_doc.get('tags', []) or [])
     _copy_citation_tracking_conversation_fields(
@@ -1021,6 +1075,7 @@ def ensure_personal_collaboration_for_legacy_conversation(source_conversation_id
         source_conversation_id,
         collaboration_conversation_doc.get('id'),
         owner_summary,
+        raw_messages=publication.messages,
     )
     if copied_messages:
         last_copied_message = copied_messages[-1]
@@ -1072,9 +1127,9 @@ def _is_eligible_legacy_group_conversation(source_conversation_doc):
     return bool(primary_context and str(primary_context.get('scope') or '').strip().lower() == 'group')
 
 
-def _copy_legacy_group_messages_to_collaboration(source_conversation_id, collaboration_conversation_id, owner_user):
+def _copy_legacy_group_messages_to_collaboration(source_conversation_id, collaboration_conversation_id, owner_user, raw_messages=None):
     query = 'SELECT * FROM c WHERE c.conversation_id = @conversation_id ORDER BY c.timestamp ASC'
-    raw_messages = list(cosmos_group_messages_container.query_items(
+    raw_messages = list(raw_messages) if raw_messages is not None else list(cosmos_group_messages_container.query_items(
         query=query,
         parameters=[{'name': '@conversation_id', 'value': source_conversation_id}],
         partition_key=source_conversation_id,
@@ -1092,6 +1147,7 @@ def _copy_legacy_group_messages_to_collaboration(source_conversation_id, collabo
         if not collaboration_message:
             continue
 
+        collaboration_message = strip_pending_action_references(collaboration_message)
         metadata = collaboration_message.setdefault('metadata', {})
         metadata.setdefault('source_message_id', raw_message.get('id'))
         metadata.setdefault('source_conversation_id', source_conversation_id)
@@ -1114,10 +1170,23 @@ def _copy_legacy_group_messages_to_collaboration(source_conversation_id, collabo
 
 
 def ensure_group_collaboration_for_legacy_conversation(source_conversation_id, owner_user, invited_participants=None):
-    source_conversation_doc = cosmos_group_conversations_container.read_item(
-        item=source_conversation_id,
-        partition_key=source_conversation_id,
-    )
+    source_container = cosmos_group_conversations_container
+    copy_source_messages = _copy_legacy_group_messages_to_collaboration
+    source_link_field = 'legacy_source_conversation_id'
+    try:
+        source_conversation_doc = source_container.read_item(
+            item=source_conversation_id,
+            partition_key=source_conversation_id,
+        )
+    except CosmosResourceNotFoundError:
+        # Group context can classify a conversation without moving its backing stores.
+        source_container = cosmos_conversations_container
+        copy_source_messages = _copy_legacy_personal_messages_to_collaboration
+        source_link_field = 'source_conversation_id'
+        source_conversation_doc = source_container.read_item(
+            item=source_conversation_id,
+            partition_key=source_conversation_id,
+        )
     owner_summary = owner_user or {}
     owner_user_id = str(owner_summary.get('user_id') or '').strip()
     if not owner_user_id:
@@ -1176,6 +1245,13 @@ def ensure_group_collaboration_for_legacy_conversation(source_conversation_id, o
             )
         return collaboration_conversation_doc, invited_state_docs, False, source_conversation_doc
 
+    # Resolve consent before making either the transcript or evidence visible.
+    from functions_m365_history import prepare_m365_history_publication
+    publication = prepare_m365_history_publication(
+        owner_user_id, source_conversation_id,
+        "group" if source_link_field == "legacy_source_conversation_id" else "personal",
+        invited_participants,
+    )
     collaboration_conversation_doc, user_states = create_group_collaboration_conversation_record(
         title=source_conversation_doc.get('title') or '',
         creator_user=owner_summary,
@@ -1196,8 +1272,15 @@ def ensure_group_collaboration_for_legacy_conversation(source_conversation_id, o
     )
     collaboration_conversation_doc['strict'] = bool(source_conversation_doc.get('strict', False))
     collaboration_conversation_doc['summary'] = source_conversation_doc.get('summary')
-    collaboration_conversation_doc['legacy_source_conversation_id'] = source_conversation_id
-    collaboration_conversation_doc['legacy_source_scope'] = 'group'
+    collaboration_conversation_doc[source_link_field] = source_conversation_id
+    if publication.request_id:
+        collaboration_conversation_doc['m365_publication'] = {
+            'request_id': publication.request_id,
+            'approval_ids': list(publication.approval_ids),
+            'includes_retained_evidence': True,
+        }
+    if source_link_field == 'legacy_source_conversation_id':
+        collaboration_conversation_doc['legacy_source_scope'] = 'group'
 
     source_context = list(source_conversation_doc.get('context', []) or [])
     if source_context:
@@ -1209,10 +1292,11 @@ def ensure_group_collaboration_for_legacy_conversation(source_conversation_id, o
     if source_locked_contexts:
         collaboration_conversation_doc['locked_contexts'] = source_locked_contexts
 
-    copied_messages = _copy_legacy_group_messages_to_collaboration(
+    copied_messages = copy_source_messages(
         source_conversation_id,
         collaboration_conversation_doc.get('id'),
         owner_summary,
+        raw_messages=publication.messages,
     )
     if copied_messages:
         last_copied_message = copied_messages[-1]
@@ -1230,7 +1314,9 @@ def ensure_group_collaboration_for_legacy_conversation(source_conversation_id, o
     source_conversation_doc['converted_to_collaboration_at'] = conversion_timestamp
     source_conversation_doc['is_hidden'] = True
     source_conversation_doc['last_updated'] = conversion_timestamp
-    cosmos_group_conversations_container.upsert_item(source_conversation_doc)
+    source_container.upsert_item(source_conversation_doc)
+    invalidate_conversation_cache_for_item(source_conversation_doc, reason="collaboration_source_converted")
+    invalidate_conversation_cache_for_item(collaboration_conversation_doc, reason="collaboration_converted")
 
     log_event(
         '[COLLABORATION] Converted group conversation into collaborative conversation',
@@ -2415,11 +2501,11 @@ def _archive_collaboration_item(item, archive_container, record_type, retention_
     archive_container.upsert_item(archived_item)
 
 
-def _delete_blob_backed_collaboration_files(messages):
+def _delete_blob_backed_collaboration_files(messages, conversation=None):
     # Local import avoids the functions_simplechat_operations collaboration dependency cycle.
     from functions_simplechat_operations import delete_blob_backed_chat_message_files
 
-    return delete_blob_backed_chat_message_files(messages, raise_on_error=True)
+    return delete_blob_backed_chat_message_files(messages, raise_on_error=True, conversation=conversation)
 
 
 def _delete_item_if_present(container, item_id, partition_key):
@@ -2495,15 +2581,11 @@ def _cleanup_collaboration_thoughts(conversation_id, user_ids, archiving_enabled
             )
 
 
-def _cleanup_linked_collaboration_source(
+def _read_linked_collaboration_source(
     conversation_doc,
     source_field,
     source_container,
-    source_messages_container,
-    archiving_enabled,
-    retention_deletion,
     expected_user_id=None,
-    additional_thought_user_ids=None,
 ):
     source_conversation_id = str((conversation_doc or {}).get(source_field) or '').strip()
     if not source_conversation_id:
@@ -2522,6 +2604,44 @@ def _cleanup_linked_collaboration_source(
         return None
     if str(source_conversation.get('collaboration_conversation_id') or '').strip() != str(conversation_doc.get('id') or '').strip():
         return None
+    return source_conversation
+
+
+def _cancel_collaboration_pending_deliveries(conversation_doc):
+    """The authorized shared destination includes only reciprocally linked sources."""
+    cancel_m365_conversation_deliveries(conversation_doc['id'])
+    for source_field, source_container in (
+        ('source_conversation_id', cosmos_conversations_container),
+        ('legacy_source_conversation_id', cosmos_group_conversations_container),
+    ):
+        source_conversation = _read_linked_collaboration_source(
+            conversation_doc, source_field, source_container,
+        )
+        if source_conversation:
+            # Co-owners may remove the shared destination without permission to
+            # delete its creator's retained personal history.
+            cancel_m365_conversation_deliveries(source_conversation['id'])
+
+
+def _cleanup_linked_collaboration_source(
+    conversation_doc,
+    source_field,
+    source_container,
+    source_messages_container,
+    archiving_enabled,
+    retention_deletion,
+    expected_user_id=None,
+    additional_thought_user_ids=None,
+    deliveries_cancelled=False,
+):
+    source_conversation = _read_linked_collaboration_source(
+        conversation_doc, source_field, source_container, expected_user_id,
+    )
+    if source_conversation is None:
+        return None
+    source_conversation_id = source_conversation['id']
+    if not deliveries_cancelled:
+        cancel_m365_conversation_deliveries(source_conversation_id)
 
     source_messages = list(source_messages_container.query_items(
         query='SELECT * FROM c WHERE c.conversation_id = @conversation_id',
@@ -2537,7 +2657,7 @@ def _cleanup_linked_collaboration_source(
             retention_deletion,
         )
     else:
-        _delete_blob_backed_collaboration_files(source_messages)
+        _delete_blob_backed_collaboration_files(source_messages, conversation=source_conversation)
 
     for source_message in source_messages:
         if archiving_enabled:
@@ -2626,7 +2746,15 @@ def _delete_collaboration_conversation_records(
             return live_conversation_doc
         conversation_doc = live_conversation_doc
     else:
-        conversation_doc = get_collaboration_conversation(conversation_id)
+        live_conversation_doc = get_collaboration_conversation(conversation_id)
+        if expected_source_user_id and (
+            expected_source_user_id not in set(live_conversation_doc.get('owner_user_ids', []) or [])
+            or _collaboration_retention_identity(live_conversation_doc) != _collaboration_retention_identity(conversation_doc)
+        ):
+            raise PermissionError('The shared conversation changed before it could be deleted.')
+        conversation_doc = live_conversation_doc
+
+    _cancel_collaboration_pending_deliveries(conversation_doc)
 
     if is_personal_collaboration_conversation(conversation_doc):
         revocation_conversation_doc = deepcopy(conversation_doc)
@@ -2721,6 +2849,7 @@ def _delete_collaboration_conversation_records(
         retention_deletion,
         expected_user_id=expected_source_user_id,
         additional_thought_user_ids=source_thought_user_ids,
+        deliveries_cancelled=True,
     )
     _cleanup_linked_collaboration_source(
         conversation_doc,
@@ -2731,6 +2860,7 @@ def _delete_collaboration_conversation_records(
         retention_deletion,
         expected_user_id=expected_source_user_id,
         additional_thought_user_ids=source_thought_user_ids,
+        deliveries_cancelled=True,
     )
 
     log_conversation_deletion(

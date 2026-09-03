@@ -42,6 +42,7 @@ from functions_conversation_cache import (
     set_cached_conversation_payload,
 )
 from functions_image_messages import decode_image_content, get_complete_image_content, hydrate_image_messages, is_blob_backed_image_message, is_external_image_url
+from functions_message_image_revisions import resolve_served_revision
 from functions_notifications import mark_chat_response_notifications_read_for_conversation
 from flask import Response, request, stream_with_context
 from functions_debug import debug_print
@@ -55,6 +56,9 @@ from functions_message_artifacts import (
     filter_assistant_artifact_items,
     hydrate_agent_citations_from_artifacts,
 )
+from functions_m365_context import M365PolicyError
+from functions_m365_pending_delivery import cancel_m365_conversation_deliveries
+import functions_msgraph_pending_actions
 from functions_simplechat_operations import (
     ConversationForkConflictError,
     create_personal_conversation_for_current_user,
@@ -823,6 +827,13 @@ def _authorize_personal_conversation_read(user_id, conversation_id):
     return conversation_item
 
 
+def hydrate_m365_pending_action_cards(messages, viewer_user_id, conversation_id):
+    """Project current cards only after the caller authorizes message history."""
+    return functions_msgraph_pending_actions.hydrate_m365_pending_action_cards(
+        messages, viewer_user_id, conversation_id,
+    )
+
+
 def _rebuild_authorized_personal_conversation_used_documents(
     user_id,
     conversation_id,
@@ -915,8 +926,12 @@ def _authorize_image_conversation_read(user_id, conversation_id):
     return conversation_item, 'collaboration'
 
 
-def _stream_blob_backed_image_message(message_doc):
-    """Stream a blob-backed image message through the authenticated image endpoint."""
+def _stream_blob_backed_image_message(message_doc, cache_control='private, max-age=300'):
+    """Stream a blob-backed image message through the authenticated image endpoint.
+
+    ``message_doc`` only needs to carry the three blob fields, so a stored image revision --
+    which uses the same key names deliberately -- can be streamed through here directly.
+    """
     blob_container = str(message_doc.get('blob_container') or '').strip()
     blob_path = str(message_doc.get('blob_path') or '').strip()
     mime_type = str(message_doc.get('mime_type') or '').strip() or 'image/png'
@@ -945,7 +960,7 @@ def _stream_blob_backed_image_message(message_doc):
             yield blob_chunk
 
     headers = {
-        'Cache-Control': 'private, max-age=300',
+        'Cache-Control': cache_control,
     }
     if content_length is not None:
         headers['Content-Length'] = str(content_length)
@@ -1062,6 +1077,20 @@ def register_route_backend_conversations(bp):
                 image_url_builder=lambda image_id: f"/api/image/{image_id}",
             )
 
+            try:
+                messages = hydrate_m365_pending_action_cards(messages, user_id, conversation_id)
+            except Exception as error:
+                log_event(
+                    "[CONVERSATION_METADATA] Microsoft 365 action cards could not be loaded.",
+                    extra={"conversation_id": conversation_id, "exception_type": type(error).__name__},
+                    level=logging.ERROR,
+                )
+                status_code = 403 if isinstance(error, (M365PolicyError, PermissionError)) else 503
+                return jsonify({
+                    "error": "m365_pending_actions_unavailable",
+                    "message": "Microsoft 365 action cards could not be loaded. Reload the conversation to try again.",
+                }), status_code
+
             return jsonify({'messages': messages})
         except PermissionError:
             return jsonify({'error': 'Forbidden'}), 403
@@ -1100,6 +1129,21 @@ def register_route_backend_conversations(bp):
                 conversation_id,
                 image_id,
             )
+
+            # An edited image is served from the revision's own blob. `rev` names which version
+            # is wanted; it exists because this URL is otherwise identical before and after an
+            # edit, and a browser holding a cached response would keep showing the version the
+            # reader just replaced. Because the URL is addressed by revision, that response can
+            # be cached hard rather than briefly.
+            requested_revision = str(request.args.get('rev') or '').strip()
+            served_revision = resolve_served_revision(image_message, requested_revision)
+            if served_revision:
+                return _stream_blob_backed_image_message(
+                    served_revision,
+                    cache_control='private, max-age=31536000, immutable'
+                    if requested_revision
+                    else 'private, max-age=60',
+                )
 
             if is_blob_backed_image_message(image_message):
                 return _stream_blob_backed_image_message(image_message)
@@ -1429,6 +1473,18 @@ def register_route_backend_conversations(bp):
                 "error": str(e)
             }), 500
 
+        try:
+            cancel_m365_conversation_deliveries(conversation_id)
+        except Exception as error:
+            log_event(
+                "[CONVERSATION_DELETE] Unable to stop outgoing Microsoft 365 actions.",
+                extra={"conversation_id": conversation_id, "exception_type": type(error).__name__},
+                level=logging.ERROR,
+            )
+            return jsonify({
+                "error": "Pending Microsoft 365 actions could not be stopped. The conversation was not deleted.",
+            }), 503
+
         if archiving_enabled:
             archived_item = dict(conversation_item)
             archived_item["archived_at"] = datetime.utcnow().isoformat()
@@ -1476,7 +1532,7 @@ def register_route_backend_conversations(bp):
                 }), 500
 
         if not archiving_enabled:
-            delete_blob_backed_chat_message_files(results)
+            delete_blob_backed_chat_message_files(results, conversation=conversation_item)
 
         for doc in results:
             if archiving_enabled:
@@ -1553,6 +1609,8 @@ def register_route_backend_conversations(bp):
                 except (LookupError, PermissionError):
                     failed_ids.append(conversation_id)
                     continue
+
+                cancel_m365_conversation_deliveries(conversation_id)
                 
                 # Archive if enabled
                 if archiving_enabled:
@@ -1578,7 +1636,7 @@ def register_route_backend_conversations(bp):
                 ))
 
                 if not archiving_enabled:
-                    delete_blob_backed_chat_message_files(messages)
+                    delete_blob_backed_chat_message_files(messages, conversation=conversation_item)
                 
                 for message in messages:
                     if archiving_enabled:
@@ -1614,8 +1672,12 @@ def register_route_backend_conversations(bp):
                 
                 success_count += 1
                 
-            except Exception as e:
-                print(f"Error deleting conversation {conversation_id}: {str(e)}")
+            except Exception as error:
+                log_event(
+                    "[CONVERSATION_DELETE] Conversation deletion failed.",
+                    extra={"conversation_id": conversation_id, "exception_type": type(error).__name__},
+                    level=logging.ERROR,
+                )
                 failed_ids.append(conversation_id)
 
         if success_count:

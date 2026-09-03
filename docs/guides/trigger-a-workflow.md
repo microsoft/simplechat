@@ -32,7 +32,7 @@ A workflow only helps when it runs at the right moment and leaves evidence you c
 3. Search with **Search workflows by name, runner, or task prompt...** if needed.
 
 {% include media.html src="guides/trigger-a-workflow-step-3.png"
-                      alt="Screenshot showing trigger a workflow step 3."
+                      alt="The personal workspace Workflows tab listing a saved workflow with its runner, manual trigger, last run status, and the Run, Activity, and History buttons."
                       title="Trigger a workflow step 3"
                       capture="Capture the trigger a workflow task at this step in SimpleChat with realistic sample data and redact secrets." %}
 

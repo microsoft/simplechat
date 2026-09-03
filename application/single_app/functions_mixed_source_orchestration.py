@@ -20,11 +20,13 @@ def log_event(*args, **kwargs):
 
 SOURCE_KIND_TABULAR = "tabular"
 SOURCE_KIND_NARRATIVE = "narrative"
+SOURCE_KIND_XML_SCHEMA = "xml_schema"
 SOURCE_KIND_UNSUPPORTED = "unsupported"
 SOURCE_KIND_UNRESOLVED = "unresolved"
 SOURCE_KINDS = frozenset({
     SOURCE_KIND_TABULAR,
     SOURCE_KIND_NARRATIVE,
+    SOURCE_KIND_XML_SCHEMA,
     SOURCE_KIND_UNSUPPORTED,
     SOURCE_KIND_UNRESOLVED,
 })
@@ -56,6 +58,7 @@ SELECTION_MODES = frozenset({
 })
 
 TABULAR_SOURCE_EXTENSIONS = frozenset({".csv", ".xls", ".xlsx", ".xlsm"})
+XML_SCHEMA_SOURCE_EXTENSIONS = frozenset({".xsd"})
 NARRATIVE_SOURCE_EXTENSIONS = frozenset({
     ".txt", ".doc", ".docm", ".docx", ".html", ".htm", ".md", ".markdown",
     ".json", ".xml", ".yaml", ".yml", ".log", ".pdf", ".ppt", ".pptx",
@@ -315,6 +318,7 @@ def emit_mixed_source_coverage_telemetry(
             "successful_source_count": coverage.get("successful_source_count", 0),
             "tabular_source_count": source_kind_counts[SOURCE_KIND_TABULAR],
             "narrative_source_count": source_kind_counts[SOURCE_KIND_NARRATIVE],
+            "xml_schema_source_count": source_kind_counts[SOURCE_KIND_XML_SCHEMA],
             "unsupported_source_count": source_kind_counts[SOURCE_KIND_UNSUPPORTED],
             "unresolved_source_count": source_kind_counts[SOURCE_KIND_UNRESOLVED],
             "missing_coverage_violation_count": coverage.get(
@@ -504,6 +508,8 @@ def classify_source_kind(file_name, document_item=None):
     extension = os.path.splitext(normalized_file_name)[1].lower()
     if extension in TABULAR_SOURCE_EXTENSIONS:
         return SOURCE_KIND_TABULAR
+    if extension in XML_SCHEMA_SOURCE_EXTENSIONS:
+        return SOURCE_KIND_XML_SCHEMA
     if extension in NARRATIVE_SOURCE_EXTENSIONS:
         return SOURCE_KIND_NARRATIVE
 
@@ -701,6 +707,18 @@ def _build_authorized_manifest_entry(document_id, user_id, document_context):
         "conversation_id": conversation_id,
         "source_version": source_version,
         "storage_locator": storage_locator,
+        "xsd_logical_path": document_item.get("xsd_logical_path"),
+        "xsd_schema_status": document_item.get("xsd_schema_status"),
+        "xsd_profile": document_item.get("xsd_profile"),
+        "xsd_validator_id": document_item.get("xsd_validator_id"),
+        "xsd_dialect": document_item.get("xsd_dialect"),
+        "xsd_effective_dialect": document_item.get("xsd_effective_dialect"),
+        "xsd_target_namespace": document_item.get("xsd_target_namespace"),
+        "xsd_sha256": document_item.get("xsd_sha256"),
+        "xsd_global_elements": document_item.get("xsd_global_elements"),
+        "xsd_global_types": document_item.get("xsd_global_types"),
+        "xsd_dependencies": document_item.get("xsd_dependencies"),
+        "xsd_dependency_count": document_item.get("xsd_dependency_count"),
         "authorization_status": AUTHORIZATION_STATUS_AUTHORIZED,
     }
 
@@ -879,6 +897,7 @@ def resolve_authorized_source_manifest(
             "resolved_source_count": resolved_source_count,
             "tabular_source_count": source_kind_counts[SOURCE_KIND_TABULAR],
             "narrative_source_count": source_kind_counts[SOURCE_KIND_NARRATIVE],
+            "xml_schema_source_count": source_kind_counts[SOURCE_KIND_XML_SCHEMA],
             "unsupported_source_count": source_kind_counts[SOURCE_KIND_UNSUPPORTED],
             "unresolved_or_unauthorized_count": source_kind_counts[SOURCE_KIND_UNRESOLVED],
             "duplicate_ids_removed": duplicate_ids_removed,
@@ -897,12 +916,14 @@ def partition_source_manifest(manifest):
     partitions = {
         "tabular_sources": [],
         "narrative_sources": [],
+        "schema_sources": [],
         "unsupported_sources": [],
         "unresolved_sources": [],
     }
     partition_key_by_source_kind = {
         SOURCE_KIND_TABULAR: "tabular_sources",
         SOURCE_KIND_NARRATIVE: "narrative_sources",
+        SOURCE_KIND_XML_SCHEMA: "schema_sources",
         SOURCE_KIND_UNSUPPORTED: "unsupported_sources",
         SOURCE_KIND_UNRESOLVED: "unresolved_sources",
     }
@@ -1142,8 +1163,14 @@ def build_evidence_envelope(
         raise ValueError("document_id is required")
 
     normalized_source_kind = str(source_kind or "").strip().lower()
-    if normalized_source_kind not in {SOURCE_KIND_TABULAR, SOURCE_KIND_NARRATIVE}:
-        raise ValueError("Evidence source_kind must be tabular or narrative")
+    if normalized_source_kind not in {
+        SOURCE_KIND_TABULAR,
+        SOURCE_KIND_NARRATIVE,
+        SOURCE_KIND_XML_SCHEMA,
+    }:
+        raise ValueError(
+            "Evidence source_kind must be tabular, narrative, or xml_schema"
+        )
 
     normalized_engine = str(engine or "").strip().lower()
     if normalized_engine not in EVIDENCE_ENGINES:
@@ -1337,6 +1364,78 @@ def build_narrative_evidence_envelopes(
                 None
                 if result_count
                 else "Narrative retrieval returned no relevant excerpts."
+            ),
+        ))
+    return envelopes
+
+
+def build_schema_summary_evidence_envelopes(
+    schema_sources,
+    search_results,
+    selection_mode,
+):
+    """Normalize indexed XSD summary results without treating schemas as narrative."""
+    normalized_selection_mode = normalize_selection_mode(
+        selection_mode,
+        default=SELECTION_MODE_RELEVANCE,
+    )
+    results_by_document_id = {}
+    for raw_result in list(search_results or []):
+        result = raw_result if isinstance(raw_result, dict) else {}
+        document_id = str(result.get("document_id") or "").strip()
+        if document_id:
+            results_by_document_id.setdefault(document_id, []).append(result)
+
+    envelopes = []
+    for source in list(schema_sources or []):
+        source = source if isinstance(source, dict) else {}
+        document_id = str(source.get("document_id") or "").strip()
+        if not document_id:
+            continue
+        source_results = results_by_document_id.get(document_id, [])
+        evidence = [
+            {
+                "chunk_text": result.get("chunk_text"),
+                "page_number": result.get("page_number"),
+                "chunk_sequence": result.get("chunk_sequence"),
+                "score": result.get("score"),
+            }
+            for result in source_results
+        ]
+        citations = [
+            {
+                "citation_id": result.get("id") or result.get("chunk_id"),
+                "page_number": result.get("page_number"),
+                "chunk_sequence": result.get("chunk_sequence"),
+            }
+            for result in source_results
+        ]
+        result_count = len(source_results)
+        envelopes.append(build_evidence_envelope(
+            document_id=document_id,
+            source_kind=SOURCE_KIND_XML_SCHEMA,
+            engine=EVIDENCE_ENGINE_HYBRID_SEARCH,
+            status=(
+                EVIDENCE_STATUS_COMPLETED
+                if result_count
+                else EVIDENCE_STATUS_PARTIAL
+            ),
+            summary=(
+                f"Retrieved {result_count} bounded XML schema summary result(s)."
+                if result_count
+                else "No relevant XML schema summary was returned."
+            ),
+            evidence=evidence,
+            citations=citations,
+            coverage={
+                "selection_mode": normalized_selection_mode,
+                "terminal": True,
+                "result_count": result_count,
+            },
+            error=(
+                None
+                if result_count
+                else "XML schema summary retrieval returned no relevant result."
             ),
         ))
     return envelopes
