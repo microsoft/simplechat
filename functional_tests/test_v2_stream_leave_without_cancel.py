@@ -2,8 +2,8 @@
 """
 Functional test for leaving a V2 conversation without cancelling its generation.
 
-Version: 0.261.050
-Implemented in: 0.261.050
+Version: 0.261.051
+Implemented in: 0.261.050 (cancellation), 0.261.051 (conversation-creation window)
 
 Sending a message and then opening a different conversation used to end the answer. Not
 because the reader was dropped -- that is harmless, generation runs in background execution
@@ -15,6 +15,12 @@ returning to the thread showed the question with no answer and nothing left to r
 The distinction this test protects is between *stopping reading* and *stopping generating*.
 Only the Stop button means the second one. Everything else -- switching threads, starting a
 new chat -- must detach.
+
+A second, narrower version of "leave straight after sending" is covered here too. The first
+message of a brand-new chat has to create the conversation before it can stream, and a
+reader who clicks away during that round trip used to be snapped back into the chat they had
+just left, sometimes with the other thread's messages rendered underneath it. Their click
+wins instead: the answer is still generated and saved, and the interface stays put.
 """
 
 import re
@@ -321,6 +327,89 @@ def test_a_reattached_stream_is_not_owned():
     return True
 
 
+def test_creating_a_conversation_does_not_take_the_screen_back():
+    """Opening another thread while a new chat is being created must not be undone.
+
+    The first message of a brand-new chat has to create the conversation before it can
+    stream, and that round trip is a window in which the reader can click elsewhere. Claiming
+    `activeConversationId` unconditionally afterwards snapped them back into the chat they
+    had just left.
+    """
+    print("Testing conversation creation does not steal the screen...")
+
+    store = _read(V2_SRC / "stores" / "chatStore.ts")
+    send = _store_action_body(store, "sendMessage")
+
+    assert re.search(
+        r"if \(get\(\)\.activeConversationId === null\) \{\s*\n\s*set\(\{ activeConversationId: conversationId",
+        send,
+    ), (
+        "sendMessage claims activeConversationId without checking whether the reader opened "
+        "something else while the conversation was being created; their click gets undone"
+    )
+
+    print("Screen ownership on creation test passed!")
+    return True
+
+
+def test_a_backgrounded_send_does_not_write_into_the_open_thread():
+    """The optimistic message and streaming state belong to whatever is on screen."""
+    print("Testing optimistic message placement...")
+
+    store = _read(V2_SRC / "stores" / "chatStore.ts")
+    send = _store_action_body(store, "sendMessage")
+
+    assert "const ownsScreen = get().activeConversationId === conversationId;" in send, (
+        "sendMessage no longer works out whether this send owns the screen"
+    )
+    assert re.search(
+        r"if \(ownsScreen\) \{\s*\n\s*set\(\(state\) => \(\{\s*\n\s*messages: \[\.\.\.state\.messages, optimisticUserMessage\]",
+        send,
+    ), (
+        "The optimistic user message is appended unconditionally, so a send whose "
+        "conversation is no longer on screen puts its question into another thread's list"
+    )
+
+    print("Optimistic message placement test passed!")
+    return True
+
+
+def test_rendering_is_gated_on_the_conversation_not_only_the_controller():
+    """Controller identity answers teardown; it does not answer where to render.
+
+    Switching threads mid-response clears the controller, so identity alone used to cover
+    both questions. It does not cover the conversation-creation window, where there is no
+    controller yet to clear -- the handlers would install one afterwards and write into
+    whatever thread the reader had opened.
+    """
+    print("Testing render gating...")
+
+    store = _read(V2_SRC / "stores" / "chatStore.ts")
+    run = _function_body(store, r"async function runChatStream\(")
+
+    assert "const ownsController = () => activeStreamController === controller;" in run, (
+        "runChatStream no longer tracks controller ownership separately from currency"
+    )
+    assert re.search(
+        r"const isCurrent = \(\)\s*=>\s*ownsController\(\) && getState\(\)\.activeConversationId === conversationId;",
+        run,
+    ), (
+        "The handlers' currency check no longer requires the stream's conversation to be "
+        "the one on screen, so a backgrounded send renders into the open thread"
+    )
+
+    # Teardown must stay on identity: a stream whose conversation is off screen still owns
+    # the module's controller and is the only thing allowed to clear it.
+    assert "if (ownsController()) {" in run, (
+        "Teardown is gated on something other than controller identity; a stream left off "
+        "screen would never clear activeStreamController, and resumeChatStream refuses to "
+        "attach while one is set"
+    )
+
+    print("Render gating test passed!")
+    return True
+
+
 def test_version_is_at_least_implementation_version():
     """The application version is at or beyond the version that added the fix."""
     print("Testing application version...")
@@ -342,6 +431,9 @@ if __name__ == "__main__":
         test_only_the_stop_button_reaches_the_cancel_route,
         test_legacy_never_cancelled_on_a_thread_switch,
         test_a_reattached_stream_is_not_owned,
+        test_creating_a_conversation_does_not_take_the_screen_back,
+        test_a_backgrounded_send_does_not_write_into_the_open_thread,
+        test_rendering_is_gated_on_the_conversation_not_only_the_controller,
         test_version_is_at_least_implementation_version,
     ]
 

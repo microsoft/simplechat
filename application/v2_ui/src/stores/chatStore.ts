@@ -766,10 +766,20 @@ async function runChatStream(
     streamingConversationId = conversationId;
     streamingConversationKind = options.kind ?? 'personal';
 
-    // A stream is "current" only while it is still the active one. If the user switches
-    // threads or starts a new chat mid-response, this goes false and the remaining
-    // handlers stop writing into what is now a different conversation's message list.
-    const isCurrent = () => activeStreamController === controller;
+    // Two different questions, and conflating them breaks one case each way.
+    //
+    // `ownsController` is about teardown: does this invocation still own the module's
+    // controller, or has a newer send installed its own? Only the owner may clear it.
+    //
+    // `isCurrent` is about rendering: is this stream's conversation still the one on
+    // screen? Switching threads mid-response clears the controller, so that alone used to
+    // answer both. It does not cover a brand-new conversation, where the reader can open a
+    // different thread during the round trip that creates it — before there is any
+    // controller to clear — leaving the handlers free to write this answer into whatever
+    // they opened.
+    const ownsController = () => activeStreamController === controller;
+    const isCurrent = () =>
+        ownsController() && getState().activeConversationId === conversationId;
 
     await streamChat(
         requestBody,
@@ -786,16 +796,18 @@ async function runChatStream(
 
     // Only tear down if this stream is still the active one; a newer send may already have
     // installed its own controller. Captured before the teardown because clearing the
-    // controller makes isCurrent() false for every check after it.
+    // controller makes ownsController() false for every check after it.
     const wasCurrent = isCurrent();
-    if (wasCurrent) {
+    if (ownsController()) {
         activeStreamController = null;
         streamingConversationId = null;
         set({ streaming: false, reconnectPhase: null });
     }
 
     // Retry and edit rewrite thread state server-side, so the authoritative message list
-    // has to be re-read rather than patched locally.
+    // has to be re-read rather than patched locally. Skipped when the reader is elsewhere,
+    // since reloadMessages reads whatever is on screen and would refetch a thread this
+    // stream never touched.
     if (options.reloadOnDone && wasCurrent) {
         await getState().reloadMessages();
     }
@@ -1610,14 +1622,23 @@ export const useChatStore = create<ChatState>((set, get) => ({
             try {
                 const created = await createConversation(trimmed);
                 conversationId = created.conversation_id;
-                set({ activeConversationId: conversationId, activeConversationKind: 'personal' });
-                // Mirrored like every other write to this field. Today the conversation just
-                // created can only be personal — this branch is reached only when nothing was
-                // open, which forces `collaborative` false above — so nothing would currently
-                // notice. Leaving it out would make the collaboration store's guard depend on
-                // that reasoning continuing to hold, and a shared conversation reachable here
-                // later would silently strand its composer at "checking access".
-                useCollaborationStore.getState().setActiveConversation(conversationId);
+                // The reader can open a conversation during that round trip, and if they do
+                // their click wins. The message is still sent and its answer still generated
+                // and saved — it appears in the rail and is there when they come back — but
+                // the interface stays where they put it instead of snapping back to a chat
+                // they have already left. Claiming `activeConversationId` unconditionally
+                // also let the thread they had just opened render its messages under this
+                // new one, because the list is keyed on whatever is active.
+                if (get().activeConversationId === null) {
+                    set({ activeConversationId: conversationId, activeConversationKind: 'personal' });
+                    // Mirrored like every other write to this field. Today the conversation just
+                    // created can only be personal — this branch is reached only when nothing was
+                    // open, which forces `collaborative` false above — so nothing would currently
+                    // notice. Leaving it out would make the collaboration store's guard depend on
+                    // that reasoning continuing to hold, and a shared conversation reachable here
+                    // later would silently strand its composer at "checking access".
+                    useCollaborationStore.getState().setActiveConversation(conversationId);
+                }
             } catch (error) {
                 set({
                     streamError:
@@ -1686,14 +1707,22 @@ export const useChatStore = create<ChatState>((set, get) => ({
         // interface must not sit in the streaming state waiting for one that never starts.
         const willStream = !collaborative || invocationTarget !== null;
 
-        set((state) => ({
-            messages: [...state.messages, optimisticUserMessage],
-            streaming: willStream,
-            streamingContent: '',
-            thoughts: [],
-            streamError: null,
-            reconnectPhase: null,
-        }));
+        // Only ever false when the reader opened another conversation while this one was
+        // being created. `messages`, `streaming` and the rest describe whatever is on
+        // screen, so writing them then would show this question and its answer inside a
+        // thread they have nothing to do with.
+        const ownsScreen = get().activeConversationId === conversationId;
+
+        if (ownsScreen) {
+            set((state) => ({
+                messages: [...state.messages, optimisticUserMessage],
+                streaming: willStream,
+                streamingContent: '',
+                thoughts: [],
+                streamError: null,
+                reconnectPhase: null,
+            }));
+        }
 
         const mentionedParticipants = collaborative
             ? extractMentionedParticipants(
