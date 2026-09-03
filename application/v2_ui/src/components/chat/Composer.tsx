@@ -3,10 +3,12 @@
 // and the capability toggles that map onto the /api/chat/stream request fields.
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { clsx } from 'clsx';
 import {
     ArrowUp,
     Bot,
+    BookmarkPlus,
     FileText,
     Gauge,
     Globe,
@@ -54,8 +56,27 @@ import {
     type ReasoningEffortSettings,
 } from '../../lib/reasoning';
 import { Dropdown, type DropdownOption } from '../ui/Dropdown';
+import {
+    filterPromptsForSlash,
+    insertPromptText,
+    readSlashQuery,
+    suggestPromptName,
+    type SlashQuery,
+} from '../../lib/promptSlash';
+import { promptNeedsFilling } from '../../lib/promptVariables';
+import { readPromptParam } from '../../lib/conversationUrl';
+import { createPrompt } from '../../lib/workspaceApi';
+import { messageToPlainText } from '../../lib/messageText';
+import type { PromptOption } from '../../lib/types';
+import {
+    EMPTY_PROMPT_DRAFT,
+    PromptEditorDialog,
+    type PromptDraft,
+} from '../prompts/PromptEditorDialog';
+import { PromptVariablesDialog, type PromptFillSource } from '../prompts/PromptVariablesDialog';
 import { AiNotice } from './AiNotice';
 import { MentionMenu, useMentionSuggestions } from './MentionMenu';
+import { PromptSlashMenu } from './PromptSlashMenu';
 import { VoiceInput } from './VoiceInput';
 import { WebSearchNotice } from './WebSearchNotice';
 
@@ -96,11 +117,24 @@ function ToolToggle({
 
 export function Composer() {
     const { streaming, sendMessage, stopStreaming, activeConversationId } = useChatStore();
+    // Read for the built-in prompt variables ({{last_response}} and friends) and for the name
+    // suggested when saving what is written as a prompt.
+    const messages = useChatStore((state) => state.messages);
+    const conversations = useChatStore((state) => state.conversations);
     const bootstrap = useBootstrapStore((state) => state.data);
+    const upsertPromptInCatalog = useBootstrapStore((state) => state.upsertPromptInCatalog);
+    const refreshBootstrap = useBootstrapStore((state) => state.refresh);
     const features = bootstrap?.features ?? {};
     // Thresholds for the large-run confirmation. These are administrator settings rather
     // than capability flags, so they come from the settings payload rather than `features`.
     const tabularRunSettings = (bootstrap?.settings ?? {}) as TabularRunSettings;
+
+    // Declared here rather than beside the picker below because the `?prompt=` handoff effect
+    // resolves against it, and that effect runs before the picker's options are built.
+    const promptCatalog = useMemo(
+        () => (bootstrap?.catalogs?.prompts ?? []) as PromptOption[],
+        [bootstrap],
+    );
     // The level chosen per model, shared with the classic interface. Read from the store
     // rather than held here so a change made anywhere is reflected without a reload.
     const reasoningEffortSettings = useUserSettingsStore(
@@ -158,6 +192,17 @@ export function Composer() {
 
     /** Set while a prompt is waiting on its large-run confirmation. */
     const [largeRun, setLargeRun] = useState<TabularRunEstimate | null>(null);
+
+    /** The `/` token under the caret, when one is being typed. */
+    const [slash, setSlash] = useState<SlashQuery | null>(null);
+    const [slashIndex, setSlashIndex] = useState(0);
+
+    /** The prompt whose variables are being filled in, if any. */
+    const [fillingPrompt, setFillingPrompt] = useState<PromptOption | null>(null);
+    /** A prompt being saved from what is currently written, if any. */
+    const [savingDraft, setSavingDraft] = useState<PromptDraft | null>(null);
+    const [savingPrompt, setSavingPrompt] = useState(false);
+    const [saveError, setSaveError] = useState<string | null>(null);
 
     const [options, setOptions] = useState<ComposerOptions>({
         documentSearch: false,
@@ -308,8 +353,42 @@ export function Composer() {
         // A conversation change invalidates both the draft's mention state and any typing
         // claim made in the conversation being left.
         setMention(null);
+        setSlash(null);
         typingRef.current = false;
     }, [activeConversationId]);
+
+    /**
+     * Consume a prompt handed over from the workspace as `/chat?prompt=<id>`.
+     *
+     * The id is captured in a lazy state initialiser, which runs during the first render --
+     * before ChatPage's URL sync effect strips the parameter. Reading it in the effect instead
+     * would race that strip and sometimes find nothing.
+     *
+     * This deliberately does not write the URL. ChatPage is the single writer of the chat
+     * query string, and `setSearchParams` replaces the whole query from the caller's render
+     * snapshot, so a parameter removed here would simply be restored by that effect.
+     *
+     * The ref guards against StrictMode running effects twice on mount: a state flag is still
+     * false in the second invocation's closure, so the prompt would be inserted twice.
+     */
+    const [searchParams] = useSearchParams();
+    const [linkedPromptId] = useState(() => readPromptParam(searchParams));
+    const promptLinkConsumed = useRef(false);
+    useEffect(() => {
+        if (promptLinkConsumed.current || !linkedPromptId || !bootstrap) {
+            return;
+        }
+        promptLinkConsumed.current = true;
+
+        const prompt = promptCatalog.find((item) => item.id === linkedPromptId);
+        if (!prompt) {
+            toast.error('That prompt is no longer available.');
+            return;
+        }
+        setOptions((current) => ({ ...current, promptId: prompt.id }));
+        insertPromptIntoComposer(prompt);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [bootstrap, promptCatalog, linkedPromptId]);
 
     // A model is identified by endpoint + id + provider + deployment together, so the
     // option is keyed on `selection_key` (unique per endpoint) rather than the deployment
@@ -335,12 +414,23 @@ export function Composer() {
         }),
     );
 
-    const promptOptions: DropdownOption[] = (bootstrap?.catalogs?.prompts ?? []).map(
-        (prompt, index) => ({
-            value: (prompt.id as string) ?? String(index),
-            label: (prompt.name as string) || 'Prompt',
-            group: prompt.scope_type ? String(prompt.scope_type) : undefined,
-        }),
+    const promptOptions: DropdownOption[] = promptCatalog.map((prompt, index) => ({
+        value: (prompt.id as string) ?? String(index),
+        label: (prompt.name as string) || 'Prompt',
+        description: prompt.description as string | undefined,
+        group: prompt.scope_type ? String(prompt.scope_type) : undefined,
+    }));
+
+    /**
+     * What the `/` menu is currently offering.
+     *
+     * An empty result is also what closes the menu, which is what makes a query containing
+     * spaces safe: an ordinary sentence that happens to start with a slash stops matching
+     * almost immediately and the menu goes away, rather than hovering over the composer.
+     */
+    const slashResults = useMemo(
+        () => (slash && canPost ? filterPromptsForSlash(promptCatalog, slash.query) : []),
+        [slash, canPost, promptCatalog],
     );
 
     // Names the agent in the model picker's tooltip. Saying which one is holding the model
@@ -581,7 +671,193 @@ export function Composer() {
         });
     };
 
+    /* ---------------------------------------------------------------- Saved prompts */
+
+    /**
+     * Put text into the composer over a range, instead of replacing everything.
+     *
+     * Picking a prompt used to call `setText(prompt.content)`, which discarded whatever had
+     * already been written. That is the reason this exists: a prompt is something you reach for
+     * part-way through composing, and losing the half-sentence you reached for it from is the
+     * worst possible response to being asked for help.
+     */
+    const insertIntoComposer = (addition: string, range?: { start: number; end: number }) => {
+        const element = textareaRef.current;
+        const start = range?.start ?? element?.selectionStart ?? text.length;
+        const end = range?.end ?? element?.selectionEnd ?? start;
+
+        const result = insertPromptText(text, start, end, addition);
+        setText(result.text);
+        setSlash(null);
+        setMention(null);
+
+        // After React has written the new value back, or the browser puts the caret at the end.
+        window.requestAnimationFrame(() => {
+            element?.focus();
+            element?.setSelectionRange(result.caret, result.caret);
+        });
+    };
+
+    /**
+     * The conversation facts the built-in variables resolve from.
+     *
+     * Assembled here rather than inside the dialog because only the composer knows what has
+     * been typed but not yet sent. Nothing in this object is applied on its own: the last
+     * assistant reply is offered as a chip the reader has to click, because that reply can be
+     * quoting an uploaded document and text from a document should not become part of the next
+     * instruction without a deliberate act.
+     */
+    const promptContext = () => {
+        const lastOfRole = (role: string) =>
+            [...messages].reverse().find((message) => message.role === role);
+        const assistant = lastOfRole('assistant');
+        const user = lastOfRole('user');
+        const conversation = conversations.find((item) => item.id === activeConversationId);
+
+        return {
+            userName: String(bootstrap?.user?.display_name ?? ''),
+            conversationTitle: String(conversation?.title ?? ''),
+            lastAssistantMessage: assistant ? messageToPlainText(assistant) : '',
+            lastUserMessage: user ? messageToPlainText(user) : '',
+            composerText: text,
+        };
+    };
+
+    /** The one-click values each variable field offers, beyond what is remembered. */
+    const promptFillSources = (): PromptFillSource[] => {
+        const context = promptContext();
+        return (
+            [
+                { label: 'Last reply', value: context.lastAssistantMessage },
+                { label: 'My last message', value: context.lastUserMessage },
+                { label: 'What I have typed', value: context.composerText },
+            ] as PromptFillSource[]
+        ).filter((source) => source.value.trim().length > 0);
+    };
+
+    /** The range a pending fill will be inserted over, captured before the dialog opens. */
+    const fillRangeRef = useRef<{ start: number; end: number } | null>(null);
+
+    /**
+     * Use a saved prompt, asking for its variables first when it has any.
+     *
+     * Not named `usePrompt`: React reserves the `use` prefix for hooks, and this is an event
+     * handler called conditionally.
+     */
+    const insertPromptIntoComposer = (
+        prompt: PromptOption,
+        range?: { start: number; end: number },
+    ) => {
+        const content = String(prompt.content ?? '');
+        if (!content) {
+            return;
+        }
+        if (promptNeedsFilling(content)) {
+            fillRangeRef.current = range ?? null;
+            setFillingPrompt(prompt);
+            return;
+        }
+        insertIntoComposer(content, range);
+    };
+
+    const pickSlashPrompt = (prompt: PromptOption) => {
+        if (!slash) {
+            return;
+        }
+        // The `/weekly` token is what the prompt replaces, so it does not survive as literal
+        // text in the message.
+        const range = { start: slash.start, end: slash.end };
+        setSlash(null);
+        setOptions((current) => ({ ...current, promptId: prompt.id }));
+        insertPromptIntoComposer(prompt, range);
+    };
+
+    /**
+     * Track the `/` token under the caret.
+     *
+     * Recomputed from the value and the caret for the same reason `syncMention` is: editing in
+     * the middle of a line, pasting and undo should behave the way typing does.
+     */
+    const syncSlash = (element: HTMLTextAreaElement) => {
+        if (!canPost) {
+            return;
+        }
+        setSlash(readSlashQuery(element.value, element.selectionStart ?? 0));
+        setSlashIndex(0);
+    };
+
+    const saveWrittenTextAsPrompt = () => {
+        const written = text.trim();
+        if (!written) {
+            return;
+        }
+        setSaveError(null);
+        setSavingDraft({
+            ...EMPTY_PROMPT_DRAFT,
+            name: suggestPromptName(written),
+            content: written,
+        });
+    };
+
+    const savePromptDraft = async () => {
+        if (!savingDraft) {
+            return;
+        }
+        setSavingPrompt(true);
+        setSaveError(null);
+        try {
+            const created = await createPrompt(savingDraft.name.trim(), savingDraft.content, {
+                description: savingDraft.description.trim(),
+            });
+            // Applied to the catalog immediately: the picker and the `/` menu read from
+            // bootstrap, and the point of saving from here is to use the prompt now.
+            upsertPromptInCatalog({
+                id: created?.id,
+                name: savingDraft.name.trim(),
+                content: savingDraft.content,
+                description: savingDraft.description.trim(),
+                scope_type: 'personal',
+            });
+            void refreshBootstrap();
+            setSavingDraft(null);
+            toast.success('Saved to your prompts');
+        } catch (error) {
+            setSaveError(
+                error instanceof Error ? error.message : 'Could not save the prompt.',
+            );
+        } finally {
+            setSavingPrompt(false);
+        }
+    };
+
     const onKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+        // The slash menu owns these keys while it has something to offer, and is tested before
+        // the mention menu because a `/` token and an `@` token cannot both be under the caret.
+        if (slashResults.length > 0) {
+            if (event.key === 'ArrowDown') {
+                event.preventDefault();
+                setSlashIndex((index) => (index + 1) % slashResults.length);
+                return;
+            }
+            if (event.key === 'ArrowUp') {
+                event.preventDefault();
+                setSlashIndex(
+                    (index) => (index - 1 + slashResults.length) % slashResults.length,
+                );
+                return;
+            }
+            if (event.key === 'Enter' || event.key === 'Tab') {
+                event.preventDefault();
+                pickSlashPrompt(slashResults[slashIndex]);
+                return;
+            }
+            if (event.key === 'Escape') {
+                event.preventDefault();
+                setSlash(null);
+                return;
+            }
+        }
+
         // The mention menu owns these keys while it is open, which is why it is handled
         // before the send: Enter should complete the highlighted name, not send a message
         // containing a half-typed one.
@@ -627,9 +903,8 @@ export function Composer() {
     const onPickPrompt = (promptId: string | undefined) => {
         setOptions((current) => ({ ...current, promptId }));
         const prompt = bootstrap?.catalogs?.prompts?.find((item) => item.id === promptId);
-        if (prompt?.content) {
-            setText(String(prompt.content));
-            textareaRef.current?.focus();
+        if (prompt) {
+            insertPromptIntoComposer(prompt as PromptOption);
         }
     };
 
@@ -689,6 +964,14 @@ export function Composer() {
                         />
                     )}
 
+                    {slashResults.length > 0 && (
+                        <PromptSlashMenu
+                            prompts={slashResults}
+                            activeIndex={slashIndex}
+                            onSelect={pickSlashPrompt}
+                        />
+                    )}
+
                     {replyTo && (
                         <div className="mb-1 flex items-start gap-2 rounded-xl bg-surface-2 px-3 py-2">
                             <Reply size={13} className="mt-0.5 shrink-0 text-text-3" />
@@ -721,11 +1004,15 @@ export function Composer() {
                         onChange={(event) => {
                             setText(event.target.value);
                             syncMention(event.target);
+                            syncSlash(event.target);
                             noteTyping(event.target.value);
                         }}
                         // The caret can move without the value changing — clicking, or an
-                        // arrow key — and the mention under it changes with it.
-                        onSelect={(event) => syncMention(event.currentTarget)}
+                        // arrow key — and the token under it changes with it.
+                        onSelect={(event) => {
+                            syncMention(event.currentTarget);
+                            syncSlash(event.currentTarget);
+                        }}
                         onBlur={stopTyping}
                         onKeyDown={onKeyDown}
                         placeholder={
@@ -804,6 +1091,18 @@ export function Composer() {
                                 clearable
                                 icon={<FileText size={15} />}
                                 onChange={onPickPrompt}
+                            />
+                        )}
+
+                        {/* Only offered once there is something to save. A prompt is wording
+                            you have already refined, so the moment worth catching is after it
+                            has been written, not before. */}
+                        {canPost && text.trim().length > 0 && (
+                            <ToolToggle
+                                active={false}
+                                onClick={saveWrittenTextAsPrompt}
+                                icon={<BookmarkPlus size={15} />}
+                                label="Save as prompt"
                             />
                         )}
 
@@ -979,6 +1278,43 @@ export function Composer() {
 
                 <AiNotice />
             </div>
+
+            {fillingPrompt ? (
+                <PromptVariablesDialog
+                    promptId={String(fillingPrompt.id ?? '')}
+                    promptName={String(fillingPrompt.name ?? 'Prompt')}
+                    content={String(fillingPrompt.content ?? '')}
+                    context={promptContext()}
+                    // Nothing is pre-filled in a shared conversation: a value remembered from a
+                    // private chat would become visible to every participant on send.
+                    shared={shared}
+                    sources={promptFillSources()}
+                    onCancel={() => {
+                        fillRangeRef.current = null;
+                        setFillingPrompt(null);
+                    }}
+                    onSubmit={(filled) => {
+                        const range = fillRangeRef.current ?? undefined;
+                        fillRangeRef.current = null;
+                        setFillingPrompt(null);
+                        insertIntoComposer(filled, range);
+                    }}
+                />
+            ) : null}
+
+            {savingDraft ? (
+                <PromptEditorDialog
+                    draft={savingDraft}
+                    saving={savingPrompt}
+                    error={saveError}
+                    onChange={setSavingDraft}
+                    onSave={() => void savePromptDraft()}
+                    onCancel={() => {
+                        setSavingDraft(null);
+                        setSaveError(null);
+                    }}
+                />
+            ) : null}
         </div>
     );
 }

@@ -81,13 +81,18 @@ def register_route_backend_public_prompts(bp):
         if not name or not content:
             return jsonify({'error': "Missing 'name' or 'content'"}), 400
 
+        options, option_error = build_prompt_create_options(data)
+        if option_error:
+            return jsonify({'error': option_error}), 400
+
         try:
             result = create_prompt_doc(
                 name=name,
                 content=content,
                 prompt_type='public_prompt',
                 user_id=user_id,
-                public_workspace_id=active_ws
+                public_workspace_id=active_ws,
+                **options
             )
             return jsonify(result), 201
         except Exception as e:
@@ -136,17 +141,9 @@ def register_route_backend_public_prompts(bp):
         active_ws, _, _ = active_workspace_context
 
         data = request.get_json() or {}
-        updates = {}
-        if 'name' in data:
-            if not isinstance(data['name'], str) or not data['name'].strip():
-                return jsonify({'error':'Invalid name'}), 400
-            updates['name'] = data['name'].strip()
-        if 'content' in data:
-            if not isinstance(data['content'], str):
-                return jsonify({'error':'Invalid content'}), 400
-            updates['content'] = data['content']
-        if not updates:
-            return jsonify({'error':'No updates'}), 400
+        updates, error = build_prompt_updates(data)
+        if error:
+            return jsonify({'error': error}), 400
 
         try:
             result = update_prompt_doc(

@@ -11,6 +11,33 @@
 export const CONVERSATION_PARAM = 'conversationId';
 
 /**
+ * A one-shot parameter that hands a saved prompt to the composer, as `/chat?prompt=<id>`.
+ *
+ * Declared here rather than beside the prompt code because this module owns the vocabulary of
+ * the chat URL, and because `syncedConversationParams` below has to know to strip it. Two
+ * components writing the query string independently is how a parameter one of them removed
+ * comes back: each `setSearchParams` replaces the *whole* query from its own render snapshot,
+ * so the later writer restores whatever the earlier one deleted.
+ */
+export const PROMPT_PARAM = 'prompt';
+
+/**
+ * The prompt a set of query parameters names, or null when it names none.
+ *
+ * Read by the composer through a lazy state initialiser, which runs during the first render --
+ * before the effect below strips it.
+ */
+export function readPromptParam(params: URLSearchParams): string | null {
+    const value = params.get(PROMPT_PARAM) ?? '';
+    return value.trim() || null;
+}
+
+/** A link that opens the chat page with a saved prompt ready to insert. */
+export function chatHrefForPrompt(promptId: string): string {
+    return `/chat?${PROMPT_PARAM}=${encodeURIComponent(promptId)}`;
+}
+
+/**
  * Also accepted when reading, never written.
  *
  * The server emits both spellings and they are already in circulation: notifications and
@@ -44,6 +71,12 @@ export function readConversationParam(params: URLSearchParams): string | null {
  * re-entering itself, and it means leaving and returning to the chat page costs no
  * navigation. A legacy parameter always counts as a difference, so an incoming
  * `?conversation_id=` link is rewritten to the canonical spelling on arrival.
+ *
+ * `prompt` is stripped here for the same reason, and deliberately by this one writer. The
+ * composer reads it during its first render and must not remove it itself: `setSearchParams`
+ * replaces the entire query from the caller's render snapshot, so a parameter the composer
+ * deleted would be restored by this effect's own snapshot moments later -- leaving a URL that
+ * re-inserts the prompt on every reload.
  */
 export function syncedConversationParams(
     params: URLSearchParams,
@@ -51,13 +84,15 @@ export function syncedConversationParams(
 ): URLSearchParams | null {
     const current = params.get(CONVERSATION_PARAM);
     const hasLegacy = params.has(LEGACY_CONVERSATION_PARAM);
+    const hasPrompt = params.has(PROMPT_PARAM);
 
-    if (!hasLegacy && (current ?? null) === conversationId) {
+    if (!hasLegacy && !hasPrompt && (current ?? null) === conversationId) {
         return null;
     }
 
     const next = new URLSearchParams(params);
     next.delete(LEGACY_CONVERSATION_PARAM);
+    next.delete(PROMPT_PARAM);
     if (conversationId) {
         next.set(CONVERSATION_PARAM, conversationId);
     } else {

@@ -2,7 +2,7 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
-### **(v0.261.053)**
+### **(v0.261.054)**
 
 #### New Features
 
@@ -47,6 +47,56 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 *   **Live Reasoning Steps Were All Labelled "Thinking"**
     *   The new interface read a step's title from a field the server does not send, so every step of a live response was labelled identically until the page was reloaded. Steps now carry the name the server gives them as they arrive.
     *   (Ref: `chatStore.ts`, thought stream frames)
+
+### **(v0.261.053)**
+
+#### New Features
+
+*   **Prompts In My Workspace Is Now A Workbench**
+    *   Editing a prompt used to open a form **above the list**. Clicking Edit on a prompt part-way down the page moved the editor to the top, out of view, with nothing tying it to the row you clicked — so the first thing you did after pressing Edit was scroll to find the editor. The layout now matches the documents explorer: the list on the left, the prompt rendered on the right, and writing done in a dialog.
+    *   **You can read a prompt without editing it.** The details pane shows the full body rendered as markdown, with its variables, its description and its actions. Previously the only way to see past the first 140 characters was to open an editor you then had to cancel out of.
+    *   **The editor shows the source and the rendering side by side**, with a small formatting toolbar, becoming tabs on a narrow screen. Closing it with unsaved changes asks first.
+    *   **Prompts now have a description and can be favourited.** Favourites sort to the top of the list and of the composer's `/` menu.
+    *   Duplicate, copy and "Use in chat" are available from the details pane, and search now covers the body of a prompt as well as its name — so you can find the one that mentions a particular system without remembering what you called it.
+    *   (Ref: V2 My Workspace, Prompts, `PromptWorkbench.tsx`, `GET/POST/PATCH /api/prompts`, [V2 Prompts Workbench](features/V2_PROMPTS_WORKBENCH.md))
+
+*   **Prompts Can Ask You To Fill In The Blanks**
+    *   Write `{{customer}}` or `{{region}}` in a prompt and you are asked for those values when you use it, instead of editing the same three words every time. A default can be written as `{{tone|formal}}`.
+    *   **Values you entered last time are offered back**, remembered per prompt so "name" in one prompt never pre-fills "name" in another. Anything filled in for you is badged as reused and cleared with one click, and the dialog always appears rather than inserting silently.
+    *   **Eight values the app already knows are filled in for you**: today's date, the current time, your name, the conversation title, the documents in scope, the last reply, your last message, and what you have already typed.
+    *   **Values from the conversation are one click each, never automatic.** The last reply can be quoting an uploaded document, and document text becoming part of your next instruction is how prompt injection gets a foothold — so you choose which field gets it.
+    *   **Nothing is pre-filled in a shared conversation**, where a value remembered from a private chat would become visible to everyone the moment you send.
+    *   **The values stay in your browser and are never sent to the server.** Anything matching an obvious key or token shape is not stored at all, and each prompt offers a "Forget saved values" control.
+    *   A prompt that documents a templating language is safe: `{{ }}` inside a code block is left alone, and `\{{` escapes a single occurrence.
+    *   (Ref: `promptVariables.ts`, `promptVariableMemory.ts`, `PromptVariablesDialog.tsx`)
+
+*   **Saving A Prompt From A Conversation**
+    *   Any message now offers **Save as prompt** in its overflow menu, and the composer offers the same for wording you have drafted but not sent. Both open the editor prefilled with a suggested name, so you can turn the specifics into `{{variables}}` before saving.
+    *   A prompt saved this way is selectable in the composer immediately, without a reload.
+    *   (Ref: `MessageActions.tsx`, `Composer.tsx`, `bootstrapStore.upsertPromptInCatalog`)
+
+*   **A `/` Shortcut For Prompts In The Composer**
+    *   Type `/` at the start of a word to search your prompts and insert one without reaching for the picker. Favourites come first, and matching covers the name, description and workspace.
+    *   A slash in the middle of a word is left alone, so `and/or` and `https://` do not trigger it.
+    *   (Ref: `promptSlash.ts`, `PromptSlashMenu.tsx`)
+
+#### Bug Fixes
+
+*   **Picking A Prompt No Longer Discards What You Had Typed**
+    *   Choosing a prompt from the composer's picker replaced the entire message box, so reaching for a prompt part-way through writing threw away the half-sentence you reached for it from. Prompts are now inserted at the cursor, or over the selection, with sensible spacing.
+    *   (Ref: composer prompt picker, `insertPromptText`)
+
+*   **"Use As Prompt" Renamed To "Copy To Composer"**
+    *   The message menu entry called "Use as prompt" only ever copied the message text into the composer — it never saved a prompt. It now says what it does, and a real **Save as prompt** sits beside it.
+    *   (Ref: `MessageActions.tsx`)
+
+*   **Prompt Search Now Actually Reaches The Server**
+    *   The workspace sent its prompt search as `search_term` while the API reads `search`, so server-side search had never once run and the list was filtered in the browser over the first page of results only.
+    *   (Ref: `fetchPrompts`, `list_prompts`)
+
+*   **One Validator For Personal, Group And Public Prompts**
+    *   The three prompt APIs each carried their own copy of the same field checks. Adding a field to one and not the others produces a value that saves on a personal prompt and is silently dropped on a group one, which reads as a save that did not work. All three now share a single validator, and creates and updates return the same fields.
+    *   (Ref: `build_prompt_updates`, `serialize_prompt_summary`, `functions_prompts.py`)
 
 ### **(v0.261.052)**
 
