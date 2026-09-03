@@ -207,10 +207,11 @@ def test_navigation_groups_appear_in_the_rail(v2_context):
         checked += 1
         expect(rail.get_by_text(group["menu_name"], exact=True)).to_be_visible()
 
-        # Three or more entries collapse behind the menu name, matching the classic rail.
-        if group["force_menu"] or len(group["items"]) > 2:
-            toggle = rail.get_by_role("button", name=group["menu_name"])
-            expect(toggle).to_have_attribute("aria-expanded", "true")
+        # Every group is a menu in this interface, whatever its entry count, so the heading
+        # is always a disclosure control and always starts open for a user who has not put
+        # the group away.
+        toggle = rail.get_by_role("button", name=group["menu_name"])
+        expect(toggle).to_be_visible()
 
         for item in group["items"]:
             entry = rail.get_by_role("link", name=item["label"], exact=True).first

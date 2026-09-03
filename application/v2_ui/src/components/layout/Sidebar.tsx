@@ -3,13 +3,19 @@
 // navigation, workspace scopes, theme control and the user menu all live in this rail,
 // which collapses to an icon strip.
 //
-// The user menu deliberately offers one destination for personal settings. It used to offer
+// The user menu carries everything about *your* account rather than about your work: your
+// own settings, administration for those who have it, the way back to the classic interface
+// and signing out. Admin Settings sits here rather than in the primary list above, which is
+// the list of places you work; the classic interface draws the same line, keeping App
+// Settings under an Admin heading in its account dropdown.
+//
+// The menu deliberately offers one destination for personal settings. It used to offer
 // two — Settings here and Profile in the classic interface — which was a choice nobody had
 // the information to make, since the classic profile page is where the settings *and* the
 // activity stats were. The stats now live on the Settings page's Stats tab, so the second
 // entry has nothing left to lead to.
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import { clsx } from 'clsx';
 import {
@@ -35,6 +41,7 @@ import { useChatStore } from '../../stores/chatStore';
 import { classicChatHref } from '../../lib/conversationUrl';
 import { ConversationRail } from '../chat/ConversationRail';
 import { NavExtras } from './NavExtras';
+import { UserAvatar } from './UserAvatar';
 
 interface NavItem {
     to: string;
@@ -42,7 +49,6 @@ interface NavItem {
     icon: typeof MessagesSquare;
     /** Hover text. Two entries are easily confused without it, so both say what they are. */
     hint?: string;
-    adminOnly?: boolean;
     /** Matches the route exactly. Needed for "/", which otherwise prefixes every path. */
     end?: boolean;
 }
@@ -72,7 +78,6 @@ const NAV_ITEMS: NavItem[] = [
     },
     { to: '/groups', label: 'Group Workspaces', icon: Users },
     { to: '/public', label: 'Public Workspaces', icon: Globe2 },
-    { to: '/admin', label: 'Admin Settings', icon: Settings, adminOnly: true },
 ];
 
 function BrandMark({ collapsed }: { collapsed: boolean }) {
@@ -115,35 +120,88 @@ function BrandMark({ collapsed }: { collapsed: boolean }) {
 
 function UserMenu({ collapsed }: { collapsed: boolean }) {
     const user = useBootstrapStore((state) => state.data?.user);
+    const isAdmin = Boolean(user?.is_admin);
     const activeConversationId = useChatStore((state) => state.activeConversationId);
     const [open, setOpen] = useState(false);
+    const containerRef = useRef<HTMLDivElement>(null);
 
-    const initials =
-        (user?.display_name || user?.email || '?')
-            .split(/[\s@.]+/)
-            .filter(Boolean)
-            .slice(0, 2)
-            .map((part) => part[0]?.toUpperCase())
-            .join('') || '?';
+    // Without this the menu could only be dismissed by choosing something from it or by
+    // clicking the avatar again, which is not how any other menu in the app behaves.
+    useEffect(() => {
+        if (!open) {
+            return;
+        }
+
+        const onPointerDown = (event: MouseEvent) => {
+            if (!containerRef.current?.contains(event.target as Node)) {
+                setOpen(false);
+            }
+        };
+        const onKeyDown = (event: KeyboardEvent) => {
+            if (event.key === 'Escape') {
+                setOpen(false);
+            }
+        };
+
+        document.addEventListener('mousedown', onPointerDown);
+        document.addEventListener('keydown', onKeyDown);
+        return () => {
+            document.removeEventListener('mousedown', onPointerDown);
+            document.removeEventListener('keydown', onKeyDown);
+        };
+    }, [open]);
+
+    const itemClass =
+        'flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-text-1 hover:bg-surface-2';
+
+    // A disclosure containing links rather than an ARIA menu. `role="menu"` would strip the
+    // link semantics from its children and promise arrow-key navigation that is not
+    // implemented, which reads worse than the plain links do.
+    const panelId = 'sidebar-account-menu';
 
     return (
-        <div className="relative">
-            {open && !collapsed && (
-                <div className="glass-modal absolute bottom-full left-0 mb-2 w-full overflow-hidden rounded-2xl p-1.5">
+        <div className="relative" ref={containerRef}>
+            {open && (
+                <div
+                    id={panelId}
+                    aria-label="Account"
+                    className={clsx(
+                        'glass-modal absolute z-50 overflow-hidden rounded-2xl p-1.5',
+                        // Collapsed, the rail is a 68px strip with no room for a panel above
+                        // the avatar, so the menu comes out beside it instead. The rail sets
+                        // no overflow, so this escapes the strip without needing a portal.
+                        collapsed
+                            ? 'bottom-0 left-full ml-2 w-56'
+                            : 'bottom-full left-0 mb-2 w-full',
+                    )}
+                >
+                    {/* The collapsed rail hides the name on the button, so the menu says
+                        whose account it is rather than opening unlabelled. */}
+                    {collapsed && (
+                        <div className="border-b border-edge px-3 pt-1 pb-2">
+                            <p className="truncate text-sm font-medium text-text-1">
+                                {user?.display_name || 'Signed in'}
+                            </p>
+                            {isAdmin && <p className="text-[11px] text-text-3">Administrator</p>}
+                        </div>
+                    )}
+
                     <NavLink
                         to="/settings"
                         onClick={() => setOpen(false)}
-                        className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-text-1 hover:bg-surface-2"
+                        className={clsx(itemClass, collapsed && 'mt-1')}
                     >
-                        <SlidersHorizontal size={15} /> Settings
+                        <SlidersHorizontal size={15} /> User Settings
                     </NavLink>
+                    {isAdmin && (
+                        <NavLink to="/admin" onClick={() => setOpen(false)} className={itemClass}>
+                            <Settings size={15} /> Admin Settings
+                        </NavLink>
+                    )}
                     {/* Carries the open conversation across, since both interfaces read the
                         same parameter. Crossing over otherwise lands on the conversation
                         list, leaving you to find your place again. */}
-                    <a
-                        href={classicChatHref(activeConversationId)}
-                        className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-text-1 hover:bg-surface-2"
-                    >
+                    <a href={classicChatHref(activeConversationId)} className={itemClass}>
                         <ChevronLeft size={15} /> Back to classic UI
                     </a>
                     <a
@@ -159,22 +217,24 @@ function UserMenu({ collapsed }: { collapsed: boolean }) {
                 type="button"
                 onClick={() => setOpen((isOpen) => !isOpen)}
                 aria-expanded={open}
+                aria-controls={panelId}
+                // Collapsed, the avatar is the only content and carries no text of its own
+                // once a profile photo replaces the initials, so the button needs a name.
+                aria-label={collapsed ? 'Account' : undefined}
                 title={collapsed ? user?.display_name || 'Account' : undefined}
                 className={clsx(
                     'flex w-full items-center gap-2.5 rounded-xl p-2 transition-colors hover:bg-surface-2',
                     collapsed && 'justify-center',
                 )}
             >
-                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-accent-soft text-xs font-semibold text-accent">
-                    {initials}
-                </span>
+                <UserAvatar size={32} />
                 {!collapsed && (
                     <>
                         <span className="min-w-0 flex-1 text-left">
                             <span className="block truncate text-sm font-medium text-text-1">
                                 {user?.display_name || 'Signed in'}
                             </span>
-                            {user?.is_admin && (
+                            {isAdmin && (
                                 <span className="block text-[11px] text-text-3">Administrator</span>
                             )}
                         </span>
@@ -191,7 +251,6 @@ function UserMenu({ collapsed }: { collapsed: boolean }) {
 
 export function Sidebar() {
     const { railCollapsed, toggleRail, theme, toggleTheme } = useUiStore();
-    const isAdmin = useBootstrapStore((state) => Boolean(state.data?.user?.is_admin));
     const startNewConversation = useChatStore((state) => state.startNewConversation);
     const location = useLocation();
 
@@ -282,7 +341,7 @@ export function Sidebar() {
             )}
 
             <ul className={clsx('space-y-0.5 px-3', onChatPage && 'mt-3')}>
-                {NAV_ITEMS.filter((item) => !item.adminOnly || isAdmin).map((item) => (
+                {NAV_ITEMS.map((item) => (
                     <li key={item.to}>
                         <NavLink
                             to={item.to}
