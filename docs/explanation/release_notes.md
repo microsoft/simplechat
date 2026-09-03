@@ -2,6 +2,17 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.046)**
+
+#### Bug Fixes
+
+*   **Admin Settings Changes Did Not Appear Until The Page Was Reloaded (New Interface)**
+    *   Enabling the classification banner in the new interface and saving appeared to do nothing. The banner was saved correctly, but it only showed up after reloading the browser.
+    *   The banner was not the only thing affected. The new interface reads the application title, the sidebar logo, the classification banner and the list of enabled capabilities once, when the page first loads, and had no way of being told that any of them had changed. Every one of those went stale the moment you saved.
+    *   Saving in **Admin Settings** now refreshes what the interface knows about itself, so the banner appears — or disappears — straight away, along with a changed title or a newly enabled capability. Uploading a logo or favicon updates the sidebar immediately too, rather than waiting for the next reload.
+    *   Your unsaved edits are unaffected: the refresh happens quietly in the background and never interrupts the page you are working on.
+    *   (Ref: V2 interface, Admin Settings, classification banner, branding, `/api/v2/bootstrap`)
+
 ### **(v0.261.045)**
 
 #### Bug Fixes
