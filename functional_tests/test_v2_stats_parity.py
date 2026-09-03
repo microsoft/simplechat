@@ -2,8 +2,8 @@
 """
 Functional test for the V2 settings Stats tab reaching parity with the classic profile page.
 
-Version: 0.261.039
-Implemented in: 0.261.039
+Version: 0.261.041
+Implemented in: 0.261.041
 
 The V2 Stats tab replaced a placeholder that showed four SVG bar sparklines. Everything it
 now draws already existed on the classic profile page's stats tab, served by the same two
@@ -308,7 +308,7 @@ def test_charts_use_the_shared_vendored_runtime():
 def test_version_is_at_least_implementation_version():
     """The application version is at or beyond the version that added this."""
     print("Testing application version...")
-    assert_app_version_at_least("0.261.039")
+    assert_app_version_at_least("0.261.041")
     print("Application version test passed!")
     return True
 

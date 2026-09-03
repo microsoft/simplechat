@@ -205,12 +205,28 @@ def test_sanitizer_boundary_at_every_html_sink():
         "MermaidDiagram.tsx": V2_SRC / "components" / "chat" / "MermaidDiagram.tsx",
     }
 
+    # A sink may delegate sanitizing to a shared module rather than calling DOMPurify
+    # itself. MermaidDiagram renders SVG produced by the Mermaid runtime, which is shared
+    # with conversation export precisely so both callers cross the same boundary. The
+    # delegation is verified rather than trusted: the sink must import from the module that
+    # sanitizes, so deleting the boundary or quietly rendering some other string fails here.
+    boundaries = {
+        "MermaidDiagram.tsx": (V2_SRC / "lib" / "mermaidRuntime.ts", "mermaidRuntime"),
+    }
+
     for name, path in sinks.items():
         source = _read(path)
         assert "dangerouslySetInnerHTML" in source, f"{name} was expected to render markup"
-        assert "purify.sanitize(" in source, (
+
+        boundary_path, import_marker = boundaries.get(name, (path, None))
+        assert "purify.sanitize(" in _read(boundary_path), (
             f"{name} writes markup to the DOM without a DOMPurify boundary"
         )
+        if import_marker is not None:
+            assert import_marker in source, (
+                f"{name} delegates sanitizing to {boundary_path.name}, so it must import "
+                "from it; rendering markup from anywhere else escapes the boundary"
+            )
 
     # Any other component that reaches for the sink must be reviewed, so the set is fixed.
     for path in (V2_SRC / "components").rglob("*.tsx"):
@@ -220,7 +236,29 @@ def test_sanitizer_boundary_at_every_html_sink():
                 "boundary. Model output must not reach the DOM as markup without one."
             )
 
-    print(f"  {len(sinks)} reviewed sink(s); no others found.")
+    # `lib/` can reach the DOM too, without React. Conversation export parses rendered
+    # diagram markup and attaches it to the document to measure it, which is the same class
+    # of sink as dangerouslySetInnerHTML and was previously invisible to this test.
+    lib_sinks = {
+        # Only inserts markup returned by mermaidRuntime.ts, which sanitizes before returning.
+        "exportVisuals.ts": "mermaidRuntime",
+    }
+    markup_insertion = ("innerHTML", "outerHTML", "insertAdjacentHTML", "DOMParser")
+
+    for path in (V2_SRC / "lib").rglob("*.ts"):
+        source = _read(path)
+        if not any(marker in source for marker in markup_insertion):
+            continue
+        assert path.name in lib_sinks, (
+            f"{path.name} inserts parsed markup into the document but is not a reviewed "
+            "sanitizer boundary. Model output must not reach the DOM without one."
+        )
+        assert lib_sinks[path.name] in source, (
+            f"{path.name} must obtain its markup from {lib_sinks[path.name]}, which is where "
+            "the DOMPurify boundary for diagram markup lives"
+        )
+
+    print(f"  {len(sinks)} reviewed sink(s); {len(lib_sinks)} reviewed library sink(s).")
     print("Sanitizer boundary test passed!")
     return True
 
@@ -246,7 +284,9 @@ def test_mermaid_is_configured_for_untrusted_input():
     """Mermaid renders only on request, sanitizes strictly, and fetches nothing."""
     print("Testing Mermaid hardening...")
 
-    source = _read(V2_SRC / "components" / "chat" / "MermaidDiagram.tsx")
+    # The hardening lives with the runtime that applies it, which inline chat rendering and
+    # conversation export both go through, so neither can render on softer settings.
+    source = _read(V2_SRC / "lib" / "mermaidRuntime.ts")
 
     assert "securityLevel: 'strict'" in source, (
         "Mermaid must use securityLevel 'strict' for model-authored diagram source"
@@ -262,6 +302,17 @@ def test_mermaid_is_configured_for_untrusted_input():
     assert "registerIconPacks" not in source, (
         "Icon packs are fetched from the public Internet and must not be registered"
     )
+
+    # Nothing may load or configure mermaid outside that runtime, which is what makes
+    # checking a single file sufficient.
+    for path in list(V2_SRC.rglob("*.ts")) + list(V2_SRC.rglob("*.tsx")):
+        if path.name in ("mermaidRuntime.ts", "vendorAssets.ts", "vendor.d.ts"):
+            continue
+        other = _read(path)
+        assert "mermaid.initialize" not in other and "mermaid.render(" not in other, (
+            f"{path.name} drives mermaid directly; it must go through mermaidRuntime.ts so "
+            "the hardening above cannot be bypassed"
+        )
 
     print("Mermaid hardening test passed!")
     return True

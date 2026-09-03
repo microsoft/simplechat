@@ -570,6 +570,105 @@ export function emailDraftMailtoUrl(draft: EmailDraft): string {
 }
 
 /* -------------------------------------------------------------------------- */
+/* Conversation export                                                         */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Whole-conversation export, as opposed to the per-message exports above.
+ *
+ * One endpoint covers every combination: any number of conversations, three formats, and
+ * either one file or a ZIP of one file per conversation. It streams the file itself rather
+ * than a link to it, so the response is read as a blob.
+ */
+export type ConversationExportFormat = 'json' | 'markdown' | 'pdf';
+export type ConversationExportPackaging = 'single' | 'zip';
+
+export const CONVERSATION_EXPORT_PATH = '/api/conversations/export';
+
+/** Extension per format, used only when the server does not name the download itself. */
+const CONVERSATION_EXPORT_EXTENSIONS: Record<ConversationExportFormat, string> = {
+    json: 'json',
+    markdown: 'md',
+    pdf: 'pdf',
+};
+
+export interface ConversationExportRequest {
+    conversation_ids: string[];
+    format: ConversationExportFormat;
+    packaging: ConversationExportPackaging;
+    include_summary_intro: boolean;
+    /**
+     * A model is identified by four fields together, not by its deployment name alone — see
+     * `lib/models.ts`. They are sent only when an intro summary was actually asked for.
+     */
+    summary_model_deployment?: string | null;
+    summary_model_endpoint_id?: string | null;
+    summary_model_id?: string | null;
+    summary_model_provider?: string | null;
+    visual_assets?: ExportVisualAsset[];
+}
+
+/** The extension a finished export will carry, which the summary step shows the user. */
+export function conversationExportExtension(
+    format: ConversationExportFormat,
+    packaging: ConversationExportPackaging,
+): string {
+    return packaging === 'zip' ? '.zip' : `.${CONVERSATION_EXPORT_EXTENSIONS[format]}`;
+}
+
+/**
+ * Read the download name out of a `Content-Disposition` header.
+ *
+ * The server already names the file, including its timestamp, so honouring the header keeps
+ * a V2 export indistinguishable from a classic one. Both a quoted and a bare filename are
+ * accepted because the header is not written by us.
+ */
+export function filenameFromContentDisposition(header: string | null): string | null {
+    if (!header) {
+        return null;
+    }
+    const match = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(header);
+    const filename = match?.[1]?.trim();
+    if (!filename) {
+        return null;
+    }
+    try {
+        return decodeURIComponent(filename);
+    } catch {
+        // A stray `%` that is not an escape sequence throws. The name is still perfectly
+        // usable as-is, and the alternative — letting this propagate — would fail a download
+        // whose file the server has already built.
+        return filename;
+    }
+}
+
+/** Download one or more conversations as a single file or a ZIP. */
+export async function downloadConversationExport(
+    body: ConversationExportRequest,
+): Promise<void> {
+    const response = await fetch(apiUrl(CONVERSATION_EXPORT_PATH), {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', Accept: '*/*' },
+        body: JSON.stringify(body),
+    });
+
+    if (!response.ok) {
+        throw await exportError(response);
+    }
+
+    const fallback = `conversations_export_${exportTimestamp()}${conversationExportExtension(
+        body.format,
+        body.packaging,
+    )}`;
+
+    saveBlob(
+        await response.blob(),
+        filenameFromContentDisposition(response.headers.get('Content-Disposition')) || fallback,
+    );
+}
+
+/* -------------------------------------------------------------------------- */
 /* Citations                                                                   */
 /* -------------------------------------------------------------------------- */
 

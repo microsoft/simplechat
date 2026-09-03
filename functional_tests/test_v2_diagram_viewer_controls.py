@@ -58,9 +58,14 @@ from functions_message_visual_styles import (  # noqa: E402
 IMPLEMENTED_IN = "0.261.037"
 
 MERMAID_TSX = V2_SRC / "components" / "chat" / "MermaidDiagram.tsx"
+# Loading, configuring and rendering moved here so conversation export can draw diagrams
+# from conversations that are not on screen. The viewer in MermaidDiagram.tsx and the export
+# rasterizer are both callers of it.
+RUNTIME_TS = V2_SRC / "lib" / "mermaidRuntime.ts"
 STAGE_TSX = V2_SRC / "components" / "chat" / "DiagramStage.tsx"
 MESSAGE_LIST_TSX = V2_SRC / "components" / "chat" / "MessageList.tsx"
 SOURCE_TS = V2_SRC / "lib" / "mermaidSource.ts"
+VISUALS_TS = V2_SRC / "lib" / "exportVisuals.ts"
 BLOCK_STYLE_TS = V2_SRC / "lib" / "blockVisualStyle.ts"
 
 
@@ -131,7 +136,7 @@ def test_the_render_failure_is_reported_rather_than_swallowed():
 
 def test_rendering_is_bounded():
     """A render cannot hang, and an oversized source is refused with its own message."""
-    source = _read(MERMAID_TSX)
+    source = _read(RUNTIME_TS)
 
     assert "RENDER_TIMEOUT_MS = 10000" in source, (
         "matches MERMAID_RENDER_TIMEOUT_MS in chat-mermaid-runtime.js; without it a wedged "
@@ -148,7 +153,7 @@ def test_rendering_is_bounded():
 
 def test_the_repair_only_runs_after_a_failure():
     """A diagram mermaid accepts is handed over untouched."""
-    source = _read(MERMAID_TSX)
+    source = _read(RUNTIME_TS)
 
     first = source.index("svg = await draw(source);")
     repair = source.index("repairMermaidSource(source)")
@@ -165,7 +170,7 @@ def test_the_repair_only_runs_after_a_failure():
 
 def test_labels_wrap_at_a_readable_width():
     """Mermaid's 200px default turns long labels into unreadable columns of text."""
-    source = _read(MERMAID_TSX)
+    source = _read(RUNTIME_TS)
 
     assert "MERMAID_WRAPPING_WIDTH" in source, "the wrapping width must be set explicitly"
     assert "wrappingWidth: MERMAID_WRAPPING_WIDTH" in source, (
@@ -369,15 +374,22 @@ def test_the_sanitizer_boundary_is_still_a_single_reviewed_file():
     names = sorted(path.name for path in sinks)
     assert names == ["MathBlock.tsx", "MermaidDiagram.tsx"], (
         f"unexpected HTML sink(s): {names}. The full-screen viewer deliberately lives inside "
-        "MermaidDiagram.tsx so every place diagram markup reaches the DOM stays in one file "
+        "MermaidDiagram.tsx so every component that renders diagram markup stays in one file "
         "that test_v2_rich_rendering.py reviews."
     )
 
-    assert "purify.sanitize(" in _read(MERMAID_TSX), "the boundary itself must still be there"
+    assert "purify.sanitize(" in _read(RUNTIME_TS), "the boundary itself must still be there"
     assert "dangerouslySetInnerHTML" not in _read(STAGE_TSX), (
         "DiagramStage owns sizing only; markup must not reach the DOM through it"
     )
-    print("  ok  diagram markup still reaches the DOM in exactly one reviewed file")
+    # Conversation export also puts diagram markup in the document, from lib/ rather than a
+    # component, to measure it before rasterizing. It is reviewed by the library-sink scan in
+    # test_v2_rich_rendering.py; what matters here is that it renders through the same
+    # sanitizing runtime rather than drawing its own.
+    assert "renderMermaidSvgForExport" in _read(VISUALS_TS), (
+        "the export rasterizer must take its markup from the sanitizing shared runtime"
+    )
+    print("  ok  diagram markup reaches the DOM only through reviewed, sanitized paths")
 
 
 def test_no_new_browser_dependency_was_introduced():

@@ -12,7 +12,7 @@ the V2 account menu offered a **Profile** link to reach it. That link is gone: w
 figures rebuilt here, a second entry in the menu offered a choice nobody had the information
 to make. Settings is now the single destination for personal settings in V2.
 
-Implemented in version: **0.261.039**
+Implemented in version: **0.261.041**
 
 ### Dependencies
 

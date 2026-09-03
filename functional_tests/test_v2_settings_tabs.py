@@ -2,7 +2,7 @@
 """
 Functional test for the V2 settings tabs and the routes behind them.
 
-Version: 0.261.039
+Version: 0.261.041
 Implemented in: 0.261.022
 
 Each tab reads a different set of endpoints, and every field name and query parameter here

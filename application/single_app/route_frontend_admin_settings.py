@@ -37,6 +37,10 @@ from functions_cosmos_throughput import (
     normalize_cosmos_throughput_settings,
     validate_cosmos_throughput_policy_settings,
 )
+from functions_branding_images import (
+    prepare_favicon_image_for_storage,
+    prepare_logo_image_for_storage,
+)
 from functions_activity_logging import log_web_search_consent_acceptance, log_general_admin_action, log_governance_change
 from functions_notifications import broadcast_system_notification
 from functions_logging import *
@@ -72,8 +76,6 @@ from support_menu_config import (
     normalize_support_latest_features_visibility,
 )
 
-ALLOWED_PIL_IMAGE_UPLOAD_FORMATS = ('PNG', 'JPEG')
-MAX_CUSTOM_LOGO_STORAGE_HEIGHT = 500
 AGENTS_PAGE_DEFAULTS = {
     'agents_page_title': 'Find your next AI partner',
     'agents_page_subtitle': 'Explore specialized agents built to accelerate how you work.',
@@ -105,44 +107,6 @@ def _is_update_version_newer(latest_version, current_version):
 def allowed_file(filename, allowed_extensions):
     return '.' in filename and \
            filename.rsplit('.', 1)[1].lower() in allowed_extensions
-
-def open_allowed_uploaded_image(file_bytes, filename):
-    img = Image.open(BytesIO(file_bytes), formats=list(ALLOWED_PIL_IMAGE_UPLOAD_FORMATS))
-    img.load()
-
-    detected_format = (img.format or '').upper()
-    if detected_format not in ALLOWED_PIL_IMAGE_UPLOAD_FORMATS:
-        raise ValueError(
-            f"Unsupported image format for {filename}. Allowed formats: {', '.join(ALLOWED_PIL_IMAGE_UPLOAD_FORMATS)}"
-        )
-
-    return img, detected_format
-
-def prepare_logo_image_for_storage(file_bytes, filename, max_height=MAX_CUSTOM_LOGO_STORAGE_HEIGHT):
-    img, detected_format = open_allowed_uploaded_image(file_bytes, filename)
-    original_size = img.size
-
-    if img.mode == 'P':
-        img = img.convert('RGBA')
-    elif img.mode != 'RGB' and img.mode != 'RGBA':
-        img = img.convert('RGB')
-
-    if max_height and img.height > max_height:
-        aspect_ratio = img.width / img.height
-        resized_width = max(1, int(round(aspect_ratio * max_height)))
-        img = img.resize((resized_width, max_height), Image.Resampling.LANCZOS)
-
-    img_bytes_io = BytesIO()
-    img.save(img_bytes_io, format='PNG', optimize=True)
-    png_data = img_bytes_io.getvalue()
-
-    return {
-        'detected_format': detected_format,
-        'original_size': original_size,
-        'stored_size': img.size,
-        'png_data': png_data,
-        'base64_str': base64.b64encode(png_data).decode('utf-8'),
-    }
 
 def normalize_agents_page_color(value, fallback):
     candidate = str(value or '').strip()
@@ -3080,7 +3044,6 @@ def register_route_frontend_admin_settings(bp):
             favicon_file = request.files.get('favicon_file')
             if favicon_file and allowed_file(favicon_file.filename, ALLOWED_EXTENSIONS_IMG):
                 try:
-                    # 1) Read file fully into memory:
                     file_bytes = favicon_file.read()
                     add_file_task_to_file_processing_log(
                         document_id='Image_Upload', # Placeholder if needed
@@ -3088,58 +3051,22 @@ def register_route_frontend_admin_settings(bp):
                         content=f"Favicon file uploaded: {favicon_file.filename}"
                     )
 
-                    # 2) Load into Pillow from the original bytes for processing
-                    img, detected_format = open_allowed_uploaded_image(file_bytes, favicon_file.filename)
-                    
-                    add_file_task_to_file_processing_log(
-                        document_id='Image_Upload', # Placeholder if needed
-                        user_id='New_image',
-                        content=f"Loaded favicon image for processing: {favicon_file.filename} (format: {detected_format})"
-                    )
-
-                    # 3) Ensure image mode is compatible (e.g., convert palette modes)
-                    if img.mode == 'P':
-                        img = img.convert('RGBA')
-                    elif img.mode != 'RGB' and img.mode != 'RGBA':
-                         img = img.convert('RGB')
+                    processed_favicon = prepare_favicon_image_for_storage(file_bytes, favicon_file.filename)
 
                     add_file_task_to_file_processing_log(
                         document_id='Image_Upload', # Placeholder if needed
                         user_id='New_image',
-                        content=f"Converted favicon image mode for processing: {favicon_file.filename} (mode: {img.mode})"
-                    )
-
-                    # 4) Resize to appropriate favicon size (16x16 or 32x32)
-                    img = img.resize((32, 32), Image.Resampling.LANCZOS)
-
-                    add_file_task_to_file_processing_log(
-                        document_id='Image_Upload', # Placeholder if needed
-                        user_id='New_image',
-                        content=f"Resized favicon image for processing: {favicon_file.filename} (new size: {img.size})"
-                    )
-
-                    # 5) Convert to ICO in-memory
-                    img_bytes_io = BytesIO()
-                    img.save(img_bytes_io, format='ICO')
-                    ico_data = img_bytes_io.getvalue()
-
-                    add_file_task_to_file_processing_log(
-                        document_id='Image_Upload', # Placeholder if needed
-                        user_id='New_image',
-                        content=f"Converted favicon image to ICO for processing: {favicon_file.filename}"
-                    )
-
-                    # 6) Turn to base64
-                    base64_str = base64.b64encode(ico_data).decode('utf-8')
-
-                    add_file_task_to_file_processing_log(
-                        document_id='Image_Upload', # Placeholder if needed
-                        user_id='New_image',
-                        content=f"Converted favicon image to base64 for processing: {base64_str}"
+                        content=(
+                            f"Prepared favicon asset: {favicon_file.filename} "
+                            f"(format: {processed_favicon['detected_format']}, "
+                            f"original size: {processed_favicon['original_size']}, "
+                            f"stored size: {processed_favicon['stored_size']}, "
+                            f"ico bytes: {len(processed_favicon['ico_data'])})"
+                        )
                     )
 
                     # Update only on success
-                    new_settings['custom_favicon_base64'] = base64_str
+                    new_settings['custom_favicon_base64'] = processed_favicon['base64_str']
 
                     current_version = settings.get('favicon_version', 1) # Get version from settings loaded at start
                     new_settings['favicon_version'] = current_version + 1 # Increment

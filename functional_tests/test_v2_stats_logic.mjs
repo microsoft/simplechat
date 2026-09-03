@@ -1,8 +1,8 @@
 // test_v2_stats_logic.mjs
 //
 // Runtime test for the V2 stats tab's pure logic.
-// Version: 0.261.039
-// Implemented in: 0.261.039
+// Version: 0.261.041
+// Implemented in: 0.261.041
 //
 // The companion test, test_v2_stats_parity.py, asserts that the tab and the routes agree on
 // names. Those are source assertions: they prove the pieces are wired together, not that they
