@@ -70,13 +70,18 @@ def register_route_backend_group_prompts(bp):
         if not name or not content:
             return jsonify({"error":"Missing 'name' or 'content'"}), 400
 
+        options, option_error = build_prompt_create_options(data)
+        if option_error:
+            return jsonify({"error": option_error}), 400
+
         try:
             result = create_prompt_doc(
                 name=name,
                 content=content,
                 prompt_type="group_prompt",
                 user_id=user_id,
-                group_id=active_group
+                group_id=active_group,
+                **options
             )
             return jsonify(result), 201
         except Exception as e:
@@ -120,17 +125,9 @@ def register_route_backend_group_prompts(bp):
             return error_response
 
         data = request.get_json() or {}
-        updates = {}
-        if "name" in data:
-            if not isinstance(data["name"], str) or not data["name"].strip():
-                return jsonify({"error":"Invalid 'name' provided"}), 400
-            updates["name"] = data["name"].strip()
-        if "content" in data:
-            if not isinstance(data["content"], str):
-                return jsonify({"error":"Invalid 'content' provided"}), 400
-            updates["content"] = data["content"]
-        if not updates:
-            return jsonify({"error":"No fields provided for update"}), 400
+        updates, error = build_prompt_updates(data)
+        if error:
+            return jsonify({"error": error}), 400
 
         try:
             result = update_prompt_doc(
