@@ -13,7 +13,7 @@ which does not know they exist. This change routes the V2 interface through the
 `/api/collaboration/*` API so a shared conversation can be read, replied to, invited into
 and managed there.
 
-**Implemented in version:** 0.261.037
+**Implemented in version:** 0.261.038
 
 ### Dependencies
 

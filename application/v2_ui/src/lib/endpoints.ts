@@ -241,12 +241,14 @@ export const maskMessage = (
 /* Message visual styles                                                       */
 /* -------------------------------------------------------------------------- */
 
-/** Colours saved against one diagram or chart inside a message. */
+/** Colours and size saved against one diagram or chart inside a message. */
 export interface VisualStyleEntry {
     palette?: string;
     background?: string;
     colors?: Record<string, string>;
     source_hash?: string;
+    /** Stage height in pixels, set by dragging the block's resize handle. */
+    height?: number;
 }
 
 /** Every saved entry for a message, keyed by fence language then by block index. */
@@ -260,11 +262,15 @@ export interface VisualStyleResponse {
 }
 
 /**
- * Save, or clear, the colours for one block of one message.
+ * Save, or clear, the colours and size for one block of one message.
  *
- * A null `style` removes the entry so the block follows the reader's own default again, which
- * is a different outcome from saving a style that happens to equal that default: the default
- * can change later.
+ * A null `style` removes the colours so the block follows the reader's own default again,
+ * which is a different outcome from saving a style that happens to equal that default: the
+ * default can change later.
+ *
+ * `height` is deliberately optional rather than nullable-by-default. Omitting the key leaves
+ * whatever size is stored alone, so changing colours never resets a diagram someone resized;
+ * sending null is what clears it.
  *
  * `conversation_id` lets the server read the message by partition key rather than running a
  * cross-partition query, exactly as the mask endpoint does.
@@ -277,6 +283,7 @@ export const setMessageVisualStyle = (
         block_index: number;
         source_hash: string;
         style: { palette: string; background: string; colors: Record<string, string> } | null;
+        height?: number | null;
     },
 ) =>
     api.post<VisualStyleResponse>(

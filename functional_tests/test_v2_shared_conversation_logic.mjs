@@ -1,8 +1,8 @@
 // test_v2_shared_conversation_logic.mjs
 //
 // Runtime test for the pure logic behind V2 shared conversations.
-// Version: 0.261.037
-// Implemented in: 0.261.037
+// Version: 0.261.038
+// Implemented in: 0.261.038
 //
 // The companion test, test_v2_shared_conversations.py, asserts that the V2 modules are wired
 // to the right endpoints and that the actions with no collaboration counterpart are hidden.
