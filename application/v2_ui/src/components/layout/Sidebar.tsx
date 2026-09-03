@@ -209,7 +209,10 @@ export function Sidebar() {
      * Two things are deliberately left alone. Clicking `Chats` while already on the chat
      * page does nothing, so a stray click on the highlighted nav item cannot throw away
      * whatever is being read. And a conversation still streaming a reply is returned to
-     * rather than reset, because the reset stops the stream and the reply would be lost.
+     * rather than reset, so a reply being watched stays on screen instead of being swapped
+     * out for an empty composer. The reply itself is no longer at stake: resetting detaches
+     * the reader without cancelling the generation, so the answer finishes and is saved
+     * either way.
      *
      * `streaming` is read from the store rather than subscribed to: it changes with every
      * token, and subscribing would re-render this rail — conversation list included —
