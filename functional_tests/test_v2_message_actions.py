@@ -146,7 +146,7 @@ def test_delete_sends_its_option_in_the_body():
 
     store = _read(V2_SRC / "stores" / "chatStore.ts")
     # Sliced to the end of the action rather than a fixed character budget, so the assertion
-    # survives the body growing -- it gained a branch in v0.261.034 for shared
+    # survives the body growing -- it gained a branch in v0.261.037 for shared
     # conversations, whose messages are deleted through their own endpoint.
     remove_start = store.index("removeMessage: async")
     remove_block = store[remove_start : store.index("retryMessage: async", remove_start)]
@@ -186,7 +186,7 @@ def test_action_row_differs_by_role():
     actions = _read(V2_SRC / "components" / "chat" / "MessageActions.tsx")
 
     # Edit resends the message as a new thread attempt, which only the personal conversation
-    # API can do, so since v0.261.034 it additionally requires not being in a shared
+    # API can do, so since v0.261.037 it additionally requires not being in a shared
     # conversation. The role condition is what this test is about and is unchanged.
     assert "isUser && !shared && onEdit" in actions, (
         "Edit must be offered only on user messages"

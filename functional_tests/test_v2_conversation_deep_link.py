@@ -198,7 +198,7 @@ def test_a_dead_link_is_reported_and_does_not_strand_itself():
     # Relying on either would open a deleted conversation as an empty chat, leave its id in
     # the URL, and leave it as the target of the next message sent.
     #
-    # Since v0.261.034 the probe is `resolveConversationKind`, because the question "does
+    # Since v0.261.037 the probe is `resolveConversationKind`, because the question "does
     # this exist" and the question "which API family owns it" have the same answer: it asks
     # the personal metadata endpoint, which 404s and 403s, and then the collaboration one,
     # which does the same. `requireExists` is what makes a conversation neither recognises a

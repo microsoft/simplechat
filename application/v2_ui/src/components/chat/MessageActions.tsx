@@ -52,6 +52,7 @@ import {
     saveEmailDraftAttachments,
     type MessageExportFormat,
 } from '../../lib/endpoints';
+import { buildMessageVisualAssets } from '../../lib/exportVisuals';
 import { synthesizeSpeech } from '../../lib/voice';
 
 function IconButton({
@@ -154,25 +155,50 @@ function SpeakButton({ message }: { message: ChatMessage }) {
     );
 }
 
+/** What the pending toast says while each export is being built. */
+const EXPORT_PENDING_MESSAGE: Record<MessageExportFormat, string> = {
+    word: 'Building your Word document… diagrams can make this take a while.',
+    powerpoint: 'Building your PowerPoint… planning the slides can take a minute.',
+    'email-draft': 'Preparing your email draft…',
+};
+
+const EXPORT_LABEL: Record<MessageExportFormat, string> = {
+    word: 'Word',
+    powerpoint: 'PowerPoint',
+    'email-draft': 'email',
+};
+
 /**
- * Run a server-rendered export, reporting the outcome.
+ * Run a server-rendered export, reporting progress and the outcome.
  *
  * Word and PowerPoint stream a file. Email is not a download at all: it returns a JSON
  * draft, whose images are saved separately because a `mailto:` URL cannot carry
  * attachments, before the mail client is opened.
+ *
+ * A pending toast goes up first. All three run entirely on the server, a PowerPoint also
+ * waits on a model planning its slides, and none of them change the page while they work — so
+ * without one the only visible response to the click is the menu closing.
  */
 async function runExport(format: MessageExportFormat, message: ChatMessage) {
-    const body = {
-        message_id: message.id,
-        conversation_id: message.conversation_id,
-    };
+    const pendingId = toast.pending(EXPORT_PENDING_MESSAGE[format]);
 
     try {
+        // Sending the diagrams already on screen saves the server starting a browser to
+        // redraw them, and keeps the colours the reader chose. Anything missing here is
+        // still rendered server-side, so a failure to rasterize only costs the shortcut.
+        const body = {
+            message_id: message.id,
+            conversation_id: message.conversation_id,
+            visual_assets: await buildMessageVisualAssets(message.id),
+        };
+
         if (format === 'email-draft') {
             const draft = await fetchMessageEmailDraft(body);
             const saved = saveEmailDraftAttachments(draft.attachments);
             window.location.href = emailDraftMailtoUrl(draft);
-            toast.success(
+            toast.settle(
+                pendingId,
+                'success',
                 saved > 0
                     ? `Email draft opened. ${saved} image${saved === 1 ? '' : 's'} downloaded to attach.`
                     : 'Email draft opened.',
@@ -181,11 +207,16 @@ async function runExport(format: MessageExportFormat, message: ChatMessage) {
         }
 
         await downloadMessageExport(format, body);
-        toast.success(format === 'word' ? 'Exported as a Word document.' : 'Exported as a PowerPoint.');
+        toast.settle(
+            pendingId,
+            'success',
+            format === 'word' ? 'Exported as a Word document.' : 'Exported as a PowerPoint.',
+        );
     } catch (error) {
-        const label =
-            format === 'word' ? 'Word' : format === 'powerpoint' ? 'PowerPoint' : 'email';
-        toast.error(
+        const label = EXPORT_LABEL[format];
+        toast.settle(
+            pendingId,
+            'error',
             error instanceof ApiError && error.message
                 ? `${label} export failed: ${error.message}`
                 : `${label} export failed.`,
@@ -221,6 +252,10 @@ function OverflowMenu({
     // The menu opens upward by default so it does not cover the next message, but near
     // the top of the scroll area there is no room above and it would render off-screen.
     const [placement, setPlacement] = useState<'up' | 'down'>('up');
+    // Which export is running, so its entry can show a spinner and the menu can refuse a
+    // second click. An export takes long enough that an impatient double-click would
+    // otherwise start two of them.
+    const [busyExport, setBusyExport] = useState<MessageExportFormat | null>(null);
     const containerRef = useRef<HTMLDivElement>(null);
     const { removeMessage } = useChatStore();
     // Editing resends the message as a new thread attempt, which only the personal
@@ -284,6 +319,37 @@ function OverflowMenu({
         </button>
     );
 
+    /**
+     * An export entry, which stays put and spins rather than closing the menu.
+     *
+     * Closing on click would take the spinner away with it, leaving the toast as the only
+     * sign anything is happening. While one export runs every entry is disabled, because
+     * they all contend for the same server-side rendering.
+     */
+    const exportItem = (label: string, icon: React.ReactNode, format: MessageExportFormat) => {
+        const busy = busyExport === format;
+        return (
+            <button
+                key={label}
+                type="button"
+                disabled={busyExport !== null}
+                onClick={() => {
+                    setBusyExport(format);
+                    void runExport(format, message).finally(() => setBusyExport(null));
+                }}
+                className={clsx(
+                    'flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm',
+                    'text-text-1 hover:bg-surface-2',
+                    'disabled:cursor-not-allowed disabled:hover:bg-transparent',
+                    busyExport !== null && !busy && 'opacity-40',
+                )}
+            >
+                {busy ? <Loader2 size={14} className="animate-spin text-accent" /> : icon}
+                {busy ? 'Working…' : label}
+            </button>
+        );
+    };
+
     return (
         <div className="relative" ref={containerRef}>
             <IconButton label="More actions" onClick={toggle}>
@@ -332,15 +398,9 @@ function OverflowMenu({
                     {item('Download Markdown', <FileDown size={14} />, () =>
                         downloadMarkdown(message),
                     )}
-                    {item('Export to Word', <FileDown size={14} />, () =>
-                        void runExport('word', message),
-                    )}
-                    {item('Export to PowerPoint', <FileDown size={14} />, () =>
-                        void runExport('powerpoint', message),
-                    )}
-                    {item('Open as email', <Mail size={14} />, () =>
-                        void runExport('email-draft', message),
-                    )}
+                    {exportItem('Export to Word', <FileDown size={14} />, 'word')}
+                    {exportItem('Export to PowerPoint', <FileDown size={14} />, 'powerpoint')}
+                    {exportItem('Open as email', <Mail size={14} />, 'email-draft')}
                     {item(
                         'Delete',
                         <Trash2 size={14} />,

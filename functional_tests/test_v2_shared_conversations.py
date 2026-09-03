@@ -2,8 +2,8 @@
 """
 Functional test for shared (collaborative) conversations in the V2 interface.
 
-Version: 0.261.034
-Implemented in: 0.261.034
+Version: 0.261.037
+Implemented in: 0.261.037
 
 Shared conversations opened in the V2 interface showed an empty thread. V2 loaded every
 conversation with ``/api/get_messages``, which reads only the personal messages container:
@@ -36,7 +36,7 @@ sys.path.insert(0, str(REPO_ROOT / "functional_tests"))
 
 from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
-IMPLEMENTED_IN = "0.261.034"
+IMPLEMENTED_IN = "0.261.037"
 
 
 def _read(path):
