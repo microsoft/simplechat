@@ -1,8 +1,8 @@
 // test_v2_conversation_multiselect_logic.ts
 // Behavioural checks for the V2 conversation rail's multi-selection.
 //
-// Version: 0.261.054
-// Implemented in: 0.261.054
+// Version: 0.261.056
+// Implemented in: 0.261.056
 //
 // The V2 interface has no unit test runner, so this follows test_v2_conversation_export_logic.ts:
 // it is bundled with the esbuild Vite already brings in and run under node by

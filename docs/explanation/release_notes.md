@@ -2,7 +2,7 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
-### **(v0.261.054)**
+### **(v0.261.056)**
 
 #### New Features
 
@@ -33,6 +33,47 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   If you were promoted to owner while the conversation was open, the menu still offered **Leave** — but confirming posted a delete, destroying the conversation and all of its messages for every participant. A demoted owner hit the reverse, being told they had deleted something that still existed.
     *   Both copies are now kept in step, and the decision is made once and carried through to the request, so the wording you confirm is always the action performed.
     *   (Ref: shared conversation removal, `can_delete_conversation`, `conversationSelection.ts`, `chatStore.ts`)
+
+### **(v0.261.055)**
+
+#### User Interface Enhancements
+
+*   **Admin Settings Has Moved Into The Account Menu In The V2 Interface**
+    *   In the V2 interface, an administrator's left-hand menu listed **Admin Settings** alongside Chats, Agents and the workspaces, mixing the places you work with the place you administer.
+    *   It now lives in the account menu at the bottom of the rail, under your name — the same place the classic interface keeps **App Settings**. The primary list is once again only the places you work.
+    *   **Settings** in that menu is now **User Settings**, so the two entries a line apart say which is which, and the page it opens is titled to match.
+    *   (Ref: V2 interface, left-hand menu, account menu, Admin Settings, personal settings)
+
+*   **Your Profile Picture Now Appears In The V2 Interface**
+    *   Your Microsoft 365 profile photo is already retrieved and stored when you first sign in, and the classic interface has always shown it. The V2 interface drew your initials instead.
+    *   It now appears on the account control at the bottom of the left-hand menu and in the header of your **User Settings** page. Initials are still used when you have no photo.
+    *   (Ref: V2 interface, account menu, User Settings, profile photo)
+
+#### Bug Fixes
+
+*   **Custom Pages And External Links Now Collapse And Stay That Way In The V2 Interface**
+    *   The **Custom Pages** and **External Links** groups in the V2 left-hand menu only became collapsible once a group held three or more links, and even then reopened on the next page load. A group put away never stayed away.
+    *   Every group now collapses from its heading, whatever the link count, and the choice is remembered against your account. It is the same preference the classic interface uses, so a group you put away in one interface stays away in the other.
+    *   Because every group in the V2 menu is now collapsible, **Force Menu Display** in Admin Settings no longer changes it. The setting continues to work in the classic interface.
+    *   (Ref: V2 interface, left-hand menu, Custom Pages, External Links, `sidebarMenuState`, [V2 Sidebar Navigation And Account Menu](fixes/V2_SIDEBAR_NAV_AND_ACCOUNT_MENU_FIX.md))
+
+*   **The Account Menu Could Not Be Opened From The Collapsed V2 Menu**
+    *   With the V2 left-hand menu collapsed to icons, clicking your account picture did nothing at all. Your settings, the way back to the classic interface and **Sign out** could only be reached by expanding the menu first, and nothing said so.
+    *   The menu now opens beside the icon strip and names the account it belongs to. It also closes when you press Escape or click elsewhere, which it previously did not.
+    *   (Ref: V2 interface, left-hand menu, collapsed rail, account menu)
+
+### **(v0.261.054)**
+
+#### Bug Fixes
+
+*   **Image Generation No Longer Goes Quiet When You Look Away**
+    *   Approving inline image proposals and then opening another conversation used to leave the cards looking untouched when you came back — no progress, **Approve** enabled again, **Approve all** back — even though those images were still being generated and did arrive a moment later. Pressing **Approve** again would have paid for the same image twice.
+    *   **Approvals now keep reporting themselves wherever you go.** Leave the conversation, visit My Workspace, come back an hour later: the cards still show their queue position and "Generating image…", because that state no longer belongs to the view you left.
+    *   **Reloading the page no longer loses track of them either.** Generation runs on the server and finishes whether or not your browser is still connected, so the only thing a reload ever really lost was the knowledge that it was coming. Restored cards say "Still generating from before the page reloaded…" and fill in as each image lands.
+    *   **You can tell from anywhere in the app.** A conversation still generating images shows a spinner and a count on its row in the conversation list, and a single notice reports images being generated whose cards are not on screen — whether you have moved to another conversation or left chat entirely. The notice is deliberately absent while you are looking at those cards, where it would only repeat what they already say.
+    *   **An approval that never finishes is written off rather than left spinning.** After ten minutes the card explains that the page reloaded while it was generating and offers to approve it again.
+    *   This is per browser tab. An image approved in one tab is not tracked in another, though the image itself is stored and appears there as soon as the conversation is read.
+    *   (Ref: `imageProposalStore.ts`, `imageProposalTracking.ts`, `imageProposalResume.ts`, `GET /api/chat/image-proposals/status/<conversation_id>`, [V2 Inline Image Proposal Resume](fixes/V2_INLINE_IMAGE_PROPOSAL_RESUME_FIX.md))
 
 ### **(v0.261.053)**
 

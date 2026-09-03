@@ -8,6 +8,12 @@
 // card. Threading those down as props would put image generation concerns into the signature
 // of every markdown caller, so they travel by context instead.
 //
+// That last one is not kept here. Approval state lives in `imageProposalStore`, because the
+// scope is only as long-lived as the message list and `selectConversation` empties that: state
+// held here would be destroyed by the user simply looking at another conversation, which is
+// exactly when an approval most needs to keep reporting itself. What the scope contributes is
+// the *address* — the conversation and message a card's state is filed under.
+//
 // The provider also owns the Approve all control. Keeping it here rather than in MessageBubble
 // means the count of pending cards, the button that acts on them, and the cards themselves all
 // live in one place, and the button lands immediately after the message text — the same
@@ -24,11 +30,9 @@ import {
 } from 'react';
 import { Images } from 'lucide-react';
 import { GlassButton } from '../ui/primitives';
-import {
-    applyCardStatePatch,
-    type ProposalCardState,
-    type ProposalCardStates,
-} from '../../lib/imageProposalCardState';
+import { type ProposalCardState, type ProposalCardStates } from '../../lib/imageProposalCardState';
+import { selectCardStates, useImageProposalStore } from '../../stores/imageProposalStore';
+import { useChatStore } from '../../stores/chatStore';
 import type { ChatMessage } from '../../lib/types';
 
 /**
@@ -41,6 +45,8 @@ import type { ChatMessage } from '../../lib/types';
 export const APPROVE_ALL_THRESHOLD = 2;
 
 interface ImageProposalContextValue {
+    /** The conversation the cards belong to; approvals are filed and matched per conversation. */
+    conversationId: string;
     /** Empty while the response is still streaming, because the message is not stored yet. */
     assistantMessageId: string;
     /** Images already generated from this message's proposals. */
@@ -52,8 +58,9 @@ interface ImageProposalContextValue {
     /**
      * Each card's state, keyed by `proposalCardKey`.
      *
-     * Held here rather than in the cards, so an approval still in flight keeps reporting
-     * itself through a rebuild of the markdown subtree the cards are rendered from.
+     * Read from `imageProposalStore` rather than held here, so an approval in flight keeps
+     * reporting itself through a rebuild of the markdown subtree the cards are rendered from
+     * *and* through the whole message list being torn down and rebuilt.
      */
     cardStates: ProposalCardStates;
     /** Record a change to one card's state. Fields the patch omits are left alone. */
@@ -64,6 +71,7 @@ const EMPTY_RESULTS: ChatMessage[] = [];
 const EMPTY_CARD_STATES: ProposalCardStates = {};
 
 const ImageProposalContext = createContext<ImageProposalContextValue>({
+    conversationId: '',
     assistantMessageId: '',
     results: EMPTY_RESULTS,
     approveAllToken: 0,
@@ -93,7 +101,14 @@ export function ImageProposalScope({
 }) {
     const [pendingIds, setPendingIds] = useState<string[]>([]);
     const [approveAllToken, setApproveAllToken] = useState(0);
-    const [cardStates, setCardStates] = useState<ProposalCardStates>(EMPTY_CARD_STATES);
+
+    // The conversation on screen is the conversation these cards are in: the message list only
+    // ever renders one, and it is cleared before another is loaded.
+    const conversationId = useChatStore((state) => state.activeConversationId) ?? '';
+    const cardStates = useImageProposalStore((state) =>
+        selectCardStates(state, conversationId, assistantMessageId),
+    );
+    const storeUpdateCardState = useImageProposalStore((state) => state.updateCardState);
 
     // Held in a ref as well so `setPending` never has to be rebuilt when the set changes.
     // A new `setPending` identity would re-run the effect in every card that reads it, and
@@ -116,13 +131,14 @@ export function ImageProposalScope({
 
     const updateCardState = useCallback(
         (cardKey: string, patch: Partial<ProposalCardState>) => {
-            setCardStates((current) => applyCardStatePatch(current, cardKey, patch));
+            storeUpdateCardState(conversationId, assistantMessageId, cardKey, patch);
         },
-        [],
+        [storeUpdateCardState, conversationId, assistantMessageId],
     );
 
     const value = useMemo<ImageProposalContextValue>(
         () => ({
+            conversationId,
             assistantMessageId,
             results: results ?? EMPTY_RESULTS,
             approveAllToken,
@@ -130,7 +146,15 @@ export function ImageProposalScope({
             cardStates,
             updateCardState,
         }),
-        [assistantMessageId, results, approveAllToken, setPending, cardStates, updateCardState],
+        [
+            conversationId,
+            assistantMessageId,
+            results,
+            approveAllToken,
+            setPending,
+            cardStates,
+            updateCardState,
+        ],
     );
 
     const pendingCount = pendingIds.length;

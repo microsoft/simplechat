@@ -36,6 +36,7 @@ export interface Toast {
 interface ToastState {
     toasts: Toast[];
     push: (tone: ToastTone, message: string, action?: ToastAction) => number;
+    update: (id: number, message: string) => void;
     settle: (id: number, tone: Exclude<ToastTone, 'pending'>, message: string) => void;
     dismiss: (id: number) => void;
 }
@@ -70,6 +71,25 @@ export const useToastStore = create<ToastState>((set, get) => ({
         }
 
         return id;
+    },
+
+    /**
+     * Rewrite a toast that is still showing, without disturbing its place or its lifetime.
+     *
+     * Exists for progress that changes while it is being reported — image approvals draining
+     * through their queue, where the count is the whole point. Dismissing and re-pushing would
+     * move the notice, restart any timer on it, and flicker.
+     *
+     * A toast that has already gone is not resurrected: an update is only ever a refinement of
+     * something the user is currently being told.
+     */
+    update: (id, message) => {
+        if (!get().toasts.some((item) => item.id === id)) {
+            return;
+        }
+        set((state) => ({
+            toasts: state.toasts.map((item) => (item.id === id ? { ...item, message } : item)),
+        }));
     },
 
     /**
@@ -111,6 +131,7 @@ export const toast = {
         useToastStore.getState().push('info', message, action),
     /** Raise a notification that stays until `settle` or `dismiss` is called with its id. */
     pending: (message: string) => useToastStore.getState().push('pending', message),
+    update: (id: number, message: string) => useToastStore.getState().update(id, message),
     settle: (id: number, tone: Exclude<ToastTone, 'pending'>, message: string) =>
         useToastStore.getState().settle(id, tone, message),
     dismiss: (id: number) => useToastStore.getState().dismiss(id),

@@ -52,6 +52,7 @@ CARD_COMPONENT = V2_SRC / "components" / "chat" / "InlineImageProposal.tsx"
 SCOPE_COMPONENT = V2_SRC / "components" / "chat" / "ImageProposalContext.tsx"
 CARD_STATE_MODULE = V2_SRC / "lib" / "imageProposalCardState.ts"
 SPEC_MODULE = V2_SRC / "lib" / "imageProposalSpec.ts"
+STORE_MODULE = V2_SRC / "stores" / "imageProposalStore.ts"
 
 LOGIC_TEST = REPO_ROOT / "functional_tests" / "test_v2_inline_image_proposal_logic.mjs"
 
@@ -115,6 +116,7 @@ def test_card_state_is_owned_by_the_message_not_the_card():
     print("Testing that approval state outlives the card...")
     card_source = _read(CARD_COMPONENT)
     scope_source = _read(SCOPE_COMPONENT)
+    store_source = _read(STORE_MODULE)
 
     # The heart of the fix. State the card holds itself is state the card loses.
     for field in ("status", "queuePosition", "failure", "prompt", "editing"):
@@ -132,11 +134,19 @@ def test_card_state_is_owned_by_the_message_not_the_card():
         raise AssertionError("The card does not write its state back to the proposal scope.")
     print("  It reads and writes that state through the scope.")
 
-    # The scope is rendered by the message bubble, which is keyed on the message id, so it
-    # survives the markdown subtree being rebuilt underneath it.
-    if "applyCardStatePatch" not in scope_source or "useState<ProposalCardStates>" not in scope_source:
-        raise AssertionError("The proposal scope does not own the card state map.")
-    print("  The scope owns the map.")
+    # The scope is not the owner either, and deliberately so: it is rendered by the message
+    # bubble, and `selectConversation` empties the message list, so a scope-owned map is
+    # destroyed by the user simply opening another conversation. The store outlives that.
+    if "useState<ProposalCardStates>" in scope_source:
+        raise AssertionError(
+            "The proposal scope holds the card state map in React state again, so leaving the "
+            "conversation and coming back discards every approval in flight."
+        )
+    if "selectCardStates(state, conversationId, assistantMessageId)" not in scope_source:
+        raise AssertionError("The scope does not read the card states from the store.")
+    if "applyCardStatePatch" not in store_source or "cards:" not in store_source:
+        raise AssertionError("The image proposal store does not own the card state map.")
+    print("  The store owns the map, and the scope only addresses it.")
 
     # Every status the card can be in has to be reachable from a rebuilt card, so all of them
     # must go through the scope rather than a local setter.
@@ -204,11 +214,16 @@ def test_the_approved_card_drops_the_proposal_badges():
     card_source = _read(CARD_COMPONENT)
 
     approved = re.search(
-        r"if \(result\) \{(.*?)\n    \}\n", card_source, re.S
+        r"if \(result\) \{\s*\n\s*//[\s\S]*?\n    \}\n", card_source
     )
     if not approved:
         raise AssertionError("The approved-result branch could not be read from the card.")
-    branch = approved.group(1)
+    branch = approved.group(0)
+    if "<ProposalCard>" not in branch:
+        raise AssertionError(
+            "The branch that was read is not the one that renders the approved card. Anchor "
+            "the search on the render rather than on the first `if (result)` in the file."
+        )
 
     if "ProposalBadges" in branch:
         raise AssertionError(
