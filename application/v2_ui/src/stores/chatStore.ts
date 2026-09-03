@@ -5,8 +5,11 @@ import { create } from 'zustand';
 import {
     addMessageBlockRevision as addMessageBlockRevisionApi,
     assistMessageBlockRevision as assistMessageBlockRevisionApi,
+    bulkHideConversations as bulkHideConversationsApi,
+    bulkPinConversations as bulkPinConversationsApi,
     createConversation,
     deleteConversation as deleteConversationApi,
+    deleteConversations as deleteConversationsApi,
     deleteMessage as deleteMessageApi,
     editMessage as editMessageApi,
     fetchConversationFeed,
@@ -23,6 +26,7 @@ import {
     switchAttempt as switchAttemptApi,
     toggleConversationHidden,
     toggleConversationPinned,
+    type BulkConversationResult,
     type MessageBlockRevisions,
 } from '../lib/endpoints';
 import {
@@ -59,6 +63,20 @@ import {
     resolveSendTarget,
 } from '../lib/mentions';
 import { buildSelectionFields } from '../lib/chatRequestSelection';
+import {
+    applySelection,
+    pruneSelection,
+    type SelectionIntent,
+    type SelectionState,
+} from '../lib/listSelection';
+import {
+    collaborativeIdsNeedingPin,
+    collaborativeRemovals,
+    partialFailureMessage,
+    partitionBySpecies,
+    selectedConversations,
+    type PinAction,
+} from '../lib/conversationSelection';
 import type { ModelCatalogEntry } from '../lib/models';
 import { resolveDocumentScope } from '../lib/documentScope';
 import { messageThreadId } from '../lib/threads';
@@ -142,14 +160,24 @@ interface ChatState {
     searchTerm: string;
 
     /**
-     * Whether the rail is picking conversations rather than opening them.
+     * The rail's multi-selection.
      *
      * Selection lives here rather than in the rail because deleting or hiding a conversation
      * is a store action, and a selection kept beside the list would go stale the moment one
-     * of those removed a row — exporting an id the user can no longer see.
+     * of those removed a row — acting on an id the user can no longer see.
+     *
+     * There is no separate "selection mode" flag: a selection either has members or it does
+     * not, and a mode that could be on with nothing selected was a second source of truth
+     * for the same question.
      */
-    selectionMode: boolean;
     selectedConversationIds: string[];
+    /**
+     * Where a Shift+click range starts, or null when there is nothing to extend from.
+     *
+     * Held apart from the ids because a range must survive the selection being replaced —
+     * that is what lets an over-long range be corrected by Shift+clicking a nearer row.
+     */
+    selectionAnchorId: string | null;
 
     activeConversationId: string | null;
     /**
@@ -223,14 +251,41 @@ interface ChatState {
     openLinkedConversation: (conversationId: string) => Promise<void>;
     startNewConversation: () => void;
     renameConversation: (conversationId: string, title: string) => Promise<void>;
-    removeConversation: (conversationId: string) => Promise<void>;
+    /**
+     * Remove one conversation from the reader's view.
+     *
+     * `decidedAction` is how a shared conversation is to be removed, when the caller has
+     * already shown the user which of the two it will be. Passing it is what guarantees the
+     * confirmation and the request agree; omitting it falls back to deciding here.
+     */
+    removeConversation: (
+        conversationId: string,
+        decidedAction?: 'delete' | 'leave',
+    ) => Promise<void>;
     togglePinned: (conversationId: string) => Promise<void>;
     toggleHidden: (conversationId: string) => Promise<void>;
 
-    setSelectionMode: (enabled: boolean) => void;
-    toggleConversationSelected: (conversationId: string) => void;
+    /**
+     * Apply a click to the selection, honouring its modifier keys.
+     *
+     * `intent` comes from `selectionIntentFromEvent`; the ordering a range reads is the
+     * rail's current list, so a range always means what the user can see. This is the only
+     * way to change which rows are picked — a second "toggle this one" action would be a
+     * parallel path that could drift from the modifier rules.
+     */
+    applyConversationSelection: (
+        conversationId: string,
+        intent: SelectionIntent,
+    ) => void;
     selectAllConversations: () => void;
     clearConversationSelection: () => void;
+
+    /** Delete or leave every selected conversation, whichever each one permits. */
+    bulkRemoveConversations: () => Promise<void>;
+    /** Set — not toggle — the pin state of every selected conversation. */
+    bulkSetConversationsPinned: (action: PinAction) => Promise<void>;
+    /** Hide every selected conversation, dropping them out of the feed. */
+    bulkHideSelectedConversations: () => Promise<void>;
 
     sendMessage: (text: string, options: ComposerOptions) => Promise<void>;
     stopStreaming: () => void;
@@ -943,7 +998,9 @@ function attachCollaborationEvents(conversationId: string): void {
      */
     const refreshOwnMembership = () => {
         if (stillOpen()) {
-            void collaboration().loadConversation(conversationId);
+            void collaboration()
+                .loadConversation(conversationId)
+                .then(() => syncListedPermissions(conversationId));
         }
     };
 
@@ -1170,10 +1227,58 @@ function removeConversationLocally(conversationId: string): void {
     const store = useChatStore.getState();
     useChatStore.setState({
         conversations: store.conversations.filter((item) => item.id !== conversationId),
+        // Pruned here as well as in the ordinary removal paths. This one is driven by a
+        // server event rather than by a click, so without it a row could vanish from under
+        // a live selection and leave the bulk bar counting a conversation that is gone.
+        selectedConversationIds: store.selectedConversationIds.filter(
+            (id) => id !== conversationId,
+        ),
+        selectionAnchorId:
+            store.selectionAnchorId === conversationId ? null : store.selectionAnchorId,
     });
     if (store.activeConversationId === conversationId) {
         store.startNewConversation();
     }
+}
+
+/**
+ * Copy the reader's freshly-read permissions onto the matching rail row.
+ *
+ * The feed row and the loaded conversation are two copies of the same viewer-scoped flags,
+ * and they are refreshed independently: a role change re-reads the membership into the
+ * collaboration store but does not reload the feed. Left to drift, the rail would describe
+ * a removal from the stale copy while `removeConversation` posted the action chosen from
+ * the fresh one — offering to "Leave" a conversation and then deleting it for everybody.
+ *
+ * Syncing the flags rather than choosing a winner keeps one answer to the question.
+ */
+function syncListedPermissions(conversationId: string): void {
+    const detail = useCollaborationStore.getState().conversation;
+    if (!detail || detail.id !== conversationId) {
+        return;
+    }
+
+    const store = useChatStore.getState();
+    const listed = store.conversations.find((item) => item.id === conversationId);
+    if (
+        !listed ||
+        (listed.can_delete_conversation === detail.can_delete_conversation &&
+            listed.can_leave_conversation === detail.can_leave_conversation)
+    ) {
+        return;
+    }
+
+    useChatStore.setState({
+        conversations: store.conversations.map((item) =>
+            item.id === conversationId
+                ? {
+                      ...item,
+                      can_delete_conversation: detail.can_delete_conversation,
+                      can_leave_conversation: detail.can_leave_conversation,
+                  }
+                : item,
+        ),
+    });
 }
 
 export const useChatStore = create<ChatState>((set, get) => ({
@@ -1184,8 +1289,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
     nextCursor: null,
     searchTerm: '',
 
-    selectionMode: false,
     selectedConversationIds: [],
+    selectionAnchorId: null,
 
     activeConversationId: null,
     activeConversationKind: null,
@@ -1217,14 +1322,30 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 cursor: reset ? null : get().nextCursor,
             });
 
-            set((state) => ({
-                conversations: reset
+            set((state) => {
+                const conversations = reset
                     ? page.conversations
-                    : [...state.conversations, ...page.conversations],
-                hasMore: Boolean(page.has_more),
-                nextCursor: page.next_cursor,
-                conversationsLoading: false,
-            }));
+                    : [...state.conversations, ...page.conversations];
+                // Selected ids that are no longer on the page are dropped here. Without
+                // this, a bulk delete taken after a search or a reload would act on rows
+                // the user can no longer see — the one surprise a delete button must never
+                // produce.
+                const selection = pruneSelection(
+                    {
+                        ids: state.selectedConversationIds,
+                        anchorId: state.selectionAnchorId,
+                    },
+                    conversations.map((conversation) => conversation.id),
+                );
+                return {
+                    conversations,
+                    hasMore: Boolean(page.has_more),
+                    nextCursor: page.next_cursor,
+                    conversationsLoading: false,
+                    selectedConversationIds: selection.ids,
+                    selectionAnchorId: selection.anchorId,
+                };
+            });
         } catch (error) {
             set({
                 conversationsLoading: false,
@@ -1327,10 +1448,20 @@ export const useChatStore = create<ChatState>((set, get) => ({
             if (kind === 'collaborative') {
                 // Membership and the capability flags that gate the composer and the
                 // participants panel.
+                //
+                // The rail row was serialized when the feed was read, which may have been
+                // long enough ago for a role change to have happened since. Opening the
+                // conversation is the moment fresher flags become available, so the row is
+                // brought into line rather than left describing an old permission — it is
+                // what the row menu and the delete confirmation read.
                 if (prefetched?.id === conversationId) {
                     useCollaborationStore.getState().setConversation(prefetched);
+                    syncListedPermissions(conversationId);
                 } else {
-                    void useCollaborationStore.getState().loadConversation(conversationId);
+                    void useCollaborationStore
+                        .getState()
+                        .loadConversation(conversationId)
+                        .then(() => syncListedPermissions(conversationId));
                 }
                 // Then the live stream that keeps the thread current while other people are
                 // writing in it.
@@ -1484,7 +1615,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
      * which applies, so the right one is chosen rather than assumed — posting `delete` as a
      * member is refused, and posting `leave` as the sole owner would strand the thread.
      */
-    removeConversation: async (conversationId) => {
+    removeConversation: async (conversationId, decidedAction) => {
         const previous = get().conversations;
         const listed = previous.find((conversation) => conversation.id === conversationId);
         const collaborative = isCollaborativeConversation(get(), conversationId);
@@ -1494,6 +1625,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
             selectedConversationIds: get().selectedConversationIds.filter(
                 (id) => id !== conversationId,
             ),
+            // A range must not be able to extend from a row that has gone.
+            selectionAnchorId:
+                get().selectionAnchorId === conversationId ? null : get().selectionAnchorId,
         });
 
         if (get().activeConversationId === conversationId) {
@@ -1502,11 +1636,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
         try {
             if (collaborative) {
+                // A caller that showed the user which of the two this would be passes it in,
+                // so what was promised is what happens. Without that the decision would be
+                // taken a second time, from a copy of the permissions that may have been
+                // refreshed in between — offering to leave a conversation and then deleting
+                // it for everybody.
                 const detail =
                     useCollaborationStore.getState().conversation?.id === conversationId
                         ? useCollaborationStore.getState().conversation
                         : (listed as CollaborationConversation | undefined);
-                const action = detail?.can_delete_conversation ? 'delete' : 'leave';
+                const action =
+                    decidedAction ?? (detail?.can_delete_conversation ? 'delete' : 'leave');
                 await collaborationDeleteAction(conversationId, action);
             } else {
                 await deleteConversationApi(conversationId);
@@ -1566,6 +1706,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
             selectedConversationIds: get().selectedConversationIds.filter(
                 (id) => id !== conversationId,
             ),
+            selectionAnchorId:
+                get().selectionAnchorId === conversationId ? null : get().selectionAnchorId,
         });
         try {
             if (isCollaborative(conversation)) {
@@ -1578,28 +1720,224 @@ export const useChatStore = create<ChatState>((set, get) => ({
         }
     },
 
-    setSelectionMode: (enabled) => {
-        // Leaving selection mode discards the selection: the checkboxes are gone, so a
-        // selection that survived would act on rows the user can no longer see or change.
-        set({ selectionMode: enabled, selectedConversationIds: enabled ? get().selectedConversationIds : [] });
-    },
-
-    toggleConversationSelected: (conversationId) => {
-        const selected = get().selectedConversationIds;
-        set({
-            selectedConversationIds: selected.includes(conversationId)
-                ? selected.filter((id) => id !== conversationId)
-                : [...selected, conversationId],
-        });
+    applyConversationSelection: (conversationId, intent) => {
+        const state = get();
+        const current: SelectionState = {
+            ids: state.selectedConversationIds,
+            anchorId: state.selectionAnchorId,
+        };
+        // The order a range reads is the rail's list as rendered, not the order ids happen
+        // to have been picked in, so a Shift+click always spans what the user can see.
+        const next = applySelection(
+            current,
+            conversationId,
+            intent,
+            state.conversations.map((conversation) => conversation.id),
+        );
+        set({ selectedConversationIds: next.ids, selectionAnchorId: next.anchorId });
     },
 
     /** Selects the rows currently loaded, which is what the user can actually see. */
     selectAllConversations: () => {
-        set({ selectedConversationIds: get().conversations.map((item) => item.id) });
+        const ids = get().conversations.map((item) => item.id);
+        set({ selectedConversationIds: ids, selectionAnchorId: ids[0] ?? null });
     },
 
     clearConversationSelection: () => {
-        set({ selectedConversationIds: [] });
+        set({ selectedConversationIds: [], selectionAnchorId: null });
+    },
+
+    /**
+     * Remove every selected conversation.
+     *
+     * Two things vary row by row and both decide which request is correct, so the selection
+     * is split rather than posted whole. Personal conversations go to the bulk route in one
+     * request. Shared ones go one at a time to the collaboration route, as a delete for an
+     * owner and a leave for everybody else — the server refuses the wrong one, and a leave
+     * posted as a delete would destroy a thread other people are still using.
+     */
+    bulkRemoveConversations: async () => {
+        const previous = get().conversations;
+        const targets = selectedConversations(previous, get().selectedConversationIds);
+        if (targets.length === 0) {
+            return;
+        }
+
+        const { personalIds } = partitionBySpecies(targets);
+        const removals = collaborativeRemovals(targets);
+        const removedIds = new Set(targets.map((conversation) => conversation.id));
+
+        set({
+            conversations: previous.filter(
+                (conversation) => !removedIds.has(conversation.id),
+            ),
+            selectedConversationIds: [],
+            selectionAnchorId: null,
+        });
+
+        const activeId = get().activeConversationId;
+        if (activeId && removedIds.has(activeId)) {
+            get().startNewConversation();
+        }
+
+        try {
+            let failed = 0;
+
+            if (personalIds.length > 0) {
+                const result = await deleteConversationsApi(personalIds);
+                failed += (result?.failed_ids ?? []).length;
+            }
+
+            if (removals.length > 0) {
+                // Settled rather than all: one shared conversation refusing must not
+                // abandon the rest of the batch half-done.
+                const outcomes = await Promise.allSettled(
+                    removals.map((removal) =>
+                        collaborationDeleteAction(removal.id, removal.action),
+                    ),
+                );
+                failed += outcomes.filter((outcome) => outcome.status === 'rejected').length;
+            }
+
+            const message = partialFailureMessage(targets.length, failed, 'delete', 'deleted');
+            if (message) {
+                toast.error(message);
+                // The optimistic removal was wrong for whatever failed, so the list is
+                // re-read rather than guessed at.
+                await get().loadConversations({ reset: true });
+            }
+        } catch (error) {
+            set({ conversations: previous });
+            toast.error(
+                error instanceof Error
+                    ? error.message
+                    : 'Could not remove those conversations.',
+            );
+        }
+    },
+
+    /**
+     * Pin or unpin every selected conversation.
+     *
+     * The caller passes the state to reach rather than a toggle. Toggling a mixed selection
+     * would leave it inverted rather than uniform, which is never what was asked for.
+     */
+    bulkSetConversationsPinned: async (action) => {
+        const previous = get().conversations;
+        const targets = selectedConversations(previous, get().selectedConversationIds);
+        if (targets.length === 0) {
+            return;
+        }
+
+        const pinned = action === 'pin';
+        const { personalIds } = partitionBySpecies(targets);
+        // The collaboration route toggles, so anything already in the target state is left
+        // alone — posting to it would flip it the wrong way.
+        const collaborativeIds = collaborativeIdsNeedingPin(targets, action);
+        const targetIds = new Set(targets.map((conversation) => conversation.id));
+
+        set({
+            conversations: previous.map((conversation) =>
+                targetIds.has(conversation.id)
+                    ? { ...conversation, is_pinned: pinned }
+                    : conversation,
+            ),
+        });
+
+        try {
+            let failed = 0;
+
+            if (personalIds.length > 0) {
+                const result: BulkConversationResult = await bulkPinConversationsApi(
+                    personalIds,
+                    action,
+                );
+                failed += (result?.failed_ids ?? []).length;
+            }
+
+            if (collaborativeIds.length > 0) {
+                const outcomes = await Promise.allSettled(
+                    collaborativeIds.map((id) => toggleCollaborationPinned(id)),
+                );
+                failed += outcomes.filter((outcome) => outcome.status === 'rejected').length;
+            }
+
+            const message = partialFailureMessage(
+                targets.length,
+                failed,
+                action,
+                pinned ? 'pinned' : 'unpinned',
+            );
+            if (message) {
+                toast.error(message);
+            }
+
+            // Pinning changes ordering, so the feed is re-read rather than re-sorted here.
+            await get().loadConversations({ reset: true });
+        } catch (error) {
+            set({ conversations: previous });
+            toast.error(
+                error instanceof Error ? error.message : 'Could not update those conversations.',
+            );
+        }
+    },
+
+    /**
+     * Hide every selected conversation.
+     *
+     * One-way, matching the single-row action: hidden conversations drop out of the feed and
+     * the rail has no view that lists them, so there would be nothing to unhide from.
+     */
+    bulkHideSelectedConversations: async () => {
+        const previous = get().conversations;
+        const targets = selectedConversations(previous, get().selectedConversationIds);
+        if (targets.length === 0) {
+            return;
+        }
+
+        const { personalIds, collaborativeIds } = partitionBySpecies(targets);
+        const hiddenIds = new Set(targets.map((conversation) => conversation.id));
+
+        set({
+            conversations: previous.filter((conversation) => !hiddenIds.has(conversation.id)),
+            selectedConversationIds: [],
+            selectionAnchorId: null,
+        });
+
+        const activeId = get().activeConversationId;
+        if (activeId && hiddenIds.has(activeId)) {
+            get().startNewConversation();
+        }
+
+        try {
+            let failed = 0;
+
+            if (personalIds.length > 0) {
+                const result: BulkConversationResult = await bulkHideConversationsApi(
+                    personalIds,
+                    'hide',
+                );
+                failed += (result?.failed_ids ?? []).length;
+            }
+
+            if (collaborativeIds.length > 0) {
+                const outcomes = await Promise.allSettled(
+                    collaborativeIds.map((id) => toggleCollaborationHidden(id)),
+                );
+                failed += outcomes.filter((outcome) => outcome.status === 'rejected').length;
+            }
+
+            const message = partialFailureMessage(targets.length, failed, 'hide', 'hidden');
+            if (message) {
+                toast.error(message);
+                await get().loadConversations({ reset: true });
+            }
+        } catch (error) {
+            set({ conversations: previous });
+            toast.error(
+                error instanceof Error ? error.message : 'Could not hide those conversations.',
+            );
+        }
     },
 
     sendMessage: async (text, options) => {

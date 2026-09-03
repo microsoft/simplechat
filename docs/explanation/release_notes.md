@@ -2,6 +2,38 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.056)**
+
+#### New Features
+
+*   **Act On Several Conversations At Once In The Sidebar**
+    *   Hovering a conversation in the chat sidebar now reveals a checkbox at its left edge. Ticking it starts a selection and a compact bar appears above the list offering **Pin**, **Hide**, **Export** and **Delete** for everything selected. Previously the only thing a selection could do was export, and pinning, hiding or deleting several conversations meant opening the same menu once per row.
+    *   **Ctrl-click adds a conversation and Shift-click selects a run of them**, matching the workspace documents explorer — the two lists now share one implementation of those rules, so they cannot drift apart.
+    *   **A plain click still opens a conversation.** Modifier keys select; an unmodified click opens and drops the selection. Once anything is selected every row shows its checkbox, so the state is visible before a click discards it.
+    *   **The permanent "Select" button is gone**, so the sidebar is a line shorter at rest than it was before this feature was added. Checkboxes appear on touch devices permanently, since there is no hover to reveal them with.
+    *   **Pin adapts to what is selected**: it offers Unpin only when everything selected is already pinned, and otherwise pins. Hiding stays one-way, matching the single-row action.
+    *   **Shared conversations are handled correctly rather than skipped.** The bulk endpoints only cover personal conversations, so a mixed selection is split — and removing a shared conversation is a deletion for its owner and a departure for everybody else, chosen per conversation rather than assumed.
+    *   `Escape` clears the selection, and `Ctrl+A` inside the sidebar selects everything loaded.
+    *   (Ref: `ConversationRail.tsx`, `listSelection.ts`, `conversationSelection.ts`, `POST /api/delete_multiple_conversations`, `POST /api/conversations/bulk-pin`, `POST /api/conversations/bulk-hide`, [V2 Conversation Multi-Select](features/V2_CONVERSATION_MULTI_SELECT.md))
+
+#### Bug Fixes
+
+*   **Deleting A Conversation Now Asks First**
+    *   Deleting a conversation from the sidebar used to happen on a single click, with no confirmation and no way back — one mis-click on a menu destroyed a conversation and every message in it.
+    *   Both the single-row delete and the new bulk delete now confirm, and the confirmation says what will really happen: a shared conversation you can only step out of is described as being left rather than deleted, and a mixed selection reports the two counts separately.
+    *   (Ref: conversation deletion, `ConfirmDialog.tsx`, `ConversationRail.tsx`)
+
+*   **A Sidebar Selection Can No Longer Outlive The Rows It Named**
+    *   Searching or paging the conversation list left a stale selection behind, so a bulk action taken afterwards could apply to conversations that were no longer on screen.
+    *   The selection is now pruned whenever the list reloads, whenever a conversation is removed or hidden, and when a shared conversation is taken away by its owner while you have it selected. Every bulk action also resolves its selection against the visible list before sending anything.
+    *   (Ref: conversation list paging, selection pruning, `chatStore.ts`)
+
+*   **Leaving A Shared Conversation Could Delete It For Everybody**
+    *   The sidebar decided whether removing a shared conversation meant *leaving* it or *deleting* it from two copies of your permissions that were refreshed independently: opening a conversation and role-change events updated one, while the sidebar row kept the value it was loaded with.
+    *   If you were promoted to owner while the conversation was open, the menu still offered **Leave** — but confirming posted a delete, destroying the conversation and all of its messages for every participant. A demoted owner hit the reverse, being told they had deleted something that still existed.
+    *   Both copies are now kept in step, and the decision is made once and carried through to the request, so the wording you confirm is always the action performed.
+    *   (Ref: shared conversation removal, `can_delete_conversation`, `conversationSelection.ts`, `chatStore.ts`)
+
 ### **(v0.261.055)**
 
 #### User Interface Enhancements
