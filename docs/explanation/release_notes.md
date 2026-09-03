@@ -2,7 +2,7 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
-### **(v0.261.034)**
+### **(v0.261.036)**
 
 #### Bug Fixes
 
@@ -13,6 +13,43 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   The model you pick is now remembered too. It previously only appeared to stick, because the page fell back to whichever model the server considered your default.
     *   A model you have not chosen a level for shows its usual default rather than a blank control, matching the classic interface.
     *   (Ref: V2 chat, reasoning effort, model picker, user preferences)
+
+### **(v0.261.035)**
+
+#### Bug Fixes
+
+*   **Exported Diagrams Are No Longer Empty Boxes**
+    *   Exporting a message with a diagram to Word or PowerPoint produced the right shapes, arrows and layout, but **no text inside any of the boxes**, even though the same diagram read correctly on screen.
+    *   The application image ships no scalable font, so when the server drew a diagram itself the browser it uses had nothing to write with: it measured every label as zero-width, fell back to the smallest box that would fit nothing, and painted no lettering. The tell-tale sign was every box coming out the same width, while on screen they varied with their labels.
+    *   The renderer now carries its own font instead of relying on whatever the host happens to have, so a diagram exports the same way on every deployment. Real fonts were also added to the image for everything else that draws in it.
+    *   Diagrams are now captured directly from the page they are drawn on, rather than being redrawn from a copy — a step that quietly discarded anything it could not reproduce.
+    *   (Ref: message export, Mermaid diagrams, server-side rendering, container fonts)
+
+*   **Exports Say When They Are Working**
+    *   Exporting to Word, PowerPoint or email closed the menu and then appeared to do nothing, sometimes for a long time. A PowerPoint export in particular waits on the model planning your slides, and long enough that it was reasonably read as having hung or failed when it was still going.
+    *   All three now put up a notice as soon as you click, which stays until the file arrives and is then replaced by the result. The menu entry spins and greys out while it runs, so an impatient second click cannot start a duplicate export.
+    *   Both the classic and new interfaces behave the same way.
+    *   (Ref: message export, notifications, chat message menu)
+
+#### User Interface Enhancements
+
+*   **Faster Exports That Keep Your Diagram Colours**
+    *   The new interface now sends the diagram it has already drawn along with the export, so the server no longer starts a browser to draw it again. Exports containing diagrams finish noticeably sooner.
+    *   Because the exported picture is the one on your screen, any colours you picked for that diagram now come with it.
+    *   (Ref: V2 chat, message export, Mermaid diagrams)
+
+### **(v0.261.034)**
+
+#### Bug Fixes
+
+*   **Picking An Agent No Longer Leaves A Model And Reasoning Level Pretending To Apply**
+    *   In the new interface, choosing an agent left the **Model** picker still showing a selected model and the **Reasoning** picker still offering a level, even though an agent can act on neither — an agent answers with its own model, and reasoning levels only reach a directly chosen model.
+    *   Worse, the request sent all three together, and the server reads a model sent alongside an agent as a deliberate instruction to override it. So an agent could quietly answer through the wrong model rather than the one it is configured with.
+    *   Selecting an agent now dims the **Model** picker back to the plain word "Model" and hides **Reasoning**. The model you had chosen is remembered, not thrown away, and comes straight back when you clear the agent.
+    *   The model picker stays clickable while it is dimmed: choosing a model is how you switch back, and doing so clears the agent for you. Its menu still shows a tick beside the model you had, so you can see what returns.
+    *   Hovering the dimmed picker names the agent that is supplying the model.
+    *   Reasoning is now also hidden while generating an image, matching the classic interface.
+    *   (Ref: V2 chat, agent picker, model picker, reasoning effort, `chatRequestSelection.ts`)
 
 ### **(v0.261.033)**
 

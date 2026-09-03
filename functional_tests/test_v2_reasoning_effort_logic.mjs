@@ -1,8 +1,8 @@
 // test_v2_reasoning_effort_logic.mjs
 //
 // Runtime test for the V2 per-model reasoning effort resolution.
-// Version: 0.261.034
-// Implemented in: 0.261.034
+// Version: 0.261.036
+// Implemented in: 0.261.036
 //
 // The companion test, test_v2_reasoning_effort_persistence.py, asserts that the composer is
 // wired to the shared user setting and that the keys it writes are ones the route accepts.

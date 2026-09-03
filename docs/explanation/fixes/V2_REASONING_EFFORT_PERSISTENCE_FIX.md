@@ -11,7 +11,7 @@ memory, so a level chosen for one model was either carried to the next or gone.
 The model picker appeared to behave, which made the reasoning picker look like the odd one
 out. It was not: the model was not being saved either.
 
-**Fixed in version:** 0.261.034
+**Fixed in version:** 0.261.036
 
 ## Root cause
 
@@ -60,23 +60,30 @@ are stored:
   unknown reasoning support when its model id is `gpt-5-mini`.
 - A model that offers no choice now resolves to no level at all, so nothing stale is sent to
   a model that rejects it.
-- `requestReasoningEffort()` suppresses `none` on both the send and retry paths, matching
-  `getCurrentReasoningEffort()`, which returns null for it.
+- `requestReasoningEffort()` suppresses `none`, applied in `buildSelectionFields()` — the one
+  place a request's routing fields are decided, covering both the send and the retry path —
+  matching `getCurrentReasoningEffort()`, which returns null for it.
 - Choosing a level writes it into `reasoningEffortSettings` through the existing debounced
   settings store, which reverts the control if the write fails.
 - Choosing a model writes `preferredModelId` (the catalog selection key, which is what the
   server matches on) and `preferredModelDeployment` (its fallback when the selection key no
   longer resolves).
 
-The reasoning picker is no longer clearable. Every model now has an effective level, and
-`None` is already an explicit option for the families that support it, so a separate "no
-value" state would only mean "fall back to the default" — which the picker cannot show.
+The reasoning picker is no longer clearable once a model is known. Such a model always has an
+effective level, and `None` is already an explicit option for the families that support it, so
+a separate "no value" state would only mean "fall back to the default" — which the picker
+cannot show.
 
 On a single-endpoint deployment there is no model catalog and therefore no model identity.
 Nothing is derived there — the offered levels would be a guess, and a default would attach a
 `reasoning_effort` to every request that the user never asked for. The control stays opt-in
-and clearable for the session, exactly as it was, and the picker is only made non-clearable
-once a model is known and a level is genuinely always in effect.
+and clearable for the session, exactly as it was.
+
+Selecting an agent is unaffected by any of this. An agent hides the reasoning picker and
+carries no level into the request at all, which
+[V2 Agent Model Exclusivity](V2_AGENT_MODEL_EXCLUSIVITY_FIX.md) establishes in
+`buildSelectionFields()`. The level is still derived and stored per model, so clearing the
+agent brings back whatever was chosen for the model underneath.
 
 A level chosen before the settings have arrived is held and written once they do. This
 setting is a map rather than a scalar and the route stores it whole, while the app renders as
@@ -106,8 +113,8 @@ picker for that configuration, so it has no model name to key a stored level on.
 | `application/v2_ui/src/lib/reasoning.ts` | `reasoningModelKey`, `resolveReasoningEffort`, `requestReasoningEffort`, `ReasoningEffortSettings` |
 | `application/v2_ui/src/lib/userSettings.ts` | Declared the three shared keys and added them to `WRITABLE_USER_SETTING_KEYS` |
 | `application/v2_ui/src/components/chat/Composer.tsx` | Reads the stored map, resolves the level per model, clears it for models with no choice, writes the level and the model selection |
-| `application/v2_ui/src/stores/chatStore.ts` | `none` suppressed on the send and retry paths |
-| `application/single_app/config.py` | Version to 0.261.034 |
+| `application/v2_ui/src/lib/chatRequestSelection.ts` | `none` suppressed where a request's routing fields are built |
+| `application/single_app/config.py` | Version to 0.261.036 |
 | `functional_tests/test_v2_reasoning_effort_persistence.py` | New test |
 | `functional_tests/test_v2_reasoning_effort_logic.mjs` | New runtime test |
 

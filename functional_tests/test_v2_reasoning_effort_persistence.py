@@ -2,8 +2,8 @@
 """
 Functional test for V2 reasoning effort persistence.
 
-Version: 0.261.034
-Implemented in: 0.261.034
+Version: 0.261.036
+Implemented in: 0.261.036
 
 The V2 reasoning level used to live only in the composer's local state. It was never read
 from or written to /api/user/settings, so it was lost on every remount -- navigating away
@@ -45,7 +45,7 @@ V2_SRC = REPO_ROOT / "application" / "v2_ui" / "src"
 LEGACY_CHAT_JS = APP_DIR / "static" / "js" / "chat"
 LOGIC_TEST = REPO_ROOT / "functional_tests" / "test_v2_reasoning_effort_logic.mjs"
 
-IMPLEMENTED_IN = "0.261.034"
+IMPLEMENTED_IN = "0.261.036"
 
 # The settings this fix depends on, all of which are shared with the classic interface.
 SHARED_SETTING_KEYS = (
@@ -187,7 +187,9 @@ def test_the_composer_reads_and_writes_the_shared_map():
 
     # There is always an effective level once a model is known, so the control is clearable
     # only where none is derived -- a deployment with no model catalog.
-    reasoning_control = composer.split("{reasoningLevels.length > 0 && (")[1].split(")}")[0]
+    reasoning_control = composer.split(
+        "{gating.showReasoning && reasoningLevels.length > 0 && ("
+    )[1].split(")}")[0]
     assert "clearable={!reasoningKey}" in reasoning_control, (
         "The reasoning picker should be clearable only where no level is in effect; a model "
         "with a level already has `None` as an explicit option where it is supported"
@@ -238,14 +240,24 @@ def test_none_is_not_sent_to_the_endpoint():
         "V2 needs one place that decides what is safe to send"
     )
 
+    # Every request's routing fields are built here, for both the send and the retry path,
+    # so this is the one place the level has to be filtered.
+    selection = _read(V2_SRC / "lib" / "chatRequestSelection.ts")
+    assert "requestReasoningEffort(input.reasoningEffort)" in selection, (
+        "The reasoning level must be filtered where a request's routing fields are built, "
+        "or `none` reaches the endpoint"
+    )
+    assert "if (input.reasoningEffort)" not in selection, (
+        "The raw level must not be assigned directly; `none` would pass straight through"
+    )
+
     store = _read(V2_SRC / "stores" / "chatStore.ts")
-    sent = store.count("requestReasoningEffort(")
-    assert sent >= 2, (
-        "Both the send and the retry paths must go through requestReasoningEffort; "
-        f"found {sent} use(s)"
+    assert "requestBody.reasoning_effort =" not in store, (
+        "The level must not be attached outside buildSelectionFields, which is also what "
+        "keeps it off the agent path"
     )
     assert "reasoning_effort: options?.reasoningEffort," not in store, (
-        "The retry path still sends the raw level, so `none` reaches the endpoint"
+        "The retry path must not send the raw level, or `none` reaches the endpoint"
     )
 
     print("None-level test passed!")

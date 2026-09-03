@@ -262,6 +262,15 @@ export async function exportMessageAsWord(messageDiv, messageId, role) {
         return;
     }
 
+    // The document is built entirely on the server, and diagrams the browser could not
+    // rasterize are redrawn there in a headless browser, so this can run for a while with
+    // nothing happening on the page.
+    const progressToast = showToast(
+        'Building your Word document… diagrams can make this take a while.',
+        'info',
+        { autohide: false }
+    );
+
     try {
         const response = await fetch('/api/message/export-word', {
             method: 'POST',
@@ -285,6 +294,8 @@ export async function exportMessageAsWord(messageDiv, messageId, role) {
     } catch (err) {
         console.error('Error exporting message to Word:', err);
         showToast('Failed to export message to Word.', 'danger');
+    } finally {
+        progressToast?.dismiss();
     }
 }
 
@@ -304,6 +315,14 @@ export async function exportMessageAsPowerPoint(messageDiv, messageId, role, opt
         showToast('Cannot export - no active conversation or message.', 'warning');
         return;
     }
+
+    // Slowest of the exports: the slide plan is written by a model before python-pptx builds
+    // anything, so the wait is measured in tens of seconds rather than in a spinner frame.
+    const progressToast = showToast(
+        'Building your PowerPoint… planning the slides can take a minute.',
+        'info',
+        { autohide: false }
+    );
 
     try {
         const requestBody = await buildMessageExportRequestBody(messageDiv, messageId, conversationId, role);
@@ -337,6 +356,8 @@ export async function exportMessageAsPowerPoint(messageDiv, messageId, role, opt
     } catch (err) {
         console.error('Error exporting message to PowerPoint:', err);
         showToast('Failed to export message to PowerPoint.', 'danger');
+    } finally {
+        progressToast?.dismiss();
     }
 }
 
@@ -382,6 +403,10 @@ export async function openInEmail(messageDiv, messageId, role) {
         return;
     }
 
+    // The subject line is written by a model and any diagram may need rendering, so this is
+    // not the instant hand-off to the mail client that it looks like.
+    const progressToast = showToast('Preparing your email draft…', 'info', { autohide: false });
+
     try {
         const response = await fetch('/api/message/export-email-draft', {
             method: 'POST',
@@ -412,5 +437,7 @@ export async function openInEmail(messageDiv, messageId, role) {
     } catch (err) {
         console.error('Error exporting message to email:', err);
         showToast('Failed to open email draft.', 'danger');
+    } finally {
+        progressToast?.dismiss();
     }
 }

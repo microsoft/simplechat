@@ -2,19 +2,21 @@
 // Renders transient notifications from the toast store.
 
 import { clsx } from 'clsx';
-import { CircleAlert, CircleCheck, Info, X } from 'lucide-react';
+import { CircleAlert, CircleCheck, Info, Loader2, X } from 'lucide-react';
 import { useToastStore, type ToastTone } from '../../stores/toastStore';
 
 const TONE_ICON: Record<ToastTone, typeof Info> = {
     success: CircleCheck,
     error: CircleAlert,
     info: Info,
+    pending: Loader2,
 };
 
 const TONE_CLASS: Record<ToastTone, string> = {
     success: 'text-ok',
     error: 'text-danger',
     info: 'text-accent',
+    pending: 'text-accent',
 };
 
 export function Toaster() {
@@ -32,22 +34,34 @@ export function Toaster() {
         >
             {toasts.map((item) => {
                 const Icon = TONE_ICON[item.tone];
+                const pending = item.tone === 'pending';
                 return (
                     <div
                         key={item.id}
                         role={item.tone === 'error' ? 'alert' : 'status'}
                         className="glass-modal pointer-events-auto flex items-start gap-2.5 rounded-xl px-3.5 py-2.5"
                     >
-                        <Icon size={16} className={clsx('mt-0.5 shrink-0', TONE_CLASS[item.tone])} />
+                        <Icon
+                            size={16}
+                            className={clsx(
+                                'mt-0.5 shrink-0',
+                                TONE_CLASS[item.tone],
+                                pending && 'animate-spin',
+                            )}
+                        />
                         <p className="min-w-0 flex-1 text-sm text-text-1">{item.message}</p>
-                        <button
-                            type="button"
-                            onClick={() => dismiss(item.id)}
-                            aria-label="Dismiss notification"
-                            className="shrink-0 rounded-md p-0.5 text-text-3 transition-colors hover:bg-surface-2 hover:text-text-1"
-                        >
-                            <X size={14} />
-                        </button>
+                        {/* Work in progress cannot be cancelled, so offering to close it would
+                            only hide the one thing telling the user it is still running. */}
+                        {!pending && (
+                            <button
+                                type="button"
+                                onClick={() => dismiss(item.id)}
+                                aria-label="Dismiss notification"
+                                className="shrink-0 rounded-md p-0.5 text-text-3 transition-colors hover:bg-surface-2 hover:text-text-1"
+                            >
+                                <X size={14} />
+                            </button>
+                        )}
                     </div>
                 );
             })}

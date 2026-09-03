@@ -23,6 +23,7 @@ import { useBootstrapStore } from '../../stores/bootstrapStore';
 import { useUserSettingsStore } from '../../stores/userSettingsStore';
 import { uploadDocument } from '../../lib/endpoints';
 import { agentSelectionKey } from '../../lib/agents';
+import { hasResolvableAgent } from '../../lib/chatRequestSelection';
 import { modelSelectionKey, findModel, type ModelCatalogEntry } from '../../lib/models';
 import { resolveGating } from '../../lib/composerGating';
 import { useUiStore } from '../../stores/uiStore';
@@ -110,6 +111,19 @@ export function Composer() {
         selectedDocumentIds: [],
     });
 
+    // An agent supplies its own deployment and never receives a reasoning level, so a
+    // selection the server can actually resolve is what puts the model picker into its
+    // overridden state. Resolved against the catalog, not the raw key, so a stale selection
+    // does not silently deactivate a control that is still in force.
+    const agentActive = useMemo(
+        () =>
+            hasResolvableAgent(
+                bootstrap?.catalogs?.agents as Record<string, unknown>[] | undefined,
+                options.agentSelection,
+            ),
+        [bootstrap, options.agentSelection],
+    );
+
     // Which controls are relevant right now. Deep research and Read URLs depend on what is
     // currently typed, not only on what is enabled.
     const gating = useMemo(
@@ -120,8 +134,16 @@ export function Composer() {
                 webSearchActive: options.webSearch,
                 urlAccessActive: options.urlAccess,
                 imageGenerationActive: options.imageGeneration,
+                agentActive,
             }),
-        [text, features, options.webSearch, options.urlAccess, options.imageGeneration],
+        [
+            text,
+            features,
+            options.webSearch,
+            options.urlAccess,
+            options.imageGeneration,
+            agentActive,
+        ],
     );
 
     // A control that stops being relevant must not leave its option set behind it, or the
@@ -201,6 +223,13 @@ export function Composer() {
         }),
     );
 
+    // Names the agent in the model picker's tooltip. Saying which one is holding the model
+    // back is the difference between an explanation and a control that has simply gone dim.
+    const activeAgentLabel = agentActive
+        ? (agentOptions.find((option) => option.value === options.agentSelection)?.label ??
+          'the selected agent')
+        : null;
+
     // Reasoning support is per-model, so the control appears only when the current model
     // actually offers a choice. Resolved from the catalog record rather than the label,
     // since the display name can be anything an administrator typed.
@@ -235,6 +264,10 @@ export function Composer() {
     // no model catalog, so the offered levels are a guess and a default would attach a
     // parameter to every request that the user never asked for. There the control stays
     // opt-in for the session, as it was before.
+    //
+    // Agent mode is deliberately not a condition here. It hides the control and drops the
+    // level from the request in `buildSelectionFields`, which is where that rule lives; the
+    // level stays derived from the model underneath, so clearing the agent brings it back.
     const derivedReasoning =
         reasoningKey && reasoningLevels.length > 0
             ? resolveReasoningEffort(reasoningKey, reasoningEffortSettings)
@@ -422,16 +455,29 @@ export function Composer() {
 
                     <div className="flex flex-wrap items-center gap-1.5 px-1 pt-1">
                         {/* Hidden while generating an image: the request goes to an image
-                            endpoint that does not take a chat model. */}
+                            endpoint that does not take a chat model. Shown but overridden
+                            while an agent is selected, since the agent brings its own
+                            deployment — picking a model here is how the user gets back to
+                            using one, so it stays usable rather than disabled. */}
                         {gating.showModelPicker && (
                             <Dropdown
                                 options={modelOptions}
                                 value={options.modelDeployment}
                                 placeholder="Model"
+                                inactive={gating.modelPickerInactive}
+                                title={
+                                    activeAgentLabel
+                                        ? `${activeAgentLabel} supplies its own model. Pick a model to use one instead.`
+                                        : undefined
+                                }
                                 onChange={(value) => {
                                     setOptions((current) => ({
                                         ...current,
                                         modelDeployment: value,
+                                        // Choosing a model is the way out of agent mode. The
+                                        // two cannot both apply, and the server reads a model
+                                        // sent alongside an agent as an override of it.
+                                        agentSelection: undefined,
                                     }));
                                     rememberModelSelection(value);
                                 }}
@@ -448,6 +494,9 @@ export function Composer() {
                                 onChange={(value) =>
                                     setOptions((current) => ({
                                         ...current,
+                                        // The model selection is kept, not cleared: it is
+                                        // simply not in force, and it comes back the moment
+                                        // the agent is cleared.
                                         agentSelection: value,
                                     }))
                                 }
@@ -544,13 +593,14 @@ export function Composer() {
                             />
                         )}
 
-                        {/* Only shown when the selected model offers a real choice; the
-                            endpoint strips the parameter for models that reject it. The
-                            level is stored per model, so it survives a reload and applies
-                            to this model alone. It is clearable only where no level is in
-                            effect — a deployment with no model catalog — because that is
-                            the one case where "no level" is a state to get back to. */}
-                        {reasoningLevels.length > 0 && (
+                        {/* Only shown when a reasoning level is a real choice: the selected
+                            model has to offer one, and neither an agent nor image generation
+                            can be in play, because neither carries the parameter. The level
+                            is stored per model, so it survives a reload and applies to this
+                            model alone. It is clearable only where no level is in effect —
+                            a deployment with no model catalog — because that is the one case
+                            where "no level" is a state to get back to. */}
+                        {gating.showReasoning && reasoningLevels.length > 0 && (
                             <Dropdown
                                 options={reasoningLevels}
                                 value={options.reasoningEffort}
