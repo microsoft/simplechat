@@ -2,6 +2,44 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.047)**
+
+#### New Features
+
+*   **A Home Page In The V2 Interface**
+    *   The new interface opened straight into chat and had no landing page, which meant three Appearance settings — **Landing Page Text**, **Markdown Alignment** and **Main Page Logo Size** — configured a page that only existed in the classic interface. Editing them appeared to do nothing.
+    *   `/v2` now opens a home page carrying your logo, your landing copy and a **Start chatting** button, and **Home** has been added to the left-hand menu. The logo is sized by **Main Page Logo Size** exactly as the classic home page sizes it.
+    *   Clearing the landing copy leaves the home page without it, rather than restoring the default wording you deleted.
+    *   (Ref: V2 interface, home page, `landing_page_text`, `landing_page_alignment`, `landing_page_logo_scale_percent`)
+
+*   **Custom Pages And External Links In The V2 Left-Hand Menu**
+    *   Both are configured under **Appearance > Pages & Links** and neither appeared in the new interface at all, so a deployment that had set them up saw a menu with none of its own links in it.
+    *   They now appear, following the same rule as the classic navigation: one or two entries sit inline as ordinary menu items, and three or more — or any number when **Force Menu Display** is on — collapse into a group under the menu name you configured, with a count.
+    *   External links open in a new tab so they cannot take an in-progress conversation with them. Custom pages honour their own "open in new tab" setting, and are still filtered per page against your roles.
+    *   (Ref: V2 interface, left-hand menu, Custom Pages, External Links, `/api/v2/bootstrap`)
+
+#### Bug Fixes
+
+*   **Custom Favicon Was Never Shown In The V2 Interface**
+    *   An uploaded favicon replaced the browser tab icon in the classic interface but never in the new one, which also always showed "SimpleChat" as the tab title regardless of the configured application title.
+    *   The favicon file keeps the same name every time it is replaced, so the address it is served from has to change or the browser keeps showing the copy it already has. The classic interface has always done this; the new interface is compiled ahead of time and could not know your branding. The page it serves is now stamped with the current favicon and application title on the way out.
+    *   (Ref: V2 interface, favicon, application title)
+
+*   **Custom Logo Was Squashed In The V2 Left-Hand Menu**
+    *   The logo was drawn into a fixed square, so any logo that is not square — which is most of them — was compressed. It is now sized by height with its own proportions kept, as in the classic navigation.
+    *   (Ref: V2 interface, left-hand menu, custom logo)
+
+*   **Unsafe External Link URLs Are No Longer Rendered In The V2 Left-Hand Menu**
+    *   The new interface validates external link addresses when you save them, but the classic Admin Settings form does not, so a link saved through the classic form — or already stored from an earlier version — could carry an address that is not a web page.
+    *   Addresses that are neither a local path nor `http`/`https` are now removed before the menu is built, so a link that the save path would have rejected can no longer reach the menu by another route.
+    *   (Ref: V2 interface, left-hand menu, External Links, `EXTERNAL_LINK_ALLOWED_SCHEMES`)
+
+*   **Four Settings Appeared Under Appearance Instead Of Their Own Tab**
+    *   **Enable Personal Workspaces** appeared under **Appearance > Notices & Agreements > User Agreement**, and the two external health check endpoints and **Show Simple Chat Documentation Guide Links** appeared under **Appearance > Pages & Links > External Links**. A fifth, **Enable Text Action**, appeared under **Appearance > Branding**.
+    *   Settings that had not yet been described to the new admin page were placed by matching their name against the section names, and these five matched the wrong section — "external" matched External Links rather than Health Check, and "user" matched User Agreement rather than Personal Workspaces.
+    *   They are now described properly and appear where they belong: the health check endpoints under **Operations > Logging & Health > Health Check**, the documentation guide links under **Help > User-Facing Latest Features**, personal workspaces under **Workspaces > Workspace Types**, and the text action under **Agents & Actions > Actions**. Each also gained the explanatory text the classic page has always shown.
+    *   (Ref: V2 Admin Settings, `admin_settings_fields.py`, capability placement)
+
 ### **(v0.261.046)**
 
 #### Bug Fixes

@@ -24,7 +24,12 @@ import logging
 from flask import current_app, jsonify, request, session
 
 from admin_settings_fields import (
+    LANDING_PAGE_ALIGNMENTS,
+    LOGO_SCALE_DEFAULT_PERCENT,
+    LOGO_SCALE_MAX_PERCENT,
+    LOGO_SCALE_MIN_PERCENT,
     get_admin_settings_fields,
+    is_safe_external_link_url,
     normalize_admin_settings_updates,
 )
 from admin_settings_nav import ADMIN_NAV
@@ -40,6 +45,13 @@ from functions_branding_images import (
     prepare_favicon_image_for_storage,
     prepare_logo_image_for_storage,
 )
+from functions_branding_urls import (
+    FAVICON_STATIC_URL,
+    LOGO_DARK_STATIC_URL,
+    LOGO_STATIC_URL,
+    build_custom_logo_urls,
+    build_favicon_url,
+)
 from functions_authentication import (
     admin_required,
     get_current_user_id,
@@ -48,6 +60,7 @@ from functions_authentication import (
     user_required,
 )
 from functions_conversation_contents import is_conversation_contents_drawer_enabled
+from functions_custom_pages import get_custom_pages_nav
 from functions_group import find_group_by_id, get_user_groups
 from functions_public_workspaces import (
     find_public_workspace_by_id,
@@ -82,28 +95,29 @@ logger = logging.getLogger(__name__)
 
 
 # Describes each branding asset an administrator can replace: how to convert the
-# upload, which settings keys hold it, and the static path it is written to.
-# ``_build_branding` returns URLs derived from these same keys, so a change here
-# cannot leave the SPA pointing at a stale path.
+# upload, which settings keys hold it, and the static path it is written to. The
+# paths come from ``functions_branding_urls``, which is also what the bootstrap
+# payload and the SPA shell read, so a change there cannot leave one surface
+# pointing at a file another no longer writes.
 BRANDING_IMAGE_TARGETS = {
     "logo": {
         "settings_key": "custom_logo_base64",
         "version_key": "logo_version",
-        "static_url": "/static/images/custom_logo.png",
+        "static_url": LOGO_STATIC_URL,
         "extensions": ALLOWED_LOGO_EXTENSIONS,
         "prepare": prepare_logo_image_for_storage,
     },
     "logo_dark": {
         "settings_key": "custom_logo_dark_base64",
         "version_key": "logo_dark_version",
-        "static_url": "/static/images/custom_logo_dark.png",
+        "static_url": LOGO_DARK_STATIC_URL,
         "extensions": ALLOWED_LOGO_EXTENSIONS,
         "prepare": prepare_logo_image_for_storage,
     },
     "favicon": {
         "settings_key": "custom_favicon_base64",
         "version_key": "favicon_version",
-        "static_url": "/static/images/favicon.ico",
+        "static_url": FAVICON_STATIC_URL,
         "extensions": ALLOWED_FAVICON_EXTENSIONS,
         "prepare": prepare_favicon_image_for_storage,
     },
@@ -159,21 +173,12 @@ def _build_branding(raw_settings, public_settings):
     logo blobs from public settings. The blobs are not what the browser needs anyway: the
     images are already served as static files, so the URLs are derived here from the raw
     settings and only the URLs are returned.
+
+    The landing page fields ride along because the SPA renders its own home page and would
+    otherwise need a second request for three values it needs on first paint.
     """
     show_logo = bool(raw_settings.get("show_logo", False))
-    logo_version = raw_settings.get("logo_version") or 1
-    logo_dark_version = raw_settings.get("logo_dark_version") or 1
-
-    logo_url = None
-    logo_dark_url = None
-    if raw_settings.get("custom_logo_base64"):
-        logo_url = f"/static/images/custom_logo.png?v={logo_version}"
-    if raw_settings.get("custom_logo_dark_base64"):
-        logo_dark_url = f"/static/images/custom_logo_dark.png?v={logo_dark_version}"
-    elif logo_url:
-        # Matches the server-rendered template, which reuses the light logo in dark mode
-        # when no dedicated dark variant has been uploaded.
-        logo_dark_url = logo_url
+    logo_url, logo_dark_url = build_custom_logo_urls(raw_settings)
 
     classification_banner = None
     if raw_settings.get("classification_banner_enabled") and raw_settings.get(
@@ -186,13 +191,130 @@ def _build_branding(raw_settings, public_settings):
             "text_color": raw_settings.get("classification_banner_text_color") or "#ffffff",
         }
 
+    landing_alignment = raw_settings.get("landing_page_alignment") or "left"
+    if landing_alignment not in LANDING_PAGE_ALIGNMENTS:
+        landing_alignment = "left"
+
     return {
         "app_title": public_settings.get("app_title") or "SimpleChat",
         "hide_app_title": bool(raw_settings.get("hide_app_title", False)),
         "show_logo": show_logo,
         "logo_url": logo_url if show_logo else None,
         "logo_dark_url": logo_dark_url if show_logo else None,
+        "favicon_url": build_favicon_url(raw_settings),
         "classification_banner": classification_banner,
+        # Passed through as stored apart from trimming, including when that leaves it
+        # empty. ``get_settings`` merges the seeded default into every document, so a
+        # blank value is an administrator's deletion, and substituting default copy would
+        # put wording they removed -- including an acceptable-use statement -- back on
+        # the page.
+        "landing_page_text": str(raw_settings.get("landing_page_text") or "").strip(),
+        "landing_page_alignment": landing_alignment,
+        "landing_page_logo_scale_percent": _coerce_logo_scale(
+            raw_settings.get("landing_page_logo_scale_percent")
+        ),
+    }
+
+
+def _coerce_logo_scale(value):
+    """Clamp the stored home page logo scale into the range the slider offers."""
+    try:
+        scale = int(float(value))
+    except (TypeError, ValueError):
+        return LOGO_SCALE_DEFAULT_PERCENT
+    return max(LOGO_SCALE_MIN_PERCENT, min(LOGO_SCALE_MAX_PERCENT, scale))
+
+
+def _menu_name(value, fallback):
+    """Return a navigation group's heading, falling back when it is blank.
+
+    ``fallback_when_empty`` in the field schema already restores the default on save, but
+    a settings document written before that rule existed can still hold an empty string,
+    and an unlabelled group in the rail is worse than a defaulted one.
+    """
+    return str(value or "").strip() or fallback
+
+
+def _build_navigation(raw_settings, user_roles):
+    """Describe the administrator-configured navigation entries for the SPA.
+
+    Both groups exist in the server-rendered interface, where custom pages arrive as
+    template context built in ``app.py`` and external links are read straight off
+    ``app_settings`` in ``_sidebar_nav.html``. Neither is reachable from the SPA, and
+    neither can be derived from the feature flags: custom pages are filtered per page
+    against the caller's roles, and the external link list is not an ``enable_*`` key.
+
+    ``menu_name`` and ``force_menu`` travel with each group so the browser can apply the
+    same "inline below three, menu at three or more" rule the templates use.
+    """
+    custom_pages = []
+    if raw_settings.get("enable_custom_pages"):
+        try:
+            for page in get_custom_pages_nav(raw_settings):
+                url = page.get("url") or page.get("href")
+                if not page.get("slug") or not url:
+                    continue
+                custom_pages.append(
+                    {
+                        "slug": page["slug"],
+                        "label": page.get("label") or page["slug"],
+                        "icon": page.get("icon") or "bi-file-earmark-text",
+                        "url": url,
+                        "open_in_new_tab": bool(page.get("open_in_new_tab", False)),
+                    }
+                )
+        except Exception as exc:
+            # A missing navigation group is a degraded rail, not a broken app, so it
+            # must not take the whole bootstrap payload down with it.
+            log_event(
+                f"[V2_BOOTSTRAP] Could not resolve custom page navigation: {exc}",
+                level=logging.WARNING,
+                exceptionTraceback=True,
+            )
+            custom_pages = []
+
+    # Matches the role gate in _sidebar_nav.html: external links are shown to signed-in
+    # users holding a real application role, not to anyone who merely has a session.
+    may_see_external_links = any(role in ("Admin", "User") for role in user_roles or [])
+    external_links = []
+    if raw_settings.get("enable_external_links") and may_see_external_links:
+        for link in raw_settings.get("external_links") or []:
+            if not isinstance(link, dict):
+                continue
+            url = str(link.get("url") or "").strip()
+            label = str(link.get("label") or "").strip()
+            if not url or not label:
+                continue
+            # Re-checked on the way out, not just on the way in. The V2 settings PATCH
+            # is the only write path that applies the scheme rule, so a link stored
+            # through the server-rendered admin form, or already in the document, could
+            # otherwise put a javascript: URL into every user's navigation.
+            if not is_safe_external_link_url(url):
+                log_event(
+                    "[V2_BOOTSTRAP] Dropped an external link with an unsupported URL "
+                    f"scheme: {label}",
+                    level=logging.WARNING,
+                )
+                continue
+            external_links.append({"label": label, "url": url})
+
+    return {
+        "custom_pages": {
+            "enabled": bool(raw_settings.get("enable_custom_pages")),
+            "menu_name": _menu_name(
+                raw_settings.get("custom_pages_menu_name"), "Custom Pages"
+            ),
+            "force_menu": bool(raw_settings.get("custom_pages_force_menu")),
+            "items": custom_pages,
+        },
+        "external_links": {
+            "enabled": bool(raw_settings.get("enable_external_links")),
+            "menu_name": _menu_name(
+                raw_settings.get("external_links_menu_name"), "External Links"
+            ),
+            "force_menu": bool(raw_settings.get("external_links_force_menu")),
+            "items": external_links,
+        },
     }
 
 
@@ -426,6 +548,7 @@ def register_route_backend_v2(bp):
                     "roles": list(current_user_roles),
                 },
                 "branding": _build_branding(settings, public_settings),
+                "navigation": _build_navigation(settings, current_user_roles),
                 "features": _build_feature_flags(public_settings, per_user_overrides),
                 "catalogs": {
                     "models": models,
