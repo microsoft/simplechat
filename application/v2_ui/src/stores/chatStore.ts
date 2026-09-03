@@ -28,8 +28,8 @@ import {
     streamChat,
     type ChatStreamHandlers,
 } from '../lib/sse';
-import { agentInfoForSelection } from '../lib/agents';
-import { modelIdentityForSelection, type ModelCatalogEntry } from '../lib/models';
+import { buildSelectionFields } from '../lib/chatRequestSelection';
+import type { ModelCatalogEntry } from '../lib/models';
 import { resolveDocumentScope } from '../lib/documentScope';
 import { messageThreadId } from '../lib/threads';
 import { proposalSourceMessageId, type ImageProposalSpec } from '../lib/imageProposalSpec';
@@ -856,31 +856,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
             url_access_enabled: options.urlAccess,
         };
 
-        // A model is identified by four fields together, not by its deployment name alone.
-        // Sending only the name makes the multi-endpoint resolver give up and fall back to
-        // the legacy endpoint, silently using a different model than the one chosen.
+        // Model identity, agent and reasoning level are mutually exclusive halves of the same
+        // decision, resolved in one place. An agent answers with its own deployment, and a
+        // model identity sent alongside `agent_info` reads to the server as an override of it.
         Object.assign(
             requestBody,
-            modelIdentityForSelection(
-                bootstrap?.catalogs?.models as ModelCatalogEntry[] | undefined,
-                options.modelDeployment,
-            ),
+            buildSelectionFields({
+                agents: bootstrap?.catalogs?.agents as Record<string, unknown>[] | undefined,
+                models: bootstrap?.catalogs?.models as ModelCatalogEntry[] | undefined,
+                agentSelection: options.agentSelection,
+                modelDeployment: options.modelDeployment,
+                reasoningEffort: options.reasoningEffort,
+            }),
         );
-
-        if (options.agentSelection) {
-            // The server reads `agent_info` and requires a dict; a bare string is silently
-            // ignored, so the picker would appear to do nothing.
-            const agentInfo = agentInfoForSelection(
-                bootstrap?.catalogs?.agents as Record<string, unknown>[] | undefined,
-                options.agentSelection,
-            );
-            if (agentInfo) {
-                requestBody.agent_info = agentInfo;
-            }
-        }
-        if (options.reasoningEffort) {
-            requestBody.reasoning_effort = options.reasoningEffort;
-        }
 
         await runChatStream(requestBody, conversationId, { isNewConversation });
     },
@@ -1001,20 +989,21 @@ export const useChatStore = create<ChatState>((set, get) => ({
         });
         try {
             const bootstrap = useBootstrapStore.getState().data;
-            // `modelDeployment` holds the picker's selection key, so the deployment name
-            // is resolved from the catalog rather than sent as-is.
-            const identity = modelIdentityForSelection(
-                bootstrap?.catalogs?.models as ModelCatalogEntry[] | undefined,
-                options?.modelDeployment,
-            );
+            // Same exclusive rule as a fresh send, so a retry cannot reintroduce the
+            // combination the server reads as a model override of the agent. The retry
+            // endpoint takes a flat deployment name, which `buildSelectionFields` has already
+            // resolved from the catalog — the option value is a selection key, not a name.
+            const selection = buildSelectionFields({
+                agents: bootstrap?.catalogs?.agents as Record<string, unknown>[] | undefined,
+                models: bootstrap?.catalogs?.models as ModelCatalogEntry[] | undefined,
+                agentSelection: options?.agentSelection,
+                modelDeployment: options?.modelDeployment,
+                reasoningEffort: options?.reasoningEffort,
+            });
             const result = await retryMessageApi(messageId, {
-                model: identity.model_deployment,
-                reasoning_effort: options?.reasoningEffort,
-                agent_info:
-                    agentInfoForSelection(
-                        bootstrap?.catalogs?.agents as Record<string, unknown>[] | undefined,
-                        options?.agentSelection,
-                    ) ?? undefined,
+                model: selection.model_deployment,
+                reasoning_effort: selection.reasoning_effort,
+                agent_info: selection.agent_info,
             });
             if (!result?.chat_request) {
                 throw new Error('The server did not return a retry request.');

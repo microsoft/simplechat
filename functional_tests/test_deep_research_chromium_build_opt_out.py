@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for Deep Research Chromium build opt-out.
-Version: 0.261.034
+Version: 0.261.035
 Implemented in: 0.241.068
 
 This test ensures azd container builds can skip Playwright Chromium browser

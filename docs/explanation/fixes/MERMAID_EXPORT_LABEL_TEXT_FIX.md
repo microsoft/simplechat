@@ -1,6 +1,6 @@
 # Exported Mermaid Diagrams Lost Their Label Text
 
-Fixed in version: **0.261.034**
+Fixed in version: **0.261.035**
 
 ## Issue
 

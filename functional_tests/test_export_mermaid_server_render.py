@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
 Functional test for server-side Mermaid rendering in exports.
-Version: 0.261.034
+Version: 0.261.035
 Implemented in: 0.261.027
-Label-text regression coverage added in: 0.261.034
+Label-text regression coverage added in: 0.261.035
 
 This test ensures diagrams are rasterized on the server, using the Playwright Chromium
 already installed in the image, for exports that have no browser attached to them. It

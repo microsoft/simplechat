@@ -95,8 +95,15 @@ def test_client_sends_the_whole_model_identity():
         )
 
         store = read(V2_SRC, "stores", "chatStore.ts")
-        assert "modelIdentityForSelection" in store, (
+        # The resolved identity now reaches the request through the shared selection rule,
+        # which is also what suppresses it when an agent is selected. Following the
+        # indirection keeps this assertion about the guarantee rather than about a call site.
+        assert "buildSelectionFields" in store, (
             "The chat request must carry the resolved identity"
+        )
+        selection = read(V2_SRC, "lib", "chatRequestSelection.ts")
+        assert "modelIdentityForSelection" in selection, (
+            "The selection rule must resolve the full identity from the catalog"
         )
 
         # The original defect: only the deployment name was sent.
@@ -216,9 +223,13 @@ def test_retry_resolves_the_model_the_same_way():
         retry = store[store.index("retryMessage: async") :]
         retry = retry[: retry.index("\n    },")]
 
-        assert "modelIdentityForSelection" in retry, (
+        assert "buildSelectionFields" in retry, (
             "Retry must resolve the deployment name from the catalog, since the option "
             "value is a selection key rather than a model name"
+        )
+        assert "model: selection.model_deployment" in retry, (
+            "The retry endpoint takes a flat deployment name, which the selection rule "
+            "has already resolved"
         )
         assert "model: options?.modelDeployment" not in retry, (
             "Sending the selection key as the model name would not resolve"

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Functional test for message export progress feedback and client-supplied diagrams.
-Version: 0.261.034
-Implemented in: 0.261.034
+Version: 0.261.035
+Implemented in: 0.261.035
 
 Two things are covered here, both from the same report: a message export that contains a
 Mermaid diagram produced empty boxes, and it ran for a long time with nothing on screen to
@@ -89,6 +89,10 @@ def test_v2_toast_store_supports_pending_work():
 
     assert_contains(source, 'pending: (message: string)', 'toast.pending helper')
     assert_contains(source, 'settle: (id: number', 'toast.settle helper')
+
+    # Settling a failure whose pending toast has gone must not swallow it. A silent failure
+    # is indistinguishable from a dead button, which is the complaint this store exists for.
+    assert_contains(source, "if (tone === 'error')", 'a lost pending toast must still report errors')
 
     print("V2 pending toast store passed!")
 

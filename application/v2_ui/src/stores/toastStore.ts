@@ -62,11 +62,16 @@ export const useToastStore = create<ToastState>((set, get) => ({
     /**
      * Turn a pending toast into its result, keeping its place in the stack.
      *
-     * A toast the user already dismissed is not resurrected — they have said they are not
-     * interested — so the result is dropped rather than pushed as a new notification.
+     * A failure is never dropped. If the pending toast is already gone the error is raised
+     * as a fresh notification instead, because a silent failure looks exactly like a dead
+     * button — the thing this store exists to prevent. A success that arrives after the
+     * notice went away is discarded, since the downloaded file already speaks for itself.
      */
     settle: (id, tone, message) => {
         if (!get().toasts.some((item) => item.id === id)) {
+            if (tone === 'error') {
+                get().push('error', message);
+            }
             return;
         }
 
