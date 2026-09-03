@@ -235,6 +235,7 @@ from functions_message_masking import (
     resolve_mask_display_name,
 )
 from functions_message_visual_styles import (
+    UNSET as VISUAL_STYLE_HEIGHT_UNSET,
     VisualStyleError,
     apply_visual_style,
 )
@@ -24902,12 +24903,15 @@ def register_route_backend_chats(bp):
     @login_required
     @user_required
     def set_message_visual_style_api(message_id):
-        """Save or clear the colours chosen for one diagram or chart inside a message.
+        """Save or clear the colours and height chosen for one diagram or chart in a message.
 
         A reply can contain several styleable blocks, so the request identifies one of them by
         its position among blocks of the same kind. Recolouring one block therefore leaves the
         others untouched, which is the whole point of storing this per block rather than per
         message.
+
+        ``height`` is optional and independent of ``style``: omitting it keeps whatever size the
+        block was left at, so changing colours never resets a diagram someone resized.
 
         Unlike the classic client's chart colour editor, nothing here rewrites the message
         content: the payload the model produced stays exactly as it was written, and the
@@ -24956,6 +24960,9 @@ def register_route_backend_chats(bp):
                     data.get('block_index'),
                     data.get('style'),
                     data.get('source_hash') or '',
+                    # A body that never mentions the height leaves the stored one alone; one
+                    # that sends null is asking for it to be cleared.
+                    data.get('height') if 'height' in data else VISUAL_STYLE_HEIGHT_UNSET,
                 )
             except VisualStyleError as ex:
                 debug_print(f'[VISUAL_STYLE] Invalid request: {ex}')

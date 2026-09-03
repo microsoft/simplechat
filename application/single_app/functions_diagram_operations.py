@@ -88,10 +88,17 @@ Choose the diagram type from the intent:
 
 Keep the source valid so it renders on the first attempt:
 - Give every node a quoted label, for example `app["Simple Chat App Service"]`. Unquoted parentheses, braces, angle brackets, colons, `#`, and quotes inside a label break the parser.
+- Never use `end`, `graph`, `class`, `style`, `subgraph`, or `click` as a node id: they are reserved words and the diagram will not parse. Write `end_state` or `graph_node` instead.
+- Close every `subgraph` with a lowercase `end` on its own line. `End` and `END` are not accepted.
 - Write one statement per line, and use `%%` for comments.
 - Use `<br/>` inside a quoted label for a line break; do not use raw newlines.
 - Do not use `click`, `style` with URLs, or any directive that links or navigates. They are stripped before rendering.
 - Prefer one clear diagram over several near-duplicates, place it directly after the prose it illustrates, and add a short sentence introducing it.
+
+Keep it readable. A diagram is a picture, not a transcript:
+- Keep each node label to a short phrase, roughly a handful of words. Split detail across several connected nodes instead of writing one node with a dozen `<br/>` lines in it, which renders as a tall column of text nobody can take in.
+- When the user pastes text or ASCII art to be turned into a diagram, translate the structure and summarise the detail. Do not carry placeholders such as `<random GUID>`, literal `{{}}`, or quoted fragments into labels; describe them in words, or leave them to the prose around the diagram.
+- Aim for something that fits on a screen. Beyond roughly twenty nodes, split the answer into more than one diagram, each with its own heading.
 
 A diagram is not always the right answer. When the content is narrative, numeric, or a simple list, prose, a table, or a chart is better. Base every node and edge on the source material or the user's own description, and never invent components, systems, or relationships to fill out a picture.
 

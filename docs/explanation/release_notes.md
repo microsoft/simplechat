@@ -2,6 +2,42 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.037)**
+
+#### Bug Fixes
+
+*   **Diagrams No Longer Render Too Small To Read**
+    *   A diagram in the new interface was drawn at roughly a quarter of its natural size — and clicking **Colors** made it suddenly readable. Both were the same bug: the message bubble sizes itself to its contents, and a diagram was telling it "I'll take whatever width you have", so the bubble shrank to the width of the diagram's own buttons. Opening the colour menu added something that *did* have a width, which is why the diagram grew.
+    *   A diagram now sizes its own panel. Measured on the Azure hierarchy diagram from the report, it went from 300 pixels wide to 966, and opening **Colors** no longer changes anything.
+    *   Long labels also wrap at a more sensible width, so a diagram with wordy boxes is no longer squeezed into tall, narrow columns of text.
+    *   (Ref: V2 chat, Mermaid diagrams, message layout)
+
+*   **A Long Diagram No Longer Breaks Scrolling**
+    *   A tall diagram used to be dropped into the conversation at full height — a large flowchart can be tens of thousands of pixels tall — which made scrolling stutter or lock up. A diagram now sits in a panel of its own that scrolls internally.
+    *   The bottom of a conversation was also unreachable after a diagram appeared: diagrams draw a moment after the message does, so the chat had already scrolled before the diagram grew. It now follows content that arrives late.
+    *   Scrolling and typing in a long conversation are noticeably lighter, because the messages you are not looking at are no longer redrawn on every scroll and every word of a streaming reply.
+    *   (Ref: V2 chat, Mermaid diagrams, message list performance)
+
+*   **A Diagram That Will Not Draw Now Says Why**
+    *   "Diagram could not be rendered" was all you got, and nothing was written to the browser console either, so there was nothing to report and nothing to look into. The reason is now shown behind **Show details**, logged to the console, and the source can be copied with one click.
+    *   More usefully, most of those diagrams now just work. When a diagram fails, SimpleChat repairs the common mistakes and draws it again: reserved words such as `end` used as a box name, a `subgraph` left unclosed, `End` instead of `end`, placeholders like `<random GUID>` carried over from pasted text, stray quotes and braces inside a label, and several more. Fourteen distinct failures were reproduced and all fourteen now render.
+    *   Repairs only happen after a diagram has already failed, so a diagram that draws correctly today is never altered.
+    *   A diagram is also given a time limit and a size limit, so a broken one can no longer leave "Rendering diagram…" on screen indefinitely.
+    *   (Ref: V2 chat, Mermaid diagrams, diagram source repair)
+
+#### User Interface Enhancements
+
+*   **Make A Diagram Bigger**
+    *   Diagrams now have **−**, **+** and a fit button to scale them, and an **Expand** button that opens the diagram full screen with its own zoom and PNG download.
+    *   The bar along the bottom edge of a diagram can be dragged to make the panel taller or shorter. It also works from the keyboard — arrow keys to resize, **Home** to go back to the automatic height.
+    *   The size you leave a diagram at is remembered with the conversation, so it is still there when you come back. Resizing a diagram does not disturb its colours, and changing its colours does not resize it.
+    *   (Ref: V2 chat, Mermaid diagrams, diagram zoom and resize)
+
+*   **Better Diagrams From The Assistant**
+    *   The assistant is now told which words break a diagram, to close every `subgraph`, and to keep box labels to a short phrase rather than packing a dozen lines into one box — which is what made the reported diagrams both unreadable and unrenderable.
+    *   When you paste text or ASCII art and ask for a diagram, it is told to summarise the detail rather than copying placeholders and punctuation straight into the boxes.
+    *   (Ref: diagram prompt guidance)
+
 ### **(v0.261.036)**
 
 #### Bug Fixes

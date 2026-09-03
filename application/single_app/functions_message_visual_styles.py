@@ -17,8 +17,14 @@ Everything arriving here is treated as untrusted. The values end up in inline st
 mermaid's theme configuration in a browser, so colours are reduced to `#rrggbb` and nothing
 else is stored. Sizes are capped so a message document cannot be grown without bound by
 repeated requests.
+
+An entry also carries the height someone dragged the block to. That is stored and cleared
+independently of the colours, because the two are separate choices: resetting a diagram's
+colours should not silently snap it back to its automatic height, and resizing a diagram
+should not stop it following the reader's default palette.
 """
 
+import math
 import re
 
 # Fence languages a style may be saved against. Matches VISUAL_STYLE_KINDS in
@@ -43,6 +49,15 @@ MAX_SERIES_COLOR_OVERRIDES = 24
 
 # Total stored entries across every kind, which bounds the size of the stored map.
 MAX_STORED_ENTRIES = 100
+
+# Stored block height in pixels. Matches MIN_STAGE_HEIGHT and MAX_STAGE_HEIGHT in
+# application/v2_ui/src/components/chat/DiagramStage.tsx.
+MIN_BLOCK_HEIGHT = 140
+MAX_BLOCK_HEIGHT = 2000
+
+# Sentinel meaning "the caller said nothing about the height", which is different from the
+# caller asking for the stored height to be removed.
+UNSET = object()
 
 HEX_COLOR_PATTERN = re.compile(r'^#[0-9a-fA-F]{6}$')
 
@@ -92,6 +107,26 @@ def validate_source_hash(value):
     if not candidate.isalnum():
         raise VisualStyleError('Source hash must be alphanumeric')
     return candidate
+
+
+def validate_block_height(value):
+    """Return a storable block height in pixels, or None to clear a stored one.
+
+    Clamped rather than rejected when out of range. The value comes from a drag, so a request
+    a few pixels past the limit is a reader holding the mouse down, not a client misbehaving,
+    and refusing it would lose a change they clearly meant to make.
+
+    Non-finite values are refused rather than clamped. ``json.loads`` accepts the bare
+    ``Infinity`` and ``NaN`` tokens, and ``round(float('inf'))`` raises ``OverflowError``, which
+    would escape the caller's ``VisualStyleError`` handling and turn a bad request into a 500.
+    """
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise VisualStyleError('Height must be a number')
+    if not math.isfinite(value):
+        raise VisualStyleError('Height must be a finite number')
+    return int(min(MAX_BLOCK_HEIGHT, max(MIN_BLOCK_HEIGHT, round(value))))
 
 
 def sanitize_visual_style(value):
@@ -160,30 +195,63 @@ def count_entries(styles):
     return sum(len(entries) for entries in styles.values())
 
 
-def apply_visual_style(message_doc, block_kind, block_index, style, source_hash=''):
-    """Store, replace or remove one block's colours, returning the resulting map.
+def apply_visual_style(
+    message_doc,
+    block_kind,
+    block_index,
+    style,
+    source_hash='',
+    height=UNSET,
+):
+    """Store, replace or remove one block's colours and height, returning the resulting map.
 
-    ``style`` of None removes the entry, which is different from storing a style that happens
+    ``style`` of None removes the colours, which is different from storing a style that happens
     to equal the reader's current default: the default can change later, and a removed entry
     should follow it.
+
+    ``height`` left at ``UNSET`` keeps whatever is stored, so a colour change does not disturb a
+    size someone chose. ``None`` clears it. The entry itself only disappears once it holds
+    neither colours nor a height.
     """
     kind = validate_block_kind(block_kind)
     index = validate_block_index(block_index)
     fingerprint = validate_source_hash(source_hash)
+    resolved_height = UNSET if height is UNSET else validate_block_height(height)
 
     styles = read_visual_styles(message_doc)
     entries = dict(styles.get(kind) or {})
+    existing = entries.get(str(index))
+    existing = existing if isinstance(existing, dict) else {}
+
+    # A stored entry whose fingerprint no longer matches describes different content, and the
+    # client already ignores it. Carrying its height forward would resurrect it and stamp it
+    # with the new fingerprint, making a size chosen for a block that no longer exists at this
+    # position authoritative for the one that does.
+    existing_hash = existing.get('source_hash')
+    if isinstance(existing_hash, str) and existing_hash and fingerprint and existing_hash != fingerprint:
+        existing = {}
 
     if style is None:
-        entries.pop(str(index), None)
+        entry = {}
     else:
-        sanitized = sanitize_visual_style(style)
+        entry = sanitize_visual_style(style)
+
+    if resolved_height is UNSET:
+        kept_height = existing.get('height')
+        if isinstance(kept_height, int) and not isinstance(kept_height, bool):
+            entry['height'] = kept_height
+    elif resolved_height is not None:
+        entry['height'] = resolved_height
+
+    if entry:
         if fingerprint:
-            sanitized['source_hash'] = fingerprint
+            entry['source_hash'] = fingerprint
         is_new = str(index) not in entries
         if is_new and count_entries(styles) >= MAX_STORED_ENTRIES:
             raise VisualStyleError('Too many styled blocks in this message')
-        entries[str(index)] = sanitized
+        entries[str(index)] = entry
+    else:
+        entries.pop(str(index), None)
 
     if entries:
         styles[kind] = entries

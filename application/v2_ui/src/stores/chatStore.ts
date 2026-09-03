@@ -177,6 +177,13 @@ interface ChatState {
         blockIndex: number,
         sourceHash: string,
         style: VisualStyle | null,
+        /**
+         * The block's stage height in pixels.
+         *
+         * `undefined` leaves whatever is stored alone, so a colour change does not reset a
+         * size someone chose; `null` clears it back to the automatic height.
+         */
+        height?: number | null,
     ) => Promise<boolean>;
     sendFeedback: (
         messageId: string,
@@ -1174,6 +1181,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         blockIndex,
         sourceHash,
         style,
+        height,
     ) => {
         if (!conversationId) {
             return false;
@@ -1192,6 +1200,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
                           colors: style.colors,
                       }
                     : null,
+                // Spread rather than always sent: the server distinguishes an absent key,
+                // which keeps the stored height, from an explicit null, which clears it.
+                ...(height === undefined ? {} : { height }),
             });
 
             set((state) => ({

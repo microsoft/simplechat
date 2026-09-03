@@ -107,6 +107,49 @@ The V2 interface solves the same problem the same way inside `MermaidDiagram.tsx
 The V2 interface needed no rendering change. It picks up the prompt guidance and starts
 receiving diagrams it could already draw.
 
+## Recovering from a diagram that will not parse
+
+Models get Mermaid wrong in a small number of predictable ways, and one bad character takes the
+whole diagram with it. The V2 renderer therefore repairs and retries before giving up. Each of
+the following was reproduced as a real parse failure against the vendored Mermaid 11.17.2 bundle
+in Chromium, and each renders after repair:
+
+| What the model wrote | Why it failed |
+|---|---|
+| `end["End"]` as a node id | `end` is reserved; so are `graph`, `class` and `style` |
+| `End` closing a `subgraph` | Only lowercase `end` is accepted |
+| A `subgraph` with no terminator | Swallows the rest of the diagram, and the error points at the last line |
+| `a[""]` | An empty label does not parse |
+| `a[App (main)]` | Unquoted parentheses |
+| `a -->|metadata: {}| b` | Unquoted braces in an edge label |
+| `a["He said "hello" loudly"]` | The string token ends at the second quote |
+| `a["A"] b["B"]` | Two declarations on one line |
+| A trailing `b -->` | A truncated reply leaves a dangling edge |
+| A leading byte-order mark | Reported as "no diagram type detected" |
+
+Two rules keep this safe:
+
+- **The repair only ever runs after Mermaid has already refused the source.** A diagram that
+  parses is handed over untouched, so nothing that renders today can be changed by it.
+- **It is scoped to flowcharts.** `subgraph`, `end`, square labels and piped edge labels mean
+  something else in the other diagram types — `||--o{` in an `erDiagram`, for instance — so any
+  other diagram type is left alone.
+
+When repair does not help, the panel shows the source with the reason behind **Show details**,
+and the reason is written to the browser console. Mermaid's limit errors are reworded: "Edge
+limit exceeded. 500 edges found, but the limit is 500." becomes "The diagram has too many
+connections to draw."
+
+The prompt guidance was extended to head off the same failures at the source: it names the
+reserved words, requires a lowercase `end` for every `subgraph`, tells the model not to carry
+placeholders such as `<random GUID>` out of pasted text into a label, and asks for short labels
+across several nodes instead of one node holding a dozen `<br/>` lines.
+
+## Viewing a diagram in the V2 interface
+
+Sizing, zoom, the drag-to-resize handle and the full-screen viewer are described in
+[V2 Diagram And Chart Styling](V2_DIAGRAM_AND_CHART_STYLING.md).
+
 ## Testing and validation
 
 `functional_tests/test_mermaid_diagram_prompt_guidance.py` covers diagram intent detection
@@ -119,6 +162,11 @@ headless Chromium: it renders a real diagram and asserts its labels survive, che
 pending-fence placeholder, the source fallback for an unparseable diagram, the render
 cache, teardown, and that no request leaves the origin.
 
+`functional_tests/test_v2_diagram_viewer_controls.py` and its bundled
+`test_v2_diagram_viewer_logic.ts` cover the source repair, the error reporting, the render
+timeout and size guard, and the V2 viewer controls. The load-bearing assertion is that the
+repair is a no-op for every diagram Mermaid already accepts.
+
 `functional_tests/test_export_mermaid_browser_rasterizer.py` and
 `functional_tests/test_export_mermaid_server_render.py` continue to assert that the browser
 and server renderers agree on configuration, now reading the browser side from the shared
@@ -127,8 +175,12 @@ runtime.
 ## Known limitations
 
 Diagram quality depends on the model. The guidance improves the odds that a diagram parses
-and is well chosen, but a model can still emit invalid Mermaid; that case shows the source
+and is well chosen, and the repair pass recovers the common failures, but a model can still
+emit Mermaid that cannot be salvaged; that case shows the source and the parser's reason
 rather than failing silently.
+
+Some failures cannot be repaired at all and are reported instead. A diagram beyond Mermaid's
+500-edge limit is one — it would measure over 50,000 pixels tall even if it parsed.
 
 A ` ```mermaid ` fence nested inside a larger fenced block is still treated as a diagram.
 This matches the existing behaviour of inline chart blocks.
