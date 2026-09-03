@@ -14,6 +14,7 @@ from functions_authentication import *
 from functions_collaboration import (
     assert_user_can_participate_in_collaboration_conversation,
     assert_user_can_view_collaboration_conversation,
+    build_collaboration_image_url,
     create_collaboration_message_notifications,
     create_group_collaboration_conversation_record,
     create_personal_collaboration_conversation_record,
@@ -80,6 +81,26 @@ from functions_block_revision_assist import (
     normalize_instruction,
     request_block_edit,
 )
+# Aliased because the block revision module above exports the same origin names for its own
+# revisions, and the two vocabularies are deliberately separate.
+from functions_message_image_revisions import (
+    IMAGE_REVISIONS_METADATA_KEY,
+    ORIGIN_AI as IMAGE_ORIGIN_AI,
+    ORIGIN_CONTROL as IMAGE_ORIGIN_CONTROL,
+    ORIGIN_PROMPT as IMAGE_ORIGIN_PROMPT,
+    ImageRevisionConflictError,
+    ImageRevisionError,
+    append_image_chat_turn,
+    apply_image_revision,
+    current_image_prompt,
+    normalize_instruction as normalize_image_instruction,
+    read_image_chat,
+    read_image_revisions,
+    resolve_served_revision,
+    serialize_image_revisions,
+    set_current_image_revision,
+)
+from functions_image_edit import ImageEditError, revise_image_message
 from functions_message_visual_styles import (
     UNSET as VISUAL_STYLE_HEIGHT_UNSET,
     VisualStyleError,
@@ -100,8 +121,12 @@ COLLABORATION_EVENT_HEARTBEAT_SECONDS = 15
 COLLABORATION_EVENT_TTL_SECONDS = 3600
 
 
-def _stream_blob_backed_image_message(message_doc):
-    """Stream a blob-backed source image for authorized collaboration viewers."""
+def _stream_blob_backed_image_message(message_doc, cache_control='private, max-age=300'):
+    """Stream a blob-backed source image for authorized collaboration viewers.
+
+    ``message_doc`` only needs the three blob fields, so a stored image revision -- which uses
+    the same key names deliberately -- can be streamed through here directly.
+    """
     blob_container = str(message_doc.get('blob_container') or '').strip()
     blob_path = str(message_doc.get('blob_path') or '').strip()
     mime_type = str(message_doc.get('mime_type') or '').strip() or 'image/png'
@@ -130,7 +155,7 @@ def _stream_blob_backed_image_message(message_doc):
             yield blob_chunk
 
     headers = {
-        'Cache-Control': 'private, max-age=300',
+        'Cache-Control': cache_control,
     }
     if content_length is not None:
         headers['Content-Length'] = str(content_length)
@@ -501,6 +526,104 @@ def _sync_collaboration_block_revisions_to_source(message_doc):
         source_metadata.pop(BLOCK_REVISIONS_METADATA_KEY, None)
 
     source_container.upsert_item(source_message_doc)
+
+
+def _load_collaboration_image_revision_message(user_id, conversation_id, message_id):
+    """Return a shared image message together with the source image that holds its bytes.
+
+    A shared image is a mirror. Its bytes live on the source message in the personal container,
+    which is what the owner's own view, the export and the collaboration image route all read,
+    so a revision has to be applied there rather than to the mirror.
+
+    Participation rather than mere visibility is required, matching the diagram routes: editing
+    an image changes what everyone in the thread sees, so it is not something a pending invitee
+    should be able to do.
+    """
+    conversation_doc = get_collaboration_conversation(conversation_id)
+    assert_user_can_participate_in_collaboration_conversation(user_id, conversation_doc)
+
+    message_doc = get_collaboration_message(message_id)
+    if str(message_doc.get('conversation_id') or '').strip() != str(conversation_id or '').strip():
+        raise CosmosResourceNotFoundError(message='Collaborative image not found')
+
+    metadata = message_doc.get('metadata', {}) if isinstance(message_doc.get('metadata'), dict) else {}
+    roles = {
+        str(message_doc.get('role') or '').strip().lower(),
+        str(metadata.get('source_role') or '').strip().lower(),
+    }
+    if 'image' not in roles:
+        raise ValueError('That message is not an image')
+
+    source_conversation_id = str(metadata.get('source_conversation_id') or '').strip()
+    source_message_id = str(metadata.get('source_message_id') or '').strip()
+    if not source_conversation_id or not source_message_id:
+        raise CosmosResourceNotFoundError(message='Source image not found')
+
+    source_doc, complete_content = get_complete_image_content(
+        cosmos_messages_container,
+        source_conversation_id,
+        source_message_id,
+    )
+
+    return {
+        'message': message_doc,
+        'source': source_doc,
+        'source_conversation_id': source_conversation_id,
+        'content': complete_content,
+    }
+
+
+def _save_collaboration_image_revisions(
+    conversation_id,
+    message_id,
+    message_doc,
+    source_doc,
+    user_id,
+):
+    """Persist an edited shared image to its source, mirror it, and tell the other readers.
+
+    The source is written first because it is the authoritative copy: the bytes, the owner's own
+    view and the export all come from it, and the collaboration image route reads it directly.
+    The mirror then receives a copy of the revision map so the shared thread can draw the history
+    and address the image by revision without a second lookup.
+
+    Should the mirror write fail, the shared view degrades to the untagged image URL, which the
+    image route answers with whatever version is current -- so participants still see the edit
+    rather than silently seeing the version it replaced.
+    """
+    cosmos_messages_container.upsert_item(source_doc)
+
+    source_metadata = source_doc.get('metadata') if isinstance(source_doc.get('metadata'), dict) else {}
+    stored = (source_metadata or {}).get(IMAGE_REVISIONS_METADATA_KEY)
+
+    metadata = message_doc.setdefault('metadata', {})
+    if not isinstance(metadata, dict):
+        metadata = {}
+        message_doc['metadata'] = metadata
+    if stored:
+        metadata[IMAGE_REVISIONS_METADATA_KEY] = stored
+    else:
+        metadata.pop(IMAGE_REVISIONS_METADATA_KEY, None)
+
+    cosmos_collaboration_messages_container.upsert_item(message_doc)
+
+    revisions = serialize_image_revisions(read_image_revisions(source_doc))
+    COLLABORATION_EVENT_REGISTRY.publish(
+        conversation_id,
+        _build_collaboration_event(
+            conversation_id,
+            'collaboration.message.image_revised',
+            {
+                'message_id': message_id,
+                'image_revisions': make_json_serializable(revisions),
+                'image_url': build_collaboration_image_url(
+                    conversation_id, message_id, message_doc
+                ),
+                'updated_by_user_id': user_id,
+            },
+        ),
+    )
+    return revisions
 
 
 def _load_collaboration_block_revision_message(user_id, conversation_id, message_id):
@@ -1788,6 +1911,189 @@ def register_route_backend_collaboration(bp):
             )
             return jsonify({'error': 'Failed to update the shared diagram'}), 500
 
+    @bp.route(
+        '/api/collaboration/conversations/<conversation_id>/messages/<message_id>/image-revision',
+        methods=['POST'],
+    )
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def add_collaboration_image_revision_api(conversation_id, message_id):
+        """Produce a new version of a shared generated image and make it the current one.
+
+        The shared counterpart of ``/api/message/<message_id>/image-revision``, with a request
+        and response shape deliberately identical so the client picks an endpoint from the
+        conversation's kind and sends the same body either way.
+
+        Unlike the diagram routes there is no separate "save" and "assist" pair, because a
+        browser cannot author an image: every version comes from the model.
+        """
+        try:
+            _require_collaboration_feature_enabled()
+            current_user = _get_current_collaboration_user()
+            if not current_user:
+                return jsonify({'error': 'User not authenticated'}), 401
+
+            settings = get_settings()
+            if not settings.get('enable_image_generation'):
+                return jsonify({'error': 'Image generation is not enabled'}), 403
+
+            data = request.get_json(silent=True) or {}
+            loaded = _load_collaboration_image_revision_message(
+                current_user['user_id'], conversation_id, message_id
+            )
+            source_doc = loaded['source']
+
+            try:
+                result = revise_image_message(
+                    settings,
+                    source_doc,
+                    # The revision is stored beside the image it revises, which belongs to the
+                    # conversation's owner rather than to whichever participant asked for it.
+                    owner_user_id=str(source_doc.get('user_id') or '').strip(),
+                    conversation_id=loaded['source_conversation_id'],
+                    complete_content=loaded['content'],
+                    origin=data.get('origin') or IMAGE_ORIGIN_AI,
+                    instruction=data.get('instruction') or '',
+                    prompt=data.get('prompt') or '',
+                    mask_data_url=data.get('mask') or '',
+                    mask_regions=data.get('mask_regions') or 0,
+                    size=data.get('size') or '',
+                    quality=data.get('quality') or '',
+                    background=data.get('background') or '',
+                    author_id=current_user['user_id'],
+                    author_name=resolve_mask_display_name(current_user),
+                    expected_revision_count=_read_collaboration_expected_revision_count(data),
+                    expected_current_revision_id=data.get('expected_current_revision_id') or '',
+                    # Re-read after the model call, which takes seconds. Another participant can
+                    # land their own version inside that window, and writing to the copy loaded
+                    # before it would silently discard theirs.
+                    reload_message=lambda: cosmos_messages_container.read_item(
+                        item=str(source_doc.get('id') or ''),
+                        partition_key=loaded['source_conversation_id'],
+                    ),
+                )
+            except ImageRevisionConflictError as exc:
+                return jsonify({
+                    'error': str(exc),
+                    'image_revisions': make_json_serializable(
+                        serialize_image_revisions(read_image_revisions(source_doc))
+                    ),
+                }), 409
+            except ImageRevisionError as exc:
+                return jsonify({'error': str(exc)}), 400
+            except ImageEditError as exc:
+                log_event(
+                    f'[COLLABORATION_IMAGE_REVISION] Edit failed for {message_id}: {exc}',
+                    level=logging.WARNING,
+                )
+                return jsonify({'error': str(exc)}), 502
+
+            # From here on the freshly re-read source document is the one being written.
+            source_doc = result['message']
+
+            if result['instruction']:
+                try:
+                    append_image_chat_turn(source_doc, 'user', result['instruction'])
+                    append_image_chat_turn(source_doc, 'assistant', result['prompt'])
+                except ImageRevisionError:
+                    pass
+
+            revisions = _save_collaboration_image_revisions(
+                conversation_id,
+                message_id,
+                loaded['message'],
+                source_doc,
+                current_user['user_id'],
+            )
+
+            return jsonify({
+                'success': True,
+                'message_id': message_id,
+                'conversation_id': conversation_id,
+                'method': result['method'],
+                'model_deployment_name': result['model'],
+                'image_url': build_collaboration_image_url(
+                    conversation_id, message_id, loaded['message']
+                ),
+                'image_revisions': make_json_serializable(revisions),
+            }), 200
+        except CosmosResourceNotFoundError:
+            return jsonify({'error': 'Collaborative image not found'}), 404
+        except ValueError as exc:
+            return jsonify({'error': str(exc)}), 400
+        except PermissionError as exc:
+            return jsonify({'error': str(exc)}), 403
+        except Exception as exc:
+            log_event(
+                f'[COLLABORATION_IMAGE_REVISION] Failed to store a version for {message_id}: {exc}',
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({'error': 'Failed to update the shared image'}), 500
+
+    @bp.route(
+        '/api/collaboration/conversations/<conversation_id>/messages/<message_id>/image-revision/current',
+        methods=['POST'],
+    )
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def set_collaboration_image_revision_api(conversation_id, message_id):
+        """Point a shared image at a different one of its stored versions."""
+        try:
+            _require_collaboration_feature_enabled()
+            current_user = _get_current_collaboration_user()
+            if not current_user:
+                return jsonify({'error': 'User not authenticated'}), 401
+
+            data = request.get_json(silent=True) or {}
+            revision_id = str(data.get('revision_id') or '').strip()
+            if not revision_id:
+                return jsonify({'error': 'revision_id is required'}), 400
+
+            loaded = _load_collaboration_image_revision_message(
+                current_user['user_id'], conversation_id, message_id
+            )
+            source_doc = loaded['source']
+
+            try:
+                set_current_image_revision(source_doc, revision_id)
+            except ImageRevisionError as exc:
+                return jsonify({'error': str(exc)}), 400
+
+            revisions = _save_collaboration_image_revisions(
+                conversation_id,
+                message_id,
+                loaded['message'],
+                source_doc,
+                current_user['user_id'],
+            )
+
+            return jsonify({
+                'success': True,
+                'message_id': message_id,
+                'conversation_id': conversation_id,
+                'image_url': build_collaboration_image_url(
+                    conversation_id, message_id, loaded['message']
+                ),
+                'image_revisions': make_json_serializable(revisions),
+            }), 200
+        except CosmosResourceNotFoundError:
+            return jsonify({'error': 'Collaborative image not found'}), 404
+        except ValueError as exc:
+            return jsonify({'error': str(exc)}), 400
+        except PermissionError as exc:
+            return jsonify({'error': str(exc)}), 403
+        except Exception as exc:
+            log_event(
+                f'[COLLABORATION_IMAGE_REVISION] Failed to restore a version for {message_id}: {exc}',
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({'error': 'Failed to update the shared image'}), 500
+
+
 
     @bp.route(
         '/api/collaboration/conversations/<conversation_id>/messages/<message_id>/visual-style',
@@ -1918,6 +2224,21 @@ def register_route_backend_collaboration(bp):
                 source_conversation_id,
                 source_message_id,
             )
+
+            # Revisions are stored on the source image, which is the authoritative copy for
+            # everyone: the owner's own view, the export and this shared view all read it. The
+            # `rev` parameter names which version is wanted, and exists because this URL is
+            # otherwise identical before and after an edit while being served with an hour of
+            # public caching.
+            requested_revision = str(request.args.get('rev') or '').strip()
+            served_revision = resolve_served_revision(source_image_doc, requested_revision)
+            if served_revision:
+                return _stream_blob_backed_image_message(
+                    served_revision,
+                    cache_control='private, max-age=31536000, immutable'
+                    if requested_revision
+                    else 'private, max-age=60',
+                )
 
             if is_blob_backed_image_message(source_image_doc):
                 return _stream_blob_backed_image_message(source_image_doc)

@@ -27,7 +27,12 @@ import type {
     MembershipRole,
 } from './types';
 import type { MaskAction, MaskedRange, MaskSelection } from './masking';
-import type { BlockRevisionAssistResponse, BlockRevisionResponse } from './endpoints';
+import type {
+    BlockRevisionAssistResponse,
+    BlockRevisionResponse,
+    ImageRevisionRequest,
+    ImageRevisionResponse,
+} from './endpoints';
 
 /* -------------------------------------------------------------------------- */
 /* Paths                                                                       */
@@ -366,6 +371,39 @@ export const assistCollaborationBlockRevision = (
 ) =>
     api.post<BlockRevisionAssistResponse>(
         `${base(conversationId)}/messages/${encodeURIComponent(messageId)}/block-revision/assist`,
+        body,
+    );
+
+/* -------------------------------------------------------------------------- */
+/* Image revisions                                                             */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Produce a new version of a shared generated image.
+ *
+ * The body is deliberately identical to the personal route's, so the store picks an endpoint
+ * from the conversation's kind and sends the same request either way.
+ *
+ * There is no `assist` counterpart to the diagram trio: a browser cannot author an image, so
+ * every version already comes from the model and this one call covers it.
+ */
+export const addCollaborationImageRevision = (
+    conversationId: string,
+    messageId: string,
+    body: ImageRevisionRequest,
+) =>
+    api.post<ImageRevisionResponse>(
+        `${base(conversationId)}/messages/${encodeURIComponent(messageId)}/image-revision`,
+        body,
+    );
+
+export const setCollaborationImageRevision = (
+    conversationId: string,
+    messageId: string,
+    body: { conversation_id: string; revision_id: string },
+) =>
+    api.post<ImageRevisionResponse>(
+        `${base(conversationId)}/messages/${encodeURIComponent(messageId)}/image-revision/current`,
         body,
     );
 

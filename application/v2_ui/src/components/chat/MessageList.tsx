@@ -9,6 +9,7 @@ import {
     EyeOff,
     FileText,
     ImageOff,
+    PenLine,
     RefreshCw,
     Reply,
     Sparkles,
@@ -16,10 +17,11 @@ import {
 } from 'lucide-react';
 import { useChatStore } from '../../stores/chatStore';
 import { useCollaborationStore } from '../../stores/collaborationStore';
-import { useBootstrapStore } from '../../stores/bootstrapStore';
+import { useBootstrapStore, useFeature } from '../../stores/bootstrapStore';
 import { useUiStore } from '../../stores/uiStore';
 import { bubbleWidthClass, chatWidthClass } from '../../lib/chatWidth';
-import { resolveImageSource } from '../../lib/images';
+import { resolveImageSource, imageEndpointBase } from '../../lib/images';
+import { useImageEditCapability, useImageRevisions } from '../../lib/imageRevisions';
 import { EmptyState, GlassButton, GlassPanel, Skeleton } from '../ui/primitives';
 import { AssistantMarkdown } from './AssistantMarkdown';
 import { MessageActions } from './MessageActions';
@@ -34,6 +36,7 @@ import {
     readMaskState,
 } from '../../lib/masking';
 import { ImageLightbox } from './ImageLightbox';
+import { ImageEditor } from './ImageEditor';
 import { ImageProposalScope } from './ImageProposalContext';
 import {
     extractProposalSpecs,
@@ -85,8 +88,17 @@ function ThoughtsPanel({ thoughts }: { thoughts: ThoughtEntry[] }) {
 function ImageMessage({ message }: { message: ChatMessage }) {
     const [failed, setFailed] = useState(false);
     const [lightboxOpen, setLightboxOpen] = useState(false);
+    const [editorOpen, setEditorOpen] = useState(false);
     const chatWidth = useUiStore((state) => state.chatWidth);
     const source = resolveImageSource(message.content);
+
+    const imageGenerationEnabled = useFeature('enable_image_generation');
+    const capability = useImageEditCapability();
+    const revisions = useImageRevisions(
+        message.id,
+        String(message.prompt ?? ''),
+        imageEndpointBase(source),
+    );
 
     // Stable so the lightbox's download callback is not rebuilt on every render.
     const naming = useMemo(
@@ -114,6 +126,13 @@ function ImageMessage({ message }: { message: ChatMessage }) {
 
     const alt = String(message.prompt || message.filename || 'Generated image');
 
+    // Offered only for an image the app generated. A user's own upload is not something the
+    // image deployment can be asked to rework, and editing one is a separate decision.
+    const editable =
+        imageGenerationEnabled &&
+        revisions.canPersist &&
+        !Boolean((message.metadata as Record<string, unknown> | undefined)?.is_user_upload);
+
     return (
         <div id={`message-${message.id}`} className="group/message flex flex-col">
             <div className="flex justify-start">
@@ -138,8 +157,27 @@ function ImageMessage({ message }: { message: ChatMessage }) {
                     />
                 </button>
             </div>
-            <div className="opacity-0 transition-opacity group-hover/message:opacity-100 focus-within:opacity-100">
+            <div className="flex items-center gap-1 opacity-0 transition-opacity group-hover/message:opacity-100 focus-within:opacity-100">
                 <MessageActions message={message} />
+                {editable && (
+                    <button
+                        type="button"
+                        onClick={() => setEditorOpen(true)}
+                        title="Change this image"
+                        aria-haspopup="dialog"
+                        className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium text-text-3 transition-colors hover:bg-surface-2 hover:text-text-1"
+                    >
+                        <PenLine size={13} />
+                        Edit
+                        {revisions.isEdited && (
+                            <span
+                                title="This image has been changed"
+                                aria-label="Changed"
+                                className="size-1.5 rounded-full bg-accent"
+                            />
+                        )}
+                    </button>
+                )}
             </div>
 
             {lightboxOpen && (
@@ -148,6 +186,17 @@ function ImageMessage({ message }: { message: ChatMessage }) {
                     title={alt}
                     naming={naming}
                     onClose={() => setLightboxOpen(false)}
+                    onEdit={editable ? () => setEditorOpen(true) : undefined}
+                />
+            )}
+
+            {editorOpen && (
+                <ImageEditor
+                    title={alt}
+                    imageSrc={source.src}
+                    revisions={revisions}
+                    capability={capability}
+                    onClose={() => setEditorOpen(false)}
                 />
             )}
         </div>

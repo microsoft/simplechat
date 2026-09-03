@@ -30,6 +30,7 @@ from functions_collaboration import (
     list_collaboration_messages,
 )
 from functions_image_messages import hydrate_image_messages
+from functions_message_image_revisions import publicize_message_image_revisions
 from functions_message_artifacts import (
     build_message_artifact_payload_map,
     filter_assistant_artifact_items,
@@ -404,7 +405,13 @@ def register_route_frontend_conversations(bp):
                 metadata = message.get('metadata', {})
                 return jsonify(metadata)
             else:
-                # Assistant, image, file messages - return full document
+                # Assistant, image, file messages - return full document.
+                #
+                # An image message's revision history records where each stored version's bytes
+                # live. That is storage detail rather than something an inspector needs, and
+                # this route returns the document verbatim, so it is reduced to its public
+                # shape here as it is everywhere else a message reaches a browser.
+                message = publicize_message_image_revisions(message)
                 return jsonify(message)
 
         except CosmosResourceNotFoundError:

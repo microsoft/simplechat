@@ -447,6 +447,123 @@ export const assistMessageBlockRevision = (
     );
 
 /* -------------------------------------------------------------------------- */
+/* Message image revisions                                                     */
+/* -------------------------------------------------------------------------- */
+
+/** How a stored image version came about, which the history list shows. */
+export type ImageRevisionOrigin = 'original' | 'ai' | 'prompt' | 'control';
+
+/**
+ * One stored version of a generated image.
+ *
+ * Deliberately carries no location. The bytes live in blob storage and are reached through the
+ * image endpoint with this `id` as the `rev` parameter; where they are actually kept is storage
+ * detail the server does not send.
+ */
+export interface ImageRevision {
+    id: string;
+    origin: ImageRevisionOrigin;
+    /** The prompt describing this version, which is what the Prompt tab shows and edits. */
+    prompt: string;
+    /** The change that was asked for, for an AI edit. */
+    instruction: string;
+    author_id?: string;
+    author_name?: string;
+    timestamp?: string;
+    model?: string;
+    /** `edit` changed part of the image; `regenerate` replaced all of it. */
+    method?: 'edit' | 'regenerate' | '';
+    size?: string;
+    quality?: string;
+    background?: string;
+    width?: number;
+    height?: number;
+    /** Whether a region was selected, and how much of the image it covered. */
+    has_mask?: boolean;
+    mask_coverage?: number;
+    mask_regions?: number;
+}
+
+/** One turn of the sub-conversation attached to an image. */
+export interface ImageRevisionChatTurn {
+    role: 'user' | 'assistant';
+    content: string;
+    timestamp?: string;
+}
+
+/**
+ * Everything stored against one edited image.
+ *
+ * Unlike a diagram, an image is its own message, so there is one entry per message rather than
+ * a map keyed by block position and fingerprint. `current` indexes `revisions`, where zero is
+ * always the original: it is pinned and never pruned.
+ */
+export interface ImageRevisionEntry {
+    current?: number;
+    revisions?: ImageRevision[];
+    chat?: ImageRevisionChatTurn[];
+}
+
+export interface ImageRevisionResponse {
+    success: boolean;
+    message_id: string;
+    /** The URL to draw, already carrying the revision so a cached copy is not shown. */
+    image_url: string;
+    image_revisions: ImageRevisionEntry;
+    method?: 'edit' | 'regenerate';
+    model_deployment_name?: string;
+}
+
+/** What an image revision request asks for. Only `ai` uses a mask. */
+export interface ImageRevisionRequest {
+    conversation_id: string;
+    origin?: ImageRevisionOrigin;
+    instruction?: string;
+    prompt?: string;
+    /** A PNG data URL where transparent pixels mark the region to change. */
+    mask?: string;
+    mask_regions?: number;
+    size?: string;
+    quality?: string;
+    background?: string;
+    expected_revision_count?: number;
+    /**
+     * Which version the editor was opened against.
+     *
+     * Sent alongside the count because the count alone stops discriminating once the stored
+     * versions reach their cap: from then on every new version drops an old one, so the total
+     * never changes again.
+     */
+    expected_current_revision_id?: string;
+}
+
+/**
+ * Produce a new version of a generated image and make it current.
+ *
+ * There is no counterpart to `addMessageBlockRevision`'s "save what I typed", because a browser
+ * cannot author an image: every version comes from the model, so creating one and asking for
+ * one are the same call.
+ */
+export const addMessageImageRevision = (messageId: string, body: ImageRevisionRequest) =>
+    api.post<ImageRevisionResponse>(
+        `/api/message/${encodeURIComponent(messageId)}/image-revision`,
+        body,
+    );
+
+/** Point an image at one of its stored versions. Nothing is deleted; the pointer moves. */
+export const setMessageImageRevision = (
+    messageId: string,
+    body: { conversation_id: string; revision_id: string },
+) =>
+    api.post<ImageRevisionResponse>(
+        `/api/message/${encodeURIComponent(messageId)}/image-revision/current`,
+        body,
+    );
+
+// The shared-conversation counterparts take a deliberately identical body and live in
+// `collaboration.ts`, alongside every other `/api/collaboration/*` binding.
+
+/* -------------------------------------------------------------------------- */
 /* Message inspection                                                          */
 /* -------------------------------------------------------------------------- */
 

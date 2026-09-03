@@ -743,6 +743,22 @@ export interface BootstrapPayload {
         external_links: NavGroup<ExternalLinkNavItem>;
     };
     features: Record<string, boolean>;
+    /**
+     * What the deployment can do, where the answer is not an `enable_*` settings flag.
+     *
+     * Whether part of an image can be changed depends on which model the selected image
+     * deployment runs and which API version is configured — neither of which is a switch
+     * anybody set, so it cannot live in `features`.
+     */
+    capabilities?: {
+        image_edit?: {
+            /** `masked` supports region edits; `regenerate` can only replace the whole image. */
+            mode: 'masked' | 'regenerate';
+            model_name: string;
+            /** Why region editing is unavailable, in words worth showing a reader. */
+            reason: string;
+        };
+    };
     catalogs: {
         models: ModelOption[];
         agents: AgentOption[];

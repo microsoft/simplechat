@@ -29,9 +29,12 @@ import {
     PROMPT_MAX_LENGTH,
 } from '../../lib/imageProposalSpec';
 import { describeQueuePosition, enqueueImageApproval } from '../../lib/imageProposalQueue';
-import { resolveImageSource } from '../../lib/images';
+import { resolveImageSource, imageEndpointBase } from '../../lib/images';
+import { useImageEditCapability, useImageRevisions } from '../../lib/imageRevisions';
+import { useFeature } from '../../stores/bootstrapStore';
 import { GlassButton } from '../ui/primitives';
 import { ImageLightbox } from './ImageLightbox';
+import { ImageEditor } from './ImageEditor';
 import { IDLE_CARD_STATE } from '../../lib/imageProposalCardState';
 import { useImageProposalScope } from './ImageProposalContext';
 import type { ChatMessage } from '../../lib/types';
@@ -75,7 +78,19 @@ function ProposalStatusCard({ title, detail }: { title: string; detail: string }
 function ApprovedImage({ result, alt }: { result: ChatMessage; alt: string }) {
     const [failed, setFailed] = useState(false);
     const [lightboxOpen, setLightboxOpen] = useState(false);
+    // Named for the dialog rather than for "editing", which in this file means the proposal's
+    // own prompt editor and is state the message scope owns. This is an ephemeral open-flag
+    // with the same lifecycle as `lightboxOpen`.
+    const [editorOpen, setEditorOpen] = useState(false);
     const source = resolveImageSource(result.content);
+
+    const imageGenerationEnabled = useFeature('enable_image_generation');
+    const capability = useImageEditCapability();
+    const revisions = useImageRevisions(
+        result.id,
+        String(result.prompt ?? ''),
+        imageEndpointBase(source),
+    );
 
     const naming = useMemo(
         () => ({ filename: result.filename, prompt: result.prompt, id: result.id }),
@@ -89,6 +104,8 @@ function ApprovedImage({ result, alt }: { result: ChatMessage; alt: string }) {
             </p>
         );
     }
+
+    const editable = imageGenerationEnabled && revisions.canPersist;
 
     return (
         <>
@@ -109,12 +126,43 @@ function ApprovedImage({ result, alt }: { result: ChatMessage; alt: string }) {
                 />
             </button>
 
+            {editable && (
+                <button
+                    type="button"
+                    onClick={() => setEditorOpen(true)}
+                    title="Change this image"
+                    aria-haspopup="dialog"
+                    className="mt-1.5 inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium text-text-3 transition-colors hover:bg-surface-2 hover:text-text-1"
+                >
+                    <Pencil size={12} />
+                    Edit
+                    {revisions.isEdited && (
+                        <span
+                            title="This image has been changed"
+                            aria-label="Changed"
+                            className="size-1.5 rounded-full bg-accent"
+                        />
+                    )}
+                </button>
+            )}
+
             {lightboxOpen && (
                 <ImageLightbox
                     source={source}
                     title={alt}
                     naming={naming}
                     onClose={() => setLightboxOpen(false)}
+                    onEdit={editable ? () => setEditorOpen(true) : undefined}
+                />
+            )}
+
+            {editorOpen && (
+                <ImageEditor
+                    title={alt}
+                    imageSrc={source.src}
+                    revisions={revisions}
+                    capability={capability}
+                    onClose={() => setEditorOpen(false)}
                 />
             )}
         </>

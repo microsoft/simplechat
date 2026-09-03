@@ -42,6 +42,7 @@ from functions_conversation_cache import (
     set_cached_conversation_payload,
 )
 from functions_image_messages import decode_image_content, get_complete_image_content, hydrate_image_messages, is_blob_backed_image_message, is_external_image_url
+from functions_message_image_revisions import resolve_served_revision
 from functions_notifications import mark_chat_response_notifications_read_for_conversation
 from flask import Response, request, stream_with_context
 from functions_debug import debug_print
@@ -915,8 +916,12 @@ def _authorize_image_conversation_read(user_id, conversation_id):
     return conversation_item, 'collaboration'
 
 
-def _stream_blob_backed_image_message(message_doc):
-    """Stream a blob-backed image message through the authenticated image endpoint."""
+def _stream_blob_backed_image_message(message_doc, cache_control='private, max-age=300'):
+    """Stream a blob-backed image message through the authenticated image endpoint.
+
+    ``message_doc`` only needs to carry the three blob fields, so a stored image revision --
+    which uses the same key names deliberately -- can be streamed through here directly.
+    """
     blob_container = str(message_doc.get('blob_container') or '').strip()
     blob_path = str(message_doc.get('blob_path') or '').strip()
     mime_type = str(message_doc.get('mime_type') or '').strip() or 'image/png'
@@ -945,7 +950,7 @@ def _stream_blob_backed_image_message(message_doc):
             yield blob_chunk
 
     headers = {
-        'Cache-Control': 'private, max-age=300',
+        'Cache-Control': cache_control,
     }
     if content_length is not None:
         headers['Content-Length'] = str(content_length)
@@ -1100,6 +1105,21 @@ def register_route_backend_conversations(bp):
                 conversation_id,
                 image_id,
             )
+
+            # An edited image is served from the revision's own blob. `rev` names which version
+            # is wanted; it exists because this URL is otherwise identical before and after an
+            # edit, and a browser holding a cached response would keep showing the version the
+            # reader just replaced. Because the URL is addressed by revision, that response can
+            # be cached hard rather than briefly.
+            requested_revision = str(request.args.get('rev') or '').strip()
+            served_revision = resolve_served_revision(image_message, requested_revision)
+            if served_revision:
+                return _stream_blob_backed_image_message(
+                    served_revision,
+                    cache_control='private, max-age=31536000, immutable'
+                    if requested_revision
+                    else 'private, max-age=60',
+                )
 
             if is_blob_backed_image_message(image_message):
                 return _stream_blob_backed_image_message(image_message)

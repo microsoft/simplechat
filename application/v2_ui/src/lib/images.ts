@@ -10,6 +10,14 @@
 //   - `/api/image/<message_id>`    blob-backed, or larger than the inline limit
 //   - `https://...`                an externally hosted image
 //
+// A shared conversation adds a fourth. `serialize_collaboration_message` writes
+// `/api/collaboration/conversations/<id>/images/<message_id>`, because a shared message is a
+// mirror and its bytes are reached through the collaboration route rather than the personal
+// one.
+//
+// Either served path may carry a `?rev=` parameter naming which stored version to serve, which
+// is what makes an edited image's URL change so a cached copy is not shown in place of it.
+//
 // Anything else is not an image we can render, and is better shown as text than as a broken
 // image element.
 
@@ -24,6 +32,15 @@ export interface ResolvedImageSource {
     /** Ready to place in an `<img src>`. */
     src: string;
 }
+
+/**
+ * The served paths that return image bytes, personal and shared.
+ *
+ * Matched precisely rather than by an `/api/` prefix: this decides what gets rendered as an
+ * image, and a loose match would emit an `<img>` pointed at a JSON endpoint.
+ */
+const IMAGE_ENDPOINT_PATTERN =
+    /^\/api\/(?:image\/|collaboration\/conversations\/[^/]+\/images\/)/;
 
 /**
  * Resolve an image message's `content` to a displayable source.
@@ -48,11 +65,26 @@ export function resolveImageSource(content: string | undefined): ResolvedImageSo
 
     // The served path is root-relative, so it needs the same base treatment as any other
     // API call for the split-origin deployment to keep working.
-    if (value.startsWith('/api/image/')) {
+    if (IMAGE_ENDPOINT_PATTERN.test(value)) {
         return { kind: 'endpoint', src: apiUrl(value) };
     }
 
     return null;
+}
+
+/**
+ * The served path without its revision parameter.
+ *
+ * The version history needs to address each stored version separately, and they would otherwise
+ * all resolve to the same URL and therefore to the same cached image. Returns an empty string
+ * for an inline or external image, which has no endpoint to address versions through — and no
+ * history either, until it has been edited once.
+ */
+export function imageEndpointBase(source: ResolvedImageSource | null): string {
+    if (!source || source.kind !== 'endpoint') {
+        return '';
+    }
+    return source.src.split('?')[0];
 }
 
 /* -------------------------------------------------------------------------- */

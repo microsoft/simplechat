@@ -4,6 +4,7 @@
 import { create } from 'zustand';
 import {
     addMessageBlockRevision as addMessageBlockRevisionApi,
+    addMessageImageRevision as addMessageImageRevisionApi,
     assistMessageBlockRevision as assistMessageBlockRevisionApi,
     createConversation,
     deleteConversation as deleteConversationApi,
@@ -18,11 +19,14 @@ import {
     renameConversation as renameConversationApi,
     retryMessage as retryMessageApi,
     setMessageBlockRevision as setMessageBlockRevisionApi,
+    setMessageImageRevision as setMessageImageRevisionApi,
     setMessageVisualStyle as setMessageVisualStyleApi,
     submitFeedback as submitFeedbackApi,
     switchAttempt as switchAttemptApi,
     toggleConversationHidden,
     toggleConversationPinned,
+    type ImageRevisionEntry,
+    type ImageRevisionOrigin,
     type MessageBlockRevisions,
 } from '../lib/endpoints';
 import {
@@ -35,6 +39,7 @@ import {
 } from '../lib/sse';
 import {
     addCollaborationBlockRevision,
+    addCollaborationImageRevision,
     assistCollaborationBlockRevision,
     cancelCollaborationStreamUrl,
     collaborationDeleteAction,
@@ -46,6 +51,7 @@ import {
     postCollaborationMessage,
     renameCollaborationConversation,
     setCollaborationBlockRevision,
+    setCollaborationImageRevision,
     setCollaborationMessageVisualStyle,
     streamCollaborationUrl,
     toggleCollaborationHidden,
@@ -309,6 +315,36 @@ interface ChatState {
         blockRevisions: MessageBlockRevisions | undefined,
     ) => void;
     /**
+     * Produce a new version of a generated image, scoped to that image alone.
+     *
+     * There is no "save what I edited" counterpart to the diagram actions, because a browser
+     * cannot author an image. Every version comes from the model, so asking for one and
+     * creating one are the same call.
+     *
+     * Resolves to null on success, or to a message worth showing beside the image.
+     */
+    reviseImage: (request: ImageRevisionActionRequest) => Promise<string | null>;
+    /** Show one of an image's stored versions. Nothing is discarded; the pointer moves. */
+    restoreImageRevision: (request: {
+        messageId: string;
+        conversationId: string;
+        conversationKind: ConversationKind | null;
+        revisionId: string;
+    }) => Promise<string | null>;
+    /**
+     * Fold a revision response back into the thread.
+     *
+     * Unlike a diagram revision this also replaces the message's `content`. A diagram's stored
+     * source is substituted at render time, but an image's content *is* a URL, and an edited
+     * image is served from a different one — carrying the revision id so the browser does not
+     * keep showing the copy it already cached.
+     */
+    mergeImageRevisions: (
+        messageId: string,
+        entry: ImageRevisionEntry | undefined,
+        imageUrl?: string,
+    ) => void;
+    /**
      * Generate the image a `simpleimage` proposal card describes.
      *
      * The conversation is passed in rather than read from the store, because approvals are
@@ -385,6 +421,47 @@ function describeBlockRevisionError(error: unknown, fallback: string): string {
         }
         if (error.status === 409) {
             return 'Someone else changed this diagram. Close and reopen it to see their version.';
+        }
+    }
+    return error instanceof Error && error.message ? error.message : fallback;
+}
+
+/** What a caller asks for when producing a new version of an image. */
+export interface ImageRevisionActionRequest {
+    messageId: string;
+    conversationId: string;
+    conversationKind: ConversationKind | null;
+    origin?: ImageRevisionOrigin;
+    instruction?: string;
+    prompt?: string;
+    /** A PNG data URL whose transparent pixels mark the region to change. */
+    mask?: string;
+    maskRegions?: number;
+    size?: string;
+    quality?: string;
+    background?: string;
+    expectedRevisionCount?: number;
+    expectedCurrentRevisionId?: string;
+}
+
+/**
+ * Turn a failed image edit into something worth showing beside the image.
+ *
+ * Separate from the diagram version because the failures differ. A 502 here is ordinary rather
+ * than alarming: image models refuse prompts, time out, and reject regions, and every one of
+ * those costs the reader a wait, so the message has to suggest what to do next rather than
+ * read as a crash.
+ */
+function describeImageRevisionError(error: unknown, fallback: string): string {
+    if (error instanceof ApiError) {
+        if (error.status === 403) {
+            return 'You can only change images in conversations you take part in.';
+        }
+        if (error.status === 409) {
+            return 'Someone else changed this image. Close and reopen it to see their version.';
+        }
+        if (error.status === 502 && error.message) {
+            return `${error.message} Try describing the change differently.`;
         }
     }
     return error instanceof Error && error.message ? error.message : fallback;
@@ -990,6 +1067,32 @@ function attachCollaborationEvents(conversationId: string): void {
             }));
             if (updatedByUserId && updatedByUserId !== currentUserId()) {
                 toast.info('A diagram in this conversation was edited.');
+            }
+        },
+
+        onMessageImageRevised: (messageId, imageRevisions, imageUrl, updatedByUserId) => {
+            if (!stillOpen()) {
+                return;
+            }
+            // The URL is replaced as well as the history. An edited image is served from a
+            // different URL carrying its revision id, and without taking it the participant
+            // would keep showing the copy already in their cache.
+            set((state) => ({
+                messages: state.messages.map((existing) =>
+                    existing.id === messageId
+                        ? {
+                              ...existing,
+                              content: imageUrl || existing.content,
+                              metadata: {
+                                  ...(existing.metadata as Record<string, unknown>),
+                                  image_revisions: imageRevisions,
+                              },
+                          }
+                        : existing,
+                ),
+            }));
+            if (updatedByUserId && updatedByUserId !== currentUserId()) {
+                toast.info('An image in this conversation was changed.');
             }
         },
 
@@ -2323,6 +2426,94 @@ export const useChatStore = create<ChatState>((set, get) => ({
                     : message,
             ),
         }));
+    },
+
+    mergeImageRevisions: (messageId, entry, imageUrl) => {
+        set((state) => ({
+            messages: state.messages.map((message) =>
+                message.id === messageId
+                    ? {
+                          ...message,
+                          // The URL carries the revision, so replacing it is what actually makes
+                          // the new image appear: the old one is still in the browser's cache
+                          // under the URL it was fetched with.
+                          content: imageUrl || message.content,
+                          metadata: {
+                              ...(message.metadata as Record<string, unknown>),
+                              image_revisions: entry ?? {},
+                          },
+                      }
+                    : message,
+            ),
+        }));
+    },
+
+    reviseImage: async ({
+        messageId,
+        conversationId,
+        conversationKind,
+        origin,
+        instruction,
+        prompt,
+        mask,
+        maskRegions,
+        size,
+        quality,
+        background,
+        expectedRevisionCount,
+        expectedCurrentRevisionId,
+    }) => {
+        // A shared conversation's messages live in different Cosmos containers behind
+        // `/api/collaboration/*`, so the endpoint is chosen from the conversation's kind rather
+        // than tried and fallen back from, exactly as the diagram actions do.
+        const shared = isSharedBlockRevision(get(), conversationId, conversationKind);
+        const body = {
+            conversation_id: conversationId,
+            ...(origin ? { origin } : {}),
+            ...(instruction ? { instruction } : {}),
+            ...(prompt ? { prompt } : {}),
+            ...(mask ? { mask } : {}),
+            ...(maskRegions ? { mask_regions: maskRegions } : {}),
+            ...(size ? { size } : {}),
+            ...(quality ? { quality } : {}),
+            ...(background ? { background } : {}),
+            ...(expectedRevisionCount === undefined
+                ? {}
+                : { expected_revision_count: expectedRevisionCount }),
+            ...(expectedCurrentRevisionId
+                ? { expected_current_revision_id: expectedCurrentRevisionId }
+                : {}),
+        };
+
+        try {
+            const result = shared
+                ? await addCollaborationImageRevision(conversationId, messageId, body)
+                : await addMessageImageRevisionApi(messageId, body);
+            get().mergeImageRevisions(messageId, result.image_revisions, result.image_url);
+            return null;
+        } catch (error) {
+            return describeImageRevisionError(error, 'That image could not be changed.');
+        }
+    },
+
+    restoreImageRevision: async ({
+        messageId,
+        conversationId,
+        conversationKind,
+        revisionId,
+    }) => {
+        const shared = isSharedBlockRevision(get(), conversationId, conversationKind);
+        const body = { conversation_id: conversationId, revision_id: revisionId };
+
+        try {
+            const result = shared
+                ? await setCollaborationImageRevision(conversationId, messageId, body)
+                : await setMessageImageRevisionApi(messageId, body);
+            get().mergeImageRevisions(messageId, result.image_revisions, result.image_url);
+            return null;
+        } catch (error) {
+            return describeImageRevisionError(error, 'That version could not be restored.');
+        }
     },
 
     forkFromMessage: async (messageId) => {
