@@ -659,6 +659,51 @@ export interface ImageProposalRequest {
 export const generateImageFromProposal = (body: ImageProposalRequest) =>
     api.post<ImageProposalResult>('/api/chat/image-proposals/generate', body);
 
+/**
+ * One already-generated proposal image, identified but not carried.
+ *
+ * Deliberately not a `ChatMessage`: this is what `/api/chat/image-proposals/status` returns,
+ * and the whole point of that route is that it never sends image bytes. The fields are exactly
+ * the ones `findResultForSpec` matches on, so a caller can tell whether the image it is
+ * waiting for exists without downloading it.
+ */
+export interface ImageProposalStatusResult {
+    message_id: string;
+    created_at?: string;
+    source_assistant_message_id: string;
+    visual_id: string;
+    title: string;
+    prompt: string;
+}
+
+export interface ImageProposalStatusResponse {
+    conversation_id: string;
+    results: ImageProposalStatusResult[];
+}
+
+/**
+ * Ask which of a conversation's image proposals already have an image.
+ *
+ * Used to recover from a page reload during an approval. The approval request is gone with the
+ * page that made it, but the server finished the work regardless, so the only question left is
+ * whether the image has landed — and this answers it in about a kilobyte, where re-reading the
+ * thread would mean re-downloading every inlined image in it.
+ *
+ * `since` narrows the answer to images written at or after the moment the caller started
+ * waiting, which is both cheaper and the only correct window: an image generated earlier
+ * cannot be the one an approval started afterwards is waiting for.
+ */
+export const fetchImageProposalStatus = (
+    conversationId: string,
+    since?: string,
+    signal?: AbortSignal,
+) =>
+    api.get<ImageProposalStatusResponse>(
+        `/api/chat/image-proposals/status/${encodeURIComponent(conversationId)}` +
+            (since ? `?since=${encodeURIComponent(since)}` : ''),
+        signal,
+    );
+
 /* -------------------------------------------------------------------------- */
 /* Message export                                                              */
 /* -------------------------------------------------------------------------- */

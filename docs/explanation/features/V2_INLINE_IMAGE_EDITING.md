@@ -20,7 +20,7 @@ The two properties that matter most are the same ones the diagram editor establi
 message's stored content is never rewritten, and the conversation never grows. A change replaces
 what is on screen rather than appending to the thread.
 
-**Implemented in version: 0.261.050**
+**Implemented in version: 0.261.056**
 
 ### What this deliberately does not do
 

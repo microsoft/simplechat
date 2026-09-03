@@ -7,12 +7,17 @@
 //
 // The active tab lives in the query string so a particular tab can be linked to and
 // survives a reload, which the classic page also supports via ?tab=.
+//
+// The title says "User Settings" rather than "Settings" because the account menu it is
+// reached from offers Admin Settings directly beneath it, and two entries a line apart
+// called Settings and Admin Settings would not say which one you had landed on.
 
 import { useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { clsx } from 'clsx';
 import { Loader2 } from 'lucide-react';
 import { PageHeader } from '../components/layout/PageHeader';
+import { UserAvatar } from '../components/layout/UserAvatar';
 import { SETTINGS_TABS } from '../components/settings/tabs';
 import { useBootstrapStore } from '../stores/bootstrapStore';
 import { useUserSettingsStore } from '../stores/userSettingsStore';
@@ -41,7 +46,8 @@ export function SettingsPage() {
     return (
         <div className="flex h-full min-h-0 flex-col">
             <PageHeader
-                title="Settings"
+                leading={<UserAvatar size={36} />}
+                title="User Settings"
                 description="Preferences for your account in this interface."
                 actions={
                     saving ? (

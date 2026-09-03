@@ -40,11 +40,21 @@ function asArray<T>(value: unknown, key?: string): T[] {
 
 /* -------------------------------------------------------------------------- Prompts */
 
+export interface PromptWrite {
+    name?: string;
+    content?: string;
+    description?: string;
+    is_favorite?: boolean;
+}
+
 /**
  * List personal prompts.
  *
  * Paging and search are server-side. The default page size is large because the section
  * renders a single scrolling list rather than paged controls.
+ *
+ * The search parameter is `search`, which is what `list_prompts` reads. It was `search_term`
+ * here, a name the route has never looked for, so server-side search silently did nothing.
  */
 export async function fetchPrompts(
     { search = '', pageSize = 500 }: { search?: string; pageSize?: number } = {},
@@ -52,16 +62,19 @@ export async function fetchPrompts(
 ): Promise<WorkspacePrompt[]> {
     const params = new URLSearchParams({ page: '1', page_size: String(pageSize) });
     if (search.trim()) {
-        params.set('search_term', search.trim());
+        params.set('search', search.trim());
     }
     const response = await api.get<unknown>(`/api/prompts?${params.toString()}`, signal);
     return asArray<WorkspacePrompt>(response, 'prompts');
 }
 
-export const createPrompt = (name: string, content: string) =>
-    api.post<WorkspacePrompt>('/api/prompts', { name, content });
+export const fetchPrompt = (promptId: string, signal?: AbortSignal) =>
+    api.get<WorkspacePrompt>(`/api/prompts/${encodeURIComponent(promptId)}`, signal);
 
-export const updatePrompt = (promptId: string, updates: { name?: string; content?: string }) =>
+export const createPrompt = (name: string, content: string, extra: PromptWrite = {}) =>
+    api.post<WorkspacePrompt>('/api/prompts', { ...extra, name, content });
+
+export const updatePrompt = (promptId: string, updates: PromptWrite) =>
     api.patch<WorkspacePrompt>(`/api/prompts/${encodeURIComponent(promptId)}`, updates);
 
 export const deletePrompt = (promptId: string) =>

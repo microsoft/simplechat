@@ -2,25 +2,16 @@
 // Rules for the administrator-configured navigation groups in the rail.
 //
 // Kept out of the component so the decisions can be executed by a test. Whether a group
-// appears at all, and whether it appears inline or behind a menu, is configuration
-// behaviour rather than presentation, and getting it wrong is invisible in review: a group
-// that never renders looks exactly like one nobody configured.
+// appears at all is configuration behaviour rather than presentation, and getting it wrong
+// is invisible in review: a group that never renders looks exactly like one nobody
+// configured.
+//
+// The classic navigation additionally decides between an inline heading and a named menu
+// from the entry count, with "Force Menu Display" overriding it. V2 has no equivalent rule
+// because every group is a menu here: a heading that collapses only past some threshold
+// means the same control behaves differently for two deployments that differ by one link.
 
 import type { CustomPageNavItem, ExternalLinkNavItem, NavGroup } from './types';
-
-/** How many entries a group may have before it collapses behind its menu name. */
-export const INLINE_ITEM_LIMIT = 2;
-
-/**
- * Whether a group should collapse behind its menu name.
- *
- * Matches the classic navigation: one or two entries read better as plain nav items, while
- * three or more crowd the rail and become a named menu. An administrator can force the
- * menu at any count, which is what "Force Menu Display" does in Admin Settings.
- */
-export function shouldRenderAsMenu(itemCount: number, forceMenu: boolean): boolean {
-    return Boolean(forceMenu) || itemCount > INLINE_ITEM_LIMIT;
-}
 
 /**
  * Whether a group has anything to show.

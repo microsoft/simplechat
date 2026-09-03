@@ -103,7 +103,11 @@ export interface PromptOption {
     id?: string;
     name?: string;
     content?: string;
+    description?: string;
+    is_favorite?: boolean;
     scope_type?: string;
+    scope_id?: string;
+    scope_name?: string;
     [key: string]: unknown;
 }
 
@@ -263,6 +267,13 @@ export interface WorkspacePrompt {
     id: string;
     name?: string;
     content?: string;
+    /** One line shown beside the name. Capped server-side at 200 characters. */
+    description?: string;
+    /**
+     * Absent on prompts created before the field existed, and on any prompt last saved by the
+     * classic interface, which sends only name and content. Always read through a default.
+     */
+    is_favorite?: boolean;
     created_at?: string;
     updated_at?: string;
     [key: string]: unknown;
@@ -691,9 +702,10 @@ export interface ExternalLinkNavItem {
 /**
  * One configurable navigation group.
  *
- * `menu_name` and `force_menu` come from settings so the rail can apply the same rule the
- * server-rendered navigation does: a short list reads better inline, a longer one becomes
- * a named, collapsible menu.
+ * `menu_name` is the heading the group collapses behind. `force_menu` is the classic
+ * navigation's override for its "inline below three entries, menu at three or more" rule and
+ * is unused here: every group in this rail is a collapsible menu, so there is nothing for it
+ * to force. It stays on the type because the bootstrap payload sends it.
  */
 export interface NavGroup<TItem> {
     enabled: boolean;

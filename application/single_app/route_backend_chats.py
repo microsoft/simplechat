@@ -2070,6 +2070,14 @@ TABULAR_INLINE_CHART_SUPPORTED_GROUP_KINDS = {
     'stacked_bar',
     'stacked_line',
 }
+
+# How many proposal results one status poll may return.
+#
+# A poll answers "has the image I approved arrived yet?", and a caller only ever asks about
+# approvals it started moments ago, so this is a ceiling on a pathological thread rather than
+# a page size anyone is expected to reach.
+IMAGE_PROPOSAL_STATUS_RESULT_LIMIT = 200
+
 STREAM_STATUS_NOT_FOUND = 'not_found'
 STREAM_STATUS_STARTED = 'started'
 STREAM_STATUS_STREAMING = 'streaming'
@@ -16234,6 +16242,106 @@ def register_route_backend_chats(bp):
                 'error': error_message,
                 **({'rate_limited': True} if status_code == 429 else {}),
             }), status_code
+
+    @bp.route('/api/chat/image-proposals/status/<conversation_id>', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def image_proposal_status(conversation_id):
+        """Report which of a conversation's image proposals already have an image.
+
+        Approving a proposal is a blocking request that outlives the browser holding it: the
+        image is generated and stored whether or not the client is still connected. A client
+        that reloaded the page mid-approval therefore has no way of knowing whether the image
+        it was waiting for has since arrived, and asking for the whole thread to find out is
+        expensive -- a small generated image is inlined into its message as a base64 data URI,
+        so a conversation full of them is megabytes per request.
+
+        This returns the identity of each proposal result and nothing else: no image bytes, no
+        message content. That keeps a poll roughly a kilobyte no matter how large the thread
+        is, and the client fetches the image itself once, through the ordinary message path,
+        only after learning it exists.
+        """
+        try:
+            user_id = get_current_user_id()
+            if not user_id:
+                return jsonify({'error': 'User not authenticated'}), 401
+
+            normalized_conversation_id = str(conversation_id or '').strip()
+            if not normalized_conversation_id:
+                return jsonify({'error': 'conversation_id is required'}), 400
+
+            # The same helper the approval itself uses, so this can never report on a
+            # conversation the caller would not be allowed to generate an image in.
+            _authorize_personal_conversation_access(user_id, normalized_conversation_id)
+
+            # Callers poll for approvals they started, so they know the earliest moment an
+            # image they care about could have been written. Everything older is noise.
+            since = str(request.args.get('since') or '').strip()
+
+            clauses = [
+                "c.conversation_id = @conversation_id",
+                "c.role = 'image'",
+                "IS_DEFINED(c.metadata.image_proposal)",
+            ]
+            parameters = [
+                {'name': '@limit', 'value': IMAGE_PROPOSAL_STATUS_RESULT_LIMIT},
+                {'name': '@conversation_id', 'value': normalized_conversation_id},
+            ]
+            if since:
+                clauses.append("c.created_at >= @since")
+                parameters.append({'name': '@since', 'value': since})
+
+            query = (
+                "SELECT TOP @limit c.id, c.created_at, c.metadata.image_proposal "
+                f"FROM c WHERE {' AND '.join(clauses)} "
+                "ORDER BY c.created_at DESC"
+            )
+
+            results = []
+            for item in cosmos_messages_container.query_items(
+                query=query,
+                parameters=parameters,
+                partition_key=normalized_conversation_id,
+            ):
+                proposal = item.get('image_proposal')
+                if not isinstance(proposal, dict):
+                    continue
+                results.append({
+                    'message_id': item.get('id'),
+                    'created_at': item.get('created_at'),
+                    'source_assistant_message_id': str(
+                        proposal.get('source_assistant_message_id') or ''
+                    ),
+                    'visual_id': str(proposal.get('visualId') or proposal.get('visual_id') or ''),
+                    'title': str(proposal.get('title') or ''),
+                    'prompt': str(proposal.get('prompt') or ''),
+                })
+
+            return jsonify({
+                'conversation_id': normalized_conversation_id,
+                'results': results,
+            }), 200
+        except LookupError:
+            return jsonify({'error': 'Conversation not found'}), 404
+        except CosmosResourceNotFoundError:
+            return jsonify({'error': 'Conversation not found'}), 404
+        except PermissionError as exc:
+            log_event(
+                f'[IMAGE_GENERATION] Proposal status authorization failed: {exc}',
+                extra={'conversation_id': conversation_id},
+                level=logging.WARNING,
+                exceptionTraceback=True,
+            )
+            return jsonify({'error': 'You do not have access to this conversation'}), 403
+        except Exception as exc:
+            log_event(
+                f'[IMAGE_GENERATION] Proposal status lookup failed: {exc}',
+                extra={'conversation_id': conversation_id},
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({'error': 'Could not read image proposal status.'}), 500
 
     @bp.route('/api/chat', methods=['POST'])
     @swagger_route(security=get_auth_security())

@@ -6,7 +6,7 @@
 import { create } from 'zustand';
 import { fetchBootstrap } from '../lib/endpoints';
 import { ApiError } from '../lib/apiClient';
-import type { BootstrapPayload } from '../lib/types';
+import type { BootstrapPayload, PromptOption } from '../lib/types';
 
 /**
  * Orders concurrent refreshes so a slower earlier one cannot land after a newer one.
@@ -33,6 +33,16 @@ interface BootstrapState {
      * those has to reload the browser before the change is visible without this.
      */
     refresh: () => Promise<void>;
+    /**
+     * Put a prompt into the catalog straight away, before a refresh has been round-tripped.
+     *
+     * The composer's picker and its `/` menu read `catalogs.prompts`, which is built server-side
+     * and cached. Saving a prompt from a chat message bumps that cache, but the payload in hand
+     * is still the old one until the refetch lands -- and the whole point of saving from chat is
+     * to use the prompt in the message you are writing. Applying it locally makes it selectable
+     * immediately; the refresh that follows replaces this with the server's version.
+     */
+    upsertPromptInCatalog: (prompt: PromptOption) => void;
 }
 
 export const useBootstrapStore = create<BootstrapState>((set) => ({
@@ -75,6 +85,27 @@ export const useBootstrapStore = create<BootstrapState>((set) => ({
             // succeeded, so a briefly stale shell is cosmetic and the next load fixes it.
         }
     },
+
+    upsertPromptInCatalog: (prompt) =>
+        set((state) => {
+            if (!state.data || !prompt?.id) {
+                return state;
+            }
+            const catalogs = state.data.catalogs ?? {};
+            const prompts = (catalogs.prompts ?? []) as PromptOption[];
+            const index = prompts.findIndex((item) => item.id === prompt.id);
+            const next =
+                index === -1
+                    ? [...prompts, prompt]
+                    : prompts.map((item, at) => (at === index ? { ...item, ...prompt } : item));
+
+            return {
+                data: {
+                    ...state.data,
+                    catalogs: { ...catalogs, prompts: next },
+                },
+            };
+        }),
 }));
 
 /** Read a feature flag, defaulting to off when bootstrap has not resolved. */

@@ -2,7 +2,7 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
-### **(v0.261.050)**
+### **(v0.261.056)**
 
 #### New Features
 
@@ -23,6 +23,137 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 *   **Images In Shared Conversations Now Display In The New Interface**
     *   An image in a shared conversation is served from a different address than one in a personal conversation, and the new interface only recognised the personal form. A shared image therefore rendered as "Image unavailable" rather than as a picture.
     *   (Ref: `images.ts`, `resolveImageSource`, collaboration image URLs)
+### **(v0.261.055)**
+
+#### User Interface Enhancements
+
+*   **Admin Settings Has Moved Into The Account Menu In The V2 Interface**
+    *   In the V2 interface, an administrator's left-hand menu listed **Admin Settings** alongside Chats, Agents and the workspaces, mixing the places you work with the place you administer.
+    *   It now lives in the account menu at the bottom of the rail, under your name — the same place the classic interface keeps **App Settings**. The primary list is once again only the places you work.
+    *   **Settings** in that menu is now **User Settings**, so the two entries a line apart say which is which, and the page it opens is titled to match.
+    *   (Ref: V2 interface, left-hand menu, account menu, Admin Settings, personal settings)
+
+*   **Your Profile Picture Now Appears In The V2 Interface**
+    *   Your Microsoft 365 profile photo is already retrieved and stored when you first sign in, and the classic interface has always shown it. The V2 interface drew your initials instead.
+    *   It now appears on the account control at the bottom of the left-hand menu and in the header of your **User Settings** page. Initials are still used when you have no photo.
+    *   (Ref: V2 interface, account menu, User Settings, profile photo)
+
+#### Bug Fixes
+
+*   **Custom Pages And External Links Now Collapse And Stay That Way In The V2 Interface**
+    *   The **Custom Pages** and **External Links** groups in the V2 left-hand menu only became collapsible once a group held three or more links, and even then reopened on the next page load. A group put away never stayed away.
+    *   Every group now collapses from its heading, whatever the link count, and the choice is remembered against your account. It is the same preference the classic interface uses, so a group you put away in one interface stays away in the other.
+    *   Because every group in the V2 menu is now collapsible, **Force Menu Display** in Admin Settings no longer changes it. The setting continues to work in the classic interface.
+    *   (Ref: V2 interface, left-hand menu, Custom Pages, External Links, `sidebarMenuState`, [V2 Sidebar Navigation And Account Menu](fixes/V2_SIDEBAR_NAV_AND_ACCOUNT_MENU_FIX.md))
+
+*   **The Account Menu Could Not Be Opened From The Collapsed V2 Menu**
+    *   With the V2 left-hand menu collapsed to icons, clicking your account picture did nothing at all. Your settings, the way back to the classic interface and **Sign out** could only be reached by expanding the menu first, and nothing said so.
+    *   The menu now opens beside the icon strip and names the account it belongs to. It also closes when you press Escape or click elsewhere, which it previously did not.
+    *   (Ref: V2 interface, left-hand menu, collapsed rail, account menu)
+
+### **(v0.261.054)**
+
+#### Bug Fixes
+
+*   **Image Generation No Longer Goes Quiet When You Look Away**
+    *   Approving inline image proposals and then opening another conversation used to leave the cards looking untouched when you came back — no progress, **Approve** enabled again, **Approve all** back — even though those images were still being generated and did arrive a moment later. Pressing **Approve** again would have paid for the same image twice.
+    *   **Approvals now keep reporting themselves wherever you go.** Leave the conversation, visit My Workspace, come back an hour later: the cards still show their queue position and "Generating image…", because that state no longer belongs to the view you left.
+    *   **Reloading the page no longer loses track of them either.** Generation runs on the server and finishes whether or not your browser is still connected, so the only thing a reload ever really lost was the knowledge that it was coming. Restored cards say "Still generating from before the page reloaded…" and fill in as each image lands.
+    *   **You can tell from anywhere in the app.** A conversation still generating images shows a spinner and a count on its row in the conversation list, and a single notice reports images being generated whose cards are not on screen — whether you have moved to another conversation or left chat entirely. The notice is deliberately absent while you are looking at those cards, where it would only repeat what they already say.
+    *   **An approval that never finishes is written off rather than left spinning.** After ten minutes the card explains that the page reloaded while it was generating and offers to approve it again.
+    *   This is per browser tab. An image approved in one tab is not tracked in another, though the image itself is stored and appears there as soon as the conversation is read.
+    *   (Ref: `imageProposalStore.ts`, `imageProposalTracking.ts`, `imageProposalResume.ts`, `GET /api/chat/image-proposals/status/<conversation_id>`, [V2 Inline Image Proposal Resume](fixes/V2_INLINE_IMAGE_PROPOSAL_RESUME_FIX.md))
+
+### **(v0.261.053)**
+
+#### New Features
+
+*   **Prompts In My Workspace Is Now A Workbench**
+    *   Editing a prompt used to open a form **above the list**. Clicking Edit on a prompt part-way down the page moved the editor to the top, out of view, with nothing tying it to the row you clicked — so the first thing you did after pressing Edit was scroll to find the editor. The layout now matches the documents explorer: the list on the left, the prompt rendered on the right, and writing done in a dialog.
+    *   **You can read a prompt without editing it.** The details pane shows the full body rendered as markdown, with its variables, its description and its actions. Previously the only way to see past the first 140 characters was to open an editor you then had to cancel out of.
+    *   **The editor shows the source and the rendering side by side**, with a small formatting toolbar, becoming tabs on a narrow screen. Closing it with unsaved changes asks first.
+    *   **Prompts now have a description and can be favourited.** Favourites sort to the top of the list and of the composer's `/` menu.
+    *   Duplicate, copy and "Use in chat" are available from the details pane, and search now covers the body of a prompt as well as its name — so you can find the one that mentions a particular system without remembering what you called it.
+    *   (Ref: V2 My Workspace, Prompts, `PromptWorkbench.tsx`, `GET/POST/PATCH /api/prompts`, [V2 Prompts Workbench](features/V2_PROMPTS_WORKBENCH.md))
+
+*   **Prompts Can Ask You To Fill In The Blanks**
+    *   Write `{{customer}}` or `{{region}}` in a prompt and you are asked for those values when you use it, instead of editing the same three words every time. A default can be written as `{{tone|formal}}`.
+    *   **Values you entered last time are offered back**, remembered per prompt so "name" in one prompt never pre-fills "name" in another. Anything filled in for you is badged as reused and cleared with one click, and the dialog always appears rather than inserting silently.
+    *   **Eight values the app already knows are filled in for you**: today's date, the current time, your name, the conversation title, the documents in scope, the last reply, your last message, and what you have already typed.
+    *   **Values from the conversation are one click each, never automatic.** The last reply can be quoting an uploaded document, and document text becoming part of your next instruction is how prompt injection gets a foothold — so you choose which field gets it.
+    *   **Nothing is pre-filled in a shared conversation**, where a value remembered from a private chat would become visible to everyone the moment you send.
+    *   **The values stay in your browser and are never sent to the server.** Anything matching an obvious key or token shape is not stored at all, and each prompt offers a "Forget saved values" control.
+    *   A prompt that documents a templating language is safe: `{{ }}` inside a code block is left alone, and `\{{` escapes a single occurrence.
+    *   (Ref: `promptVariables.ts`, `promptVariableMemory.ts`, `PromptVariablesDialog.tsx`)
+
+*   **Saving A Prompt From A Conversation**
+    *   Any message now offers **Save as prompt** in its overflow menu, and the composer offers the same for wording you have drafted but not sent. Both open the editor prefilled with a suggested name, so you can turn the specifics into `{{variables}}` before saving.
+    *   A prompt saved this way is selectable in the composer immediately, without a reload.
+    *   (Ref: `MessageActions.tsx`, `Composer.tsx`, `bootstrapStore.upsertPromptInCatalog`)
+
+*   **A `/` Shortcut For Prompts In The Composer**
+    *   Type `/` at the start of a word to search your prompts and insert one without reaching for the picker. Favourites come first, and matching covers the name, description and workspace.
+    *   A slash in the middle of a word is left alone, so `and/or` and `https://` do not trigger it.
+    *   (Ref: `promptSlash.ts`, `PromptSlashMenu.tsx`)
+
+#### Bug Fixes
+
+*   **Picking A Prompt No Longer Discards What You Had Typed**
+    *   Choosing a prompt from the composer's picker replaced the entire message box, so reaching for a prompt part-way through writing threw away the half-sentence you reached for it from. Prompts are now inserted at the cursor, or over the selection, with sensible spacing.
+    *   (Ref: composer prompt picker, `insertPromptText`)
+
+*   **"Use As Prompt" Renamed To "Copy To Composer"**
+    *   The message menu entry called "Use as prompt" only ever copied the message text into the composer — it never saved a prompt. It now says what it does, and a real **Save as prompt** sits beside it.
+    *   (Ref: `MessageActions.tsx`)
+
+*   **Prompt Search Now Actually Reaches The Server**
+    *   The workspace sent its prompt search as `search_term` while the API reads `search`, so server-side search had never once run and the list was filtered in the browser over the first page of results only.
+    *   (Ref: `fetchPrompts`, `list_prompts`)
+
+*   **One Validator For Personal, Group And Public Prompts**
+    *   The three prompt APIs each carried their own copy of the same field checks. Adding a field to one and not the others produces a value that saves on a personal prompt and is silently dropped on a group one, which reads as a save that did not work. All three now share a single validator, and creates and updates return the same fields.
+    *   (Ref: `build_prompt_updates`, `serialize_prompt_summary`, `functions_prompts.py`)
+
+### **(v0.261.052)**
+
+#### User Interface Enhancements
+
+*   **The Logo Is The Way Home In The New Interface**
+    *   Clicking the logo or the application title at the top of the left rail now opens the home page. Previously it was not a link at all, and a separate **Home** row sat directly underneath it — two controls for one destination, only one of which worked.
+    *   That **Home** row has been removed. The rail is one item shorter, and the place people already click is the place that works.
+    *   The link is announced to screen readers as the application name followed by "home", so it is still identifiable when the rail is collapsed to just a logo or a single letter.
+    *   (Ref: V2 navigation rail, brand mark, [V2 Brand Mark Home Link Fix](fixes/V2_BRAND_MARK_HOME_LINK_FIX.md))
+
+#### Bug Fixes
+
+*   **The Application Title No Longer Appears Twice In The Left Rail**
+    *   With no custom logo uploaded, the new interface showed a coloured square holding the first letter of the application title *and* the full title next to it — "**S** SimpleChat".
+    *   The lettered square is a stand-in for a logo, so it now appears only where the title itself cannot: when the left rail is collapsed, or when **Hide Application Title** is turned on. An expanded rail shows the title on its own.
+    *   Deployments with a custom logo are unaffected.
+    *   (Ref: V2 navigation rail, Appearance > Branding, [V2 Brand Mark Home Link Fix](fixes/V2_BRAND_MARK_HOME_LINK_FIX.md))
+
+### **(v0.261.051)**
+
+#### Bug Fixes
+
+*   **Clicking Away Just After Starting A New Chat No Longer Bounces You Back**
+    *   The first message in a brand-new chat has to create the conversation before it can answer, and clicking a different conversation during that moment used to undo the click and drop you back into the chat you had just left.
+    *   In the unluckier version of the same timing, the conversation you clicked would have its messages shown underneath the new chat, so a thread appeared to contain a question that was asked somewhere else.
+    *   Your click now wins. The message is still sent and its answer still generated and saved — the new chat appears in the list with its title and unread marker — but the interface stays where you put it.
+    *   Nothing was ever lost or filed against the wrong conversation; the effect was limited to what was on screen.
+    *   (Ref: `chatStore.ts` `sendMessage`, `runChatStream`, [V2 New Conversation Send Race](fixes/V2_NEW_CONVERSATION_SEND_RACE_FIX.md))
+
+### **(v0.261.050)**
+
+#### Bug Fixes
+
+*   **Leaving A Chat No Longer Destroys The Answer Being Written**
+    *   In the new interface, sending a message and then opening a different conversation before the reply finished ended the reply. Coming back showed the question with no answer, and nothing to reconnect to.
+    *   It looked intermittent because the timing changed the symptom. Leaving during the "thinking" phase, before the assistant had produced its first word, saved no reply at all. Leaving later left a truncated one.
+    *   The cause was that switching conversations, and starting a new chat, asked the server to *cancel* the generation rather than simply stopping reading it. Those are different things, and only the Stop button should mean the second one. Answers are generated in the background and deliberately outlive the connection carrying them, so dropping the connection was always safe; cancelling was not.
+    *   Leaving a conversation now detaches. The answer finishes and is saved, reopening the thread picks the reply back up mid-flow or shows it complete, and several conversations can be generating at once — matching how the classic interface has always behaved.
+    *   Stop is unchanged and still cancels. Leaving a shared conversation also no longer cancels a reply other participants are waiting for.
+    *   (Ref: `chatStore.ts` `detachActiveStream`, `selectConversation`, `startNewConversation`, `stopStreaming`, `/api/chat/stream/cancel`, [V2 Stream Cancelled On Conversation Leave](fixes/V2_STREAM_CANCELLED_ON_CONVERSATION_LEAVE_FIX.md))
 
 ### **(v0.261.049)**
 
