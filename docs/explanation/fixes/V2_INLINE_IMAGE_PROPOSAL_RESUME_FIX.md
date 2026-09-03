@@ -1,6 +1,6 @@
 # V2 Inline Image Proposal Resume Fix
 
-Fixed in version: **0.261.053**
+Fixed in version: **0.261.054**
 
 ## Issue
 
@@ -97,7 +97,7 @@ conversation that owns the cards, where it would only repeat what each card is a
 | File | Change |
 | --- | --- |
 | `application/single_app/route_backend_chats.py` | Added the image proposal status route and its result limit. |
-| `application/single_app/config.py` | Version `0.261.052` -> `0.261.053`. |
+| `application/single_app/config.py` | Version `0.261.053` -> `0.261.054`. |
 | `application/v2_ui/src/lib/imageProposalTracking.ts` | New. Record shape, matching rules, bounds and storage. |
 | `application/v2_ui/src/stores/imageProposalStore.ts` | New. Owns card state and in-flight approvals. |
 | `application/v2_ui/src/lib/imageProposalResume.ts` | New. Restore, poll, write off, and report. |

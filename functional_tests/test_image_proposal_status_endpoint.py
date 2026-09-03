@@ -3,8 +3,8 @@
 """
 Functional test for the image proposal status route.
 
-Version: 0.261.053
-Implemented in: 0.261.053
+Version: 0.261.054
+Implemented in: 0.261.054
 
 `GET /api/chat/image-proposals/status/<conversation_id>` exists so a client that reloaded the
 page during an image approval can find out whether the image it was waiting for has arrived.
@@ -40,7 +40,7 @@ sys.path.insert(0, str(REPO_ROOT / "functional_tests"))
 
 from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
-IMPLEMENTED_IN = "0.261.053"
+IMPLEMENTED_IN = "0.261.054"
 
 ROUTE_FUNCTION = "image_proposal_status"
 ROUTE_PATH = "/api/chat/image-proposals/status/<conversation_id>"

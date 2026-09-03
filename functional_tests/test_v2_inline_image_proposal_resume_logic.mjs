@@ -1,8 +1,8 @@
 // test_v2_inline_image_proposal_resume_logic.mjs
 //
 // Runtime test for resuming a V2 image approval after the page that started it is gone.
-// Version: 0.261.053
-// Implemented in: 0.261.053
+// Version: 0.261.054
+// Implemented in: 0.261.054
 //
 // The companion test, test_v2_inline_image_proposal_resume.py, proves the pieces are wired
 // together. This one executes the rules that decide whether a user gets their image back.
