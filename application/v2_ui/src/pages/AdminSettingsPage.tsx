@@ -163,6 +163,14 @@ function buildCapabilityIndex(
 
 export function AdminSettingsPage() {
     const isAdmin = useBootstrapStore((state) => Boolean(state.data?.user?.is_admin));
+    /**
+     * Re-read bootstrap after a save.
+     *
+     * Branding, the classification banner and the feature flags the whole application
+     * branches on all come from that payload, which is fetched once at startup. Without
+     * this, applying a setting here changed the settings document and nothing visible.
+     */
+    const refreshBootstrap = useBootstrapStore((state) => state.refresh);
 
     const [data, setData] = useState<AdminSettingsResponse | null>(null);
     const [brandingAssets, setBrandingAssets] = useState<BrandingAssets>({});
@@ -434,6 +442,7 @@ export function AdminSettingsPage() {
             );
             setFieldWarnings(response.warnings ?? {});
             setDraft({});
+            void refreshBootstrap();
 
             const warningCount = Object.keys(response.warnings ?? {}).length;
             toast.success(
@@ -458,15 +467,21 @@ export function AdminSettingsPage() {
         } finally {
             setSaving(false);
         }
-    }, [draft]);
+    }, [draft, refreshBootstrap]);
 
-    const onBrandingUploaded = useCallback((target: string, result: BrandingUploadResponse) => {
-        setBrandingAssets((current) => ({
-            ...current,
-            [target]: { present: true, version: result.version, url: result.url },
-        }));
-        toast.success('Image uploaded.');
-    }, []);
+    const onBrandingUploaded = useCallback(
+        (target: string, result: BrandingUploadResponse) => {
+            setBrandingAssets((current) => ({
+                ...current,
+                [target]: { present: true, version: result.version, url: result.url },
+            }));
+            // Uploads save immediately rather than joining the draft, so the rail, the
+            // home page and the browser tab have to be told straight away.
+            void refreshBootstrap();
+            toast.success('Image uploaded.');
+        },
+        [refreshBootstrap],
+    );
 
     /** Read another field's current value, preferring an unsaved edit. */
     const readSibling = (key: string, fallback = '') =>

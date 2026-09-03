@@ -15,6 +15,7 @@ interface BootstrapState {
     /** True when the failure was an expired session rather than a server fault. */
     authExpired: boolean;
     load: () => Promise<void>;
+    refresh: () => Promise<void>;
 }
 
 export const useBootstrapStore = create<BootstrapState>((set) => ({
@@ -38,6 +39,26 @@ export const useBootstrapStore = create<BootstrapState>((set) => ({
                         ? error.message
                         : 'Failed to load the application.',
             });
+        }
+    },
+
+    /**
+     * Re-read bootstrap after something changed it, without disturbing the running app.
+     *
+     * Administrator changes to branding, the classification banner and the feature flags
+     * all land in this payload, which is otherwise fetched exactly once at startup. Saving
+     * a setting therefore appeared to do nothing until the page was reloaded by hand.
+     *
+     * Deliberately does not touch `loading`: that flag swaps the whole application for the
+     * boot skeleton, and a background refresh must not blank the page the administrator is
+     * looking at. A failure is left silent for the same reason -- the previous payload is
+     * still valid, and the save that triggered this has already reported its own outcome.
+     */
+    refresh: async () => {
+        try {
+            set({ data: await fetchBootstrap(), error: null, authExpired: false });
+        } catch {
+            /* Keep the payload already on screen. */
         }
     },
 }));

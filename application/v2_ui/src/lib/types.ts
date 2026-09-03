@@ -555,6 +555,36 @@ export interface WebSearchNoticeConfig {
     text: string;
 }
 
+/** A trusted page deployed under `custom_pages` and exposed at `/custom/<slug>`. */
+export interface CustomPageNavItem {
+    slug: string;
+    label: string;
+    /** A Bootstrap Icons class name, chosen per page in its metadata contract. */
+    icon: string;
+    url: string;
+    open_in_new_tab: boolean;
+}
+
+/** An administrator-approved link shown in the navigation rail. */
+export interface ExternalLinkNavItem {
+    label: string;
+    url: string;
+}
+
+/**
+ * One configurable navigation group.
+ *
+ * `menu_name` and `force_menu` come from settings so the rail can apply the same rule the
+ * server-rendered navigation does: a short list reads better inline, a longer one becomes
+ * a named, collapsible menu.
+ */
+export interface NavGroup<TItem> {
+    enabled: boolean;
+    menu_name: string;
+    force_menu: boolean;
+    items: TItem[];
+}
+
 /** Response shape of GET /api/v2/bootstrap. Assembled by route_backend_v2.py. */
 export interface BootstrapPayload {
     version: string;
@@ -571,12 +601,29 @@ export interface BootstrapPayload {
         show_logo: boolean;
         logo_url: string | null;
         logo_dark_url: string | null;
+        /** Versioned when a custom icon is stored, so a replacement is not served stale. */
+        favicon_url: string;
         classification_banner: {
             enabled: boolean;
             text?: string;
             color?: string;
             text_color?: string;
         } | null;
+        /** Home page copy. Falls back server-side to the same default the classic UI uses. */
+        landing_page_text: string;
+        landing_page_alignment: 'left' | 'center' | 'right';
+        landing_page_logo_scale_percent: number;
+    };
+    /**
+     * Administrator-configured navigation groups, resolved server-side.
+     *
+     * Not derivable from `features` or `settings`: custom pages are filtered per page
+     * against the caller's roles, and neither the link list nor the menu names are
+     * `enable_*` keys.
+     */
+    navigation: {
+        custom_pages: NavGroup<CustomPageNavItem>;
+        external_links: NavGroup<ExternalLinkNavItem>;
     };
     features: Record<string, boolean>;
     catalogs: {

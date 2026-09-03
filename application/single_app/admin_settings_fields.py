@@ -30,9 +30,11 @@ Two things keep this honest rather than becoming a third source of truth:
     to the same normalizers the server-rendered form uses. Both interfaces
     therefore agree on what a valid value is.
 
-Only the Appearance group is described so far. Sections with no entry here fall
-back to the V2 surface's ``enable_*`` scan, so undescribed groups keep working
-exactly as they did.
+Only the Appearance group is described in full so far. Sections with no entry
+here fall back to the V2 surface's ``enable_*`` scan, so undescribed groups keep
+working exactly as they did. A handful of individual fields outside Appearance
+are also declared: that scan places a key by guessing from shared word stems,
+and declaring a field is the only way to stop it guessing wrong.
 """
 
 import re
@@ -533,6 +535,103 @@ ADMIN_SETTINGS_FIELDS = {
             "depends_on": {"key": "enable_external_links", "equals": True},
         },
     ],
+    # The sections below are not part of the Appearance group. They are described
+    # here because the V2 surface's `enable_*` fallback was filing their toggles
+    # under Appearance: it matches a key to a section by shared leading word
+    # stems and takes the first section that scores at all, so
+    # `enable_external_healthcheck` matched "external" in External Links long
+    # before it could reach Health Check, whose id splits into "health" and
+    # "check" and so never matches the single token "healthcheck". Declaring a
+    # key is what takes it out of that scan, so these five are declared rather
+    # than guessed at. Wording is taken from the V1 panes so both interfaces say
+    # the same thing.
+    "health-check-section": [
+        {
+            "key": "enable_external_healthcheck",
+            "type": "switch",
+            "label": "Enable /external/healthcheck",
+            "help": (
+                "Authenticated endpoint for external monitoring systems. Best for "
+                "internal monitors or diagnostics tooling that already signs in to "
+                "the application."
+            ),
+            "default": False,
+        },
+        {
+            "key": "enable_no_auth_external_healthcheck",
+            "type": "switch",
+            "label": "Enable /external/healthcheckz",
+            "help": (
+                "Unauthenticated endpoint for platform probes that cannot sign in. "
+                "This route is intentionally unauthenticated, so only enable it for "
+                "trusted health probes or controlled network paths."
+            ),
+            "default": False,
+        },
+    ],
+    "user-facing-latest-features-section": [
+        {
+            "key": "enable_support_latest_feature_documentation_links",
+            "type": "switch",
+            "label": "Show Simple Chat Documentation Guide Links",
+            "help": (
+                "User-facing Latest Features cards show public documentation guide "
+                "buttons in addition to the direct in-app shortcuts."
+            ),
+            "default": False,
+            # V1 hides this control entirely while the Latest Features destination
+            # is off, because the cards it affects are not reachable then.
+            "depends_on": {"key": "enable_support_latest_features", "equals": True},
+        },
+    ],
+    # Declared so the dependency above resolves to a control an administrator can
+    # actually find and flip, and so the Support Menu gate chain reads the same in
+    # both interfaces. The remaining fields in this section are still discovered
+    # by the fallback scan.
+    "support-menu-section": [
+        {
+            "key": "enable_support_menu",
+            "type": "switch",
+            "label": "Enable Support Menu for End Users",
+            "help": (
+                "Signed-in users with the User role get a Support menu in navigation, "
+                "leading to destinations such as Send Feedback and Latest Features."
+            ),
+            "default": False,
+        },
+        {
+            "key": "enable_support_latest_features",
+            "type": "switch",
+            "label": "Enable Latest Features Destination",
+            "help": "Publishes a user-facing Latest Features page from the Support menu.",
+            "default": True,
+            "depends_on": {"key": "enable_support_menu", "equals": True},
+        },
+    ],
+    "personal-workspaces-section": [
+        {
+            "key": "enable_user_workspace",
+            "type": "switch",
+            "label": "Enable Personal Workspaces",
+            "help": (
+                "Users can create and manage their own private workspace for document "
+                "storage, knowledge bases and personal AI interactions."
+            ),
+            "default": True,
+        },
+    ],
+    "actions-config": [
+        {
+            "key": "enable_text_plugin",
+            "type": "switch",
+            "label": "Enable Text Action",
+            "help": (
+                "Agents can perform text processing operations such as formatting, "
+                "validation and manipulation of strings and text content."
+            ),
+            "default": True,
+        },
+    ],
 }
 
 
@@ -642,6 +741,17 @@ def _validate_external_link_url(url):
     if not parsed.netloc:
         return "URL is missing a host."
     return None
+
+
+def is_safe_external_link_url(url):
+    """Return True when a navigation link URL is safe to render as an ``href``.
+
+    The write path already refuses anything else, but only the V2 settings PATCH goes
+    through it: the server-rendered admin form stores whatever string it is given, and a
+    settings document predates both. Any surface that turns a stored link into an anchor
+    should therefore check here rather than trust the document.
+    """
+    return _validate_external_link_url(url) is None
 
 
 def _normalize_link_list(value):
