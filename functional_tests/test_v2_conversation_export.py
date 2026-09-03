@@ -226,17 +226,19 @@ def test_the_conversation_cap_matches_the_conversation_route():
 
 
 def test_the_rail_can_select_several_conversations():
-    """Bulk export needs a selection mode, and it must survive rows being removed."""
+    """Bulk export needs a multi-selection, and it must survive rows being removed."""
     print("Testing rail multi-select...")
 
     store = _read(STORE_TS)
     rail = _read(RAIL_TSX)
 
+    # Selection stopped being a mode in 0.261.050: rows reveal a checkbox on hover, so a
+    # selection either has members or it does not. The actions the export path relies on are
+    # asserted by name here; the rest of the behaviour lives in
+    # test_v2_conversation_multiselect.py.
     for action in (
-        "selectionMode",
         "selectedConversationIds",
-        "setSelectionMode",
-        "toggleConversationSelected",
+        "applyConversationSelection",
         "selectAllConversations",
         "clearConversationSelection",
     ):
@@ -247,8 +249,10 @@ def test_the_rail_can_select_several_conversations():
     assert store.count("selectedConversationIds.filter(") >= 2, (
         "removing and hiding a conversation must both prune the selection"
     )
+    # And so must a reload, which is how a search narrows the list under a live selection.
+    assert "pruneSelection(" in store, "reloading the feed must prune the selection"
 
-    assert 'type="checkbox"' in rail, "selection mode needs checkboxes"
+    assert 'type="checkbox"' in rail, "picking conversations needs checkboxes"
     assert "ConversationExportDialog" in rail, "the rail must be able to open the wizard"
 
     print("  ok  the rail supports multi-select and keeps it consistent")
