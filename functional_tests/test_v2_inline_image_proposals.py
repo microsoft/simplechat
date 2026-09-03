@@ -2,7 +2,7 @@
 """
 Functional test for V2 inline image generation proposals.
 
-Version: 0.261.029
+Version: 0.261.041
 Implemented in: 0.261.029
 
 A model can propose a generated image inside an ordinary reply by emitting a fenced
@@ -42,6 +42,7 @@ from test_support.versioning import assert_app_version_at_least  # noqa: E402
 IMPLEMENTED_IN = "0.261.029"
 
 SPEC_MODULE = V2_SRC / "lib" / "imageProposalSpec.ts"
+CARD_STATE_MODULE = V2_SRC / "lib" / "imageProposalCardState.ts"
 QUEUE_MODULE = V2_SRC / "lib" / "imageProposalQueue.ts"
 RICH_BLOCKS_MODULE = V2_SRC / "lib" / "richBlocks.ts"
 BLOCK_INDEX_MODULE = V2_SRC / "lib" / "rehypeRichBlockIndex.ts"
@@ -60,6 +61,7 @@ LOGIC_TEST = REPO_ROOT / "functional_tests" / "test_v2_inline_image_proposal_log
 
 V2_FILES = (
     SPEC_MODULE,
+    CARD_STATE_MODULE,
     QUEUE_MODULE,
     RICH_BLOCKS_MODULE,
     ENDPOINTS_MODULE,
@@ -80,7 +82,7 @@ def _read(path):
 def test_proposal_modules_exist():
     """Every piece of the V2 proposal pipeline is present."""
     print("Testing that the proposal modules exist...")
-    for path in (SPEC_MODULE, QUEUE_MODULE, CARD_COMPONENT, SCOPE_COMPONENT):
+    for path in (SPEC_MODULE, CARD_STATE_MODULE, QUEUE_MODULE, CARD_COMPONENT, SCOPE_COMPONENT):
         if not path.exists():
             raise AssertionError(f"Missing V2 image proposal module: {path}")
         print(f"  {path.relative_to(REPO_ROOT)} is present.")
@@ -367,7 +369,7 @@ def test_fence_is_wired_into_the_renderer_with_a_streaming_guard():
 
     if "IMAGE_PROPOSAL_LANGUAGE" not in markdown_source:
         raise AssertionError("AssistantMarkdown does not know the proposal fence.")
-    if "<InlineImageProposal source={source} />" not in markdown_source:
+    if not re.search(r"<InlineImageProposal\s+source=\{source\}", markdown_source):
         raise AssertionError("The fence does not render the proposal card.")
     # The rich-fence list moved to rehypeRichBlockIndex.ts, which both decides that a fence
     # loses its <pre> wrapper and numbers the fences a saved colour choice is filed under.

@@ -1,8 +1,9 @@
 // test_v2_inline_image_proposal_logic.mjs
 //
 // Runtime test for the V2 inline image proposal logic.
-// Version: 0.261.029
+// Version: 0.261.041
 // Implemented in: 0.261.029
+// Card identity and card state added in: 0.261.041
 //
 // The companion test, test_v2_inline_image_proposals.py, asserts that the V2 card agrees with
 // the classic client and the server about names, caps, paths and thresholds. Those are source
@@ -10,8 +11,9 @@
 //
 // This file executes the parts that are pure logic and where a quiet mistake would be
 // invisible until a user lost an image: reading a model-authored payload, reuniting an
-// approved image with the card that proposed it, and running approvals one at a time. Each of
-// those has a failure mode that renders perfectly and is simply wrong.
+// approved image with the card that proposed it, naming a card so its approval state survives
+// the card being rebuilt, and running approvals one at a time. Each of those has a failure
+// mode that renders perfectly and is simply wrong.
 //
 // Run directly with `node functional_tests/test_v2_inline_image_proposal_logic.mjs`. Requires
 // Node 22.6 or newer, which strips the TypeScript types so the real modules can be imported
@@ -25,8 +27,13 @@ import {
     normalizePrompt,
     parseImageProposal,
     proposalBadges,
+    proposalCardKey,
     proposalSourceMessageId,
 } from '../application/v2_ui/src/lib/imageProposalSpec.ts';
+import {
+    applyCardStatePatch,
+    IDLE_CARD_STATE,
+} from '../application/v2_ui/src/lib/imageProposalCardState.ts';
 import {
     describeQueuePosition,
     enqueueImageApproval,
@@ -347,6 +354,94 @@ check('normalizePrompt is defensive about non-strings', () => {
     assert.equal(normalizePrompt(undefined), '');
     assert.equal(normalizePrompt(null), '');
     assert.equal(normalizePrompt('  padded  '), 'padded');
+});
+
+/* ------------------------------- card identity ------------------------------- */
+
+/** A closed proposal fence carrying the given payload. */
+function proposalFence(payload) {
+    return ['```simpleimage', JSON.stringify(payload), '```'].join('\n');
+}
+
+check('a card is identified by its position among the fences', () => {
+    const message = [
+        proposalFence({ visualId: 'a', prompt: 'first' }),
+        proposalFence({ visualId: 'b', prompt: 'second' }),
+    ].join('\n\n');
+    const [first, second] = extractProposalSpecs(message);
+
+    // Two cards in one message must never share a key: the scope files their approval state
+    // under it, so a collision would show one card the other's progress.
+    assert.notEqual(proposalCardKey(first, 0), proposalCardKey(second, 1));
+    assert.equal(proposalCardKey(first, 0), 'block:0');
+    assert.equal(proposalCardKey(second, 1), 'block:1');
+});
+
+check('the key survives the card being rebuilt from the same message', () => {
+    const message = proposalFence({ visualId: 'a', prompt: 'first' });
+    const before = proposalCardKey(extractProposalSpecs(message)[0], 0);
+    const after = proposalCardKey(extractProposalSpecs(message)[0], 0);
+
+    // This is the whole point: re-parsing the same message has to name the same card, or an
+    // approval in flight loses the state it is reporting into.
+    assert.equal(before, after);
+});
+
+check('the key falls back to the spec when there is no block index', () => {
+    const withId = parseImageProposal(JSON.stringify({ visualId: 'slide_1', prompt: 'p' })).spec;
+    assert.equal(proposalCardKey(withId), 'visual:slide_1');
+
+    const withoutId = parseImageProposal(JSON.stringify({ prompt: 'a  multi\nline' })).spec;
+    assert.equal(proposalCardKey(withoutId), 'prompt:a multi line');
+
+    // A malformed proposal has no spec, and cannot be approved either, so one shared key is
+    // enough for all of them.
+    assert.equal(proposalCardKey(null), 'invalid');
+
+    // A negative or fractional index is not an index; it must not be trusted as a key.
+    assert.equal(proposalCardKey(withId, -1), 'visual:slide_1');
+    assert.equal(proposalCardKey(withId, 1.5), 'visual:slide_1');
+});
+
+/* -------------------------------- card state --------------------------------- */
+
+check('an unknown card starts from the idle state', () => {
+    const states = applyCardStatePatch({}, 'block:0', { status: 'queued' });
+    assert.equal(states['block:0'].status, 'queued');
+    assert.equal(states['block:0'].queuePosition, 0);
+    assert.equal(states['block:0'].failure, '');
+    assert.equal(states['block:0'].editing, false);
+    assert.equal(IDLE_CARD_STATE.status, 'idle');
+});
+
+check('a patch leaves the fields it does not mention alone', () => {
+    let states = applyCardStatePatch({}, 'block:0', { prompt: 'edited', editing: true });
+    states = applyCardStatePatch(states, 'block:0', { status: 'generating' });
+
+    assert.equal(states['block:0'].prompt, 'edited');
+    assert.equal(states['block:0'].editing, true);
+    assert.equal(states['block:0'].status, 'generating');
+});
+
+check('one card cannot disturb another', () => {
+    let states = applyCardStatePatch({}, 'block:0', { status: 'generating' });
+    states = applyCardStatePatch(states, 'block:1', { status: 'queued', queuePosition: 1 });
+
+    // The reported bug in one sentence: the first image arriving must not reset the others.
+    assert.equal(states['block:0'].status, 'generating');
+    assert.equal(states['block:1'].status, 'queued');
+    assert.equal(states['block:1'].queuePosition, 1);
+});
+
+check('a patch that changes nothing returns the same record', () => {
+    const states = applyCardStatePatch({}, 'block:0', { status: 'queued', queuePosition: 2 });
+
+    // The queue reports its position to every waiting card each time it moves, and most of
+    // those reports say what the card already knows. A new record for each would re-render
+    // every card in the message repeatedly for no visible change.
+    assert.equal(applyCardStatePatch(states, 'block:0', { queuePosition: 2 }), states);
+    assert.equal(applyCardStatePatch(states, 'block:0', {}), states);
+    assert.notEqual(applyCardStatePatch(states, 'block:0', { queuePosition: 1 }), states);
 });
 
 /* ----------------------------------- runner ---------------------------------- */
