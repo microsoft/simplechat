@@ -2,8 +2,8 @@
 # test_v2_admin_settings_normalization.py
 """
 Functional test for Admin Settings PATCH normalization.
-Version: 0.261.038
-Implemented in: 0.261.038
+Version: 0.261.039
+Implemented in: 0.261.039
 
 The V2 admin surface saves settings one section at a time through a JSON PATCH,
 so the server-rendered form's inline validation no longer runs. These checks pin
@@ -29,7 +29,7 @@ def test_numeric_values_are_clamped_to_declared_bounds():
     """An out-of-range logo scale would render an unusable home page."""
     print("Testing numeric clamping...")
 
-    assert_app_version_at_least("0.261.038")
+    assert_app_version_at_least("0.261.039")
 
     high, errors, _ = normalize({"landing_page_logo_scale_percent": 9000})
     assert not errors, errors

@@ -2,8 +2,8 @@
 # test_v2_admin_appearance_parity.py
 """
 Functional test pinning V1/V2 parity for the Admin Settings Appearance group.
-Version: 0.261.038
-Implemented in: 0.261.038
+Version: 0.261.039
+Implemented in: 0.261.039
 
 The V2 React admin surface renders from ``admin_settings_fields.py`` rather than
 from the server-rendered panes, so the two descriptions of the same settings can
@@ -86,7 +86,7 @@ def test_appearance_panes_match_navigation():
     """The panes this test reads must be the ones ADMIN_NAV puts in the group."""
     print("Testing Appearance pane list against ADMIN_NAV...")
 
-    assert_app_version_at_least("0.261.038")
+    assert_app_version_at_least("0.261.039")
 
     group = next((g for g in ADMIN_NAV if g["id"] == APPEARANCE_GROUP_ID), None)
     assert group, "ADMIN_NAV no longer defines an 'appearance' group."

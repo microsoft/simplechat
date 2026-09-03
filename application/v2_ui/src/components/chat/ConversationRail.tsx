@@ -4,10 +4,14 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { clsx } from 'clsx';
-import { MoreHorizontal, Pin, Search, Trash2, EyeOff, Pencil } from 'lucide-react';
+import { MoreHorizontal, Pin, Search, Trash2, EyeOff, LogOut, Pencil, Users } from 'lucide-react';
 import { useChatStore } from '../../stores/chatStore';
+import { useCollaborationStore } from '../../stores/collaborationStore';
+import { useBootstrapStore } from '../../stores/bootstrapStore';
 import { useUserSettingsStore } from '../../stores/userSettingsStore';
 import { workspaceBadge, type WorkspaceBadgeTone } from '../../lib/conversationBadges';
+import { canShareConversation, panelTargetForConversation } from '../../lib/sharing';
+import { isCollaborative } from '../../lib/types';
 import { Skeleton } from '../ui/primitives';
 import type { Conversation } from '../../lib/types';
 
@@ -68,8 +72,14 @@ function ConversationRow({ conversation }: { conversation: Conversation }) {
     const [menuOpen, setMenuOpen] = useState(false);
     const [renaming, setRenaming] = useState(false);
     const [draftTitle, setDraftTitle] = useState(conversation.title);
+    const openPanel = useCollaborationStore((state) => state.openPanel);
+    const collaborationEnabled = useBootstrapStore((state) =>
+        Boolean(state.data?.features?.enable_collaborative_conversations),
+    );
 
     const isActive = conversation.id === activeConversationId;
+    const shareable = collaborationEnabled && canShareConversation(conversation);
+    const shared = isCollaborative(conversation);
 
     const commitRename = () => {
         const trimmed = draftTitle.trim();
@@ -166,6 +176,24 @@ function ConversationRow({ conversation }: { conversation: Conversation }) {
                         >
                             <Pencil size={14} /> Rename
                         </button>
+                        {shareable && (
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setMenuOpen(false);
+                                    // The panel loads its own copy of the membership into its
+                                    // own slot. Loading it here as well would write the
+                                    // conversation on screen's slot with a different
+                                    // conversation's document.
+                                    openPanel(
+                                        panelTargetForConversation(conversation.id, conversation),
+                                    );
+                                }}
+                                className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-sm text-text-1 hover:bg-surface-2"
+                            >
+                                <Users size={14} /> {shared ? 'People' : 'Share'}
+                            </button>
+                        )}
                         <button
                             type="button"
                             onClick={() => {
@@ -194,7 +222,18 @@ function ConversationRow({ conversation }: { conversation: Conversation }) {
                             }}
                             className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-sm text-danger hover:bg-danger-soft"
                         >
-                            <Trash2 size={14} /> Delete
+                            {/* Named for what it will actually do. Only an owner can destroy
+                                a shared conversation for everybody; anybody else leaves it,
+                                and the thread carries on without them. */}
+                            {shared && !conversation.can_delete_conversation ? (
+                                <>
+                                    <LogOut size={14} /> Leave
+                                </>
+                            ) : (
+                                <>
+                                    <Trash2 size={14} /> Delete
+                                </>
+                            )}
                         </button>
                     </div>
                 </>

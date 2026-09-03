@@ -3,7 +3,7 @@
 """
 Functional regression test for home page logo upload storage quality.
 
-Version: 0.261.038
+Version: 0.261.039
 Implemented in: 0.241.059
 
 This test ensures that uploaded logos are no longer reduced to 100px tall
@@ -11,7 +11,7 @@ before storage. Instead, the admin upload pipeline preserves enough
 resolution for the home page logo control while capping stored height at
 500px to keep settings payloads bounded.
 
-The conversion helpers moved to ``functions_branding_images.py`` in 0.261.038
+The conversion helpers moved to ``functions_branding_images.py`` in 0.261.039
 so the V2 admin surface could accept the same uploads without a second
 implementation, so the source assertions follow them there.
 """

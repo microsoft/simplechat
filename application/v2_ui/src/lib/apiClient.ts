@@ -15,8 +15,13 @@
  * When the SPA is deployed to its own App Service, VITE_API_BASE is set at build time to
  * the Flask origin. That path additionally requires V2_UI_ALLOWED_ORIGIN to be set on the
  * Flask app so it emits CORS headers and trusts the origin for CSRF.
+ *
+ * `import.meta.env` is a Vite construct and is absent under any other loader, so it is read
+ * defensively. Without that, importing any module in this graph outside a Vite build — a
+ * functional test executing the real source, for instance — throws before a single line of
+ * the module under test runs.
  */
-export const API_BASE: string = import.meta.env.VITE_API_BASE ?? '';
+export const API_BASE: string = import.meta.env?.VITE_API_BASE ?? '';
 
 /** Cross-origin deployments must send credentials explicitly to carry the session cookie. */
 export const CREDENTIALS_MODE: RequestCredentials = API_BASE ? 'include' : 'same-origin';

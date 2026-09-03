@@ -2,8 +2,8 @@
 # test_v2_admin_field_renderer_coverage.py
 """
 Functional test that the V2 admin UI renders every field the schema can declare.
-Version: 0.261.038
-Implemented in: 0.261.038
+Version: 0.261.039
+Implemented in: 0.261.039
 
 The V2 admin surface is driven by ``admin_settings_fields.py``. That indirection has one
 silent failure mode: the schema can declare a field type, or name a bespoke component,
@@ -43,7 +43,7 @@ def test_every_field_type_has_a_renderer():
     """A declared type with no branch renders nothing at all."""
     print("Testing renderer coverage for every field type...")
 
-    assert_app_version_at_least("0.261.038")
+    assert_app_version_at_least("0.261.039")
 
     controls = read(FIELDS_TSX)
     page = read(PAGE_TSX)

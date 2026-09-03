@@ -2,8 +2,8 @@
 # test_v2_admin_settings_schema.py
 """
 Functional test for the Admin Settings field schema shape.
-Version: 0.261.038
-Implemented in: 0.261.038
+Version: 0.261.039
+Implemented in: 0.261.039
 
 The V2 admin surface renders whatever ``admin_settings_fields.py`` declares. A
 malformed entry does not raise anything server-side; it produces a control that
@@ -55,7 +55,7 @@ def test_field_types_are_known():
     """An unrecognised type would render as nothing at all."""
     print("Testing that every field declares a known type...")
 
-    assert_app_version_at_least("0.261.038")
+    assert_app_version_at_least("0.261.039")
 
     unknown = [
         f"{section_id}.{field.get('key') or field.get('component')}: {field.get('type')!r}"

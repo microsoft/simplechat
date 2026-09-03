@@ -1,13 +1,13 @@
 # test_pillow_psd_upload_hardening.py
 """
 Functional test for Pillow PSD upload hardening.
-Version: 0.261.038
+Version: 0.261.039
 Implemented in: 0.239.134
 
 This test ensures the application pins Pillow to a patched version and limits
 admin image uploads to the PNG and JPEG formats that the admin surfaces allow.
 
-The decoding allowlist moved into ``functions_branding_images.py`` in 0.261.038
+The decoding allowlist moved into ``functions_branding_images.py`` in 0.261.039
 so the V2 admin surface shares it. That makes the property to assert stronger
 than before: every upload path must reach Pillow through the one helper that
 passes an explicit ``formats`` allowlist, so no route can decode a PSD by
