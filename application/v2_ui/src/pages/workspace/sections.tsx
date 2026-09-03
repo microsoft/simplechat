@@ -43,9 +43,9 @@ export interface WorkspaceSectionContext {
  * How much room a section needs.
  *
  * Most sections are a column of rows and read better constrained to a comfortable measure.
- * The documents explorer is not: it carries its own navigation rail, details pane and status
- * bar, and it manages its own scrolling, so it needs the full width of the page and the full
- * height rather than being centred inside a narrower one.
+ * The documents explorer and the prompts workbench are not: each carries its own list, details
+ * pane and command bar, and each manages its own scrolling, so they need the full width and
+ * height of the page rather than being centred inside a narrower one.
  */
 export type WorkspaceSectionLayout = 'prose' | 'full';
 
@@ -92,6 +92,7 @@ export const WORKSPACE_SECTIONS: WorkspaceSectionDefinition[] = [
         group: 'knowledge',
         icon: MessageSquareQuote,
         blurb: 'Wording you have refined once and want to reuse in chat.',
+        layout: 'full',
         render: () => <PromptsSection />,
     },
     {

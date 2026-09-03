@@ -2,12 +2,13 @@
 // Per-message action row, differing by role.
 //
 // User messages can be edited; assistant messages can be rated and forked. Both can be
-// copied, retried, deleted, exported and reused as a prompt. Attempt navigation appears
-// only once more than one attempt exists.
+// copied, retried, deleted, exported, copied into the composer and saved as a reusable prompt.
+// Attempt navigation appears only once more than one attempt exists.
 
 import { useEffect, useRef, useState } from 'react';
 import { clsx } from 'clsx';
 import {
+    BookmarkPlus,
     BookOpen,
     Brain,
     ChevronLeft,
@@ -54,6 +55,13 @@ import {
 } from '../../lib/endpoints';
 import { buildMessageVisualAssets } from '../../lib/exportVisuals';
 import { synthesizeSpeech } from '../../lib/voice';
+import { suggestPromptName } from '../../lib/promptSlash';
+import { createPrompt } from '../../lib/workspaceApi';
+import {
+    EMPTY_PROMPT_DRAFT,
+    PromptEditorDialog,
+    type PromptDraft,
+} from '../prompts/PromptEditorDialog';
 
 function IconButton({
     label,
@@ -244,9 +252,11 @@ function downloadMarkdown(message: ChatMessage) {
 function OverflowMenu({
     message,
     onEdit,
+    onSaveAsPrompt,
 }: {
     message: ChatMessage;
     onEdit?: () => void;
+    onSaveAsPrompt: (text: string) => void;
 }) {
     const [open, setOpen] = useState(false);
     // The menu opens upward by default so it does not cover the next message, but near
@@ -375,7 +385,7 @@ function OverflowMenu({
                                 /* Clipboard access can be denied. */
                             });
                     })}
-                    {item('Use as prompt', <Clipboard size={14} />, () => {
+                    {item('Copy to composer', <Clipboard size={14} />, () => {
                         const composer = document.getElementById(
                             'composer-input',
                         ) as HTMLTextAreaElement | null;
@@ -394,6 +404,13 @@ function OverflowMenu({
                             composer.dispatchEvent(new Event('input', { bubbles: true }));
                             composer.focus();
                         }
+                    })}
+                    {/* Distinct from the entry above, which only fills the composer. This one
+                        keeps the wording, and was the thing "Use as prompt" sounded like it
+                        did but never has. */}
+                    {item('Save as prompt', <BookmarkPlus size={14} />, () => {
+                        const text = messageToPlainText(message);
+                        onSaveAsPrompt(text);
                     })}
                     {item('Download Markdown', <FileDown size={14} />, () =>
                         downloadMarkdown(message),
@@ -469,6 +486,51 @@ export function MessageActions({
     const sources = readSources(message as unknown as Json);
     const masks = readMaskState(message);
     const maskingAllowed = canMask(message, currentUserId);
+
+    /**
+     * Saving a message as a reusable prompt.
+     *
+     * Opened prefilled rather than saved outright: the message is a starting point, and the
+     * two things worth changing before it becomes a prompt -- a name that will read well in a
+     * list, and turning the specifics into `{{variables}}` -- are exactly what the editor is
+     * for. The classic interface has no equivalent, so this is new rather than parity.
+     */
+    const [promptDraft, setPromptDraft] = useState<PromptDraft | null>(null);
+    const [savingPrompt, setSavingPrompt] = useState(false);
+    const [promptError, setPromptError] = useState<string | null>(null);
+    const upsertPromptInCatalog = useBootstrapStore((state) => state.upsertPromptInCatalog);
+    const refreshBootstrap = useBootstrapStore((state) => state.refresh);
+
+    const savePromptDraft = async () => {
+        if (!promptDraft) {
+            return;
+        }
+        setSavingPrompt(true);
+        setPromptError(null);
+        try {
+            const created = await createPrompt(promptDraft.name.trim(), promptDraft.content, {
+                description: promptDraft.description.trim(),
+            });
+            // Applied locally as well as refetched, so the prompt is selectable in the composer
+            // straight away rather than after the bootstrap round trip lands.
+            upsertPromptInCatalog({
+                id: created?.id,
+                name: promptDraft.name.trim(),
+                content: promptDraft.content,
+                description: promptDraft.description.trim(),
+                scope_type: 'personal',
+            });
+            void refreshBootstrap();
+            setPromptDraft(null);
+            toast.success('Saved to your prompts');
+        } catch (error) {
+            setPromptError(
+                error instanceof Error ? error.message : 'Could not save the prompt.',
+            );
+        } finally {
+            setSavingPrompt(false);
+        }
+    };
 
     const copy = async () => {
         try {
@@ -669,8 +731,33 @@ export function MessageActions({
                     </IconButton>
                 )}
 
-                <OverflowMenu message={message} onEdit={onEdit} />
+                <OverflowMenu
+                    message={message}
+                    onEdit={onEdit}
+                    onSaveAsPrompt={(text) => {
+                        setPromptError(null);
+                        setPromptDraft({
+                            ...EMPTY_PROMPT_DRAFT,
+                            name: suggestPromptName(text),
+                            content: text,
+                        });
+                    }}
+                />
             </div>
+
+            {promptDraft ? (
+                <PromptEditorDialog
+                    draft={promptDraft}
+                    saving={savingPrompt}
+                    error={promptError}
+                    onChange={setPromptDraft}
+                    onSave={() => void savePromptDraft()}
+                    onCancel={() => {
+                        setPromptDraft(null);
+                        setPromptError(null);
+                    }}
+                />
+            ) : null}
         </div>
     );
 }
