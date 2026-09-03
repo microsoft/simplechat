@@ -67,6 +67,23 @@ export interface ConversationFeedQuery {
     cursor?: string | null;
 }
 
+/**
+ * What the bulk conversation routes answer with.
+ *
+ * They succeed partially rather than failing whole: an id the caller may not touch is
+ * reported in `failed_ids` and the rest of the batch still applies. Callers must read the
+ * counts rather than trusting the 200.
+ */
+export interface BulkConversationResult {
+    success?: boolean;
+    /** Set by bulk-pin and bulk-hide. */
+    updated_count?: number;
+    /** Set by delete_multiple_conversations. */
+    deleted_count?: number;
+    failed_ids?: string[];
+    action?: string;
+}
+
 export function fetchConversationFeed(
     query: ConversationFeedQuery = {},
     signal?: AbortSignal,
@@ -103,8 +120,34 @@ export const deleteConversation = (conversationId: string) =>
     api.delete<Json>(`/api/conversations/${encodeURIComponent(conversationId)}`);
 
 export const deleteConversations = (conversationIds: string[]) =>
-    api.post<Json>('/api/delete_multiple_conversations', {
+    api.post<BulkConversationResult>('/api/delete_multiple_conversations', {
         conversation_ids: conversationIds,
+    });
+
+/**
+ * Pin or unpin several conversations in one request.
+ *
+ * Unlike the single-conversation route this *sets* rather than toggles, which is what a
+ * mixed selection needs: toggling each row would leave the selection in the state it
+ * started, only inverted, rather than in the state the user asked for.
+ *
+ * Personal conversations only. The route matches on `user_id`, so a shared conversation's
+ * id comes back in `failed_ids`; see lib/conversationSelection.ts for the split.
+ */
+export const bulkPinConversations = (conversationIds: string[], action: 'pin' | 'unpin') =>
+    api.post<BulkConversationResult>('/api/conversations/bulk-pin', {
+        conversation_ids: conversationIds,
+        action,
+    });
+
+/** Hide or unhide several conversations at once. Personal conversations only, as above. */
+export const bulkHideConversations = (
+    conversationIds: string[],
+    action: 'hide' | 'unhide',
+) =>
+    api.post<BulkConversationResult>('/api/conversations/bulk-hide', {
+        conversation_ids: conversationIds,
+        action,
     });
 
 /**

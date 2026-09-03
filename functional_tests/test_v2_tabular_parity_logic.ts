@@ -1,8 +1,8 @@
 // test_v2_tabular_parity_logic.ts
 //
 // Runtime test for the V2 tabular parity rules.
-// Version: 0.261.056
-// Implemented in: 0.261.056
+// Version: 0.261.057
+// Implemented in: 0.261.057
 //
 // The companion test, test_v2_tabular_parity.py, asserts that the pieces are wired together:
 // the client reads the metadata keys the server writes, calls the routes that exist, and
