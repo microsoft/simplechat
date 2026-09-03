@@ -2,6 +2,22 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.009)**
+
+#### Bug Fixes
+
+*   **Shared Workspace File Approvals Are Visible To Approvers Again**
+    *   Fixed document access index candidate selection for workspace scope projections so pending-approval records are considered alongside already granted records.
+    *   Shared files staged for approval are intentionally not granted yet, so filtering only on `access_granted = true` could hide those files from approval experiences even though they were eligible for review.
+    *   The projection query now includes `approval_status = not_approved` rows while still requiring current-version projection records.
+    *   (Ref: `functions_document_access_index.py`, [Workspace Shared File Approval Visibility Fix](fixes/WORKSPACE_SHARED_FILE_APPROVAL_VISIBILITY_FIX.md))
+
+*   **Distroless Runtime Copy No Longer Fails On `/usr/lib64` Overlay Conflicts**
+    *   Fixed Docker BuildKit failures where `COPY --from=builder /odbc-runtime/ /` or `COPY --from=builder /playwright-runtime/ /` could abort with `cannot copy to non-directory ... /usr/lib64` when the distroless base exposes `/usr/lib64` as a non-directory entry.
+    *   Updated runtime staging to copy native shared libraries into `/odbc-runtime/usr/lib` and `/playwright-runtime/usr/lib` while continuing to source candidates from both `/usr/lib64` and `/usr/lib` in the builder stage.
+    *   This preserves SQL ODBC and Playwright Chromium runtime packaging while avoiding path-type collisions against evolving base-image filesystem layouts.
+    *   (Ref: `Dockerfile`, `test_sql_container_odbc_runtime.py`, `test_deep_research_chromium_build_opt_out.py`, [Distroless Runtime Overlay Path Fix](fixes/DISTROLESS_RUNTIME_OVERLAY_PATH_FIX.md))
+
 ### **(v0.261.007)**
 
 #### Bug Fixes
