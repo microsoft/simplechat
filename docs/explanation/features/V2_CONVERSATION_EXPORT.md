@@ -9,7 +9,7 @@ Before this, the V2 interface could export a *single message* as Word, PowerPoin
 draft, but had no way to export a conversation at all. Anyone who needed a transcript had to
 switch back to the classic interface.
 
-**Implemented in version:** 0.261.038
+**Implemented in version:** 0.261.040
 
 ## Dependencies
 

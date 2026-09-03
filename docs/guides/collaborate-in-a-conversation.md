@@ -57,6 +57,19 @@ Use a shared conversation when the discussion, prompts, AI responses, and genera
 
 9. Approve the file to make it downloadable, or deny it if it should not be released. Requesters cannot approve their own generated files.
 
+## In the V2 interface
+
+The same shared conversations work in the V2 interface, with the controls in different places.
+
+- **Share a conversation, or manage who is in one**: the people button in the chat header, or **Share** in the conversation's menu in the left rail. Both open the same panel, which also promotes members to admin, removes people, and lets you leave the conversation or delete it for everyone.
+- **Accept an invitation**: a prompt above the conversation offers **Join** and **Decline**. You can read an invited conversation before joining, but the composer stays disabled until you do.
+- **Mention somebody**: type `@` in the composer. The menu lists the people already in the conversation, then the models and agents you can address, then people you could add. Use the arrow keys and press **Tab** or **Enter** to accept the highlighted suggestion.
+- **Ask the assistant**: `@`-mention a model or agent, or turn on an assistant tool such as document search, web search, image generation, deep research, reading URLs, an agent, or a saved prompt. A message with none of those goes to the other participants only, exactly as in the classic interface.
+- **Reply to a specific message**: the reply button on any message. The reply shows what it is answering.
+- **Approve a generated file**: files waiting on your decision are listed above the conversation with **Approve** and **Deny**, rather than on the message that produced them.
+
+Retry, edit, attempt navigation, and fork are not offered in a shared conversation in either interface; those actions have no shared-conversation equivalent.
+
 ## Verify it worked
 
 The conversation appears with a shared or collaborative indicator, the participant list shows accepted or pending members, and new shared messages appear for each accepted participant. A completed `@` mention appears in the message text. A participant-generated file stays unavailable while approval is pending and becomes downloadable only after an authorized approver approves it.

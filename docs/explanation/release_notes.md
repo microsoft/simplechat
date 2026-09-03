@@ -2,7 +2,7 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
-### **(v0.261.038)**
+### **(v0.261.040)**
 
 #### New Features
 
@@ -21,6 +21,69 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   A diagram saved as a PNG, or embedded in an exported file, came out compressed into a narrow strip roughly 100 pixels wide regardless of its real size — a 1094×541 flowchart was rasterized at 100×541.
     *   The cause was the diagram's width being read as the number `100` from the value `100%`. The real dimensions were sitting in the diagram alongside it and are now used instead.
     *   (Ref: diagram PNG download, conversation export, SVG rasterizing)
+### **(v0.261.039)**
+
+#### New Features
+
+*   **The New Admin Settings Page Now Has The Rest Of The Appearance Settings**
+    *   The new interface's admin page could only ever show on/off switches, because it worked out what to display by looking for settings that happened to be true or false. Everything else was invisible — so the whole Appearance group amounted to a handful of switches and a note telling you to go back to the classic page.
+    *   Appearance is now complete. **Branding** has the application title, the home page logo size slider, and uploads for the light logo, dark logo and favicon, each showing the image you currently have. **Home Page Text** has the alignment control and the landing page editor, with a live preview that follows the alignment you pick. **Notices & Agreements** has the classification banner with both colour pickers and a preview strip, the AI notice, the full Terms of Use configuration, and the user agreement with its four apply-to options, a word counter and a **Test preview** button. **Pages & Links** has the custom pages settings, the full static page designer, the developer guide, and an external links editor you can add to, remove from and reorder.
+    *   (Ref: V2 admin settings, Appearance group, `admin_settings_fields.py`)
+
+*   **Changes Are Saved Together, When You Say So**
+    *   Switches used to save the instant you clicked them, which does not translate to typing into a text box. Edits now collect in a bar at the bottom of the page that tells you how many changes are waiting, with **Save changes** and **Discard**. `Ctrl`/`Cmd`+`S` saves, and closing the tab with unsaved edits asks first.
+    *   This also fixes something subtler: the Terms of Use and AI notice re-prompt every user whenever their wording changes. Saving on every keystroke would have re-prompted everyone once per character typed.
+    *   (Ref: V2 admin settings, save bar)
+
+*   **Rejected Settings Now Explain Themselves**
+    *   Values are checked before anything is written, and a rejected save comes back with the reason attached to the control that caused it — a colour that is not valid hex, a link that is not an http or https address, a cancel redirect that would leave the site unsafely. Nothing is saved unless everything in the batch is valid, so a save can no longer land half-applied.
+    *   The checks reuse the same code the classic page uses, so the two interfaces agree about what a valid value is.
+    *   (Ref: V2 admin settings, settings validation)
+
+#### Bug Fixes
+
+*   **Navigation Links Can No Longer Be Given An Unsafe Address**
+    *   External navigation links saved through the new admin page are now restricted to local paths and http or https addresses. Previously any text was accepted and placed directly into the link, which allowed a `javascript:` address into the navigation bar on every page.
+    *   (Ref: external links, navigation)
+
+*   **Logo And Favicon Handling Now Lives In One Place**
+    *   Image conversion was written into the classic settings page. Both admin pages now share one implementation, so a logo is stored identically no matter where it was uploaded from, and the PNG/JPEG-only restriction that keeps unexpected image formats away from the image library applies to every upload path.
+    *   (Ref: `functions_branding_images.py`, logo and favicon uploads)
+
+*   **Three Tests That Could Not Fail Correctly**
+    *   The Pillow security test pinned an exact dependency version and the custom logo test looked for help text in a file it had moved out of, so both reported problems that were not real while no longer checking the thing they were written for. They now assert a minimum version and read the composed template.
+    *   (Ref: functional tests, version assertions)
+
+### **(v0.261.038)**
+
+#### Bug Fixes
+
+*   **Shared Conversations Opened Empty In The V2 Interface**
+    *   Clicking a shared conversation in the new interface showed a thread with no messages in it. The interface loaded every conversation's messages from the personal chat API, which does not hold shared conversations and answers with an empty list rather than an error, so the conversation opened successfully with nothing in it — and remained the target of the next message sent.
+    *   Shared conversations are now read from the collaboration API they actually live in, in both the personal and the group case.
+    *   (Ref: V2 chat, `/api/get_messages`, `/api/collaboration/conversations`)
+
+#### New Features
+
+*   **Shared Conversations In The V2 Interface**
+    *   The new interface now supports shared conversations in full, matching the classic one. Both shared personal and shared group conversations can be read, replied to and managed there.
+    *   **Messages say who wrote them.** Another participant's message appears on the left with their name above it, and your own on the right as before. Uploads shared into the conversation are shown as named attachments, and a message that asked the assistant is labelled as such.
+    *   **The assistant only answers when asked.** As in the classic interface, a message in a shared conversation goes to the other people in it and not to the model — unless it `@`-mentions a model or an agent, or you have turned on an assistant tool such as document search, web search, image generation, deep research, reading URLs, an agent or a saved prompt. Tagging a model or agent uses that one for the message, whatever the pickers hold.
+    *   **Type `@` to mention somebody.** The menu offers the people already in the conversation, the models and agents you can address, and — if you can manage members — people you could add. Choosing one of the last group invites them.
+    *   **The conversation stays live.** Messages other people write appear as they are sent, along with a "typing" indicator, and deletions and masks applied by others are reflected straight away. You are told when somebody mentions you.
+    *   **Reply to a specific message** with the reply button on any message; the reply shows what it is answering.
+    *   **Share an existing conversation** from the new **people** button in the chat header, or **Share** in the conversation's menu in the left rail. The same panel manages who is in the conversation, promotes members to admin, removes people, and lets you leave it or delete it for everyone. What you are offered follows what you are actually allowed to do.
+    *   **Invitations** are shown above the conversation with **Join** and **Decline**. You can read an invited conversation before joining, so you can see what you are being invited to.
+    *   **Files the assistant generates** in a shared conversation are held back until approved, and anything waiting on your decision is listed above the thread with Approve and Deny.
+    *   Retry, edit, attempt navigation and fork are not offered in a shared conversation, matching the classic interface — those actions have no equivalent there.
+    *   Requires **Collaborative conversations** to be enabled in admin settings. With it off, none of these controls appear.
+    *   (Ref: V2 chat, collaboration API, participants panel, mentions, live updates)
+
+#### User Interface Enhancements
+
+*   **Mentioning Somebody No Longer Notifies The Wrong Person**
+    *   Where one person's display name is the start of another's — "Ada" and "Ada Lovelace" — writing "@Ada Lovelace" also counted as mentioning "Ada", and notified them. The longer name now claims its own text, so only the person actually named is notified. Naming both people in one message still notifies both.
+    *   (Ref: shared conversations, mentions)
 
 ### **(v0.261.037)**
 

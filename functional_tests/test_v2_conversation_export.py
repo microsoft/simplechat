@@ -2,8 +2,8 @@
 """
 Functional test for conversation export in the V2 (React) interface.
 
-Version: 0.261.038
-Implemented in: 0.261.038
+Version: 0.261.040
+Implemented in: 0.261.040
 
 The V2 interface could export a single message as Word, PowerPoint or an email draft, but it
 could not export a conversation at all — the classic interface's export wizard had no V2
@@ -37,7 +37,7 @@ sys.path.insert(0, str(REPO_ROOT / "functional_tests"))
 
 from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
-IMPLEMENTED_IN = "0.261.038"
+IMPLEMENTED_IN = "0.261.040"
 
 EXPORT_LIB = V2_SRC / "lib" / "conversationExport.ts"
 ENDPOINTS_TS = V2_SRC / "lib" / "endpoints.ts"

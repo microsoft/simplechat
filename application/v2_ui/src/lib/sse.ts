@@ -347,6 +347,26 @@ export async function reattachChatStream(
 }
 
 /**
+ * Options that let a shared conversation reuse this transport.
+ *
+ * A shared conversation streams through `/api/collaboration/conversations/<id>/stream`,
+ * which bridges to `/api/chat/stream` internally and re-emits its frames, so every handler
+ * and the whole parser apply unchanged and only the URL differs.
+ *
+ * Recovery is the one thing that does not carry over. `/api/chat/stream/reattach` is keyed
+ * on the conversation the generation actually runs in, which for a shared conversation is a
+ * hidden source conversation the browser is never told the id of. Reattaching with the
+ * shared conversation's id would address a conversation that endpoint has never heard of,
+ * so recovery must be switched off rather than allowed to fail.
+ */
+export interface ChatStreamOptions {
+    /** Endpoint to POST to. Defaults to the personal chat stream. */
+    url?: string;
+    /** Whether a dropped transport may be reattached to. Defaults to true. */
+    allowRecovery?: boolean;
+}
+
+/**
  * Open a chat stream and dispatch frames to the supplied handlers.
  *
  * Resolves once the stream reaches a terminal state. Aborting via `signal` resolves with
@@ -360,6 +380,7 @@ export async function streamChat(
     body: ChatStreamRequest,
     handlers: ChatStreamHandlers,
     signal?: AbortSignal,
+    options: ChatStreamOptions = {},
 ): Promise<ChatStreamResult> {
     const result: ChatStreamResult = {
         accumulated: '',
@@ -388,7 +409,7 @@ export async function streamChat(
 
     let response: Response;
     try {
-        response = await fetch(apiUrl('/api/chat/stream'), {
+        response = await fetch(options.url ?? apiUrl('/api/chat/stream'), {
             method: 'POST',
             credentials: CREDENTIALS_MODE,
             headers: {
@@ -429,7 +450,7 @@ export async function streamChat(
         await consumeStreamResponse(response, trackingHandlers, result, signal, captureError);
     }
 
-    if (pendingError && !signal?.aborted && conversationId) {
+    if (pendingError && !signal?.aborted && conversationId && options.allowRecovery !== false) {
         // The answer is generated on the server and outlives the HTTP connection, so a
         // dropped transport is recoverable. attachToLiveStream reports its own failures.
         const attached = await attachToLiveStream(
@@ -451,14 +472,22 @@ export async function streamChat(
     return result;
 }
 
-/** Ask the server to stop generating. The stream itself ends with a cancelled frame. */
-export async function cancelStream(conversationId: string): Promise<void> {
-    await fetch(apiUrl(`/api/chat/stream/cancel/${encodeURIComponent(conversationId)}`), {
-        method: 'POST',
-        credentials: CREDENTIALS_MODE,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ reason: 'user_requested' }),
-    }).catch(() => {
+/**
+ * Ask the server to stop generating. The stream itself ends with a cancelled frame.
+ *
+ * `url` overrides the endpoint for a shared conversation, whose cancel route resolves the
+ * hidden source conversation before reaching the same stream registry.
+ */
+export async function cancelStream(conversationId: string, url?: string): Promise<void> {
+    await fetch(
+        url ?? apiUrl(`/api/chat/stream/cancel/${encodeURIComponent(conversationId)}`),
+        {
+            method: 'POST',
+            credentials: CREDENTIALS_MODE,
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ reason: 'user_requested' }),
+        },
+    ).catch(() => {
         /* Best effort: the stream is torn down client-side regardless. */
     });
 }

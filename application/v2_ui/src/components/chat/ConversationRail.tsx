@@ -15,12 +15,18 @@ import {
     Search,
     Trash2,
     EyeOff,
+    LogOut,
     Pencil,
+    Users,
     X,
 } from 'lucide-react';
 import { useChatStore } from '../../stores/chatStore';
+import { useCollaborationStore } from '../../stores/collaborationStore';
+import { useBootstrapStore } from '../../stores/bootstrapStore';
 import { useUserSettingsStore } from '../../stores/userSettingsStore';
 import { workspaceBadge, type WorkspaceBadgeTone } from '../../lib/conversationBadges';
+import { canShareConversation, panelTargetForConversation } from '../../lib/sharing';
+import { isCollaborative } from '../../lib/types';
 import { Skeleton } from '../ui/primitives';
 import { ConversationExportDialog } from './ConversationExportDialog';
 import type { Conversation } from '../../lib/types';
@@ -91,9 +97,15 @@ function ConversationRow({
     const [menuOpen, setMenuOpen] = useState(false);
     const [renaming, setRenaming] = useState(false);
     const [draftTitle, setDraftTitle] = useState(conversation.title);
+    const openPanel = useCollaborationStore((state) => state.openPanel);
+    const collaborationEnabled = useBootstrapStore((state) =>
+        Boolean(state.data?.features?.enable_collaborative_conversations),
+    );
 
     const isActive = conversation.id === activeConversationId;
     const isSelected = selectedConversationIds.includes(conversation.id);
+    const shareable = collaborationEnabled && canShareConversation(conversation);
+    const shared = isCollaborative(conversation);
 
     const commitRename = () => {
         const trimmed = draftTitle.trim();
@@ -146,6 +158,9 @@ function ConversationRow({
                         onChange={() => toggleConversationSelected(conversation.id)}
                         className="h-4 w-4 shrink-0 accent-[var(--accent)]"
                     />
+                    {conversation.is_pinned && (
+                        <Pin size={12} className="shrink-0 fill-current opacity-70" />
+                    )}
                     <span className="min-w-0 flex-1">
                         <span className="block truncate text-sm">
                             {conversation.title || 'Untitled conversation'}
@@ -218,6 +233,24 @@ function ConversationRow({
                         >
                             <Pencil size={14} /> Rename
                         </button>
+                        {shareable && (
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setMenuOpen(false);
+                                    // The panel loads its own copy of the membership into its
+                                    // own slot. Loading it here as well would write the
+                                    // conversation on screen's slot with a different
+                                    // conversation's document.
+                                    openPanel(
+                                        panelTargetForConversation(conversation.id, conversation),
+                                    );
+                                }}
+                                className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-sm text-text-1 hover:bg-surface-2"
+                            >
+                                <Users size={14} /> {shared ? 'People' : 'Share'}
+                            </button>
+                        )}
                         <button
                             type="button"
                             onClick={() => {
@@ -256,7 +289,18 @@ function ConversationRow({
                             }}
                             className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-sm text-danger hover:bg-danger-soft"
                         >
-                            <Trash2 size={14} /> Delete
+                            {/* Named for what it will actually do. Only an owner can destroy
+                                a shared conversation for everybody; anybody else leaves it,
+                                and the thread carries on without them. */}
+                            {shared && !conversation.can_delete_conversation ? (
+                                <>
+                                    <LogOut size={14} /> Leave
+                                </>
+                            ) : (
+                                <>
+                                    <Trash2 size={14} /> Delete
+                                </>
+                            )}
                         </button>
                     </div>
                 </>

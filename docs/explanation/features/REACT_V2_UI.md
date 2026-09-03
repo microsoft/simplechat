@@ -185,13 +185,41 @@ images are already served as static files.
 
 Blueprint `backend_v2_admin` — `login_required`, `admin_required`.
 
-Returns the **raw** settings document plus the admin navigation. Admin settings are
-deliberately not sanitized: sanitization removes the keys, secrets and endpoint
-configuration that an administrator is there to manage. Access is gated on the Admin role
-at both the blueprint guard and the route decorator.
+Returns the **raw** settings document, the admin navigation, the field schema and a
+description of the stored branding images. Admin settings are deliberately not sanitized:
+sanitization removes the keys, secrets and endpoint configuration that an administrator is
+there to manage. Access is gated on the Admin role at both the blueprint guard and the
+route decorator.
 
-`PATCH` applies a partial update, so the V2 admin surface can toggle a single capability
-without posting the entire settings form.
+| Key | What it carries |
+| --- | --- |
+| `settings` | The raw settings document. |
+| `admin_nav` | Group → tab → section structure, from `admin_settings_nav.py`. |
+| `field_schema` | Section id → declared fields, from `admin_settings_fields.py`. |
+| `branding_assets` | Presence, version and URL of each logo and the favicon. The base64 blobs are never returned. |
+
+`PATCH` applies a partial update. Supplied values are normalized against the field schema
+before anything is written, and the update is applied only if every key validates, so a
+save never lands half-applied. A rejected save returns `400` with a `field_errors` map so
+the UI can put each message next to the control that caused it.
+
+Values that are advisory rather than invalid — an agreement longer than the recommended
+200 words, for example — are returned in a `warnings` map and still saved, matching what
+the server-rendered form does.
+
+### `POST /api/v2/admin/settings/branding-image`
+
+Blueprint `backend_v2_admin` — `login_required`, `admin_required`. Multipart.
+
+Accepts `target` (`logo`, `logo_dark` or `favicon`) and `file`. Branding images cannot ride
+along with a JSON `PATCH`, and they have to be converted before they can be stored, so they
+get their own endpoint.
+
+The conversion is `functions_branding_images.py`, shared with the server-rendered form, so
+an image uploaded through either interface is stored identically: PNG and JPEG only, logos
+capped at 500px tall, favicons squared off to a 32×32 ICO. Each successful upload bumps the
+matching version counter, because the static file keeps a stable name and browsers would
+otherwise keep serving the previous image.
 
 ## Interface
 
@@ -713,18 +741,92 @@ The server-rendered admin page nests 14 groups → 46 tabs → 96 sections, so f
 toggle can take several clicks through two levels of tabs.
 
 V2 flattens the same structure: a slim category rail for the 14 groups, a single scrollable
-pane of sections, and a search box that matches across every section, tab, group and
-capability key at once. Pressing `/` focuses search from anywhere on the page. Typing
-`retention` or `data lifecycle` both find the retention settings.
+pane of sections, and a search box that matches across every section, tab, group, setting
+key, label and help string at once. Pressing `/` focuses search from anywhere on the page.
+Typing `retention` or `data lifecycle` both find the retention settings.
 
 The structure still comes from `admin_settings_nav.py`, so it cannot drift from the classic
-page. Capability keys are associated with sections by matching word stems between the key
-and the section id; anything that cannot be matched is collected under "Other capabilities"
-rather than hidden, because a silently missing toggle is worse than a misfiled one.
+page.
 
-Toggles save individually via `PATCH`, with the switch rolling back if the request fails.
-Settings that need more than a switch — endpoints, keys, prompts, connection tests — remain
-on the classic admin page, which is linked from the bottom of the V2 page.
+#### Where the controls come from
+
+Two sources feed the page, and which one a section uses depends on whether it has been
+described yet.
+
+**Declared fields.** `admin_settings_fields.py` maps a section id to an ordered list of
+fields, each carrying the type, label, help text, default, bounds, options and visibility
+dependency a generic renderer needs. Everything in the Appearance group is described this
+way, which is what allows V2 to show titles, colour pickers, selects, ranges, markdown
+editors, image uploads and repeatable lists rather than switches alone.
+
+**The `enable_*` fallback.** A section with no declaration is still discovered by scanning
+the settings document for booleans and matching each key to a section by shared word stems.
+Anything unmatched is collected under "Other capabilities" rather than hidden, because a
+silently missing toggle is worse than a misfiled one. This is how the whole page originally
+worked; it stays so undescribed groups keep functioning, and it retires one group at a time
+as each is described.
+
+A key that has a declared field is excluded from the fallback scan, so a setting is never
+rendered twice.
+
+#### Saving
+
+Edits buffer into a draft and save together through a single `PATCH`, from a sticky bar
+that reports how many changes are pending and offers **Save changes** or **Discard**.
+`Ctrl`/`Cmd`+`S` saves, and closing the tab with pending edits prompts first.
+
+Buffering is not only a UI preference. Terms of Use and the AI notice derive a content
+version from their text and frequency, and every new version re-prompts every user. Saving
+on each keystroke would mint a version per character.
+
+Two things save immediately instead, because they are not part of the settings document:
+branding image uploads, which need server-side conversion before anything can be previewed,
+and custom page metadata, which lives in its own Cosmos container.
+
+#### Appearance group
+
+| Tab | What V2 now renders |
+| --- | --- |
+| Branding | Application title, show-logo and hide-title switches, a 50–500% home page logo size slider, light and dark logo uploads and a favicon upload, each with a live preview |
+| Branding → Home Page Text | Markdown alignment, editor toggle, and the landing page text with a live preview that follows the chosen alignment |
+| Branding → Appearance | Dark mode and left navigation defaults |
+| Notices & Agreements | Classification banner with two colour pickers and a live preview; the AI notice text and display behaviour; the full Terms of Use configuration; the user agreement with its four apply-to targets, a word counter and a **Test preview** dialog |
+| Pages & Links | Custom pages with a restart acknowledgement, menu options and the full static page designer; external links as an add, remove and reorder editor |
+
+The static page designer writes to the same `/api/admin/custom-pages` CRUD as the classic
+designer, so a page created in either interface is identical. Python-registered pages are
+listed but not editable, because they are defined in code.
+
+#### Keeping the two interfaces in step
+
+The schema is a second description of settings the server-rendered panes also describe, so
+it could drift. `functional_tests/test_v2_admin_appearance_parity.py` reads the three
+Appearance panes, collects every form field name they submit, and fails unless each one is
+claimed by the schema — directly, through the documented `LEGACY_FIELD_NAMES` aliases where
+the two shapes differ, or through an explicit exemption. It also checks the reverse
+direction, so the schema cannot invent a setting nothing reads, and compares select option
+values and range bounds between the two.
+
+`LEGACY_FIELD_NAMES` records the places the shapes genuinely differ:
+
+| Server-rendered form field | Settings key |
+| --- | --- |
+| `user_agreement_apply_personal` / `_group` / `_public` / `_chat` | `user_agreement_apply_to` (array) |
+| `external_links_json` | `external_links` (array of `{label, url}`) |
+| `logo_file` / `logo_dark_file` / `favicon_file` | `custom_logo_base64` / `custom_logo_dark_base64` / `custom_favicon_base64` |
+| `custom_pages_restart_acknowledged` | An acknowledgement on `enable_custom_pages`, never stored |
+
+#### Adding a group
+
+Describing another group is a Python-only change: add its sections to
+`ADMIN_SETTINGS_FIELDS`, extend the parity test to cover the group's panes, and the V2 page
+renders the new controls without a front-end change. A field type the renderer does not
+implement is caught by `test_v2_admin_field_renderer_coverage.py` rather than silently
+drawing nothing.
+
+Groups that still rely on the fallback scan link to the classic admin page for the settings
+that need more than a switch. That link is now shown only for those groups, since it is
+misleading once a group is fully described.
 
 ### Workspace
 

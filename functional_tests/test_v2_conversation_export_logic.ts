@@ -1,8 +1,8 @@
 // test_v2_conversation_export_logic.ts
 // Behavioural checks for the V2 conversation export logic.
 //
-// Version: 0.261.038
-// Implemented in: 0.261.038
+// Version: 0.261.040
+// Implemented in: 0.261.040
 //
 // The V2 interface has no unit test runner, so this follows test_v2_visual_style_logic.ts: it
 // is bundled with the esbuild Vite already brings in and run under node by
