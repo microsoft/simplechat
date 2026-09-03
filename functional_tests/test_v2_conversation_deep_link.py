@@ -2,8 +2,9 @@
 """
 Functional test for conversation deep linking in the V2 interface.
 
-Version: 0.261.032
+Version: 0.261.039
 Implemented in: 0.261.032
+Kind resolution moved to a single endpoint in: 0.261.039
 
 The classic interface has supported linking straight to a conversation since v0.237.001:
 chat-onload.js reads ?conversationId= (or the older ?conversation_id=) on load, and
@@ -199,10 +200,9 @@ def test_a_dead_link_is_reported_and_does_not_strand_itself():
     # the URL, and leave it as the target of the next message sent.
     #
     # Since v0.261.038 the probe is `resolveConversationKind`, because the question "does
-    # this exist" and the question "which API family owns it" have the same answer: it asks
-    # the personal metadata endpoint, which 404s and 403s, and then the collaboration one,
-    # which does the same. `requireExists` is what makes a conversation neither recognises a
-    # rejection rather than a default.
+    # this exist" and the question "which API family owns it" have the same answer.
+    # `requireExists` is what makes a conversation the server does not recognise a rejection
+    # rather than a default.
     existence_check = body.index(
         "await resolveConversationKind(conversationId, { requireExists: true })"
     )
@@ -216,22 +216,27 @@ def test_a_dead_link_is_reported_and_does_not_strand_itself():
         "/api/get_messages answers 200 with an empty list when it does not"
     )
 
-    # The probe itself must still be a real existence check against both families, rather
+    # The probe itself must still be a real existence check covering both families, rather
     # than something that quietly defaults.
     resolver = re.search(
         r"async function resolveConversationKind\((.|\n)*?\n\}", source
     )
     assert resolver, "resolveConversationKind should be implemented"
     resolver_body = resolver.group(0)
-    assert "await fetchConversationMetadata(conversationId)" in resolver_body, (
-        "The personal metadata endpoint is what answers 404 and 403 for a personal conversation"
+
+    # Since v0.261.039 one endpoint answers for both families. It used to call the personal
+    # metadata endpoint and read its 404 as "then it is a shared one", which worked but made
+    # the browser log a failed request for every link to a shared conversation.
+    assert "await fetchConversationKind(conversationId)" in resolver_body, (
+        "One endpoint must answer both which family owns the conversation and whether it "
+        "exists, without a 404 standing in for part of the answer"
     )
-    assert "await fetchCollaborationConversation(conversationId)" in resolver_body, (
-        "A shared conversation is not in the personal metadata endpoint and must be probed "
-        "through its own"
+    assert "fetchConversationMetadata(" not in resolver_body, (
+        "The personal metadata endpoint is no longer the probe, and calling it here would "
+        "bring back the console error the kind endpoint removed"
     )
     assert "if (options.requireExists)" in resolver_body, (
-        "A link naming a conversation neither endpoint recognises must be rejected, not "
+        "A link naming a conversation the server does not recognise must be rejected, not "
         "defaulted to personal"
     )
 

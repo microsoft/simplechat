@@ -15,6 +15,7 @@ import type {
     ChatMessage,
     ChatStreamRequest,
     Citation,
+    CollaborationConversation,
     ConversationFeedPage,
     ConversationMetadata,
     ConversationSummary,
@@ -134,6 +135,34 @@ export const markConversationRead = (conversationId: string, isCollaborative = f
 export const fetchConversationMetadata = (conversationId: string, signal?: AbortSignal) =>
     api.get<ConversationMetadata>(
         `/api/conversations/${encodeURIComponent(conversationId)}/metadata`,
+        signal,
+    );
+
+/** Which family of endpoints a conversation belongs to. */
+export type ConversationKind = 'personal' | 'collaborative';
+
+/** Response of GET /api/conversations/<id>/kind. */
+export interface ConversationKindResponse {
+    conversation_id: string;
+    kind: ConversationKind;
+    /** Present only for a shared conversation, so opening one costs a single request. */
+    conversation?: CollaborationConversation;
+}
+
+/**
+ * Resolve whether a conversation is personal or shared, and confirm it exists.
+ *
+ * Needed for a conversation reached from a link, which is not in the loaded rail and so has no
+ * row to read a kind from. Neither message endpoint can stand in for this: both answer 200 with
+ * an empty list for a conversation that is not there, so a deleted one would otherwise open as
+ * an empty chat and stay in the address bar.
+ *
+ * A 404 covers "no such conversation" and "not yours" alike; the server does not distinguish
+ * them, and neither should a caller.
+ */
+export const fetchConversationKind = (conversationId: string, signal?: AbortSignal) =>
+    api.get<ConversationKindResponse>(
+        `/api/conversations/${encodeURIComponent(conversationId)}/kind`,
         signal,
     );
 
