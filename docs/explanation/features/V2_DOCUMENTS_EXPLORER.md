@@ -11,7 +11,6 @@ and deleting — so that browsing by tag and administering tags are no longer co
 same toolbar.
 
 **Implemented in version:** `0.261.045`
-
 **Dependencies**
 
 | Requirement | Why |
@@ -147,17 +146,20 @@ become a way around it in the other.
 
 ### Settings
 
-Two new keys, whitelisted in `route_backend_users.py` and declared in
+Three new keys, whitelisted in `route_backend_users.py` and declared in
 `WRITABLE_USER_SETTING_KEYS`:
 
 | Key | Contents |
 |---|---|
 | `v2DocumentsPrefs` | View mode, visible columns, page size, details pane state, sort |
 | `v2DocumentSavedViews` | The saved views pinned in the rail |
+| `v2WorkspaceRailCollapsed` | Whether the workspace section rail shows icons only |
 
 Namespaced rather than shared with the classic interface, which stores its own view mode in
 `localStorage` under `personalWorkspaceViewPreference` and offers four modes to this
-interface's two.
+interface's two. `v2WorkspaceRailCollapsed` is likewise separate from `v2RailCollapsed`, which
+belongs to the application shell — the two rails sit side by side, and collapsing one to make
+room should not collapse the other.
 
 ### The Tags section
 
@@ -236,6 +238,50 @@ somewhere arbitrary later.
 Save with **Save view** in the command bar, which appears once anything is narrowing the list.
 Right-click a view in the rail to remove it.
 
+### Reclaiming width
+
+The workspace section rail collapses to icons with the control at its top, remembered per
+user in `v2WorkspaceRailCollapsed`. Collapsed entries keep their labels as tooltips and as
+screen-reader text. This is separate from the application shell's own rail, so the two can be
+collapsed independently.
+
+### Searching
+
+The box searches shortly after you stop typing, or immediately on **Enter**. **Escape**
+clears it.
+
+The input is bound to what you have typed rather than to the debounced query value. Binding a
+controlled input to the debounced value reverts every keystroke until the debounce catches up,
+which drops characters when typing at speed.
+
+### Bulk operations and progress
+
+Tagging and deleting are sent in batches of `BULK_BATCH_SIZE` documents, and a determinate
+progress bar reports how far through the selection the work is.
+
+This is not cosmetic. Server-side, tagging one document costs a cross-partition query, a
+document write, and an update to every one of its search-index chunks; deleting likewise
+removes index chunks as well as the record. A single request covering a large selection
+therefore runs for a long time, and behind an indeterminate spinner that is indistinguishable
+from a hang. Batching makes the progress real and each request short.
+
+The progress task is cleared in a `finally` on every path, so a failed batch reports itself
+and the bar comes down rather than staying up forever.
+
+### Re-extraction
+
+The pane states the mode the selection is currently on, marks that option as **(current)**,
+and offers the other one as *Switch to …*. Previously it showed Standard and Enhanced as two
+equal buttons with nothing indicating which was already in effect, so changing it meant
+guessing and then checking.
+
+- Only PDFs and images go through Document Intelligence. For any other file the control is not
+  shown, and in a mixed selection the documents it does not apply to are named and left alone.
+- A selection spanning both modes reports **Mixed**; one where no mode was ever recorded
+  reports **Not recorded**. Those are different situations and are not conflated.
+- Enhanced is disabled with a reason when `enable_enhanced_extraction` is off, because the
+  reprocess route rejects a request for `layout` outright in that case.
+
 ### Deleting
 
 Bulk delete reports per document. When the server refuses one — because it was uploaded
@@ -246,8 +292,8 @@ the reason, and offers to go ahead anyway.
 
 | Test | Covers |
 |---|---|
-| `functional_tests/test_v2_documents_explorer.py` | Route guards, shared delete guard, settings whitelist, section registration on both sides, V1 non-regression, endpoint coverage, composition, selection model, view modes, no CDN assets |
-| `functional_tests/test_v2_documents_explorer_logic.ts` | 58 behavioural checks over the query builder, selection algebra, filter chips, status derivation, formatting, pagination, facets and saved views |
+| `functional_tests/test_v2_documents_explorer.py` | Route guards, shared delete guard, settings whitelist, section registration on both sides, V1 non-regression, endpoint coverage, composition, selection model, view modes, search binding, batched progress, the re-extract control, the collapsible rail, no CDN assets |
+| `functional_tests/test_v2_documents_explorer_logic.ts` | 67 behavioural checks over the query builder, selection algebra, filter chips, status derivation, formatting, pagination, facets, saved views, batching and extraction-mode summarisation |
 
 The Python test additionally *executes* the new server helpers — `sort_documents`,
 `filter_documents_by_place`, `build_personal_document_facets` — by extracting them from source

@@ -9,13 +9,14 @@
 // Metadata is presented, not previewed. There is no general document-preview endpoint, so
 // promising a preview here would mean promising something the server cannot supply.
 
-import { clsx } from 'clsx';
 import {
+    Check,
     Download,
     FileStack,
     MessageSquare,
     PanelRightClose,
     Pencil,
+    RefreshCw,
     Share2,
     Sparkles,
     Tag as TagIcon,
@@ -27,11 +28,15 @@ import {
     commonTags,
     documentDate,
     documentDisplayName,
+    extractionMode as documentExtractionMode,
+    extractionModeLabel,
     formatAbsoluteDate,
     formatFileSize,
     normalizeStringList,
     normalizeTags,
+    summarizeExtraction,
     totalFileSize,
+    type ExtractionMode,
 } from '../../lib/documentExplorer';
 import { GlassButton } from '../ui/primitives';
 import {
@@ -66,6 +71,13 @@ export interface DocumentActionAvailability {
     extractMetadata: boolean;
     sharing: boolean;
     classification: boolean;
+    /**
+     * Whether Enhanced extraction is switched on for the deployment.
+     *
+     * The reprocess route rejects a request for `layout` outright when it is not, so the
+     * option is disabled with a reason rather than offered and refused.
+     */
+    enhancedExtraction: boolean;
 }
 
 export interface DocumentPaneActions {
@@ -149,6 +161,114 @@ function ActionButtons({
     );
 }
 
+/**
+ * The re-extraction control.
+ *
+ * Previously two equal buttons labelled Standard and Enhanced, with nothing saying which one
+ * the document was already on -- so changing it meant guessing and then checking. The current
+ * mode is now stated, the button for it is inert and marked as current, and the other one is
+ * the actionable choice. Documents that are neither PDFs nor images do not go through
+ * Document Intelligence at all, so the control is not offered for them.
+ */
+function ReextractSection({
+    documents,
+    enhancedEnabled,
+    onReextract,
+}: {
+    documents: WorkspaceDocument[];
+    enhancedEnabled: boolean;
+    onReextract: (documents: WorkspaceDocument[], mode: ExtractionMode) => void;
+}) {
+    const { supported, unsupported, current } = summarizeExtraction(documents);
+
+    if (supported.length === 0) {
+        return null;
+    }
+
+    const currentLabel =
+        current === 'mixed'
+            ? 'Mixed'
+            : current
+              ? extractionModeLabel(current)
+              : 'Not recorded';
+
+    const options: { mode: ExtractionMode; label: string; hint: string }[] = [
+        {
+            mode: 'read',
+            label: 'Standard',
+            hint: 'Faster and cheaper. Best for plain text PDFs and images.',
+        },
+        {
+            mode: 'layout',
+            label: 'Enhanced',
+            hint: 'Preserves tables, page structure and checkboxes. Slower and costlier.',
+        },
+    ];
+
+    return (
+        <Section title="Extraction">
+            <p className="mb-2 text-xs text-text-2">
+                Currently:{' '}
+                <span className="font-medium text-text-1">{currentLabel}</span>
+                {supported.length > 1 ? (
+                    <span className="text-text-3">
+                        {' '}
+                        across {supported.length} documents
+                    </span>
+                ) : null}
+            </p>
+
+            <div className="flex flex-wrap gap-1.5">
+                {options.map((option) => {
+                    const isCurrent = current === option.mode;
+                    const blocked = option.mode === 'layout' && !enhancedEnabled;
+
+                    if (isCurrent) {
+                        return (
+                            <span
+                                key={option.mode}
+                                className="inline-flex items-center gap-1 rounded-xl border border-edge bg-surface-2 px-3 py-1.5 text-sm text-text-3"
+                                title={`These documents were already extracted with ${option.label}.`}
+                            >
+                                <Check size={13} />
+                                {option.label}
+                                <span className="text-[11px]">(current)</span>
+                            </span>
+                        );
+                    }
+
+                    return (
+                        <GlassButton
+                            key={option.mode}
+                            variant="subtle"
+                            size="sm"
+                            disabled={blocked}
+                            onClick={() => onReextract(supported, option.mode)}
+                            title={
+                                blocked
+                                    ? 'Enhanced extraction is switched off for this deployment.'
+                                    : `${option.hint} Re-reads ${supported.length === 1 ? 'this document' : `these ${supported.length} documents`}.`
+                            }
+                        >
+                            <RefreshCw size={13} />
+                            {current ? `Switch to ${option.label}` : `Extract as ${option.label}`}
+                        </GlassButton>
+                    );
+                })}
+            </div>
+
+            {unsupported.length > 0 ? (
+                <p className="mt-1.5 text-[11px] text-text-3">
+                    {unsupported.length} of the selected{' '}
+                    {unsupported.length === 1 ? 'document is' : 'documents are'} not a PDF or
+                    image, so the extraction mode does not apply and{' '}
+                    {unsupported.length === 1 ? 'it will' : 'they will'} be left alone.
+                </p>
+            ) : null}
+        </Section>
+    );
+}
+
 export function DocumentDetailsPane({
     documents,
     availability,
@@ -229,24 +349,11 @@ export function DocumentDetailsPane({
                         )}
                     </Section>
 
-                    <Section title="Re-extract">
-                        <div className="flex gap-1.5">
-                            <GlassButton
-                                variant="subtle"
-                                size="sm"
-                                onClick={() => actions.onReextract(documents, 'read')}
-                            >
-                                Standard
-                            </GlassButton>
-                            <GlassButton
-                                variant="subtle"
-                                size="sm"
-                                onClick={() => actions.onReextract(documents, 'layout')}
-                            >
-                                Enhanced
-                            </GlassButton>
-                        </div>
-                    </Section>
+                    <ReextractSection
+                        documents={documents}
+                        enhancedEnabled={availability.enhancedExtraction}
+                        onReextract={actions.onReextract}
+                    />
                 </div>
 
                 <div className="border-t border-edge">
@@ -267,7 +374,7 @@ export function DocumentDetailsPane({
     const keywords = normalizeStringList(document.keywords);
     const classification = String(document.document_classification ?? '').trim();
     const abstract = String(document.abstract ?? '').trim();
-    const extractionMode = String(document.document_intelligence_extraction_mode ?? '').trim();
+    const currentExtraction = documentExtractionMode(document);
     const sharedCount = Array.isArray(document.shared_user_ids)
         ? document.shared_user_ids.length
         : 0;
@@ -324,9 +431,9 @@ export function DocumentDetailsPane({
                         <Field label="Uploaded">
                             {formatAbsoluteDate(documentDate(document))}
                         </Field>
-                        {extractionMode ? (
+                        {currentExtraction ? (
                             <Field label="Extraction">
-                                {extractionMode === 'layout' ? 'Enhanced' : 'Standard'}
+                                {extractionModeLabel(currentExtraction)}
                             </Field>
                         ) : null}
                     </dl>
@@ -376,29 +483,11 @@ export function DocumentDetailsPane({
                     </Section>
                 ) : null}
 
-                <Section title="Re-extract">
-                    <p className="mb-1.5 text-xs text-text-3">
-                        Read the file again, either quickly or with layout analysis.
-                    </p>
-                    <div className="flex gap-1.5">
-                        <GlassButton
-                            variant="subtle"
-                            size="sm"
-                            onClick={() => actions.onReextract([document], 'read')}
-                            className={clsx(extractionMode === 'read' && 'opacity-60')}
-                        >
-                            Standard
-                        </GlassButton>
-                        <GlassButton
-                            variant="subtle"
-                            size="sm"
-                            onClick={() => actions.onReextract([document], 'layout')}
-                            className={clsx(extractionMode === 'layout' && 'opacity-60')}
-                        >
-                            Enhanced
-                        </GlassButton>
-                    </div>
-                </Section>
+                <ReextractSection
+                    documents={[document]}
+                    enhancedEnabled={availability.enhancedExtraction}
+                    onReextract={actions.onReextract}
+                />
             </div>
 
             <div className="border-t border-edge">

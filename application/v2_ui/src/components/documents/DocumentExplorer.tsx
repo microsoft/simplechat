@@ -12,7 +12,7 @@
 // without a renderer.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { FileText, Loader2, Upload } from 'lucide-react';
+import { FileText, Upload } from 'lucide-react';
 import type {
     DocumentExplorerPrefs,
     DocumentQuery,
@@ -27,6 +27,7 @@ import {
     EMPTY_SELECTION,
     applyQueryChange,
     applySelection,
+    batched,
     clearAllFilters,
     clearFilterChip,
     describeActiveFilters,
@@ -72,6 +73,7 @@ import { errorMessage } from '../workspace/useSectionResource';
 import { ExplorerRail } from './ExplorerRail';
 import {
     ExplorerCommandBar,
+    ExplorerProgress,
     ExplorerStatusBar,
     FilterChips,
 } from './ExplorerCommandBar';
@@ -88,6 +90,23 @@ import {
 
 /** How often an in-flight document is re-checked. Matches the classic interface. */
 const PROGRESS_POLL_MS = 5000;
+
+/**
+ * How many documents each bulk request covers.
+ *
+ * Bulk tagging is not cheap server-side: every document costs a cross-partition query, a
+ * write, and an update to each of its search-index chunks. Sending one request for a large
+ * selection produced a single request that ran for minutes behind an indeterminate spinner.
+ * Batching turns that into steady, reportable progress at negligible extra cost.
+ */
+const BULK_BATCH_SIZE = 5;
+
+/** A bulk operation in flight, and how far through it is. */
+interface ExplorerTask {
+    label: string;
+    completed: number;
+    total: number;
+}
 
 const DEFAULT_PREFS: DocumentExplorerPrefs = {
     viewMode: 'details',
@@ -156,10 +175,13 @@ export function DocumentExplorer() {
 
     const [selection, setSelection] = useState<SelectionState>(EMPTY_SELECTION);
     const [loading, setLoading] = useState(true);
-    const [busy, setBusy] = useState(false);
+    const [task, setTask] = useState<ExplorerTask | null>(null);
     const [uploading, setUploading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [dialog, setDialog] = useState<ActiveDialog>(null);
+
+    // Dialogs disable their controls while any bulk work is running.
+    const busy = task !== null;
 
     const fileInputRef = useRef<HTMLInputElement>(null);
     const containerRef = useRef<HTMLDivElement>(null);
@@ -202,6 +224,7 @@ export function DocumentExplorer() {
             extractMetadata: Boolean(features?.enable_extract_meta_data),
             sharing: Boolean(features?.enable_file_sharing),
             classification: Boolean(features?.enable_document_classification),
+            enhancedExtraction: Boolean(features?.enable_enhanced_extraction),
         }),
         [downloadsEnabled, features],
     );
@@ -446,6 +469,44 @@ export function DocumentExplorer() {
     /* Actions                                                                 */
     /* ---------------------------------------------------------------------- */
 
+    /**
+     * Run one request per batch of documents, reporting progress as each lands.
+     *
+     * Always clears the task, including when a batch throws, so a failure can never leave the
+     * progress bar up forever -- which is exactly what an indeterminate spinner around a
+     * single long request looked like.
+     */
+    const runBatched = useCallback(
+        async (
+            label: string,
+            ids: string[],
+            perBatch: (batch: string[]) => Promise<void>,
+        ): Promise<{ completed: number; failed: number }> => {
+            const batches = batched(ids, BULK_BATCH_SIZE);
+            let completed = 0;
+            let failed = 0;
+
+            setTask({ label, completed: 0, total: ids.length });
+            try {
+                for (const batch of batches) {
+                    try {
+                        await perBatch(batch);
+                        completed += batch.length;
+                    } catch (batchError) {
+                        failed += batch.length;
+                        toast.error(errorMessage(batchError, `${label} failed.`));
+                    }
+                    setTask({ label, completed: completed + failed, total: ids.length });
+                }
+            } finally {
+                setTask(null);
+            }
+
+            return { completed, failed };
+        },
+        [],
+    );
+
     const runBulkTag = useCallback(
         async (
             ids: string[],
@@ -456,34 +517,38 @@ export function DocumentExplorer() {
             if (ids.length === 0 || tagNames.length === 0) {
                 return;
             }
-            setBusy(true);
-            try {
-                await bulkTagPersonalDocuments(ids, action, tagNames);
-                await refreshAll();
 
-                const verb = action === 'add_tags' ? 'Tagged' : 'Untagged';
-                const message = `${verb} ${ids.length} ${ids.length === 1 ? 'document' : 'documents'}`;
-                if (options.undoable) {
-                    toast.success(`${message} with ${tagNames.join(', ')}`, {
-                        label: 'Undo',
-                        onAct: () => {
-                            void runBulkTag(
-                                ids,
-                                action === 'add_tags' ? 'remove_tags' : 'add_tags',
-                                tagNames,
-                            );
-                        },
-                    });
-                } else {
-                    toast.success(message);
-                }
-            } catch (tagError) {
-                toast.error(errorMessage(tagError, 'Could not update tags.'));
-            } finally {
-                setBusy(false);
+            const verb = action === 'add_tags' ? 'Tagging' : 'Untagging';
+            const { completed } = await runBatched(
+                `${verb} ${ids.length} ${ids.length === 1 ? 'document' : 'documents'}`,
+                ids,
+                (batch) => bulkTagPersonalDocuments(batch, action, tagNames).then(() => undefined),
+            );
+
+            await refreshAll();
+
+            if (completed === 0) {
+                return;
+            }
+
+            const done = action === 'add_tags' ? 'Tagged' : 'Untagged';
+            const message = `${done} ${completed} ${completed === 1 ? 'document' : 'documents'} with ${tagNames.join(', ')}`;
+            if (options.undoable) {
+                toast.success(message, {
+                    label: 'Undo',
+                    onAct: () => {
+                        void runBulkTag(
+                            ids,
+                            action === 'add_tags' ? 'remove_tags' : 'add_tags',
+                            tagNames,
+                        );
+                    },
+                });
+            } else {
+                toast.success(message);
             }
         },
-        [refreshAll],
+        [refreshAll, runBatched],
     );
 
     const onDropOnTag = useCallback(
@@ -618,7 +683,7 @@ export function DocumentExplorer() {
 
     const onSaveMetadata = useCallback(
         async (target: WorkspaceDocument, draft: MetadataDraft) => {
-            setBusy(true);
+            setTask({ label: 'Saving metadata', completed: 0, total: 1 });
             try {
                 await updatePersonalDocumentMetadata(documentId(target), {
                     title: draft.title,
@@ -640,7 +705,7 @@ export function DocumentExplorer() {
             } catch (saveError) {
                 toast.error(errorMessage(saveError, 'Could not save metadata.'));
             } finally {
-                setBusy(false);
+                setTask(null);
             }
         },
         [refreshAll],
@@ -655,46 +720,68 @@ export function DocumentExplorer() {
             if (ids.length === 0) {
                 return;
             }
-            setBusy(true);
+
+            // Batched like the tag path: deleting a document removes its search-index chunks
+            // as well as its record, so a large selection is slow enough to need reporting.
+            const blocked: BulkDeleteError[] = [];
+            const failed: BulkDeleteError[] = [];
+            let deletedCount = 0;
+
+            setTask({
+                label: `Deleting ${ids.length} ${ids.length === 1 ? 'document' : 'documents'}`,
+                completed: 0,
+                total: ids.length,
+            });
             try {
-                const response = await bulkDeletePersonalDocuments(ids, {
-                    deleteMode: options.deleteAllVersions ? 'all_versions' : 'current_only',
-                    conversationLinkedDeleteConfirmed: options.force,
-                    fileSyncDeleteAction: options.force ? 'keep_source' : null,
-                });
-
-                const blocked = (response.errors ?? []).filter(
-                    (entry) => entry.needs_confirmation,
-                );
-                const failed = (response.errors ?? []).filter(
-                    (entry) => !entry.needs_confirmation,
-                );
-
-                if (blocked.length > 0) {
-                    // Kept open, now listing exactly what was refused and why, so the user can
-                    // decide about those documents rather than about the batch.
-                    setDialog({ kind: 'delete', documents: targets, blocked });
-                } else {
-                    setDialog(null);
+                let processed = 0;
+                for (const batch of batched(ids, BULK_BATCH_SIZE)) {
+                    try {
+                        const response = await bulkDeletePersonalDocuments(batch, {
+                            deleteMode: options.deleteAllVersions
+                                ? 'all_versions'
+                                : 'current_only',
+                            conversationLinkedDeleteConfirmed: options.force,
+                            fileSyncDeleteAction: options.force ? 'keep_source' : null,
+                        });
+                        deletedCount += response.deleted_count ?? 0;
+                        for (const entry of response.errors ?? []) {
+                            (entry.needs_confirmation ? blocked : failed).push(entry);
+                        }
+                    } catch (batchError) {
+                        toast.error(
+                            errorMessage(batchError, 'Could not delete some documents.'),
+                        );
+                    }
+                    processed += batch.length;
+                    setTask({
+                        label: `Deleting ${ids.length} ${ids.length === 1 ? 'document' : 'documents'}`,
+                        completed: processed,
+                        total: ids.length,
+                    });
                 }
-
-                const deletedCount = response.deleted_count ?? 0;
-                if (deletedCount > 0) {
-                    toast.success(
-                        `Deleted ${deletedCount} ${deletedCount === 1 ? 'document' : 'documents'}.`,
-                    );
-                }
-                if (failed.length > 0) {
-                    toast.error(failed[0].message ?? 'Some documents could not be deleted.');
-                }
-
-                setSelection(EMPTY_SELECTION);
-                await refreshAll();
-            } catch (deleteError) {
-                toast.error(errorMessage(deleteError, 'Could not delete documents.'));
             } finally {
-                setBusy(false);
+                setTask(null);
             }
+
+            if (blocked.length > 0) {
+                // Kept open, now listing exactly what was refused and why, so the user can
+                // decide about those documents rather than about the batch.
+                setDialog({ kind: 'delete', documents: targets, blocked });
+            } else {
+                setDialog(null);
+            }
+
+            if (deletedCount > 0) {
+                toast.success(
+                    `Deleted ${deletedCount} ${deletedCount === 1 ? 'document' : 'documents'}.`,
+                );
+            }
+            if (failed.length > 0) {
+                toast.error(failed[0].message ?? 'Some documents could not be deleted.');
+            }
+
+            setSelection(EMPTY_SELECTION);
+            await refreshAll();
         },
         [refreshAll],
     );
@@ -820,13 +907,18 @@ export function DocumentExplorer() {
             />
 
             <ExplorerCommandBar
-                query={query}
+                searchDraft={searchDraft}
                 prefs={prefs}
                 selectionCount={selection.ids.length}
                 uploading={uploading}
                 availability={availability}
                 canSaveView={isSaveableQuery(query)}
                 onSearchChange={setSearchDraft}
+                onSearchSubmit={(value) => {
+                    // Enter searches now rather than waiting out the debounce.
+                    setSearchDraft(value);
+                    setQuery((current) => applyQueryChange(current, { search: value }));
+                }}
                 onUpload={() => fileInputRef.current?.click()}
                 onDownload={() => void onDownload(selectedDocuments)}
                 onTag={() => setDialog({ kind: 'tag', documents: selectedDocuments })}
@@ -892,12 +984,7 @@ export function DocumentExplorer() {
                             }
                         }}
                     >
-                        {busy ? (
-                            <div className="flex items-center gap-2 border-b border-edge px-3 py-1.5 text-xs text-text-3">
-                                <Loader2 size={12} className="animate-spin" />
-                                Working…
-                            </div>
-                        ) : null}
+                        {task ? <ExplorerProgress task={task} /> : null}
                         {content()}
                     </div>
 

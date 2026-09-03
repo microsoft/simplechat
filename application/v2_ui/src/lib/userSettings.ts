@@ -53,6 +53,15 @@ export interface UserSettings {
     v2ChatWidth?: string;
 
     /**
+     * Whether the personal workspace's section rail shows icons only.
+     *
+     * Deliberately separate from `v2RailCollapsed`, which is the application shell's rail.
+     * They are two different navigation surfaces stacked side by side, and collapsing one to
+     * make room should not also collapse the other.
+     */
+    v2WorkspaceRailCollapsed?: boolean;
+
+    /**
      * How the workspace documents explorer is presented, and the views pinned in its rail.
      *
      * Namespaced like the shell preferences above. The classic interface stores its own
@@ -128,6 +137,10 @@ export const WRITABLE_USER_SETTING_KEYS = [
     'v2ChatWidth',
     'v2MermaidStyle',
     'v2ChartStyle',
+    // Whether the section rail inside the personal workspace is showing icons only.
+    // Separate from v2RailCollapsed, which is the rail of the application shell:
+    // collapsing one should not collapse the other.
+    'v2WorkspaceRailCollapsed',
     // Workspace documents explorer: how the list is presented, and the saved filter
     // combinations pinned in its navigation rail.
     'v2DocumentsPrefs',

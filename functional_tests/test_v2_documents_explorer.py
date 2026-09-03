@@ -71,6 +71,7 @@ RAIL_TSX = V2_SRC / "components" / "documents" / "ExplorerRail.tsx"
 TABLE_TSX = V2_SRC / "components" / "documents" / "DocumentTable.tsx"
 TILES_TSX = V2_SRC / "components" / "documents" / "DocumentTiles.tsx"
 DETAILS_TSX = V2_SRC / "components" / "documents" / "DocumentDetailsPane.tsx"
+COMMAND_BAR_TSX = V2_SRC / "components" / "documents" / "ExplorerCommandBar.tsx"
 LOGIC_CHECK_TS = REPO_ROOT / "functional_tests" / "test_v2_documents_explorer_logic.ts"
 
 # Routes added for the explorer, each with the guards its neighbours already carry.
@@ -609,6 +610,139 @@ def test_the_typescript_logic_checks_pass():
     return True
 
 
+def test_search_is_debounced_without_dropping_keystrokes():
+    """A controlled input bound to the debounced value reverts every keystroke."""
+    print("Testing search input binding...")
+
+    command_bar = _read(COMMAND_BAR_TSX)
+
+    assert "value={searchDraft}" in command_bar, (
+        "The search box must be bound to the draft. Binding it to the debounced "
+        "`query.search` meant each keystroke was reverted until the debounce caught up, "
+        "which dropped characters while typing at speed"
+    )
+    assert "value={query.search}" not in command_bar, (
+        "The search box must not be bound to the debounced value"
+    )
+    assert "onSearchSubmit" in command_bar, (
+        "Enter should search immediately rather than waiting out the debounce"
+    )
+    assert "event.key === 'Enter'" in command_bar
+    assert "event.key === 'Escape'" in command_bar, "Escape should clear the search"
+
+    explorer = _read(EXPLORER_TSX)
+    assert "searchDraft={searchDraft}" in explorer, (
+        "The explorer must pass the draft, not the committed query, to the search box"
+    )
+    assert re.search(r"setTimeout\(\s*\(\)\s*=>", explorer), (
+        "The search should still be debounced between keystrokes"
+    )
+
+    print("  ok  search is debounced, Enter commits, and no keystroke is reverted")
+    return True
+
+
+def test_bulk_work_reports_determinate_progress():
+    """An indeterminate spinner over a slow request is indistinguishable from a hang."""
+    print("Testing bulk progress reporting...")
+
+    explorer = _read(EXPLORER_TSX)
+    command_bar = _read(COMMAND_BAR_TSX)
+
+    assert "ExplorerProgress" in command_bar and "ExplorerProgress" in explorer, (
+        "Bulk operations should report determinate progress"
+    )
+    assert 'role="progressbar"' in command_bar, "The progress bar must be announced as one"
+    assert "aria-valuenow" in command_bar and "aria-valuemax" in command_bar
+
+    assert "Working…" not in explorer, (
+        "The indeterminate 'Working…' banner should be gone; bulk tagging updates each "
+        "document and its search-index chunks, so it runs long enough that a spinner "
+        "reads as a hang"
+    )
+
+    assert "BULK_BATCH_SIZE" in explorer, (
+        "Bulk work should be batched so progress can be reported as it lands"
+    )
+    assert "batched(" in explorer, "Batching should use the tested helper"
+
+    # The regression that made this necessary: a task left set forever. Every path that
+    # starts one must clear it in a finally.
+    starts = explorer.count("setTask({")
+    clears = explorer.count("setTask(null)")
+    assert clears >= 3, (
+        f"Every operation that sets a progress task must clear it; found {starts} starts "
+        f"and only {clears} clears"
+    )
+
+    print("  ok  bulk work is batched and reports determinate, always-cleared progress")
+    return True
+
+
+def test_reextract_states_the_current_mode():
+    """Two equal buttons with no current state meant guessing and then checking."""
+    print("Testing the re-extract control...")
+
+    details = _read(DETAILS_TSX)
+
+    assert "summarizeExtraction" in details, (
+        "The pane should report the mode the selection is currently on"
+    )
+    assert "(current)" in details, "The current mode must be marked as such"
+    assert "Switch to" in details, (
+        "The actionable button should say it switches, not just name a mode"
+    )
+    assert "enhancedExtraction" in details, (
+        "Enhanced must be gated on enable_enhanced_extraction; the reprocess route rejects "
+        "a request for layout outright when it is off"
+    )
+    assert "not a PDF or" in details, (
+        "Documents the extraction mode does not apply to should be called out"
+    )
+
+    explorer = _read(EXPLORER_TSX)
+    assert "enable_enhanced_extraction" in explorer, (
+        "The explorer must read the enhanced extraction flag from the bootstrap features"
+    )
+
+    lib = _read(EXPLORER_TS)
+    assert "supportsExtractionModeChange" in lib
+    assert "'.heic'" in lib, (
+        "The image extension list should match EXTRACTION_MODE_CHANGE_IMAGE_EXTENSIONS "
+        "in workspace-documents.js"
+    )
+
+    print("  ok  the re-extract control states the current mode and gates Enhanced")
+    return True
+
+
+def test_the_workspace_rail_can_be_collapsed():
+    print("Testing the collapsible workspace rail...")
+
+    page = _read(WORKSPACE_PAGE_TSX)
+
+    assert "v2WorkspaceRailCollapsed" in page, (
+        "The workspace section rail should have its own collapse preference"
+    )
+    assert "v2RailCollapsed" not in page, (
+        "The workspace rail must not reuse the application shell's collapse preference; "
+        "collapsing one should not collapse the other"
+    )
+    assert "PanelLeftClose" in page and "PanelLeftOpen" in page
+    assert 'aria-expanded={!railCollapsed}' in page
+    assert 'className="sr-only"' in page, (
+        "A collapsed entry still needs its label available to a screen reader"
+    )
+
+    # And the key has to be writable, or the preference is dropped silently.
+    users = _read(USERS_ROUTE)
+    assert "'v2WorkspaceRailCollapsed'" in users
+    assert "'v2WorkspaceRailCollapsed'" in _read(USER_SETTINGS_TS)
+
+    print("  ok  the workspace rail collapses to icons and remembers it")
+    return True
+
+
 TESTS = [
     test_version_is_at_least_the_implementing_release,
     test_new_settings_keys_are_whitelisted,
@@ -624,6 +758,10 @@ TESTS = [
     test_the_name_column_shows_the_title_over_the_file_name,
     test_only_two_views_are_offered,
     test_the_details_pane_handles_every_selection_size,
+    test_search_is_debounced_without_dropping_keystrokes,
+    test_bulk_work_reports_determinate_progress,
+    test_reextract_states_the_current_mode,
+    test_the_workspace_rail_can_be_collapsed,
     test_no_cdn_assets_were_introduced,
     test_the_typescript_logic_checks_pass,
 ]

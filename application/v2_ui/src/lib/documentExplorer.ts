@@ -722,6 +722,122 @@ export function paginationItems(
     return [1, null, ...range(current - half, current - half + middleRun - 1), null, pageCount];
 }
 
+/** Split a list into fixed-size batches. */
+export function batched<T>(items: readonly T[], size: number): T[][] {
+    const batchSize = Math.max(1, Math.trunc(size) || 1);
+    const batches: T[][] = [];
+    for (let index = 0; index < items.length; index += batchSize) {
+        batches.push(items.slice(index, index + batchSize));
+    }
+    return batches;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Extraction mode                                                             */
+/* -------------------------------------------------------------------------- */
+
+export type ExtractionMode = 'read' | 'layout';
+
+/**
+ * Extensions the extraction mode can be changed for.
+ *
+ * Only PDFs and images go through Document Intelligence, so offering the choice on a .docx
+ * would queue a job that changes nothing. Quoted from
+ * EXTRACTION_MODE_CHANGE_IMAGE_EXTENSIONS in workspace-documents.js.
+ */
+export const EXTRACTION_MODE_IMAGE_EXTENSIONS = [
+    '.jpg',
+    '.jpeg',
+    '.png',
+    '.bmp',
+    '.tiff',
+    '.tif',
+    '.heif',
+    '.heic',
+] as const;
+
+export function supportsExtractionModeChange(document: WorkspaceDocument): boolean {
+    const fileName = String(document.file_name ?? '').toLowerCase();
+    if (!fileName) {
+        return false;
+    }
+    return (
+        fileName.endsWith('.pdf') ||
+        EXTRACTION_MODE_IMAGE_EXTENSIONS.some((extension) => fileName.endsWith(extension))
+    );
+}
+
+/** The mode a document was last extracted with, or null when it was never recorded. */
+export function extractionMode(document: WorkspaceDocument): ExtractionMode | null {
+    const mode = String(document.document_intelligence_extraction_mode ?? '')
+        .trim()
+        .toLowerCase();
+    if (mode === 'layout' || mode === 'read') {
+        return mode;
+    }
+    return null;
+}
+
+export function extractionModeLabel(mode: ExtractionMode | null): string {
+    if (mode === 'layout') {
+        return 'Enhanced';
+    }
+    if (mode === 'read') {
+        return 'Standard';
+    }
+    return 'Unknown';
+}
+
+export interface ExtractionSummary {
+    /** Documents whose extraction mode can be changed. */
+    supported: WorkspaceDocument[];
+    /** Documents that are not PDFs or images, so the choice does not apply to them. */
+    unsupported: WorkspaceDocument[];
+    /**
+     * The mode the supported documents are currently on.
+     *
+     * `mixed` when they disagree and `null` when none of them recorded one, which are
+     * different situations: the first means switching will change some of them, the second
+     * means nothing is known about any of them.
+     */
+    current: ExtractionMode | 'mixed' | null;
+}
+
+/**
+ * Work out what to say about a selection's extraction mode.
+ *
+ * The pane previously offered Standard and Enhanced as two equal buttons without saying
+ * which one the document was already on, so the only way to change it was to guess and then
+ * check. Reporting the current mode is what turns two buttons into one meaningful choice.
+ */
+export function summarizeExtraction(
+    documents: readonly WorkspaceDocument[],
+): ExtractionSummary {
+    const supported: WorkspaceDocument[] = [];
+    const unsupported: WorkspaceDocument[] = [];
+
+    for (const document of documents) {
+        (supportsExtractionModeChange(document) ? supported : unsupported).push(document);
+    }
+
+    const modes = new Set<ExtractionMode>();
+    for (const document of supported) {
+        const mode = extractionMode(document);
+        if (mode) {
+            modes.add(mode);
+        }
+    }
+
+    let current: ExtractionMode | 'mixed' | null = null;
+    if (modes.size === 1) {
+        current = [...modes][0];
+    } else if (modes.size > 1) {
+        current = 'mixed';
+    }
+
+    return { supported, unsupported, current };
+}
+
 /* -------------------------------------------------------------------------- */
 /* Facets                                                                      */
 /* -------------------------------------------------------------------------- */

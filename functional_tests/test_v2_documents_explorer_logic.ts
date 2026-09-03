@@ -32,6 +32,7 @@ import {
     EMPTY_SELECTION,
     applyQueryChange,
     applySelection,
+    batched,
     buildDocumentListParams,
     clearAllFilters,
     clearFilterChip,
@@ -40,6 +41,8 @@ import {
     describePage,
     documentDisplayName,
     documentStatus,
+    extractionMode,
+    extractionModeLabel,
     formatFileSize,
     formatRelativeDate,
     moveSelection,
@@ -49,6 +52,8 @@ import {
     placeCount,
     pruneSelection,
     selectionIntentFromEvent,
+    summarizeExtraction,
+    supportsExtractionModeChange,
     toggleSelectAll,
     toggleSort,
     visiblePlaces,
@@ -552,6 +557,93 @@ check('saving a view under an existing name replaces it', () => {
 check('a view can be removed', () => {
     const view = createSavedView('Contracts', query({ tags: ['alpha'] }));
     assert.deepEqual(removeSavedView([view], view.id), []);
+});
+
+/* --------------------------------- batching ------------------------------------ */
+
+check('bulk work is split into fixed-size batches', () => {
+    // Tagging costs a query, a write and a search-index update per document, so a single
+    // request for a large selection ran long enough to be indistinguishable from a hang.
+    assert.deepEqual(batched([1, 2, 3, 4, 5], 2), [[1, 2], [3, 4], [5]]);
+    assert.deepEqual(batched([1, 2], 5), [[1, 2]]);
+    assert.deepEqual(batched([], 5), []);
+    assert.deepEqual(batched([1, 2, 3], 1), [[1], [2], [3]]);
+});
+
+check('a nonsense batch size still produces usable batches', () => {
+    assert.deepEqual(batched([1, 2], 0), [[1], [2]]);
+    assert.deepEqual(batched([1, 2], -3), [[1], [2]]);
+});
+
+/* ------------------------------ extraction mode --------------------------------- */
+
+check('only PDFs and images can have their extraction mode changed', () => {
+    // Anything else never goes through Document Intelligence, so offering the choice would
+    // queue a job that changes nothing.
+    assert.equal(supportsExtractionModeChange({ file_name: 'report.pdf' }), true);
+    assert.equal(supportsExtractionModeChange({ file_name: 'SCAN.PDF' }), true);
+    assert.equal(supportsExtractionModeChange({ file_name: 'photo.jpeg' }), true);
+    assert.equal(supportsExtractionModeChange({ file_name: 'diagram.tiff' }), true);
+    assert.equal(supportsExtractionModeChange({ file_name: 'notes.docx' }), false);
+    assert.equal(supportsExtractionModeChange({ file_name: 'data.csv' }), false);
+    assert.equal(supportsExtractionModeChange({}), false);
+});
+
+check('the current extraction mode is read back, or reported as unknown', () => {
+    assert.equal(extractionMode({ document_intelligence_extraction_mode: 'layout' }), 'layout');
+    assert.equal(extractionMode({ document_intelligence_extraction_mode: ' READ ' }), 'read');
+    assert.equal(extractionMode({}), null);
+    assert.equal(extractionMode({ document_intelligence_extraction_mode: 'other' }), null);
+    assert.equal(extractionModeLabel('layout'), 'Enhanced');
+    assert.equal(extractionModeLabel('read'), 'Standard');
+    assert.equal(extractionModeLabel(null), 'Unknown');
+});
+
+check('a selection on one mode reports that mode', () => {
+    // The pane previously offered Standard and Enhanced as two equal buttons without saying
+    // which one the document was already on, so changing it meant guessing then checking.
+    const summary = summarizeExtraction([
+        { file_name: 'a.pdf', document_intelligence_extraction_mode: 'read' },
+        { file_name: 'b.png', document_intelligence_extraction_mode: 'read' },
+    ]);
+    assert.equal(summary.current, 'read');
+    assert.equal(summary.supported.length, 2);
+    assert.equal(summary.unsupported.length, 0);
+});
+
+check('a selection on different modes reports mixed', () => {
+    const summary = summarizeExtraction([
+        { file_name: 'a.pdf', document_intelligence_extraction_mode: 'read' },
+        { file_name: 'b.pdf', document_intelligence_extraction_mode: 'layout' },
+    ]);
+    assert.equal(summary.current, 'mixed');
+});
+
+check('a selection with no recorded mode is unknown, not mixed', () => {
+    // These are different situations: mixed means switching changes some of them, unknown
+    // means nothing is known about any of them.
+    const summary = summarizeExtraction([{ file_name: 'a.pdf' }, { file_name: 'b.pdf' }]);
+    assert.equal(summary.current, null);
+});
+
+check('documents the mode does not apply to are separated out', () => {
+    const summary = summarizeExtraction([
+        { file_name: 'a.pdf', document_intelligence_extraction_mode: 'layout' },
+        { file_name: 'notes.docx' },
+        { file_name: 'sheet.xlsx' },
+    ]);
+    assert.equal(summary.current, 'layout');
+    assert.deepEqual(summary.supported.map((item) => item.file_name), ['a.pdf']);
+    assert.deepEqual(
+        summary.unsupported.map((item) => item.file_name),
+        ['notes.docx', 'sheet.xlsx'],
+    );
+});
+
+check('a selection of only unsupported documents offers nothing', () => {
+    const summary = summarizeExtraction([{ file_name: 'notes.docx' }]);
+    assert.equal(summary.supported.length, 0);
+    assert.equal(summary.current, null);
 });
 
 /* ----------------------------------- runner ---------------------------------- */

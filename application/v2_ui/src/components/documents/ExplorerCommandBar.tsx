@@ -18,6 +18,7 @@ import {
     Download,
     LayoutGrid,
     List,
+    Loader2,
     MessageSquare,
     PanelRight,
     Search,
@@ -27,7 +28,7 @@ import {
     Upload,
     X,
 } from 'lucide-react';
-import type { DocumentExplorerPrefs, DocumentQuery } from '../../lib/types';
+import type { DocumentExplorerPrefs } from '../../lib/types';
 import {
     DOCUMENT_PAGE_SIZES,
     describePage,
@@ -39,13 +40,14 @@ import { Dropdown } from '../ui/Dropdown';
 import { DOCUMENT_COLUMNS } from './DocumentTable';
 
 export function ExplorerCommandBar({
-    query,
+    searchDraft,
     prefs,
     selectionCount,
     uploading,
     availability,
     canSaveView,
     onSearchChange,
+    onSearchSubmit,
     onUpload,
     onDownload,
     onTag,
@@ -55,13 +57,15 @@ export function ExplorerCommandBar({
     onSaveView,
     onPrefsChange,
 }: {
-    query: DocumentQuery;
+    /** What the user has typed. Distinct from `query.search`, which lags it by the debounce. */
+    searchDraft: string;
     prefs: DocumentExplorerPrefs;
     selectionCount: number;
     uploading: boolean;
     availability: { downloads: boolean; extractMetadata: boolean };
     canSaveView: boolean;
     onSearchChange: (value: string) => void;
+    onSearchSubmit: (value: string) => void;
     onUpload: () => void;
     onDownload: () => void;
     onTag: () => void;
@@ -140,10 +144,24 @@ export function ExplorerCommandBar({
                     />
                     <input
                         type="search"
-                        value={query.search}
+                        // Bound to the draft, not to `query.search`. Binding a controlled
+                        // input to the debounced value meant every keystroke was reverted
+                        // until the debounce caught up, which is what dropped characters
+                        // while typing at speed.
+                        value={searchDraft}
                         onChange={(event) => onSearchChange(event.target.value)}
+                        onKeyDown={(event) => {
+                            if (event.key === 'Enter') {
+                                event.preventDefault();
+                                onSearchSubmit(event.currentTarget.value);
+                            }
+                            if (event.key === 'Escape') {
+                                event.preventDefault();
+                                onSearchSubmit('');
+                            }
+                        }}
                         placeholder="Search name or title"
-                        aria-label="Search documents"
+                        aria-label="Search documents. Press Enter to search immediately."
                         className="h-8 w-56 rounded-lg border border-edge bg-surface-1 pr-2 pl-7 text-sm text-text-1 placeholder:text-text-3 focus:border-accent focus:outline-none"
                     />
                 </div>
@@ -231,6 +249,50 @@ export function ExplorerCommandBar({
                     <PanelRight size={15} />
                 </button>
             </div>
+        </div>
+    );
+}
+
+/**
+ * A determinate progress bar for a bulk operation.
+ *
+ * Determinate rather than a spinner because these operations are genuinely slow: tagging
+ * updates each document *and* its search-index chunks, so a large selection takes long enough
+ * that an indeterminate "Working…" is indistinguishable from a hang. Saying "14 of 50" is the
+ * difference between waiting and giving up.
+ */
+export function ExplorerProgress({
+    task,
+}: {
+    task: { label: string; completed: number; total: number };
+}) {
+    const total = Math.max(1, task.total);
+    const percent = Math.min(100, Math.round((task.completed / total) * 100));
+
+    return (
+        <div
+            className="flex items-center gap-2.5 border-b border-edge px-3 py-2"
+            role="status"
+            aria-live="polite"
+        >
+            <Loader2 size={13} className="shrink-0 animate-spin text-accent" />
+            <span className="shrink-0 text-xs text-text-2">{task.label}</span>
+            <span
+                className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-surface-sunken"
+                role="progressbar"
+                aria-valuenow={task.completed}
+                aria-valuemin={0}
+                aria-valuemax={task.total}
+                aria-label={task.label}
+            >
+                <span
+                    className="block h-full rounded-full bg-accent transition-[width] duration-200"
+                    style={{ width: `${percent}%` }}
+                />
+            </span>
+            <span className="shrink-0 text-xs tabular-nums text-text-3">
+                {task.completed} of {task.total}
+            </span>
         </div>
     );
 }

@@ -2,6 +2,35 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.046)**
+
+#### Bug Fixes
+
+*   **Typing In The Documents Search Box Dropped Characters**
+    *   The search box searched on every keystroke and lost letters if you typed at anything like normal speed, so a search term had to be entered slowly and checked.
+    *   The box was displaying the *searched* term rather than what you had typed, so each keystroke was undone until the search caught up. It now shows what you type, waits for you to stop before searching, and searches immediately if you press **Enter**. **Escape** clears it.
+    *   (Ref: V2 My Workspace, Documents, search)
+
+*   **Tagging Several Documents Appeared To Hang**
+    *   Applying tags to a multi-document selection showed a spinner labelled "Working…" that never went away and never refreshed the list. The tags had actually been applied — a page refresh showed them — but nothing on screen said so.
+    *   Tagging a document is expensive on the server: it rewrites the document and every one of its search index entries. Sending one request for the whole selection meant a single request that ran for a very long time behind a spinner that could not distinguish slow from stuck.
+    *   Tagging and deleting are now sent in small batches with **a real progress bar** showing how many documents of the total are done, and the list refreshes when it finishes. A batch that fails now reports itself instead of leaving the progress indicator up indefinitely.
+    *   (Ref: V2 My Workspace, Documents, bulk tagging, bulk delete, progress reporting)
+
+#### User Interface Enhancements
+
+*   **Re-Extraction Now Says Which Mode A Document Is Already On**
+    *   The details pane offered **Standard** and **Enhanced** as two identical buttons without indicating which one had been used, so the only way to change a document's extraction was to guess and then check.
+    *   It now states the current mode, marks that option as **(current)**, and presents the other as **Switch to Standard** or **Switch to Enhanced**. A selection spanning both reads **Mixed**; one where no mode was ever recorded reads **Not recorded**.
+    *   The choice is hidden for files it does not apply to — only PDFs and images are processed this way — and in a mixed selection those files are named and left alone rather than silently included.
+    *   **Enhanced** is disabled with an explanation when your administrator has not enabled enhanced extraction, instead of being offered and then refused.
+    *   (Ref: V2 My Workspace, Documents, details pane, `enable_enhanced_extraction`)
+
+*   **The My Workspace Section Menu Can Be Collapsed**
+    *   The list of workspace sections down the left can now be collapsed to icons, giving the documents explorer noticeably more room. The choice is remembered.
+    *   It collapses independently of the main application sidebar, so you can narrow either one without affecting the other. Collapsed entries keep their names as tooltips and for screen readers.
+    *   (Ref: V2 My Workspace, section navigation)
+
 ### **(v0.261.045)**
 
 #### New Features
