@@ -2,6 +2,21 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.043)**
+
+#### Bug Fixes
+
+*   **Chart And Diagram Colours Could Not Be Saved In A Shared Conversation**
+    *   Picking a colour for a chart or a diagram in a shared conversation changed it on screen and then reported "That change could not be saved", with a 404 in the browser console. Only shared conversations were affected; personal ones saved as normal.
+    *   Shared conversations are stored separately from personal ones, and the endpoint that saves a block's colours could only find personal conversations, so it refused the write before it ever reached the message. Colours and sizes now save in shared conversations too.
+    *   Because a shared conversation is shared, the colours you choose are stored on the message and are what everybody in the conversation sees — the same way masking already works — and they change on the other participants' screens as you make them rather than on their next visit. Changing them needs the same access as posting a message, so a read-only viewer sees the colours others chose without being able to alter them for everybody.
+    *   (Ref: V2 chat, shared conversations, diagram and chart colours, `/api/collaboration/conversations/.../visual-style`)
+
+*   **Opening A Link To A Shared Conversation Logged A Console Error**
+    *   Following a link to a shared conversation worked, but always left a 404 in the browser console. The interface was working out whether the link pointed at a personal or a shared conversation by asking about it as a personal one first and reading the failure as its answer.
+    *   It now asks once and gets a straight answer, so opening a shared conversation from a link is a single successful request and the console stays clean.
+    *   (Ref: V2 chat, shared conversations, conversation deep links)
+
 ### **(v0.261.042)**
 
 #### New Features

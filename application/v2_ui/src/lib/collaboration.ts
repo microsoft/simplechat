@@ -17,6 +17,7 @@
 //     the AI actually runs in, so callers must follow the returned id.
 
 import { api, apiUrl } from './apiClient';
+import type { MessageVisualStyles } from './endpoints';
 import type {
     CollaborationConversation,
     CollaborationMessage,
@@ -258,6 +259,46 @@ export const maskCollaborationMessage = (
 ) =>
     api.post<CollaborationMaskResponse>(
         `${base(conversationId)}/messages/${encodeURIComponent(messageId)}/mask`,
+        body,
+    );
+
+/** Response of the collaboration visual style route. */
+export interface CollaborationVisualStyleResponse {
+    success: boolean;
+    message_id: string;
+    conversation_id: string;
+    visual_styles: MessageVisualStyles;
+    message?: CollaborationMessage;
+}
+
+/**
+ * Save, or clear, the colours and size of one diagram or chart in a shared message.
+ *
+ * The shared counterpart of `setMessageVisualStyle` in `endpoints.ts`. The personal route
+ * resolves the conversation through the personal container, which a shared conversation is
+ * not in, so sending a shared message there answers 404 rather than saving anything.
+ *
+ * The conversation travels in the path rather than the body, which is how every other
+ * collaboration message route addresses its conversation. The remaining fields match the
+ * personal route exactly, including `height` being absent to keep the stored size and null to
+ * clear it, because both routes hand the payload to the same validator on the server.
+ *
+ * The stored choice belongs to the message, so it applies for every participant and the
+ * server broadcasts it to them. Changing it therefore needs the same write access as posting.
+ */
+export const setCollaborationMessageVisualStyle = (
+    conversationId: string,
+    messageId: string,
+    body: {
+        block_kind: string;
+        block_index: number;
+        source_hash: string;
+        style: { palette: string; background: string; colors: Record<string, string> } | null;
+        height?: number | null;
+    },
+) =>
+    api.post<CollaborationVisualStyleResponse>(
+        `${base(conversationId)}/messages/${encodeURIComponent(messageId)}/visual-style`,
         body,
     );
 
