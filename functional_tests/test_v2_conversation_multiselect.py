@@ -2,8 +2,8 @@
 """
 Functional test for conversation multi-select in the V2 (React) interface.
 
-Version: 0.261.050
-Implemented in: 0.261.050
+Version: 0.261.053
+Implemented in: 0.261.053
 
 The V2 conversation rail could pick several conversations, but only in order to export them:
 a permanent "Select" button swapped every row into a checkbox, the only bulk action was
@@ -43,7 +43,7 @@ sys.path.insert(0, str(REPO_ROOT / "functional_tests"))
 
 from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
-IMPLEMENTED_IN = "0.261.050"
+IMPLEMENTED_IN = "0.261.053"
 
 RAIL_TSX = V2_SRC / "components" / "chat" / "ConversationRail.tsx"
 STORE_TS = V2_SRC / "stores" / "chatStore.ts"
