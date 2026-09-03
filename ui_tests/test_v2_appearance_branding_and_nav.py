@@ -3,7 +3,7 @@
 UI test for V2 Appearance branding, the classification banner, the home page and the
 administrator-configured navigation groups.
 
-Version: 0.261.050
+Version: 0.261.052
 Implemented in: 0.261.047
 
 Six Appearance settings had no visible effect in the V2 interface:
@@ -16,7 +16,7 @@ Six Appearance settings had no visible effect in the V2 interface:
     did not have;
   - Custom Pages and External Links were absent from the rail entirely.
 
-Extended in 0.261.050, when the brand mark became the rail's home link and the separate
+Extended in 0.261.052, when the brand mark became the rail's home link and the separate
 Home nav item was removed: the brand coverage now also states that there is one control
 for the destination rather than two, that the link names itself for the collapsed rail,
 and that the letter square is not drawn beside the title it stands in for.

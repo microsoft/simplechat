@@ -2,8 +2,8 @@
 """
 Functional test for the V2 rail's brand mark and the removal of the Home nav item.
 
-Version: 0.261.050
-Implemented in: 0.261.050
+Version: 0.261.052
+Implemented in: 0.261.052
 
 Three faults met at the top of the navigation rail.
 
@@ -178,7 +178,7 @@ def test_the_letter_square_only_stands_in_for_an_absent_title():
 def test_version_is_at_least_implementation_version():
     """The change is present from the version that introduced it onwards."""
     print("Testing application version...")
-    assert_app_version_at_least("0.261.050")
+    assert_app_version_at_least("0.261.052")
     print("Application version test passed!")
     return True
 

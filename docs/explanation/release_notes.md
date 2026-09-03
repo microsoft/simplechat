@@ -2,7 +2,7 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
-### **(v0.261.050)**
+### **(v0.261.052)**
 
 #### User Interface Enhancements
 
@@ -19,6 +19,29 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   The lettered square is a stand-in for a logo, so it now appears only where the title itself cannot: when the left rail is collapsed, or when **Hide Application Title** is turned on. An expanded rail shows the title on its own.
     *   Deployments with a custom logo are unaffected.
     *   (Ref: V2 navigation rail, Appearance > Branding, [V2 Brand Mark Home Link Fix](fixes/V2_BRAND_MARK_HOME_LINK_FIX.md))
+
+### **(v0.261.051)**
+
+#### Bug Fixes
+
+*   **Clicking Away Just After Starting A New Chat No Longer Bounces You Back**
+    *   The first message in a brand-new chat has to create the conversation before it can answer, and clicking a different conversation during that moment used to undo the click and drop you back into the chat you had just left.
+    *   In the unluckier version of the same timing, the conversation you clicked would have its messages shown underneath the new chat, so a thread appeared to contain a question that was asked somewhere else.
+    *   Your click now wins. The message is still sent and its answer still generated and saved — the new chat appears in the list with its title and unread marker — but the interface stays where you put it.
+    *   Nothing was ever lost or filed against the wrong conversation; the effect was limited to what was on screen.
+    *   (Ref: `chatStore.ts` `sendMessage`, `runChatStream`, [V2 New Conversation Send Race](fixes/V2_NEW_CONVERSATION_SEND_RACE_FIX.md))
+
+### **(v0.261.050)**
+
+#### Bug Fixes
+
+*   **Leaving A Chat No Longer Destroys The Answer Being Written**
+    *   In the new interface, sending a message and then opening a different conversation before the reply finished ended the reply. Coming back showed the question with no answer, and nothing to reconnect to.
+    *   It looked intermittent because the timing changed the symptom. Leaving during the "thinking" phase, before the assistant had produced its first word, saved no reply at all. Leaving later left a truncated one.
+    *   The cause was that switching conversations, and starting a new chat, asked the server to *cancel* the generation rather than simply stopping reading it. Those are different things, and only the Stop button should mean the second one. Answers are generated in the background and deliberately outlive the connection carrying them, so dropping the connection was always safe; cancelling was not.
+    *   Leaving a conversation now detaches. The answer finishes and is saved, reopening the thread picks the reply back up mid-flow or shows it complete, and several conversations can be generating at once — matching how the classic interface has always behaved.
+    *   Stop is unchanged and still cancels. Leaving a shared conversation also no longer cancels a reply other participants are waiting for.
+    *   (Ref: `chatStore.ts` `detachActiveStream`, `selectConversation`, `startNewConversation`, `stopStreaming`, `/api/chat/stream/cancel`, [V2 Stream Cancelled On Conversation Leave](fixes/V2_STREAM_CANCELLED_ON_CONVERSATION_LEAVE_FIX.md))
 
 ### **(v0.261.049)**
 

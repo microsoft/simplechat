@@ -13,7 +13,7 @@ Separately, a deployment with no custom logo saw its application title twice. Th
 area fell back to an accent square holding the first letter of the title, and then rendered
 the whole title next to it: **S** SimpleChat.
 
-**Fixed in version:** 0.261.050
+**Fixed in version:** 0.261.052
 
 ## Root cause
 
@@ -103,7 +103,7 @@ that leads home is a convention that does not usually carry one.
 | File | Change |
 |---|---|
 | `application/v2_ui/src/components/layout/Sidebar.tsx` | **Home** nav item, its `lucide-react` icon import and the `NavItem.end` field removed; `BrandMark` wrapped in a `NavLink to="/" end` that names itself; letter square gated on `showInitial` |
-| `application/single_app/config.py` | Version to 0.261.050 |
+| `application/single_app/config.py` | Version to 0.261.052 |
 | `functional_tests/test_v2_brand_mark_home_link.py` | New test |
 | `ui_tests/test_v2_appearance_branding_and_nav.py` | Brand coverage extended to the home link and the letter square rule |
 

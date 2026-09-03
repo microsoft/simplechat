@@ -85,7 +85,7 @@ both interfaces, so the alignment setting reads as a choice about the prose.
 | anything unmatched | Redirects to `/v2` |
 
 **Home** was reached from a nav item at the top of the rail when this page was added.
-Since `0.261.050` the rail's brand mark — the logo, the application title, or the
+Since `0.261.052` the rail's brand mark — the logo, the application title, or the
 letter square standing in for them — carries the destination instead, and the nav
 item is gone. See
 [V2_BRAND_MARK_HOME_LINK_FIX.md](../fixes/V2_BRAND_MARK_HOME_LINK_FIX.md).
