@@ -1,8 +1,8 @@
 // test_v2_inline_image_proposal_store.mjs
 //
 // Runtime test for the V2 image proposal store.
-// Version: 0.261.050
-// Implemented in: 0.261.050
+// Version: 0.261.053
+// Implemented in: 0.261.053
 //
 // The store is where two things that cost real money are decided: whether a second approval may
 // be sent for a card that already has one running, and whether an approval in flight is still

@@ -2,8 +2,8 @@
 """
 Functional test for V2 inline image approvals surviving the view that started them.
 
-Version: 0.261.050
-Implemented in: 0.261.050
+Version: 0.261.053
+Implemented in: 0.261.053
 
 Approving an inline image proposal used to be tied to the conversation being on screen. The
 approval itself was not -- it is a blocking request, and the serial queue behind it is
@@ -43,7 +43,7 @@ sys.path.insert(0, str(REPO_ROOT / "functional_tests"))
 
 from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
-IMPLEMENTED_IN = "0.261.050"
+IMPLEMENTED_IN = "0.261.053"
 
 TRACKING_MODULE = V2_SRC / "lib" / "imageProposalTracking.ts"
 RESUME_MODULE = V2_SRC / "lib" / "imageProposalResume.ts"

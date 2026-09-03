@@ -84,7 +84,11 @@ both interfaces, so the alignment setting reads as a choice about the prose.
 | `/v2/chat` | Chat |
 | anything unmatched | Redirects to `/v2` |
 
-**Home** was added as the first entry in the navigation rail.
+**Home** was reached from a nav item at the top of the rail when this page was added.
+Since `0.261.052` the rail's brand mark — the logo, the application title, or the
+letter square standing in for them — carries the destination instead, and the nav
+item is gone. See
+[V2_BRAND_MARK_HOME_LINK_FIX.md](../fixes/V2_BRAND_MARK_HOME_LINK_FIX.md).
 
 **New chat** is not shown on the home page. It is offered only on the chat page,
 because it acts on chat state that is not on screen anywhere else; clicking
@@ -146,8 +150,9 @@ Custom Pages and External Links are configured under **Appearance > Pages & Link
 - `functional_tests/test_v2_navigation_groups_logic.mjs` executes the client's
   inline-versus-menu and visibility decisions.
 - `ui_tests/test_v2_appearance_branding_and_nav.py` covers the rendered home page,
-  the logo height, the "Start chatting" link, the Home rail entry and the two
-  navigation groups, driven by what bootstrap reports for the deployment under test.
+  the logo height, the "Start chatting" link, the brand mark that reaches this page
+  and the two navigation groups, driven by what bootstrap reports for the deployment
+  under test.
 
 ## Known limitations
 
