@@ -887,19 +887,32 @@ export interface Citation {
     [key: string]: unknown;
 }
 
-/** A single reasoning step surfaced by a `type: "thought"` stream frame. */
+/**
+ * A single reasoning step surfaced by a `type: "thought"` stream frame.
+ *
+ * `stepType`, `detail` and `activity` are what `serialize_thought_event` actually sends;
+ * without them a live run cannot be drawn as staged progress, only as a list of sentences.
+ * They are optional because plenty of steps are exactly that.
+ */
 export interface ThoughtEntry {
     id: string;
     title: string;
     content: string;
+    stepType?: string;
+    detail?: string;
+    /** The staged-work payload, when the step reports one. See `lib/activityLanes.ts`. */
+    activity?: Json;
+    progress?: Json;
+    stepIndex?: number;
 }
 
 /**
  * A reasoning step as returned by the persisted-thoughts endpoint.
  *
  * This is NOT the same shape as `ThoughtEntry`, which comes from a live stream frame. The
- * stored record has `step_type` where the live one has `title`, plus timing and progress
- * fields the stream does not carry. Keys are quoted from `route_backend_thoughts.py`.
+ * stored record has `step_type` where the live one has `title`, plus timing the stream does
+ * not carry. Keys are quoted from `route_backend_thoughts.py`, which passes `activity` and
+ * `progress` through as the objects they were stored as.
  */
 export interface PersistedThought {
     id?: string;
@@ -908,8 +921,8 @@ export interface PersistedThought {
     step_type?: string;
     content?: string;
     detail?: string;
-    activity?: string;
-    progress?: number | null;
+    activity?: Json;
+    progress?: Json;
     duration_ms?: number | null;
     timestamp?: string;
 }

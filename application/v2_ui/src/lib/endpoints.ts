@@ -7,8 +7,10 @@
 
 import { api, apiUrl, uploadFile, ApiError, API_BASE, CREDENTIALS_MODE } from './apiClient';
 import { buildDocumentListParams } from './documentExplorer';
+import { artifactDownloadPath } from './generatedArtifacts';
 import type { EnhancedCitationMetadata } from './enhancedCitations';
 import type { ExportVisualAsset } from './exportVisuals';
+import type { GeneratedArtifact, GeneratedRunStatus } from './generatedArtifacts';
 import type { MaskAction, MaskedRange, MaskSelection } from './masking';
 import type {
     AiNoticeFrequency,
@@ -973,6 +975,90 @@ export function workspaceDocumentDownloadUrl(docId: string): string {
 export function tabularWorkspaceDownloadUrl(docId: string): string {
     return apiUrl(
         `/api/enhanced_citations/tabular_workspace?doc_id=${encodeURIComponent(docId)}`,
+    );
+}
+
+/**
+ * The original of a spreadsheet uploaded straight into a conversation.
+ *
+ * A chat upload is not a workspace document, so it has no `doc_id` to download by; it is
+ * addressed by the conversation it was attached to and the file id within it.
+ */
+export function chatUploadTabularDownloadUrl(conversationId: string, fileId: string): string {
+    return apiUrl(
+        `/api/enhanced_citations/tabular?conversation_id=${encodeURIComponent(
+            conversationId,
+        )}&file_id=${encodeURIComponent(fileId)}`,
+    );
+}
+
+/* -------------------------------------------------------------------------- */
+/* Chat file uploads                                                           */
+/* -------------------------------------------------------------------------- */
+
+/** What `/api/get_file_content` returns for a file uploaded straight into a conversation. */
+export interface ChatFileContent {
+    file_content?: string;
+    filename?: string;
+    /** True when the content is CSV that should be drawn as a table. */
+    is_table?: boolean;
+    /**
+     * Where the content came from. `blob` means the original file is still in storage and
+     * can be downloaded; anything else means only the extracted text survives.
+     */
+    file_content_source?: string;
+    error?: string;
+}
+
+export function fetchChatFileContent(conversationId: string, fileId: string) {
+    return api.post<ChatFileContent>('/api/get_file_content', {
+        conversation_id: conversationId,
+        file_id: fileId,
+    });
+}
+
+/* -------------------------------------------------------------------------- */
+/* Generated artifacts                                                         */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Absolute download URL for a generated artifact.
+ *
+ * `artifactDownloadPath` picks the target and this applies the API base, so the choice
+ * between the conversation copy and the workspace copy stays testable without a Vite build.
+ * Returns an empty string when the artifact names no downloadable target.
+ */
+export function generatedArtifactDownloadUrl(
+    artifact: GeneratedArtifact,
+    fallbackConversationId = '',
+): string {
+    const path = artifactDownloadPath(artifact, fallbackConversationId);
+    return path ? apiUrl(path) : '';
+}
+
+export interface GeneratedOutputRunResponse {
+    success?: boolean;
+    message?: string;
+    run?: GeneratedRunStatus;
+}
+
+export function fetchGeneratedOutputRun(runId: string, signal?: AbortSignal) {
+    return api.get<GeneratedOutputRunResponse>(
+        `/api/tabular/generated-output/runs/${encodeURIComponent(runId)}`,
+        signal,
+    );
+}
+
+/** Requeue a durable run the worker stopped short of finishing. */
+export function resumeGeneratedOutputRun(runId: string) {
+    return api.post<GeneratedOutputRunResponse>(
+        `/api/tabular/generated-output/runs/${encodeURIComponent(runId)}/resume`,
+    );
+}
+
+export function cancelGeneratedOutputRun(runId: string) {
+    return api.post<GeneratedOutputRunResponse>(
+        `/api/tabular/generated-output/runs/${encodeURIComponent(runId)}/cancel`,
     );
 }
 
