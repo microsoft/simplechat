@@ -561,6 +561,40 @@ response.
 
 A `web` tag's value comes from model output, so only `http(s)` values become links.
 
+### Conversation export
+
+A whole conversation, or several at once, can be exported as JSON, Markdown or PDF, either as
+one file or as a ZIP holding one file per conversation. An optional intro summary puts a short
+written abstract above each transcript.
+
+It is reachable three ways: a single conversation's own menu in the rail, the rail's selection
+mode for several at once, and the conversation details dialog. Starting from a single
+conversation skips the review step, so that export opens on the format choice.
+
+The wizard drives the endpoints the classic wizard already uses —
+`POST /api/conversations/export` and `POST /api/conversations/export/visual-scan` — so nothing
+was added server-side and the two interfaces produce identical files.
+
+A model chosen for the intro summary is sent as all four identity fields
+(`summary_model_deployment`, `summary_model_endpoint_id`, `summary_model_id`,
+`summary_model_provider`). Sending only the deployment name makes the server's resolver return
+nothing and fall back to the legacy single-endpoint client, which is a different endpoint from
+the one the user picked, with no error anywhere.
+
+**Diagrams are drawn in the browser.** Mermaid is a browser library, so the alternative is the
+server launching headless Chromium once per export. The client asks the scan endpoint which
+diagram sources the selected conversations contain, renders each one, and posts the PNGs back
+as `visual_assets`. Rendering goes through the same hardened runtime the chat uses
+(`lib/mermaidRuntime.ts`), which is why that runtime is shared rather than living inside
+`MermaidDiagram.tsx`: an export covers conversations that were never on screen, so there is no
+mounted component to take an SVG from.
+
+Exports are drawn with a fixed light preset rather than the reader's theme, because the file is
+read outside the application, where a dark diagram on white paper is unreadable. A diagram that
+fails to render is left out and the server draws it instead, so a broken diagram costs fidelity
+rather than the whole export. A JSON export skips this entirely — it keeps the original
+markdown, fences included.
+
 ### Composer gating
 
 Every control being visible whenever its capability was enabled is what made the composer
@@ -965,6 +999,7 @@ this entirely and is the recommended layout.
 | `functional_tests/test_v2_generated_image_lightbox.py` | The image thumbnail opens a dialog rather than a new tab, the dialog is dismissable and manages focus, every source kind is handled by download and open-in-new-tab, and `window.open` is not given `noopener` |
 | `functional_tests/test_v2_chat_notices.py` | Both notices resolved server-side from the shared helpers, the web search notice's three-key condition including consent, all four AI notice frequencies, dismissal only after a successful write, session keys shared with the classic interface, no hardcoded disclaimer, notice text escaped |
 | `functional_tests/test_v2_conversation_deep_link.py` | Both parameter spellings read and only the canonical one written, the incoming link captured before any effect can strip it, the URL replaced rather than pushed, a dead link reported instead of stranded, a list row backfilled behind the stale-response guard, and the classic handover carrying the conversation |
+| `functional_tests/test_v2_conversation_export.py` | The wizard reuses the existing export endpoints and sends only fields the route reads, the summary model carries all four identity fields, JSON exports skip rasterizing, diagrams render through the shared hardened runtime, a percentage width is not mistaken for a size, the rail's selection survives rows being removed, and all three entry points open the wizard |
 | `functional_tests/test_csrf_state_changing_route_guard.py` | Cross-site mutations require an explicitly trusted origin; CORS preflights answered before authentication and never wildcarded |
 | `functional_tests/route_tests/` | Blueprint policy classification for `frontend_v2`, `backend_v2`, `backend_v2_admin` |
 
@@ -993,12 +1028,12 @@ imported in a test environment.
   microphone and speech output needs Azure Speech configured in the tenant. Both were
   verified structurally — correct controls, correct gating, correct requests and payloads —
   but neither actual capture nor actual playback has been exercised.
-- Collaboration, tabular runs, conversation export, workflow activity, scope lock and the
-  chat tutorial are not wired.
+- Collaboration, tabular runs, workflow activity, scope lock and the chat tutorial are not
+  wired.
 - Stream reattachment (`/api/chat/stream/reattach/{id}`) is not used; a dropped connection
   surfaces an error rather than silently resuming.
 - Admin settings edits boolean capabilities only.
 - Group and public workspaces are not rebuilt.
-- The bundle is ~530 KB raw / ~162 KB gzipped, dominated by React, the markdown pipeline
+- The bundle is ~711 KB raw / ~213 KB gzipped, dominated by React, the markdown pipeline
   and syntax highlighting grammars. It is not code-split, because the chat page needs
   nearly all of it on first paint.
