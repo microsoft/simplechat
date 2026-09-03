@@ -57,6 +57,29 @@ from functions_message_masking import (
     copy_message_mask_metadata,
     resolve_mask_display_name,
 )
+from functions_message_block_revisions import (
+    BLOCK_REVISIONS_METADATA_KEY,
+    ORIGIN_AI,
+    ORIGIN_CONTROL,
+    ORIGIN_MANUAL,
+    BlockRevisionConflictError,
+    BlockRevisionError,
+    append_block_chat_turn,
+    apply_block_revision,
+    current_block_source,
+    read_block_chat,
+    read_block_entry,
+    read_block_revisions,
+    set_current_revision,
+    validate_block_index,
+    validate_block_kind,
+    validate_source_hash,
+)
+from functions_block_revision_assist import (
+    BlockAssistError,
+    normalize_instruction,
+    request_block_edit,
+)
 from functions_message_visual_styles import (
     UNSET as VISUAL_STYLE_HEIGHT_UNSET,
     VisualStyleError,
@@ -420,6 +443,152 @@ def _sync_collaboration_mask_metadata_to_source(message_doc):
 
     copy_message_mask_metadata(metadata, source_metadata)
     source_container.upsert_item(source_message_doc)
+
+
+def _sync_collaboration_block_revisions_to_source(message_doc):
+    """Copy a shared message's diagram revisions onto the personal message behind it.
+
+    A shared conversation's messages are mirrors: the model's history, the conversation export
+    and the owner's own view of the thread are all built from the source message in the personal
+    container. Writing an edit only to the mirror would show the new diagram to whoever is
+    reading the shared thread while the model, the export and the owner all continued to see the
+    original.
+
+    The same problem and the same answer as ``_sync_collaboration_mask_metadata_to_source``
+    directly above, which is why they sit together.
+
+    Best effort: the edit has already been stored on the shared message by the time this runs,
+    so a missing source message is logged rather than failing a write that succeeded.
+    """
+    metadata = (message_doc or {}).get('metadata', {}) if isinstance((message_doc or {}).get('metadata'), dict) else {}
+    source_conversation_id = str(metadata.get('source_conversation_id') or '').strip()
+    source_message_id = str(metadata.get('source_message_id') or '').strip()
+    if not source_conversation_id or not source_message_id:
+        return
+
+    source_scope = str(metadata.get('source_conversation_scope') or '').strip().lower()
+    source_container = cosmos_group_messages_container if source_scope == 'group' else cosmos_messages_container
+
+    try:
+        source_message_doc = source_container.read_item(
+            item=source_message_id,
+            partition_key=source_conversation_id,
+        )
+    except CosmosResourceNotFoundError:
+        log_event(
+            '[COLLABORATION_BLOCK_REVISION] Linked source message was not found while syncing revisions',
+            extra={
+                'conversation_id': (message_doc or {}).get('conversation_id'),
+                'message_id': (message_doc or {}).get('id'),
+                'source_conversation_id': source_conversation_id,
+                'source_message_id': source_message_id,
+                'source_scope': source_scope or 'personal',
+            },
+            level=logging.WARNING,
+            debug_only=True,
+        )
+        return
+
+    source_metadata = source_message_doc.setdefault('metadata', {})
+    if not isinstance(source_metadata, dict):
+        source_metadata = {}
+        source_message_doc['metadata'] = source_metadata
+
+    stored = metadata.get(BLOCK_REVISIONS_METADATA_KEY)
+    if stored:
+        source_metadata[BLOCK_REVISIONS_METADATA_KEY] = stored
+    else:
+        source_metadata.pop(BLOCK_REVISIONS_METADATA_KEY, None)
+
+    source_container.upsert_item(source_message_doc)
+
+
+def _load_collaboration_block_revision_message(user_id, conversation_id, message_id):
+    """Return the shared message a block revision request targets, authorizing the caller.
+
+    Participation rather than mere visibility is required, matching the mask route: editing a
+    diagram changes what everyone in the thread sees, so it is not something a pending invitee
+    should be able to do.
+    """
+    conversation_doc = get_collaboration_conversation(conversation_id)
+    assert_user_can_participate_in_collaboration_conversation(user_id, conversation_doc)
+
+    message_doc = get_collaboration_message(message_id)
+    if str(message_doc.get('conversation_id') or '').strip() != str(conversation_id or '').strip():
+        raise CosmosResourceNotFoundError(message='Collaborative message not found')
+
+    return message_doc
+
+
+def _save_collaboration_block_revisions(conversation_id, message_id, message_doc, user_id):
+    """Persist an edited shared message, mirror it to its source, and tell the other readers."""
+    cosmos_collaboration_messages_container.upsert_item(message_doc)
+    _sync_collaboration_block_revisions_to_source(message_doc)
+
+    revisions = read_block_revisions(message_doc)
+    COLLABORATION_EVENT_REGISTRY.publish(
+        conversation_id,
+        _build_collaboration_event(
+            conversation_id,
+            'collaboration.message.block_revised',
+            {
+                'message_id': message_id,
+                'block_revisions': make_json_serializable(revisions),
+                'updated_by_user_id': user_id,
+            },
+        ),
+    )
+    return revisions
+
+
+def _read_collaboration_expected_revision_count(data):
+    """Return the caller's view of how many revisions exist, or None when it did not say."""
+    if 'expected_revision_count' not in data:
+        return None
+    value = data.get('expected_revision_count')
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise BlockRevisionError('expected_revision_count must be a non-negative integer')
+    return value
+
+
+def _find_collaboration_originating_request(conversation_id, message_doc):
+    """Return the request that produced a shared message, for grounding a diagram edit.
+
+    The nearest preceding human message in the shared thread. Only that one message is used, and
+    it is passed to the model as background rather than as instructions — sending a whole shared
+    conversation to redraw one flowchart would be expensive and would hand the model a great
+    deal of other people's writing.
+
+    Best effort: an edit works perfectly well with no grounding at all, so a failure here is
+    swallowed rather than failing the edit.
+    """
+    timestamp = str((message_doc or {}).get('timestamp') or '').strip()
+    if not timestamp:
+        return ''
+    try:
+        rows = list(cosmos_collaboration_messages_container.query_items(
+            query=(
+                'SELECT TOP 1 c.content FROM c '
+                'WHERE c.conversation_id = @conversation_id '
+                "AND c.role = 'user' AND c.timestamp < @timestamp "
+                'ORDER BY c.timestamp DESC'
+            ),
+            parameters=[
+                {'name': '@conversation_id', 'value': conversation_id},
+                {'name': '@timestamp', 'value': timestamp},
+            ],
+            partition_key=conversation_id,
+        ))
+    except Exception as exc:
+        log_event(
+            f'[COLLABORATION_BLOCK_REVISION] Could not read the originating request: {exc}',
+            level=logging.WARNING,
+            debug_only=True,
+        )
+        return ''
+    return str((rows[0] or {}).get('content') or '').strip() if rows else ''
 
 
 def register_route_backend_collaboration(bp):
@@ -1367,6 +1536,260 @@ def register_route_backend_collaboration(bp):
             return jsonify({'error': 'Failed to update shared message mask state'}), 500
 
     @bp.route(
+        '/api/collaboration/conversations/<conversation_id>/messages/<message_id>/block-revision',
+        methods=['POST'],
+    )
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def add_collaboration_block_revision_api(conversation_id, message_id):
+        """Record a new version of one diagram in a shared message and make it the current one.
+
+        The shared counterpart of the personal route in ``route_backend_chats.py``. A shared
+        conversation keeps its messages in a different container, so the two cannot be one
+        route; what they must share is the storage rules, which both take from
+        ``functions_message_block_revisions``.
+        """
+        try:
+            _require_collaboration_feature_enabled()
+            current_user = _get_current_collaboration_user()
+            if not current_user:
+                return jsonify({'error': 'User not authenticated'}), 401
+
+            data = request.get_json(silent=True) or {}
+            origin = data.get('origin') or ORIGIN_MANUAL
+            # Only a human-driven edit is recorded here. An AI-authored revision is written by
+            # the assist route, which is the only place that knows a model produced the source.
+            if origin not in (ORIGIN_MANUAL, ORIGIN_CONTROL):
+                return jsonify({'error': 'Unsupported revision origin'}), 400
+
+            message_doc = _load_collaboration_block_revision_message(
+                current_user['user_id'], conversation_id, message_id
+            )
+
+            try:
+                apply_block_revision(
+                    message_doc,
+                    data.get('block_kind'),
+                    data.get('block_index'),
+                    data.get('source'),
+                    data.get('source_hash') or '',
+                    original_source=data.get('original_source') or '',
+                    author_id=current_user['user_id'],
+                    author_name=resolve_mask_display_name(current_user),
+                    origin=origin,
+                    note=data.get('note') or '',
+                    expected_revision_count=_read_collaboration_expected_revision_count(data),
+                )
+            except BlockRevisionConflictError as exc:
+                return jsonify({
+                    'error': str(exc),
+                    'block_revisions': make_json_serializable(read_block_revisions(message_doc)),
+                }), 409
+            except BlockRevisionError as exc:
+                return jsonify({'error': str(exc)}), 400
+
+            revisions = _save_collaboration_block_revisions(
+                conversation_id, message_id, message_doc, current_user['user_id']
+            )
+
+            return jsonify({
+                'success': True,
+                'message_id': message_id,
+                'conversation_id': conversation_id,
+                'block_revisions': make_json_serializable(revisions),
+            }), 200
+        except CosmosResourceNotFoundError:
+            return jsonify({'error': 'Collaborative message not found'}), 404
+        except PermissionError as exc:
+            return jsonify({'error': str(exc)}), 403
+        except Exception as exc:
+            log_event(
+                f'[COLLABORATION_BLOCK_REVISION] Failed to store a revision for {message_id}: {exc}',
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({'error': 'Failed to update the shared diagram'}), 500
+
+    @bp.route(
+        '/api/collaboration/conversations/<conversation_id>/messages/<message_id>/block-revision/current',
+        methods=['POST'],
+    )
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def set_collaboration_block_revision_api(conversation_id, message_id):
+        """Point one diagram in a shared message at a different one of its stored versions."""
+        try:
+            _require_collaboration_feature_enabled()
+            current_user = _get_current_collaboration_user()
+            if not current_user:
+                return jsonify({'error': 'User not authenticated'}), 401
+
+            data = request.get_json(silent=True) or {}
+            revision_id = str(data.get('revision_id') or '').strip()
+            if not revision_id:
+                return jsonify({'error': 'revision_id is required'}), 400
+
+            message_doc = _load_collaboration_block_revision_message(
+                current_user['user_id'], conversation_id, message_id
+            )
+
+            try:
+                set_current_revision(
+                    message_doc,
+                    data.get('block_kind'),
+                    data.get('block_index'),
+                    revision_id,
+                    data.get('source_hash') or '',
+                )
+            except BlockRevisionError as exc:
+                return jsonify({'error': str(exc)}), 400
+
+            revisions = _save_collaboration_block_revisions(
+                conversation_id, message_id, message_doc, current_user['user_id']
+            )
+
+            return jsonify({
+                'success': True,
+                'message_id': message_id,
+                'conversation_id': conversation_id,
+                'block_revisions': make_json_serializable(revisions),
+            }), 200
+        except CosmosResourceNotFoundError:
+            return jsonify({'error': 'Collaborative message not found'}), 404
+        except PermissionError as exc:
+            return jsonify({'error': str(exc)}), 403
+        except Exception as exc:
+            log_event(
+                f'[COLLABORATION_BLOCK_REVISION] Failed to restore a revision for {message_id}: {exc}',
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({'error': 'Failed to update the shared diagram'}), 500
+
+    @bp.route(
+        '/api/collaboration/conversations/<conversation_id>/messages/<message_id>/block-revision/assist',
+        methods=['POST'],
+    )
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def assist_collaboration_block_revision_api(conversation_id, message_id):
+        """Ask the model to change one diagram in a shared message.
+
+        As on the personal route, the model is given the diagram's current source, that
+        diagram's own sub-conversation and the request that produced it — never the
+        conversation. In a shared thread that matters more rather than less: the surrounding
+        messages belong to other people.
+        """
+        try:
+            _require_collaboration_feature_enabled()
+            current_user = _get_current_collaboration_user()
+            if not current_user:
+                return jsonify({'error': 'User not authenticated'}), 401
+
+            data = request.get_json(silent=True) or {}
+            try:
+                instruction = normalize_instruction(data.get('instruction'))
+            except BlockAssistError as exc:
+                return jsonify({'error': str(exc)}), 400
+
+            block_kind = data.get('block_kind')
+            block_index = data.get('block_index')
+            source_hash = data.get('source_hash') or ''
+            original_source = data.get('original_source') or ''
+
+            # Validated before the model is called: a malformed request is the caller's fault
+            # and should say so rather than costing a completion first.
+            try:
+                validate_block_kind(block_kind)
+                validate_block_index(block_index)
+                validate_source_hash(source_hash, required=True)
+            except BlockRevisionError as exc:
+                return jsonify({'error': str(exc)}), 400
+
+            message_doc = _load_collaboration_block_revision_message(
+                current_user['user_id'], conversation_id, message_id
+            )
+
+            entry = read_block_entry(message_doc, block_kind, block_index, source_hash)
+            current_source = current_block_source(entry, fallback=original_source)
+            if not current_source:
+                return jsonify({'error': 'The diagram source is required'}), 400
+
+            try:
+                result = request_block_edit(
+                    get_settings(),
+                    current_source,
+                    instruction,
+                    chat_turns=read_block_chat(entry),
+                    originating_request=_find_collaboration_originating_request(
+                        conversation_id, message_doc
+                    ),
+                )
+            except BlockAssistError as exc:
+                log_event(
+                    f'[COLLABORATION_BLOCK_REVISION] Assist failed for {message_id}: {exc}',
+                    level=logging.WARNING,
+                )
+                return jsonify({'error': str(exc)}), 502
+
+            try:
+                # The revision is written first, so a model reply that is not a storable diagram
+                # leaves no transcript behind describing an edit that never happened.
+                apply_block_revision(
+                    message_doc,
+                    block_kind,
+                    block_index,
+                    result['source'],
+                    source_hash,
+                    original_source=original_source,
+                    author_id=current_user['user_id'],
+                    author_name=resolve_mask_display_name(current_user),
+                    origin=ORIGIN_AI,
+                    note=instruction,
+                    expected_revision_count=_read_collaboration_expected_revision_count(data),
+                )
+                append_block_chat_turn(
+                    message_doc, block_kind, block_index, 'user', instruction, source_hash
+                )
+                append_block_chat_turn(
+                    message_doc, block_kind, block_index, 'assistant', result['source'], source_hash
+                )
+            except BlockRevisionConflictError as exc:
+                return jsonify({
+                    'error': str(exc),
+                    'block_revisions': make_json_serializable(read_block_revisions(message_doc)),
+                }), 409
+            except BlockRevisionError as exc:
+                return jsonify({'error': f'The model returned an unusable diagram: {exc}'}), 502
+
+            revisions = _save_collaboration_block_revisions(
+                conversation_id, message_id, message_doc, current_user['user_id']
+            )
+
+            return jsonify({
+                'success': True,
+                'message_id': message_id,
+                'conversation_id': conversation_id,
+                'source': result['source'],
+                'block_revisions': make_json_serializable(revisions),
+            }), 200
+        except CosmosResourceNotFoundError:
+            return jsonify({'error': 'Collaborative message not found'}), 404
+        except PermissionError as exc:
+            return jsonify({'error': str(exc)}), 403
+        except Exception as exc:
+            log_event(
+                f'[COLLABORATION_BLOCK_REVISION] Assist raised for {message_id}: {exc}',
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({'error': 'Failed to update the shared diagram'}), 500
+
+
+    @bp.route(
         '/api/collaboration/conversations/<conversation_id>/messages/<message_id>/visual-style',
         methods=['POST'],
     )
@@ -1460,6 +1883,7 @@ def register_route_backend_collaboration(bp):
                 exceptionTraceback=True,
             )
             return jsonify({'error': 'Failed to update shared message visual style'}), 500
+
 
     @bp.route('/api/collaboration/conversations/<conversation_id>/images/<message_id>', methods=['GET'])
     @swagger_route(security=get_auth_security())

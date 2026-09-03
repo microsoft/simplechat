@@ -239,6 +239,29 @@ from functions_message_visual_styles import (
     VisualStyleError,
     apply_visual_style,
 )
+from functions_message_block_revisions import (
+    ORIGIN_AI,
+    ORIGIN_CONTROL,
+    ORIGIN_MANUAL,
+    BlockRevisionConflictError,
+    BlockRevisionError,
+    append_block_chat_turn,
+    apply_block_revision,
+    current_block_source,
+    read_block_chat,
+    read_block_entry,
+    read_block_revisions,
+    resolve_block_sources_in_content,
+    set_current_revision,
+    validate_block_index,
+    validate_block_kind,
+    validate_source_hash,
+)
+from functions_block_revision_assist import (
+    BlockAssistError,
+    normalize_instruction,
+    request_block_edit,
+)
 from functions_document_actions import (
     DOCUMENT_ACTION_CONTEXT_CHAT,
     DOCUMENT_ACTION_TYPE_COMPARISON,
@@ -24995,6 +25018,370 @@ def register_route_backend_chats(bp):
             )
             return build_json_error_response()
 
+    def _load_block_revision_message(user_id, conversation_id, message_id):
+        """Return the message a block revision request targets, or an error response for it.
+
+        Authorizes the conversation rather than the message, matching the visual-style route
+        above and for the same reason: a diagram lives in an assistant message, which carries no
+        author of its own, and any participant of a shared conversation may edit it.
+        """
+        if not conversation_id:
+            return None, (jsonify({'error': 'conversation_id is required'}), 400)
+
+        try:
+            _authorize_personal_conversation_access(user_id, conversation_id)
+        except PermissionError:
+            return None, (jsonify({'error': 'You can only edit your own conversations'}), 403)
+        except LookupError:
+            return None, (jsonify({'error': 'Conversation not found'}), 404)
+
+        try:
+            message_doc = cosmos_messages_container.read_item(
+                item=message_id,
+                partition_key=conversation_id,
+            )
+        except CosmosResourceNotFoundError:
+            return None, (jsonify({'error': 'Message not found'}), 404)
+
+        # The partition key is the conversation, so a message read through it already belongs to
+        # the authorized conversation. Checked anyway, because a mismatch would mean the stored
+        # document disagrees with where it was found.
+        if str(message_doc.get('conversation_id') or '') != conversation_id:
+            return None, (jsonify({'error': 'Message not found'}), 404)
+
+        return message_doc, None
+
+    def _read_expected_revision_count(data):
+        """Return the caller's view of how many revisions exist, or None when it did not say."""
+        if 'expected_revision_count' not in data:
+            return None
+        value = data.get('expected_revision_count')
+        if value is None:
+            return None
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise BlockRevisionError('expected_revision_count must be a non-negative integer')
+        return value
+
+    @bp.route('/api/message/<message_id>/block-revision', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def add_message_block_revision_api(message_id):
+        """Record a new version of one diagram in a message and make it the current one.
+
+        The message's own content is never rewritten. The new source is stored in metadata and
+        substituted in when the content is read, which keeps `masked_ranges` — character offsets
+        into that content — pointing at the text they were measured against.
+
+        ``original_source`` seeds the revision history the first time a block is edited, so the
+        version the model actually produced stays recoverable however many edits follow.
+        """
+        user_id = None
+        try:
+            data = request.get_json(silent=True) or {}
+            user_id = get_current_user_id()
+            if not user_id:
+                return jsonify({'error': 'User not authenticated'}), 401
+
+            conversation_id = str(data.get('conversation_id') or '').strip()
+            message_doc, error = _load_block_revision_message(
+                user_id, conversation_id, message_id
+            )
+            if error:
+                return error
+
+            current_user = get_current_user_info() or {}
+            origin = data.get('origin') or ORIGIN_MANUAL
+            # Only a human-driven edit may be recorded through this route. An AI-authored
+            # revision is written by the assist route, which is the only place that knows a
+            # model actually produced the source.
+            if origin not in (ORIGIN_MANUAL, ORIGIN_CONTROL):
+                return jsonify({'error': 'Unsupported revision origin'}), 400
+
+            try:
+                apply_block_revision(
+                    message_doc,
+                    data.get('block_kind'),
+                    data.get('block_index'),
+                    data.get('source'),
+                    data.get('source_hash') or '',
+                    original_source=data.get('original_source') or '',
+                    author_id=user_id,
+                    author_name=resolve_mask_display_name(current_user),
+                    origin=origin,
+                    note=data.get('note') or '',
+                    expected_revision_count=_read_expected_revision_count(data),
+                )
+            except BlockRevisionConflictError as ex:
+                return jsonify({
+                    'error': str(ex),
+                    'block_revisions': read_block_revisions(message_doc),
+                }), 409
+            except BlockRevisionError as ex:
+                debug_print(f'[BLOCK_REVISION] Invalid request: {ex}')
+                return jsonify({'error': str(ex)}), 400
+
+            try:
+                cosmos_messages_container.upsert_item(message_doc)
+            except Exception as e:
+                log_event(
+                    f'[BLOCK_REVISION] Failed to update message: {e}',
+                    extra={'message_id': message_id, 'user_id': user_id},
+                    level=logging.ERROR,
+                    exceptionTraceback=True,
+                )
+                return build_json_error_response('Failed to update message')
+
+            return jsonify({
+                'success': True,
+                'message_id': message_id,
+                'block_revisions': read_block_revisions(message_doc),
+            }), 200
+
+        except Exception as e:
+            log_event(
+                f'[BLOCK_REVISION] Unhandled exception: {e}',
+                extra={'message_id': message_id, 'user_id': user_id},
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return build_json_error_response()
+
+    @bp.route('/api/message/<message_id>/block-revision/current', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def set_message_block_revision_api(message_id):
+        """Point one diagram at a different one of its stored versions.
+
+        This is undo, redo and "restore the original", which are all the same operation: nothing
+        is deleted, the pointer moves. Addressed by revision id rather than position, because
+        positions shift once the oldest edits start being pruned.
+        """
+        user_id = None
+        try:
+            data = request.get_json(silent=True) or {}
+            user_id = get_current_user_id()
+            if not user_id:
+                return jsonify({'error': 'User not authenticated'}), 401
+
+            conversation_id = str(data.get('conversation_id') or '').strip()
+            message_doc, error = _load_block_revision_message(
+                user_id, conversation_id, message_id
+            )
+            if error:
+                return error
+
+            revision_id = str(data.get('revision_id') or '').strip()
+            if not revision_id:
+                return jsonify({'error': 'revision_id is required'}), 400
+
+            try:
+                set_current_revision(
+                    message_doc,
+                    data.get('block_kind'),
+                    data.get('block_index'),
+                    revision_id,
+                    data.get('source_hash') or '',
+                )
+            except BlockRevisionError as ex:
+                debug_print(f'[BLOCK_REVISION] Invalid restore request: {ex}')
+                return jsonify({'error': str(ex)}), 400
+
+            try:
+                cosmos_messages_container.upsert_item(message_doc)
+            except Exception as e:
+                log_event(
+                    f'[BLOCK_REVISION] Failed to update message: {e}',
+                    extra={'message_id': message_id, 'user_id': user_id},
+                    level=logging.ERROR,
+                    exceptionTraceback=True,
+                )
+                return build_json_error_response('Failed to update message')
+
+            return jsonify({
+                'success': True,
+                'message_id': message_id,
+                'block_revisions': read_block_revisions(message_doc),
+            }), 200
+
+        except Exception as e:
+            log_event(
+                f'[BLOCK_REVISION] Unhandled exception: {e}',
+                extra={'message_id': message_id, 'user_id': user_id},
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return build_json_error_response()
+
+    def _find_originating_user_request(conversation_id, message_doc):
+        """Return the request that produced a message, for grounding a diagram edit.
+
+        The nearest preceding user message. "Make it match what we discussed" nearly always
+        means the request the diagram came from, and passing that one message is enough for it
+        to mean something without sending the whole conversation to redraw a flowchart.
+
+        Best effort: an edit works perfectly well with no grounding at all, so a failure here is
+        swallowed rather than failing the edit.
+        """
+        timestamp = str(message_doc.get('timestamp') or '').strip()
+        if not timestamp:
+            return ''
+        try:
+            rows = list(cosmos_messages_container.query_items(
+                query=(
+                    'SELECT TOP 1 c.content FROM c '
+                    'WHERE c.conversation_id = @conversation_id '
+                    "AND c.role = 'user' AND c.timestamp < @timestamp "
+                    'ORDER BY c.timestamp DESC'
+                ),
+                parameters=[
+                    {'name': '@conversation_id', 'value': conversation_id},
+                    {'name': '@timestamp', 'value': timestamp},
+                ],
+                partition_key=conversation_id,
+            ))
+        except Exception as exc:
+            debug_print(f'[BLOCK_REVISION] Could not read the originating request: {exc}')
+            return ''
+        return str((rows[0] or {}).get('content') or '').strip() if rows else ''
+
+    @bp.route('/api/message/<message_id>/block-revision/assist', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def assist_message_block_revision_api(message_id):
+        """Ask the model to change one diagram, without adding anything to the conversation.
+
+        The model is given this diagram's current source, the turns of its own sub-conversation
+        and the request that originally produced it — not the conversation history. The reply
+        becomes a new revision and a turn in that sub-conversation, both of which stay attached
+        to the diagram; neither is ever sent back to the model as conversation history.
+        """
+        user_id = None
+        try:
+            data = request.get_json(silent=True) or {}
+            user_id = get_current_user_id()
+            if not user_id:
+                return jsonify({'error': 'User not authenticated'}), 401
+
+            conversation_id = str(data.get('conversation_id') or '').strip()
+            message_doc, error = _load_block_revision_message(
+                user_id, conversation_id, message_id
+            )
+            if error:
+                return error
+
+            try:
+                instruction = normalize_instruction(data.get('instruction'))
+            except BlockAssistError as ex:
+                return jsonify({'error': str(ex)}), 400
+
+            block_kind = data.get('block_kind')
+            block_index = data.get('block_index')
+            source_hash = data.get('source_hash') or ''
+            original_source = data.get('original_source') or ''
+
+            # Validated before the model is called, not after. A malformed request is the
+            # caller's fault and should say so, rather than costing a completion and then
+            # failing as though the model had produced something unusable.
+            try:
+                validate_block_kind(block_kind)
+                validate_block_index(block_index)
+                validate_source_hash(source_hash, required=True)
+            except BlockRevisionError as ex:
+                return jsonify({'error': str(ex)}), 400
+
+            entry = read_block_entry(message_doc, block_kind, block_index, source_hash)
+            current_source = current_block_source(entry, fallback=original_source)
+            if not current_source:
+                return jsonify({'error': 'The diagram source is required'}), 400
+
+            try:
+                result = request_block_edit(
+                    get_settings(),
+                    current_source,
+                    instruction,
+                    chat_turns=read_block_chat(entry),
+                    originating_request=_find_originating_user_request(
+                        conversation_id, message_doc
+                    ),
+                )
+            except BlockAssistError as ex:
+                log_event(
+                    f'[BLOCK_REVISION] Assist failed: {ex}',
+                    extra={'message_id': message_id, 'user_id': user_id},
+                    level=logging.WARNING,
+                )
+                return jsonify({'error': str(ex)}), 502
+
+            current_user = get_current_user_info() or {}
+            try:
+                # The revision is written first. If the model returned something that is not a
+                # storable diagram, the reader gets an error and no transcript is left behind
+                # describing an edit that never happened.
+                apply_block_revision(
+                    message_doc,
+                    block_kind,
+                    block_index,
+                    result['source'],
+                    source_hash,
+                    original_source=original_source,
+                    author_id=user_id,
+                    author_name=resolve_mask_display_name(current_user),
+                    origin=ORIGIN_AI,
+                    note=instruction,
+                    expected_revision_count=_read_expected_revision_count(data),
+                )
+                # The assistant turn stores the source rather than the model's prose, because a
+                # follow-up instruction needs to refer to what the diagram became.
+                append_block_chat_turn(
+                    message_doc, block_kind, block_index, 'user', instruction, source_hash
+                )
+                append_block_chat_turn(
+                    message_doc,
+                    block_kind,
+                    block_index,
+                    'assistant',
+                    result['source'],
+                    source_hash,
+                )
+            except BlockRevisionConflictError as ex:
+                return jsonify({
+                    'error': str(ex),
+                    'block_revisions': read_block_revisions(message_doc),
+                }), 409
+            except BlockRevisionError as ex:
+                debug_print(f'[BLOCK_REVISION] Model reply was not storable: {ex}')
+                return jsonify({'error': f'The model returned an unusable diagram: {ex}'}), 502
+
+            try:
+                cosmos_messages_container.upsert_item(message_doc)
+            except Exception as e:
+                log_event(
+                    f'[BLOCK_REVISION] Failed to update message: {e}',
+                    extra={'message_id': message_id, 'user_id': user_id},
+                    level=logging.ERROR,
+                    exceptionTraceback=True,
+                )
+                return build_json_error_response('Failed to update message')
+
+            return jsonify({
+                'success': True,
+                'message_id': message_id,
+                'source': result['source'],
+                'block_revisions': read_block_revisions(message_doc),
+            }), 200
+
+        except Exception as e:
+            log_event(
+                f'[BLOCK_REVISION] Unhandled assist exception: {e}',
+                extra={'message_id': message_id, 'user_id': user_id},
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return build_json_error_response()
+
 
 def _format_history_message_ref(message):
     role = str((message or {}).get('role') or 'unknown')
@@ -25865,6 +26252,8 @@ def build_conversation_history_segments(
                 continue
 
             content = message.get('content', '')
+            if isinstance(content, str) and content:
+                content = resolve_block_sources_in_content(message, content)
             if role == 'assistant' and include_assistant_citation_context:
                 content = build_assistant_history_content_with_citations(message, content)
             message_texts_older.append(f"{role.upper()}: {content}")
@@ -25923,6 +26312,13 @@ def build_conversation_history_segments(
             content = remove_masked_content(content, masked_ranges)
             masked_range_message_refs.append(_format_history_message_ref(message))
             debug_print(f"[MASK] Applied {len(masked_ranges)} masked ranges to message {message.get('id')}")
+
+        # Substitute the current version of any diagram that has been edited. Deliberately after
+        # masking: masked ranges are character offsets into the stored content, so resolving
+        # first and then cutting by offset would remove the wrong text. Only the version on the
+        # reader's screen is sent; the revision history behind it never is.
+        if isinstance(content, str) and content:
+            content = resolve_block_sources_in_content(message, content)
 
         if role in allowed_roles_in_history:
             if role == 'assistant' and include_assistant_citation_context:

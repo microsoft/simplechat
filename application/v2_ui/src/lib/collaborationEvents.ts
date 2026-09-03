@@ -108,6 +108,18 @@ export interface CollaborationEventHandlers {
         message: CollaborationMessage,
         updatedByUserId: string | undefined,
     ) => void;
+    /**
+     * A diagram in a shared message was edited by somebody.
+     *
+     * Carries only the revision map rather than the whole message: the edit changes nothing
+     * else about the message, and replacing the message would clobber whatever local state the
+     * reader's copy already has.
+     */
+    onMessageBlockRevised?: (
+        messageId: string,
+        blockRevisions: Record<string, unknown>,
+        updatedByUserId: string | undefined,
+    ) => void;
     onMessageVisualStyleUpdated?: (
         message: CollaborationMessage,
         updatedByUserId: string | undefined,
@@ -225,6 +237,16 @@ export function dispatchCollaborationEvent(
         case 'collaboration.message.masked':
             if (payload.message) {
                 handlers.onMessageMasked?.(payload.message, payload.updated_by_user_id);
+            }
+            return;
+
+        case 'collaboration.message.block_revised':
+            if (payload.message_id) {
+                handlers.onMessageBlockRevised?.(
+                    String(payload.message_id),
+                    (payload.block_revisions ?? {}) as Record<string, unknown>,
+                    payload.updated_by_user_id,
+                );
             }
             return;
 

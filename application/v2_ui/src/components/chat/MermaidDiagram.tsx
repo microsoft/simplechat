@@ -20,6 +20,7 @@ import {
     Download,
     Maximize2,
     Minus,
+    PenLine,
     Plus,
     Scan,
     TriangleAlert,
@@ -27,17 +28,20 @@ import {
 } from 'lucide-react';
 import { useUiStore } from '../../stores/uiStore';
 import { useBlockVisualStyle } from '../../lib/blockVisualStyle';
+import { useBlockRevisions } from '../../lib/blockRevisions';
 import {
     isDefaultVisualStyle,
     resolveBackgroundColor,
     themeSurfaceColor,
     visualStyleSignature,
+    type VisualStyle,
 } from '../../lib/visualPalettes';
 import { describeMermaidError } from '../../lib/mermaidSource';
 import { peekMermaidSvg, renderMermaidSvg } from '../../lib/mermaidRuntime';
 import { downloadDataUri, fileNameStem, svgElementToPngDataUri } from '../../lib/svgRaster';
 import { registerExportDiagram } from '../../lib/exportVisuals';
 import { VisualStyleMenu } from './VisualStyleMenu';
+import { DiagramEditor } from './DiagramEditor';
 import {
     clampZoom,
     defaultStageHeight,
@@ -335,51 +339,20 @@ function DiagramLightbox({
 }
 
 /**
- * A rendered mermaid diagram.
+ * Render a diagram, reporting progress as state.
  *
- * A diagram that fails to parse falls back to its source rather than disappearing: the
- * source is still the answer the model gave, and hiding it would lose information.
- *
- * `messageId` and `blockIndex` are what a saved colour choice and a saved height are filed
- * under. A diagram in a reply that is still streaming has neither, so it renders with the
- * reader's defaults and its controls say the choice will be kept once the reply finishes.
+ * Extracted so the inline panel and the editor's live preview draw diagrams the same way, and
+ * so both go through `renderMermaidSvg`, which is where the DOMPurify boundary and mermaid's
+ * strict configuration live.
  */
-export function MermaidDiagram({
-    source,
-    messageId,
-    blockIndex,
-}: {
-    source: string;
-    messageId?: string;
-    blockIndex?: number;
-}) {
-    const theme = useUiStore((state) => state.theme);
+function useRenderedDiagram(
+    source: string,
+    theme: string,
+    style: VisualStyle,
+    background: string,
+    signature: string,
+): DiagramState {
     const [state, setState] = useState<DiagramState>({ status: 'pending' });
-    const [menuOpen, setMenuOpen] = useState(false);
-    const [expanded, setExpanded] = useState(false);
-    const [zoom, setZoom] = useState(1);
-    const [panelWidth, setPanelWidth] = useState(0);
-    const [downloadError, setDownloadError] = useState<string | null>(null);
-    const containerRef = useRef<HTMLDivElement>(null);
-
-    const { style, setStyle, reset, height, setHeight, resetHeight, canPersist, error } =
-        useBlockVisualStyle('mermaid', source, messageId, blockIndex);
-
-    // `theme` is a dependency because the "match theme" background resolves through the app's
-    // own surface colour, which is exactly what the theme switch changes.
-    const background = useMemo(
-        () =>
-            resolveBackgroundColor(
-                style,
-                themeSurfaceColor(theme === 'dark' ? '#101728' : '#ffffff'),
-            ),
-        [style, theme],
-    );
-    const signature = useMemo(
-        () => visualStyleSignature(style, background),
-        [style, background],
-    );
-    const styled = !isDefaultVisualStyle(style);
 
     useEffect(() => {
         const trimmed = source.trim();
@@ -418,6 +391,109 @@ export function MermaidDiagram({
         };
     }, [source, theme, style, background, signature]);
 
+    return state;
+}
+
+/**
+ * A diagram drawn from an arbitrary source, for the editor's live preview.
+ *
+ * Lives in this file rather than beside the editor because it writes diagram markup to the DOM,
+ * and every such sink is deliberately kept here — see the header, and the boundary check in
+ * test_v2_rich_rendering.py.
+ */
+function DiagramPreview({
+    source,
+    theme,
+    style,
+    background,
+    signature,
+}: {
+    source: string;
+    theme: string;
+    style: VisualStyle;
+    background: string;
+    signature: string;
+}) {
+    const state = useRenderedDiagram(source, theme, style, background, signature);
+
+    if (state.status === 'pending') {
+        return (
+            <div className="flex h-24 items-center justify-center text-xs text-text-3">
+                Rendering diagram…
+            </div>
+        );
+    }
+
+    if (state.status === 'error') {
+        return <DiagramSource source={source.trim()} reason={state.reason} />;
+    }
+
+    return (
+        <div
+            // Sanitized in `renderMermaidSvg` by DOMPurify, after mermaid generated it under
+            // securityLevel 'strict'. SVG cannot be expressed as React children here.
+            dangerouslySetInnerHTML={{ __html: state.svg }}
+            className="mx-auto [&_svg]:h-auto [&_svg]:max-w-full"
+        />
+    );
+}
+
+/**
+ * A rendered mermaid diagram.
+ *
+ * A diagram that fails to parse falls back to its source rather than disappearing: the
+ * source is still the answer the model gave, and hiding it would lose information.
+ *
+ * `messageId` and `blockIndex` are what a saved colour choice and a saved height are filed
+ * under. A diagram in a reply that is still streaming has neither, so it renders with the
+ * reader's defaults and its controls say the choice will be kept once the reply finishes.
+ */
+export function MermaidDiagram({
+    source,
+    messageId,
+    blockIndex,
+}: {
+    source: string;
+    messageId?: string;
+    blockIndex?: number;
+}) {
+    const theme = useUiStore((state) => state.theme);
+    const [menuOpen, setMenuOpen] = useState(false);
+    const [expanded, setExpanded] = useState(false);
+    const [editing, setEditing] = useState(false);
+    const [zoom, setZoom] = useState(1);
+    const [panelWidth, setPanelWidth] = useState(0);
+    const [downloadError, setDownloadError] = useState<string | null>(null);
+    const containerRef = useRef<HTMLDivElement>(null);
+
+    // Deliberately keyed off `source`, the block's original text, not the version being shown.
+    // Colours are filed under the original's fingerprint, so editing a diagram keeps whatever
+    // colours were chosen for it instead of silently resetting them.
+    const { style, setStyle, reset, height, setHeight, resetHeight, canPersist, error } =
+        useBlockVisualStyle('mermaid', source, messageId, blockIndex);
+
+    const revisions = useBlockRevisions('mermaid', source, messageId, blockIndex);
+    /** The version to draw, export and download: the current revision, or the original. */
+    const shownSource = revisions.source;
+
+    // `theme` is a dependency because the "match theme" background resolves through the app's
+    // own surface colour, which is exactly what the theme switch changes.
+    const background = useMemo(
+        () =>
+            resolveBackgroundColor(
+                style,
+                themeSurfaceColor(theme === 'dark' ? '#101728' : '#ffffff'),
+            ),
+        [style, theme],
+    );
+    const signature = useMemo(
+        () => visualStyleSignature(style, background),
+        [style, background],
+    );
+    const styled = !isDefaultVisualStyle(style);
+
+    const state = useRenderedDiagram(shownSource, theme, style, background, signature);
+
     const svg = state.status === 'ready' ? state.svg : '';
     const size = useMemo(() => (svg ? readDiagramSize(svg) : null), [svg]);
 
@@ -439,12 +515,12 @@ export function MermaidDiagram({
             setDownloadError(null);
             try {
                 const dataUri = await svgElementToPngDataUri(target, background);
-                downloadDataUri(dataUri, `${diagramName(source)}.png`);
+                downloadDataUri(dataUri, `${diagramName(shownSource)}.png`);
             } catch {
                 setDownloadError('The diagram could not be saved as an image.');
             }
         },
-        [background, source],
+        [background, shownSource],
     );
 
     /**
@@ -457,15 +533,15 @@ export function MermaidDiagram({
     useEffect(
         () =>
             registerExportDiagram(messageId, blockIndex, {
-                source,
+                source: shownSource,
                 background,
                 getSvg: () => containerRef.current?.querySelector('svg') ?? null,
             }),
-        [messageId, blockIndex, source, background],
+        [messageId, blockIndex, shownSource, background],
     );
 
     if (state.status === 'error') {
-        return <DiagramSource source={source.trim()} reason={state.reason} />;
+        return <DiagramSource source={shownSource.trim()} reason={state.reason} />;
     }
 
     if (state.status === 'pending') {
@@ -519,6 +595,24 @@ export function MermaidDiagram({
                     <div className="ml-auto flex flex-wrap items-center gap-1">
                         <button
                             type="button"
+                            onClick={() => setEditing(true)}
+                            title="Edit this diagram"
+                            aria-haspopup="dialog"
+                            className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium text-text-3 transition-colors hover:bg-surface-2 hover:text-text-1"
+                        >
+                            <PenLine size={13} />
+                            Edit
+                            {revisions.isEdited && (
+                                <span
+                                    title="This diagram has been edited"
+                                    aria-label="Edited"
+                                    className="size-1.5 rounded-full bg-accent"
+                                />
+                            )}
+                        </button>
+
+                        <button
+                            type="button"
                             onClick={() => setExpanded(true)}
                             title="View the diagram full screen"
                             aria-haspopup="dialog"
@@ -562,10 +656,40 @@ export function MermaidDiagram({
                 <DiagramLightbox
                     svg={state.svg}
                     size={size}
-                    title={source.trim().split('\n', 1)[0] || 'Diagram'}
+                    title={shownSource.trim().split('\n', 1)[0] || 'Diagram'}
                     background={styled ? background : undefined}
                     onDownload={(element) => void downloadPng(element)}
                     onClose={() => setExpanded(false)}
+                />
+            )}
+
+            {editing && (
+                <DiagramEditor
+                    title={shownSource.trim().split('\n', 1)[0] || 'Diagram'}
+                    currentSource={shownSource}
+                    revisions={revisions.revisions}
+                    currentIndex={revisions.currentIndex}
+                    chat={revisions.chat}
+                    canPersist={revisions.canPersist}
+                    busy={revisions.busy}
+                    error={revisions.error}
+                    onClearError={revisions.clearError}
+                    onSave={revisions.save}
+                    onRestore={revisions.restore}
+                    onAsk={revisions.ask}
+                    // Passed as a render prop so the editor never writes diagram markup itself:
+                    // every such sink stays in this file, which is what the boundary check in
+                    // test_v2_rich_rendering.py protects.
+                    renderPreview={(previewSource) => (
+                        <DiagramPreview
+                            source={previewSource}
+                            theme={theme}
+                            style={style}
+                            background={background}
+                            signature={signature}
+                        />
+                    )}
+                    onClose={() => setEditing(false)}
                 />
             )}
         </>

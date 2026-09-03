@@ -325,6 +325,128 @@ export const setMessageVisualStyle = (
     );
 
 /* -------------------------------------------------------------------------- */
+/* Message block revisions                                                     */
+/* -------------------------------------------------------------------------- */
+
+/** How a stored revision came about, which the history list shows. */
+export type BlockRevisionOrigin = 'original' | 'manual' | 'control' | 'ai';
+
+/** One stored version of a diagram's source. */
+export interface BlockRevision {
+    id: string;
+    source: string;
+    origin: BlockRevisionOrigin;
+    author_id?: string;
+    author_name?: string;
+    /** A short label for the change, which for an AI edit is the instruction that caused it. */
+    note?: string;
+    timestamp?: string;
+}
+
+/** One turn of the sub-conversation attached to a diagram. */
+export interface BlockRevisionChatTurn {
+    role: 'user' | 'assistant';
+    content: string;
+    timestamp?: string;
+}
+
+/**
+ * Everything stored against one edited block.
+ *
+ * `current` indexes `revisions`, where zero is always the original: it is pinned and never
+ * pruned, so the meaning of zero does not drift as older edits are dropped.
+ */
+export interface BlockRevisionEntry {
+    source_hash?: string;
+    current?: number;
+    revisions?: BlockRevision[];
+    chat?: BlockRevisionChatTurn[];
+}
+
+/** Every edited block in a message, keyed by fence language then by block index. */
+export type MessageBlockRevisions = Record<string, Record<string, BlockRevisionEntry>>;
+
+export interface BlockRevisionResponse {
+    success: boolean;
+    message_id: string;
+    block_revisions: MessageBlockRevisions;
+}
+
+/** Response of the assist endpoint, which also returns the source it produced. */
+export interface BlockRevisionAssistResponse extends BlockRevisionResponse {
+    source: string;
+}
+
+/** Fields shared by every block revision request, which together address one diagram. */
+interface BlockRevisionTarget {
+    conversation_id: string;
+    block_kind: string;
+    block_index: number;
+    /** Fingerprint of the block's *original* source, which is what the entry is filed under. */
+    source_hash: string;
+}
+
+/**
+ * Record a new version of one diagram and make it current.
+ *
+ * `original_source` seeds the history the first time a block is edited, so the version the
+ * model produced stays recoverable however many edits follow. The server verifies it against
+ * `source_hash` rather than trusting it.
+ *
+ * `expected_revision_count` is optional and only matters in a shared conversation: sending the
+ * count the editor was opened against turns a silent overwrite of someone else's edit into a
+ * 409 the caller can report.
+ */
+export const addMessageBlockRevision = (
+    messageId: string,
+    body: BlockRevisionTarget & {
+        source: string;
+        original_source: string;
+        origin?: 'manual' | 'control';
+        note?: string;
+        expected_revision_count?: number;
+    },
+) =>
+    api.post<BlockRevisionResponse>(
+        `/api/message/${encodeURIComponent(messageId)}/block-revision`,
+        body,
+    );
+
+/**
+ * Point a diagram at one of its stored versions.
+ *
+ * Undo, redo and "restore the original" are all this one call: nothing is deleted, the pointer
+ * moves. Addressed by revision id because positions shift once the oldest edits are pruned.
+ */
+export const setMessageBlockRevision = (
+    messageId: string,
+    body: BlockRevisionTarget & { revision_id: string },
+) =>
+    api.post<BlockRevisionResponse>(
+        `/api/message/${encodeURIComponent(messageId)}/block-revision/current`,
+        body,
+    );
+
+/**
+ * Ask the model to change one diagram.
+ *
+ * The request carries only this diagram — its current source, its own sub-conversation and the
+ * request that produced it. The conversation is not sent, and the reply does not join it.
+ */
+export const assistMessageBlockRevision = (
+    messageId: string,
+    body: BlockRevisionTarget & {
+        instruction: string;
+        original_source: string;
+        expected_revision_count?: number;
+    },
+) =>
+    api.post<BlockRevisionAssistResponse>(
+        `/api/message/${encodeURIComponent(messageId)}/block-revision/assist`,
+        body,
+    );
+
+/* -------------------------------------------------------------------------- */
 /* Message inspection                                                          */
 /* -------------------------------------------------------------------------- */
 

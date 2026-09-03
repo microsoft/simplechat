@@ -35,6 +35,7 @@ from functions_export_visuals import (
     replace_inline_visual_blocks_with_export_html,
 )
 from functions_mermaid_export import extract_mermaid_sources
+from functions_message_block_revisions import resolve_block_sources_in_content
 from functions_mermaid_server_render import (
     is_mermaid_server_rendering_available,
     render_mermaid_visual_assets,
@@ -780,6 +781,10 @@ def _sanitize_message(
 ) -> Dict[str, Any]:
     role = message.get('role', '')
     content = message.get('content', '')
+    # Substitute the current version of any edited diagram, so an export matches what the
+    # reader has on screen rather than the version the model first produced.
+    if isinstance(content, str) and content:
+        content = resolve_block_sources_in_content(message, content)
     reference_citation_buckets = _collect_raw_citation_buckets(message)
     source_citation_buckets = _collect_source_citation_buckets(message)
     normalized_citations = _normalize_citations(reference_citation_buckets)
@@ -2403,6 +2408,10 @@ def _render_message_export_content(
     visual_assets: Optional[List[Dict[str, Any]]] = None,
 ) -> str:
     raw_content = message.get('content', '') if source_content is None else source_content
+    # Only when the caller has not supplied its own content: an override is a deliberate
+    # substitution and resolving into it would fight whatever the caller meant to export.
+    if source_content is None and isinstance(raw_content, str) and raw_content:
+        raw_content = resolve_block_sources_in_content(message, raw_content)
     rendered_content = replace_inline_visual_blocks_with_export_html(
         _normalize_content(raw_content),
         visual_assets,

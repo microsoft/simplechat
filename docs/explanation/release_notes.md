@@ -2,6 +2,21 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.049)**
+
+#### New Features
+
+*   **Diagrams Can Be Edited Where They Are, Instead Of Regenerated**
+    *   A Mermaid diagram in a reply used to be final. Changing one meant asking again in the thread, which produced another message with another diagram — so refining a diagram a few times left the conversation full of near-duplicates, all of them still being sent to the model.
+    *   Every rendered diagram now has an **Edit** button. The editor opens with a live preview and four tabs: **Source** for editing the Mermaid directly, **Layout** for flow direction and spacing, **Ask AI** for describing a change in words, and **History** for every version it has had.
+    *   **Ask AI is a conversation with the diagram, not with the thread.** The model is given the diagram's current source, that diagram's own earlier instructions, and the request the diagram originally came from — not the conversation. Its replies never appear in the thread.
+    *   **Only the version on your screen is used as context.** The revision history and the editing conversation behind it are stored with the diagram and are never sent to the model, so refining a diagram ten times costs the same context as generating it once.
+    *   **Nothing is ever deleted.** History records who changed what and why, restoring an older version moves a pointer rather than discarding newer ones, and the version the model originally produced is always kept.
+    *   **Boxes still cannot be dragged**, and the interface says so rather than pretending otherwise. Mermaid computes node positions and has no syntax for placing one, so what the Layout tab offers instead is direction, spacing, and — through the source editor — grouping and reordering.
+    *   Works in shared conversations as well as personal ones. Any participant can edit a diagram, matching who can already recolour one, and each change is attributed. An edit is written through to the underlying message, so the AI, exports and the conversation's owner all see the version you edited; the other participants see it change as it happens.
+    *   The classic interface shows whichever version is current, so a conversation read in either place shows the same diagram, and exports carry the current version too.
+    *   (Ref: `functions_message_block_revisions.py`, `functions_block_revision_assist.py`, `DiagramEditor.tsx`, `/api/message/<id>/block-revision`, `/api/collaboration/conversations/<id>/messages/<id>/block-revision`, [V2 Inline Diagram Editing](features/V2_INLINE_DIAGRAM_EDITING.md))
+
 ### **(v0.261.048)**
 
 #### New Features
