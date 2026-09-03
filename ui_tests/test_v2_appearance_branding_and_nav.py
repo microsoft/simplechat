@@ -3,7 +3,7 @@
 UI test for V2 Appearance branding, the classification banner, the home page and the
 administrator-configured navigation groups.
 
-Version: 0.261.047
+Version: 0.261.052
 Implemented in: 0.261.047
 
 Six Appearance settings had no visible effect in the V2 interface:
@@ -15,6 +15,11 @@ Six Appearance settings had no visible effect in the V2 interface:
   - the landing copy, its alignment and the home page logo size configured a page V2
     did not have;
   - Custom Pages and External Links were absent from the rail entirely.
+
+Extended in 0.261.052, when the brand mark became the rail's home link and the separate
+Home nav item was removed: the brand coverage now also states that there is one control
+for the destination rather than two, that the link names itself for the collapsed rail,
+and that the letter square is not drawn beside the title it stands in for.
 
 Each assertion here is driven by what /api/v2/bootstrap actually reports for the
 deployment under test, so the test states the same contract on any tenant rather than
@@ -90,9 +95,17 @@ def test_rail_shows_the_configured_brand_mark(v2_context):
     """A custom logo must reach the rail, at its own aspect ratio."""
     page, bootstrap = _open_v2(v2_context)
     branding = bootstrap["branding"]
+    title = branding.get("app_title") or "SimpleChat"
 
     rail = page.get_by_role("navigation", name="Primary")
+    brand = rail.locator('a[href="/v2"], a[href="/v2/"]')
     logo = rail.locator("img").first
+
+    if not branding.get("hide_app_title"):
+        # The letter square is a stand-in for a mark, so in the expanded rail it must not
+        # be drawn beside the title it stands in for -- that showed the same word twice.
+        # The logo contributes no text, so this holds whether or not one is configured.
+        expect(brand).to_have_text(title)
 
     if not branding.get("show_logo") or not branding.get("logo_url"):
         # The letter avatar is the deliberate V2 fallback, not a missing logo.
@@ -165,11 +178,25 @@ def test_home_page_renders_landing_content_and_reaches_chat(v2_context):
 @pytest.mark.ui
 def test_home_is_reachable_from_the_rail(v2_context):
     """Home has to be navigable, since /v2 is where a deep link now lands."""
-    page, _bootstrap = _open_v2(v2_context, "/v2/chat")
+    page, bootstrap = _open_v2(v2_context, "/v2/chat")
+    title = bootstrap["branding"].get("app_title") or "SimpleChat"
 
     rail = page.get_by_role("navigation", name="Primary")
-    home = rail.get_by_role("link", name="Home")
+
+    # The brand mark carries the destination; the separate Home nav item that used to sit
+    # beneath it is gone, so there must be exactly one control leading to /v2 rather than
+    # two stacked on each other. Matching on the href keeps this independent of how the
+    # link chooses to name itself.
+    home = rail.locator('a[href="/v2"], a[href="/v2/"]')
+    expect(home).to_have_count(1)
     expect(home).to_be_visible()
+
+    # Collapsed, the link holds only a logo or a letter, both of which are decorative, so
+    # it has to name itself or it reaches a screen reader as an unlabelled link.
+    assert (home.get_attribute("aria-label") or "").strip() == f"{title} home", (
+        "The brand link should be named for the application and its destination, got "
+        f"{home.get_attribute('aria-label')!r}."
+    )
 
     home.click()
     page.wait_for_url(f"{BASE_URL}/v2")

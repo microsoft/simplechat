@@ -3,7 +3,7 @@
 Saved prompts in the V2 interface, rebuilt as a two-pane workbench with a dedicated editor,
 `{{variable}}` placeholders, and the ability to create a prompt from a conversation.
 
-**Implemented in version:** 0.261.052
+**Implemented in version:** 0.261.053
 **Applies to:** the V2 React interface (`application/v2_ui`), My Workspace → Prompts, and the
 chat composer.
 **Dependencies:** `enable_user_workspace`. Group and public prompt routes were extended at the

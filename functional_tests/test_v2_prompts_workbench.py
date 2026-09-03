@@ -2,8 +2,8 @@
 """
 Functional test for the V2 prompts workbench.
 
-Version: 0.261.052
-Implemented in: 0.261.052
+Version: 0.261.053
+Implemented in: 0.261.053
 
 The behavioural half of the front end lives in ``test_v2_prompts_workbench_logic.ts``, run from
 here. This file covers the parts that are only observable in the source, plus the new
@@ -158,7 +158,7 @@ def _load_module_functions(path, names):
 
 def test_version_is_at_least_the_implementing_release():
     print("Testing version...")
-    assert_app_version_at_least("0.261.052")
+    assert_app_version_at_least("0.261.053")
     print("  ok  version is at or beyond the implementing release")
     return True
 

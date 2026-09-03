@@ -1,8 +1,8 @@
 // test_v2_prompts_workbench_logic.ts
 //
 // Runtime test for the V2 prompts workbench rules.
-// Version: 0.261.052
-// Implemented in: 0.261.052
+// Version: 0.261.053
+// Implemented in: 0.261.053
 //
 // The companion test, test_v2_prompts_workbench.py, asserts that the pieces are wired
 // together: routes carry their decorators, the shared validator is used by all three prompt
