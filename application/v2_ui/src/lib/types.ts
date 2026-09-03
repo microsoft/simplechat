@@ -112,14 +112,131 @@ export interface WorkspaceDocument {
     document_id?: string;
     file_name?: string;
     title?: string;
+    abstract?: string;
+    /** Stored as an array, but older records and form round-trips can leave a string. */
+    authors?: string[] | string;
+    keywords?: string[] | string;
+    publication_date?: string;
     percentage_complete?: number;
     status?: string;
     document_classification?: string;
     tags?: string[] | string;
     version?: number;
     num_chunks?: number;
+    number_of_pages?: number;
+    file_size?: number;
+    file_type?: string;
     upload_date?: string;
+    last_updated?: string;
+    revision_family_id?: string;
+    is_current_version?: boolean;
+    /** Entries are `"<user id>,<approval status>"`, not bare ids. */
+    shared_user_ids?: string[];
+    shared_approval_status?: 'owner' | 'approved' | 'not_approved' | 'none' | string;
+    owner_id?: string;
+    user_id?: string;
+    created_from_chat_upload?: boolean;
+    conversation_id?: string;
+    conversation_title_at_upload?: string;
+    conversation_url?: string;
+    /** `read` is the standard extraction, `layout` the enhanced one. */
+    document_intelligence_extraction_mode?: string;
+    enhanced_citations?: boolean;
+    _ts?: number;
     [key: string]: unknown;
+}
+
+/**
+ * Response of GET /api/documents.
+ *
+ * `total_count` is the size of the whole filtered set, not of the page, so it is what the
+ * pager counts against. The endpoint has used both `documents` and `items` as its collection
+ * key, so both are accepted.
+ */
+export interface DocumentListResponse {
+    documents?: WorkspaceDocument[];
+    items?: WorkspaceDocument[];
+    page?: number;
+    page_size?: number;
+    total_count?: number;
+    file_downloads_enabled?: boolean;
+    needs_legacy_update_check?: boolean;
+}
+
+/**
+ * Response of GET /api/documents/facets.
+ *
+ * Counted server-side over the caller's whole workspace and deliberately ignoring the
+ * current filters: these drive a navigation rail, and a rail that re-counted itself against
+ * the active filter would collapse to zeroes as soon as anything in it was selected.
+ */
+export interface DocumentFacets {
+    total: number;
+    untagged: number;
+    processing: number;
+    errors: number;
+    recent: number;
+    shared_with_me: number;
+    by_tag: Record<string, number>;
+    by_classification: Record<string, number>;
+}
+
+/** The standing views in the explorer rail. Sent to the API as `place`. */
+export type DocumentPlace =
+    | 'all'
+    | 'recent'
+    | 'shared'
+    | 'processing'
+    | 'errors'
+    | 'untagged';
+
+/**
+ * Fields the list endpoint will order by.
+ *
+ * Mirrors ALLOWED_DOCUMENT_SORT_FIELDS in functions_documents.py. Anything outside this set
+ * is silently replaced with `_ts` server-side, so a column offering a sort not listed here
+ * would appear to work and quietly do nothing.
+ */
+export type DocumentSortField =
+    | '_ts'
+    | 'file_name'
+    | 'title'
+    | 'upload_date'
+    | 'file_size'
+    | 'number_of_pages'
+    | 'version'
+    | 'document_classification';
+
+export type SortDirection = 'asc' | 'desc';
+
+/** Everything that decides which documents are shown, and in what order. */
+export interface DocumentQuery {
+    place: DocumentPlace;
+    search: string;
+    /** Applied with AND: a document must carry every selected tag. */
+    tags: string[];
+    classification: string | null;
+    page: number;
+    pageSize: number;
+    sortBy: DocumentSortField;
+    sortOrder: SortDirection;
+}
+
+/** A named query pinned in the rail. The flat-tag answer to folders. */
+export interface DocumentSavedView {
+    id: string;
+    name: string;
+    query: Pick<DocumentQuery, 'place' | 'search' | 'tags' | 'classification'>;
+}
+
+/** How the explorer is presented. Persisted through `v2DocumentsPrefs`. */
+export interface DocumentExplorerPrefs {
+    viewMode: 'details' | 'tiles';
+    pageSize: number;
+    detailsPaneOpen: boolean;
+    columns: string[];
+    sortBy: DocumentSortField;
+    sortOrder: SortDirection;
 }
 
 /**

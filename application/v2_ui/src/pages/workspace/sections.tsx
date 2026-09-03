@@ -18,6 +18,7 @@ import {
     Plug,
     Server,
     Sparkles,
+    Tags,
     Workflow,
 } from 'lucide-react';
 import type { ReactNode } from 'react';
@@ -30,12 +31,23 @@ import { EndpointsSection } from './EndpointsSection';
 import { FileSourcesSection } from './FileSourcesSection';
 import { IdentitiesSection } from './IdentitiesSection';
 import { PromptsSection } from './PromptsSection';
+import { TagsSection } from './TagsSection';
 import { WorkflowsSection } from './WorkflowsSection';
 
 export interface WorkspaceSectionContext {
     /** Whether another section is available, for cross-links that should not dead-end. */
     isEnabled: (sectionId: string) => boolean;
 }
+
+/**
+ * How much room a section needs.
+ *
+ * Most sections are a column of rows and read better constrained to a comfortable measure.
+ * The documents explorer is not: it carries its own navigation rail, details pane and status
+ * bar, and it manages its own scrolling, so it needs the full width of the page and the full
+ * height rather than being centred inside a narrower one.
+ */
+export type WorkspaceSectionLayout = 'prose' | 'full';
 
 export interface WorkspaceSectionDefinition extends WorkspaceSectionDescriptor {
     id: string;
@@ -44,6 +56,7 @@ export interface WorkspaceSectionDefinition extends WorkspaceSectionDescriptor {
     icon: LucideIcon;
     /** One line on what the section is for. Shown on the overview. */
     blurb: string;
+    layout?: WorkspaceSectionLayout;
     render: (context: WorkspaceSectionContext) => ReactNode;
 }
 
@@ -54,7 +67,16 @@ export const WORKSPACE_SECTIONS: WorkspaceSectionDefinition[] = [
         group: 'knowledge',
         icon: FileText,
         blurb: 'Files you upload, indexed so the assistant can quote them.',
+        layout: 'full',
         render: (context) => <DocumentsSection syncEnabled={context.isEnabled('sync')} />,
+    },
+    {
+        id: 'tags',
+        label: 'Tags',
+        group: 'knowledge',
+        icon: Tags,
+        blurb: 'The labels your documents are filed under, and what each one is called.',
+        render: (context) => <TagsSection documentsEnabled={context.isEnabled('documents')} />,
     },
     {
         id: 'sync',

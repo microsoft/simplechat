@@ -10,10 +10,11 @@
 import { useMemo } from 'react';
 import { NavLink, useParams } from 'react-router-dom';
 import { clsx } from 'clsx';
-import { LayoutGrid, Lock } from 'lucide-react';
+import { LayoutGrid, Lock, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import { PageHeader } from '../../components/layout/PageHeader';
 import { EmptyState } from '../../components/ui/primitives';
 import { useBootstrapStore } from '../../stores/bootstrapStore';
+import { useUserSettingsStore } from '../../stores/userSettingsStore';
 import {
     groupWorkspaceSections,
     navigableSections,
@@ -26,6 +27,11 @@ import type { WorkspaceSectionContext } from './sections';
 export function WorkspacePage() {
     const workspace = useBootstrapStore((state) => state.data?.workspace);
     const { section: requestedSection } = useParams<{ section?: string }>();
+
+    const railCollapsed = useUserSettingsStore(
+        (state) => state.settings.v2WorkspaceRailCollapsed === true,
+    );
+    const updateUserSettings = useUserSettingsStore((state) => state.update);
 
     const resolved = useMemo(
         () => resolveWorkspaceSections(WORKSPACE_SECTIONS, workspace),
@@ -65,6 +71,11 @@ export function WorkspacePage() {
         : null;
     const showOverview = !requestedSection;
 
+    // A full-bleed section manages its own width, height and scrolling. Wrapping one in the
+    // page's centred, page-scrolling container would give it a second scrollbar and squeeze
+    // a three-pane layout into a reading measure.
+    const fullBleed = !showOverview && activeEntry?.enabled && activeEntry.section.layout === 'full';
+
     const renderBody = () => {
         if (showOverview) {
             return <OverviewSection resolved={resolved} />;
@@ -94,7 +105,8 @@ export function WorkspacePage() {
 
     const linkClass = ({ isActive }: { isActive: boolean }) =>
         clsx(
-            'flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm transition-colors',
+            'flex items-center gap-2.5 rounded-lg text-left text-sm transition-colors',
+            railCollapsed ? 'justify-center px-2 py-2' : 'px-2.5 py-2',
             isActive
                 ? 'bg-accent-soft font-medium text-accent'
                 : 'text-text-2 hover:bg-surface-2 hover:text-text-1',
@@ -110,18 +122,70 @@ export function WorkspacePage() {
             <div className="flex min-h-0 flex-1 gap-4 overflow-hidden p-4">
                 <nav
                     aria-label="Workspace sections"
-                    className="flex w-52 shrink-0 flex-col gap-3 overflow-y-auto"
+                    className={clsx(
+                        'flex shrink-0 flex-col gap-3 overflow-y-auto transition-[width]',
+                        railCollapsed ? 'w-12' : 'w-52',
+                    )}
                 >
-                    <NavLink to="/workspace" end className={linkClass}>
+                    <button
+                        type="button"
+                        onClick={() =>
+                            updateUserSettings({ v2WorkspaceRailCollapsed: !railCollapsed })
+                        }
+                        aria-label={
+                            railCollapsed
+                                ? 'Expand workspace sections'
+                                : 'Collapse workspace sections'
+                        }
+                        aria-expanded={!railCollapsed}
+                        title={
+                            railCollapsed
+                                ? 'Expand workspace sections'
+                                : 'Collapse workspace sections'
+                        }
+                        className={clsx(
+                            'flex items-center gap-2 rounded-lg py-1.5 text-xs text-text-3 transition-colors hover:bg-surface-2 hover:text-text-1',
+                            railCollapsed ? 'justify-center px-2' : 'px-2.5',
+                        )}
+                    >
+                        {railCollapsed ? (
+                            <PanelLeftOpen size={15} />
+                        ) : (
+                            <>
+                                <PanelLeftClose size={15} />
+                                <span>Collapse</span>
+                            </>
+                        )}
+                    </button>
+
+                    <NavLink
+                        to="/workspace"
+                        end
+                        className={linkClass}
+                        title={railCollapsed ? 'Overview' : undefined}
+                    >
                         <LayoutGrid size={15} className="shrink-0" />
-                        <span className="truncate">Overview</span>
+                        {railCollapsed ? (
+                            <span className="sr-only">Overview</span>
+                        ) : (
+                            <span className="truncate">Overview</span>
+                        )}
                     </NavLink>
 
                     {groups.map(({ group, sections }) => (
                         <div key={group.id} className="space-y-0.5">
-                            <p className="px-2.5 text-[11px] font-semibold tracking-wide text-text-3 uppercase">
-                                {group.label}
-                            </p>
+                            {railCollapsed ? (
+                                // A rule rather than a heading: the group label has nowhere to
+                                // go at this width, but the grouping itself still reads.
+                                <div
+                                    aria-hidden="true"
+                                    className="mx-2 my-1.5 border-t border-edge"
+                                />
+                            ) : (
+                                <p className="px-2.5 text-[11px] font-semibold tracking-wide text-text-3 uppercase">
+                                    {group.label}
+                                </p>
+                            )}
                             {sections.map(({ section }) => {
                                 const Icon = section.icon;
                                 return (
@@ -129,9 +193,18 @@ export function WorkspacePage() {
                                         key={section.id}
                                         to={`/workspace/${section.id}`}
                                         className={linkClass}
+                                        title={
+                                            railCollapsed
+                                                ? `${group.label}: ${section.label}`
+                                                : undefined
+                                        }
                                     >
                                         <Icon size={15} className="shrink-0" />
-                                        <span className="truncate">{section.label}</span>
+                                        {railCollapsed ? (
+                                            <span className="sr-only">{section.label}</span>
+                                        ) : (
+                                            <span className="truncate">{section.label}</span>
+                                        )}
                                     </NavLink>
                                 );
                             })}
@@ -139,8 +212,17 @@ export function WorkspacePage() {
                     ))}
                 </nav>
 
-                <div className="min-w-0 flex-1 overflow-y-auto">
-                    <div className="mx-auto max-w-4xl pb-8">{renderBody()}</div>
+                <div
+                    className={clsx(
+                        'min-w-0 flex-1',
+                        fullBleed ? 'flex min-h-0 flex-col overflow-hidden' : 'overflow-y-auto',
+                    )}
+                >
+                    {fullBleed ? (
+                        renderBody()
+                    ) : (
+                        <div className="mx-auto max-w-4xl pb-8">{renderBody()}</div>
+                    )}
                 </div>
             </div>
         </div>

@@ -14,7 +14,10 @@ import { Link } from 'react-router-dom';
 import { ArrowRight, Lock } from 'lucide-react';
 import { GlassPanel } from '../../components/ui/primitives';
 import { SectionIntro } from '../../components/workspace/primitives';
-import { fetchPersonalDocuments } from '../../lib/endpoints';
+import {
+    fetchPersonalDocumentFacets,
+    fetchPersonalDocumentTags,
+} from '../../lib/endpoints';
 import {
     fetchActions,
     fetchAgents,
@@ -33,9 +36,13 @@ type CountMap = Record<string, number | undefined>;
 /** How to count the contents of each section, for the summary on its card. */
 const COUNT_LOADERS: Record<string, (signal: AbortSignal) => Promise<number>> = {
     documents: async (signal) => {
-        const response = await fetchPersonalDocuments(1000, signal);
-        return (response.documents ?? response.items ?? []).length;
+        // Counted from the facets endpoint rather than by fetching a large page and
+        // measuring it: the count is the only thing wanted here, and the old approach
+        // pulled up to a thousand full document records to get it.
+        const facets = await fetchPersonalDocumentFacets(signal);
+        return Number(facets.total ?? 0);
     },
+    tags: async (signal) => (await fetchPersonalDocumentTags(signal)).tags?.length ?? 0,
     prompts: async (signal) => (await fetchPrompts({}, signal)).length,
     sync: async (signal) => (await fetchSyncSources(signal)).length,
     agents: async (signal) => (await fetchAgents(signal)).length,

@@ -14,15 +14,28 @@ import { create } from 'zustand';
 
 export type ToastTone = 'success' | 'error' | 'info' | 'pending';
 
+/**
+ * An offer to reverse what the toast is reporting.
+ *
+ * Exists for actions that are applied immediately and in bulk, where a confirmation dialog
+ * beforehand would be worse: it would interrupt every correct use of the gesture to guard
+ * against the rare wrong one. Reversing afterwards puts the cost on the mistake instead.
+ */
+export interface ToastAction {
+    label: string;
+    onAct: () => void;
+}
+
 export interface Toast {
     id: number;
     tone: ToastTone;
     message: string;
+    action?: ToastAction;
 }
 
 interface ToastState {
     toasts: Toast[];
-    push: (tone: ToastTone, message: string) => number;
+    push: (tone: ToastTone, message: string, action?: ToastAction) => number;
     settle: (id: number, tone: Exclude<ToastTone, 'pending'>, message: string) => void;
     dismiss: (id: number) => void;
 }
@@ -44,11 +57,11 @@ let nextId = 1;
 export const useToastStore = create<ToastState>((set, get) => ({
     toasts: [],
 
-    push: (tone, message) => {
+    push: (tone, message, action) => {
         const id = nextId;
         nextId += 1;
 
-        set((state) => ({ toasts: [...state.toasts, { id, tone, message }] }));
+        set((state) => ({ toasts: [...state.toasts, { id, tone, message, action }] }));
 
         if (tone !== 'pending') {
             window.setTimeout(() => {
@@ -91,9 +104,11 @@ export const useToastStore = create<ToastState>((set, get) => ({
 
 /** Convenience for non-component code, which cannot use the hook form. */
 export const toast = {
-    success: (message: string) => useToastStore.getState().push('success', message),
+    success: (message: string, action?: ToastAction) =>
+        useToastStore.getState().push('success', message, action),
     error: (message: string) => useToastStore.getState().push('error', message),
-    info: (message: string) => useToastStore.getState().push('info', message),
+    info: (message: string, action?: ToastAction) =>
+        useToastStore.getState().push('info', message, action),
     /** Raise a notification that stays until `settle` or `dismiss` is called with its id. */
     pending: (message: string) => useToastStore.getState().push('pending', message),
     settle: (id: number, tone: Exclude<ToastTone, 'pending'>, message: string) =>
