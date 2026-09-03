@@ -50,6 +50,26 @@ export interface UserSettings {
     v2RailCollapsed?: boolean;
     v2ChatWidth?: string;
 
+    /**
+     * The chat model last chosen in the picker, as a catalog `selection_key`.
+     *
+     * Deliberately NOT namespaced like `v2RailCollapsed`: both interfaces mean the same
+     * thing by it, and `/api/v2/bootstrap` resolves `initial_model_selection` from this key
+     * (falling back to `preferredModelDeployment`). Without it the composer restores
+     * whatever the other interface last saved, or the first entry in the catalog.
+     */
+    preferredModelId?: string;
+    preferredModelDeployment?: string;
+
+    /**
+     * The reasoning level chosen per model, `{ 'gpt-5-mini': 'medium' }`.
+     *
+     * Shared with the classic interface, which owns the same map, so a level chosen in one
+     * is in effect in the other. Keyed by model id (falling back to deployment name), which
+     * is what `getCurrentModelName()` in chat-reasoning.js uses.
+     */
+    reasoningEffortSettings?: Record<string, string>;
+
     chatCompletionAudioEnabled?: boolean;
     chatCompletionAudioMuted?: boolean;
     chatCompletionAudioSound?: string;
@@ -95,6 +115,12 @@ export const WRITABLE_USER_SETTING_KEYS = [
     'v2ChatWidth',
     'v2MermaidStyle',
     'v2ChartStyle',
+    // Shared with the classic interface rather than namespaced: the chosen model and its
+    // reasoning level mean the same thing in both, and the bootstrap resolves the initial
+    // model selection from these keys.
+    'preferredModelId',
+    'preferredModelDeployment',
+    'reasoningEffortSettings',
     'chatCompletionAudioEnabled',
     'chatCompletionAudioMuted',
     'chatCompletionAudioSound',

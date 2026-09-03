@@ -2,6 +2,18 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.036)**
+
+#### Bug Fixes
+
+*   **Your Reasoning Level Now Sticks In The New Interface**
+    *   Choosing a reasoning level in the V2 chat used to be forgotten the moment you left the page and came back, and switching models either carried the level over or lost it entirely. It is now remembered per model, so each model keeps the level you chose for it.
+    *   The level is shared with the classic interface, which has always remembered it: set **Medium** for a model in one interface and it is Medium in the other.
+    *   Switching to a model that has no reasoning — `gpt-4o`, for example — no longer leaves the previous model's level attached to your request. The setting disappeared from the toolbar but was still being sent.
+    *   The model you pick is now remembered too. It previously only appeared to stick, because the page fell back to whichever model the server considered your default.
+    *   A model you have not chosen a level for shows its usual default rather than a blank control, matching the classic interface.
+    *   (Ref: V2 chat, reasoning effort, model picker, user preferences)
+
 ### **(v0.261.035)**
 
 #### Bug Fixes
