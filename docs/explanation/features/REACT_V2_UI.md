@@ -276,6 +276,27 @@ and the conversation list sit beneath, and the theme toggle and user menu are pi
 bottom. The rail collapses to a 68px icon strip, and the collapse state is persisted. All
 content lives in the right-hand pane.
 
+The brand mark is the link to the home page; there is no separate **Home** navigation item,
+because the logo is where a reader looks for that destination anyway. What it draws depends
+on what is configured and how much room there is:
+
+| Custom logo | Rail | Application title | Brand shows |
+|---|---|---|---|
+| yes | expanded | shown | logo and title |
+| yes | expanded | hidden | logo |
+| yes | collapsed | either | logo, capped at 44px wide |
+| no | expanded | shown | the title alone |
+| no | expanded | hidden | a letter square holding the title's initial |
+| no | collapsed | either | the letter square |
+
+The letter square is a stand-in for a mark, so it appears only where the title itself
+cannot: in the collapsed rail, or when **Hide Application Title** is on. Drawn beside the
+title it was the same word twice.
+
+The link names itself for the collapsed rail — where it holds only a decorative logo or
+letter — as the application title followed by "home", rather than "Home" alone, so the
+visible label stays inside the accessible name.
+
 The classification banner, when configured, is the only element that spans the full width —
 matching the server-rendered interface.
 
@@ -1069,6 +1090,7 @@ this entirely and is the recommended layout.
 | `functional_tests/test_v2_tabular_parity.py` | The client reads the generated-artifact metadata keys the server writes and de-duplicates on the same identifiers, every tabular route the SPA requests is registered, the run-control routes carry their decorators, the confirmation thresholds survive settings sanitization, the thought frame's `activity` and `progress` are carried, every component is mounted, and the large-run confirmation precedes the send |
 | `functional_tests/test_v2_tabular_parity_logic.ts` | Executes the tabular logic: artifact normalising and de-duplication, download-target selection, the compact-layout rule, preview table construction, durable run progress and polling, artifact set completion, lane detection and activity counting, the progress ratchet, the confirmation heuristic, tool-result row banding, and CSV parsing |
 | `functional_tests/test_v2_new_chat_scoping.py` | **New chat** offered only where it can act and the nav list's spacing following it, **Chats** starting a fresh conversation on arrival from elsewhere, that reset guarded on both the current route and an in-flight stream with the guard preceding it, the streaming flag read rather than subscribed, the drawer and details panel closed with the conversation they describe, and enabled buttons carrying a pointer cursor |
+| `functional_tests/test_v2_brand_mark_home_link.py` | The **Home** nav item, its icon import and the exact-match field it needed all removed; the brand mark carrying the home destination with the exact matching that keeps it off every other route; the link naming itself for the collapsed rail; and the letter square gated on the title being absent rather than on the logo being absent |
 | `functional_tests/test_csrf_state_changing_route_guard.py` | Cross-site mutations require an explicitly trusted origin; CORS preflights answered before authentication and never wildcarded |
 | `functional_tests/route_tests/` | Blueprint policy classification for `frontend_v2`, `backend_v2`, `backend_v2_admin` |
 
