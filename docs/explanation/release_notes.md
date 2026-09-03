@@ -2,6 +2,18 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.041)**
+
+#### Bug Fixes
+
+*   **The New Interface's New Chat Button Now Works, And Buttons Look Clickable**
+    *   **New chat** appeared in the sidebar on every page but only ever did anything on the chat page. Clicking it from **My Workspace**, **Admin Settings** or **Settings** produced no visible response at all — it reset chat state that was not on screen and left you where you were. It is now shown only on the chat page, where it has something to act on.
+    *   **Chats** in the sidebar covers what that leaves behind. Clicking it from anywhere else now starts a fresh chat, which is what makes a new chat reachable from the rest of the application. Two exceptions: clicking **Chats** while already on the chat page still does nothing, so a stray click cannot discard what you are reading, and a conversation still streaming a reply is returned to rather than reset, so a response in progress is never thrown away.
+    *   Previously, leaving the chat page and coming back silently reopened whatever conversation you last had. That conversation is still one click away in the conversation list.
+    *   No button in the new interface showed a hand cursor — not **New chat**, not the chat header icons, the conversation list, the composer or the admin controls. Everything rendered with the arrow cursor browsers use for text you cannot click. The whole interface now indicates what is clickable.
+    *   Starting a new chat no longer leaves the conversation drawer stranded open and empty after its **Contents** and **Documents** buttons have disappeared, and the conversation details panel no longer outlives the conversation it was describing.
+    *   (Ref: V2 navigation rail, New chat, conversation drawer, button cursor)
+
 ### **(v0.261.040)**
 
 #### New Features

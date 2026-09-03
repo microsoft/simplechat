@@ -1237,6 +1237,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
             reconnectPhase: null,
             metadata: null,
             metadataError: null,
+            // Closed rather than left behind. The header's Contents and Documents toggles
+            // are drawn only while a conversation is open, so an open drawer would survive
+            // with nothing left to describe and no control to dismiss it from. The classic
+            // interface closes it here too.
+            drawerMode: null,
         });
         useCollaborationStore.getState().setActiveConversation(null);
     },

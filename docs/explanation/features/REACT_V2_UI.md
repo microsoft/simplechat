@@ -268,6 +268,23 @@ content lives in the right-hand pane.
 The classification banner, when configured, is the only element that spans the full width —
 matching the server-rendered interface.
 
+**New chat** is drawn only while the chat page is open. It is a state reset rather than a
+navigation, so on any other page it would clear a conversation that is not on screen and
+leave the reader where they were — a control that appears to do nothing.
+
+**Chats** covers that case instead: reaching the chat page from anywhere else starts a fresh
+conversation. This is needed because the chat store is ordinary in-memory state with no
+persistence, so the open conversation survives a client-side route change and the chat page
+would otherwise silently resume it. Two exceptions are deliberate. Clicking **Chats** while
+already on the chat page does nothing, so a stray click on the highlighted item cannot
+discard what is being read; and a conversation still streaming is returned to rather than
+reset, since the reset cancels the stream. The streaming flag is read from the store at
+click time rather than subscribed to, because it changes with every token and a
+subscription would re-render the rail and its conversation list throughout a response.
+
+Deep links are unaffected: the reset is on the navigation item's click, which a direct load
+of `/v2/chat?conversationId=<id>` never passes through.
+
 ### Chat
 
 Wired to the live APIs:
@@ -1000,6 +1017,7 @@ this entirely and is the recommended layout.
 | `functional_tests/test_v2_chat_notices.py` | Both notices resolved server-side from the shared helpers, the web search notice's three-key condition including consent, all four AI notice frequencies, dismissal only after a successful write, session keys shared with the classic interface, no hardcoded disclaimer, notice text escaped |
 | `functional_tests/test_v2_conversation_deep_link.py` | Both parameter spellings read and only the canonical one written, the incoming link captured before any effect can strip it, the URL replaced rather than pushed, a dead link reported instead of stranded, a list row backfilled behind the stale-response guard, and the classic handover carrying the conversation |
 | `functional_tests/test_v2_conversation_export.py` | The wizard reuses the existing export endpoints and sends only fields the route reads, the summary model carries all four identity fields, JSON exports skip rasterizing, diagrams render through the shared hardened runtime, a percentage width is not mistaken for a size, the rail's selection survives rows being removed, and all three entry points open the wizard |
+| `functional_tests/test_v2_new_chat_scoping.py` | **New chat** offered only where it can act and the nav list's spacing following it, **Chats** starting a fresh conversation on arrival from elsewhere, that reset guarded on both the current route and an in-flight stream with the guard preceding it, the streaming flag read rather than subscribed, the drawer and details panel closed with the conversation they describe, and enabled buttons carrying a pointer cursor |
 | `functional_tests/test_csrf_state_changing_route_guard.py` | Cross-site mutations require an explicitly trusted origin; CORS preflights answered before authentication and never wildcarded |
 | `functional_tests/route_tests/` | Blueprint policy classification for `frontend_v2`, `backend_v2`, `backend_v2_admin` |
 
