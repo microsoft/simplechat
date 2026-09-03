@@ -17,6 +17,8 @@ This feature adds:
 
 **Implemented in version: 0.261.033**
 
+**Shared conversation support added in version: 0.261.043**
+
 ### Dependencies
 
 None added. Mermaid, Chart.js and DOMPurify are already vendored under
@@ -115,6 +117,21 @@ mode follows you into dark mode unless you asked for a specific colour.
 For a chart the background is painted by a per-chart Chart.js plugin, so it is part of the
 canvas and therefore part of the downloaded PNG. Axis, tick and legend colours are recomputed
 from it, so a dark background chosen while in light mode is not labelled in dark grey.
+
+## In a shared conversation
+
+Everything above works the same way in a shared conversation, with one difference that follows
+from what a shared conversation is: the choice is stored on the shared message, so it is what
+every participant sees, and it changes on their screen as you make it rather than on their next
+load. This matches how masking already behaves, and it is the only option that keeps a
+conversation looking the same to the people in it.
+
+Because a change is seen by everyone, restyling a block needs the same write access as posting a
+message. A read-only viewer sees the colours others chose and can still expand, zoom and
+download a diagram.
+
+Your own default palette still applies to every shared block nobody has singled out, so two
+participants reading the same untouched chart each see it in their own colours.
 
 ## Downloading a diagram
 
@@ -243,6 +260,45 @@ The endpoint authorizes the **conversation**, not the message. A diagram lives i
 message, which carries no author of its own, and authorizing the conversation also admits a
 participant acting inside a shared conversation.
 
+### `POST /api/collaboration/conversations/<conversation_id>/messages/<message_id>/visual-style`
+
+The same operation for a shared conversation. Body and response are identical except that the
+conversation travels in the path rather than in the body, which is how every other collaboration
+message route addresses its conversation.
+
+A shared conversation and its messages live in different Cosmos containers, so the personal
+endpoint cannot resolve one and answers 404 for it. Both routes hand the payload to the same
+`apply_visual_style` validator, so a value refused in a personal conversation is refused in a
+shared one.
+
+Two things differ in behaviour rather than in shape:
+
+- **It requires write access**, not just visibility. The stored choice is on the shared message,
+  so it is what every participant sees; a read-only viewer recolouring a chart would be changing
+  the conversation for everybody else.
+- **It broadcasts.** A `collaboration.message.visual_style_updated` event goes out on the
+  conversation's event stream, so other participants' charts change where they are sitting
+  instead of on their next load. The event carries the serialized message; the client takes only
+  the styles from it and shows no notification, because a colour change is cosmetic.
+
+Unlike message masking, the styles are **not** copied back to the hidden source conversation.
+A mask changes what is exported and what the model is later shown; colours change neither.
+
+### `GET /api/conversations/<conversation_id>/kind`
+
+Reports whether a conversation is `personal` or `collaborative`, and confirms it exists. For a
+shared conversation the serialized conversation document travels with the answer, so opening one
+from a link costs a single request.
+
+This exists because a conversation reached from a link is not in the loaded conversation list and
+so has no row to read a kind from. The client used to work it out by calling the personal
+metadata endpoint and reading its 404 as "then it must be a shared one" — correct, but it made
+the browser log a failed request every time somebody followed a link to a shared conversation.
+
+A conversation the caller may not see is reported as absent rather than forbidden, and a shared
+conversation is never named as such while collaborative conversations are disabled by
+configuration, since its endpoints would refuse everything.
+
 ### User settings
 
 Two keys are accepted by `POST /api/user/settings`:
@@ -289,13 +345,18 @@ as an independent second boundary, and `bindFunctions` is still never called.
 | `application/v2_ui/src/lib/richBlocks.ts` | Fence languages and the streaming placeholder guard |
 | `application/v2_ui/src/lib/rehypeRichBlockIndex.ts` | Numbers the blocks on the parsed tree |
 | `application/single_app/functions_message_visual_styles.py` | Server-side validation and storage rules |
-| `application/single_app/route_backend_chats.py` | The `visual-style` endpoint |
+| `application/single_app/route_backend_chats.py` | The personal `visual-style` endpoint |
+| `application/single_app/route_backend_collaboration.py` | The shared-conversation `visual-style` endpoint |
+| `application/single_app/route_backend_conversations.py` | The conversation-kind endpoint used to open a linked conversation |
 | `application/single_app/route_backend_users.py` | Allowlisting and validating the two defaults |
 
 ## Testing
 
 - `functional_tests/test_v2_visual_style_controls.py` — validation rules, storage bounds,
   endpoint protections, sanitizer boundaries, and the PNG download wiring.
+- `functional_tests/test_v2_collaboration_visual_style_fix.py` — the shared-conversation
+  endpoint exercised end to end: what it stores, what it refuses, who may call it, what it
+  broadcasts, and the conversation-kind endpoint's answers.
 - `functional_tests/test_v2_visual_style_logic.ts` — behavioural checks of the colour and
   fence-numbering logic, bundled with esbuild and run by the test above when the front-end
   toolchain is installed.
@@ -311,9 +372,8 @@ Mermaid already accepts.
 
 ## Known limitations
 
-- Colours are stored on personal conversations, which is how the V2 chat loads messages. A
-  message reached through the collaboration routes renders with your defaults and does not
-  persist a per-block choice.
+- In a shared conversation the choice is stored on the shared message, so it applies for every
+  participant rather than only for you. There is no per-reader override of a shared block.
 - Block positions shift if an edit or a mask removes an entire block from a message. The source
   fingerprint makes this fail safe — the override is ignored — rather than applying colours to
   the wrong content.

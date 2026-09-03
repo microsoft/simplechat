@@ -108,6 +108,10 @@ export interface CollaborationEventHandlers {
         message: CollaborationMessage,
         updatedByUserId: string | undefined,
     ) => void;
+    onMessageVisualStyleUpdated?: (
+        message: CollaborationMessage,
+        updatedByUserId: string | undefined,
+    ) => void;
     onConversationUpdated?: (conversation: CollaborationConversation) => void;
     onConversationDeleted?: (conversationId: string) => void;
     onMembersInvited?: (
@@ -221,6 +225,15 @@ export function dispatchCollaborationEvent(
         case 'collaboration.message.masked':
             if (payload.message) {
                 handlers.onMessageMasked?.(payload.message, payload.updated_by_user_id);
+            }
+            return;
+
+        case 'collaboration.message.visual_style_updated':
+            if (payload.message) {
+                handlers.onMessageVisualStyleUpdated?.(
+                    payload.message,
+                    payload.updated_by_user_id,
+                );
             }
             return;
 

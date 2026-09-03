@@ -5,7 +5,9 @@
 // drawn with Chart.js, matching what the classic interface shows for the same message.
 //
 // Chart.js is loaded from the vendored copy on first use rather than bundled: most
-// conversations contain no chart, and there is no reason to make every user pay for it.
+// conversations contain no chart, and there is no reason to make every user pay for it. The
+// loader lives in lib/chartRuntime.ts and is shared with the settings stats tab, so whichever
+// draws first pays for the script and the other reuses it.
 //
 // Series colours and the canvas background can be changed per chart; see blockVisualStyle.ts
 // for where a change is stored. Unlike the classic client's colour editor, nothing here
@@ -22,8 +24,8 @@ import {
     resolveChartTable,
     type ChartSpec,
 } from '../../lib/inlineChartSpec';
-import type { ChartJsConstructor, ChartJsInstance } from '../../lib/vendor';
-import { VENDOR_PATHS, loadVendorScript } from '../../lib/vendorAssets';
+import type { ChartJsInstance } from '../../lib/vendor';
+import { loadChartRuntime, readThemeColors } from '../../lib/chartRuntime';
 import { useBlockVisualStyle } from '../../lib/blockVisualStyle';
 import {
     THEME_BACKGROUND,
@@ -32,53 +34,6 @@ import {
 } from '../../lib/visualPalettes';
 import { fileNameStem } from '../../lib/svgRaster';
 import { VisualStyleMenu } from './VisualStyleMenu';
-
-let chartRuntime: ChartJsConstructor | null = null;
-let chartRuntimeLoad: Promise<ChartJsConstructor> | null = null;
-
-/** Load Chart.js once per session. The UMD build self-registers every controller and scale. */
-function loadChartRuntime(): Promise<ChartJsConstructor> {
-    if (chartRuntime) {
-        return Promise.resolve(chartRuntime);
-    }
-    if (!chartRuntimeLoad) {
-        chartRuntimeLoad = loadVendorScript(VENDOR_PATHS.chartJs)
-            .then(() => {
-                if (!window.Chart) {
-                    throw new Error('Chart.js did not register a global after loading');
-                }
-                chartRuntime = window.Chart;
-                return chartRuntime;
-            })
-            .catch((error) => {
-                chartRuntimeLoad = null;
-                throw error;
-            });
-    }
-    return chartRuntimeLoad;
-}
-
-/**
- * Chart colours taken from the live theme.
- *
- * Read from the custom properties rather than hard-coded, so a chart follows the light/dark
- * switch without a second definition of the palette drifting out of step with `theme.css`.
- */
-function readThemeColors(): { text: string; grid: string; surface: string } {
-    const fallback = { text: '#475569', grid: 'rgba(15, 23, 42, 0.10)', surface: '#ffffff' };
-    if (typeof window === 'undefined') {
-        return fallback;
-    }
-
-    const styles = window.getComputedStyle(document.documentElement);
-    const read = (name: string, backup: string) => styles.getPropertyValue(name).trim() || backup;
-
-    return {
-        text: read('--text-2', fallback.text),
-        grid: read('--edge-strong', fallback.grid),
-        surface: read('--surface-solid', fallback.surface),
-    };
-}
 
 /** A file name for the downloaded image, derived from the chart's own title. */
 function downloadName(spec: ChartSpec): string {

@@ -66,6 +66,7 @@ from functions_source_review import (
     is_source_review_enabled_for_user,
     is_url_access_enabled_for_user,
 )
+from functions_workspace_sections import build_workspace_section_availability
 from route_frontend_chats import (
     _build_chat_model_catalog,
     _build_chat_prompt_catalog,
@@ -395,6 +396,22 @@ def register_route_backend_v2(bp):
                 stored_workspace_id if stored_workspace_id in visible_workspace_ids else None
             )
 
+            # Which workspace sections this user may see. Computed server-side because the
+            # answer combines settings, app-role checks and governance policy, and only
+            # `enable_*` keys reach `features` above -- `allow_user_agents`,
+            # `allow_user_plugins`, `per_user_semantic_kernel` and the file sync and
+            # governance checks would all be invisible to the SPA otherwise.
+            workspace = {"enabled": False, "sections": {}}
+            try:
+                workspace = build_workspace_section_availability(
+                    settings,
+                    user_id,
+                    user_info=current_user_info,
+                    user_roles=current_user_roles,
+                )
+            except Exception as exc:
+                logger.warning(f"[V2_BOOTSTRAP] Failed to resolve workspace sections: {exc}")
+
             payload = {
                 "version": VERSION,
                 "user": {
@@ -425,6 +442,7 @@ def register_route_backend_v2(bp):
                 },
                 "admin_nav": ADMIN_NAV if "Admin" in current_user_roles else [],
                 "notices": _build_notices(public_settings, user_settings_dict),
+                "workspace": workspace,
                 "settings": public_settings,
             }
 

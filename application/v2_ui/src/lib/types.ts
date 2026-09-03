@@ -134,6 +134,126 @@ export interface WorkspaceTag {
     color?: string;
 }
 
+/**
+ * Entities behind the personal workspace sections.
+ *
+ * Every one of these routes returns more fields than the list views read, and several add
+ * fields over time, so each type is deliberately open. Only the fields the UI actually
+ * renders or sends are named; anything else stays available through the index signature
+ * rather than being dropped on the way through.
+ */
+export interface WorkspacePrompt {
+    id: string;
+    name?: string;
+    content?: string;
+    created_at?: string;
+    updated_at?: string;
+    [key: string]: unknown;
+}
+
+export interface WorkspaceIdentity {
+    id: string;
+    name?: string;
+    description?: string;
+    auth_type?: string;
+    username?: string;
+    scope_type?: string;
+    scope_id?: string;
+    created_at?: string;
+    updated_at?: string;
+    [key: string]: unknown;
+}
+
+export interface WorkspaceSyncSource {
+    id: string;
+    name?: string;
+    source_type?: string;
+    identity_id?: string;
+    remote_path?: string;
+    enabled?: boolean;
+    sync_interval_minutes?: number;
+    created_at?: string;
+    updated_at?: string;
+    [key: string]: unknown;
+}
+
+export interface WorkspaceSyncRun {
+    id: string;
+    source_id?: string;
+    status?: string;
+    started_at?: string;
+    completed_at?: string;
+    triggered_by?: string;
+    [key: string]: unknown;
+}
+
+export interface WorkspaceAgent {
+    id: string;
+    name?: string;
+    display_name?: string;
+    description?: string;
+    instructions?: string;
+    /** True for agents supplied by an administrator, which a user may not edit or delete. */
+    is_global?: boolean;
+    is_group?: boolean;
+    agent_type?: string;
+    tags?: string[];
+    actions_to_load?: string[];
+    [key: string]: unknown;
+}
+
+export interface WorkspaceAction {
+    id: string;
+    name?: string;
+    displayName?: string;
+    description?: string;
+    /** Which connector this action is, for example `mcp`, `openapi` or `sql_query`. */
+    type?: string;
+    endpoint?: string;
+    is_global?: boolean;
+    [key: string]: unknown;
+}
+
+export interface WorkspaceWorkflow {
+    id: string;
+    name?: string;
+    description?: string;
+    status?: string;
+    active_run_id?: string | null;
+    created_at?: string;
+    updated_at?: string;
+    [key: string]: unknown;
+}
+
+export interface WorkspaceWorkflowRun {
+    id: string;
+    workflow_id?: string;
+    status?: string;
+    started_at?: string;
+    completed_at?: string;
+    [key: string]: unknown;
+}
+
+export interface WorkspaceModelEndpointModel {
+    id?: string;
+    deploymentName?: string;
+    modelName?: string;
+    displayName?: string;
+    enabled?: boolean;
+    [key: string]: unknown;
+}
+
+export interface WorkspaceModelEndpoint {
+    id: string;
+    name?: string;
+    provider?: string;
+    enabled?: boolean;
+    connection?: Record<string, unknown>;
+    auth?: Record<string, unknown>;
+    models?: WorkspaceModelEndpointModel[];
+    [key: string]: unknown;
+}
+
 /** Where a cited document lives, from functions_citation_tracking._scope_from_citation. */
 export interface UsedDocumentScope {
     type?: 'personal' | 'group' | 'public' | string;
@@ -484,8 +604,35 @@ export interface BootstrapPayload {
         ai: AiNoticeConfig;
         web_search: WebSearchNoticeConfig;
     };
+    /**
+     * Which personal workspace sections this user may see.
+     *
+     * Resolved server-side by functions_workspace_sections, because the answer combines
+     * plain settings, app-role checks and governance policy. `features` cannot carry it:
+     * it only forwards `enable_*` keys, so `allow_user_agents`, `allow_user_plugins`,
+     * `per_user_semantic_kernel` and `allow_user_custom_endpoints` would all be missing,
+     * and the file sync and governance checks are not settings keys at all.
+     */
+    workspace: WorkspaceAvailability;
     /** Sanitized settings. Never contains keys, secrets or connection strings. */
     settings: Json;
+}
+
+/** The group a workspace section belongs to, as reported by the server. */
+export type WorkspaceSectionGroup = 'knowledge' | 'automation' | 'connections';
+
+export interface WorkspaceSectionAvailability {
+    enabled: boolean;
+    /** Why the section is unavailable. Null when it is enabled. */
+    reason: string | null;
+    group: WorkspaceSectionGroup;
+}
+
+export interface WorkspaceAvailability {
+    enabled: boolean;
+    file_sync_enabled?: boolean;
+    governance?: Record<string, boolean>;
+    sections: Record<string, WorkspaceSectionAvailability>;
 }
 
 /**

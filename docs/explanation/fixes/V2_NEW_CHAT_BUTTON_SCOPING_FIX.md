@@ -11,7 +11,7 @@ pointer stayed an arrow over it, as it did over every other button in the interf
 pressing it could leave the conversation drawer stranded open and empty with no way to
 dismiss it from the header.
 
-**Fixed in version:** 0.261.041
+**Fixed in version:** 0.261.044
 
 ## Root cause
 
@@ -99,7 +99,7 @@ conversation details panel can no longer outlive the conversation it describes.
 | `application/v2_ui/src/styles/theme.css` | Pointer cursor restored for enabled buttons in the base layer |
 | `application/v2_ui/src/stores/chatStore.ts` | `startNewConversation` also clears `drawerMode` |
 | `application/v2_ui/src/pages/ChatPage.tsx` | Conversation details gated on an open conversation |
-| `application/single_app/config.py` | Version to 0.261.041 |
+| `application/single_app/config.py` | Version to 0.261.044 |
 | `functional_tests/test_v2_new_chat_scoping.py` | New test |
 
 ## Validation

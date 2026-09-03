@@ -2,8 +2,8 @@
 """
 Functional test for the V2 interface's New chat button.
 
-Version: 0.261.041
-Implemented in: 0.261.041
+Version: 0.261.044
+Implemented in: 0.261.044
 
 Three defects met at one button.
 
@@ -212,7 +212,7 @@ def test_buttons_look_clickable():
 def test_version_is_at_least_implementation_version():
     """The change is present from the version that introduced it onwards."""
     print("Testing application version...")
-    assert_app_version_at_least("0.261.041")
+    assert_app_version_at_least("0.261.044")
     print("Application version test passed!")
     return True
 

@@ -19,6 +19,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useChatStore } from '../stores/chatStore';
+import type { ConversationKind } from '../stores/chatStore';
 import { useUserSettingsStore } from '../stores/userSettingsStore';
 import {
     DEFAULT_VISUAL_STYLE,
@@ -150,6 +151,14 @@ interface PendingChange {
     style?: VisualStyle | null;
     height?: number | null;
     conversationId: string;
+    /**
+     * Which API family that conversation belongs to.
+     *
+     * Captured with the id and for the same reason: a shared conversation is saved through a
+     * different endpoint, and by the time a flushed change is written the reader may already be
+     * looking at a conversation of the other kind.
+     */
+    conversationKind: ConversationKind | null;
 }
 
 export function useBlockVisualStyle(
@@ -228,6 +237,7 @@ export function useBlockVisualStyle(
             void applyVisualStyle(
                 messageId,
                 change.conversationId,
+                change.conversationKind,
                 kind,
                 blockIndex,
                 sourceHash,
@@ -246,7 +256,7 @@ export function useBlockVisualStyle(
     );
 
     const schedule = useCallback(
-        (change: Omit<PendingChange, 'conversationId'>) => {
+        (change: Omit<PendingChange, 'conversationId' | 'conversationKind'>) => {
             if (timerRef.current !== null) {
                 clearTimeout(timerRef.current);
                 timerRef.current = null;
@@ -257,7 +267,8 @@ export function useBlockVisualStyle(
 
             // Captured now rather than read when the write fires: the conversation can change
             // between the two, and this change belongs to the one it was made in.
-            const conversationId = useChatStore.getState().activeConversationId ?? '';
+            const { activeConversationId, activeConversationKind } = useChatStore.getState();
+            const conversationId = activeConversationId ?? '';
             if (!conversationId) {
                 return;
             }
@@ -267,6 +278,7 @@ export function useBlockVisualStyle(
                 ...(change.style === undefined ? {} : { style: change.style }),
                 ...(change.height === undefined ? {} : { height: change.height }),
                 conversationId,
+                conversationKind: activeConversationKind,
             };
 
             pendingRef.current = merged;
